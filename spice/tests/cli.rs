@@ -15,6 +15,7 @@ use wire::{Outcome, ReplyPosition, Version};
 
 /// The exit a refused request carries, in either form.
 const REFUSAL_EXIT: i32 = 2;
+const FAULT_EXIT: i32 = 1;
 
 const CODEX_PROSE: &[u8] =
     br#"{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"working"}}"#;
@@ -262,18 +263,14 @@ fn root_help_exposes_the_generated_command_families() {
 }
 
 #[test]
-fn a_registered_unlanded_leaf_refuses_by_name() {
-    let spoken = invoke(&["lane"]);
+fn a_registered_landed_leaf_reaches_its_implementation() {
+    let spoken = invoke(&["taste"]);
 
-    assert_eq!(spoken.code, Some(REFUSAL_EXIT));
+    assert_eq!(spoken.code, Some(FAULT_EXIT));
     assert!(spoken.out.is_empty());
-    assert_eq!(
-        utf8(spoken.err),
-        concat!(
-            "spice: release::not-landed; complete COORDIN-1kJQlDjc ",
-            "(lane::read) before Rust release one admits this leaf\n",
-        ),
-    );
+    let stderr = utf8(spoken.err);
+    assert!(!stderr.contains("release::not-landed"));
+    assert!(!stderr.contains("release::dispatch-gap"));
 }
 
 #[test]
@@ -382,22 +379,22 @@ fn version_refuses_unfinalized_and_incompatible_schema_without_mutation() {
 /// that happen to match today.
 #[test]
 fn one_outcome_reaches_one_stream_in_either_form() {
-    let text = invoke(&["lane"]);
-    let json = invoke(&["--json", "lane"]);
+    let text = invoke(&["taste"]);
+    let json = invoke(&["--json", "taste"]);
 
-    assert_eq!(text.code, Some(REFUSAL_EXIT));
-    assert_eq!(json.code, Some(REFUSAL_EXIT));
-    assert!(text.out.is_empty(), "a refusal is not an answer");
+    assert_eq!(text.code, Some(FAULT_EXIT));
+    assert_eq!(json.code, Some(FAULT_EXIT));
+    assert!(text.out.is_empty(), "a fault is not an answer");
     assert!(json.out.is_empty(), "the form does not move the stream");
 
     let decoded: Outcome<()> = wire::decode(&json.err).expect("the document is the wire DTO");
-    let Outcome::Refusal(refusal) = decoded else {
-        panic!("an unlanded leaf refuses: {decoded:?}");
+    let Outcome::Fault(fault) = decoded else {
+        panic!("a landed leaf reports its environment fault: {decoded:?}");
     };
 
     assert_eq!(
         utf8(text.err),
-        format!("spice: {}; {}\n", refusal.reason, refusal.remedy),
+        format!("spice: {}; {}\n", fault.reason, fault.detail),
     );
     assert_eq!(
         json.err.iter().filter(|byte| **byte == b'\n').count(),

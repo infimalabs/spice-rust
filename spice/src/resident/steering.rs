@@ -32,15 +32,50 @@ pub(super) fn publish_lane_discoveries(
     })?;
     for lane in &residency.lanes {
         let capability = lane_capability(lane)?;
-        canvas::Discovery {
-            endpoint: operator.endpoint.clone(),
-            capability,
-            epoch: residency.epoch,
-        }
-        .publish(paths.lane_canvas.join(lane.lane.to_string()))
-        .map_err(|error| environment_fault("canvas::lane-publish-failed", &error.to_string()))?;
+        publish_lane_discovery(paths, operator, lane.lane, capability)?;
     }
     Ok(())
+}
+
+pub(super) fn publish_lane_surface(
+    paths: &RuntimePaths,
+    operator: &canvas::Discovery,
+    lane: CanonicalUuid,
+    capability: CanonicalUuid,
+) -> CommandResult<()> {
+    fs::create_dir_all(&paths.lane_canvas).map_err(|error| {
+        environment_fault("canvas::lane-directory-unavailable", &error.to_string())
+    })?;
+    publish_lane_discovery(paths, operator, lane, capability)?;
+    let seal = steer::Key::for_directive(capability);
+    if let Err(error) = steer::inbox::publish(&paths.inbox, lane, &seal, &[]) {
+        remove_lane_surface(paths, lane);
+        return Err(environment_fault(
+            "steer::inbox-unwritable",
+            &error.to_string(),
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn remove_lane_surface(paths: &RuntimePaths, lane: CanonicalUuid) {
+    let _ = fs::remove_file(paths.lane_canvas.join(lane.to_string()));
+    let _ = fs::remove_file(steer::inbox::path(&paths.inbox, lane));
+}
+
+fn publish_lane_discovery(
+    paths: &RuntimePaths,
+    operator: &canvas::Discovery,
+    lane: CanonicalUuid,
+    capability: CanonicalUuid,
+) -> CommandResult<()> {
+    canvas::Discovery {
+        endpoint: operator.endpoint.clone(),
+        capability,
+        epoch: operator.epoch,
+    }
+    .publish(paths.lane_canvas.join(lane.to_string()))
+    .map_err(|error| environment_fault("canvas::lane-publish-failed", &error.to_string()))
 }
 
 pub(super) fn publish_inboxes(

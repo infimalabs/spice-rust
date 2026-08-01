@@ -1,5 +1,7 @@
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RuntimePaths {
+    worktree: PathBuf,
+    common: PathBuf,
     runtime: PathBuf,
     data: PathBuf,
     journal: PathBuf,
@@ -69,6 +71,8 @@ impl RuntimePaths {
             .admit_state()
             .map_err(|error| crate::state_failure(&error).outcome())?;
         Ok(Self {
+            worktree: repository.worktree_root().to_path_buf(),
+            common: repository.common_dir().to_path_buf(),
             runtime: state.runtime().to_path_buf(),
             data: state.data().to_path_buf(),
             journal: state.journal().to_path_buf(),
@@ -497,7 +501,7 @@ async fn run_surface(
     seats: &mut Seats,
 ) -> CommandResult<()> {
     let operator = new_uuid();
-    let mut capabilities = canvas::axum::Capabilities::default();
+    let capabilities = canvas::axum::Capabilities::default();
     capabilities
         .insert(operator, Actor::Operator)
         .map_err(|error| environment_fault("canvas::capability-invalid", &error.to_string()))?;
@@ -511,7 +515,7 @@ async fn run_surface(
                 })?;
         }
     }
-    let (server, mut control) = canvas::axum::Server::bind(epoch, capabilities)
+    let (server, mut control) = canvas::axum::Server::bind(epoch, capabilities.clone())
         .await
         .map_err(|error| environment_fault("canvas::bind-failed", &error.to_string()))?;
     let discovery = server
@@ -530,6 +534,16 @@ async fn run_surface(
     let mut server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;
     }));
+    lane_surface::restore_seats(bus, paths, epoch, seats)?;
+    let command_surface = command_surface::Surface::new(
+        bus,
+        repository,
+        paths,
+        epoch,
+        &capabilities,
+        &discovery,
+        config,
+    );
     loop {
         let request = tokio::select! {
             request = control.recv() => request.ok_or_else(|| {
@@ -540,15 +554,7 @@ async fn run_surface(
             }
         };
         let dark = is_dark_command(request.command());
-        let outcome = dispatch_command(
-            bus,
-            repository,
-            paths,
-            epoch,
-            config,
-            seats,
-            request.command(),
-        );
+        let outcome = command_surface.dispatch(seats, request.command());
         let reached_dark = dark && matches!(outcome, Outcome::Reply(_));
         let response = request.respond(outcome);
         if reached_dark {

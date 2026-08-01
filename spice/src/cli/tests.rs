@@ -117,12 +117,17 @@ fn every_contract_has_an_executable_succession_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 58);
+    assert_eq!(landed, 63);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
     assert_eq!(landing(&["lock", "run"]), Landing::Landed);
     assert_eq!(landing(&["release", "publish"]), Landing::Landed);
     assert_eq!(landing(&["restore", "verify"]), Landing::Landed);
+    assert_eq!(landing(&["lane"]), Landing::Landed);
+    assert_eq!(landing(&["lane", "add"]), Landing::Landed);
+    assert_eq!(landing(&["lane", "drain"]), Landing::Landed);
+    assert_eq!(landing(&["lane", "wake"]), Landing::Landed);
+    assert_eq!(landing(&["recall"]), Landing::Landed);
     assert_eq!(landing(&["steer"]), Landing::Landed);
     assert_eq!(landing(&["steer", "cancel"]), Landing::Landed);
     assert_eq!(landing(&["inbox"]), Landing::Landed);
@@ -151,25 +156,13 @@ fn every_contract_has_an_executable_succession_disposition() {
         assert_eq!(landing(path), Landing::Landed, "{path:?}");
     }
 
-    let owning_tasks = contracts()
-        .iter()
-        .filter_map(|contract| match landing(contract.path) {
-            Landing::Gap(task) => Some(task),
-            Landing::Landed | Landing::Unaccounted => None,
-        })
-        .collect::<BTreeSet<_>>();
-    assert_eq!(owning_tasks, BTreeSet::from(["COORDIN-1kJQlDjc"]));
-
     let (rust_ledger, _) = include_str!("../../../PORTING.md")
         .split_once("## Installed Python paths")
         .expect("the ledger separates Rust and Python inventories");
     let landed_ledger = rust_ledger
         .split_once("### Landed")
         .expect("the ledger names its landed section")
-        .1
-        .split_once("### `")
-        .expect("the landed section ends before task-owned gaps")
-        .0;
+        .1;
     for contract in contracts() {
         let path = format!("`{}`", contract.path.join(" "));
         assert!(
@@ -191,12 +184,6 @@ fn every_contract_has_an_executable_succession_disposition() {
                 "landed command sits outside the ledger's Landed section: {path}",
             );
         }
-    }
-    for task in owning_tasks {
-        assert!(
-            rust_ledger.contains(&format!("`{task}`")),
-            "Rust succession ledger omitted task {task}"
-        );
     }
 }
 
@@ -432,6 +419,45 @@ fn daemonless_local_succession_is_closed_and_explicit() {
             "local mapping names an unlanded Rust leaf: {:?}",
             row.rust,
         );
+    }
+}
+
+#[test]
+fn python_lifecycle_and_session_forensics_name_their_rust_successors() {
+    let ledger = include_str!("../../../PORTING.md");
+    let agent = ledger
+        .split_once("### Agent lifecycle")
+        .expect("the ledger names Python agent lifecycle")
+        .1
+        .split_once("### Configuration")
+        .expect("the agent lifecycle section is bounded")
+        .0;
+    for mapping in [
+        "- `agent activation`: `lane` and canvas discovery; `COORDIN-1kJQlDjc`.",
+        "- `agent ensure`: `lane add`; `COORDIN-1kJQlDjc`.",
+        "- `agent show`: `lane` and `recall`; `COORDIN-1kJQlDjc`.",
+    ] {
+        assert!(
+            agent.lines().any(|line| line == mapping),
+            "missing {mapping}"
+        );
+    }
+
+    let sessions = ledger
+        .split_once("### Session forensics")
+        .expect("the ledger names Python session forensics")
+        .1
+        .split_once("### Task plane")
+        .expect("the session forensics section is bounded")
+        .0;
+    let historical_path = format!("- `session {}{}`", "brie", "fing");
+    assert!(sessions.lines().any(|line| line == historical_path));
+    assert!(sessions.contains(
+        "Its retained questions are answered by landed `watch` and `retro`, plus\n\
+         `recall` and `thread` under their owning tasks."
+    ));
+    for path in [&["lane"][..], &["lane", "add"][..], &["recall"][..]] {
+        assert_eq!(landing(path), Landing::Landed);
     }
 }
 

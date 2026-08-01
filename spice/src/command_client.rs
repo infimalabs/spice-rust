@@ -22,6 +22,7 @@ use wire::{
 use crate::cli::{Contract, Guard, Principal, ReplyPositionLaw};
 
 mod browser;
+mod mapping;
 mod steering;
 mod typed;
 
@@ -57,6 +58,14 @@ pub(crate) enum SelectedCommand<'a> {
         release: &'a crate::release_command::AdmittedRelease,
         state: crate::release_command::PublicationState,
     },
+    /// Read the current resident-owned lane table.
+    LaneRead,
+    /// Seat one new lane and launch its first occupant.
+    LaneSeat { body: &'a wire::intent::LaneSeat },
+    /// Drive one existing lane toward drain or wake.
+    LaneState { body: &'a wire::intent::LaneState },
+    /// Read one bounded continuity account.
+    LaneRecall { body: &'a wire::intent::LaneRecall },
     /// The operator appends one durable directive to a seated lane.
     SteerSend {
         lane: CanonicalUuid,
@@ -93,7 +102,12 @@ pub(crate) fn execute(
     selected: SelectedCommand<'_>,
 ) -> Outcome<CommandAnswer> {
     let mapped = MappedCommand::selected(contract, selected);
-    execute_mapped(discovery_path, contract, Connection::Operator, mapped)
+    let connection = match ambient_lane_identity() {
+        Ok(Some(lane)) => Connection::Lane(lane),
+        Ok(None) => Connection::Operator,
+        Err(outcome) => return outcome,
+    };
+    execute_mapped(discovery_path, contract, connection, mapped)
 }
 
 fn execute_mapped(
@@ -106,7 +120,7 @@ fn execute_mapped(
         Ok(mapped) => mapped,
         Err(outcome) => return outcome,
     };
-    let discovery_path = discovery_path(operator_discovery, connection);
+    let discovery_path = selected_discovery_path(operator_discovery, connection);
     let discovery = match DiscoveryRead::open(&discovery_path) {
         Ok(discovery) => discovery,
         Err(outcome) => return outcome,
@@ -127,7 +141,8 @@ pub(crate) fn authenticate(
             "selected CLI contract has no authenticated resident read mapping",
         ));
     }
-    let discovery = DiscoveryRead::open(discovery_path)?;
+    let connection = ambient_lane_identity()?.map_or(Connection::Operator, Connection::Lane);
+    let discovery = DiscoveryRead::open(&selected_discovery_path(discovery_path, connection))?;
     let session = open_session(contract, discovery)?;
     Ok(session.accepted.epoch)
 }
@@ -173,176 +188,12 @@ fn read_inbox(
     }
 }
 
-fn discovery_path(operator_discovery: &Path, connection: Connection) -> PathBuf {
+fn selected_discovery_path(operator_discovery: &Path, connection: Connection) -> PathBuf {
     match connection {
         Connection::Operator => operator_discovery.to_path_buf(),
         Connection::Lane(lane) => operator_discovery
             .with_file_name("canvas-lanes")
             .join(lane.to_string()),
-    }
-}
-
-impl MappedCommand {
-    fn selected(contract: &Contract, selected: SelectedCommand<'_>) -> ClientResult<Self> {
-        match (contract.path, selected) {
-            (["down"], SelectedCommand::Down) => Self::new(
-                contract,
-                &["down"],
-                CommandKind::UpChange,
-                vec![Witness::Transition {
-                    from: wire::ResidentState::Seated,
-                    to: wire::ResidentState::Dark,
-                }],
-                &wire::intent::UpChange {
-                    state: wire::ResidentState::Dark,
-                },
-            ),
-            (["consent"], SelectedCommand::ConsentRead) => Self::new(
-                contract,
-                &["consent"],
-                CommandKind::ConsentRead,
-                Vec::new(),
-                &wire::intent::ConsentRead {},
-            ),
-            (["consent", "policy"], SelectedCommand::ConsentPolicy) => Self::new(
-                contract,
-                &["consent", "policy"],
-                CommandKind::ConsentPolicy,
-                Vec::new(),
-                &wire::intent::ConsentPolicy {},
-            ),
-            (
-                ["consent", "allow"] | ["consent", "deny"],
-                SelectedCommand::ConsentDecide {
-                    request,
-                    answer,
-                    expected,
-                },
-            ) => Self::new(
-                contract,
-                contract.path,
-                CommandKind::ConsentDecide,
-                expected,
-                &wire::intent::ConsentDecide { request, answer },
-            ),
-            (["release", "publish"], SelectedCommand::ReleasePublish { release, state }) => {
-                let mut expected = vec![Witness::Observation {
-                    key: release.key().clone(),
-                    head: state.observation(),
-                }];
-                expected.extend(release.receipts().map(|proof| Witness::Sealed {
-                    proof: proof.clone(),
-                    manifest: release.manifest().clone(),
-                }));
-                Self::new(
-                    contract,
-                    &["release", "publish"],
-                    CommandKind::ReleasePublish,
-                    expected,
-                    &wire::intent::ReleasePublish {
-                        key: release.key().clone(),
-                        manifest: release.manifest().clone(),
-                    },
-                )
-            }
-            (["steer", "cancel"], SelectedCommand::SteerCancel { directive }) => Self::new(
-                contract,
-                &["steer", "cancel"],
-                CommandKind::SteerCancel,
-                vec![Witness::Directive {
-                    steer: directive,
-                    disposition: Disposition::Live,
-                }],
-                &wire::intent::DirectiveRef { directive },
-            ),
-            (["trust", "grant"], SelectedCommand::TrustGrant { digest }) => Self::new(
-                contract,
-                &["trust", "grant"],
-                CommandKind::TrustGrant,
-                vec![Witness::Trust {
-                    digest: digest.clone(),
-                    standing: wire::TrustState::Pended,
-                }],
-                &wire::intent::TrustRef {
-                    digest: digest.clone(),
-                },
-            ),
-            (["trust", "revoke"], SelectedCommand::TrustRevoke { digest }) => Self::new(
-                contract,
-                &["trust", "revoke"],
-                CommandKind::TrustRevoke,
-                vec![Witness::Trust {
-                    digest: digest.clone(),
-                    standing: wire::TrustState::Granted,
-                }],
-                &wire::intent::TrustRef {
-                    digest: digest.clone(),
-                },
-            ),
-            _ => Err(protocol_fault(
-                "command::mapping-unsupported",
-                "selected CLI contract has no resident command mapping",
-            )),
-        }
-    }
-
-    fn new<B: Serialize>(
-        contract: &Contract,
-        mapped_path: &[&str],
-        kind: CommandKind,
-        expected: Vec<Witness>,
-        body: &B,
-    ) -> ClientResult<Self> {
-        if contract.path != mapped_path
-            || !contract.guards.contains(&Guard::Resident)
-            || matches!(contract.principal, Principal::Local)
-            || kind.is_read() != matches!(contract.journal, crate::cli::JournalAccess::Read)
-        {
-            return Err(protocol_fault(
-                "command::mapping-unsupported",
-                "selected CLI contract has no resident command mapping",
-            ));
-        }
-        let encoded = wire::encode(body).map_err(|_| {
-            protocol_fault(
-                "command::body-unencodable",
-                "selected CLI body cannot be represented by the current wire",
-            )
-        })?;
-        kind.binding().body.decode(&encoded).map_err(|_| {
-            protocol_fault(
-                "command::body-incomplete",
-                "selected CLI body does not match the command registry binding",
-            )
-        })?;
-        let body = wire::decode(&encoded).map_err(|_| {
-            protocol_fault(
-                "command::body-unrepresentable",
-                "validated command body did not retain its wire representation",
-            )
-        })?;
-        let mapped = Self {
-            id: CanonicalUuid::new(uuid::Uuid::new_v4()),
-            kind,
-            expected,
-            body,
-        };
-        let preflight = mapped.envelope(CanonicalUuid::new(uuid::Uuid::new_v4()));
-        preflight
-            .witnessed()
-            .map_err(|error| protocol_fault("command::witness-law", &error.to_string()))?;
-        Ok(mapped)
-    }
-
-    fn envelope(&self, epoch: CanonicalUuid) -> Command<serde_json::Value> {
-        Command {
-            v: wire::WireVersion::CURRENT,
-            id: self.id,
-            epoch,
-            kind: self.kind,
-            expected: self.expected.clone(),
-            body: self.body.clone(),
-        }
     }
 }
 
@@ -740,6 +591,25 @@ fn open_session(
         socket,
         discovery,
         accepted,
+    })
+}
+
+fn ambient_lane_identity() -> ClientResult<Option<CanonicalUuid>> {
+    let Some(value) = crate::bootstrap_environment("SPICE_LANE") else {
+        // env-policy: allow
+        return Ok(None);
+    };
+    let Some(value) = value.to_str() else {
+        return Err(protocol_fault(
+            "hello::lane-identity-invalid",
+            "SPICE_LANE is not UTF-8",
+        ));
+    };
+    value.parse().map(Some).map_err(|_| {
+        protocol_fault(
+            "hello::lane-identity-invalid",
+            "SPICE_LANE is not one canonical lane UUID",
+        )
     })
 }
 

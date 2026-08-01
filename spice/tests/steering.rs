@@ -1,4 +1,6 @@
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -29,6 +31,27 @@ impl Fixture {
         ));
         let runtime = root.join(".git/.spice-rust");
         fs::create_dir_all(root.join(".git")).expect("fixture git directory");
+        let vendor = root.join("fake-claude");
+        fs::write(
+            &vendor,
+            concat!(
+                "#!/bin/sh\n",
+                "trap 'exit 0' TERM INT\n",
+                "while :; do sleep 1; done\n",
+            ),
+        )
+        .expect("fixture vendor writes");
+        #[cfg(unix)]
+        fs::set_permissions(&vendor, fs::Permissions::from_mode(0o700))
+            .expect("fixture vendor becomes executable");
+        fs::write(
+            root.join("spice.toml"),
+            format!(
+                "[lane]\nlease = \"1s\"\n\n[vendor.claude]\nbinary = {:?}\n",
+                vendor.display().to_string()
+            ),
+        )
+        .expect("fixture vendor configuration writes");
         Self { root, runtime }
     }
 
@@ -84,22 +107,40 @@ impl RunningResident {
             .expect("readiness watcher arms before publication");
         let deadline = Monotonic::now() + READINESS_DEADLINE;
         while !fixture.canvas().is_file() {
-            assert!(
-                self.child
-                    .as_mut()
-                    .expect("resident child")
-                    .try_wait()
-                    .expect("resident status")
-                    .is_none(),
-                "foreground resident exited before readiness"
-            );
+            self.assert_running();
             let remaining = deadline.saturating_duration_since(Monotonic::now());
             match receiver.recv_timeout(remaining) {
                 Ok(Ok(_)) => {}
                 Ok(Err(error)) => panic!("readiness notification failed: {error}"),
-                Err(error) => panic!("resident readiness failed: {error}"),
+                Err(error) => {
+                    self.assert_running();
+                    panic!("resident readiness failed: {error}");
+                }
             }
         }
+    }
+
+    fn assert_running(&mut self) {
+        if self
+            .child
+            .as_mut()
+            .expect("resident child")
+            .try_wait()
+            .expect("resident status")
+            .is_none()
+        {
+            return;
+        }
+        let output = self
+            .child
+            .take()
+            .expect("exited resident child")
+            .wait_with_output()
+            .expect("exited resident output");
+        panic!(
+            "foreground resident exited: stdout={:?} stderr={:?}",
+            output.stdout, output.stderr
+        );
     }
 
     fn wait(mut self) -> Output {
@@ -138,6 +179,7 @@ struct ExpectedRecognition {
 
 fn invoke(fixture: &Fixture, arguments: &[&str], json: bool) -> Output {
     let mut process = Command::new(env!("CARGO_BIN_EXE_spice"));
+    process.env_remove(steer::hook::LANE);
     if json {
         process.arg("--json");
     }
@@ -220,6 +262,20 @@ fn setup() -> (Fixture, RunningResident, Lanes) {
     (fixture, resident, lanes)
 }
 
+fn current_occupant(fixture: &Fixture, lane: wire::CanonicalUuid) -> wire::CanonicalUuid {
+    journal::Journal::open(fixture.journal())
+        .expect("steering journal opens")
+        .read(|read| read.residency_head())
+        .expect("lane residency reads")
+        .expect("lane residency exists")
+        .into_body()
+        .lanes
+        .into_iter()
+        .find(|row| row.lane == lane)
+        .and_then(|row| row.occupant)
+        .expect("restored lane has a current occupant")
+}
+
 fn stop(fixture: &Fixture, resident: RunningResident) {
     let down = invoke(fixture, &["down"], true);
     assert!(down.status.success(), "down failed: {:?}", down.stderr);
@@ -239,9 +295,16 @@ fn seed_occupied_lane(
         .expect("lane fixture head reads")
         .expect("lane fixture head exists");
     let epoch = current.body().epoch;
+    let worktree = fs::canonicalize(&fixture.root)
+        .expect("lane fixture worktree canonicalizes")
+        .display()
+        .to_string();
     let mut next = current.body().clone();
     next.lanes.push(wire::LaneResidency {
         lane,
+        worktree: worktree.clone(),
+        life: "drive".to_owned(),
+        vendor: "claude".parse().expect("fixture vendor"),
         occupant: Some(occupant),
         lineage: vec![occupant],
         capabilities: vec![capability],
@@ -262,7 +325,9 @@ fn seed_occupied_lane(
             wire::body::LaneSeated {
                 lane,
                 capability,
-                worktree: fixture.root.display().to_string(),
+                worktree,
+                life: "drive".to_owned(),
+                vendor: "claude".parse().expect("fixture vendor"),
             },
             FactCause::Existing(current.position()),
         )
@@ -273,6 +338,7 @@ fn seed_occupied_lane(
                 lane,
                 occupant,
                 epoch,
+                group: 123,
             },
             FactCause::Pending(seated),
         )
@@ -325,13 +391,20 @@ fn lane_epoch(fixture: &Fixture, lane: wire::CanonicalUuid) -> wire::CanonicalUu
     text_inbox(&invoke(fixture, &["inbox", &lane], false)).epoch
 }
 
-fn acknowledgment_paths(fixture: &Fixture, lanes: Lanes) -> (ExpectedRecognition, String) {
+fn acknowledgment_paths(
+    fixture: &Fixture,
+    resident: &mut RunningResident,
+    lanes: Lanes,
+) -> (ExpectedRecognition, String) {
     let lane = lanes.target.to_string();
     let sent = invoke(
         fixture,
         &["steer", &lane, "bind the exact command family"],
         true,
     );
+    if !sent.status.success() {
+        resident.assert_running();
+    }
     let Outcome::Reply(reply): Outcome<wire::intent::DirectiveAnswer> = json_outcome(&sent) else {
         panic!("JSON steering send must reply: {:?}", sent.stderr);
     };
@@ -339,7 +412,10 @@ fn acknowledgment_paths(fixture: &Fixture, lanes: Lanes) -> (ExpectedRecognition
     assert_eq!(sent.disposition, wire::Disposition::Live);
     let inbox = text_inbox(&invoke(fixture, &["inbox", &lane], false));
     assert_eq!(inbox.lanes.len(), 1);
-    assert_eq!(inbox.lanes[0].occupant, Some(lanes.occupant));
+    assert_eq!(
+        inbox.lanes[0].occupant,
+        Some(current_occupant(fixture, lanes.target))
+    );
     assert_eq!(inbox.lanes[0].pending[0].directive, sent.directive);
     assert_eq!(inbox.lanes[0].pending[0].key, sent.key);
 
@@ -754,8 +830,8 @@ fn instant(value: &str) -> Instant {
 
 #[test]
 fn steering_commands_preserve_principals_races_and_restart_state() {
-    let (fixture, resident, lanes) = setup();
-    let (acknowledged, historical_key) = acknowledgment_paths(&fixture, lanes);
+    let (fixture, mut resident, lanes) = setup();
+    let (acknowledged, historical_key) = acknowledgment_paths(&fixture, &mut resident, lanes);
     let declined = decline_path(&fixture, lanes.target);
     let (race, raced) = cancellation_race(&fixture, lanes.target);
     assert!(matches!(

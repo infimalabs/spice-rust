@@ -228,6 +228,12 @@ pub enum ResidentState {
 pub struct LaneResidency {
     /// Lane identity.
     pub lane: CanonicalUuid,
+    /// Canonical worktree permanently bound to the lane.
+    pub worktree: String,
+    /// Closed lane-life spelling governing re-seating.
+    pub life: String,
+    /// Vendor selected for each occupant in this lane.
+    pub vendor: crate::Name,
     /// Current occupant, absent between seats.
     #[serde(
         default,

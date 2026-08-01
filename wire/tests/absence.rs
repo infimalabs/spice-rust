@@ -26,6 +26,9 @@ const WORKFLOW: &str = r#"{
 
 const LANE: &str = r#"{
   "lane": "018f82d4-6f59-7d06-92e3-bce913116302",
+  "worktree": "/worktrees/lane-a",
+  "life": "drive",
+  "vendor": "claude",
   "lineage": [],
   "capabilities": [],
   "disposition": "vacant"

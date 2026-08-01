@@ -20,6 +20,7 @@ use std::fmt;
 
 use journal::crossing::body::{LaneDrained, LaneExited, LaneRenewed, LaneSeated, LaneStarted};
 use journal::crossing::{CanonicalUuid, LaneResidency, ResidencyHead, ResidentState};
+use wire::Name;
 
 /// The word a seat's disposition is reported under.
 const OCCUPIED: &str = "occupied";
@@ -32,6 +33,8 @@ pub struct Seat {
     lane: CanonicalUuid,
     capability: CanonicalUuid,
     worktree: String,
+    life: String,
+    vendor: Name,
     occupant: Option<CanonicalUuid>,
     lineage: Vec<CanonicalUuid>,
 }
@@ -53,6 +56,18 @@ impl Seat {
     #[must_use]
     pub fn worktree(&self) -> &str {
         &self.worktree
+    }
+
+    /// The closed lane-life spelling selected for occupants of this seat.
+    #[must_use]
+    pub fn life(&self) -> &str {
+        &self.life
+    }
+
+    /// The vendor selected for occupants of this seat.
+    #[must_use]
+    pub const fn vendor(&self) -> &Name {
+        &self.vendor
     }
 
     /// The occupant sitting in the seat, absent between occupants.
@@ -78,6 +93,9 @@ impl Seat {
     pub fn residency(&self) -> LaneResidency {
         LaneResidency {
             lane: self.lane,
+            worktree: self.worktree.clone(),
+            life: self.life.clone(),
+            vendor: self.vendor.clone(),
             occupant: self.occupant,
             lineage: self.lineage.clone(),
             capabilities: vec![self.capability],
@@ -243,6 +261,8 @@ impl Table {
                 lane: fact.lane,
                 capability: fact.capability,
                 worktree: fact.worktree.clone(),
+                life: fact.life.clone(),
+                vendor: fact.vendor.clone(),
                 occupant: None,
                 lineage: Vec::new(),
             },
@@ -274,6 +294,12 @@ impl Table {
     /// Succeeds one occupant with another, naming the ancestor it descends
     /// from, which must be the occupant the seat is actually holding.
     fn renew(&mut self, fact: &LaneRenewed) -> Result<(), Refusal> {
+        if fact.epoch != self.epoch {
+            return Err(Refusal::Stale {
+                epoch: self.epoch,
+                named: fact.epoch,
+            });
+        }
         let lane = fact.lane;
         let seat = self
             .seats
@@ -331,6 +357,8 @@ mod tests {
             lane: uuid(1),
             capability: uuid(2),
             worktree: "/worktrees/lane-a".to_owned(),
+            life: "drive".to_owned(),
+            vendor: "claude".parse().expect("fixture vendor"),
         }
     }
 
@@ -347,6 +375,7 @@ mod tests {
             lane: uuid(1),
             occupant,
             epoch: uuid(0),
+            group: 123,
         }
     }
 
@@ -410,6 +439,7 @@ mod tests {
             lane: uuid(1),
             occupant: uuid(3),
             epoch: uuid(9),
+            group: 123,
         };
 
         assert_eq!(
@@ -436,6 +466,8 @@ mod tests {
                 lane: uuid(1),
                 occupant: uuid(4),
                 ancestor: uuid(3),
+                epoch: uuid(0),
+                group: 124,
             }))
             .expect("the successor names the sitting occupant");
 
@@ -457,6 +489,8 @@ mod tests {
                 lane: uuid(1),
                 occupant: uuid(5),
                 ancestor: uuid(4),
+                epoch: uuid(0),
+                group: 125,
             }))
             .expect_err("the named ancestor is not sitting");
 
@@ -488,6 +522,8 @@ mod tests {
                 lane: uuid(1),
                 occupant: uuid(3),
                 ancestor: uuid(3),
+                epoch: uuid(0),
+                group: 126,
             })),
             Err(Refusal::Occupied {
                 lane: uuid(1),

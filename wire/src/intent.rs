@@ -18,8 +18,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::body::ConsentQueueCause;
 use crate::command::CommandKind;
-use crate::envelope::Actor;
-use crate::head::{ResidentState, TrustState};
+use crate::envelope::{Actor, Origin, Seq};
+use crate::fact::FactKind;
+use crate::head::{LaneResidency, ResidentState, TrustState};
 use crate::ident::{CanonicalUuid, Digest, Instant};
 use crate::witness::{Answer, Disposition, Name, Phase, TaskHandle};
 
@@ -380,6 +381,11 @@ pub struct TrustRef {
     pub digest: Digest,
 }
 
+/// Read the current lane table without mutation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaneRead {}
+
 /// Seat a lane in an operator-created worktree.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -388,16 +394,43 @@ pub struct LaneSeat {
     pub lane: CanonicalUuid,
     /// Worktree path the operator created.
     pub worktree: String,
+    /// Closed lane-life spelling selected for this seat.
+    pub life: String,
+    /// Vendor selected for this seat.
+    pub vendor: Name,
 }
 
 /// Change a seated lane's state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LaneAction {
+    /// Gracefully end the current occupant and leave the seat vacant.
+    Drain,
+    /// Launch a new occupant into a vacant seat.
+    Wake,
+}
+
+/// Change a seated lane's lifecycle state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneState {
     /// Lane whose state moves.
     pub lane: CanonicalUuid,
-    /// State it moves to.
-    pub state: ResidentState,
+    /// Lifecycle action the operator selected.
+    pub action: LaneAction,
+}
+
+/// Select one lane's continuity account, or the operator-wide account.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaneRecall {
+    /// Lane whose continuity is requested; absent for the operator-wide view.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub lane: Option<CanonicalUuid>,
 }
 
 /// Record a taste verdict at its evidence locus.
@@ -654,6 +687,65 @@ pub struct StateAnswer {
     pub to: ResidentState,
 }
 
+/// Current lane state read at one resident barrier.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaneAnswer {
+    /// Resident generation that owns the table.
+    pub epoch: CanonicalUuid,
+    /// Resident state at the read barrier.
+    pub state: ResidentState,
+    /// Current lane rows in stable lane order.
+    pub lanes: Vec<LaneResidency>,
+}
+
+/// The answer a lane seating or lifecycle command returns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaneChangeAnswer {
+    /// Lane whose disposition changed.
+    pub lane: CanonicalUuid,
+    /// Disposition held before the transaction.
+    pub from: String,
+    /// Disposition held after the transaction.
+    pub to: String,
+}
+
+/// One bounded continuity event retained in a recall account.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecallEntry {
+    /// Journal position of the event.
+    pub seq: Seq,
+    /// Closed fact kind observed there.
+    pub kind: FactKind,
+    /// Principal that authored the event.
+    pub actor: Actor,
+    /// Durable origin carried by the event.
+    pub origin: Origin,
+}
+
+/// Ranked, bounded continuity account served at one journal barrier.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecallAnswer {
+    /// Composite journal barrier every field was derived from.
+    pub barrier: Seq,
+    /// Canonical repository worktree serving the account.
+    pub repository: String,
+    /// Requested lane, absent for an operator-wide account.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub lane: Option<CanonicalUuid>,
+    /// Current resident and lane state.
+    pub residency: LaneAnswer,
+    /// Most recent relevant events, newest first and explicitly bounded.
+    pub recent: Vec<RecallEntry>,
+}
+
 /// The answer a taste verdict returns.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -727,10 +819,14 @@ pub enum BodyShape {
     ConsentPolicy,
     /// [`TrustRef`]
     TrustRef,
+    /// [`LaneRead`]
+    LaneRead,
     /// [`LaneSeat`]
     LaneSeat,
     /// [`LaneState`]
     LaneState,
+    /// [`LaneRecall`]
+    LaneRecall,
     /// [`TasteRecord`]
     TasteRecord,
     /// [`Recognize`]
@@ -766,8 +862,14 @@ pub enum AnswerShape {
     ConsentPolicy,
     /// [`TrustAnswer`]
     Trust,
+    /// [`LaneAnswer`]
+    Lane,
+    /// [`LaneChangeAnswer`]
+    LaneChange,
     /// [`StateAnswer`]
     State,
+    /// [`RecallAnswer`]
+    Recall,
     /// [`TasteAnswer`]
     Taste,
     /// [`RecognitionAnswer`]
@@ -800,8 +902,14 @@ pub enum CommandAnswer {
     ConsentPolicy(ConsentPolicyAnswer),
     /// [`AnswerShape::Trust`]
     Trust(TrustAnswer),
+    /// [`AnswerShape::Lane`]
+    Lane(Box<LaneAnswer>),
+    /// [`AnswerShape::LaneChange`]
+    LaneChange(LaneChangeAnswer),
     /// [`AnswerShape::State`]
     State(StateAnswer),
+    /// [`AnswerShape::Recall`]
+    Recall(Box<RecallAnswer>),
     /// [`AnswerShape::Taste`]
     Taste(TasteAnswer),
     /// [`AnswerShape::Recognition`]
@@ -824,7 +932,10 @@ impl CommandAnswer {
             Self::ConsentQueue(_) => AnswerShape::ConsentQueue,
             Self::ConsentPolicy(_) => AnswerShape::ConsentPolicy,
             Self::Trust(_) => AnswerShape::Trust,
+            Self::Lane(_) => AnswerShape::Lane,
+            Self::LaneChange(_) => AnswerShape::LaneChange,
             Self::State(_) => AnswerShape::State,
+            Self::Recall(_) => AnswerShape::Recall,
             Self::Taste(_) => AnswerShape::Taste,
             Self::Recognition(_) => AnswerShape::Recognition,
         }
@@ -852,7 +963,10 @@ impl AnswerShape {
             Self::ConsentQueue => CommandAnswer::ConsentQueue(crate::decode(bytes)?),
             Self::ConsentPolicy => CommandAnswer::ConsentPolicy(crate::decode(bytes)?),
             Self::Trust => CommandAnswer::Trust(crate::decode(bytes)?),
+            Self::Lane => CommandAnswer::Lane(Box::new(crate::decode(bytes)?)),
+            Self::LaneChange => CommandAnswer::LaneChange(crate::decode(bytes)?),
             Self::State => CommandAnswer::State(crate::decode(bytes)?),
+            Self::Recall => CommandAnswer::Recall(Box::new(crate::decode(bytes)?)),
             Self::Taste => CommandAnswer::Taste(crate::decode(bytes)?),
             Self::Recognition => CommandAnswer::Recognition(crate::decode(bytes)?),
         })
@@ -919,8 +1033,10 @@ impl CommandKind {
             Self::TrustPend | Self::TrustGrant | Self::TrustRevoke => {
                 Binding::of(B::TrustRef, A::Trust)
             }
-            Self::LaneSeat => Binding::of(B::LaneSeat, A::State),
-            Self::LaneState => Binding::of(B::LaneState, A::State),
+            Self::LaneRead => Binding::of(B::LaneRead, A::Lane),
+            Self::LaneSeat => Binding::of(B::LaneSeat, A::LaneChange),
+            Self::LaneState => Binding::of(B::LaneState, A::LaneChange),
+            Self::LaneRecall => Binding::of(B::LaneRecall, A::Recall),
             Self::TasteRecord => Binding::of(B::TasteRecord, A::Taste),
             Self::CanaryRecognize
             | Self::VendorRecognize
@@ -989,10 +1105,14 @@ pub enum Intent {
     ConsentPolicy(ConsentPolicy),
     /// [`BodyShape::TrustRef`]
     TrustRef(TrustRef),
+    /// [`BodyShape::LaneRead`]
+    LaneRead(LaneRead),
     /// [`BodyShape::LaneSeat`]
     LaneSeat(LaneSeat),
     /// [`BodyShape::LaneState`]
     LaneState(LaneState),
+    /// [`BodyShape::LaneRecall`]
+    LaneRecall(LaneRecall),
     /// [`BodyShape::TasteRecord`]
     TasteRecord(TasteRecord),
     /// [`BodyShape::Recognize`]
@@ -1033,8 +1153,10 @@ impl Intent {
             Self::ConsentRead(_) => BodyShape::ConsentRead,
             Self::ConsentPolicy(_) => BodyShape::ConsentPolicy,
             Self::TrustRef(_) => BodyShape::TrustRef,
+            Self::LaneRead(_) => BodyShape::LaneRead,
             Self::LaneSeat(_) => BodyShape::LaneSeat,
             Self::LaneState(_) => BodyShape::LaneState,
+            Self::LaneRecall(_) => BodyShape::LaneRecall,
             Self::TasteRecord(_) => BodyShape::TasteRecord,
             Self::Recognize(_) => BodyShape::Recognize,
             Self::ReleasePublish(_) => BodyShape::ReleasePublish,
@@ -1115,8 +1237,10 @@ impl BodyShape {
             Self::ConsentRead => Intent::ConsentRead(crate::decode(bytes)?),
             Self::ConsentPolicy => Intent::ConsentPolicy(crate::decode(bytes)?),
             Self::TrustRef => Intent::TrustRef(crate::decode(bytes)?),
+            Self::LaneRead => Intent::LaneRead(crate::decode(bytes)?),
             Self::LaneSeat => Intent::LaneSeat(crate::decode(bytes)?),
             Self::LaneState => Intent::LaneState(crate::decode(bytes)?),
+            Self::LaneRecall => Intent::LaneRecall(crate::decode(bytes)?),
             Self::TasteRecord => Intent::TasteRecord(crate::decode(bytes)?),
             Self::Recognize => Intent::Recognize(crate::decode(bytes)?),
             Self::ReleasePublish => Intent::ReleasePublish(crate::decode(bytes)?),

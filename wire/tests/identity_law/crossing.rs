@@ -441,6 +441,9 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
 
     let occupied = LaneResidency {
         lane: first_uuid,
+        worktree: "/worktrees/lane-a".to_owned(),
+        life: "drive".to_owned(),
+        vendor: "claude".parse().expect("fixture vendor"),
         occupant: Some(second_uuid),
         lineage: vec![first_uuid],
         capabilities: vec![second_uuid],
@@ -448,6 +451,9 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
     };
     let empty = LaneResidency {
         lane: second_uuid,
+        worktree: "/worktrees/lane-b".to_owned(),
+        life: "steer".to_owned(),
+        vendor: "codex".parse().expect("fixture vendor"),
         occupant: None,
         lineage: Vec::new(),
         capabilities: Vec::new(),

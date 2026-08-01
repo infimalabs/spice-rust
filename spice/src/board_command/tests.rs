@@ -46,6 +46,9 @@ mod tests {
             .enumerate()
             .map(|(index, seat)| wire::LaneResidency {
                 lane: seat.lane,
+                worktree: "/fixture".to_owned(),
+                life: "drive".to_owned(),
+                vendor: "claude".parse().expect("fixture vendor"),
                 occupant: Some(seat.occupant),
                 lineage: vec![seat.occupant],
                 capabilities: vec![uuid(number * 100 + index as u64 + 50)],

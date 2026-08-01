@@ -34,6 +34,8 @@ mod journal_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod journal_lock;
 #[cfg(not(target_arch = "wasm32"))]
+mod lane_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod lock_command;
 mod proof_command;
 #[cfg(not(target_arch = "wasm32"))]
@@ -162,6 +164,9 @@ fn main() {
         ["version"] => deliver(&version_outcome(), form),
         ["release", "notes"] => deliver(&release_command::notes(leaf), form),
         ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
+        ["lane"] | ["lane", "add"] | ["lane", "drain"] | ["lane", "wake"] | ["recall"] => {
+            deliver(&lane_command::run(leaf, contract), form)
+        }
         ["release", "publish"] => match release_command::run(leaf, contract) {
             release_command::RunResult::Plan(outcome) => deliver(&outcome, form),
             release_command::RunResult::Published(outcome) => deliver(&outcome, form),
@@ -251,42 +256,27 @@ fn target_unsupported(path: &[&str]) -> Option<Fault> {
 }
 
 fn not_landed(contract: &cli::Contract) -> Outcome<()> {
-    let task = match cli::landing(contract.path) {
-        cli::Landing::Gap(task) => task,
-        cli::Landing::Landed => {
-            return Outcome::Fault(Fault {
-                class: FaultClass::Protocol,
-                reason: "release::dispatch-gap".to_owned(),
-                detail: format!(
-                    concat!(
-                        "registered landed command reached the terminal ",
-                        "release branch: {}"
-                    ),
-                    contract.path.join(" ")
+    match cli::landing(contract.path) {
+        cli::Landing::Landed => Outcome::Fault(Fault {
+            class: FaultClass::Protocol,
+            reason: "release::dispatch-gap".to_owned(),
+            detail: format!(
+                concat!(
+                    "registered landed command reached the terminal ",
+                    "release branch: {}"
                 ),
-            });
-        }
-        cli::Landing::Unaccounted => {
-            return Outcome::Fault(Fault {
-                class: FaultClass::Protocol,
-                reason: "release::succession-unaccounted".to_owned(),
-                detail: format!(
-                    "registered command has no succession disposition: {}",
-                    contract.path.join(" ")
-                ),
-            });
-        }
-    };
-    Outcome::Refusal(Refusal {
-        reason: "release::not-landed".to_owned(),
-        witness: None,
-        expected: None,
-        observed: Some(contract.path.join(" ")),
-        remedy: format!(
-            "complete {task} ({}) before Rust release one admits this leaf",
-            contract.battery,
-        ),
-    })
+                contract.path.join(" ")
+            ),
+        }),
+        cli::Landing::Unaccounted => Outcome::Fault(Fault {
+            class: FaultClass::Protocol,
+            reason: "release::succession-unaccounted".to_owned(),
+            detail: format!(
+                "registered command has no succession disposition: {}",
+                contract.path.join(" ")
+            ),
+        }),
+    }
 }
 
 /// Acquire Doctor's ambient inputs at the binary rim, retaining presence but
