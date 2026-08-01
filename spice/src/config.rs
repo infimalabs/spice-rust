@@ -10,7 +10,9 @@ use wire::ConfigSource;
 mod load;
 mod resolve;
 
-pub use load::{AcquisitionIssue, AcquisitionKind, LoadError, load};
+pub use load::{
+    AcquisitionIssue, AcquisitionKind, LoadError, Locations, load, load_repository, locations,
+};
 pub use resolve::{
     ConcretePath, Document, FlagError, FlagOverride, FlagValue, Inputs, Issue, IssueKind,
     Provenance, ResolveError, Resolved, resolve,

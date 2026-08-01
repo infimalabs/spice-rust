@@ -84,8 +84,9 @@ impl FloorDeclaration {
     }
 }
 
+/// One compiled Gate executable declaration before operational probing.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ToolDeclaration {
+pub struct ToolDeclaration {
     name: String,
     program: String,
     probe_arguments: Vec<String>,
@@ -113,6 +114,28 @@ impl ToolDeclaration {
             self.name, self.probe_output
         );
     }
+
+    /// Stable compiled tool name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Exact compiled executable path.
+    #[must_use]
+    pub fn program(&self) -> &Path {
+        Path::new(&self.program)
+    }
+}
+
+/// Return every compiled Gate executable without reading or starting it.
+///
+/// # Errors
+///
+/// Returns a specification error if this build's own declaration set is not
+/// internally coherent.
+pub fn declared_tools() -> Result<Vec<ToolDeclaration>, GateSetError> {
+    GateSet::current().map(|gate_set| gate_set.tools)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

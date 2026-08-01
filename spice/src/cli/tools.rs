@@ -5,74 +5,11 @@ use std::collections::BTreeSet;
 
 #[cfg(test)]
 use super::{Contract, Guard};
-
-/// How one external tool relates to the command that declares it.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) enum ToolMode {
-    /// The command may start this tool.
-    Launch,
-    /// The command reports this integration but never starts it.
-    Observe,
-}
-
-/// Whether a tool must be available for the declaring integration to operate.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) enum ToolRequirement {
-    Required,
-    Optional,
-}
-
-/// Where the exact executable declaration comes from.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) enum ToolSource {
-    /// The caller supplies the executable after the command delimiter.
-    CommandOperand,
-    /// The compiled current Gate contract supplies the executable.
-    GateContract,
-    /// The sealed Proof contract supplies the OCI runtime.
-    ProofRuntime,
-    /// The sealed Proof battery supplies a program inside the container.
-    ProofBattery,
-    /// A worktree-local integration seam supplies the executable.
-    WorktreeConfiguration,
-}
-
-/// Which existing contract owns runtime and output limits.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) enum ToolBounds {
-    /// Spice adds no independent limit around the caller's child.
-    ChildOwned,
-    /// [`gate::Bounds`] owns runtime, drain, reap, grace, and capture limits.
-    GateContract,
-    /// [`proof::Limits`] owns runtime, drain, reap, grace, and capture limits.
-    ProofLimits,
-    /// Observation never starts the tool.
-    NotExecuted,
-}
-
-/// Who can stop a declared tool invocation.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) enum ToolCancellation {
-    /// The child and its caller own interruption; Spice adds no cancellation arm.
-    ChildOwned,
-    /// The owning limits terminate and reap the process at their deadline.
-    Deadline,
-    /// Observation never starts the tool.
-    NotExecuted,
-}
-
-/// Network posture of a declared tool invocation.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) enum ToolNetwork {
-    /// The caller's child declares its own network behavior.
-    ChildOwned,
-    /// The owning command does not promise an offline boundary.
-    Permitted,
-    /// The owning command constructs a network-denied boundary.
-    Denied,
-    /// Observation never starts the tool.
-    NotExecuted,
-}
+pub(crate) use wire::{
+    DoctorToolBounds as ToolBounds, DoctorToolCancellation as ToolCancellation,
+    DoctorToolMode as ToolMode, DoctorToolNetwork as ToolNetwork,
+    DoctorToolRequirement as ToolRequirement, DoctorToolSource as ToolSource,
+};
 
 /// One external tool declaration carried by the closed command registry.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]

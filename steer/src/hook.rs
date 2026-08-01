@@ -29,16 +29,16 @@ use wire::CanonicalUuid;
 ///
 /// Named here and read at the rim: this crate states the vocabulary without
 /// reaching for it.
-pub const PROOF: &str = "SPICE_PROOF"; // env-policy: allow
+pub const PROOF: &str = wire::SpiceVariable::Proof.as_str();
 
 /// The variable naming the installed hooks directory.
-pub const HOOKS: &str = "SPICE_HOOKS"; // env-policy: allow
+pub const HOOKS: &str = wire::SpiceVariable::Hooks.as_str();
 
 /// The variable naming the lane's rendered direction.
-pub const INBOX: &str = "SPICE_INBOX"; // env-policy: allow
+pub const INBOX: &str = wire::SpiceVariable::Inbox.as_str();
 
 /// The variable naming the lane a shell is bound to.
-pub const LANE: &str = "SPICE_LANE"; // env-policy: allow
+pub const LANE: &str = wire::SpiceVariable::Lane.as_str();
 
 /// One interception stage and the bytes it must carry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

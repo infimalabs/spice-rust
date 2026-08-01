@@ -14,9 +14,9 @@ mod tools;
 use syntax::register_syntax;
 #[cfg(test)]
 use syntax::{is_optional, syntax_tokens};
+pub(crate) use tools::ExternalTool;
 use tools::{
-    CALLER_COMMAND, DOCTOR_TOOLS, ExternalTool, GATE_MUTATION_TOOLS, GATE_POLICY_TOOLS, NO_TOOLS,
-    PROOF_TOOLS,
+    CALLER_COMMAND, DOCTOR_TOOLS, GATE_MUTATION_TOOLS, GATE_POLICY_TOOLS, NO_TOOLS, PROOF_TOOLS,
 };
 #[cfg(test)]
 use tools::{ToolBounds, ToolCancellation, ToolNetwork, posture_violations};

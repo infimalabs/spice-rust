@@ -1,0 +1,432 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use spice::config::Root;
+use wire::{
+    ConfigSource, DoctorCommand, DoctorObservation, DoctorReport, DoctorToolSource, Outcome,
+    ReplyPosition, SpiceVariable,
+};
+
+const SECRET: &str = "doctor-must-not-render-this-value";
+
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn repository(label: &str) -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "spice-doctor-{label}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed),
+        ));
+        fs::create_dir_all(path.join(".git/.spice/data")).expect("create repository fixture");
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+
+    fn tracked(&self, text: &str) {
+        fs::write(self.0.join("spice.toml"), text).expect("write tracked configuration");
+    }
+
+    fn local(&self, text: &str) {
+        fs::write(self.0.join(".git/.spice/config.toml"), text).expect("write local configuration");
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.0).expect("remove Doctor repository fixture");
+    }
+}
+
+struct Spoken {
+    code: Option<i32>,
+    out: Vec<u8>,
+    err: Vec<u8>,
+}
+
+fn invoke(
+    repository: &Path,
+    arguments: &[&str],
+    search_path: &OsStr,
+    environment: &[(SpiceVariable, &str)],
+) -> Spoken {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+    command
+        .args(arguments)
+        .current_dir(repository)
+        .env("PATH", search_path);
+    for variable in SpiceVariable::ALL {
+        command.env_remove(variable.as_str());
+    }
+    for (variable, value) in environment {
+        command.env(variable.as_str(), value);
+    }
+    let output = command.output().expect("Doctor process launches");
+    Spoken {
+        code: output.status.code(),
+        out: output.stdout,
+        err: output.stderr,
+    }
+}
+
+fn reply(spoken: &Spoken) -> wire::Reply<DoctorReport<Root>> {
+    assert_eq!(spoken.code, Some(0));
+    assert!(spoken.err.is_empty());
+    let decoded: Outcome<DoctorReport<Root>> =
+        wire::decode(&spoken.out).expect("Doctor emits its typed outcome");
+    let Outcome::Reply(reply) = decoded else {
+        panic!("Doctor must complete inspection: {decoded:?}");
+    };
+    assert_eq!(reply.position, ReplyPosition::Direct {});
+    reply
+}
+
+fn command<'a>(report: &'a DoctorReport<Root>, name: &str) -> &'a DoctorCommand {
+    report
+        .commands
+        .iter()
+        .find(|row| row.command == name)
+        .unwrap_or_else(|| panic!("Doctor omitted command {name:?}"))
+}
+
+fn non_ready_reason(observation: &DoctorObservation) -> Option<&str> {
+    match observation {
+        DoctorObservation::Ready {} => None,
+        DoctorObservation::Unavailable { reason }
+        | DoctorObservation::InputRequired { reason }
+        | DoctorObservation::NotApplicable { reason }
+        | DoctorObservation::Unsupported { reason } => Some(reason),
+    }
+}
+
+#[cfg(unix)]
+struct HealthyFixture {
+    repository: Scratch,
+    bin: PathBuf,
+    marker: PathBuf,
+    journal: PathBuf,
+    before: BTreeMap<PathBuf, Entry>,
+}
+
+#[cfg(unix)]
+fn healthy_fixture() -> HealthyFixture {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let repository = Scratch::repository("healthy");
+    repository.tracked("[lane]\nlease = \"20m\"\n");
+    repository.local("[listen]\nwindow = \"45s\"\n");
+    let journal = repository
+        .path()
+        .join(".git/.spice/data/spicejournal.sqlite3");
+    fs::write(&journal, b"not an opened journal\n").expect("write authority sentinel");
+
+    let bin = repository.path().join("fixture-bin");
+    fs::create_dir(&bin).expect("create fixture executable directory");
+    let marker = repository.path().join("rtk-was-started");
+    let rtk = bin.join("rtk");
+    fs::write(
+        &rtk,
+        format!("#!/bin/sh\nprintf started > '{}'\n", marker.display()),
+    )
+    .expect("write mutation-probe executable");
+    fs::set_permissions(&rtk, fs::Permissions::from_mode(0o755))
+        .expect("make mutation-probe executable");
+    let before = directory_state(repository.path());
+
+    HealthyFixture {
+        repository,
+        bin,
+        marker,
+        journal,
+        before,
+    }
+}
+
+fn same_report(text: &Spoken, json: &Spoken) -> DoctorReport<Root> {
+    assert_eq!(text.code, Some(0));
+    assert!(text.err.is_empty());
+    let text_body: DoctorReport<Root> =
+        wire::decode(&text.out).expect("text is the stable Doctor body");
+    let json_reply = reply(json);
+
+    assert_eq!(json_reply.body, text_body);
+    assert_eq!(json_reply.position, ReplyPosition::Direct {});
+    json_reply.body
+}
+
+fn assert_locations_configuration_and_provenance(report: &DoctorReport<Root>, repository: &Path) {
+    assert_eq!(report.target.os, std::env::consts::OS);
+    assert_eq!(report.target.architecture, std::env::consts::ARCH);
+    let canonical = fs::canonicalize(repository).expect("canonical fixture");
+    assert_eq!(report.locations.working, canonical.display().to_string());
+    assert_eq!(report.locations.repository, canonical.display().to_string());
+    assert_eq!(
+        report.locations.repository_common,
+        canonical.join(".git").display().to_string()
+    );
+    assert_eq!(
+        report.locations.tracked_configuration,
+        canonical.join("spice.toml").display().to_string()
+    );
+    assert_eq!(
+        report.locations.local_configuration,
+        canonical
+            .join(".git/.spice/config.toml")
+            .display()
+            .to_string()
+    );
+    assert!(
+        report
+            .provenance
+            .iter()
+            .any(|row| { row.path == "lane.lease" && row.source == ConfigSource::Tracked })
+    );
+    assert!(
+        report
+            .provenance
+            .iter()
+            .any(|row| { row.path == "listen.window" && row.source == ConfigSource::Local })
+    );
+    assert!(
+        report
+            .provenance
+            .iter()
+            .any(|row| row.source == ConfigSource::Builtin)
+    );
+    assert_eq!(report.configuration.lane().lease().to_string(), "20m");
+    assert_eq!(
+        report.configuration.listen().window_word().to_string(),
+        "45s"
+    );
+}
+
+fn assert_environment_presence(report: &DoctorReport<Root>) {
+    assert_eq!(report.environment.len(), SpiceVariable::ALL.len());
+    for row in &report.environment {
+        if row.variable == SpiceVariable::Lane {
+            assert!(matches!(row.observation, DoctorObservation::Ready {}));
+        } else {
+            assert!(matches!(
+                row.observation,
+                DoctorObservation::Unavailable { .. }
+            ));
+        }
+    }
+}
+
+fn assert_tool_posture_and_text(report: &DoctorReport<Root>, text: &[u8]) {
+    let doctor = command(report, "doctor");
+    assert!(matches!(doctor.observation, DoctorObservation::Ready {}));
+    assert!(doctor.tools.iter().any(|tool| {
+        tool.name == "rtk"
+            && tool.source == DoctorToolSource::WorktreeConfiguration
+            && matches!(tool.observation, DoctorObservation::Ready {})
+    }));
+    assert!(matches!(
+        command(report, "run").observation,
+        DoctorObservation::InputRequired { .. }
+    ));
+    assert!(
+        command(report, "proof")
+            .tools
+            .iter()
+            .any(|tool| { matches!(tool.observation, DoctorObservation::Unsupported { .. }) })
+    );
+
+    let text = std::str::from_utf8(text).expect("Doctor text is UTF-8");
+    assert!(text.contains("\"source\":\"tracked\""));
+    assert!(text.contains("\"source\":\"local\""));
+    for reason in report
+        .environment
+        .iter()
+        .filter_map(|row| non_ready_reason(&row.observation))
+        .chain(
+            report
+                .commands
+                .iter()
+                .filter_map(|row| non_ready_reason(&row.observation)),
+        )
+        .chain(report.commands.iter().flat_map(|row| {
+            row.tools
+                .iter()
+                .filter_map(|tool| non_ready_reason(&tool.observation))
+        }))
+    {
+        assert!(text.contains(reason), "text omitted {reason:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn both_forms_report_the_same_read_only_state_without_executing_rtk_or_leaking_environment() {
+    let fixture = healthy_fixture();
+
+    let environment = [(SpiceVariable::Lane, SECRET)];
+    let text = invoke(
+        fixture.repository.path(),
+        &["doctor"],
+        fixture.bin.as_os_str(),
+        &environment,
+    );
+    let json = invoke(
+        fixture.repository.path(),
+        &["doctor", "--json"],
+        fixture.bin.as_os_str(),
+        &environment,
+    );
+
+    let report = same_report(&text, &json);
+    assert!(
+        !text
+            .out
+            .windows(SECRET.len())
+            .any(|bytes| bytes == SECRET.as_bytes())
+    );
+    assert!(
+        !json
+            .out
+            .windows(SECRET.len())
+            .any(|bytes| bytes == SECRET.as_bytes())
+    );
+    assert_locations_configuration_and_provenance(&report, fixture.repository.path());
+    assert_environment_presence(&report);
+    assert_tool_posture_and_text(&report, &text.out);
+
+    assert!(
+        !fixture.marker.exists(),
+        "Doctor started the observed RTK executable"
+    );
+    assert_eq!(
+        fs::read(&fixture.journal).expect("read authority sentinel"),
+        b"not an opened journal\n"
+    );
+    assert_eq!(directory_state(fixture.repository.path()), fixture.before);
+}
+
+#[test]
+fn missing_optional_rtk_is_an_unhealthy_row_inside_a_direct_reply() {
+    let repository = Scratch::repository("missing-rtk");
+    repository.tracked("");
+    let empty_path = repository.path().join("empty-path");
+    fs::create_dir(&empty_path).expect("create empty executable search path");
+
+    let spoken = invoke(
+        repository.path(),
+        &["--json", "doctor"],
+        empty_path.as_os_str(),
+        &[],
+    );
+    let reply = reply(&spoken);
+    let report = &reply.body;
+    let doctor = command(report, "doctor");
+
+    assert!(matches!(
+        doctor.observation,
+        DoctorObservation::Unavailable { ref reason } if reason.contains("rtk")
+    ));
+    assert!(doctor.tools.iter().any(|tool| {
+        tool.requirement == wire::DoctorToolRequirement::Optional
+            && matches!(tool.observation, DoctorObservation::Unavailable { .. })
+    }));
+}
+
+#[test]
+fn malformed_and_unknown_configuration_are_typed_refusals_from_both_exact_paths() {
+    for (label, tracked, local, expected) in [
+        ("tracked-syntax", "[lane\n", "", "spice.toml"),
+        (
+            "local-syntax",
+            "",
+            "[listen]\nwindow = [\n",
+            ".spice/config.toml",
+        ),
+        ("unknown", "[unknown]\nvalue = 1\n", "", "unknown"),
+    ] {
+        let repository = Scratch::repository(label);
+        repository.tracked(tracked);
+        repository.local(local);
+        let empty_path = repository.path().join("empty-path");
+        fs::create_dir(&empty_path).expect("create empty executable search path");
+
+        let spoken = invoke(
+            repository.path(),
+            &["doctor", "--json"],
+            empty_path.as_os_str(),
+            &[],
+        );
+        assert_eq!(spoken.code, Some(2), "{label}");
+        assert!(spoken.out.is_empty(), "{label}");
+        let outcome: Outcome<DoctorReport<Root>> =
+            wire::decode(&spoken.err).expect("configuration refusal is typed");
+        let Outcome::Refusal(refusal) = outcome else {
+            panic!("{label} must refuse: {outcome:?}");
+        };
+        assert_eq!(refusal.reason, "doctor::configuration-refused", "{label}");
+        assert!(
+            refusal
+                .observed
+                .as_deref()
+                .is_some_and(|observed| observed.contains(expected)),
+            "{label}: {refusal:?}"
+        );
+    }
+}
+
+#[test]
+fn doctor_exposes_no_fix_or_aggregate_execution_path() {
+    let repository = Scratch::repository("no-fix");
+    repository.tracked("");
+    let spoken = invoke(repository.path(), &["doctor", "--fix"], OsStr::new(""), &[]);
+
+    assert_eq!(spoken.code, Some(2));
+    assert!(spoken.out.is_empty());
+    let stderr = String::from_utf8(spoken.err).expect("Clap speaks UTF-8");
+    assert!(stderr.contains("unexpected argument '--fix'"));
+    assert!(!stderr.contains("release::not-landed"));
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum Entry {
+    Directory,
+    File(Vec<u8>),
+}
+
+fn directory_state(root: &Path) -> BTreeMap<PathBuf, Entry> {
+    let mut state = BTreeMap::new();
+    collect_directory_state(root, root, &mut state);
+    state
+}
+
+fn collect_directory_state(root: &Path, directory: &Path, state: &mut BTreeMap<PathBuf, Entry>) {
+    let mut names = BTreeSet::new();
+    for entry in fs::read_dir(directory).expect("read fixture directory") {
+        let path = entry.expect("read fixture entry").path();
+        let relative = path
+            .strip_prefix(root)
+            .expect("fixture entry remains below root")
+            .to_path_buf();
+        assert!(names.insert(relative.clone()), "fixture paths are unique");
+        let metadata = fs::symlink_metadata(&path).expect("read fixture metadata");
+        if metadata.is_dir() {
+            assert!(state.insert(relative, Entry::Directory).is_none());
+            collect_directory_state(root, &path, state);
+        } else {
+            assert!(
+                state
+                    .insert(
+                        relative,
+                        Entry::File(fs::read(&path).expect("read fixture bytes")),
+                    )
+                    .is_none()
+            );
+        }
+    }
+}

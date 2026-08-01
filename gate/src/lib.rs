@@ -34,7 +34,7 @@ pub use config::{Config, WalkConfig};
 pub use input::{
     BASELINE_PATH, BASELINE_VERSION, Baseline, BaselineError, Contract, ContractError, FieldError,
     Floor, FloorDeclaration, FloorKind, GateSet, GateSetError, LONG_LINE_LIMIT, POLICY_PATH,
-    PolicyError, ToolError, ToolIdentity,
+    PolicyError, ToolDeclaration, ToolError, ToolIdentity, declared_tools,
 };
 pub use jurisdiction::{
     Admission, Entry, Ignore, IgnoreError, Jurisdiction, Rule, Shape, WalkError,

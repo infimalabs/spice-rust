@@ -40,6 +40,7 @@ fn every_crossing_type_obeys_the_identity_law() {
 
     cover_spellings(&mut covered);
     cover_config_scalars(&mut covered);
+    cover_doctor_vocabularies(&mut covered);
     cover_journal_frames(&mut covered);
     cover_task_heads(&mut covered);
     cover_claim_heads(&mut covered);
@@ -54,6 +55,44 @@ fn every_crossing_type_obeys_the_identity_law() {
     cover_vocabularies(&mut covered);
 
     assert_coverage_is_complete(&covered);
+}
+
+/// Closed Doctor report states and metadata spellings.
+fn cover_doctor_vocabularies(covered: &mut BTreeSet<String>) {
+    spelling_law(covered, "SpiceVariable", SpiceVariable::ALL);
+    spelling_law(covered, "DoctorToolMode", DoctorToolMode::ALL);
+    ranked_law(
+        covered,
+        "DoctorToolRequirement",
+        DoctorToolRequirement::ALL,
+    );
+    ranked_law(covered, "DoctorToolSource", DoctorToolSource::ALL);
+    ranked_law(covered, "DoctorToolBounds", DoctorToolBounds::ALL);
+    spelling_law(
+        covered,
+        "DoctorToolCancellation",
+        DoctorToolCancellation::ALL,
+    );
+    ranked_law(covered, "DoctorToolNetwork", DoctorToolNetwork::ALL);
+    law(
+        covered,
+        "DoctorObservation",
+        &[
+            DoctorObservation::Ready {},
+            DoctorObservation::Unavailable {
+                reason: "rtk is absent".to_owned(),
+            },
+            DoctorObservation::InputRequired {
+                reason: "the caller supplies CMD".to_owned(),
+            },
+            DoctorObservation::NotApplicable {
+                reason: "the command declares no tool".to_owned(),
+            },
+            DoctorObservation::Unsupported {
+                reason: "inspection would execute the tool".to_owned(),
+            },
+        ],
+    );
 }
 
 /// Shared configuration words and the typed provenance surrounding them.

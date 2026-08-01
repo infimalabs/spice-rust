@@ -39,6 +39,7 @@
 pub mod body;
 pub mod command;
 pub mod config;
+pub mod doctor;
 pub mod envelope;
 pub mod fact;
 pub mod head;
@@ -58,6 +59,11 @@ pub mod witness;
 
 pub use command::{Authority, Command, CommandKind, CommandKindError, Law, LawError};
 pub use config::{ConfigSource, DurationWord, DurationWordError, Provenance};
+pub use doctor::{
+    DoctorCommand, DoctorConfigProvenance, DoctorEnvironment, DoctorLocations, DoctorObservation,
+    DoctorReport, DoctorTarget, DoctorTool, DoctorToolBounds, DoctorToolCancellation,
+    DoctorToolMode, DoctorToolNetwork, DoctorToolRequirement, DoctorToolSource, SpiceVariable,
+};
 pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVersion};
 pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{

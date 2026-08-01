@@ -14,6 +14,36 @@ use crate::repository::{Repository, ResolveError as RepositoryError};
 const TRACKED_FILE: &str = "spice.toml";
 const LOCAL_FILE: &str = ".spice/config.toml";
 
+/// Exact repository configuration locations.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Locations {
+    tracked: PathBuf,
+    local: PathBuf,
+}
+
+impl Locations {
+    /// Tracked worktree policy document.
+    #[must_use]
+    pub fn tracked(&self) -> &Path {
+        &self.tracked
+    }
+
+    /// Machine-local Git-common document.
+    #[must_use]
+    pub fn local(&self) -> &Path {
+        &self.local
+    }
+}
+
+/// Derive the two configuration paths from the canonical repository layout.
+#[must_use]
+pub fn locations(repository: &Repository) -> Locations {
+    Locations {
+        tracked: repository.worktree_root().join(TRACKED_FILE),
+        local: repository.common_dir().join(LOCAL_FILE),
+    }
+}
+
 /// Why one existing configuration path could not become document text.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum AcquisitionKind {
@@ -193,12 +223,26 @@ impl Error for LoadError {
 /// diagnostic found after both exact document paths have been inspected.
 pub fn load(start: impl AsRef<Path>, flags: &[FlagOverride]) -> Result<Resolved, LoadError> {
     let repository = Repository::discover(start).map_err(LoadError::repository_failure)?;
-    let tracked_path = repository.worktree_root().join(TRACKED_FILE);
-    let local_path = repository.common_dir().join(LOCAL_FILE);
+    load_repository(&repository, flags)
+}
+
+/// Load effective configuration from an already resolved repository.
+///
+/// # Errors
+///
+/// Returns every acquisition and resolution diagnostic found after both exact
+/// document paths have been inspected.
+pub fn load_repository(
+    repository: &Repository,
+    flags: &[FlagOverride],
+) -> Result<Resolved, LoadError> {
+    let locations = locations(repository);
+    let tracked_path = locations.tracked();
+    let local_path = locations.local();
 
     let mut acquisition = Vec::new();
-    let tracked = acquire(ConfigSource::Tracked, &tracked_path, &mut acquisition);
-    let local = acquire(ConfigSource::Local, &local_path, &mut acquisition);
+    let tracked = acquire(ConfigSource::Tracked, tracked_path, &mut acquisition);
+    let local = acquire(ConfigSource::Local, local_path, &mut acquisition);
     let tracked_location = tracked_path.display().to_string();
     let local_location = local_path.display().to_string();
     let resolved = resolve(Inputs::new(
