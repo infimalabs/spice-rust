@@ -86,14 +86,40 @@ fn main() {
 }
 
 fn not_landed(contract: &cli::Contract) -> Outcome<()> {
+    let task = match cli::landing(contract.path) {
+        cli::Landing::Gap(task) => task,
+        cli::Landing::Landed => {
+            return Outcome::Fault(Fault {
+                class: FaultClass::Protocol,
+                reason: "release::dispatch-gap".to_owned(),
+                detail: format!(
+                    concat!(
+                        "registered landed command reached the terminal ",
+                        "release branch: {}"
+                    ),
+                    contract.path.join(" ")
+                ),
+            });
+        }
+        cli::Landing::Unaccounted => {
+            return Outcome::Fault(Fault {
+                class: FaultClass::Protocol,
+                reason: "release::succession-unaccounted".to_owned(),
+                detail: format!(
+                    "registered command has no succession disposition: {}",
+                    contract.path.join(" ")
+                ),
+            });
+        }
+    };
     Outcome::Refusal(Refusal {
         reason: "release::not-landed".to_owned(),
         witness: None,
         expected: None,
         observed: Some(contract.path.join(" ")),
         remedy: format!(
-            "finish the {} battery before Rust release one admits this leaf",
-            contract.battery
+            "complete {task} ({}) before Rust release one admits this leaf",
+            contract.battery,
         ),
     })
 }
