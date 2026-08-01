@@ -3,11 +3,12 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::thread;
-use std::time::Duration;
+use std::sync::mpsc;
+use std::time::{Duration, Instant as Monotonic};
 
 use bus::{Bus, CommitOutcome};
 use journal::{FactCause, JournalWrite};
+use notify::{RecursiveMode, Watcher};
 use sill::{Acquisition, LockFile, LockName};
 use wire::{
     Actor, ClaimDisposition, ClaimHead, FactKind, Instant, LeaseHead, Outcome, Producer,
@@ -16,13 +17,14 @@ use wire::{
 
 const FAULT_EXIT: i32 = 1;
 const REFUSAL_EXIT: i32 = 2;
-const STARTUP_ALLOWANCE: Duration = Duration::from_millis(500);
+const READINESS_DEADLINE: Duration = Duration::from_secs(10);
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
     root: PathBuf,
     runtime: PathBuf,
+    cleanup: PathBuf,
 }
 
 impl Fixture {
@@ -34,7 +36,32 @@ impl Fixture {
         ));
         let runtime = root.join(".git/.spice");
         fs::create_dir_all(root.join(".git")).expect("fixture git directory");
-        Self { root, runtime }
+        Self {
+            cleanup: root.clone(),
+            root,
+            runtime,
+        }
+    }
+
+    fn linked(name: &str) -> Self {
+        let cleanup = std::env::temp_dir().join(format!(
+            "spice-resident-linked-{name}-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let root = cleanup.join("worktree");
+        let common = cleanup.join("common.git");
+        let git = common.join("worktrees/linked");
+        fs::create_dir_all(&root).expect("linked worktree directory");
+        fs::create_dir_all(&git).expect("linked Git directory");
+        fs::write(root.join(".git"), format!("gitdir: {}\n", git.display()))
+            .expect("linked Git pointer");
+        fs::write(git.join("commondir"), "../..\n").expect("linked common pointer");
+        Self {
+            root,
+            runtime: common.join(".spice"),
+            cleanup,
+        }
     }
 
     fn journal(&self) -> PathBuf {
@@ -52,7 +79,7 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        fs::remove_dir_all(&self.root).expect("fixture cleanup");
+        fs::remove_dir_all(&self.cleanup).expect("fixture cleanup");
     }
 }
 
@@ -73,17 +100,46 @@ impl RunningResident {
     }
 
     fn assert_ready(&mut self, fixture: &Fixture) {
-        thread::sleep(STARTUP_ALLOWANCE);
-        assert!(
-            self.child
-                .as_mut()
-                .expect("resident child")
-                .try_wait()
-                .expect("resident status")
-                .is_none(),
-            "foreground resident exited during startup"
-        );
-        assert!(fixture.canvas().is_file(), "discovery marks readiness");
+        let (sender, receiver) = mpsc::channel::<notify::Result<notify::Event>>();
+        let mut watcher = notify::recommended_watcher(move |event| {
+            let _ = sender.send(event);
+        })
+        .expect("readiness watcher starts");
+        watcher
+            .watch(
+                fixture
+                    .runtime
+                    .parent()
+                    .expect("runtime has Git-common parent"),
+                RecursiveMode::Recursive,
+            )
+            .expect("readiness watcher arms before publication");
+        let deadline = Monotonic::now() + READINESS_DEADLINE;
+        loop {
+            assert!(
+                self.child
+                    .as_mut()
+                    .expect("resident child")
+                    .try_wait()
+                    .expect("resident status")
+                    .is_none(),
+                "foreground resident exited before readiness"
+            );
+            if fixture.canvas().is_file() {
+                return;
+            }
+            let remaining = deadline.saturating_duration_since(Monotonic::now());
+            match receiver.recv_timeout(remaining) {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => panic!("readiness notification failed: {error}"),
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    panic!("resident did not publish discovery before {READINESS_DEADLINE:?}")
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    panic!("readiness watcher disconnected")
+                }
+            }
+        }
     }
 
     fn wait(mut self) -> Output {
@@ -429,5 +485,37 @@ fn shutdown_preserves_an_unfinished_claim_before_releasing_authority() {
             FactKind::UpDark,
         ],
         "shutdown appended no claim disposition transition"
+    );
+}
+
+#[test]
+fn down_releases_before_reply_and_linked_worktrees_use_common_state() {
+    let fixture = Fixture::linked("restart");
+    let mut resident = RunningResident::spawn(&fixture);
+    resident.assert_ready(&fixture);
+    assert!(
+        fixture.canvas().starts_with(&fixture.runtime),
+        "linked discovery escaped Git-common state"
+    );
+    for _ in 0..3 {
+        let down = invoke(&fixture, "down");
+        assert!(down.status.success(), "down failed: {:?}", down.stderr);
+        let previous = resident;
+        resident = RunningResident::spawn(&fixture);
+        resident.assert_ready(&fixture);
+        assert!(
+            previous.wait().status.success(),
+            "replaced foreground resident failed"
+        );
+    }
+    let down = invoke(&fixture, "down");
+    assert!(
+        down.status.success(),
+        "final down failed: {:?}",
+        down.stderr
+    );
+    assert!(
+        resident.wait().status.success(),
+        "foreground resident failed"
     );
 }

@@ -14,9 +14,10 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::io;
+use std::time::Duration;
 
 use journal::crossing::CanonicalUuid;
-use sill::{ProcessGroup, Running, Spec, WaitError, WaitOutcome, spawn};
+use sill::{ProcessGroup, Running, Spec, WaitError, WaitOutcome, WaitStep, spawn};
 
 /// One process group supervised under a lane.
 pub struct Occupant {
@@ -50,6 +51,67 @@ impl Occupant {
         self.running.spec()
     }
 
+    /// Remaining configured runtime available for graceful drain.
+    #[must_use]
+    pub fn drain_remaining(&self) -> Duration {
+        self.running.runtime_remaining()
+    }
+
+    /// Configured grace after a termination signal.
+    #[must_use]
+    pub fn termination_grace(&self) -> Duration {
+        self.running.spec().grace
+    }
+
+    /// Configured reap bound after forced termination.
+    #[must_use]
+    pub fn reap_bound(&self) -> Duration {
+        self.running.spec().deadlines.reap()
+    }
+
+    /// Passively waits for this group to exit within `duration`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the SILL wait failure with this occupant's owner evidence.
+    pub fn wait_for(self, duration: Duration) -> Result<OccupantWait, WaitError> {
+        let Self {
+            lane,
+            occupant,
+            running,
+        } = self;
+        match running.wait_for(duration)? {
+            WaitStep::Exited(outcome) => Ok(OccupantWait::Exited {
+                lane,
+                occupant,
+                outcome,
+            }),
+            WaitStep::Running(running) => Ok(OccupantWait::Running(Box::new(Self {
+                lane,
+                occupant,
+                running: *running,
+            }))),
+        }
+    }
+
+    /// Requests graceful termination of the whole process group.
+    ///
+    /// # Errors
+    ///
+    /// Returns the SILL signalling failure with this occupant's owner evidence.
+    pub fn terminate(&self) -> Result<(), WaitError> {
+        self.running.signal_terminate()
+    }
+
+    /// Forces termination of the whole process group.
+    ///
+    /// # Errors
+    ///
+    /// Returns the SILL signalling failure with this occupant's owner evidence.
+    pub fn kill(&self) -> Result<(), WaitError> {
+        self.running.signal_kill()
+    }
+
     /// Waits for the process group to end.
     ///
     /// # Errors
@@ -58,6 +120,22 @@ impl Occupant {
     pub fn wait(self) -> Result<WaitOutcome, WaitError> {
         self.running.wait()
     }
+}
+
+/// Result of passively observing one occupied seat for a bounded interval.
+#[derive(Debug)]
+pub enum OccupantWait {
+    /// The group exited and was reaped within the interval.
+    Exited {
+        /// Lane whose group ended.
+        lane: CanonicalUuid,
+        /// Occupant whose group ended.
+        occupant: CanonicalUuid,
+        /// Complete bounded process evidence.
+        outcome: WaitOutcome,
+    },
+    /// The interval elapsed and the seat remains occupied.
+    Running(Box<Occupant>),
 }
 
 impl fmt::Debug for Occupant {

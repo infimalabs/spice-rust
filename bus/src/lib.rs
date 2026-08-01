@@ -12,8 +12,8 @@ mod runtime {
     use std::thread::{self, JoinHandle};
 
     use journal::{
-        CommitFault, FactSnapshot, GuardRefusal, Journal, JournalWrite, SnapshotError,
-        Verification, VerifyError,
+        CommitFault, FactSnapshot, GuardError, GuardRefusal, Journal, JournalHead, JournalWrite,
+        SnapshotError, Verification, VerifyError,
     };
 
     const REQUEST_CAPACITY: usize = 64;
@@ -146,6 +146,20 @@ mod runtime {
                 .map_err(BusReadError::Snapshot)
         }
 
+        /// Read the current resident and lane head through the writer queue.
+        pub fn residency_head(
+            &self,
+        ) -> Result<Option<JournalHead<journal::crossing::ResidencyHead>>, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::Residency { answer })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+                .map_err(BusReadError::Head)
+        }
+
         /// Verify authority through the writer queue, after all earlier
         /// submissions have settled.
         pub fn verify(&self) -> Result<Verification, BusVerifyError> {
@@ -198,6 +212,11 @@ mod runtime {
         Snapshot {
             answer: SyncSender<Result<FactSnapshot, SnapshotError>>,
         },
+        Residency {
+            answer: SyncSender<
+                Result<Option<JournalHead<journal::crossing::ResidencyHead>>, GuardError>,
+            >,
+        },
         Verify {
             answer: SyncSender<Result<Verification, VerifyError>>,
         },
@@ -230,6 +249,9 @@ mod runtime {
                 }
                 Request::Snapshot { answer } => {
                     let _ = answer.send(journal.fact_snapshot());
+                }
+                Request::Residency { answer } => {
+                    let _ = answer.send(journal.read(|read| read.residency_head()));
                 }
                 Request::Verify { answer } => {
                     let _ = answer.send(journal.verify());
@@ -277,6 +299,7 @@ mod runtime {
     pub enum BusReadError {
         Bus(BusError),
         Snapshot(SnapshotError),
+        Head(GuardError),
     }
 
     impl fmt::Display for BusReadError {
@@ -284,6 +307,7 @@ mod runtime {
             match self {
                 Self::Bus(error) => error.fmt(formatter),
                 Self::Snapshot(error) => error.fmt(formatter),
+                Self::Head(error) => error.fmt(formatter),
             }
         }
     }

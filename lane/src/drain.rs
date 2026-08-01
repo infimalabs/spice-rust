@@ -107,6 +107,12 @@ impl Descent {
         }
     }
 
+    /// Resume from the last durable rung after an interrupted shutdown.
+    #[must_use]
+    pub const fn resume(at: ResidentState) -> Self {
+        Self { at }
+    }
+
     /// The rung the descent stands on.
     #[must_use]
     pub const fn at(self) -> ResidentState {

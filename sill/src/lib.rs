@@ -8,7 +8,7 @@ mod spawn;
 mod spec;
 
 pub use lock::{Acquisition, LockFile, LockName, LockNameError, Possession};
-pub use spawn::{CapturedOutput, Completion, Running, WaitError, WaitOutcome, spawn};
+pub use spawn::{CapturedOutput, Completion, Running, WaitError, WaitOutcome, WaitStep, spawn};
 pub use spec::{
     Argv, Cancellation, CancellationToken, Deadlines, Environment, Output, ProcessGroup, Redaction,
     RestartDisposition, Spec, SpecError, StdinPolicy, StreamPolicy, WaitPolicy,
