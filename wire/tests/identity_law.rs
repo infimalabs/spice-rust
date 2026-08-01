@@ -35,8 +35,8 @@ use wire::{
     Derived, Digest, Disposition, Envelope, Fact, FactKind, Fault, FaultClass, FindingHead,
     FindingState, FoldName, Hello, Instant, LaneResidency, LeaseHead, Name, Origin, Outcome,
     Overflow, Packed, Phase, Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState, Response,
-    Seq, SeqRange, Standing, TaskHandle, TaskHead, TrustHead, TrustState, Up, WireVersion, Witness,
-    WitnessClass, WitnessHead, WitnessKind, WorkflowHead,
+    Seq, SeqRange, TaskHandle, TaskHead, TrustHead, TrustState, WireVersion, Witness, WitnessClass,
+    WitnessHead, WitnessKind, WorkflowHead,
 };
 
 /// Names `wire` re-exports that never cross as values, each with its reason.
@@ -639,12 +639,12 @@ fn cover_head_enums(covered: &mut BTreeSet<String>) {
         "FindingState",
         &[FindingState::Open, FindingState::Cleared],
     );
-    law(
+    spelling_law(
         covered,
         "ResidentState",
         &[ResidentState::Seated, ResidentState::Dark],
     );
-    law(
+    spelling_law(
         covered,
         "TrustState",
         &[TrustState::Pended, TrustState::Revoked],
@@ -732,15 +732,15 @@ fn cover_witness_values(covered: &mut BTreeSet<String>) {
             },
             Witness::Trust {
                 digest: digest("c"),
-                standing: Standing::Pended,
+                standing: TrustState::Pended,
             },
             Witness::Transition {
-                from: Up::Seated,
-                to: Up::Quiescing,
+                from: ResidentState::Seated,
+                to: ResidentState::Quiescing,
             },
         ],
     );
-    // These five derive Ord and Hash, so they owe the same rank-and-spelling
+    // These three derive Ord and Hash, so they owe the same rank-and-spelling
     // agreement the newtypes owe. `Law` stores `WitnessKind` in static slices
     // and asks `contains`, and every one of them can key a map or sort a
     // rendered column, so the weaker helper would leave that unchecked.
@@ -750,8 +750,6 @@ fn cover_witness_values(covered: &mut BTreeSet<String>) {
         &[Disposition::Live, Disposition::Declined],
     );
     spelling_law(covered, "Answer", &[Answer::Asked, Answer::Denied]);
-    spelling_law(covered, "Standing", &[Standing::Pended, Standing::Revoked]);
-    spelling_law(covered, "Up", &[Up::Seated, Up::Dark]);
     spelling_law(
         covered,
         "WitnessKind",

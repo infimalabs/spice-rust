@@ -60,8 +60,8 @@ pub use reply::{
     Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, Response, SeqRange, SeqRangeError,
 };
 pub use witness::{
-    Answer, Disposition, Name, NameError, Phase, PhaseError, Standing, TaskHandle, TaskHandleError,
-    Up, Witness, WitnessKind,
+    Answer, Disposition, Name, NameError, Phase, PhaseError, TaskHandle, TaskHandleError, Witness,
+    WitnessKind,
 };
 
 /// Decode wire bytes into a DTO.

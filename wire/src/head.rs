@@ -137,8 +137,8 @@ pub struct WitnessHead {
     pub head: Seq,
 }
 
-/// Approval state for executable bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Approval state shared by durable trust heads, command witnesses, and answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TrustState {
     /// Changed bytes await an operator decision.
@@ -187,8 +187,8 @@ pub struct FindingHead {
     pub state: FindingState,
 }
 
-/// Durable resident life.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Resident lifecycle shared by durable heads, transition witnesses, intents, and answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ResidentState {
     /// The resident holds authority and admits work.
