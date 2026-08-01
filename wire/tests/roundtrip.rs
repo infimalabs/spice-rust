@@ -130,8 +130,7 @@ const DIRECT_PROOF_RESULT: &str = concat!(
 const RELEASE_NOTES: &str = concat!(
     r#"{"manifest":"1111111111111111111111111111111111111111111111111111111111111111","#,
     r#""build":"2222222222222222222222222222222222222222222222222222222222222222","#,
-    r#""range":{"from":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","#,
-    r#""to":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","commits":1},"#,
+    r#""range":{"from":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","to":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","commits":1},"#,
     r#""schema":{"from":1,"to":2},"targets":[{"target":"aarch64-apple-darwin","#,
     r#""payload":"3333333333333333333333333333333333333333333333333333333333333333","#,
     r#""receipt":"4444444444444444444444444444444444444444444444444444444444444444"}],"#,
