@@ -31,12 +31,12 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use wire::{
-    Actor, Answer, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind, CursorHead,
-    Derived, Digest, Disposition, Envelope, Fact, FactKind, Fault, FaultClass, FindingHead,
-    FindingState, FoldName, Hello, Instant, LaneResidency, LeaseHead, Name, Origin, Outcome,
-    Overflow, Packed, Phase, Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState, Response,
-    Seq, SeqRange, Standing, TaskHandle, TaskHead, TrustHead, TrustState, Up, WireVersion, Witness,
-    WitnessClass, WitnessHead, WitnessKind, WorkflowHead,
+    Accepted, Actor, Answer, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind,
+    CursorHead, Derived, Digest, Disposition, Envelope, Fact, FactKind, Fault, FaultClass,
+    FindingHead, FindingState, FoldName, Hello, Instant, LaneResidency, LeaseHead, Name, Origin,
+    Outcome, Overflow, Packed, Phase, Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState,
+    Response, Seq, SeqRange, Standing, TaskHandle, TaskHead, TrustHead, TrustState, Up,
+    WireVersion, Witness, WitnessClass, WitnessHead, WitnessKind, WorkflowHead,
 };
 
 /// Names `wire` re-exports that never cross as values, each with its reason.
@@ -702,6 +702,27 @@ fn cover_command_frames(covered: &mut BTreeSet<String>) {
                 wire: WireVersion(1),
                 capability: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
                 epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
+            },
+        ],
+    );
+    law(
+        covered,
+        "Accepted",
+        &[
+            Accepted {
+                wire: WireVersion(1),
+                actor: Actor::Operator,
+                epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+            },
+            Accepted {
+                wire: WireVersion(1),
+                actor: Actor::Spice,
+                epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+            },
+            Accepted {
+                wire: WireVersion(1),
+                actor: Actor::Lane(uuid("018f82d4-6f59-7d06-92e3-bce9131163c4")),
+                epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
             },
         ],
     );

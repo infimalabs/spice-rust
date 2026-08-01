@@ -7,7 +7,7 @@
 //! allowed to reach browser state.
 
 use serde::de::DeserializeOwned;
-use wire::{CanonicalUuid, Envelope, Fault, FaultClass, Hello, Response, WireVersion};
+use wire::{Accepted, CanonicalUuid, Envelope, Fault, FaultClass, Hello, Response, WireVersion};
 
 /// Reasons this door names when it turns a frame away.
 ///
@@ -141,6 +141,25 @@ impl Session {
         })
     }
 
+    /// Decode the resident's acceptance and admit it against this session.
+    ///
+    /// This is the only way the app learns which principal it acts as. The
+    /// resident derives actor and rights from the capability it was presented,
+    /// so the app never asserts an actor and has no constructor that would let
+    /// it: a principal enters through this door or not at all.
+    ///
+    /// # Errors
+    ///
+    /// Returns a protocol fault when the bytes do not decode, carry a version
+    /// this build does not speak, or accept a generation this session does not
+    /// address.
+    pub fn admit_accepted(&self, bytes: &[u8]) -> Result<Admitted<Accepted>, Fault> {
+        let frame: Accepted = decode_frame(bytes)?;
+        admit_wire(frame.wire)?;
+        self.admit_epoch(frame.epoch)?;
+        Ok(Admitted(frame))
+    }
+
     /// Decode one inbound response and admit it against this session.
     ///
     /// Undecodable bytes, a version this build does not speak, and an epoch
@@ -156,17 +175,26 @@ impl Session {
     ) -> Result<Admitted<Response<B>>, Fault> {
         let frame: Response<B> = decode_frame(bytes)?;
         admit_wire(frame.v)?;
-        if frame.epoch != self.epoch {
-            return Err(Fault {
-                class: FaultClass::Protocol,
-                reason: reason::EPOCH.to_owned(),
-                detail: format!(
-                    "frame answered epoch {}; this session addresses {}",
-                    frame.epoch, self.epoch
-                ),
-            });
-        }
+        self.admit_epoch(frame.epoch)?;
         Ok(Admitted(frame))
+    }
+
+    /// Admit a generation against the one this session opened on.
+    ///
+    /// Both epoch-bearing doors share this spelling. A second one would let a
+    /// caller handle one door and miss the other.
+    fn admit_epoch(&self, observed: CanonicalUuid) -> Result<(), Fault> {
+        if observed == self.epoch {
+            return Ok(());
+        }
+        Err(Fault {
+            class: FaultClass::Protocol,
+            reason: reason::EPOCH.to_owned(),
+            detail: format!(
+                "frame answered epoch {observed}; this session addresses {}",
+                self.epoch
+            ),
+        })
     }
 
     /// Decode one streamed fact and admit it against this session.
