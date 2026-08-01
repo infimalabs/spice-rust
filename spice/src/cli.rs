@@ -158,7 +158,7 @@ macro_rules! row {
 const CONTRACTS: &[Contract] = &[
     row!(
         ["watch"],
-        "watch [ROOT] [--once]",
+        "watch [ROOT]",
         Local,
         None,
         [],
