@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use wire::{Body, CanonicalUuid, Envelope, Fact, Origin, Overflow, Packed, Seq};
+use wire::{Body, CanonicalUuid, Envelope, Fact, Origin, Outcome, Overflow, Packed, Response, Seq};
 
 use crate::socket::Admitted;
 
@@ -210,14 +210,32 @@ impl<T> BrowserState<T> {
         }
     }
 
-    /// Replace the packed answer with a newly received one.
+    /// Replace the packed answer with an admitted reply.
     ///
     /// A packed answer carries its own rank, overflow, and horizon, so a later
     /// answer replaces the earlier one whole. Merging two answers would
     /// produce a list no producer ever ranked and a horizon no source ever
     /// declared.
-    pub fn replace(&mut self, packed: Packed<T>) {
-        self.packed = Some(packed);
+    ///
+    /// The response must carry the socket door's [`Admitted`] receipt. A bare
+    /// [`Packed`] value has no path into state, so rows, overflow, and horizon
+    /// cannot be populated by bytes that bypassed [`crate::Session`]. A
+    /// refusal, fault, or answer from another state generation changes
+    /// nothing and remains available to the caller through `admitted`.
+    #[must_use]
+    pub fn replace(&mut self, admitted: &Admitted<Response<Packed<T>>>) -> bool
+    where
+        T: Clone,
+    {
+        let response = admitted.get();
+        let Outcome::Reply(reply) = &response.outcome else {
+            return false;
+        };
+        if response.epoch != self.epoch {
+            return false;
+        }
+        self.packed = Some(reply.body.clone());
+        true
     }
 
     /// The rows of the current answer, empty before one arrives.

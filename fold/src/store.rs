@@ -6,7 +6,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::{Cursor, FoldId, Horizon};
 
-const STORE_SCHEMA_VERSION: u32 = 1;
+pub(crate) const STORE_SCHEMA_VERSION: u32 = 1;
 
 /// Pure fold logic used to rebuild one complete generation.
 pub trait Reducer {
@@ -171,7 +171,7 @@ impl Store {
         connection
             .execute_batch("PRAGMA foreign_keys = ON; PRAGMA trusted_schema = OFF;")
             .map_err(StoreError::Sqlite)?;
-        baseline(&connection)?;
+        baseline(&connection, STORE_SCHEMA_VERSION)?;
         Ok(Self { connection })
     }
 
@@ -443,9 +443,18 @@ fn to_sql(value: u64, fold: FoldId) -> Result<i64, StoreError> {
         .map_err(|_| StoreError::Refused(Refusal::PositionOutOfRange { fold, value }))
 }
 
-fn baseline(connection: &Connection) -> Result<(), StoreError> {
+/// Creates the schema if absent, then refuses a store another version wrote.
+///
+/// The seeded version is bound from `current` rather than spelled into the SQL.
+/// A literal would make the constant inert: bumping it would brick a brand-new
+/// store, which still seeds the old number, and report a version disagreement
+/// against a store that has no prior version to migrate from.
+pub(crate) fn baseline(connection: &Connection, current: u32) -> Result<(), StoreError> {
     connection
         .execute_batch(BASELINE_SQL)
+        .map_err(StoreError::Sqlite)?;
+    connection
+        .execute(SEED_VERSION_SQL, params![current])
         .map_err(StoreError::Sqlite)?;
     let version: u32 = connection
         .query_row(
@@ -454,10 +463,10 @@ fn baseline(connection: &Connection) -> Result<(), StoreError> {
             |row| row.get(0),
         )
         .map_err(StoreError::Sqlite)?;
-    if version != STORE_SCHEMA_VERSION {
+    if version != current {
         return Err(StoreError::SchemaVersion {
             found: version,
-            current: STORE_SCHEMA_VERSION,
+            current,
         });
     }
     Ok(())
@@ -537,12 +546,16 @@ impl Error for StoreError {
     }
 }
 
+/// Seeds the version only when the store has none, leaving an older store's
+/// number intact for [`baseline`] to refuse.
+const SEED_VERSION_SQL: &str =
+    "INSERT OR IGNORE INTO fold_schema(singleton, version) VALUES (1, ?1)";
+
 const BASELINE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS fold_schema (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     version INTEGER NOT NULL CHECK (version > 0)
 ) STRICT;
-INSERT OR IGNORE INTO fold_schema(singleton, version) VALUES (1, 1);
 
 CREATE TABLE IF NOT EXISTS fold_generations (
     fold TEXT NOT NULL,

@@ -53,12 +53,49 @@ fn a_non_canonical_uuid_is_refused_by_the_decoder_too() {
     assert!(refused.is_err(), "upper-case text is not a canonical uuid");
 }
 
+/// Where each class sits in the sweep below.
+///
+/// The sweep is a hand-written array, and on its own an array goes stale in
+/// silence: add a variant, forget the line, and every domain test keeps passing
+/// while covering one class less. This match is the half the compiler checks. A
+/// new variant fails to compile here first, and the arm it forces names the
+/// index the sweep then has to fill.
+const fn position(domain: Domain) -> usize {
+    match domain {
+        Domain::TargetPayload => 0,
+        Domain::Artifact => 1,
+        Domain::Pins => 2,
+        Domain::Inventory => 3,
+        Domain::GateFile => 4,
+        Domain::GateTree => 5,
+        Domain::GatePolicy => 6,
+        Domain::GateInventory => 7,
+        Domain::GateMeasurement => 8,
+    }
+}
+
+#[test]
+fn the_sweep_names_every_domain_exactly_once() {
+    for (index, domain) in DOMAINS.iter().enumerate() {
+        assert_eq!(
+            position(*domain),
+            index,
+            "the domain sweep and the class list disagree about {domain:?}"
+        );
+    }
+}
+
 /// Every domain, so a new class cannot be added without being swept here.
-const DOMAINS: [Domain; 4] = [
+const DOMAINS: [Domain; 9] = [
     Domain::TargetPayload,
     Domain::Artifact,
     Domain::Pins,
     Domain::Inventory,
+    Domain::GateFile,
+    Domain::GateTree,
+    Domain::GatePolicy,
+    Domain::GateInventory,
+    Domain::GateMeasurement,
 ];
 
 #[test]
@@ -92,6 +129,11 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
             "spice.dist.artifact.v1",
             "spice.dist.pins.v1",
             "spice.dist.inventory.v1",
+            "spice.gate.file.v1",
+            "spice.gate.tree.v1",
+            "spice.gate.policy.v1",
+            "spice.gate.inventory.v1",
+            "spice.gate.measurement.v1",
         ],
         "a domain tag changed; that re-points digests already published under it"
     );
