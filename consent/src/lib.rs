@@ -196,7 +196,7 @@ impl Actuator {
         self.budgets.renew(&rule);
         Ok(self
             .pending
-            .release(request)
+            .release(request, Ruling::Allow)
             .expect("the inspected request remains held until this release"))
     }
 

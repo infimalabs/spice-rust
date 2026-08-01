@@ -1,7 +1,19 @@
 use std::fmt;
 
 use dialect::{Classification, Document, Refusal, Warning};
-use wire::Digest;
+use wire::{Digest, Domain};
+
+/// Mint the identity of one board document from its exact authored bytes.
+///
+/// Preview and apply reach a digest only through this function, so the
+/// previewed identity and the identity observed at apply time are the same
+/// computation over the same bytes under the same domain. Nothing accepts a
+/// digest a caller supplies from elsewhere, so the digest an operator approved
+/// names one document and no other.
+#[must_use]
+pub fn digest_of(input: &str) -> Digest {
+    Digest::compute(Domain::BoardDocument, input.as_bytes())
+}
 
 /// Digest-bound, fully classified document ready for application.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -12,8 +24,12 @@ pub struct Preview {
 }
 
 impl Preview {
-    /// Classify bytes and bind the caller-computed digest of those exact bytes.
-    pub fn classify(input: &str, digest: Digest) -> Result<Self, PreviewRefusal> {
+    /// Classify bytes and bind the digest of those exact bytes.
+    ///
+    /// The digest is derived here rather than accepted, so a preview cannot
+    /// carry an identity belonging to any document other than `input`.
+    pub fn classify(input: &str) -> Result<Self, PreviewRefusal> {
+        let digest = digest_of(input);
         match dialect::classify(input) {
             Classification::Current(document) => Ok(Self {
                 digest,

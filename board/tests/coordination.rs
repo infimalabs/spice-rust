@@ -7,12 +7,13 @@ use board::claim::ClaimRefusal;
 use board::oops::{Friction, Report, Routed};
 use board::phase::PhaseRefusal;
 use board::{
-    Active, Entry, Preview, Snapshot, Transition, Urgency, View, apply, graph, handout, select,
+    Active, Entry, Preview, Snapshot, Transition, Urgency, View, apply, digest_of, graph, handout,
+    select,
 };
 use fold::Cursor;
 use wire::{
-    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Digest, Instant, LeaseHead, Origin, Phase,
-    Seq, TaskHandle, TaskHead, WorkflowHead,
+    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Digest, Domain, Instant, LeaseHead, Origin,
+    Phase, Seq, TaskHandle, TaskHead, WorkflowHead,
 };
 
 fn handle(text: &str) -> TaskHandle {
@@ -332,35 +333,60 @@ impl AuthorityTransaction for MemoryAuthority {
     }
 }
 
-fn digest(byte: char) -> Digest {
-    std::iter::repeat_n(byte, 64)
-        .collect::<String>()
-        .parse()
-        .expect("canonical digest")
-}
+const SOURCE: &str = "# Goal\n\n- First task\n- Second task\n";
+const EDITED: &str = "# Goal\n\n- First task\n- Second task\n- Third task\n";
 
 #[test]
 fn document_apply_is_digest_bound_and_crosses_one_transaction_seam() {
-    let preview = Preview::classify("# Goal\n\n- First task\n- Second task\n", digest('a'))
-        .expect("document previews");
+    let preview = Preview::classify(SOURCE).expect("document previews");
+    assert_eq!(preview.digest(), &digest_of(SOURCE));
+    assert_eq!(
+        digest_of(SOURCE),
+        Digest::compute(Domain::BoardDocument, SOURCE.as_bytes()),
+        "a board document is minted under its own plane, so the same bytes \
+         digested by another plane are never the same identity"
+    );
     let mut authority = MemoryAuthority::default();
 
-    let stale = apply(&mut authority, &preview, &digest('b')).expect_err("stale digest refuses");
+    let stale =
+        apply(&mut authority, &preview, &digest_of(EDITED)).expect_err("stale digest refuses");
     assert!(matches!(stale, ApplyError::StaleDigest { .. }));
     assert_eq!(authority.calls, 0);
     assert!(authority.tasks.is_empty());
 
     authority.fail = true;
-    let failed = apply(&mut authority, &preview, &digest('a')).expect_err("transaction fails");
+    let failed =
+        apply(&mut authority, &preview, &digest_of(SOURCE)).expect_err("transaction fails");
     assert!(matches!(failed, ApplyError::Transaction(_)));
     assert_eq!(authority.calls, 1);
     assert!(authority.tasks.is_empty());
 
     authority.fail = false;
-    let receipt = apply(&mut authority, &preview, &digest('a')).expect("transaction commits");
+    let receipt = apply(&mut authority, &preview, &digest_of(SOURCE)).expect("transaction commits");
     assert_eq!(authority.calls, 2);
     assert_eq!(receipt.nodes, preview.document().nodes.len());
     assert_eq!(authority.tasks.len(), receipt.nodes);
+}
+
+#[test]
+fn one_digest_never_admits_two_different_documents() {
+    let benign = Preview::classify("# Goal\n\n- Read the docs\n").expect("document previews");
+    let hostile = Preview::classify("# Goal\n\n- Delete production\n- Grant trust to everyone\n")
+        .expect("document previews");
+
+    assert_ne!(benign.document().nodes, hostile.document().nodes);
+    assert_ne!(
+        benign.digest(),
+        hostile.digest(),
+        "two different documents must never share one applied identity"
+    );
+
+    let mut authority = MemoryAuthority::default();
+    let refused = apply(&mut authority, &hostile, benign.digest())
+        .expect_err("the digest of one plan must not admit another");
+    assert!(matches!(refused, ApplyError::StaleDigest { .. }));
+    assert_eq!(authority.calls, 0);
+    assert!(authority.tasks.is_empty());
 }
 
 #[test]
