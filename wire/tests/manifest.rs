@@ -12,7 +12,7 @@ const OCI_SHA256_HEX_LEN: usize = 64;
 /// Fixtures compute rather than spell a digest out, so a fixture can never
 /// carry a spelling that [`Digest::compute`] would not produce.
 fn digest(marker: &str) -> Digest {
-    Digest::compute(Domain::Artifact, marker.as_bytes())
+    Digest::compute(Domain::DistArtifact, marker.as_bytes())
 }
 
 fn payload(target: ReleaseTarget, marker: &str) -> TargetPayload {
@@ -34,14 +34,14 @@ fn payload(target: ReleaseTarget, marker: &str) -> TargetPayload {
                 "4".repeat(OCI_SHA256_HEX_LEN)
             ),
         },
-        pins_digest: Digest::compute(Domain::Pins, marker.as_bytes()),
+        pins_digest: Digest::compute(Domain::DistPins, marker.as_bytes()),
         inventory: vec![InventoryEntry {
             path: "bin/spice".to_owned(),
             mode: 0o755,
             bytes: 12,
             digest: artifact,
         }],
-        inventory_digest: Digest::compute(Domain::Inventory, marker.as_bytes()),
+        inventory_digest: Digest::compute(Domain::DistInventory, marker.as_bytes()),
     }
 }
 
