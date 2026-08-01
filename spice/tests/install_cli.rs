@@ -7,7 +7,8 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::de::DeserializeOwned;
-use spice::install::{InstallPlan, InstallReceipt, InstallStatus};
+use serde_json::Value;
+use spice::install::{InstallPreview, InstallReceipt, InstallStatus};
 use wire::Outcome;
 
 struct Fixture {
@@ -124,10 +125,22 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
     let fixture = Fixture::new("digest");
     let text = fixture.invoke(&["install"]);
     let json = fixture.invoke(&["--json", "install"]);
-    let text: InstallPlan = text_body(text);
-    let preview: InstallPlan = reply_body(json);
+    let text_document = successful_document(text);
+    let text_digest = emitted_digest(&text_document).to_owned();
+    let text: InstallPreview =
+        serde_json::from_value(text_document).expect("text preview body decodes");
+    let json_document = successful_document(json);
+    assert_eq!(json_document["kind"], "reply");
+    assert!(json_document.get("direct").is_some());
+    let json_body = json_document["body"].clone();
+    let json_digest = emitted_digest(&json_body).to_owned();
+    let preview: InstallPreview =
+        serde_json::from_value(json_body).expect("JSON preview body decodes");
     assert_eq!(text, preview);
-    assert_eq!(preview.operations().len(), 5);
+    assert_eq!(text_digest, json_digest);
+    assert_eq!(preview.digest().as_str(), text_digest);
+    assert_eq!(preview.digest(), &preview.plan().digest().unwrap());
+    assert_eq!(preview.plan().operations().len(), 5);
     assert!(!fixture.installed_binary().exists());
     assert!(!fixture.record().exists());
     assert!(!fixture.root.join(".git/.spice-rust").exists());
@@ -137,17 +150,28 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
     );
     fixture.assert_python_authority_unchanged();
 
-    let digest = preview.digest().expect("preview digest");
-    let moved = alternate_digest(digest.as_str());
+    let malformed = fixture.invoke(&["--json", "install", "--apply=not-a-digest"]);
+    assert_eq!(malformed.code, Some(2));
+    assert!(malformed.out.is_empty());
+    assert_refusal(&malformed.err, "install::digest-refused");
+    assert!(!fixture.installed_binary().exists());
+    assert!(!fixture.record().exists());
+
+    let moved = alternate_digest(&text_digest);
     let refused = fixture.invoke(&["--json", "install", &format!("--apply={moved}")]);
     assert_eq!(refused.code, Some(2));
     assert!(refused.out.is_empty());
     assert_refusal(&refused.err, "install::digest-moved");
     assert!(!fixture.installed_binary().exists());
     assert!(!fixture.record().exists());
+    assert_eq!(
+        fs::read(fixture.root.join(".git/info/exclude")).unwrap(),
+        fixture.exclude_bytes
+    );
+    fixture.assert_python_authority_unchanged();
 
     let applied: InstallReceipt =
-        reply_body(fixture.invoke(&["--json", "install", &format!("--apply={digest}")]));
+        reply_body(fixture.invoke(&["--json", "install", &format!("--apply={text_digest}")]));
     assert_eq!(applied.status(), InstallStatus::Complete);
     assert_eq!(applied.completed(), 5);
     assert_eq!(
@@ -161,8 +185,8 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
 #[test]
 fn unapply_restores_exact_prior_images_and_keeps_the_namespaced_receipt() {
     let fixture = Fixture::new("unapply");
-    let preview: InstallPlan = reply_body(fixture.invoke(&["--json", "install"]));
-    let digest = preview.digest().unwrap();
+    let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
+    let digest = preview.digest();
     let applied = fixture.invoke(&["install", &format!("--apply={digest}")]);
     assert_eq!(applied.code, Some(0));
     assert!(applied.err.is_empty());
@@ -188,8 +212,8 @@ fn unapply_restores_exact_prior_images_and_keeps_the_namespaced_receipt() {
 #[test]
 fn drift_refuses_reversal_without_overwriting_the_changed_target() {
     let fixture = Fixture::new("drift");
-    let preview: InstallPlan = reply_body(fixture.invoke(&["--json", "install"]));
-    let digest = preview.digest().unwrap();
+    let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
+    let digest = preview.digest();
     assert_eq!(
         fixture
             .invoke(&["install", &format!("--apply={digest}")])
@@ -208,10 +232,16 @@ fn drift_refuses_reversal_without_overwriting_the_changed_target() {
     fixture.assert_python_authority_unchanged();
 }
 
-fn text_body<T: DeserializeOwned>(spoken: Spoken) -> T {
+fn successful_document(spoken: Spoken) -> Value {
     assert_eq!(spoken.code, Some(0));
     assert!(spoken.err.is_empty());
-    wire::decode(&spoken.out).expect("text body decodes")
+    serde_json::from_slice(&spoken.out).expect("successful output is JSON")
+}
+
+fn emitted_digest(document: &Value) -> &str {
+    document["digest"]
+        .as_str()
+        .expect("install preview emits a digest token")
 }
 
 fn reply_body<T: DeserializeOwned + std::fmt::Debug>(spoken: Spoken) -> T {

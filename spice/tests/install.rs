@@ -7,7 +7,7 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use spice::install::{
-    InstallError, InstallPlan, InstallReceipt, InstallStatus, apply, plan, unapply,
+    InstallError, InstallPreview, InstallReceipt, InstallStatus, apply, plan, unapply,
 };
 use spice::repository::Repository;
 use wire::{Outcome, ReplyPosition};
@@ -269,8 +269,8 @@ fn cli_preview_apply_and_unapply_are_typed_idempotent_and_python_first() {
     let json_plan = invoke(scratch.path(), &["--json", "install"]);
     assert!(text_plan.status.success());
     assert!(json_plan.status.success());
-    let text_plan: InstallPlan = wire::decode(&text_plan.stdout).unwrap();
-    let json_plan: Outcome<InstallPlan> = wire::decode(&json_plan.stdout).unwrap();
+    let text_plan: InstallPreview = wire::decode(&text_plan.stdout).unwrap();
+    let json_plan: Outcome<InstallPreview> = wire::decode(&json_plan.stdout).unwrap();
     let Outcome::Reply(json_plan) = json_plan else {
         panic!("JSON install preview must reply");
     };
@@ -278,7 +278,7 @@ fn cli_preview_apply_and_unapply_are_typed_idempotent_and_python_first() {
     assert_eq!(json_plan.body, text_plan);
     assert!(!scratch.join(".spice/rust").exists());
 
-    let apply_argument = format!("--apply={}", text_plan.digest().unwrap());
+    let apply_argument = format!("--apply={}", text_plan.digest());
     let text_apply = invoke(scratch.path(), &["install", &apply_argument]);
     let json_apply = invoke(scratch.path(), &["--json", "install", &apply_argument]);
     let text_apply: InstallReceipt = successful_body(text_apply);

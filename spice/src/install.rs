@@ -398,6 +398,34 @@ impl InstallPlan {
     }
 }
 
+/// One side-effect-free install preview and the exact identity admitted by apply.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstallPreview {
+    digest: Digest,
+    plan: InstallPlan,
+}
+
+impl InstallPreview {
+    /// Bind a canonical plan to its dedicated-domain identity.
+    pub fn from_plan(plan: InstallPlan) -> Result<Self, InstallError> {
+        let digest = plan.digest()?;
+        Ok(Self { digest, plan })
+    }
+
+    /// Exact canonical plan identity accepted by `install --apply`.
+    #[must_use]
+    pub const fn digest(&self) -> &Digest {
+        &self.digest
+    }
+
+    /// Side-effect-free canonical installation plan.
+    #[must_use]
+    pub const fn plan(&self) -> &InstallPlan {
+        &self.plan
+    }
+}
+
 /// Durable progress state for apply and reversal.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]

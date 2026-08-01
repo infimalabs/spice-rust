@@ -2,13 +2,13 @@
 
 use std::path::PathBuf;
 
-use spice::install::{InstallError, InstallPlan, InstallReceipt};
+use spice::install::{InstallError, InstallPreview, InstallReceipt};
 use spice::repository::Repository;
 use spice::repository::StateError;
 use wire::{Digest, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
 pub(crate) enum Answer {
-    Plan(Outcome<InstallPlan>),
+    Plan(Outcome<InstallPreview>),
     Receipt(Outcome<InstallReceipt>),
 }
 
@@ -39,7 +39,10 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
                 Ok(executable) => executable,
                 Err(outcome) => return Answer::Plan(outcome),
             };
-            Answer::Plan(result(spice::install::plan(&repository, Some(&executable))))
+            Answer::Plan(result(
+                spice::install::plan(&repository, Some(&executable))
+                    .and_then(InstallPreview::from_plan),
+            ))
         }
         Request::Apply(spelling) => {
             let digest = match spelling.parse::<Digest>() {
