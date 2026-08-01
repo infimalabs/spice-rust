@@ -51,6 +51,16 @@ pub struct Rendering {
 }
 
 impl Rendering {
+    #[cfg(test)]
+    pub(crate) const fn stream(&self) -> Stream {
+        self.stream
+    }
+
+    #[cfg(test)]
+    pub(crate) fn document(&self) -> &[u8] {
+        &self.document
+    }
+
     /// Writes this rendering to the stream it names.
     ///
     /// A terminal that has gone away is not this process's business to report:

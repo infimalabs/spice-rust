@@ -24,11 +24,18 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Outcome<GateReport> {
         Ok(selected) => selected,
         Err(failure) => return failure.outcome(),
     };
-    let current = match selected.contract.adjudicate(selected.root()) {
-        Ok(current) => current,
+    let result = selected
+        .contract
+        .adjudicate(selected.root())
+        .map(|current| current.report());
+    run_report(result)
+}
+
+fn run_report(result: Result<GateReport, gate::RunError>) -> Outcome<GateReport> {
+    let report = match result {
+        Ok(report) => report,
         Err(error) => return Failure::run("gate::run-refused", error).outcome(),
     };
-    let report = current.report();
     if report.standing() == Standing::Refused {
         return Outcome::Refusal(Refusal {
             reason: "gate::regressed".to_owned(),
@@ -195,3 +202,6 @@ impl Failure {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+mod fixtures;
