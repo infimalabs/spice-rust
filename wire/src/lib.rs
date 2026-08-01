@@ -33,9 +33,16 @@ pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
     Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, Response, SeqRange, SeqRangeError,
 };
+// `WitnessKind` is deliberately absent here and reached as
+// `wire::witness::WitnessKind`. Two vocabularies currently claim that name:
+// `head::WitnessKind` names the predicate classes a witness head carries,
+// while `witness::WitnessKind` names the command registry's discriminants.
+// They overlap at different granularity, and WIRE-1kJJZ3Y7 owns deciding
+// whether they are one concept. This keeps the crate compiling without
+// prejudging that decision by renaming or deleting either one.
 pub use witness::{
     Answer, Disposition, Name, NameError, Phase, PhaseError, Standing, TaskHandle, TaskHandleError,
-    Up, Witness, WitnessKind,
+    Up, Witness,
 };
 
 /// Decode wire bytes into a DTO.
