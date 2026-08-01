@@ -73,11 +73,12 @@ fn every_crossing_optional_field_spells_absence_one_way() {
 /// complies.
 ///
 /// Without this fixture, emptying the source collector, stopping the walk at
-/// the top directory, dropping the descent into modules or enum variants, or
-/// short-circuiting the judgment all leave the suite green while nothing is
-/// enforced. The fixture tree carries one offender at each of those depths and
-/// two declarations that must stay unreported, so the finding list is exact in
-/// both directions.
+/// the top directory, dropping the descent into modules or enum variants,
+/// skipping the fields that carry no ident, or short-circuiting the judgment
+/// all leave the suite green while nothing is enforced. The fixture tree
+/// carries one offender at each of those depths, in both field syntaxes, and
+/// three declarations that must stay unreported, so the finding list is exact
+/// in both directions.
 #[test]
 fn an_optional_field_missing_the_spelling_is_refused() {
     let findings = judge_tree(&crate_root().join("tests/fixture/absence"));
@@ -88,6 +89,9 @@ fn an_optional_field_missing_the_spelling_is_refused() {
             format!("bare.rs: Draft.note omits {DEFAULT}, {SKIP}, {PRESENT}"),
             format!("bare.rs: Step::Begun.after omits {DEFAULT}, {SKIP}, {PRESENT}"),
             format!("nested/partial.rs: Partial.cause omits {PRESENT}"),
+            format!("unnamed.rs: Tagged.1 omits {DEFAULT}, {SKIP}, {PRESENT}"),
+            format!("unnamed.rs: Reach::Near.0 omits {DEFAULT}, {SKIP}, {PRESENT}"),
+            format!("unnamed.rs: Reach::Far.0 omits {DEFAULT}, {PRESENT}"),
         ]
     );
 }
@@ -264,11 +268,15 @@ impl Judge {
         }
     }
 
+    /// Judge every optional field a declaration carries, named the way Rust
+    /// names it.
+    ///
+    /// A tuple field answers to its position rather than to an ident. Reading
+    /// the ident and skipping the fields that have none would exempt every
+    /// tuple struct and tuple variant from the rule, so absence is judged by
+    /// the field's type and attributes and the position only spells it.
     fn fields(&mut self, owner: &str, crossing: Crossing, fields: &syn::Fields) {
-        for field in fields {
-            let Some(name) = &field.ident else {
-                continue;
-            };
+        for (position, field) in fields.iter().enumerate() {
             if !is_optional(&field.ty) {
                 continue;
             }
@@ -276,6 +284,10 @@ impl Judge {
             if missing.is_empty() {
                 continue;
             }
+            let name = field
+                .ident
+                .as_ref()
+                .map_or_else(|| position.to_string(), ToString::to_string);
             self.findings.push(format!(
                 "{}: {owner}.{name} omits {}",
                 self.location,
