@@ -46,6 +46,9 @@ successor and are not ports in waiting.
 | JavaScript emission | Removed. Browser DTOs compile from the wire crate, so there is no emitted foreign mirror or staleness protocol. |
 | Source-text UI tests | Removed. Shared fixtures prove typed view state and the browser pass proves the rendered appliance. |
 | Vendor files as citations | Removed. Owned tape bytes and stable loci are the only transcript evidence boundary. |
+| Session forensics (`spice session`) | Removed as a Python command family. Release one keeps forensics only through current `spice watch`, `spice retro`, `spice recall`, and `spice thread` surfaces backed by owned tape and journal loci; the Python subcommand set and private parsing rules do not cross. |
+| `spice demo` | Removed. Demonstration-only execution paths do not enter release one; examples and confidence evidence belong in current command fixtures, app fixtures, and sealed proof receipts. |
+| `spice agent import` | Removed. Agent state crosses the clean break only as reviewed task documents or explicit current-dialect application; no import verb reads Python state or makes old transcripts or tasks authoritative. |
 | Agent-to-agent messaging | Removed. Board state, directives, facts, and repository evidence are the complete coordination surface. |
 | Multi-user authority | Removed. One operator capability governs the repository; independent human authority is outside doctrine. |
 | Hidden projects | Removed. Work is visible through the ordinary board and allocator contract. |
