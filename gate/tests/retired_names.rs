@@ -127,13 +127,13 @@ fn scratch_setup_creates_its_root_rather_than_adopting_one_that_exists() {
 fn scratch_drop_removes_its_root_without_replacing_the_original_panic() {
     const ORIGINAL_PANIC: &str = "planted panic before scratch teardown";
 
-    let tree = ScratchTree::new("unwind");
-    let root = tree.path().to_path_buf();
+    let tree = Tree::new("unwind");
+    let root = tree.root.clone();
 
     let panic = std::panic::catch_unwind(|| {
         let live_tree = tree;
         assert!(
-            live_tree.path().exists(),
+            live_tree.root.exists(),
             "the scratch root was not live before the planted panic"
         );
         std::panic::panic_any(ORIGINAL_PANIC);
