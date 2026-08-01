@@ -56,7 +56,8 @@ impl Journal {
 }
 
 impl JournalReader {
-    /// Read the canonical authority stream without creating or migrating it.
+    /// Reads the canonical authority stream without writer capability,
+    /// creation, or migration.
     pub fn fact_snapshot(&self) -> Result<FactSnapshot, SnapshotError> {
         read_snapshot(&self.connection)
     }
