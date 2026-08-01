@@ -7,6 +7,13 @@
 use serde::{Deserialize, Serialize};
 use wire::ConfigSource;
 
+mod resolve;
+
+pub use resolve::{
+    ConcretePath, Document, FlagError, FlagOverride, FlagValue, Inputs, Issue, IssueKind,
+    Provenance, ResolveError, Resolved, resolve,
+};
+
 /// Every release-one configuration domain.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -247,20 +254,36 @@ impl PathTemplate {
     /// Whether this template covers one concrete leaf path.
     #[must_use]
     pub fn matches(self, path: &[PathSegment<'_>]) -> bool {
+        self.covers(path, true)
+    }
+
+    pub(crate) fn accepts_prefix(self, path: &[PathSegment<'_>]) -> bool {
+        self.covers(path, false)
+    }
+
+    fn covers(self, path: &[PathSegment<'_>], exact: bool) -> bool {
         let mut at = 0;
         for segment in self.rendered.split('.') {
+            if at == path.len() {
+                return !exact;
+            }
             if segment == "<name>" {
                 if !matches!(path.get(at), Some(PathSegment::Key(_))) {
                     return false;
                 }
                 at += 1;
             } else if let Some(key) = segment.strip_suffix("[]") {
-                if path.get(at) != Some(&PathSegment::Key(key))
-                    || !matches!(path.get(at + 1), Some(PathSegment::Index(_)))
-                {
+                if path.get(at) != Some(&PathSegment::Key(key)) {
                     return false;
                 }
-                at += 2;
+                at += 1;
+                if at == path.len() {
+                    return !exact;
+                }
+                if !matches!(path.get(at), Some(PathSegment::Index(_))) {
+                    return false;
+                }
+                at += 1;
             } else {
                 if path.get(at) != Some(&PathSegment::Key(segment)) {
                     return false;
