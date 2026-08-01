@@ -14,7 +14,6 @@ pub enum InstallError {
     State(StateError),
     Encode(serde_json::Error),
     Decode(serde_json::Error),
-    Atomic(atomic::Error),
     Io {
         operation: &'static str,
         path: PathBuf,
@@ -66,7 +65,6 @@ impl fmt::Display for InstallError {
             Self::State(error) => error.fmt(formatter),
             Self::Encode(error) => write!(formatter, "install plan did not encode: {error}"),
             Self::Decode(error) => write!(formatter, "install record did not decode: {error}"),
-            Self::Atomic(error) => write!(formatter, "install publication failed: {error}"),
             Self::Io {
                 operation,
                 path,
@@ -142,7 +140,6 @@ impl Error for InstallError {
             Self::Repository(error) => Some(error),
             Self::State(error) => Some(error),
             Self::Encode(error) | Self::Decode(error) => Some(error),
-            Self::Atomic(error) => Some(error),
             Self::Io { source, .. } => Some(source),
             _ => None,
         }

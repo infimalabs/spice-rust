@@ -5,10 +5,12 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use wire::Digest;
 
-use super::files::{create_directory, publish_image};
+use super::binding::bind_destination;
+use super::files::{observe_bound, publish_bound};
 use super::{
     FileImage, Generation, InstallError, InstallPlan, InstallReceipt, InstallStatus,
-    LEGACY_RECORDS, RECORD_MODE, RECORD_NAME, RECORD_VERSION, Repository, RepositoryIdentity,
+    LEGACY_RECORDS, RECORD_MODE, RECORD_NAME, RECORD_PATH, RECORD_VERSION, Repository,
+    RepositoryIdentity,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -174,17 +176,18 @@ impl InstallRecord {
 
 pub(super) fn read_record(repository: &Repository) -> Result<Option<LoadedRecord>, InstallError> {
     refuse_legacy_record(repository)?;
-    let path = record_path(repository)?;
-    let metadata = match fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(source) => return Err(InstallError::io("inspect install record", path, source)),
+    record_path(repository)?;
+    let binding = bind_destination(repository.common_dir(), RECORD_PATH)?;
+    let (observed, _) = observe_bound(
+        repository.common_dir(),
+        &binding.destination,
+        &binding.parent,
+    )?;
+    let Some(observed) = observed else {
+        return Ok(None);
     };
-    if !metadata.file_type().is_file() {
-        return Err(InstallError::PathShape(path));
-    }
-    let bytes =
-        fs::read(&path).map_err(|source| InstallError::io("read install record", &path, source))?;
+    let generation = observed.generation;
+    let bytes = observed.image.bytes;
     let record: InstallRecord = wire::decode(&bytes).map_err(InstallError::Decode)?;
     record.validate_for_repository(repository)?;
     let canonical = wire::encode(&record).map_err(InstallError::Encode)?;
@@ -193,10 +196,7 @@ pub(super) fn read_record(repository: &Repository) -> Result<Option<LoadedRecord
             "install record is not canonical".to_owned(),
         ));
     }
-    Ok(Some(LoadedRecord {
-        record,
-        generation: Generation::observe(&metadata),
-    }))
+    Ok(Some(LoadedRecord { record, generation }))
 }
 
 pub(super) fn write_initial_record(
@@ -204,22 +204,15 @@ pub(super) fn write_initial_record(
     record: &InstallRecord,
 ) -> Result<Generation, InstallError> {
     record.validate_for_repository(repository)?;
-    let logical = record_path(repository)?;
-    match fs::symlink_metadata(&logical) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Ok(_) => return Err(InstallError::ParentChanged(logical)),
-        Err(source) => {
-            return Err(InstallError::io(
-                "inspect absent install record",
-                logical,
-                source,
-            ));
-        }
+    let (observed, _) = observe_bound(
+        repository.common_dir(),
+        &record.plan.record.destination,
+        &record.plan.record.parent,
+    )?;
+    if observed.is_some() {
+        return Err(InstallError::ParentChanged(record_path(repository)?));
     }
-    for relative in &record.plan.record.introduced_parents {
-        create_directory(repository.common_dir(), relative)?;
-    }
-    write_record_bytes(repository, record)
+    write_record_bytes(repository, record, None)
 }
 
 pub(super) fn write_record(
@@ -228,22 +221,23 @@ pub(super) fn write_record(
     expected: Generation,
 ) -> Result<Generation, InstallError> {
     record.validate_for_repository(repository)?;
-    let path = record_path(repository)?;
-    let metadata = fs::symlink_metadata(&path)
-        .map_err(|source| InstallError::io("inspect install record", &path, source))?;
-    if !metadata.file_type().is_file() || Generation::observe(&metadata) != expected {
-        return Err(InstallError::ParentChanged(path));
-    }
-    write_record_bytes(repository, record)
+    write_record_bytes(repository, record, Some(expected))
 }
 
 fn write_record_bytes(
     repository: &Repository,
     record: &InstallRecord,
+    expected: Option<Generation>,
 ) -> Result<Generation, InstallError> {
-    let path = record_path(repository)?;
     let bytes = wire::encode(record).map_err(InstallError::Encode)?;
-    publish_image(&path, &FileImage::new(RECORD_MODE, bytes), true)
+    publish_bound(
+        repository.common_dir(),
+        &record.plan.record.destination,
+        &record.plan.record.parent,
+        record.plan.record.introduced_parents.len(),
+        &FileImage::new(RECORD_MODE, bytes),
+        expected,
+    )
 }
 
 pub(super) fn record_path(repository: &Repository) -> Result<PathBuf, InstallError> {

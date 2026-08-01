@@ -231,6 +231,8 @@ pub struct DocApplied {
 /// A directive was created.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SteerSent {
+    /// Durable directive identity, equal to the command that created it.
+    pub directive: CanonicalUuid,
     /// Directive key.
     pub key: String,
     /// Lane the directive addresses.
@@ -251,6 +253,8 @@ pub struct SteerSent {
 /// The same intent was sent again with lineage and escalation carried.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SteerResent {
+    /// Durable identity of the new rung.
+    pub directive: CanonicalUuid,
     /// Key of the resent directive.
     pub key: String,
     /// Key this send descends from.
@@ -631,7 +635,7 @@ pub struct JournalRestored {
     /// New epoch that recognized the exchange.
     pub epoch: CanonicalUuid,
     /// Authority the restore exchanged.
-    pub authority: CanonicalUuid,
+    pub authority: Digest,
 }
 
 /// The resident acquired the kernel writer lock and minted its epoch.

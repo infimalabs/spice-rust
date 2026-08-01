@@ -358,6 +358,14 @@ fn remove_if_present(path: &Path) -> io::Result<()> {
     }
 }
 
+fn remove_tree_if_present(path: &Path) -> io::Result<()> {
+    match fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 fn committed_reply(first: u64, last: u64) -> Outcome<()> {
     Outcome::Reply(Reply {
         position: ReplyPosition::Committed(SeqRange {

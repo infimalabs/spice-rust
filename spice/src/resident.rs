@@ -23,6 +23,7 @@ use wire::{
 type CommandResult<T> = Result<T, Outcome<()>>;
 
 mod shutdown;
+mod steering;
 
 use shutdown::{current_residency, drive_shutdown};
 

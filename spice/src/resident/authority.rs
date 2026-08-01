@@ -3,8 +3,8 @@ fn dispatch_command(
     repository: &Repository,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
+    config: &SurfaceConfig,
     seats: &mut Seats,
-    consent_policy: &consent::Policy,
     command: &wire::AdmittedCommand,
 ) -> Outcome<CommandAnswer> {
     if let Some(outcome) = crate::board_command::dispatch(bus, command) {
@@ -17,14 +17,26 @@ fn dispatch_command(
         (CommandKind::ReleasePublish, Intent::ReleasePublish(publish)) => {
             dispatch_release_publish(bus, paths, epoch, command, publish)
         }
+        (CommandKind::SteerInbox, Intent::SteerInbox(inbox)) => {
+            steering::inbox(bus, epoch, command, inbox)
+        }
+        (CommandKind::SteerSend, Intent::SteerSend(send)) => {
+            steering::send(bus, paths, epoch, &config.steering, command, send)
+        }
+        (CommandKind::SteerCancel, Intent::DirectiveRef(cancel)) => {
+            steering::cancel(bus, paths, epoch, command, cancel)
+        }
+        (CommandKind::SteerDispose, Intent::SteerDispose(dispose)) => {
+            steering::dispose(bus, paths, epoch, command, dispose)
+        }
         (CommandKind::ConsentRead, Intent::ConsentRead(_)) => {
-            dispatch_consent_read(bus, consent_policy)
+            dispatch_consent_read(bus, &config.consent)
         }
         (CommandKind::ConsentPolicy, Intent::ConsentPolicy(_)) => {
-            dispatch_consent_policy(bus, consent_policy)
+            dispatch_consent_policy(bus, &config.consent)
         }
         (CommandKind::ConsentDecide, Intent::ConsentDecide(decide)) => {
-            dispatch_consent_decide(bus, epoch, consent_policy, command, decide)
+            dispatch_consent_decide(bus, epoch, &config.consent, command, decide)
         }
         (CommandKind::TrustGrant | CommandKind::TrustRevoke, Intent::TrustRef(reference)) => {
             dispatch_trust_rule(bus, repository, epoch, command, reference)

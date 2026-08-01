@@ -230,6 +230,77 @@ pub enum Source {
     CommandResults,
 }
 
+impl Source {
+    /// Stable inventory spelling used to explain one materialization's inputs.
+    #[must_use]
+    pub fn provenance(self) -> String {
+        match self {
+            Self::Fact(kind) => kind.to_string(),
+            Self::Facts(plane) => format!("{}::*", plane.as_str()),
+            Self::Fold(fold) => fold.to_string(),
+            Self::Head(head) => head.as_str().to_owned(),
+            Self::Ring(ring) => ring.as_str().to_owned(),
+            Self::Config(config) => config.as_str().to_owned(),
+            Self::Tape(tape) => tape.as_str().to_owned(),
+            Self::CommandResults => "stored-command-results".to_owned(),
+        }
+    }
+}
+
+impl FactPlane {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Task => "task",
+            Self::Claim => "claim",
+            Self::Document => "doc",
+            Self::Steering => "steer",
+            Self::Consent => "consent",
+            Self::Lane => "lane",
+            Self::Taste => "taste",
+            Self::Canary => "canary",
+            Self::Vendor => "vendor",
+            Self::Trust => "trust",
+            Self::Commit => "commit",
+            Self::Gate => "gate",
+            Self::Journal => "journal",
+            Self::Resident => "up",
+            Self::Proof => "proof",
+            Self::Release => "release",
+        }
+    }
+}
+
+impl HeadSource {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Task => "task",
+            Self::Workflow => "workflow",
+            Self::Claim => "claim",
+            Self::Lease => "lease",
+            Self::Witness => "witness",
+            Self::Finding => "finding",
+            Self::Residency => "residency",
+        }
+    }
+}
+
+impl ConfigSource {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Consent => "consent",
+            Self::Taste => "taste",
+        }
+    }
+}
+
+impl TapeSource {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::DeclaredExtents => "declared-extents",
+        }
+    }
+}
+
 /// One admitted fact or head family named by a fold answer.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum AnswerContent {

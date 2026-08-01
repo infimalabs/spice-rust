@@ -44,6 +44,8 @@ mod resident;
 #[cfg(not(target_arch = "wasm32"))]
 mod restore_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod steering_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod trust_command;
 
 use render::Form;
@@ -148,12 +150,12 @@ fn main() {
         },
         ["backup"] => deliver(&journal_command::backup(leaf), form),
         ["restore"] => deliver(&restore_command::restore(leaf), form),
-        ["journal"] => deliver(&journal_command::report(), form),
-        ["journal", "replay"] => deliver(&journal_command::replay(leaf), form),
+        ["journal"] => deliver(&journal_command::report(contract), form),
+        ["journal", "replay"] => deliver(&journal_command::replay(leaf, contract), form),
         ["journal", "reindex"] => deliver(&journal_command::reindex(), form),
-        ["journal", "verify"] => deliver(&journal_command::verify(), form),
-        ["fold"] => deliver(&journal_command::folds(), form),
-        ["thread"] => deliver(&journal_command::thread(leaf), form),
+        ["journal", "verify"] => deliver(&journal_command::verify(contract), form),
+        ["fold"] => deliver(&journal_command::folds(contract), form),
+        ["thread"] => deliver(&journal_command::thread(leaf, contract), form),
         ["canvas"] => deliver(&canvas_command::open(), form),
         ["version"] => deliver(&version_outcome(), form),
         ["release", "notes"] => deliver(&release_command::notes(leaf), form),
@@ -177,6 +179,10 @@ fn main() {
         | ["task", "depends"]
         | ["doc"]
         | ["doc", "ledger"] => deliver(&board_command::run(leaf, contract), form),
+        ["steer"] | ["steer", "cancel"] | ["inbox"] | ["ack"] => deliver(
+            &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
+            form,
+        ),
         ["trust"] => deliver(&trust_command::report(contract), form),
         ["trust", "grant"] => deliver(&trust_command::rule(leaf, contract, true), form),
         ["trust", "revoke"] => deliver(&trust_command::rule(leaf, contract, false), form),
