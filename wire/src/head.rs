@@ -99,20 +99,11 @@ pub struct LeaseHead {
 
 /// Closed classes of authoritative witness heads.
 ///
-/// This is not [`crate::WitnessKind`], and the one-word difference between
-/// their names hides how differently they range. These seven classify
-/// predicates the journal keeps as head rows of their own. `WitnessKind`
-/// discriminates [`crate::Witness`], the wider set a command may carry in
-/// `expected`, and most of those are re-proven against some *other* head — a
-/// task, workflow, claim, or lease row — rather than against a witness head.
-///
-/// So the two vocabularies overlap without either containing the other.
-/// `Assignment`, `Directive`, `Consent`, `Budget`, and `Transition` name a
-/// class here and a command predicate there; `Review` and `Document` have no
-/// command-side counterpart under those spellings, and the command side
-/// carries sixteen kinds that are no head row at all. Reach for this type when
-/// classifying something already stored, and for `WitnessKind` when stating
-/// what a command must prove before it lands.
+/// This classifies seven stored predicate-head rows. Command preconditions use
+/// the 23-variant [`crate::witness::WitnessKind`] vocabulary instead. They
+/// overlap on assignment, directive, consent, budget, and transition, but
+/// neither contains the other: only heads name review and document classes,
+/// while only commands name task, workflow, claim, and other concrete subjects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WitnessClass {

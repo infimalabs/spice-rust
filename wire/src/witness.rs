@@ -405,13 +405,9 @@ pub enum Witness {
 ///
 /// The command registry states its law in these terms because a required
 /// witness is known at compile time while the value it proves is not.
-///
-/// This is not [`crate::WitnessClass`], which names the seven classes of
-/// durable witness *head row*. These kinds range over what a command may
-/// carry in `expected`, and most of them are proven against another head — a
-/// task, workflow, claim, or lease row — rather than against a witness head
-/// row. The two vocabularies overlap on `Assignment`, `Directive`, `Consent`,
-/// `Budget`, and `Transition` without either containing the other.
+/// [`crate::WitnessClass`] separately classifies the seven durable witness-head
+/// rows. The two vocabularies overlap on assignment, directive, consent,
+/// budget, and transition, but neither contains the other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WitnessKind {

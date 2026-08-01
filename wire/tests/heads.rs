@@ -3,8 +3,8 @@
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use wire::{
-    ClaimHead, CursorHead, FindingHead, LeaseHead, ResidencyHead, TaskHead, TrustHead, WitnessHead,
-    WorkflowHead,
+    ClaimHead, Command, CursorHead, FindingHead, LeaseHead, ResidencyHead, TaskHead, TrustHead,
+    WitnessClass, WitnessHead, WitnessKind, WorkflowHead,
 };
 
 const TASK: &str = r#"{
@@ -50,6 +50,14 @@ const WITNESS: &str = r#"{
   "kind": "review",
   "predicate": "workflow head 41 is review",
   "head": 43
+}"#;
+
+const COMMAND: &str = r#"{
+  "v": 1,
+  "id": "018f82d4-6f59-7d06-92e3-bce913116304",
+  "kind": "task::note",
+  "expected": [{ "kind": "existence", "task": "WIRE-aBcD" }],
+  "body": {}
 }"#;
 
 const TRUST: &str = r#"{
@@ -147,6 +155,16 @@ fn witness_heads_admit_each_settled_predicate_class() {
         let decoded = wire::decode::<WitnessHead>(fixture.as_bytes());
         assert!(decoded.is_ok(), "{class} is an authoritative witness class");
     }
+}
+
+#[test]
+fn both_witness_vocabularies_coexist_without_shadowing() {
+    let head: WitnessHead = wire::decode(WITNESS.as_bytes()).expect("witness head decodes");
+    let command: Command<serde_json::Value> =
+        wire::decode(COMMAND.as_bytes()).expect("command decodes");
+
+    assert_eq!(head.kind, WitnessClass::Review);
+    assert_eq!(command.expected[0].kind(), WitnessKind::Existence);
 }
 
 #[test]
