@@ -9,8 +9,8 @@ Install the tracked hooks once per checkout or linked worktree:
 ```
 
 The pre-commit hook runs formatting, Clippy, and the complete workspace test
-suite through `scripts/verify.sh`. It prints each command before execution and
-names the command and exit status when verification fails.
+suite through `cargo xtask verify`. It prints each command before execution
+and names the command and exit status when verification fails.
 
 ## Workspace verification
 
@@ -18,7 +18,7 @@ Run the same verification outside a commit, and before handing work to
 another agent, with:
 
 ```sh
-./scripts/verify.sh
+cargo xtask verify
 ```
 
 The `gate` integration tests enforce repository contracts from stable product

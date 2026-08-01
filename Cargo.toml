@@ -21,6 +21,7 @@ members = [
     "taste",
     "vendor",
     "wire",
+    "xtask",
 ]
 resolver = "3"
 
