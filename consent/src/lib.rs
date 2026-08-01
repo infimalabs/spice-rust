@@ -5,7 +5,7 @@
 //! modules are the three things a decision needs: [`policy`] states which named
 //! rule answers, [`budget`] bounds how many times a rule may grant before an
 //! operator renews it, and [`pend`] holds what the operator must answer while
-//! the lane keeps doing reversible work.
+//! the lane keeps doing reversible work, then records the answer once given.
 //!
 //! No policy is decided anywhere else. `vendor` states the request and this
 //! crate answers it, so the seat an operator configures is the seat that acts.
@@ -17,17 +17,17 @@ pub mod pend;
 pub mod policy;
 
 pub use budget::{Budgets, Spend};
-pub use pend::{Held, Pending, Reversibility};
-pub use policy::{Answer, Authority, Decision, POSTURE, Policy, PolicyError, Rule};
+pub use pend::{Held, Pending, Reversibility, Ruling};
+pub use policy::{Answer, Authority, Decision, OPERATOR, POSTURE, Policy, PolicyError, Rule};
 
 use wire::body::{ConsentAsked, ConsentDenied, ConsentGranted, ConsentQueueCause, ConsentQueued};
 
 /// The one disposition a request received.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Outcome {
-    /// A rule or the posture allowed the request.
+    /// A rule, the posture, or the operator allowed the request.
     Granted(ConsentGranted),
-    /// A rule or the posture refused the request.
+    /// A rule, the posture, or the operator refused the request.
     Denied(ConsentDenied),
     /// The request waits for the operator.
     Queued(ConsentQueued),
@@ -58,10 +58,14 @@ impl Outcome {
                 witness: Some(denied.rule.clone()),
                 expected: None,
                 observed: None,
-                remedy: format!(
-                    "the `{}` rule denies this operation; ask the operator to decide it directly, or change that rule",
-                    denied.rule
-                ),
+                remedy: if denied.rule == OPERATOR {
+                    "the operator refused this request; it never proceeds under this identity, so ask again only as a new request".to_owned()
+                } else {
+                    format!(
+                        "the `{}` rule denies this operation; ask the operator to decide it directly, or change that rule",
+                        denied.rule
+                    )
+                },
             }),
         }
     }
@@ -196,9 +200,28 @@ impl Actuator {
             .expect("the inspected request remains held until this release"))
     }
 
-    /// Release a held request once the operator has answered it.
-    pub fn release(&mut self, request: wire::CanonicalUuid) -> Option<Held> {
-        self.pending.release(request)
+    /// Record the operator's answer to a held request and state the fact.
+    ///
+    /// The answer is the request's terminal disposition, so it reads as an
+    /// [`Outcome`] exactly like the answer a rule gives: a grant opens the
+    /// action the queue was holding, and a refusal closes it for good. A
+    /// request nothing holds has no answer to record and yields nothing.
+    pub fn release(&mut self, request: wire::CanonicalUuid, ruling: Ruling) -> Option<Outcome> {
+        let held = self.pending.release(request, ruling)?;
+        let rule = Authority::Operator.name().to_owned();
+        Some(match ruling {
+            Ruling::Allow => Outcome::Granted(ConsentGranted {
+                request,
+                lane: held.lane(),
+                rule,
+                budget: None,
+            }),
+            Ruling::Deny => Outcome::Denied(ConsentDenied {
+                request,
+                lane: held.lane(),
+                rule,
+            }),
+        })
     }
 }
 

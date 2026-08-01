@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use wire::CanonicalUuid;
 use wire::body::{ConsentAsked, ConsentQueueCause, ConsentQueued};
@@ -10,6 +10,19 @@ pub enum Reversibility {
     Reversible,
     /// The action cannot be undone, so it waits until the operator decides.
     Irreversible,
+}
+
+/// How the operator ruled on a held request.
+///
+/// The operator gives one of the two decisive answers a rule can give. Queueing
+/// again is not among them, because it would re-ask the question the operator
+/// is answering, so this is deliberately narrower than [`crate::Answer`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Ruling {
+    /// The operator allowed the held operation.
+    Allow,
+    /// The operator refused the held operation.
+    Deny,
 }
 
 /// One request held for the operator.
@@ -58,9 +71,14 @@ impl Held {
 ///
 /// Holding is not blocking. A lane with requests outstanding keeps doing
 /// reversible work, and only the irreversible action a request covers waits.
+///
+/// A refused request is remembered after it leaves the queue, because the
+/// answer that ends the wait is the same answer that decides whether the
+/// action may be taken at all.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Pending {
     held: BTreeMap<CanonicalUuid, Held>,
+    refused: BTreeSet<CanonicalUuid>,
 }
 
 impl Pending {
@@ -97,15 +115,36 @@ impl Pending {
         queued
     }
 
-    /// Release a decided request, yielding what was held.
-    pub fn release(&mut self, request: CanonicalUuid) -> Option<Held> {
-        self.held.remove(&request)
+    /// Release a request the operator answered, yielding what was held.
+    ///
+    /// A refusal is kept after the release, because taking the request out of
+    /// the queue must not open what the operator closed. The identity stays
+    /// refused for good; asking again is a new request under a new identity
+    /// that the operator has not answered.
+    pub fn release(&mut self, request: CanonicalUuid, ruling: Ruling) -> Option<Held> {
+        let held = self.held.remove(&request)?;
+        if ruling == Ruling::Deny {
+            self.refused.insert(request);
+        }
+        Some(held)
+    }
+
+    /// What is held under this request identity, if anything still is.
+    #[must_use]
+    pub fn held(&self, request: CanonicalUuid) -> Option<&Held> {
+        self.held.get(&request)
     }
 
     /// Whether this request is still waiting on the operator.
     #[must_use]
     pub fn holds(&self, request: CanonicalUuid) -> bool {
-        self.held.contains_key(&request)
+        self.held(request).is_some()
+    }
+
+    /// Whether the operator refused this request.
+    #[must_use]
+    pub fn refuses(&self, request: CanonicalUuid) -> bool {
+        self.refused.contains(&request)
     }
 
     /// The request held under this identity, if it is still pending.
@@ -123,11 +162,14 @@ impl Pending {
     /// this one. A decision pending about some other operation is not an answer
     /// about this one, and treating it as one would make the first queued
     /// request a global halt on every lane.
+    ///
+    /// A request the operator refused never proceeds again. Waiting and being
+    /// refused are different reasons to stop, and only the first one ends.
     #[must_use]
     pub fn proceeds(&self, request: CanonicalUuid, reversibility: Reversibility) -> bool {
         match reversibility {
             Reversibility::Reversible => true,
-            Reversibility::Irreversible => !self.holds(request),
+            Reversibility::Irreversible => !self.holds(request) && !self.refuses(request),
         }
     }
 
