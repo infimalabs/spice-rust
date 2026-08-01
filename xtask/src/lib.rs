@@ -4,7 +4,16 @@ use std::fmt;
 use std::io::{self, Write};
 use std::process::Command;
 
-const VERIFY_STEPS: [Step; 4] = [
+/// The target the browser app is compiled for.
+///
+/// Every other step builds for the host and only for the host, so the far side
+/// of each `cfg(not(target_arch = "wasm32"))` is code no host step ever
+/// compiles. The app is compiled from this workspace and embedded in the binary
+/// that owns the socket, which makes that far side shipped code rather than a
+/// portability courtesy.
+const WASM_TARGET: &str = "wasm32-unknown-unknown";
+
+const VERIFY_STEPS: [Step; 5] = [
     Step::new(
         "cargo fmt --all -- --check",
         &["fmt", "--all", "--", "--check"],
@@ -20,6 +29,10 @@ const VERIFY_STEPS: [Step; 4] = [
             "-D",
             "warnings",
         ],
+    ),
+    Step::new(
+        "cargo check --locked --workspace --target wasm32-unknown-unknown",
+        &["check", "--locked", "--workspace", "--target", WASM_TARGET],
     ),
     Step::new(
         "cargo test --locked --workspace --all-targets",
@@ -169,12 +182,7 @@ mod tests {
 
     #[test]
     fn success_runs_every_step_in_order_and_prints_exact_labels() {
-        let mut runner = runner([
-            Outcome::Success,
-            Outcome::Success,
-            Outcome::Success,
-            Outcome::Success,
-        ]);
+        let mut runner = runner(VERIFY_STEPS.map(|_| Outcome::Success));
         let mut output = Vec::new();
 
         verify_with(&mut runner, &mut output).expect("verification succeeds");
@@ -198,6 +206,31 @@ mod tests {
 
         assert_eq!(step.arguments, ["test", "--locked", "--workspace", "--doc"]);
         assert_eq!(VERIFY_STEPS.last(), Some(step));
+    }
+
+    /// The battery builds for a second target, and says which one.
+    ///
+    /// Every other step is a host build, so without this one the far side of
+    /// each `cfg(not(target_arch = "wasm32"))` is never compiled by anything
+    /// and breaks in a build no step runs. The label carries the triple because
+    /// the same cargo command fails for host reasons too, and a reader seeing
+    /// only "check failed" would look for a defect that is not there.
+    #[test]
+    fn verifier_builds_the_workspace_for_the_browser_target() {
+        let step = VERIFY_STEPS
+            .iter()
+            .find(|step| step.arguments.contains(&"--target"))
+            .expect("the verifier has a cross-target step");
+
+        assert_eq!(
+            step.arguments,
+            ["check", "--locked", "--workspace", "--target", WASM_TARGET],
+        );
+        assert!(
+            step.label.contains(WASM_TARGET),
+            "the label must name the target it builds for: {}",
+            step.label,
+        );
     }
 
     #[test]

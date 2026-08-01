@@ -245,7 +245,8 @@ impl Law {
         optional: &[],
     };
     /// Exact request disposition, named rule, and budget predicate when a rule
-    /// spends or renews a budget.
+    /// spends or renews a budget. The `consent::decide` command additionally
+    /// requires operator capability.
     pub const DECIDE: Self = Self {
         required: &[WitnessKind::Consent, WitnessKind::Rule],
         optional: &[WitnessKind::Budget],

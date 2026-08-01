@@ -13,7 +13,8 @@
 use app::{Admitted, Applied, BrowserState, ChainEnd, Session};
 use serde::{Deserialize, Serialize};
 use wire::{
-    CanonicalUuid, Envelope, Fact, FaultClass, Overflow, Packed, Response, Seq, WireVersion, body,
+    Accepted, CanonicalUuid, Envelope, Fact, FaultClass, Overflow, Packed, Response, Seq,
+    WireVersion, body,
 };
 
 /// Capability this session opens with.
@@ -33,6 +34,24 @@ fn uuid(text: &str) -> CanonicalUuid {
 /// A session opened against [`CAPABILITY`] and [`EPOCH`].
 fn session() -> Session {
     Session::open(uuid(CAPABILITY), uuid(EPOCH))
+}
+
+fn next_session() -> Session {
+    Session::open(uuid(NEXT_CAPABILITY), uuid(NEXT_EPOCH))
+}
+
+/// The principal receipt that scopes browser state and every admitted frame.
+fn accepted(session: &Session, epoch: &str) -> Admitted<Accepted> {
+    let bytes = format!(
+        r#"{{ "wire": 1, "actor": "lane:018f82d4-6f59-7d06-92e3-bce9131163c2", "epoch": "{epoch}" }}"#
+    );
+    session
+        .admit_accepted(bytes.as_bytes())
+        .expect("the fixture acceptance is admitted")
+}
+
+fn browser_state<T>() -> BrowserState<T> {
+    BrowserState::new(&accepted(&session(), EPOCH))
 }
 
 /// The body of the reply fixture.
@@ -215,7 +234,7 @@ fn a_streamed_fact_at_another_wire_version_faults_and_never_reaches_state() {
 
     // The door is the only route in, so a state that saw this stream is
     // indistinguishable from one that saw nothing at all.
-    let state = BrowserState::<Row>::new(uuid(EPOCH));
+    let state = browser_state::<Row>();
     assert_eq!(state.cursor(), None);
 }
 
@@ -297,7 +316,7 @@ fn a_frame_missing_a_required_field_faults_as_undecodable() {
 
 #[test]
 fn an_untouched_state_invents_no_cursor_horizon_or_rows() {
-    let state = BrowserState::<Row>::new(uuid(EPOCH));
+    let state = browser_state::<Row>();
 
     assert_eq!(state.cursor(), None);
     assert_eq!(state.horizon(), None);
@@ -308,7 +327,7 @@ fn an_untouched_state_invents_no_cursor_horizon_or_rows() {
 
 #[test]
 fn monotone_frames_advance_the_cursor() {
-    let mut state = BrowserState::<Row>::new(uuid(EPOCH));
+    let mut state = browser_state::<Row>();
 
     assert_eq!(state.apply(&envelope(48213)), Applied::Advanced);
     assert_eq!(state.cursor(), Some(seq(48213)));
@@ -317,8 +336,20 @@ fn monotone_frames_advance_the_cursor() {
 }
 
 #[test]
+fn a_same_epoch_frame_from_another_capability_never_reaches_state() {
+    let foreign = Session::open(uuid(NEXT_CAPABILITY), uuid(EPOCH))
+        .admit_envelope::<body::TaskPhased>(&envelope_bytes(1, 48213))
+        .expect("the other session admits its own frame");
+    let mut state = browser_state::<Row>();
+
+    assert_eq!(state.apply(&foreign), Applied::ForeignScope);
+    assert_eq!(state.cursor(), None);
+    assert!(state.walk(seq(48213)).links().is_empty());
+}
+
+#[test]
 fn a_repeated_delivery_is_named_a_duplicate_and_moves_nothing() {
-    let mut state = BrowserState::<Row>::new(uuid(EPOCH));
+    let mut state = browser_state::<Row>();
     state.apply(&envelope(48213));
 
     let applied = state.apply(&envelope(48213));
@@ -330,7 +361,7 @@ fn a_repeated_delivery_is_named_a_duplicate_and_moves_nothing() {
 
 #[test]
 fn a_reordered_delivery_is_named_stale_and_never_lowers_the_cursor() {
-    let mut state = BrowserState::<Row>::new(uuid(EPOCH));
+    let mut state = browser_state::<Row>();
     state.apply(&envelope(48214));
 
     let applied = state.apply(&envelope(48190));
@@ -341,7 +372,7 @@ fn a_reordered_delivery_is_named_stale_and_never_lowers_the_cursor() {
 
 #[test]
 fn a_gap_advances_without_being_repaired() {
-    let mut state = BrowserState::<Row>::new(uuid(EPOCH));
+    let mut state = browser_state::<Row>();
     state.apply(&envelope(48213));
 
     assert_eq!(state.apply(&envelope(48999)), Applied::Advanced);
@@ -350,7 +381,7 @@ fn a_gap_advances_without_being_repaired() {
 
 #[test]
 fn a_chain_walk_ends_at_the_received_envelope_that_omits_cause() {
-    let mut state = BrowserState::<Row>::new(uuid(EPOCH));
+    let mut state = browser_state::<Row>();
     state.apply(&causal_envelope(48190, None));
     state.apply(&causal_envelope(48213, Some(48190)));
     state.apply(&causal_envelope(48214, Some(48213)));
@@ -375,7 +406,7 @@ fn a_chain_walk_ends_at_the_received_envelope_that_omits_cause() {
 
 #[test]
 fn a_dangling_cause_is_reported_without_inventing_its_position() {
-    let mut state = BrowserState::<Row>::new(uuid(EPOCH));
+    let mut state = browser_state::<Row>();
     state.apply(&causal_envelope(48214, Some(48213)));
 
     let walk = state.walk(seq(48214));
@@ -395,7 +426,7 @@ fn a_dangling_cause_is_reported_without_inventing_its_position() {
 
 #[test]
 fn a_cause_cycle_is_reported_after_each_received_link_once() {
-    let mut state = BrowserState::<Row>::new(uuid(EPOCH));
+    let mut state = browser_state::<Row>();
     state.apply(&causal_envelope(48213, Some(48214)));
     state.apply(&causal_envelope(48214, Some(48213)));
 
@@ -413,7 +444,7 @@ fn a_cause_cycle_is_reported_after_each_received_link_once() {
 
 #[test]
 fn a_received_stale_frame_can_complete_a_previously_dangling_walk() {
-    let mut state = BrowserState::<Row>::new(uuid(EPOCH));
+    let mut state = browser_state::<Row>();
     state.apply(&causal_envelope(48214, Some(48213)));
     assert_eq!(state.walk(seq(48214)).end(), ChainEnd::Dangling(seq(48213)));
 
@@ -426,7 +457,7 @@ fn a_received_stale_frame_can_complete_a_previously_dangling_walk() {
 
 #[test]
 fn a_later_answer_replaces_the_earlier_one_whole() {
-    let mut state = BrowserState::new(uuid(EPOCH));
+    let mut state = browser_state();
     assert!(state.replace(&packed_answer(&["first", "second"], None, 48213)));
 
     assert!(state.replace(&packed_answer(&["third"], None, 48214)));
@@ -437,7 +468,7 @@ fn a_later_answer_replaces_the_earlier_one_whole() {
 
 #[test]
 fn overflow_is_carried_from_the_answer_rather_than_inferred_from_length() {
-    let mut state = BrowserState::new(uuid(EPOCH));
+    let mut state = browser_state();
     assert!(state.replace(&packed_answer(&["only"], Some((41, 48250)), 48213)));
 
     assert!(state.is_overflowing());
@@ -453,7 +484,7 @@ fn overflow_is_carried_from_the_answer_rather_than_inferred_from_length() {
 
 #[test]
 fn a_complete_answer_clears_the_overflow_an_earlier_one_declared() {
-    let mut state = BrowserState::new(uuid(EPOCH));
+    let mut state = browser_state();
     assert!(state.replace(&packed_answer(&["only"], Some((41, 48250)), 48213)));
 
     assert!(state.replace(&packed_answer(&["only", "rest"], None, 48214)));
@@ -464,11 +495,11 @@ fn a_complete_answer_clears_the_overflow_an_earlier_one_declared() {
 
 #[test]
 fn reconnecting_to_a_new_generation_starts_empty() {
-    let mut state = BrowserState::new(uuid(EPOCH));
+    let mut state = browser_state();
     state.apply(&envelope(48213));
     assert!(state.replace(&packed_answer(&["stale"], None, 48213)));
 
-    state.reconnect(uuid(NEXT_EPOCH));
+    state.reconnect(&accepted(&next_session(), NEXT_EPOCH));
 
     assert_eq!(state.epoch(), uuid(NEXT_EPOCH));
     assert_eq!(state.cursor(), None);
@@ -479,12 +510,27 @@ fn reconnecting_to_a_new_generation_starts_empty() {
 }
 
 #[test]
+fn reconnecting_to_another_capability_in_the_same_epoch_starts_empty() {
+    let mut state = browser_state();
+    state.apply(&envelope(48213));
+    assert!(state.replace(&packed_answer(&["private"], None, 48213)));
+    let replacement = Session::open(uuid(NEXT_CAPABILITY), uuid(EPOCH));
+
+    state.reconnect(&accepted(&replacement, EPOCH));
+
+    assert_eq!(state.epoch(), uuid(EPOCH));
+    assert_eq!(state.cursor(), None);
+    assert_eq!(state.horizon(), None);
+    assert!(state.rows().is_empty());
+}
+
+#[test]
 fn reconnecting_to_the_same_generation_resumes_where_it_left_off() {
-    let mut state = BrowserState::new(uuid(EPOCH));
+    let mut state = browser_state();
     state.apply(&envelope(48213));
     assert!(state.replace(&packed_answer(&["live"], None, 48213)));
 
-    state.reconnect(uuid(EPOCH));
+    state.reconnect(&accepted(&session(), EPOCH));
 
     assert_eq!(state.epoch(), uuid(EPOCH));
     assert_eq!(state.cursor(), Some(seq(48213)));
@@ -493,10 +539,10 @@ fn reconnecting_to_the_same_generation_resumes_where_it_left_off() {
 
 #[test]
 fn a_resumed_state_still_refuses_positions_it_already_applied() {
-    let mut state = BrowserState::<Row>::new(uuid(EPOCH));
+    let mut state = browser_state::<Row>();
     state.apply(&envelope(48213));
 
-    state.reconnect(uuid(EPOCH));
+    state.reconnect(&accepted(&session(), EPOCH));
 
     assert_eq!(state.apply(&envelope(48213)), Applied::Duplicate);
 }
@@ -504,7 +550,7 @@ fn a_resumed_state_still_refuses_positions_it_already_applied() {
 #[test]
 fn a_frame_admitted_by_the_session_is_the_frame_state_applies() {
     let session = session();
-    let mut state = BrowserState::<Row>::new(session.epoch());
+    let mut state = BrowserState::<Row>::new(&accepted(&session, EPOCH));
 
     session
         .admit_frame::<Status>(&response(1, EPOCH))

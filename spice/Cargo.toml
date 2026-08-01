@@ -11,6 +11,7 @@ atomic = { path = "../atomic" }
 board = { path = "../board" }
 bus = { path = "../bus" }
 canvas = { path = "../canvas" }
+clap = "4.6.5"
 consent = { path = "../consent" }
 dialect = { path = "../dialect" }
 fold = { path = "../fold" }

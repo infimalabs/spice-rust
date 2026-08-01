@@ -24,7 +24,7 @@ use wire::{
     Outcome, Overflow, Response, Seq, WireVersion, Witness,
 };
 
-use crate::socket::Admitted;
+use crate::socket::{Admitted, SessionScope};
 use crate::state::{Answer, BrowserState};
 
 /// Reason named when an answer does not belong to the command it was paired
@@ -42,20 +42,33 @@ const ANSWER_MISMATCH: &str = "pane::answer-mismatch";
 /// provenance but cannot grant it.
 ///
 /// [`Session::admit_accepted`]: crate::Session::admit_accepted
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Principal {
     actor: Actor,
     epoch: CanonicalUuid,
+    scope: SessionScope,
+}
+
+impl fmt::Debug for Principal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Principal")
+            .field("actor", &self.actor)
+            .field("epoch", &self.epoch)
+            .finish()
+    }
 }
 
 impl Principal {
     /// Adopt the principal the resident derived for this session.
     #[must_use]
     pub fn admitted(accepted: &Admitted<Accepted>) -> Self {
+        let scope = accepted.scope();
         let accepted = accepted.get();
         Self {
             actor: accepted.actor.clone(),
             epoch: accepted.epoch,
+            scope,
         }
     }
 
@@ -69,6 +82,10 @@ impl Principal {
     #[must_use]
     pub const fn epoch(&self) -> CanonicalUuid {
         self.epoch
+    }
+
+    pub(crate) const fn scope(&self) -> SessionScope {
+        self.scope
     }
 
     /// True when this principal carries the operator capability.
@@ -91,7 +108,10 @@ impl Principal {
 /// class here rather than defaulting into the lane-visible set.
 const fn requires_operator(kind: CommandKind) -> bool {
     match kind {
-        CommandKind::SteerCancel | CommandKind::TrustGrant | CommandKind::TrustRevoke => true,
+        CommandKind::SteerCancel
+        | CommandKind::ConsentDecide
+        | CommandKind::TrustGrant
+        | CommandKind::TrustRevoke => true,
         CommandKind::TaskAdd
         | CommandKind::TaskEdit
         | CommandKind::TaskNote
@@ -111,7 +131,6 @@ const fn requires_operator(kind: CommandKind) -> bool {
         | CommandKind::SteerSend
         | CommandKind::SteerResend
         | CommandKind::SteerDispose
-        | CommandKind::ConsentDecide
         | CommandKind::TrustPend
         | CommandKind::LaneSeat
         | CommandKind::LaneState
@@ -186,7 +205,8 @@ impl<'a, T> ReadPane<'a, T> {
     /// under another authority's name.
     #[must_use]
     pub fn over(principal: &'a Principal, state: &'a BrowserState<T>) -> Option<Self> {
-        (principal.epoch() == state.epoch()).then_some(Self { principal, state })
+        (principal.epoch() == state.epoch() && principal.scope() == state.scope())
+            .then_some(Self { principal, state })
     }
 
     /// The principal this pane renders for.

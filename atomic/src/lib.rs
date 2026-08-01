@@ -490,6 +490,8 @@ mod tests {
         fs::write(&source, b"prepared bytes").unwrap();
         fs::write(&destination_path, b"old bytes").unwrap();
         let destination = Destination::new(&destination_path).unwrap();
+        let source_entries = source_directory.entries();
+        let destination_entries = destination_directory.entries();
 
         let error = destination.replace_from(&source).unwrap_err();
 
@@ -499,6 +501,132 @@ mod tests {
         ));
         assert_eq!(fs::read(&source).unwrap(), b"prepared bytes");
         assert_eq!(fs::read(&destination_path).unwrap(), b"old bytes");
+        assert_eq!(source_directory.entries(), source_entries);
+        assert_eq!(destination_directory.entries(), destination_entries);
+    }
+
+    #[test]
+    fn destination_without_a_file_name_is_refused_without_mutation() {
+        let directory = TestDirectory::new();
+        let sentinel = directory.path().join("sentinel");
+        fs::write(&sentinel, b"untouched").unwrap();
+        let requested = directory.path().join("..");
+        let entries = directory.entries();
+
+        let error = Destination::new(&requested).unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::Refused(Refusal::DestinationHasNoFileName { destination })
+                if destination == requested
+        ));
+        assert_eq!(fs::read(&sentinel).unwrap(), b"untouched");
+        assert_eq!(directory.entries(), entries);
+    }
+
+    #[test]
+    fn source_without_a_file_name_is_refused_without_mutation() {
+        let directory = TestDirectory::new();
+        let destination_path = directory.path().join("published");
+        fs::write(&destination_path, b"old bytes").unwrap();
+        let destination = Destination::new(&destination_path).unwrap();
+        let requested = directory.path().join("..");
+        let entries = directory.entries();
+
+        let error = destination.replace_from(&requested).unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::Refused(Refusal::SourceHasNoFileName { source }) if source == requested
+        ));
+        assert_eq!(fs::read(&destination_path).unwrap(), b"old bytes");
+        assert_eq!(directory.entries(), entries);
+    }
+
+    #[test]
+    fn source_equal_to_destination_is_refused_without_mutation() {
+        let directory = TestDirectory::new();
+        let destination_path = directory.path().join("published");
+        fs::write(&destination_path, b"old bytes").unwrap();
+        let destination = Destination::new(&destination_path).unwrap();
+        let resolved_destination = destination.path().to_path_buf();
+        let entries = directory.entries();
+
+        let error = destination.replace_from(&destination_path).unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::Refused(Refusal::SourceIsDestination { path }) if path == resolved_destination
+        ));
+        assert_eq!(fs::read(&destination_path).unwrap(), b"old bytes");
+        assert_eq!(directory.entries(), entries);
+    }
+
+    #[test]
+    fn non_regular_source_is_refused_without_mutation() {
+        let directory = TestDirectory::new();
+        let source = directory.path().join("prepared-directory");
+        let destination_path = directory.path().join("published");
+        fs::create_dir(&source).unwrap();
+        fs::write(&destination_path, b"old bytes").unwrap();
+        let destination = Destination::new(&destination_path).unwrap();
+        let resolved_source = fs::canonicalize(directory.path())
+            .unwrap()
+            .join("prepared-directory");
+        let entries = directory.entries();
+
+        let error = destination.replace_from(&source).unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::Refused(Refusal::SourceIsNotRegularFile { source: refused })
+                if refused == resolved_source
+        ));
+        assert_eq!(fs::read(&destination_path).unwrap(), b"old bytes");
+        assert!(source.is_dir());
+        assert_eq!(directory.entries(), entries);
+    }
+
+    #[test]
+    fn dropping_an_abandoned_stage_removes_its_temporary() {
+        let directory = TestDirectory::new();
+        let destination_path = directory.path().join("published");
+        fs::write(&destination_path, b"old bytes").unwrap();
+        let destination = Destination::new(&destination_path).unwrap();
+        let entries = directory.entries();
+        let mut staged = destination.stage().unwrap();
+        staged.write_all(b"abandoned bytes").unwrap();
+        let temporary = staged.temporary_path().to_path_buf();
+        assert!(temporary.is_file());
+
+        drop(staged);
+
+        assert!(!temporary.exists());
+        assert_eq!(fs::read(&destination_path).unwrap(), b"old bytes");
+        assert_eq!(directory.entries(), entries);
+    }
+
+    #[test]
+    fn simultaneous_stages_use_distinct_live_temporaries() {
+        let directory = TestDirectory::new();
+        let destination_path = directory.path().join("published");
+        fs::write(&destination_path, b"old bytes").unwrap();
+        let destination = Destination::new(&destination_path).unwrap();
+        let entries = directory.entries();
+
+        let first = destination.stage().unwrap();
+        let second = destination.stage().unwrap();
+        let first_path = first.temporary_path().to_path_buf();
+        let second_path = second.temporary_path().to_path_buf();
+
+        assert_ne!(first_path, second_path);
+        assert!(first_path.is_file());
+        assert!(second_path.is_file());
+
+        drop(first);
+        drop(second);
+        assert_eq!(fs::read(&destination_path).unwrap(), b"old bytes");
+        assert_eq!(directory.entries(), entries);
     }
 
     struct TestDirectory(PathBuf);
