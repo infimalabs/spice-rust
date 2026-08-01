@@ -51,7 +51,10 @@ stems = [
     "wire",
 ]
 
-# A stem itself is a complete ownership assignment. Two deeper levels remain
-# available when a domain needs stable sub-routing.
-project_min_depth = 1
+# A stem names the domain that owns the work, never the work itself. Every
+# project therefore takes a child segment saying what moves inside that domain,
+# with a third available when a child needs to subdivide. A bare stem would let
+# a domain accumulate rows that are distinguishable only by handle, which is the
+# same undifferentiated bucket the stem inventory above exists to break up.
+project_min_depth = 2
 project_max_depth = 3

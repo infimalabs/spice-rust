@@ -1004,7 +1004,7 @@ fn is_slug_spelling(target: &str) -> bool {
 
 fn valid_project(project: &str) -> bool {
     let segments = project.split('.').collect::<Vec<_>>();
-    (1..=3).contains(&segments.len())
+    (2..=3).contains(&segments.len())
         && segments.iter().all(|segment| {
             !segment.is_empty()
                 && segment
