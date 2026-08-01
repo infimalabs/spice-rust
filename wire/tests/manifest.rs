@@ -69,3 +69,36 @@ fn release_targets_encode_as_canonical_rust_triples() {
         br#""x86_64-unknown-linux-musl""#
     );
 }
+
+#[test]
+fn payloads_refuse_unknown_fields_at_every_structured_level() {
+    let encoded =
+        wire::encode(&payload(ReleaseTarget::Aarch64AppleDarwin, 'a')).expect("payload encodes");
+    let original: serde_json::Value = serde_json::from_slice(&encoded).expect("payload is JSON");
+
+    for path in [Vec::new(), vec!["pins"], vec!["inventory", "0"]] {
+        let mut changed = original.clone();
+        let mut object = &mut changed;
+        for &segment in &path {
+            object = if let Ok(index) = segment.parse::<usize>() {
+                &mut object.as_array_mut().expect("fixture segment is an array")[index]
+            } else {
+                object
+                    .as_object_mut()
+                    .expect("fixture segment is an object")
+                    .get_mut(segment)
+                    .expect("fixture segment exists")
+            };
+        }
+        object
+            .as_object_mut()
+            .expect("fixture target is an object")
+            .insert("unknown".to_owned(), serde_json::Value::Bool(true));
+
+        let bytes = serde_json::to_vec(&changed).expect("changed payload encodes");
+        assert!(
+            wire::decode::<TargetPayload>(&bytes).is_err(),
+            "unknown field at {path:?} must refuse"
+        );
+    }
+}

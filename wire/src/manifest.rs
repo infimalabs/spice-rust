@@ -34,6 +34,7 @@ impl fmt::Display for ReleaseTarget {
 
 /// Exact identities required before distribution may build.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BuildPins {
     pub rust: String,
     pub wasm_target: String,
@@ -44,6 +45,7 @@ pub struct BuildPins {
 
 /// One staged file bound into a target payload.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct InventoryEntry {
     pub path: String,
     pub mode: u32,
@@ -53,6 +55,7 @@ pub struct InventoryEntry {
 
 /// The receipt-free object submitted to proof for one release target.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TargetPayload {
     pub version: u16,
     pub target: ReleaseTarget,
