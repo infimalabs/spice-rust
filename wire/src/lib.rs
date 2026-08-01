@@ -26,7 +26,6 @@ pub use ident::{CanonicalUuid, IdentError, Instant};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
     Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, Response, SeqRange, SeqRangeError,
-    exit,
 };
 pub use witness::{Phase, PhaseError, TaskHandle, TaskHandleError, Witness};
 
