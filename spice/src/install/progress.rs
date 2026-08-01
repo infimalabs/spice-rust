@@ -303,7 +303,7 @@ fn destination_parent_generation(
     let parent = destination
         .parent()
         .expect("a strict destination below a root has a parent");
-    let metadata = fs::metadata(parent)
+    let metadata = fs::symlink_metadata(parent)
         .map_err(|source| InstallError::io("inspect destination parent", parent, source))?;
     if !metadata.is_dir() {
         return Err(InstallError::PathShape(parent.to_path_buf()));

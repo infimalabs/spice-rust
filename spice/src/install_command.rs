@@ -112,6 +112,7 @@ fn result<B>(result: Result<B, InstallError>) -> Outcome<B> {
 fn failure<B>(error: InstallError) -> Outcome<B> {
     let detail = error.to_string();
     let refusal_reason = install_refusal_reason(&error);
+    let refusal_remedy = install_refusal_remedy(&error);
     match error {
         InstallError::PathShape(_)
         | InstallError::PathOutsideRoot(_)
@@ -131,8 +132,7 @@ fn failure<B>(error: InstallError) -> Outcome<B> {
             witness: Some("install-plan".to_owned()),
             expected: Some("the exact current coexistence install state".to_owned()),
             observed: Some(detail),
-            remedy: "inspect the current plan and repair the named state before retrying"
-                .to_owned(),
+            remedy: refusal_remedy.to_owned(),
         }),
         InstallError::Repository(_) | InstallError::Io { .. } => Outcome::Fault(Fault {
             class: FaultClass::Environment,
@@ -163,5 +163,17 @@ fn install_refusal_reason(error: &InstallError) -> &'static str {
         InstallError::PathOutsideRoot(_) => "install::path-outside-root",
         InstallError::ParentChanged(_) => "install::parent-changed",
         _ => "install::input-refused",
+    }
+}
+
+fn install_refusal_remedy(error: &InstallError) -> &'static str {
+    match error {
+        InstallError::PathOutsideRoot(_) => {
+            "repair the named symlink or record path so it stays within its permitted root"
+        }
+        InstallError::ParentChanged(_) => {
+            "rerun install preview against the current parent generation before applying"
+        }
+        _ => "inspect the current plan and repair the named state before retrying",
     }
 }

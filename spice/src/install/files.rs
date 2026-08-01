@@ -84,8 +84,11 @@ pub(super) fn publish_image(
         if private { RECORD_MODE } else { image.mode },
     )?;
     staged.commit().map_err(InstallError::Atomic)?;
-    let metadata = fs::metadata(path)
+    let metadata = fs::symlink_metadata(path)
         .map_err(|source| InstallError::io("inspect published file", path, source))?;
+    if !metadata.is_file() {
+        return Err(InstallError::PathShape(path.to_path_buf()));
+    }
     Ok(Generation::observe(&metadata))
 }
 

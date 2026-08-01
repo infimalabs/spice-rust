@@ -78,12 +78,12 @@ impl fmt::Display for InstallError {
             ),
             Self::PathOutsideRoot(path) => write!(
                 formatter,
-                "install path resolves outside its permitted root: {}",
+                "install path resolves outside its canonical permitted root: {}",
                 path.display()
             ),
             Self::ParentChanged(path) => write!(
                 formatter,
-                "install destination parent changed after planning: {}",
+                "install destination parent generation changed after planning: {}",
                 path.display()
             ),
             Self::ExclusionsNotUtf8 => formatter.write_str("Git exclusions are not UTF-8"),

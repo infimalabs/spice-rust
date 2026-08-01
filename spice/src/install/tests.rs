@@ -334,6 +334,12 @@ fn planning_binds_internal_symlinked_install_parents_and_refuses_escape() {
         error,
         InstallError::PathOutsideRoot(path) if path == canonical_external
     ));
+    assert!(
+        plan(&repository, None)
+            .unwrap_err()
+            .to_string()
+            .contains("canonical permitted root")
+    );
     assert!(fs::read_dir(&external).unwrap().next().is_none());
     fs::remove_dir(external).unwrap();
 }

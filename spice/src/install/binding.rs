@@ -19,6 +19,10 @@ impl Generation {
     pub(super) fn observe(metadata: &fs::Metadata) -> Self {
         generation(metadata)
     }
+
+    pub(super) fn matches(self, metadata: &fs::Metadata) -> bool {
+        self == Self::observe(metadata)
+    }
 }
 
 /// Canonical existing ancestor that anchors a destination parent.
@@ -126,10 +130,10 @@ pub(super) fn validate_binding(
     let root = fs::canonicalize(root)
         .map_err(|source| InstallError::io("resolve install root", root, source))?;
     let ancestor = root.join(&parent.ancestor);
-    let metadata = fs::metadata(&ancestor).map_err(|source| {
+    let metadata = fs::symlink_metadata(&ancestor).map_err(|source| {
         InstallError::io("inspect bound destination parent", &ancestor, source)
     })?;
-    if !metadata.is_dir() || Generation::observe(&metadata) != parent.generation {
+    if !metadata.is_dir() || !parent.generation.matches(&metadata) {
         return Err(InstallError::ParentChanged(ancestor));
     }
     let expected_parent = ancestor.join(&parent.missing);
