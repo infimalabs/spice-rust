@@ -1,1 +1,543 @@
-//! Atomic filesystem publication crate skeleton.
+//! Durable, same-directory file publication.
+//!
+//! A publication writes a new file beside its destination, synchronizes the
+//! complete bytes, atomically replaces the destination, and then synchronizes
+//! the parent directory. Callers can either use [`Destination::publish`] or
+//! stage bytes explicitly with [`Destination::stage`].
+
+#![forbid(unsafe_code)]
+
+use std::ffi::OsString;
+use std::fmt;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
+const CREATE_ATTEMPTS: usize = 128;
+
+/// A destination whose parent directory has been resolved.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Destination {
+    path: PathBuf,
+    parent: PathBuf,
+}
+
+impl Destination {
+    /// Resolves a destination in an existing parent directory.
+    pub fn new(path: impl AsRef<Path>) -> Result<Self, Error> {
+        let requested = path.as_ref();
+        let file_name = requested.file_name().ok_or_else(|| {
+            Error::Refused(Refusal::DestinationHasNoFileName {
+                destination: requested.to_path_buf(),
+            })
+        })?;
+        let parent = canonical_parent(requested, Operation::ResolveDestination)?;
+
+        Ok(Self {
+            path: parent.join(file_name),
+            parent,
+        })
+    }
+
+    /// Returns the resolved destination path.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Creates an empty same-directory temporary file.
+    pub fn stage(&self) -> Result<StagedWrite, Error> {
+        for _ in 0..CREATE_ATTEMPTS {
+            let temporary = self.parent.join(temporary_name());
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)
+            {
+                Ok(file) => {
+                    return Ok(StagedWrite {
+                        file: Some(file),
+                        temporary: Some(temporary),
+                        destination: self.clone(),
+                    });
+                }
+                Err(source) if source.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(source) => {
+                    return Err(Error::io(Operation::CreateTemporary, temporary, source));
+                }
+            }
+        }
+
+        Err(Error::io(
+            Operation::CreateTemporary,
+            self.parent.clone(),
+            io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "temporary filename attempts exhausted",
+            ),
+        ))
+    }
+
+    /// Writes and publishes complete replacement bytes.
+    ///
+    /// An error from [`Operation::SyncDirectory`] occurs after replacement:
+    /// the new bytes are visible, but their survival across a crash is not
+    /// proved. All earlier errors leave the destination unchanged.
+    pub fn publish<F>(&self, write: F) -> Result<(), Error>
+    where
+        F: FnOnce(&mut StagedWrite) -> io::Result<()>,
+    {
+        let mut staged = self.stage()?;
+        if let Err(source) = write(&mut staged) {
+            return Err(staged.fail(Operation::WriteTemporary, source));
+        }
+        staged.commit()
+    }
+
+    /// Publishes an already-written regular file from the same directory.
+    ///
+    /// Different parent directories are refused even when they happen to be
+    /// mounted on the same filesystem. Keeping the source beside the
+    /// destination makes the atomicity contract explicit and checkable before
+    /// any mutation occurs. An error from [`Operation::SyncDirectory`] occurs
+    /// after the source has replaced the destination.
+    pub fn replace_from(&self, source: impl AsRef<Path>) -> Result<(), Error> {
+        let requested = source.as_ref();
+        let file_name = requested.file_name().ok_or_else(|| {
+            Error::Refused(Refusal::SourceHasNoFileName {
+                source: requested.to_path_buf(),
+            })
+        })?;
+        let parent = canonical_parent(requested, Operation::ResolveSource)?;
+        let source = parent.join(file_name);
+
+        if parent != self.parent {
+            return Err(Error::Refused(Refusal::DifferentDirectories {
+                source,
+                destination: self.path.clone(),
+            }));
+        }
+        if source == self.path {
+            return Err(Error::Refused(Refusal::SourceIsDestination {
+                path: source,
+            }));
+        }
+
+        let metadata = fs::symlink_metadata(&source)
+            .map_err(|error| Error::io(Operation::InspectSource, &source, error))?;
+        if !metadata.file_type().is_file() {
+            return Err(Error::Refused(Refusal::SourceIsNotRegularFile { source }));
+        }
+
+        let file = OpenOptions::new()
+            .write(true)
+            .open(&source)
+            .map_err(|error| Error::io(Operation::OpenSource, &source, error))?;
+        file.sync_all()
+            .map_err(|error| Error::io(Operation::SyncFile, &source, error))?;
+        drop(file);
+
+        fs::rename(&source, &self.path)
+            .map_err(|error| Error::io(Operation::Replace, &source, error))?;
+        sync_directory(&self.parent)
+    }
+}
+
+/// A same-directory temporary file that has not yet been published.
+#[derive(Debug)]
+pub struct StagedWrite {
+    file: Option<File>,
+    temporary: Option<PathBuf>,
+    destination: Destination,
+}
+
+impl StagedWrite {
+    /// Returns the private temporary path.
+    #[must_use]
+    pub fn temporary_path(&self) -> &Path {
+        self.temporary
+            .as_deref()
+            .expect("a staged write always has a temporary path")
+    }
+
+    /// Synchronizes and atomically publishes the staged bytes.
+    ///
+    /// An error from [`Operation::SyncDirectory`] occurs after replacement:
+    /// the destination contains the staged bytes, but directory durability is
+    /// unproved.
+    pub fn commit(mut self) -> Result<(), Error> {
+        let temporary = self
+            .temporary
+            .as_ref()
+            .expect("a staged write always has a temporary path")
+            .clone();
+        let file = self
+            .file
+            .take()
+            .expect("a staged write always has an open file");
+
+        if let Err(source) = file.sync_all() {
+            drop(file);
+            return Err(self.fail(Operation::SyncFile, source));
+        }
+        drop(file);
+
+        if let Err(source) = fs::rename(&temporary, &self.destination.path) {
+            return Err(self.fail(Operation::Replace, source));
+        }
+        self.temporary.take();
+
+        sync_directory(&self.destination.parent)
+    }
+
+    fn fail(mut self, operation: Operation, source: io::Error) -> Error {
+        self.file.take();
+        let path = self
+            .temporary
+            .take()
+            .unwrap_or_else(|| self.destination.path.clone());
+        let cleanup = match fs::remove_file(&path) {
+            Ok(()) => None,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => Some(error),
+        };
+        Error::Io {
+            operation,
+            path,
+            source,
+            cleanup,
+        }
+    }
+}
+
+impl Write for StagedWrite {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.file
+            .as_mut()
+            .expect("a staged write always has an open file")
+            .write(buffer)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file
+            .as_mut()
+            .expect("a staged write always has an open file")
+            .flush()
+    }
+}
+
+impl Drop for StagedWrite {
+    fn drop(&mut self) {
+        self.file.take();
+        if let Some(temporary) = self.temporary.take() {
+            let _ = fs::remove_file(temporary);
+        }
+    }
+}
+
+/// A publication refusal detected before mutation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Refusal {
+    /// The destination does not identify a file.
+    DestinationHasNoFileName { destination: PathBuf },
+    /// The prepared source does not identify a file.
+    SourceHasNoFileName { source: PathBuf },
+    /// Prepared source and destination are not in one resolved directory.
+    DifferentDirectories {
+        source: PathBuf,
+        destination: PathBuf,
+    },
+    /// Replacing a path with itself is not a publication.
+    SourceIsDestination { path: PathBuf },
+    /// Prepared publication accepts regular files only.
+    SourceIsNotRegularFile { source: PathBuf },
+}
+
+/// The filesystem operation associated with an I/O failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Operation {
+    ResolveDestination,
+    ResolveSource,
+    CreateTemporary,
+    WriteTemporary,
+    InspectSource,
+    OpenSource,
+    SyncFile,
+    Replace,
+    SyncDirectory,
+}
+
+impl fmt::Display for Operation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::ResolveDestination => "resolve destination directory",
+            Self::ResolveSource => "resolve source directory",
+            Self::CreateTemporary => "create temporary file",
+            Self::WriteTemporary => "write temporary file",
+            Self::InspectSource => "inspect source file",
+            Self::OpenSource => "open source file",
+            Self::SyncFile => "sync file",
+            Self::Replace => "replace destination",
+            Self::SyncDirectory => "sync parent directory",
+        })
+    }
+}
+
+/// A typed publication failure.
+#[derive(Debug)]
+pub enum Error {
+    Refused(Refusal),
+    Io {
+        operation: Operation,
+        path: PathBuf,
+        source: io::Error,
+        cleanup: Option<io::Error>,
+    },
+}
+
+impl Error {
+    fn io(operation: Operation, path: impl Into<PathBuf>, source: io::Error) -> Self {
+        Self::Io {
+            operation,
+            path: path.into(),
+            source,
+            cleanup: None,
+        }
+    }
+
+    /// Returns a cleanup failure that accompanied the primary failure.
+    #[must_use]
+    pub fn cleanup_error(&self) -> Option<&io::Error> {
+        match self {
+            Self::Refused(_) => None,
+            Self::Io { cleanup, .. } => cleanup.as_ref(),
+        }
+    }
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Refused(refusal) => write!(formatter, "publication refused: {refusal}"),
+            Self::Io {
+                operation,
+                path,
+                source,
+                cleanup,
+            } => {
+                write!(
+                    formatter,
+                    "failed to {operation} at {}: {source}",
+                    path.display()
+                )?;
+                if let Some(cleanup) = cleanup {
+                    write!(formatter, "; temporary cleanup also failed: {cleanup}")?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Refused(_) => None,
+            Self::Io { source, .. } => Some(source),
+        }
+    }
+}
+
+impl fmt::Display for Refusal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DestinationHasNoFileName { destination } => {
+                write!(
+                    formatter,
+                    "destination {} has no file name",
+                    destination.display()
+                )
+            }
+            Self::SourceHasNoFileName { source } => {
+                write!(formatter, "source {} has no file name", source.display())
+            }
+            Self::DifferentDirectories {
+                source,
+                destination,
+            } => write!(
+                formatter,
+                "source {} and destination {} are not in the same directory",
+                source.display(),
+                destination.display()
+            ),
+            Self::SourceIsDestination { path } => {
+                write!(
+                    formatter,
+                    "source and destination are both {}",
+                    path.display()
+                )
+            }
+            Self::SourceIsNotRegularFile { source } => {
+                write!(
+                    formatter,
+                    "source {} is not a regular file",
+                    source.display()
+                )
+            }
+        }
+    }
+}
+
+fn canonical_parent(path: &Path, operation: Operation) -> Result<PathBuf, Error> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    };
+    fs::canonicalize(parent).map_err(|error| Error::io(operation, parent, error))
+}
+
+fn temporary_name() -> OsString {
+    let sequence = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
+    OsString::from(format!(
+        ".spice-atomic-{}-{sequence}.tmp",
+        std::process::id()
+    ))
+}
+
+fn sync_directory(parent: &Path) -> Result<(), Error> {
+    let directory =
+        File::open(parent).map_err(|error| Error::io(Operation::SyncDirectory, parent, error))?;
+    directory
+        .sync_all()
+        .map_err(|error| Error::io(Operation::SyncDirectory, parent, error))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn staged_bytes_are_hidden_until_complete_replacement() {
+        let directory = TestDirectory::new();
+        let path = directory.path().join("state");
+        fs::write(&path, b"old complete bytes").unwrap();
+        let destination = Destination::new(&path).unwrap();
+        let mut staged = destination.stage().unwrap();
+
+        staged.write_all(b"new ").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"old complete bytes");
+        staged.write_all(b"complete bytes").unwrap();
+        staged.commit().unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), b"new complete bytes");
+        assert_eq!(directory.entries(), vec![OsString::from("state")]);
+    }
+
+    #[test]
+    fn failed_writer_preserves_destination_and_cleans_temporary() {
+        let directory = TestDirectory::new();
+        let path = directory.path().join("state");
+        fs::write(&path, b"old complete bytes").unwrap();
+        let destination = Destination::new(&path).unwrap();
+
+        let error = destination
+            .publish(|staged| {
+                staged.write_all(b"partial")?;
+                Err(io::Error::other("injected writer failure"))
+            })
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::Io {
+                operation: Operation::WriteTemporary,
+                cleanup: None,
+                ..
+            }
+        ));
+        assert_eq!(fs::read(&path).unwrap(), b"old complete bytes");
+        assert_eq!(directory.entries(), vec![OsString::from("state")]);
+    }
+
+    #[test]
+    fn prepared_file_replaces_destination_and_publishes_parent_entry() {
+        let directory = TestDirectory::new();
+        let source = directory.path().join("prepared");
+        let destination_path = directory.path().join("published");
+        fs::write(&source, b"prepared bytes").unwrap();
+        fs::write(&destination_path, b"old bytes").unwrap();
+        let destination = Destination::new(&destination_path).unwrap();
+
+        destination.replace_from(&source).unwrap();
+
+        assert!(!source.exists());
+        assert_eq!(fs::read(&destination_path).unwrap(), b"prepared bytes");
+        assert_eq!(directory.entries(), vec![OsString::from("published")]);
+    }
+
+    #[test]
+    fn prepared_file_in_another_directory_is_refused_without_mutation() {
+        let source_directory = TestDirectory::new();
+        let destination_directory = TestDirectory::new();
+        let source = source_directory.path().join("prepared");
+        let destination_path = destination_directory.path().join("published");
+        fs::write(&source, b"prepared bytes").unwrap();
+        fs::write(&destination_path, b"old bytes").unwrap();
+        let destination = Destination::new(&destination_path).unwrap();
+
+        let error = destination.replace_from(&source).unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::Refused(Refusal::DifferentDirectories { .. })
+        ));
+        assert_eq!(fs::read(&source).unwrap(), b"prepared bytes");
+        assert_eq!(fs::read(&destination_path).unwrap(), b"old bytes");
+    }
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            for _ in 0..CREATE_ATTEMPTS {
+                let sequence = NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+                let path = std::env::temp_dir().join(format!(
+                    "spice-atomic-test-{}-{sequence}",
+                    std::process::id()
+                ));
+                match fs::create_dir(&path) {
+                    Ok(()) => return Self(path),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                    Err(error) => panic!("failed to create test directory: {error}"),
+                }
+            }
+            panic!("test directory attempts exhausted");
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+
+        fn entries(&self) -> Vec<OsString> {
+            let mut entries = fs::read_dir(&self.0)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect::<Vec<_>>();
+            entries.sort();
+            entries
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+}
