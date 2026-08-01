@@ -21,12 +21,100 @@
 //! output back to itself, which is why the parser below looks for the table and
 //! not for `pub enum FactKind` — that enum is now generated, so a parser aimed
 //! at it would find no variants and prove nothing about all 59 of them.
+//!
+//! [`PINNED`] holds the third side, and the one neither of the others can
+//! supply. Both of those read the crate under test: the match covers its enum
+//! and the parser reads its source, so a renamed spelling moves the enum, the
+//! source, and every expectation drawn from either of them at once, and nothing
+//! fails. An oracle taken from the artifact it judges detects absence, never
+//! drift. `PINNED` is written out by hand here, so a spelling that changes in
+//! `wire/src/fact.rs` alone is a spelling that disagrees with an independent
+//! statement of what it was agreed to be.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
 
 use wire::FactKind;
+
+/// Every kind's wire spelling, written out here rather than read from the crate
+/// under test.
+///
+/// The parser answers "what does `fact.rs` say today". This answers "what were
+/// these spellings agreed to be", and only a deliberate edit here can change
+/// that answer. Renaming `taste::confirmed` to `taste::vindicated` in the
+/// vocabulary table used to pass the whole workspace suite in silence, because
+/// every expectation was drawn from the file being renamed.
+///
+/// Silence is the expensive part. These spellings cross the socket, rest in the
+/// journal, and compile into the browser app, so a rename nobody is forced to
+/// notice does not fail at a version boundary — it stops matching journal rows
+/// already written under the old word, which is a decoder error against durable
+/// history rather than a build error against a diff.
+///
+/// So editing this table is the deliberate act, and the tests below exist to
+/// make it impossible to take by accident.
+const PINNED: &[(&str, &str)] = &[
+    ("TaskAdded", "task::added"),
+    ("TaskPhased", "task::phased"),
+    ("TaskDone", "task::done"),
+    ("TaskReviewed", "task::reviewed"),
+    ("TaskAssigned", "task::assigned"),
+    ("TaskNoted", "task::noted"),
+    ("TaskDeferred", "task::deferred"),
+    ("TaskWoken", "task::woken"),
+    ("TaskEdited", "task::edited"),
+    ("ClaimWon", "claim::won"),
+    ("ClaimCarried", "claim::carried"),
+    ("ClaimFreed", "claim::freed"),
+    ("ClaimLapsed", "claim::lapsed"),
+    ("ClaimRenewed", "claim::renewed"),
+    ("DocApplied", "doc::applied"),
+    ("SteerSent", "steer::sent"),
+    ("SteerResent", "steer::resent"),
+    ("SteerAcked", "steer::acked"),
+    ("SteerDeclined", "steer::declined"),
+    ("SteerMissed", "steer::missed"),
+    ("SteerLapsed", "steer::lapsed"),
+    ("SteerCanceled", "steer::canceled"),
+    ("ConsentAsked", "consent::asked"),
+    ("ConsentGranted", "consent::granted"),
+    ("ConsentDenied", "consent::denied"),
+    ("ConsentQueued", "consent::queued"),
+    ("ConsentFloored", "consent::floored"),
+    ("LaneSeated", "lane::seated"),
+    ("LaneStarted", "lane::started"),
+    ("LaneExited", "lane::exited"),
+    ("LaneCompacted", "lane::compacted"),
+    ("LaneRenewed", "lane::renewed"),
+    ("LaneDrained", "lane::drained"),
+    ("LaneDegraded", "lane::degraded"),
+    ("LaneHeld", "lane::held"),
+    ("LaneResumed", "lane::resumed"),
+    ("TasteConfirmed", "taste::confirmed"),
+    ("TasteCleared", "taste::cleared"),
+    ("CanaryAlarmed", "canary::alarmed"),
+    ("CanaryContradicted", "canary::contradicted"),
+    ("VendorArmed", "vendor::armed"),
+    ("TrustPended", "trust::pended"),
+    ("TrustGranted", "trust::granted"),
+    ("TrustRevoked", "trust::revoked"),
+    ("CommitLanded", "commit::landed"),
+    ("GateFound", "gate::found"),
+    ("GateCleared", "gate::cleared"),
+    ("JournalMigrated", "journal::migrated"),
+    ("JournalBacked", "journal::backed"),
+    ("JournalRestored", "journal::restored"),
+    ("UpSeated", "up::seated"),
+    ("UpQuiescing", "up::quiescing"),
+    ("UpDraining", "up::draining"),
+    ("UpTerminating", "up::terminating"),
+    ("UpKilling", "up::killing"),
+    ("UpVerifying", "up::verifying"),
+    ("UpDark", "up::dark"),
+    ("ProofSealed", "proof::sealed"),
+    ("ReleasePublished", "release::published"),
+];
 
 /// The plane a fact belongs to, decided by the compiler rather than by text.
 ///
@@ -239,4 +327,112 @@ fn the_vocabulary_spans_every_plane_the_match_names() {
             "the {expected} plane has an arm in plane() but no spelling in FactKind",
         );
     }
+}
+
+/// What the compiled vocabulary actually crosses as, keyed by variant.
+///
+/// The key comes from `Debug` and the value from serde, so the two halves of a
+/// row are read through different derives and a rename cannot move both.
+fn crossing_spellings() -> BTreeMap<String, String> {
+    FactKind::ALL
+        .iter()
+        .map(|kind| {
+            let encoded = wire::encode(kind).expect("a fact kind encodes");
+            let quoted = String::from_utf8(encoded).expect("a spelling is text");
+            let spelling = quoted
+                .strip_prefix('"')
+                .and_then(|rest| rest.strip_suffix('"'))
+                .expect("a fact kind crosses as a JSON string")
+                .to_owned();
+            (format!("{kind:?}"), spelling)
+        })
+        .collect()
+}
+
+/// One row of either table, spelled the same way so the two can be differenced.
+fn rows<K: AsRef<str>, V: AsRef<str>>(pairs: impl IntoIterator<Item = (K, V)>) -> BTreeSet<String> {
+    pairs
+        .into_iter()
+        .map(|(variant, spelling)| format!("{} = {:?}", variant.as_ref(), spelling.as_ref()))
+        .collect()
+}
+
+#[test]
+fn every_kind_crosses_as_the_spelling_this_table_pins() {
+    let pinned: BTreeMap<&str, &str> = PINNED.iter().copied().collect();
+    assert_eq!(
+        pinned.len(),
+        PINNED.len(),
+        "this table names some variant twice, so one of its rows is unreachable",
+    );
+
+    let crossing = crossing_spellings();
+    let mut drift = Vec::new();
+    for (variant, crossed) in &crossing {
+        match pinned.get(variant.as_str()) {
+            Some(expected) if *expected == crossed.as_str() => {}
+            Some(expected) => drift.push(format!(
+                "{variant} was pinned as {expected:?} but now crosses as {crossed:?}"
+            )),
+            None => drift.push(format!(
+                "{variant} crosses as {crossed:?} but this table pins no spelling for it"
+            )),
+        }
+    }
+    for variant in pinned.keys() {
+        assert!(
+            crossing.contains_key(*variant),
+            "{variant} is pinned here but is no longer a fact kind",
+        );
+    }
+
+    assert!(
+        drift.is_empty(),
+        "the crossing spellings no longer match the ones pinned in this file; \
+         change the table only if stored facts should be read under the new \
+         word:\n{}",
+        drift.join("\n"),
+    );
+}
+
+#[test]
+fn every_pinned_spelling_still_decodes_to_its_kind() {
+    // The direction durable history depends on. A journal row written under a
+    // pinned spelling has to keep decoding as the kind it was written as, and a
+    // rename breaks that here rather than at a read of real bytes.
+    for (variant, spelling) in PINNED {
+        let quoted = format!("\"{spelling}\"");
+        let decoded: FactKind = wire::decode(quoted.as_bytes()).unwrap_or_else(|_| {
+            panic!("{spelling:?} was pinned for {variant} but no longer decodes as any kind")
+        });
+
+        assert_eq!(
+            format!("{decoded:?}"),
+            *variant,
+            "{spelling:?} was pinned for {variant} but now decodes as {decoded:?}",
+        );
+    }
+}
+
+#[test]
+fn the_pinned_table_and_the_declaring_source_name_the_same_kinds() {
+    // Neither list may move alone. This also hardens the parser above: a change
+    // to the vocabulary macro that made it read most rows instead of all of
+    // them would clear its own length guard and be caught only here.
+    let declared = rows(
+        declared_kinds()
+            .into_iter()
+            .filter_map(|kind| kind.spelling.map(|spelling| (kind.variant, spelling))),
+    );
+    let pinned = rows(PINNED.iter().copied());
+
+    let only_declared: Vec<&String> = declared.difference(&pinned).collect();
+    let only_pinned: Vec<&String> = pinned.difference(&declared).collect();
+
+    assert!(
+        only_declared.is_empty() && only_pinned.is_empty(),
+        "the vocabulary table in wire/src/fact.rs and the pinned table in this \
+         file disagree, so one was edited alone:\n  only in fact.rs: \
+         {only_declared:?}\n  only in this file: {only_pinned:?}",
+    );
 }
