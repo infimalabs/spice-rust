@@ -47,7 +47,7 @@ const LEASE: &str = r#"{
 
 const WITNESS: &str = r#"{
   "name": "review:WIRE-aBcD",
-  "class": "review",
+  "kind": "review",
   "predicate": "workflow head 41 is review",
   "head": 43
 }"#;
@@ -115,7 +115,7 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
         &["actor", "disposition", "epoch", "fact", "lane", "occupant"],
     );
     assert_fields::<LeaseHead>(LEASE, &["epoch", "expiry", "maximum", "renewal", "start"]);
-    assert_fields::<WitnessHead>(WITNESS, &["class", "head", "name", "predicate"]);
+    assert_fields::<WitnessHead>(WITNESS, &["head", "kind", "name", "predicate"]);
     assert_fields::<TrustHead>(TRUST, &["digest", "state"]);
     assert_fields::<FindingHead>(
         FINDING,
@@ -143,7 +143,7 @@ fn witness_heads_admit_each_settled_predicate_class() {
         "document",
         "transition",
     ] {
-        let fixture = WITNESS.replace("\"class\": \"review\"", &format!("\"class\": \"{class}\""));
+        let fixture = WITNESS.replace("\"kind\": \"review\"", &format!("\"kind\": \"{class}\""));
         let decoded = wire::decode::<WitnessHead>(fixture.as_bytes());
         assert!(decoded.is_ok(), "{class} is an authoritative witness class");
     }
@@ -184,36 +184,38 @@ fn assert_value_fields(value: &serde_json::Value, fields: &[&str]) {
 
 /// Both witness vocabularies name themselves in one scope without shadowing.
 ///
-/// This test exists because they once collided: two crates-worth of work each
-/// exported a `WitnessKind`, and `wire` stopped compiling. Importing both
-/// unqualified is the cheapest standing proof that the names stayed distinct,
-/// and asserting their overlap keeps the reason for two types legible — if one
-/// ever becomes a strict subset of the other, that is the moment to merge them.
+/// This test exists because they once collided: two lanes each exported a
+/// `WitnessKind` from the crate root and `wire` stopped compiling. Importing
+/// both unqualified is the cheapest standing proof the names stayed distinct.
+/// `WitnessClass` and `WitnessKind` now differ by one word, so the reason for
+/// two types has to be asserted rather than assumed — the day either becomes a
+/// subset of the other is the day to merge them, and this fails then.
 #[test]
 fn both_witness_vocabularies_coexist_unqualified() {
-    use wire::{Command, CommandKind, PredicateClass, TaskHandle, Witness, WitnessKind};
+    use wire::{WitnessClass, WitnessKind};
 
     let head: WitnessHead = wire::decode(WITNESS.as_bytes()).expect("witness head decodes");
-    assert_eq!(head.class, PredicateClass::Review);
+    assert_eq!(head.kind, WitnessClass::Review);
 
-    let task: TaskHandle = "WIRE-aBcD"
-        .parse()
-        .expect("fixture handle spells correctly");
-    let command = Command {
-        v: wire::WireVersion::CURRENT,
-        id: "018f82d4-6f59-7d06-92e3-bce913116307"
-            .parse()
-            .expect("fixture uuid is canonical"),
-        kind: CommandKind::TaskNote,
-        expected: vec![Witness::Existence { task }],
-        body: (),
-    };
-    assert_eq!(command.expected[0].kind(), WitnessKind::Existence);
-    assert!(command.witnessed().is_ok());
+    // Neither vocabulary contains the other, proved through the one decoder
+    // both share: `review` is a stored head class the command side cannot
+    // spell, and `existence` is a command precondition that is no head row.
+    assert!(wire::decode::<WitnessClass>(b"\"review\"".as_slice()).is_ok());
+    assert!(wire::decode::<WitnessKind>(b"\"review\"".as_slice()).is_err());
+    assert!(wire::decode::<WitnessKind>(b"\"existence\"".as_slice()).is_ok());
+    assert!(wire::decode::<WitnessClass>(b"\"existence\"".as_slice()).is_err());
 
-    // The overlap is real but neither contains the other: `Review` is a head
-    // class with no command-side spelling, and `Existence` is a command
-    // predicate that is never a witness head row.
-    assert!(!format!("{:?}", WitnessKind::Assignment).is_empty());
-    assert!(!format!("{:?}", PredicateClass::Assignment).is_empty());
+    // They do overlap, which is why one type cannot serve both roles: the same
+    // five spellings decode on both sides and mean the same predicate.
+    for shared in ["assignment", "directive", "consent", "budget", "transition"] {
+        let spelling = format!("\"{shared}\"");
+        assert!(
+            wire::decode::<WitnessClass>(spelling.as_bytes()).is_ok(),
+            "{shared} is a head class"
+        );
+        assert!(
+            wire::decode::<WitnessKind>(spelling.as_bytes()).is_ok(),
+            "{shared} is a command predicate"
+        );
+    }
 }

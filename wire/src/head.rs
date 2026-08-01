@@ -97,27 +97,25 @@ pub struct LeaseHead {
     pub epoch: CanonicalUuid,
 }
 
-/// Closed classes of durable named predicate stored as a witness head row.
+/// Closed classes of authoritative witness heads.
 ///
-/// This is not [`crate::WitnessKind`], and the difference is load-bearing.
-/// These seven are the classes WIRE.md's Witness head row names: predicates
-/// the journal keeps as rows of their own, which later commands must re-prove.
-/// [`crate::WitnessKind`] discriminates [`crate::Witness`], the wider set of
-/// predicates a command may carry in `expected`, and most of those are proven
-/// against some *other* head — a task, workflow, claim, or lease row — rather
-/// than against a witness head row.
+/// This is not [`crate::WitnessKind`], and the one-word difference between
+/// their names hides how differently they range. These seven classify
+/// predicates the journal keeps as head rows of their own. `WitnessKind`
+/// discriminates [`crate::Witness`], the wider set a command may carry in
+/// `expected`, and most of those are re-proven against some *other* head — a
+/// task, workflow, claim, or lease row — rather than against a witness head.
 ///
-/// So the two vocabularies overlap without nesting. `Assignment`, `Directive`,
-/// `Consent`, `Budget`, and `Transition` name a class here and a command
-/// predicate there; `Review` and `Document` have no command-side counterpart
-/// under those spellings, and the command side carries sixteen kinds that are
-/// not witness head rows at all. A type that ranges over rows is spelled
-/// `Class` here, following [`crate::Fault`] and [`crate::FaultClass`]; a type
-/// that discriminates an enum is spelled `Kind`, following [`crate::Fact`] and
-/// [`crate::FactKind`].
+/// So the two vocabularies overlap without either containing the other.
+/// `Assignment`, `Directive`, `Consent`, `Budget`, and `Transition` name a
+/// class here and a command predicate there; `Review` and `Document` have no
+/// command-side counterpart under those spellings, and the command side
+/// carries sixteen kinds that are no head row at all. Reach for this type when
+/// classifying something already stored, and for `WitnessKind` when stating
+/// what a command must prove before it lands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum PredicateClass {
+pub enum WitnessClass {
     /// Allocation or reviewer assignment.
     Assignment,
     /// Review authorship or verdict state.
@@ -141,7 +139,7 @@ pub struct WitnessHead {
     /// Stable predicate name.
     pub name: String,
     /// Predicate class from WIRE's closed authority list.
-    pub class: PredicateClass,
+    pub kind: WitnessClass,
     /// Canonical predicate statement.
     pub predicate: String,
     /// Fact that established the current predicate.

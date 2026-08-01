@@ -31,9 +31,12 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use wire::{
-    Actor, CanonicalUuid, Command, CommandKind, Derived, Envelope, Fact, FactKind, Fault,
-    FaultClass, FoldName, Hello, Instant, Origin, Outcome, Overflow, Packed, Phase, Refusal, Reply,
-    ReplyPosition, Response, Seq, SeqRange, TaskHandle, WireVersion, Witness,
+    Actor, Answer, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind, CursorHead,
+    Derived, Digest, Disposition, Envelope, Fact, FactKind, Fault, FaultClass, FindingHead,
+    FindingState, FoldName, Hello, Instant, LaneResidency, LeaseHead, Name, Origin, Outcome,
+    Overflow, Packed, Phase, Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState, Response,
+    Seq, SeqRange, Standing, TaskHandle, TaskHead, TrustHead, TrustState, Up, WireVersion, Witness,
+    WitnessClass, WitnessHead, WitnessKind, WorkflowHead,
 };
 
 /// Names `wire` re-exports that never cross as values, each with its reason.
@@ -56,6 +59,18 @@ const NOT_CROSSING: &[(&str, &str)] = &[
     ),
     (
         "IdentError",
+        "parse refusal; returned to a caller, never encoded",
+    ),
+    (
+        "Law",
+        "compile-time command registry metadata; concrete Witness values cross instead",
+    ),
+    (
+        "LawError",
+        "command validation refusal; returned to a caller, never encoded",
+    ),
+    (
+        "NameError",
         "parse refusal; returned to a caller, never encoded",
     ),
     (
@@ -128,6 +143,10 @@ fn seq(value: u64) -> Seq {
 
 fn handle(text: &str) -> TaskHandle {
     text.parse().expect("task handle")
+}
+
+fn digest(nibble: &str) -> Digest {
+    nibble.repeat(64).parse().expect("digest spelling")
 }
 
 fn hash_of<T: Hash>(value: &T) -> u64 {
@@ -261,6 +280,11 @@ fn every_crossing_type_obeys_the_identity_law() {
 
     cover_spellings(&mut covered);
     cover_journal_frames(&mut covered);
+    cover_task_heads(&mut covered);
+    cover_claim_heads(&mut covered);
+    cover_policy_heads(&mut covered);
+    cover_residency_heads(&mut covered);
+    cover_head_enums(&mut covered);
     cover_command_frames(&mut covered);
     cover_packed_frames(&mut covered);
     cover_refusal_frames(&mut covered);
@@ -330,6 +354,15 @@ fn cover_spellings(covered: &mut BTreeSet<String>) {
         ],
     );
     spelling_law(covered, "Seq", &[seq(1), seq(48213)]);
+    spelling_law(
+        covered,
+        "Name",
+        &[
+            "next".parse::<Name>().expect("name"),
+            "reads".parse::<Name>().expect("name"),
+        ],
+    );
+    spelling_law(covered, "Digest", &[digest("a"), digest("b")]);
 }
 
 /// The frames that rest in the journal.
@@ -371,6 +404,258 @@ fn cover_journal_frames(covered: &mut BTreeSet<String>) {
     );
 }
 
+/// Task statement and workflow heads.
+fn cover_task_heads(covered: &mut BTreeSet<String>) {
+    let first_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
+    let second_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c3");
+    let task = handle("SPICE-aBcD");
+
+    law(
+        covered,
+        "TaskHead",
+        &[
+            TaskHead {
+                handle: task.clone(),
+                uuid: first_uuid,
+                title: "Build the gate".to_owned(),
+                project: "task.gate".to_owned(),
+                tags: vec!["guard".to_owned()],
+                dependencies: Vec::new(),
+                provenance: "repo:genesis".parse().expect("origin"),
+                revision: seq(10),
+            },
+            TaskHead {
+                handle: task.clone(),
+                uuid: second_uuid,
+                title: "Review the gate".to_owned(),
+                project: "task.gate".to_owned(),
+                tags: vec!["guard".to_owned(), "review".to_owned()],
+                dependencies: vec![handle("WIRE-eFgH")],
+                provenance: "task:SPICE-aBcD".parse().expect("origin"),
+                revision: seq(11),
+            },
+        ],
+    );
+    law(
+        covered,
+        "WorkflowHead",
+        &[
+            WorkflowHead {
+                flow: vec![
+                    "todo".parse().expect("phase"),
+                    "review".parse().expect("phase"),
+                ],
+                phase: "todo".parse().expect("phase"),
+                status: "pending".to_owned(),
+                review: "unassigned".to_owned(),
+                assignment: Some(Actor::Operator),
+                deferral: Some(at("2030-04-12T18:44:09.271Z")),
+                completion: None,
+            },
+            WorkflowHead {
+                flow: vec![
+                    "todo".parse().expect("phase"),
+                    "review".parse().expect("phase"),
+                ],
+                phase: "review".parse().expect("phase"),
+                status: "completed".to_owned(),
+                review: "clean".to_owned(),
+                assignment: Some(Actor::Lane(first_uuid)),
+                deferral: None,
+                completion: Some(at("2030-04-12T18:44:09.272Z")),
+            },
+        ],
+    );
+}
+
+/// Claim possession and lease heads.
+fn cover_claim_heads(covered: &mut BTreeSet<String>) {
+    let first_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
+    let second_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c3");
+
+    law(
+        covered,
+        "ClaimHead",
+        &[
+            ClaimHead {
+                actor: Actor::Operator,
+                fact: seq(12),
+                lane: first_uuid,
+                occupant: second_uuid,
+                epoch: first_uuid,
+                disposition: ClaimDisposition::Active,
+            },
+            ClaimHead {
+                actor: Actor::Lane(first_uuid),
+                fact: seq(13),
+                lane: second_uuid,
+                occupant: first_uuid,
+                epoch: second_uuid,
+                disposition: ClaimDisposition::Lapsed,
+            },
+        ],
+    );
+    law(
+        covered,
+        "LeaseHead",
+        &[
+            LeaseHead {
+                start: at("2030-04-12T18:44:09.271Z"),
+                renewal: at("2030-04-12T18:44:09.272Z"),
+                maximum: at("2030-04-12T18:45:09.271Z"),
+                expiry: at("2030-04-12T18:45:00.271Z"),
+                epoch: first_uuid,
+            },
+            LeaseHead {
+                start: at("2030-04-12T18:44:10.271Z"),
+                renewal: at("2030-04-12T18:44:10.272Z"),
+                maximum: at("2030-04-12T18:46:09.271Z"),
+                expiry: at("2030-04-12T18:46:00.271Z"),
+                epoch: second_uuid,
+            },
+        ],
+    );
+}
+
+/// Witness, trust, and gate-finding heads.
+fn cover_policy_heads(covered: &mut BTreeSet<String>) {
+    law(
+        covered,
+        "WitnessHead",
+        &[
+            WitnessHead {
+                name: "review".to_owned(),
+                kind: WitnessClass::Review,
+                predicate: "reviewer differs from author".to_owned(),
+                head: seq(14),
+            },
+            WitnessHead {
+                name: "budget".to_owned(),
+                kind: WitnessClass::Budget,
+                predicate: "remaining equals 2".to_owned(),
+                head: seq(15),
+            },
+        ],
+    );
+    law(
+        covered,
+        "TrustHead",
+        &[
+            TrustHead {
+                digest: digest("a").to_string(),
+                state: TrustState::Pended,
+            },
+            TrustHead {
+                digest: digest("b").to_string(),
+                state: TrustState::Granted,
+            },
+        ],
+    );
+    law(
+        covered,
+        "FindingHead",
+        &[
+            FindingHead {
+                identity: "gate::one".to_owned(),
+                severity: "high".to_owned(),
+                locus: "wire/src/lib.rs".to_owned(),
+                owner: "wire".to_owned(),
+                receipt: digest("c").to_string(),
+                state: FindingState::Open,
+            },
+            FindingHead {
+                identity: "gate::two".to_owned(),
+                severity: "low".to_owned(),
+                locus: "wire/src/head.rs".to_owned(),
+                owner: "gate".to_owned(),
+                receipt: digest("d").to_string(),
+                state: FindingState::Cleared,
+            },
+        ],
+    );
+}
+
+/// Resident generation, lane, and cursor heads.
+fn cover_residency_heads(covered: &mut BTreeSet<String>) {
+    let first_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
+    let second_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c3");
+
+    let occupied = LaneResidency {
+        lane: first_uuid,
+        occupant: Some(second_uuid),
+        lineage: vec![first_uuid],
+        capabilities: vec![second_uuid],
+        disposition: "seated".to_owned(),
+    };
+    let empty = LaneResidency {
+        lane: second_uuid,
+        occupant: None,
+        lineage: Vec::new(),
+        capabilities: Vec::new(),
+        disposition: "empty".to_owned(),
+    };
+    law(covered, "LaneResidency", &[occupied.clone(), empty.clone()]);
+    law(
+        covered,
+        "ResidencyHead",
+        &[
+            ResidencyHead {
+                epoch: first_uuid,
+                state: ResidentState::Seated,
+                lanes: vec![occupied],
+            },
+            ResidencyHead {
+                epoch: second_uuid,
+                state: ResidentState::Dark,
+                lanes: vec![empty],
+            },
+        ],
+    );
+    law(
+        covered,
+        "CursorHead",
+        &[
+            CursorHead {
+                seq: None,
+                wake: None,
+            },
+            CursorHead {
+                seq: Some(seq(16)),
+                wake: Some(seq(15)),
+            },
+        ],
+    );
+}
+
+/// Closed enums carried inside authoritative heads.
+fn cover_head_enums(covered: &mut BTreeSet<String>) {
+    law(
+        covered,
+        "ClaimDisposition",
+        &[ClaimDisposition::Active, ClaimDisposition::Freed],
+    );
+    law(
+        covered,
+        "FindingState",
+        &[FindingState::Open, FindingState::Cleared],
+    );
+    law(
+        covered,
+        "ResidentState",
+        &[ResidentState::Seated, ResidentState::Dark],
+    );
+    law(
+        covered,
+        "TrustState",
+        &[TrustState::Pended, TrustState::Revoked],
+    );
+    law(
+        covered,
+        "WitnessClass",
+        &[WitnessClass::Assignment, WitnessClass::Transition],
+    );
+}
+
 /// The frames a caller sends across the socket.
 fn cover_command_frames(covered: &mut BTreeSet<String>) {
     law(
@@ -396,21 +681,7 @@ fn cover_command_frames(covered: &mut BTreeSet<String>) {
             },
         ],
     );
-    law(
-        covered,
-        "Witness",
-        &[
-            Witness::Task {
-                task: handle("SPICE-aBcD"),
-                head: seq(48190),
-            },
-            Witness::Workflow {
-                task: handle("SPICE-aBcD"),
-                head: seq(48190),
-                phase: "todo".parse().expect("phase"),
-            },
-        ],
-    );
+    cover_witness_values(covered);
     law(
         covered,
         "Hello",
@@ -426,6 +697,54 @@ fn cover_command_frames(covered: &mut BTreeSet<String>) {
                 epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
             },
         ],
+    );
+}
+
+/// Concrete command predicates and their nested state vocabularies.
+fn cover_witness_values(covered: &mut BTreeSet<String>) {
+    law(
+        covered,
+        "Witness",
+        &[
+            Witness::Task {
+                task: handle("SPICE-aBcD"),
+                head: seq(48190),
+            },
+            Witness::Workflow {
+                task: handle("SPICE-aBcD"),
+                head: seq(48190),
+                phase: "todo".parse().expect("phase"),
+            },
+            Witness::Directive {
+                steer: uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+                disposition: Disposition::Live,
+            },
+            Witness::Consent {
+                request: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
+                answer: Answer::Asked,
+            },
+            Witness::Trust {
+                digest: digest("c"),
+                standing: Standing::Pended,
+            },
+            Witness::Transition {
+                from: Up::Seated,
+                to: Up::Quiescing,
+            },
+        ],
+    );
+    law(
+        covered,
+        "Disposition",
+        &[Disposition::Live, Disposition::Declined],
+    );
+    law(covered, "Answer", &[Answer::Asked, Answer::Denied]);
+    law(covered, "Standing", &[Standing::Pended, Standing::Revoked]);
+    law(covered, "Up", &[Up::Seated, Up::Dark]);
+    law(
+        covered,
+        "WitnessKind",
+        &[WitnessKind::Task, WitnessKind::Transition],
     );
 }
 

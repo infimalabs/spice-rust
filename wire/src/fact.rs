@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 
 /// Every admitted fact discriminant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[non_exhaustive]
 pub enum FactKind {
     /// A task statement and initial workflow head were created.
     #[serde(rename = "task::added")]
