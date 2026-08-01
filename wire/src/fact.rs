@@ -12,6 +12,7 @@
 use std::fmt;
 
 use serde::de::{Deserializer, Error as DeError};
+use serde::ser::{Error as SerError, Serializer};
 use serde::{Deserialize, Serialize};
 
 /// A closed class of appenders. Every kind names exactly one.
@@ -117,6 +118,20 @@ macro_rules! vocabulary {
             pub const fn producer(self) -> Producer {
                 match self {
                     $(Self::$variant => Producer::$producer,)+
+                }
+            }
+
+            /// Validate an opaque body through the DTO registered for this kind.
+            fn validate_body(
+                self,
+                body: &serde_json::Map<String, serde_json::Value>,
+            ) -> Result<(), serde_json::Error> {
+                match self {
+                    $(
+                        Self::$variant => {
+                            decode_registered_body::<crate::body::$variant>(body).map(drop)
+                        }
+                    )+
                 }
             }
         }
@@ -278,33 +293,72 @@ impl fmt::Display for FactKind {
 /// The body is a type parameter bounded by [`Body`], so the pair is fixed at
 /// compile time: `F` names the kind, and there is no way to spell a fact whose
 /// body is an untyped map.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(serialize = "F: Body", deserialize = "F: Body"))]
+///
+/// The discriminant is derived from the registered body type and cannot be
+/// supplied independently:
+///
+/// ```compile_fail
+/// let fact = wire::Fact {
+///     kind: wire::FactKind::TaskDone,
+///     body: wire::body::TaskWoken {
+///         task: "WIRE-aBcD".parse().expect("task handle"),
+///     },
+/// };
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fact<F: Body> {
-    /// Discriminant from the closed vocabulary. It is always `F::KIND`.
-    #[serde(deserialize_with = "registered_kind::<F, _>")]
-    pub kind: FactKind,
     /// Kind-specific body, flattened beside the discriminant.
-    #[serde(flatten)]
     pub body: F,
 }
 
-/// Decode the discriminant, refusing one that does not name `F`.
-///
-/// A document whose `kind` disagrees with the body being decoded into is not a
-/// well-formed fact of that kind, and admitting it would let a body silently
-/// answer for a transition it does not describe.
-fn registered_kind<'de, F: Body, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<FactKind, D::Error> {
-    let kind = FactKind::deserialize(deserializer)?;
-    if kind == F::KIND {
-        Ok(kind)
+#[derive(Deserialize)]
+struct UncheckedFact {
+    kind: FactKind,
+    #[serde(flatten)]
+    body: serde_json::Map<String, serde_json::Value>,
+}
+
+fn decode_registered_body<F: Body>(
+    body: &serde_json::Map<String, serde_json::Value>,
+) -> Result<F, serde_json::Error> {
+    let supplied = serde_json::Value::Object(body.clone());
+    let decoded: F = serde_json::from_value(supplied.clone())?;
+    let registered = serde_json::to_value(&decoded)?;
+    if supplied == registered {
+        Ok(decoded)
     } else {
-        Err(D::Error::custom(format!(
-            "kind {kind} is not the kind this body is registered against, {}",
-            F::KIND
-        )))
+        Err(<serde_json::Error as DeError>::custom(
+            "body fields do not exactly match the registered DTO",
+        ))
+    }
+}
+
+impl<F: Body> Serialize for Fact<F> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut fields = match serde_json::to_value(&self.body).map_err(S::Error::custom)? {
+            serde_json::Value::Object(fields) => fields,
+            _ => return Err(S::Error::custom("a registered body must be an object")),
+        };
+        fields.insert(
+            "kind".to_owned(),
+            serde_json::to_value(F::KIND).map_err(S::Error::custom)?,
+        );
+        fields.serialize(serializer)
+    }
+}
+
+impl<'de, F: Body> Deserialize<'de> for Fact<F> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let unchecked = UncheckedFact::deserialize(deserializer)?;
+        if unchecked.kind != F::KIND {
+            return Err(D::Error::custom(format!(
+                "kind {} is not the kind this body is registered against, {}",
+                unchecked.kind,
+                F::KIND
+            )));
+        }
+        let body = decode_registered_body(&unchecked.body).map_err(D::Error::custom)?;
+        Ok(Self { body })
     }
 }
 
@@ -319,26 +373,67 @@ fn registered_kind<'de, F: Body, D: Deserializer<'de>>(
 ///
 /// This gives up nothing the registration was protecting. The vocabulary is
 /// enforced where a fact is minted and where a typed consumer decodes one; a
-/// reader that never interprets the body cannot mistake one kind for another.
-/// What it must not do is round-trip an opaque body back onto the socket, which
-/// is why nothing here converts into a [`Fact`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// reader validates the body through that kind's registered DTO before keeping
+/// its fields opaque. It can re-encode a stored row for canonical verification,
+/// but its private fields prevent callers from inventing or mutating an opaque
+/// fact and sending it as a typed one.
+///
+/// An unchecked opaque fact cannot be constructed:
+///
+/// ```compile_fail
+/// let fact = wire::AnyFact {
+///     kind: wire::FactKind::TaskDone,
+///     body: Default::default(),
+/// };
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AnyFact {
     /// Discriminant from the closed vocabulary, refused if it is not one.
-    pub kind: FactKind,
-    /// The remaining fields, uninterpreted.
+    kind: FactKind,
+    /// The remaining fields, validated once and then uninterpreted.
     #[serde(flatten)]
-    pub body: serde_json::Map<String, serde_json::Value>,
+    body: serde_json::Map<String, serde_json::Value>,
+}
+
+impl<'de> Deserialize<'de> for AnyFact {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let unchecked = UncheckedFact::deserialize(deserializer)?;
+        unchecked
+            .kind
+            .validate_body(&unchecked.body)
+            .map_err(D::Error::custom)?;
+        Ok(Self {
+            kind: unchecked.kind,
+            body: unchecked.body,
+        })
+    }
+}
+
+impl AnyFact {
+    /// The registered discriminant decoded for this body.
+    #[must_use]
+    pub const fn kind(&self) -> FactKind {
+        self.kind
+    }
+
+    /// The validated body fields as they appeared on the wire.
+    #[must_use]
+    pub const fn body(&self) -> &serde_json::Map<String, serde_json::Value> {
+        &self.body
+    }
 }
 
 impl<F: Body> Fact<F> {
     /// Pair a body with the one discriminant it is registered against.
     #[must_use]
     pub const fn new(body: F) -> Self {
-        Self {
-            kind: F::KIND,
-            body,
-        }
+        Self { body }
+    }
+
+    /// The discriminant registered for this body's type.
+    #[must_use]
+    pub const fn kind(&self) -> FactKind {
+        F::KIND
     }
 
     /// The producer class permitted to mint this fact.
