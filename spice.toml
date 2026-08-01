@@ -58,3 +58,19 @@ stems = [
 # same undifferentiated bucket the stem inventory above exists to break up.
 project_min_depth = 2
 project_max_depth = 3
+
+[policy]
+# Every environment name this workspace defines, spelled once.
+#
+# This is not the predecessor's interpreter allowlist, which said which ambient
+# values Python was permitted to read. This is the workspace's own vocabulary:
+# the names spice writes and the names spice reads back. The gate matches it
+# against the tracked tree in both directions, so a name used without being
+# listed fails, and a name listed after its last use fails too. That is what
+# makes the vocabulary countable rather than a set of literals accumulating
+# across crates.
+#
+# `steer` owns all four today. Interception exports the proof and reads the
+# geometry back: the hooks directory it sources its static stage from, the
+# rendered direction it writes to stderr, and the lane a shell is bound to.
+env_names = ["SPICE_HOOKS", "SPICE_INBOX", "SPICE_LANE", "SPICE_PROOF"]

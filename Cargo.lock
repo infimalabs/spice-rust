@@ -689,6 +689,7 @@ dependencies = [
  "fold",
  "journal",
  "sill",
+ "syn 3.0.3",
  "wire",
 ]
 
