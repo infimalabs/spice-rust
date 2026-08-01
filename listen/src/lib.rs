@@ -21,14 +21,18 @@ pub use event::{
 };
 pub use residue::{Decoded, LocusLengthError, Residue, ResidueKind};
 pub use surface::{
-    Mode, Observation, RetroSelector, Span, StreamOutcome, SurfaceError, Watch, retro,
+    Mode, Observation, RetroSelector, Span, StreamOutcome, SurfaceError, SurfaceEvent,
+    SurfaceReasoning, SurfaceResidue, SurfaceToolMoment, SurfaceToolResult, Watch, retro,
 };
 pub use tape::Locus;
 
 use serde_json::{Map, Value};
 
 /// The installed vendor stream grammar to apply.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(
+    Clone, Copy, Debug, serde::Deserialize, Eq, Ord, PartialEq, PartialOrd, Hash, serde::Serialize,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum Dialect {
     /// Claude Code JSONL records.
     Claude,

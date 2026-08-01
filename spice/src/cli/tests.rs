@@ -269,7 +269,7 @@ fn contract_syntax_drives_argument_registration() {
     let parser = command();
     for argv in [
         &["spice", "doctor"][..],
-        &["spice", "watch", "root", "--once"],
+        &["spice", "watch", "root"],
         &["spice", "task", "add", "title", "--project", "rim.cli"],
         &["spice", "task", "depends", "TASK", "FIRST", "SECOND"],
         &["spice", "lane", "add", "--life", "Drive"],
@@ -283,8 +283,10 @@ fn contract_syntax_drives_argument_registration() {
             .unwrap_or_else(|error| panic!("{argv:?} must parse: {error}"));
     }
 
+    // Release one exposes no finite, test-only execution arm for watch.
     for argv in [
         &["spice", "doctor", "garbage"][..],
+        &["spice", "watch", "root", "--once"],
         &["spice", "task", "add"],
         &["spice", "task", "depends", "TASK"],
         &["spice", "lane", "add", "--life", "Sprint"],

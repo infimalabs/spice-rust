@@ -217,10 +217,9 @@ fn run_watch(matches: &clap::ArgMatches, form: Form) -> ! {
     let root = matches
         .get_one::<String>("ROOT")
         .map_or_else(|| PathBuf::from("."), PathBuf::from);
-    let once = matches.get_flag("once");
     let mut watch = Watch::new(&root);
 
-    if once || !is_real_directory(&root) {
+    if !is_real_directory(&root) {
         match poll_and_emit(&mut watch, form) {
             Ok(()) => terminate_stream(),
             Err(fault) => deliver_fault(fault, form),
