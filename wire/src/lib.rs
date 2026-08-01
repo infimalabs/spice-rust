@@ -40,10 +40,7 @@ pub mod witness;
 pub use command::{Command, CommandKind, CommandKindError, Law, LawError};
 pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVersion};
 pub use fact::{Body, Fact, FactKind, Producer};
-// `head::WitnessKind` is deliberately not re-exported here. It classes a board
-// head, while [`witness::WitnessKind`] discriminates a command's expectations;
-// the two are different closed sets and the command registry states its law in
-// terms of the latter, so that one holds the crate-root spelling.
+pub use head::WitnessClass;
 pub use head::{
     ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency, LeaseHead,
     ResidencyHead, ResidentState, TaskHead, TrustHead, TrustState, WitnessHead, WorkflowHead,
@@ -55,12 +52,11 @@ pub use reply::{
     Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, Response, SeqRange, SeqRangeError,
 };
 // `WitnessKind` is deliberately absent here and reached as
-// `wire::witness::WitnessKind`. Two vocabularies currently claim that name:
-// `head::WitnessKind` names the predicate classes a witness head carries,
-// while `witness::WitnessKind` names the command registry's discriminants.
-// They overlap at different granularity, and WIRE-1kJJZ3Y7 owns deciding
-// whether they are one concept. This keeps the crate compiling without
-// prejudging that decision by renaming or deleting either one.
+// `wire::witness::WitnessKind`. The head vocabulary that once claimed the same
+// name is now [`head::WitnessClass`], so the two no longer collide; what keeps
+// the command discriminant off the crate root is that it and `WitnessClass`
+// class the same predicates at different granularity, and a reader who reaches
+// for the root spelling should have to say which one they mean.
 pub use witness::{
     Answer, Disposition, Name, NameError, Phase, PhaseError, Standing, TaskHandle, TaskHandleError,
     Up, Witness,
