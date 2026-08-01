@@ -17,4 +17,4 @@ pub mod socket;
 pub mod state;
 
 pub use socket::{Admitted, Session};
-pub use state::{Applied, BrowserState};
+pub use state::{Applied, BrowserState, CausalLink, ChainEnd, ChainWalk};
