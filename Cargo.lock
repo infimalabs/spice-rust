@@ -265,10 +265,13 @@ dependencies = [
  "axum",
  "bus",
  "fold",
+ "futures-util",
  "journal",
  "serde",
  "serde_json",
  "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
  "toml",
  "tungstenite",
  "wire",
@@ -459,6 +462,7 @@ name = "dist"
 version = "0.0.0"
 dependencies = [
  "atomic",
+ "gix",
  "serde_json",
  "sill",
  "thiserror",
@@ -597,6 +601,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2cd50c473c80f6d7c3670a752354b8e569b1a7cbfdc0419ec88e5edad85e0dc7"
 
 [[package]]
+name = "futures-macro"
+version = "0.3.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d6d3cde68c518367be28956066ddfef33813991b77a55005a69dae04bf3b10b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "futures-sink"
 version = "0.3.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -615,6 +630,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a77a90a256fce34da66415271e30f94ee91c57b04b8a2c042d9cf3220179deaa"
 dependencies = [
  "futures-core",
+ "futures-macro",
  "futures-sink",
  "futures-task",
  "pin-project-lite",
@@ -1329,6 +1345,12 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
+
+[[package]]
+name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
@@ -1539,6 +1561,7 @@ name = "journal"
 version = "0.0.0"
 dependencies = [
  "atomic",
+ "libc",
  "rusqlite",
  "serde",
  "serde_json",
@@ -2089,6 +2112,7 @@ dependencies = [
  "clap",
  "consent",
  "dialect",
+ "dist",
  "fold",
  "gate",
  "jiff",
@@ -2271,6 +2295,21 @@ dependencies = [
  "log",
  "tokio",
  "tungstenite",
+]
+
+[[package]]
+name = "tokio-util"
+version = "0.7.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b9590b93e6fcc1739458317cccd391ad3955e2bde8913edf6f95f9e65a8f034"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "futures-sink",
+ "futures-util",
+ "hashbrown 0.14.5",
+ "pin-project-lite",
+ "tokio",
 ]
 
 [[package]]

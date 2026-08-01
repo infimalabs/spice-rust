@@ -7,7 +7,7 @@ use serde::de::{Deserializer, Error as _};
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 
-use crate::Digest;
+use crate::{Digest, WireVersion};
 
 const OCI_SHA256_HEX_LEN: usize = 64;
 
@@ -20,6 +20,8 @@ pub const JOURNAL_BACKUP_VERSION: u16 = 1;
 pub struct JournalBackupMember {
     /// Canonical slash-separated path relative to the bundle root.
     pub path: String,
+    /// POSIX permission bits, masked to `0o7777`.
+    pub mode: u32,
     /// Exact byte length of the member.
     pub bytes: u64,
     /// Domain-separated identity of the member bytes.
@@ -32,6 +34,8 @@ pub struct JournalBackupMember {
 pub struct JournalBackupManifest {
     /// Current bundle schema.
     pub version: u16,
+    /// Current crossing schema required to interpret the authority.
+    pub wire: WireVersion,
     /// Finalized journal schema carried by the authority member.
     pub journal_schema: u32,
     /// Member path containing the SQLite authority.
@@ -272,6 +276,7 @@ pub struct InventoryEntry {
 pub struct TargetPayload {
     pub version: u16,
     pub target: ReleaseTarget,
+    /// Domain-separated identity of the immutable Git commit built.
     pub source: Digest,
     pub app: Digest,
     pub embedded_app: Digest,

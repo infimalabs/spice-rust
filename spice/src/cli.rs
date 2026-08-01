@@ -318,7 +318,7 @@ const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["release", "notes"],
-        "release notes",
+        "release notes RANGE MANIFEST",
         Local,
         None,
         [],
@@ -844,14 +844,14 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["lock", "run"]
         | ["proof"]
         | ["proof", "replay"]
+        | ["release", "notes"]
         | ["up"]
         | ["down"]
         | ["run"]
         | ["config"]
-        | ["release", "publish"] => Landing::Landed,
-        ["install"] | ["restore", "verify"] | ["release", "notes"] => {
-            Landing::Gap("LOCAL-1kJQlG6b")
-        }
+        | ["release", "publish"]
+        | ["restore", "verify"] => Landing::Landed,
+        ["install"] => Landing::Gap("LOCAL-1kJQlG6b"),
         ["board"]
         | ["board", "graph"]
         | ["board", "handout"]
