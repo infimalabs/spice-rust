@@ -65,7 +65,11 @@ pub struct JournalReader {
 impl Journal {
     /// Opens or creates an authority database and admits only schema v1.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, OpenError> {
-        Self::from_connection(Connection::open(path).map_err(OpenError::Sqlite)?)
+        let path = path.as_ref();
+        Self::from_connection(Connection::open(path).map_err(|source| OpenError::Open {
+            path: path.to_path_buf(),
+            source,
+        })?)
     }
 
     /// Opens an isolated in-memory authority database.
@@ -76,6 +80,16 @@ impl Journal {
     /// Returns the finalized schema version.
     pub fn schema_version(&self) -> Result<u32, OpenError> {
         migrate::finalized_version(&self.connection)
+    }
+
+    /// Inspects one existing authority database without creating or migrating it.
+    ///
+    /// This is the daemonless read used by identity-reporting surfaces. The
+    /// read-only SQLite handle makes absence and write attempts refusals at the
+    /// storage boundary; unlike [`Self::open`], this path never baselines an
+    /// empty file and never enters a migration transaction.
+    pub fn inspect_schema(path: impl AsRef<Path>) -> Result<u32, OpenError> {
+        JournalReader::open(path)?.schema_version()
     }
 
     fn from_connection(mut connection: Connection) -> Result<Self, OpenError> {
@@ -97,15 +111,19 @@ impl JournalReader {
     /// or the existing schema-admission refusal when migration is unfinished
     /// or belongs to another release.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, OpenError> {
+        let path = path.as_ref();
         let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .map_err(OpenError::Sqlite)?;
+            .map_err(|source| OpenError::Open {
+                path: path.to_path_buf(),
+                source,
+            })?;
         connection
             .pragma_update(None, "query_only", true)
             .map_err(OpenError::Sqlite)?;
         connection
             .pragma_update(None, "trusted_schema", false)
             .map_err(OpenError::Sqlite)?;
-        migrate::finalized_version(&connection)?;
+        migrate::inspect_version(&connection)?;
         Ok(Self { connection })
     }
 

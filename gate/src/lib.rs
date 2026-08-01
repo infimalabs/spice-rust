@@ -11,6 +11,7 @@
 //! each other, and the qualifier is what keeps a reader from believing
 //! otherwise.
 
+pub mod camp;
 pub mod jurisdiction;
 pub mod measure;
 pub mod message;
@@ -18,6 +19,10 @@ pub mod names;
 pub mod ratchet;
 pub mod verdict;
 
+pub use camp::{
+    BoundRelation, Camp, CampError, CampFinding, CampReport, CampStanding, DistributionReport,
+    LocusDistance, SharedBound,
+};
 pub use jurisdiction::{
     Admission, Entry, Ignore, IgnoreError, Jurisdiction, Rule, Shape, WalkError,
 };

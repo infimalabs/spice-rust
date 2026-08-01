@@ -90,14 +90,14 @@ const fn exit_status<B>(outcome: &Outcome<B>) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, Seq};
+    use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
     use super::render::{self, Stream};
     use super::{FAULT_EXIT, REFUSAL_EXIT, REPLY_EXIT, exit_status};
 
     fn reply() -> Outcome<()> {
         Outcome::Reply(Reply {
-            position: ReplyPosition::Snapshot(Seq::new(1).expect("non-zero position")),
+            position: ReplyPosition::Direct {},
             body: (),
         })
     }

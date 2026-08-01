@@ -183,7 +183,7 @@ outcome:
 
 | Outcome | Payload | Exit |
 | --- | --- | --- |
-| `Reply` | Typed result and committed inclusive `seq` range; a read-only result carries its snapshot cursor instead. | `0` |
+| `Reply` | Typed result and its journal relationship: a committed inclusive `seq` range, a read-only snapshot `cursor`, or `direct: {}` for a daemonless answer with no journal position. | `0` |
 | `Refusal` | Stable reason, failed witness when applicable, observed state, and actionable remedy. It carries no committed range. | `2` |
 | `Fault` | Named protocol, store, or environment defect, including stale epoch and id collision. | `1` |
 
@@ -430,6 +430,12 @@ return bare `Packed<T>` beside their reply's snapshot cursor; they have
 no fold or generation and never invent one. Only fold-backed reads wear
 `Derived<T>`, so generation identity and applied cursor are always
 present where they exist and never fabricated where they do not.
+
+Daemonless commands with no journal access answer beside `direct: {}`.
+The empty object is the one explicit spelling of that absence: `null`, a
+cursor, a committed range, and objects with unknown fields are refused.
+Resident reads and commands continue to carry their real snapshot or
+committed position; they cannot use the direct form.
 
 ## Decoder
 

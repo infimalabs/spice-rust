@@ -664,6 +664,7 @@ fn verify_response(row: &ReceiptRow, violations: &mut Vec<Violation>) {
                 && row.last.is_none()
                 && row.snapshot.and_then(|v| u64::try_from(v).ok()) == Some(cursor.get())
         }
+        wire::ReplyPosition::Direct {} => false,
     };
     if !agreed {
         receipt_violation(

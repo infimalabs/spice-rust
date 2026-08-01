@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use wire::{
     Actor, CanonicalUuid, Command, Envelope, Fact, FactKind, Fault, FaultClass, Hello, Instant,
     Origin, Outcome, Overflow, Packed, Refusal, Rejected, Reply, ReplyPosition, Response, Seq,
-    SeqRange, TaskHandle, WireVersion, Witness, body,
+    SeqRange, TaskHandle, Version, WireVersion, Witness, body,
 };
 
 /// Body of the `task::done` command printed in WIRE.md.
@@ -107,6 +107,8 @@ const REPLY: &str = r#"{
   }
 }"#;
 
+const VERSION: &str = r#"{"binary":"1111111111111111111111111111111111111111111111111111111111111111","wire":1,"journal":1,"app":"2222222222222222222222222222222222222222222222222222222222222222"}"#;
+
 #[test]
 fn envelope_matches_the_specified_document() {
     let envelope: Envelope<Fact<body::TaskPhased>> = round_trip(ENVELOPE);
@@ -125,6 +127,74 @@ fn envelope_matches_the_specified_document() {
     assert_eq!(envelope.fact.kind(), FactKind::TaskPhased);
     assert_eq!(envelope.fact.body.phase.as_str(), "verify");
     assert!(!envelope.is_root());
+}
+
+#[test]
+fn version_is_the_exact_stable_four_identity_document() {
+    let version: Version = wire::decode(VERSION.as_bytes()).expect("version document decodes");
+
+    assert_eq!(version.binary.as_str(), "1".repeat(64));
+    assert_eq!(version.wire, WireVersion::CURRENT);
+    assert_eq!(version.journal, 1);
+    assert_eq!(version.app.as_str(), "2".repeat(64));
+    assert_eq!(
+        wire::encode(&version).expect("version document re-encodes"),
+        VERSION.as_bytes(),
+        "the stable machine form changed"
+    );
+}
+
+#[test]
+fn version_refuses_missing_null_extra_and_wrong_shaped_identities() {
+    let document: serde_json::Value = serde_json::from_str(VERSION).expect("fixture is JSON");
+
+    for field in ["binary", "wire", "journal", "app"] {
+        let mut missing = document.clone();
+        missing
+            .as_object_mut()
+            .expect("version is an object")
+            .remove(field);
+        assert!(
+            wire::decode::<Version>(&serde_json::to_vec(&missing).expect("missing shape encodes"))
+                .is_err(),
+            "missing {field} was admitted"
+        );
+
+        let mut null = document.clone();
+        null[field] = serde_json::Value::Null;
+        assert!(
+            wire::decode::<Version>(&serde_json::to_vec(&null).expect("null shape encodes"))
+                .is_err(),
+            "null {field} was admitted"
+        );
+    }
+
+    let mut extra = document.clone();
+    extra
+        .as_object_mut()
+        .expect("version is an object")
+        .insert("epoch".to_owned(), serde_json::json!(1));
+    assert!(
+        wire::decode::<Version>(&serde_json::to_vec(&extra).expect("extra shape encodes")).is_err(),
+        "an unknown version identity was admitted"
+    );
+
+    for (field, wrong) in [
+        ("binary", serde_json::json!(7)),
+        ("wire", serde_json::json!("1")),
+        ("journal", serde_json::json!("1")),
+        ("app", serde_json::json!("not-a-digest")),
+    ] {
+        let mut malformed = document.clone();
+        malformed[field] = wrong;
+        assert!(
+            wire::decode::<Version>(
+                &serde_json::to_vec(&malformed).expect("malformed shape encodes")
+            )
+            .is_err(),
+            "wrong-shaped {field} was admitted"
+        );
+    }
 }
 
 #[test]
@@ -305,6 +375,50 @@ fn a_read_only_reply_carries_a_snapshot_cursor_instead_of_a_range() {
 
     let decoded: Response<DoneResult> = wire::decode(encoded.as_bytes()).expect("decodes");
     assert_eq!(decoded, response);
+}
+
+#[test]
+fn a_daemonless_reply_states_that_its_journal_position_is_directly_absent() {
+    let outcome = Outcome::Reply(Reply {
+        position: ReplyPosition::Direct {},
+        body: DoneResult {
+            task: "SPICE-aBcD".parse().expect("handle"),
+            status: "checked".to_owned(),
+        },
+    });
+
+    let encoded = wire::encode(&outcome).expect("direct reply encodes");
+    let value: serde_json::Value = serde_json::from_slice(&encoded).expect("wire bytes are json");
+    assert_eq!(value["direct"], serde_json::json!({}));
+    assert!(value.get("seq").is_none() && value.get("cursor").is_none());
+
+    let decoded: Outcome<DoneResult> = wire::decode(&encoded).expect("direct reply decodes");
+    assert_eq!(decoded, outcome);
+}
+
+#[test]
+fn direct_absence_has_no_null_unknown_or_sequence_shaped_alias() {
+    for (name, direct) in [
+        ("null", serde_json::Value::Null),
+        ("unknown", serde_json::json!({"unknown": true})),
+        (
+            "committed range",
+            serde_json::json!({"first": 1, "last": 1}),
+        ),
+        ("snapshot cursor", serde_json::json!(1)),
+    ] {
+        let alternate = serde_json::json!({
+            "kind": "reply",
+            "direct": direct,
+            "body": {"task": "SPICE-aBcD", "status": "checked"}
+        });
+        let bytes = serde_json::to_vec(&alternate).expect("alternate is json");
+
+        assert!(
+            wire::decode::<Outcome<DoneResult>>(&bytes).is_err(),
+            "the {name} spelling must not alias direct absence",
+        );
+    }
 }
 
 #[test]

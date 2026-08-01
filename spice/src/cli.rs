@@ -28,6 +28,27 @@ pub(crate) enum JournalAccess {
     Resident,
 }
 
+/// Journal relationship a successful reply must report.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ReplyPositionLaw {
+    /// The command is daemonless and has no journal position.
+    Direct,
+    /// The command answers from a read snapshot.
+    Snapshot,
+    /// The command commits authoritative state before answering.
+    Committed,
+}
+
+impl JournalAccess {
+    const fn reply_position(self) -> ReplyPositionLaw {
+        match self {
+            Self::None => ReplyPositionLaw::Direct,
+            Self::Read => ReplyPositionLaw::Snapshot,
+            Self::Command | Self::Recovery | Self::Resident => ReplyPositionLaw::Committed,
+        }
+    }
+}
+
 /// Additional posture or admission rule carried by a leaf.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Guard {
@@ -77,6 +98,7 @@ pub(crate) struct Contract {
     pub(crate) syntax: &'static str,
     pub(crate) principal: Principal,
     pub(crate) journal: JournalAccess,
+    pub(crate) reply_position: ReplyPositionLaw,
     pub(crate) facts: &'static [FactKind],
     pub(crate) guards: &'static [Guard],
     pub(crate) result: ResultClass,
@@ -94,6 +116,7 @@ macro_rules! row {
             syntax: $syntax,
             principal: Principal::$principal,
             journal: JournalAccess::$journal,
+            reply_position: JournalAccess::$journal.reply_position(),
             facts: &[$(FactKind::$fact),*],
             guards: &[$(Guard::$guard),*],
             result: ResultClass::$result,
@@ -1096,6 +1119,20 @@ mod tests {
                     "command journal access has no resident guard: {contract:?}",
                 );
             }
+            match (contract.journal, contract.reply_position) {
+                (JournalAccess::None, ReplyPositionLaw::Direct) => assert!(
+                    contract.guards.contains(&Guard::Daemonless),
+                    "a direct reply must belong to a daemonless leaf: {contract:?}",
+                ),
+                (JournalAccess::Read, ReplyPositionLaw::Snapshot)
+                | (
+                    JournalAccess::Command | JournalAccess::Recovery | JournalAccess::Resident,
+                    ReplyPositionLaw::Committed,
+                ) => {}
+                _ => panic!(
+                    "reply position does not match the leaf's journal authority: {contract:?}"
+                ),
+            }
             if contract.result == ResultClass::Plan {
                 assert!(
                     contract.guards.contains(&Guard::DigestOnMutation),
@@ -1120,6 +1157,7 @@ mod tests {
             syntax: "missing",
             principal: Principal::Local,
             journal: JournalAccess::None,
+            reply_position: ReplyPositionLaw::Direct,
             facts: &[],
             guards: &[],
             result: ResultClass::Reply,

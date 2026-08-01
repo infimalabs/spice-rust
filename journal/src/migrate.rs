@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt;
+use std::path::PathBuf;
 
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
@@ -54,6 +55,20 @@ pub(crate) fn finalized_version(connection: &Connection) -> Result<u32, OpenErro
         .map_err(OpenError::Sqlite)?
         .ok_or(MigrationError::MissingSingleton)?;
     admit_state(connection, state)
+}
+
+/// Reads an existing schema identity without performing baseline or migration.
+pub(crate) fn inspect_version(connection: &Connection) -> Result<u32, OpenError> {
+    if !table_exists(connection, "journal_schema")? {
+        let object_count = authority_object_count(connection)?;
+        return Err(if object_count == 0 {
+            MigrationError::MissingSchema
+        } else {
+            MigrationError::UnversionedAuthority { object_count }
+        }
+        .into());
+    }
+    finalized_version(connection)
 }
 
 fn admit_state(connection: &Connection, state: SchemaState) -> Result<u32, OpenError> {
@@ -123,17 +138,30 @@ struct SchemaState {
     to_version: Option<u32>,
 }
 
-/// A database-open failure.
+/// A database open, schema admission, or SQLite operation failure.
 #[derive(Debug)]
 pub enum OpenError {
+    Open {
+        path: PathBuf,
+        source: rusqlite::Error,
+    },
     Sqlite(rusqlite::Error),
     Migration(MigrationError),
-    InvalidCursor { found: i64 },
+    InvalidCursor {
+        found: i64,
+    },
 }
 
 impl fmt::Display for OpenError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Open { path, source } => {
+                write!(
+                    formatter,
+                    "journal could not open {}: {source}",
+                    path.display()
+                )
+            }
             Self::Sqlite(error) => write!(formatter, "journal SQLite operation failed: {error}"),
             Self::Migration(error) => error.fmt(formatter),
             Self::InvalidCursor { found } => {
@@ -149,6 +177,7 @@ impl fmt::Display for OpenError {
 impl Error for OpenError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::Open { source, .. } => Some(source),
             Self::Sqlite(error) => Some(error),
             Self::Migration(error) => Some(error),
             Self::InvalidCursor { .. } => None,
@@ -165,6 +194,7 @@ impl From<MigrationError> for OpenError {
 /// A named schema-state refusal.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MigrationError {
+    MissingSchema,
     UnversionedAuthority { object_count: u32 },
     SchemaRowCount { count: u32 },
     MissingSingleton,
@@ -178,6 +208,9 @@ pub enum MigrationError {
 impl fmt::Display for MigrationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MissingSchema => formatter.write_str(
+                "journal has no schema identity; release 1 requires a finalized schema before read-only inspection",
+            ),
             Self::UnversionedAuthority { object_count } => write!(
                 formatter,
                 "journal refuses an unversioned nonempty authority containing {object_count} schema objects; release 1 requires backup and an empty authority"

@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::envelope::{Seq, WireVersion};
-use crate::ident::CanonicalUuid;
+use crate::ident::{CanonicalUuid, Digest};
 
 /// An inclusive range of committed journal positions.
 ///
@@ -66,12 +66,15 @@ impl TryFrom<SeqRangeShape> for SeqRange {
     }
 }
 
-/// Where a successful result sits in the journal.
+/// Where a successful result sits relative to the journal.
 ///
 /// A mutating command commits a range; a read-only command answers from a
-/// snapshot instead. The two are distinct keys rather than one overloaded
-/// field, so a reader never guesses which it received.
+/// snapshot instead; and a daemonless command states directly that no journal
+/// position exists. The three are distinct keys rather than one overloaded
+/// field, so a reader never guesses which it received and no caller needs to
+/// fabricate a sequence for a journal-free answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum ReplyPosition {
     /// Inclusive range committed by a mutating transaction.
     #[serde(rename = "seq")]
@@ -79,16 +82,42 @@ pub enum ReplyPosition {
     /// Snapshot cursor answered by a read-only command.
     #[serde(rename = "cursor")]
     Snapshot(Seq),
+    /// Direct daemonless answer carrying no journal position.
+    ///
+    /// The struct variant deliberately encodes as `"direct": {}`. An empty
+    /// object is the one explicit absence marker; `null` and objects carrying
+    /// sequence-shaped or unknown fields are not alternate spellings.
+    #[serde(rename = "direct")]
+    Direct {},
 }
 
-/// A typed result and its journal position.
+/// A typed result and its relationship to the journal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Reply<B> {
-    /// Committed range, or the snapshot cursor for a read-only result.
+    /// Committed range, read snapshot, or explicit journal-free position.
     #[serde(flatten)]
     pub position: ReplyPosition,
     /// Kind-specific result.
     pub body: B,
+}
+
+/// Compiled identities reported by the daemonless `version` leaf.
+///
+/// These four values are one machine document rather than independent prose:
+/// the native artifact and embedded app identify what was built, while the
+/// wire and journal versions identify the only crossing and authority schemas
+/// that build admits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Version {
+    /// Digest of the native executable for its release target.
+    pub binary: Digest,
+    /// The one wire schema this build speaks.
+    pub wire: WireVersion,
+    /// Finalized journal schema this build observed without migrating it.
+    pub journal: u32,
+    /// Digest of the app bytes embedded in the native executable.
+    pub app: Digest,
 }
 
 /// An answer about an event that did not occur.
