@@ -10,11 +10,13 @@
 pub mod container;
 pub mod evidence;
 pub mod layout;
+pub mod payload;
 pub mod replay;
 
 pub use container::{Container, ContainerError, Limits, OciRuntime};
 pub use evidence::{EvidenceError, EvidencePublishError, VerifiedEvidence, publish, verify};
 pub use layout::{Input, InputError, Layout, LayoutError, ReceiptInput};
+pub use payload::{AdmittedPayload, PayloadError, admit};
 pub use replay::{
     Battery, Check, CheckKind, CheckStanding, CheckVerdict, ReplayError, ReplayVerdict, replay,
 };

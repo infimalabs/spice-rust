@@ -5,13 +5,12 @@ use std::fmt;
 use std::io::Write as _;
 use std::path::Path;
 
-use wire::manifest::{ProofReceipt, ProofStanding, ReleaseTarget, TargetPayload};
+use wire::manifest::{ProofReceipt, ProofStanding, ReleaseTarget};
 use wire::{Digest, Domain, ProofEvidence};
 
-use crate::container::is_digest_pinned;
+use crate::payload::AdmittedPayload;
 use crate::replay::{Battery, ReplayVerdict};
 
-const PAYLOAD_VERSION: u16 = 1;
 const RECEIPT_VERSION: u16 = 1;
 
 /// Evidence whose payload, replay, and receipt agree in every bound identity.
@@ -63,83 +62,46 @@ impl From<VerifiedEvidence> for ProofEvidence {
     }
 }
 
-/// Verify the current target payload and detached receipt against one replay.
+/// Verify one detached receipt against an admitted target payload and replay.
 ///
 /// # Errors
 ///
-/// Refuses noncanonical wire bytes, stale schemas, internal payload digest
-/// disagreements, incomplete artifact inventories, refused replays, or any
-/// receipt field that does not bind the supplied payload and replay exactly.
+/// Payload shape and identity have already crossed [`crate::payload::admit`].
+/// This step refuses noncanonical receipt bytes, a stale receipt schema, a
+/// refused replay, or any receipt field that does not bind the admitted
+/// payload and supplied replay exactly.
 pub fn verify(
-    payload_bytes: &[u8],
+    admitted: &AdmittedPayload,
     receipt_bytes: &[u8],
     replay: &ReplayVerdict,
 ) -> Result<VerifiedEvidence, EvidenceError> {
-    let payload: TargetPayload = wire::decode(payload_bytes)
-        .map_err(|source| EvidenceError::DecodePayload(source.to_string()))?;
     let receipt: ProofReceipt = wire::decode(receipt_bytes)
         .map_err(|source| EvidenceError::DecodeReceipt(source.to_string()))?;
-    let canonical_payload =
-        wire::encode(&payload).map_err(|source| EvidenceError::Encode(source.to_string()))?;
     let canonical_receipt =
         wire::encode(&receipt).map_err(|source| EvidenceError::Encode(source.to_string()))?;
-    if canonical_payload != payload_bytes {
-        return Err(EvidenceError::NonCanonicalPayload);
-    }
     if canonical_receipt != receipt_bytes {
         return Err(EvidenceError::NonCanonicalReceipt);
-    }
-    if payload.version != PAYLOAD_VERSION {
-        return Err(EvidenceError::PayloadVersion(payload.version));
     }
     if receipt.version != RECEIPT_VERSION {
         return Err(EvidenceError::ReceiptVersion(receipt.version));
     }
-    if !is_digest_pinned(&payload.pins.proof_container) {
-        return Err(EvidenceError::UnpinnedEnvironment(
-            payload.pins.proof_container.clone(),
-        ));
-    }
 
-    let pins_bytes =
-        wire::encode(&payload.pins).map_err(|source| EvidenceError::Encode(source.to_string()))?;
-    let pins_digest = Digest::compute(Domain::DistPins, &pins_bytes);
-    if payload.pins_digest != pins_digest {
-        return Err(EvidenceError::PinsDigest);
-    }
-    let inventory_bytes = wire::encode(&payload.inventory)
-        .map_err(|source| EvidenceError::Encode(source.to_string()))?;
-    let inventory_digest = Digest::compute(Domain::DistInventory, &inventory_bytes);
-    if payload.inventory_digest != inventory_digest {
-        return Err(EvidenceError::InventoryDigest);
-    }
-    for pair in payload.inventory.windows(2) {
-        if pair[0].path >= pair[1].path {
-            return Err(EvidenceError::InventoryOrder(pair[1].path.clone()));
-        }
-    }
-    verify_artifact(&payload, "app/app.wasm", 0o644, &payload.app)?;
-    verify_artifact(&payload, "embed/app.bin", 0o644, &payload.embedded_app)?;
-    verify_artifact(&payload, "bin/spice", 0o755, &payload.native)?;
-    if payload.inventory.len() != 3 {
-        return Err(EvidenceError::InventoryLength(payload.inventory.len()));
-    }
-
-    let payload_digest = Digest::compute(Domain::DistTargetPayload, &canonical_payload);
+    let payload = admitted.value();
+    let payload_digest = admitted.digest();
     if receipt.target != payload.target {
         return Err(EvidenceError::Target {
             payload: payload.target,
             receipt: receipt.target,
         });
     }
-    if receipt.payload != payload_digest {
+    if receipt.payload != *payload_digest {
         return Err(EvidenceError::PayloadDigest);
     }
     if receipt.environment != payload.pins.proof_container
         || receipt.environment != replay.environment()
     {
         return Err(EvidenceError::Environment {
-            payload: payload.pins.proof_container,
+            payload: payload.pins.proof_container.clone(),
             receipt: receipt.environment,
             replay: replay.environment().to_owned(),
         });
@@ -162,7 +124,7 @@ pub fn verify(
     let receipt_digest = Digest::compute(Domain::ProofReceipt, &canonical_receipt);
     Ok(VerifiedEvidence {
         target: payload.target,
-        payload: payload_digest,
+        payload: payload_digest.clone(),
         receipt: receipt_digest,
         battery: receipt.battery,
         replay: receipt.replay,
@@ -186,50 +148,13 @@ pub fn publish(receipt: &ProofReceipt, destination: &Path) -> Result<Digest, Evi
     Ok(Digest::compute(Domain::ProofReceipt, &bytes))
 }
 
-fn verify_artifact(
-    payload: &TargetPayload,
-    path: &'static str,
-    mode: u32,
-    digest: &Digest,
-) -> Result<(), EvidenceError> {
-    let Some(entry) = payload.inventory.iter().find(|entry| entry.path == path) else {
-        return Err(EvidenceError::MissingArtifact(path));
-    };
-    if entry.mode != mode {
-        return Err(EvidenceError::ArtifactMode {
-            path,
-            expected: mode,
-            observed: entry.mode,
-        });
-    }
-    if &entry.digest != digest {
-        return Err(EvidenceError::ArtifactDigest(path));
-    }
-    Ok(())
-}
-
 /// Why payload, replay, and receipt did not form one proof.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvidenceError {
-    DecodePayload(String),
     DecodeReceipt(String),
     Encode(String),
-    NonCanonicalPayload,
     NonCanonicalReceipt,
-    PayloadVersion(u16),
     ReceiptVersion(u16),
-    UnpinnedEnvironment(String),
-    PinsDigest,
-    InventoryDigest,
-    InventoryOrder(String),
-    InventoryLength(usize),
-    MissingArtifact(&'static str),
-    ArtifactMode {
-        path: &'static str,
-        expected: u32,
-        observed: u32,
-    },
-    ArtifactDigest(&'static str),
     Target {
         payload: ReleaseTarget,
         receipt: ReleaseTarget,
@@ -249,58 +174,16 @@ pub enum EvidenceError {
 impl fmt::Display for EvidenceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::DecodePayload(source) => {
-                write!(formatter, "target payload does not decode: {source}")
-            }
             Self::DecodeReceipt(source) => {
                 write!(formatter, "proof receipt does not decode: {source}")
             }
             Self::Encode(source) => write!(formatter, "proof evidence does not encode: {source}"),
-            Self::NonCanonicalPayload => {
-                formatter.write_str("target payload bytes are not canonical")
-            }
             Self::NonCanonicalReceipt => {
                 formatter.write_str("proof receipt bytes are not canonical")
-            }
-            Self::PayloadVersion(version) => {
-                write!(formatter, "target payload version {version} is not current")
             }
             Self::ReceiptVersion(version) => {
                 write!(formatter, "proof receipt version {version} is not current")
             }
-            Self::UnpinnedEnvironment(environment) => write!(
-                formatter,
-                "target payload proof environment is not digest-pinned: {environment:?}"
-            ),
-            Self::PinsDigest => {
-                formatter.write_str("target payload pin digest disagrees with its pins")
-            }
-            Self::InventoryDigest => {
-                formatter.write_str("target payload inventory digest disagrees with its inventory")
-            }
-            Self::InventoryOrder(path) => write!(
-                formatter,
-                "target payload inventory is not strictly ordered at {path:?}"
-            ),
-            Self::InventoryLength(length) => write!(
-                formatter,
-                "target payload inventory contains {length} entries instead of 3"
-            ),
-            Self::MissingArtifact(path) => {
-                write!(formatter, "target payload inventory is missing {path}")
-            }
-            Self::ArtifactMode {
-                path,
-                expected,
-                observed,
-            } => write!(
-                formatter,
-                "target payload artifact {path} has mode {observed:04o}, expected {expected:04o}"
-            ),
-            Self::ArtifactDigest(path) => write!(
-                formatter,
-                "target payload artifact {path} disagrees with its named digest"
-            ),
             Self::Target { payload, receipt } => write!(
                 formatter,
                 "proof target {receipt} does not match payload target {payload}"
@@ -369,6 +252,7 @@ mod tests {
     use wire::manifest::{BuildPins, InventoryEntry, ReleaseTarget, TargetPayload};
 
     use super::{EvidenceError, publish, verify};
+    use crate::payload::{AdmittedPayload, admit};
     use crate::replay::{Battery, ReplayVerdict};
     use wire::{Digest, Domain, ProofEvidence};
 
@@ -376,14 +260,14 @@ mod tests {
     fn current_payload_replay_and_receipt_verify_as_one_identity_chain() {
         let payload = payload();
         let payload_bytes = wire::encode(&payload).expect("payload encodes");
+        let admitted = admit(&payload_bytes).expect("payload admits before replay");
         let replay = clean_replay(&payload);
         let receipt = replay.receipt(
             &payload,
             Digest::compute(Domain::DistTargetPayload, &payload_bytes),
         );
         let receipt_bytes = wire::encode(&receipt).expect("receipt encodes");
-
-        let verified = verify(&payload_bytes, &receipt_bytes, &replay).expect("evidence verifies");
+        let verified = verify(&admitted, &receipt_bytes, &replay).expect("evidence verifies");
 
         let result: ProofEvidence = verified.clone().into();
 
@@ -401,15 +285,15 @@ mod tests {
     fn a_receipt_over_another_payload_refuses_by_the_mismatched_identity() {
         let payload = payload();
         let payload_bytes = wire::encode(&payload).expect("payload encodes");
+        let admitted = admit(&payload_bytes).expect("payload admits before replay");
         let replay = clean_replay(&payload);
         let receipt = replay.receipt(
             &payload,
             Digest::compute(Domain::DistTargetPayload, b"another payload"),
         );
-
         assert_eq!(
             verify(
-                &payload_bytes,
+                &admitted,
                 &wire::encode(&receipt).expect("receipt encodes"),
                 &replay,
             ),
@@ -421,6 +305,7 @@ mod tests {
     fn every_detached_receipt_binding_is_checked_independently() {
         let payload = payload();
         let payload_bytes = wire::encode(&payload).expect("payload encodes");
+        let admitted = admit(&payload_bytes).expect("payload admits before replay");
         let replay = clean_replay(&payload);
         let receipt = replay.receipt(
             &payload,
@@ -431,7 +316,7 @@ mod tests {
         let mut wrong_target = receipt.clone();
         wrong_target.target = ReleaseTarget::Aarch64AppleDarwin;
         assert_refuses(
-            &payload_bytes,
+            &admitted,
             &wrong_target,
             &replay,
             EvidenceError::Target {
@@ -443,7 +328,7 @@ mod tests {
         let mut wrong_battery = receipt.clone();
         wrong_battery.battery = other(Domain::ProofBattery);
         assert_refuses(
-            &payload_bytes,
+            &admitted,
             &wrong_battery,
             &replay,
             EvidenceError::BatteryDigest,
@@ -452,7 +337,7 @@ mod tests {
         let mut wrong_replay = receipt.clone();
         wrong_replay.replay = other(Domain::ProofReplay);
         assert_refuses(
-            &payload_bytes,
+            &admitted,
             &wrong_replay,
             &replay,
             EvidenceError::ReplayDigest,
@@ -462,7 +347,7 @@ mod tests {
         wrong_environment.environment = format!("registry.example/other@sha256:{}", "5".repeat(64));
         assert!(matches!(
             verify(
-                &payload_bytes,
+                &admitted,
                 &wire::encode(&wrong_environment).expect("receipt encodes"),
                 &replay,
             ),
@@ -481,11 +366,15 @@ mod tests {
         fs::create_dir_all(&root).expect("fixture directory");
         let payload = payload();
         let payload_bytes = wire::encode(&payload).expect("payload encodes");
+        let admitted = admit(&payload_bytes).expect("payload admits before replay");
         let replay = clean_replay(&payload);
         let receipt = replay.receipt(
             &payload,
             Digest::compute(Domain::DistTargetPayload, &payload_bytes),
         );
+        let receipt_bytes = wire::encode(&receipt).expect("receipt encodes");
+        let _verified =
+            verify(&admitted, &receipt_bytes, &replay).expect("evidence verifies before publish");
         let destination = root.join("receipt.json");
 
         let digest = publish(&receipt, &destination).expect("receipt publishes");
@@ -561,14 +450,14 @@ mod tests {
     }
 
     fn assert_refuses(
-        payload_bytes: &[u8],
+        admitted: &AdmittedPayload,
         receipt: &wire::manifest::ProofReceipt,
         replay: &ReplayVerdict,
         expected: EvidenceError,
     ) {
         assert_eq!(
             verify(
-                payload_bytes,
+                admitted,
                 &wire::encode(receipt).expect("receipt encodes"),
                 replay,
             ),

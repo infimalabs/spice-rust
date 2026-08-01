@@ -590,15 +590,15 @@ impl RepositoryScratch {
         connection
             .execute_batch(concat!(
                 "CREATE TABLE journal_schema(singleton INTEGER PRIMARY KEY, ",
-                "version INTEGER NOT NULL, state TEXT NOT NULL, from_version INTEGER, ",
-                "to_version INTEGER, plan_digest TEXT);"
+                "version INTEGER NOT NULL, state TEXT NOT NULL, ",
+                "from_version INTEGER, to_version INTEGER, plan_digest TEXT);",
             ))
             .expect("create schema identity");
         connection
             .execute(
                 concat!(
-                    "INSERT INTO journal_schema(singleton, version, state, from_version, ",
-                    "to_version) VALUES (1, ?1, ?2, ?3, ?4)"
+                    "INSERT INTO journal_schema(singleton, version, state, ",
+                    "from_version, to_version) VALUES (1, ?1, ?2, ?3, ?4)"
                 ),
                 params![version, state, from, to],
             )
