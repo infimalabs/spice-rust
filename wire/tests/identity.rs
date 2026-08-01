@@ -67,20 +67,21 @@ const fn position(domain: Domain) -> usize {
         Domain::DistArtifact => 2,
         Domain::DistPins => 3,
         Domain::DistInventory => 4,
-        Domain::ProofBattery => 5,
-        Domain::ProofReplayV2 => 6,
-        Domain::ProofReceiptV2 => 7,
-        Domain::ProofNativeRunner => 8,
-        Domain::GateFile => 9,
-        Domain::GateTree => 10,
-        Domain::GateSet => 11,
-        Domain::GatePolicy => 12,
-        Domain::GateBounds => 13,
-        Domain::GateBaseline => 14,
-        Domain::GateTool => 15,
-        Domain::GateInventory => 16,
-        Domain::GateMeasurement => 17,
-        Domain::GateReceipt => 18,
+        Domain::DistReleaseManifest => 5,
+        Domain::ProofBattery => 6,
+        Domain::ProofReplayV2 => 7,
+        Domain::ProofReceiptV2 => 8,
+        Domain::ProofNativeRunner => 9,
+        Domain::GateFile => 10,
+        Domain::GateTree => 11,
+        Domain::GateSet => 12,
+        Domain::GatePolicy => 13,
+        Domain::GateBounds => 14,
+        Domain::GateBaseline => 15,
+        Domain::GateTool => 16,
+        Domain::GateInventory => 17,
+        Domain::GateMeasurement => 18,
+        Domain::GateReceipt => 19,
     }
 }
 
@@ -96,12 +97,13 @@ fn the_sweep_names_every_domain_exactly_once() {
 }
 
 /// Every domain, so a new class cannot be added without being swept here.
-const DOMAINS: [Domain; 19] = [
+const DOMAINS: [Domain; 20] = [
     Domain::BoardDocument,
     Domain::DistTargetPayload,
     Domain::DistArtifact,
     Domain::DistPins,
     Domain::DistInventory,
+    Domain::DistReleaseManifest,
     Domain::ProofBattery,
     Domain::ProofReplayV2,
     Domain::ProofReceiptV2,
@@ -172,6 +174,7 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
             "spice.dist.artifact.v1",
             "spice.dist.pins.v1",
             "spice.dist.inventory.v1",
+            "spice.dist.release-manifest.v1",
             "spice.proof.battery.v1",
             "spice.proof.replay.v2",
             "spice.proof.receipt.v2",
