@@ -18,8 +18,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::command::CommandKind;
 use crate::envelope::Actor;
+use crate::head::{ResidentState, TrustState};
 use crate::ident::{CanonicalUuid, Digest, Instant};
-use crate::witness::{Answer, Disposition, Name, Phase, Standing, TaskHandle, Up};
+use crate::witness::{Answer, Disposition, Name, Phase, TaskHandle};
 
 /// Add one task as direct intent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -242,7 +243,7 @@ pub struct LaneState {
     /// Lane whose state moves.
     pub lane: CanonicalUuid,
     /// State it moves to.
-    pub state: Up,
+    pub state: ResidentState,
 }
 
 /// Record a taste verdict at its evidence locus.
@@ -283,7 +284,7 @@ pub struct ReleasePublish {
 #[serde(deny_unknown_fields)]
 pub struct UpChange {
     /// State the resident is asked to reach.
-    pub state: Up,
+    pub state: ResidentState,
 }
 
 /// The answer a task command returns.
@@ -343,7 +344,7 @@ pub struct TrustAnswer {
     /// Digest whose standing moved.
     pub digest: Digest,
     /// Its standing after the transaction.
-    pub standing: Standing,
+    pub standing: TrustState,
 }
 
 /// The answer a lane or resident state change returns.
@@ -351,9 +352,9 @@ pub struct TrustAnswer {
 #[serde(deny_unknown_fields)]
 pub struct StateAnswer {
     /// State held before the transaction.
-    pub from: Up,
+    pub from: ResidentState,
     /// State held after it.
-    pub to: Up,
+    pub to: ResidentState,
 }
 
 /// The answer a taste verdict returns.

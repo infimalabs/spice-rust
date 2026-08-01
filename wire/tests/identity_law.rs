@@ -35,8 +35,8 @@ use wire::{
     CursorHead, Derived, Digest, Disposition, Envelope, Fact, Fault, FaultClass, FindingHead,
     FindingState, FoldName, Hello, Instant, LaneResidency, LeaseHead, Name, Origin, Outcome,
     Overflow, Packed, Phase, Producer, Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState,
-    Response, Seq, SeqRange, Standing, TaskHandle, TaskHead, TrustHead, TrustState, Up,
-    WireVersion, Witness, WitnessClass, WitnessHead, WitnessKind, WorkflowHead, body,
+    Response, Seq, SeqRange, TaskHandle, TaskHead, TrustHead, TrustState, WireVersion, Witness,
+    WitnessClass, WitnessHead, WitnessKind, WorkflowHead, body,
 };
 
 /// Names `wire` re-exports that never cross as values, each with its reason.
@@ -671,16 +671,6 @@ fn cover_head_enums(covered: &mut BTreeSet<String>) {
     );
     law(
         covered,
-        "ResidentState",
-        &[ResidentState::Seated, ResidentState::Dark],
-    );
-    law(
-        covered,
-        "TrustState",
-        &[TrustState::Pended, TrustState::Revoked],
-    );
-    law(
-        covered,
         "WitnessClass",
         &[WitnessClass::Assignment, WitnessClass::Transition],
     );
@@ -755,11 +745,11 @@ fn cover_witness_values(covered: &mut BTreeSet<String>) {
             },
             Witness::Trust {
                 digest: digest("c"),
-                standing: Standing::Pended,
+                standing: TrustState::Pended,
             },
             Witness::Transition {
-                from: Up::Seated,
-                to: Up::Quiescing,
+                from: ResidentState::Seated,
+                to: ResidentState::Quiescing,
             },
         ],
     );
@@ -1068,20 +1058,20 @@ fn cover_vocabularies(covered: &mut BTreeSet<String>) {
     );
     spelling_law(
         covered,
-        "Standing",
-        &[Standing::Pended, Standing::Granted, Standing::Revoked],
+        "TrustState",
+        &[TrustState::Pended, TrustState::Granted, TrustState::Revoked],
     );
     spelling_law(
         covered,
-        "Up",
+        "ResidentState",
         &[
-            Up::Seated,
-            Up::Quiescing,
-            Up::Draining,
-            Up::Terminating,
-            Up::Killing,
-            Up::Verifying,
-            Up::Dark,
+            ResidentState::Seated,
+            ResidentState::Quiescing,
+            ResidentState::Draining,
+            ResidentState::Terminating,
+            ResidentState::Killing,
+            ResidentState::Verifying,
+            ResidentState::Dark,
         ],
     );
     spelling_law(
