@@ -237,12 +237,6 @@ impl<T> Answer<T> {
             Self::HeadDirect(_) => None,
         }
     }
-
-    /// True when this answer carries fold provenance at all.
-    #[must_use]
-    pub const fn is_derived(&self) -> bool {
-        matches!(self, Self::Derived(_))
-    }
 }
 
 /// Browser state scoped to one admitted principal and resident generation.
