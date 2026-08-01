@@ -2,8 +2,7 @@
 
 use std::path::PathBuf;
 
-use serde::Serialize;
-use spice::install::{InstallError, InstallPlan, InstallReceipt};
+use spice::install::{InstallError, InstallPreview, InstallReceipt};
 use spice::repository::Repository;
 use spice::repository::StateError;
 use wire::{Digest, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
@@ -11,14 +10,6 @@ use wire::{Digest, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 pub(crate) enum Answer {
     Plan(Outcome<InstallPreview>),
     Receipt(Outcome<InstallReceipt>),
-}
-
-/// Operator-facing preview carrying the exact token accepted by `--apply`.
-#[derive(Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct InstallPreview {
-    plan: InstallPlan,
-    digest: Digest,
 }
 
 pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
@@ -54,10 +45,10 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
                 Ok(executable) => executable,
                 Err(outcome) => return Answer::Plan(outcome),
             };
-            Answer::Plan(preview(spice::install::plan(
-                &repository,
-                Some(&executable),
-            )))
+            Answer::Plan(result(
+                spice::install::plan(&repository, Some(&executable))
+                    .and_then(InstallPreview::from_plan),
+            ))
         }
         Request::Apply(spelling) => {
             let digest = match spelling.parse::<Digest>() {
@@ -86,20 +77,6 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
         }
         Request::Unapply => Answer::Receipt(result(spice::install::unapply(&repository))),
     }
-}
-
-fn preview(result: Result<InstallPlan, InstallError>) -> Outcome<InstallPreview> {
-    result
-        .and_then(|plan| {
-            let digest = plan.digest()?;
-            Ok(InstallPreview { plan, digest })
-        })
-        .map_or_else(failure, |body| {
-            Outcome::Reply(Reply {
-                position: ReplyPosition::Direct {},
-                body,
-            })
-        })
 }
 
 enum Request {
