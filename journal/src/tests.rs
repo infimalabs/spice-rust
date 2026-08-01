@@ -3,10 +3,11 @@ use std::collections::BTreeSet;
 use rusqlite::{Connection, params};
 use serde_json::json;
 use wire::{
-    Actor, AnyFact, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind, Envelope,
-    FactKind, FindingHead, FindingState, Instant, LaneResidency, LeaseHead, Origin, Outcome, Phase,
-    Reply, ReplyPosition, ResidencyHead, ResidentState, Response, Seq, SeqRange, TaskHandle,
-    TaskHead, TrustHead, TrustState, WireVersion, Witness, WitnessClass, WitnessHead, WorkflowHead,
+    Actor, AnyFact, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind, Digest,
+    Envelope, FactKind, FindingHead, FindingState, Instant, LaneResidency, LeaseHead, Origin,
+    Outcome, Phase, Reply, ReplyPosition, ResidencyHead, ResidentState, Response, Seq, SeqRange,
+    TaskHandle, TaskHead, TrustHead, TrustState, WireVersion, Witness, WitnessClass, WitnessHead,
+    WorkflowHead,
 };
 
 use crate::{Journal, MigrationError, OpenError, SCHEMA_VERSION, ViolationClass};
@@ -504,14 +505,15 @@ fn insert_heads(journal: &Journal) {
         2,
         &witness_head(),
     );
+    let trust_digest = digest("a");
     insert_head(
         &journal.connection,
         "trust_heads",
         "digest",
-        "sha256:fixture",
+        trust_digest.as_str(),
         2,
         &TrustHead {
-            digest: "sha256:fixture".to_owned(),
+            digest: trust_digest.clone(),
             state: TrustState::Pended,
         },
     );
@@ -526,7 +528,7 @@ fn insert_heads(journal: &Journal) {
             severity: "error".to_owned(),
             locus: "journal:fixture".to_owned(),
             owner: "task.journal".to_owned(),
-            receipt: "receipt:fixture".to_owned(),
+            receipt: digest("b"),
             state: FindingState::Open,
         },
     );
@@ -713,6 +715,10 @@ fn expected_tables() -> BTreeSet<String> {
 
 fn uuid(text: &str) -> CanonicalUuid {
     text.parse().expect("canonical fixture uuid")
+}
+
+fn digest(nibble: &str) -> Digest {
+    nibble.repeat(64).parse().expect("canonical digest")
 }
 
 fn instant() -> Instant {
