@@ -626,6 +626,11 @@ fn the_grant_pane_presents_exactly_the_commands_wire_gives_operator_authority() 
         .copied()
         .filter(|kind| kind.law().authority == Authority::Operator)
         .collect::<BTreeSet<_>>();
+    assert_eq!(
+        CommandKind::SteerSend.law().authority,
+        Authority::Operator,
+        "a lane principal must never submit operator direction",
+    );
 
     // The expected set is written out rather than derived, because a test that
     // computed it the way the pane does would agree with any classification,
