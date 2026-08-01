@@ -1,0 +1,1 @@
+//! Disposable fold crate skeleton.

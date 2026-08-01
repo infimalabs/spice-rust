@@ -1,0 +1,1 @@
+//! Board authority crate skeleton.

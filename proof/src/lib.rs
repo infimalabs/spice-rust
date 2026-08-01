@@ -1,0 +1,1 @@
+//! Release proof crate skeleton.
