@@ -75,7 +75,14 @@ project_max_depth = 3
 # from, the rendered direction it writes to stderr, and the lane a shell is
 # bound to. `gate` owns the mutation seed and attempt number it repeats into
 # every bounded cargo-mutants process.
-env_names = ["SPICE_HOOKS", "SPICE_INBOX", "SPICE_LANE", "SPICE_MUTATION_ATTEMPT", "SPICE_MUTATION_SEED", "SPICE_PROOF"]
+env_names = [
+    "SPICE_HOOKS",
+    "SPICE_INBOX",
+    "SPICE_LANE",
+    "SPICE_MUTATION_ATTEMPT",
+    "SPICE_MUTATION_SEED",
+    "SPICE_PROOF",
+]
 
 [taste.polling]
 words = ["delay*", "poll*", "sleep*", "slept"]

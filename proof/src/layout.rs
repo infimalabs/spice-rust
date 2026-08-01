@@ -356,7 +356,10 @@ mod tests {
 
         assert!(matches!(
             layout.read_payload(),
-            Err(InputError::Missing { input: Input::Payload, path }) if path == layout.payload_path()
+            Err(InputError::Missing {
+                input: Input::Payload,
+                path
+            }) if path == layout.payload_path()
         ));
         assert!(matches!(
             receipt.read(),
@@ -387,7 +390,10 @@ mod tests {
 
         assert!(matches!(
             layout.read_payload(),
-            Err(InputError::NotRegular { input: Input::Payload, path }) if path == layout.payload_path()
+            Err(InputError::NotRegular {
+                input: Input::Payload,
+                path
+            }) if path == layout.payload_path()
         ));
         assert!(matches!(
             receipt.read(),
@@ -419,7 +425,10 @@ mod tests {
 
         assert!(matches!(
             layout.read_payload(),
-            Err(InputError::Symlink { input: Input::Payload, path }) if path == layout.payload_path()
+            Err(InputError::Symlink {
+                input: Input::Payload,
+                path
+            }) if path == layout.payload_path()
         ));
         assert!(matches!(
             receipt.read(),
