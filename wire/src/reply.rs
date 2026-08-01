@@ -156,6 +156,28 @@ pub struct Version {
     pub app: Digest,
 }
 
+/// Authenticated identities and replay counts for one offline restore bundle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RestoreVerification {
+    /// Domain-separated identity of the canonical backup manifest.
+    pub bundle: Digest,
+    /// Finalized schema admitted from the authority member.
+    pub journal_schema: u32,
+    /// Domain-separated identity of the SQLite authority bytes.
+    pub authority: Digest,
+    /// Number of authenticated regular-file members.
+    pub members: u64,
+    /// Facts whose complete replay closure verified.
+    pub facts: u64,
+    /// Command receipts whose request/answer bindings verified.
+    pub receipts: u64,
+    /// Current authority heads whose canonical bodies verified.
+    pub heads: u64,
+    /// Origin/cause thread-index rows whose closure verified.
+    pub threads: u64,
+}
+
 /// Verified identities returned by both daemonless proof leaves.
 ///
 /// This body has no standing or success flag: its existence is the clean

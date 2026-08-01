@@ -274,6 +274,7 @@ fn command(kind: &str, expected: Vec<Witness>) -> Command<body::TaskDone> {
     Command {
         v: WireVersion(1),
         id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+        epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
         kind: kind.parse::<CommandKind>().expect("command kind"),
         expected,
         body: body("checked"),

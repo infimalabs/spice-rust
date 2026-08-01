@@ -13,9 +13,10 @@ use tokio::sync::oneshot;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::header::ORIGIN;
 use tungstenite::{Message, WebSocket};
+use wire::intent::{CommandAnswer, Intent, StateAnswer};
 use wire::{
-    Actor, CanonicalUuid, Fault, FaultClass, Instant, Outcome, Producer, Refusal, Reply,
-    ReplyPosition, ResidencyHead, ResidentState, Seq, SeqRange,
+    Actor, CanonicalUuid, Command, CommandKind, Fault, FaultClass, Instant, Outcome, Producer,
+    Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState, Response, Seq, SeqRange, Witness,
 };
 
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
@@ -331,10 +332,15 @@ async fn run_surface(
                 return Err(server_outcome(served));
             }
         };
-        let outcome = drive_shutdown(bus, paths, epoch, seats);
-        let dark = matches!(outcome, Outcome::Reply(_));
+        let dark = is_dark_command(request.command());
+        let outcome = dispatch_command(bus, paths, epoch, seats, request.command());
+        let reached_dark = dark && matches!(outcome, Outcome::Reply(_));
         let _ = request.respond(outcome);
-        if dark {
+        if reached_dark {
+            control.close();
+            while let Some(pending) = control.try_recv() {
+                let _ = pending.respond(not_admitting());
+            }
             drop(published);
             let _ = shutdown.send(());
             return match server_task.await {
@@ -343,6 +349,129 @@ async fn run_surface(
             };
         }
     }
+}
+
+fn is_dark_command(command: &wire::AdmittedCommand) -> bool {
+    matches!(
+        command.body(),
+        Intent::UpChange(wire::intent::UpChange {
+            state: ResidentState::Dark
+        })
+    )
+}
+
+fn dispatch_command(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    command: &wire::AdmittedCommand,
+) -> Outcome<CommandAnswer> {
+    match (command.kind(), command.body()) {
+        (CommandKind::UpChange, Intent::UpChange(change)) => {
+            dispatch_up_change(bus, paths, epoch, seats, command, change)
+        }
+        _ => Outcome::Refusal(Refusal {
+            reason: "command::handler-not-landed".to_owned(),
+            witness: None,
+            expected: Some(command.kind().to_string()),
+            observed: None,
+            remedy: "land the registered resident handler before exposing this CLI leaf".to_owned(),
+        }),
+    }
+}
+
+fn dispatch_up_change(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    command: &wire::AdmittedCommand,
+    change: &wire::intent::UpChange,
+) -> Outcome<CommandAnswer> {
+    if !matches!(command.actor(), Actor::Operator) {
+        return Outcome::Refusal(Refusal {
+            reason: "command::authority".to_owned(),
+            witness: Some("principal".to_owned()),
+            expected: Some("operator".to_owned()),
+            observed: Some(command.actor().to_string()),
+            remedy: "reconnect with the current operator capability".to_owned(),
+        });
+    }
+    if !matches!(change.state, ResidentState::Dark) {
+        return Outcome::Refusal(Refusal {
+            reason: "down::target-not-dark".to_owned(),
+            witness: Some("transition".to_owned()),
+            expected: Some("dark".to_owned()),
+            observed: Some(format!("{:?}", change.state).to_lowercase()),
+            remedy: "request Dark and let the resident drive every bounded edge".to_owned(),
+        });
+    }
+    let head = match bus.residency_head() {
+        Ok(Some(head)) => head,
+        Ok(None) => {
+            return typed_store_fault("resident::head-missing", "residency head is absent");
+        }
+        Err(error) => {
+            return typed_store_fault("resident::head-unreadable", &error.to_string());
+        }
+    };
+    if head.body().epoch != epoch || command.epoch() != epoch {
+        return typed_protocol_fault(
+            "resident::epoch-moved",
+            &format!(
+                "request {}, resident {}, durable head {}",
+                command.epoch(),
+                epoch,
+                head.body().epoch
+            ),
+        );
+    }
+    let from = head.body().state;
+    let transition_matches = command.expected().iter().any(|witness| {
+        matches!(
+            witness,
+            Witness::Transition {
+                from: witnessed_from,
+                to: ResidentState::Dark,
+            } if *witnessed_from == from
+        )
+    });
+    if !transition_matches {
+        return Outcome::Refusal(Refusal {
+            reason: "resident::transition-moved".to_owned(),
+            witness: Some("transition".to_owned()),
+            expected: Some(format!("{:?}->dark", from).to_lowercase()),
+            observed: command.expected().iter().find_map(|witness| match witness {
+                Witness::Transition { from, to } => {
+                    Some(format!("{from:?}->{to:?}").to_lowercase())
+                }
+                _ => None,
+            }),
+            remedy: "read the current resident state and retry the exact transition".to_owned(),
+        });
+    }
+    match drive_shutdown(bus, paths, epoch, seats) {
+        Outcome::Reply(reply) => Outcome::Reply(Reply {
+            position: reply.position,
+            body: CommandAnswer::State(StateAnswer {
+                from,
+                to: ResidentState::Dark,
+            }),
+        }),
+        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => Outcome::Fault(fault),
+    }
+}
+
+fn not_admitting() -> Outcome<CommandAnswer> {
+    Outcome::Refusal(Refusal {
+        reason: "resident::not-admitting".to_owned(),
+        witness: Some("resident-state".to_owned()),
+        expected: Some("seated".to_owned()),
+        observed: Some("quiescing".to_owned()),
+        remedy: "wait for shutdown to finish and reconnect to the next resident epoch".to_owned(),
+    })
 }
 
 mod shutdown;
@@ -477,18 +606,81 @@ fn request_dark(discovery: &canvas::Discovery) -> Outcome<()> {
         }
     }
 
-    if let Err(outcome) = send(
-        &mut socket,
-        &wire::intent::UpChange {
+    let id = new_uuid();
+    let command = Command {
+        v: wire::WireVersion::CURRENT,
+        id,
+        epoch: discovery.epoch,
+        kind: CommandKind::UpChange,
+        expected: vec![Witness::Transition {
+            from: ResidentState::Seated,
+            to: ResidentState::Dark,
+        }],
+        body: wire::intent::UpChange {
             state: ResidentState::Dark,
         },
-    ) {
+    };
+    if let Err(outcome) = send(&mut socket, &command) {
         return outcome;
     }
     match receive(&mut socket) {
-        Ok(answer) => wire::decode::<Outcome<()>>(&answer)
-            .unwrap_or_else(|error| protocol_fault("down::answer-undecodable", &error.to_string())),
+        Ok(answer) => decode_dark_response(&answer, id, discovery.epoch),
         Err(outcome) => outcome,
+    }
+}
+
+fn decode_dark_response(bytes: &[u8], id: CanonicalUuid, epoch: CanonicalUuid) -> Outcome<()> {
+    let response = match wire::decode::<Response<serde_json::Value>>(bytes) {
+        Ok(response) => response,
+        Err(error) => {
+            if let Ok(fault) = wire::decode::<Fault>(bytes) {
+                return Outcome::Fault(fault);
+            }
+            if let Ok(refusal) = wire::decode::<Refusal>(bytes) {
+                return Outcome::Refusal(refusal);
+            }
+            return protocol_fault("down::answer-undecodable", &error.to_string());
+        }
+    };
+    if !response.v.is_current() || response.id != id || response.epoch != epoch {
+        return protocol_fault(
+            "down::answer-mismatch",
+            &format!(
+                "expected id {id} at epoch {epoch}; received id {} at epoch {} on wire {}",
+                response.id, response.epoch, response.v
+            ),
+        );
+    }
+    match response.outcome {
+        Outcome::Reply(reply) => {
+            let encoded = match serde_json::to_vec(&reply.body) {
+                Ok(encoded) => encoded,
+                Err(error) => {
+                    return protocol_fault("down::answer-unencodable", &error.to_string());
+                }
+            };
+            let answer = match CommandKind::UpChange.binding().answer.decode(&encoded) {
+                Ok(answer) => answer,
+                Err(error) => {
+                    return protocol_fault("down::answer-undecodable", &error.to_string());
+                }
+            };
+            match answer {
+                CommandAnswer::State(StateAnswer {
+                    to: ResidentState::Dark,
+                    ..
+                }) => Outcome::Reply(Reply {
+                    position: reply.position,
+                    body: (),
+                }),
+                answer => protocol_fault(
+                    "down::answer-shape",
+                    &format!("expected a state answer ending in dark, received {answer:?}"),
+                ),
+            }
+        }
+        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => Outcome::Fault(fault),
     }
 }
 
@@ -557,7 +749,15 @@ fn protocol_fault(reason: &str, detail: &str) -> Outcome<()> {
     fault(FaultClass::Protocol, reason, detail)
 }
 
+fn typed_protocol_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
+    fault(FaultClass::Protocol, reason, detail)
+}
+
 fn store_fault(reason: &str, detail: &str) -> Outcome<()> {
+    fault(FaultClass::Store, reason, detail)
+}
+
+fn typed_store_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
     fault(FaultClass::Store, reason, detail)
 }
 
@@ -565,7 +765,7 @@ fn environment_fault(reason: &str, detail: &str) -> Outcome<()> {
     fault(FaultClass::Environment, reason, detail)
 }
 
-fn fault(class: FaultClass, reason: &str, detail: &str) -> Outcome<()> {
+fn fault<B>(class: FaultClass, reason: &str, detail: &str) -> Outcome<B> {
     Outcome::Fault(Fault {
         class,
         reason: reason.to_owned(),

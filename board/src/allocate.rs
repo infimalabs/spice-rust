@@ -295,6 +295,7 @@ fn build_write(
             Command {
                 v: WireVersion::CURRENT,
                 id: request.command,
+                epoch: request.epoch,
                 kind: CommandKind::ClaimWin,
                 expected: expected_witnesses,
                 body: intent::ClaimWin {

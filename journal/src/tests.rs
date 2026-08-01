@@ -954,6 +954,7 @@ fn insert_receipt(journal: &Journal) {
     let command = Command {
         v: WireVersion::CURRENT,
         id,
+        epoch,
         kind: CommandKind::TaskDone,
         expected: Vec::new(),
         body: json!({"task": "JOURNAL-a1", "validation": "fixture"}),

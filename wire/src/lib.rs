@@ -57,7 +57,10 @@ pub mod packed;
 pub mod reply;
 pub mod witness;
 
-pub use command::{Authority, Command, CommandKind, CommandKindError, Law, LawError};
+pub use command::{
+    AdmittedCommand, Authority, Command, CommandKind, CommandKindError, CommandRejection, Law,
+    LawError,
+};
 pub use config::{ConfigSource, DurationWord, DurationWordError, Provenance};
 pub use doctor::{
     DoctorCommand, DoctorConfigProvenance, DoctorEnvironment, DoctorLocations, DoctorObservation,
@@ -75,8 +78,8 @@ pub use hello::{Accepted, Hello, Rejected};
 pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
-    Fault, FaultClass, Outcome, ProofEvidence, Refusal, Reply, ReplyPosition, Response, SeqRange,
-    SeqRangeError, Version,
+    Fault, FaultClass, Outcome, ProofEvidence, Refusal, Reply, ReplyPosition, Response,
+    RestoreVerification, SeqRange, SeqRangeError, Version,
 };
 pub use witness::{
     Answer, Disposition, Name, NameError, Phase, PhaseError, TaskHandle, TaskHandleError, Witness,

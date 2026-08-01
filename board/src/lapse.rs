@@ -408,6 +408,7 @@ fn build_write(request: Request, observed: Observation) -> Result<JournalWrite, 
             Command {
                 v: WireVersion::CURRENT,
                 id: request.command,
+                epoch: request.epoch,
                 kind: CommandKind::ClaimLapse,
                 expected: witnesses(&request, &observed, lane),
                 body: request.intent,
