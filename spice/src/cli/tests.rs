@@ -78,10 +78,12 @@ fn generated_tree_and_contract_rows_are_bijective() {
             );
         }
         match (contract.journal, contract.reply_position) {
-            (JournalAccess::None, ReplyPositionLaw::Direct) => assert!(
-                contract.guards.contains(&Guard::Daemonless),
-                "a direct reply must belong to a daemonless leaf: {contract:?}",
-            ),
+            (JournalAccess::None | JournalAccess::Inspect, ReplyPositionLaw::Direct) => {
+                assert!(
+                    contract.guards.contains(&Guard::Daemonless),
+                    "a direct reply must belong to a daemonless leaf: {contract:?}",
+                )
+            }
             (JournalAccess::Read, ReplyPositionLaw::Snapshot)
             | (
                 JournalAccess::Command | JournalAccess::Recovery | JournalAccess::Resident,

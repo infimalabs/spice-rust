@@ -9,7 +9,7 @@ use crate::SCHEMA_VERSION;
 const FINALIZED: &str = "finalized";
 const PREPARED: &str = "prepared";
 
-pub(crate) fn baseline(connection: &mut Connection) -> Result<(), OpenError> {
+pub(crate) fn baseline(connection: &mut Connection) -> Result<Option<Migration>, OpenError> {
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Exclusive)
         .map_err(OpenError::Sqlite)?;
@@ -23,11 +23,36 @@ pub(crate) fn baseline(connection: &mut Connection) -> Result<(), OpenError> {
             .execute_batch(BASELINE_SQL)
             .map_err(OpenError::Sqlite)?;
         transaction.commit().map_err(OpenError::Sqlite)?;
-        return Ok(());
+        return Ok(Some(Migration {
+            from: 0,
+            to: SCHEMA_VERSION,
+        }));
     }
 
     finalized_version(&transaction)?;
-    transaction.commit().map_err(OpenError::Sqlite)
+    transaction.commit().map_err(OpenError::Sqlite)?;
+    Ok(None)
+}
+
+/// One schema transition completed by this journal open.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Migration {
+    from: u32,
+    to: u32,
+}
+
+impl Migration {
+    /// Schema version the open left.
+    #[must_use]
+    pub const fn from(self) -> u32 {
+        self.from
+    }
+
+    /// Schema version the open finalized.
+    #[must_use]
+    pub const fn to(self) -> u32 {
+        self.to
+    }
 }
 
 pub(crate) fn finalized_version(connection: &Connection) -> Result<u32, OpenError> {

@@ -6,10 +6,11 @@
 //! a paraphrase of them.
 
 use serde::{Deserialize, Serialize};
+use wire::manifest::ReleaseTarget;
 use wire::{
     Actor, CanonicalUuid, Command, Envelope, Fact, FactKind, Fault, FaultClass, Hello, Instant,
-    Origin, Outcome, Overflow, Packed, Refusal, Rejected, Reply, ReplyPosition, Response, Seq,
-    SeqRange, TaskHandle, Version, WireVersion, Witness, body,
+    Origin, Outcome, Overflow, Packed, ProofEvidence, Refusal, Rejected, Reply, ReplyPosition,
+    Response, Seq, SeqRange, TaskHandle, Version, WireVersion, Witness, body,
 };
 
 /// Body of the `task::done` command printed in WIRE.md.
@@ -109,6 +110,10 @@ const REPLY: &str = r#"{
 
 const VERSION: &str = r#"{"binary":"1111111111111111111111111111111111111111111111111111111111111111","wire":1,"journal":1,"app":"2222222222222222222222222222222222222222222222222222222222222222"}"#;
 
+const PROOF_EVIDENCE: &str = r#"{"target":"x86_64-unknown-linux-musl","payload":"1111111111111111111111111111111111111111111111111111111111111111","receipt":"2222222222222222222222222222222222222222222222222222222222222222","battery":"3333333333333333333333333333333333333333333333333333333333333333","replay":"4444444444444444444444444444444444444444444444444444444444444444"}"#;
+
+const DIRECT_PROOF_RESULT: &str = r#"{"kind":"reply","direct":{},"body":{"target":"x86_64-unknown-linux-musl","payload":"1111111111111111111111111111111111111111111111111111111111111111","receipt":"2222222222222222222222222222222222222222222222222222222222222222","battery":"3333333333333333333333333333333333333333333333333333333333333333","replay":"4444444444444444444444444444444444444444444444444444444444444444"}}"#;
+
 #[test]
 fn envelope_matches_the_specified_document() {
     let envelope: Envelope<Fact<body::TaskPhased>> = round_trip(ENVELOPE);
@@ -195,6 +200,102 @@ fn version_refuses_missing_null_extra_and_wrong_shaped_identities() {
             "wrong-shaped {field} was admitted"
         );
     }
+}
+
+#[test]
+fn proof_evidence_is_the_exact_stable_five_identity_document() {
+    let evidence: ProofEvidence =
+        wire::decode(PROOF_EVIDENCE.as_bytes()).expect("proof evidence decodes");
+
+    assert_eq!(evidence.target, ReleaseTarget::X86_64UnknownLinuxMusl);
+    assert_eq!(evidence.payload.as_str(), "1".repeat(64));
+    assert_eq!(evidence.receipt.as_str(), "2".repeat(64));
+    assert_eq!(evidence.battery.as_str(), "3".repeat(64));
+    assert_eq!(evidence.replay.as_str(), "4".repeat(64));
+    assert_eq!(
+        wire::encode(&evidence).expect("proof evidence re-encodes"),
+        PROOF_EVIDENCE.as_bytes(),
+        "the stable proof evidence form changed"
+    );
+}
+
+#[test]
+fn proof_evidence_refuses_missing_null_extra_and_wrong_shaped_identities() {
+    let document: serde_json::Value =
+        serde_json::from_str(PROOF_EVIDENCE).expect("fixture is JSON");
+
+    for field in ["target", "payload", "receipt", "battery", "replay"] {
+        let mut missing = document.clone();
+        missing
+            .as_object_mut()
+            .expect("proof evidence is an object")
+            .remove(field);
+        assert!(
+            wire::decode::<ProofEvidence>(
+                &serde_json::to_vec(&missing).expect("missing shape encodes")
+            )
+            .is_err(),
+            "missing {field} was admitted"
+        );
+
+        let mut null = document.clone();
+        null[field] = serde_json::Value::Null;
+        assert!(
+            wire::decode::<ProofEvidence>(&serde_json::to_vec(&null).expect("null shape encodes"))
+                .is_err(),
+            "null {field} was admitted"
+        );
+    }
+
+    let mut extra = document.clone();
+    extra
+        .as_object_mut()
+        .expect("proof evidence is an object")
+        .insert("standing".to_owned(), serde_json::json!("clean"));
+    assert!(
+        wire::decode::<ProofEvidence>(&serde_json::to_vec(&extra).expect("extra shape encodes"))
+            .is_err(),
+        "a second standing signal was admitted"
+    );
+
+    for (field, wrong) in [
+        ("target", serde_json::json!("unknown-target")),
+        ("payload", serde_json::json!(7)),
+        ("receipt", serde_json::json!("not-a-digest")),
+        ("battery", serde_json::json!("3".repeat(63))),
+        ("replay", serde_json::json!(null)),
+    ] {
+        let mut malformed = document.clone();
+        malformed[field] = wrong;
+        assert!(
+            wire::decode::<ProofEvidence>(
+                &serde_json::to_vec(&malformed).expect("malformed shape encodes")
+            )
+            .is_err(),
+            "wrong-shaped {field} was admitted"
+        );
+    }
+}
+
+#[test]
+fn proof_evidence_is_a_direct_result_without_a_fabricated_sequence() {
+    let result: Outcome<ProofEvidence> =
+        wire::decode(DIRECT_PROOF_RESULT.as_bytes()).expect("direct proof result decodes");
+
+    let Outcome::Reply(reply) = &result else {
+        panic!("the fixture is a successful reply");
+    };
+    assert_eq!(reply.position, ReplyPosition::Direct {});
+    assert_eq!(reply.body.target, ReleaseTarget::X86_64UnknownLinuxMusl);
+    assert_eq!(
+        wire::encode(&result).expect("direct proof result re-encodes"),
+        DIRECT_PROOF_RESULT.as_bytes(),
+        "the shared direct proof result changed"
+    );
+    assert!(!DIRECT_PROOF_RESULT.contains("\"seq\""));
+    assert!(!DIRECT_PROOF_RESULT.contains("\"cursor\""));
+    assert!(!DIRECT_PROOF_RESULT.contains("\"standing\""));
+    assert!(!DIRECT_PROOF_RESULT.contains("\"success\""));
 }
 
 #[test]

@@ -38,6 +38,7 @@ pub(crate) enum Principal {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum JournalAccess {
     None,
+    Inspect,
     Read,
     Command,
     Recovery,
@@ -58,7 +59,7 @@ pub(crate) enum ReplyPositionLaw {
 impl JournalAccess {
     const fn reply_position(self) -> ReplyPositionLaw {
         match self {
-            Self::None => ReplyPositionLaw::Direct,
+            Self::None | Self::Inspect => ReplyPositionLaw::Direct,
             Self::Read => ReplyPositionLaw::Snapshot,
             Self::Command | Self::Recovery | Self::Resident => ReplyPositionLaw::Committed,
         }
@@ -190,7 +191,7 @@ const CONTRACTS: &[Contract] = &[
         ["version"],
         "version",
         Local,
-        Read,
+        Inspect,
         [],
         [Daemonless, Offline],
         Reply,

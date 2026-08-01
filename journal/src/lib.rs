@@ -15,10 +15,10 @@ mod replay;
 #[cfg(not(target_arch = "wasm32"))]
 pub use guard::{
     Applied, BuildError, CommitError, CommitFault, FactCause, GuardError, GuardRefusal,
-    JournalGuard, JournalHead, JournalRead, JournalWrite, PendingFact, TaskHeads,
+    JournalGuard, JournalHead, JournalRead, JournalWrite, PendingFact, ReadError, TaskHeads,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use migrate::{MigrationError, OpenError};
+pub use migrate::{Migration, MigrationError, OpenError};
 #[cfg(not(target_arch = "wasm32"))]
 pub use read::{FactSnapshot, SnapshotError};
 #[cfg(not(target_arch = "wasm32"))]
@@ -47,6 +47,7 @@ use rusqlite::{Connection, OpenFlags};
 #[derive(Debug)]
 pub struct Journal {
     connection: Connection,
+    migration: Option<Migration>,
 }
 
 /// A capability-distinct, read-only view of finalized authority.
@@ -82,6 +83,12 @@ impl Journal {
         migrate::finalized_version(&self.connection)
     }
 
+    /// Schema transition this open completed, absent when authority was current.
+    #[must_use]
+    pub const fn migration(&self) -> Option<Migration> {
+        self.migration
+    }
+
     /// Inspects one existing authority database without creating or migrating it.
     ///
     /// This is the daemonless read used by identity-reporting surfaces. The
@@ -96,8 +103,11 @@ impl Journal {
         connection
             .execute_batch("PRAGMA foreign_keys = ON; PRAGMA trusted_schema = OFF;")
             .map_err(OpenError::Sqlite)?;
-        migrate::baseline(&mut connection)?;
-        Ok(Self { connection })
+        let migration = migrate::baseline(&mut connection)?;
+        Ok(Self {
+            connection,
+            migration,
+        })
     }
 }
 

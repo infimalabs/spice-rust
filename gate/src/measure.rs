@@ -9,6 +9,7 @@
 
 use std::fmt;
 use std::fmt::Write as _;
+use std::path::Path;
 use std::time::Duration;
 
 use sill::{
@@ -107,6 +108,61 @@ impl Bounds {
     #[must_use]
     pub const fn deadlines(&self) -> Deadlines {
         self.deadlines
+    }
+
+    /// Grace between termination and forced termination.
+    #[must_use]
+    pub const fn grace(&self) -> Duration {
+        self.grace
+    }
+
+    /// Bytes retained from each output stream.
+    #[must_use]
+    pub const fn capture(&self) -> usize {
+        self.capture
+    }
+
+    /// Canonical declaration of every process bound.
+    #[must_use]
+    pub fn render(&self) -> String {
+        format!(
+            "bounds 1\nowner {}\nruntime-ms {}\noutput-drain-ms {}\nreap-ms {}\n\
+             cancellation never\nrestart never\ngrace-ms {}\ncapture {}\n",
+            self.wait.owner(),
+            self.deadlines.runtime().as_millis(),
+            self.deadlines.output_drain().as_millis(),
+            self.deadlines.reap().as_millis(),
+            self.grace.as_millis(),
+            self.capture,
+        )
+    }
+
+    /// Identity of the complete process declaration.
+    #[must_use]
+    pub fn digest(&self) -> Digest {
+        Digest::compute(Domain::GateBounds, self.render().as_bytes())
+    }
+
+    pub(crate) fn spec(&self, argv: Argv, cwd: &Path) -> Spec {
+        Spec {
+            argv,
+            cwd: cwd.to_path_buf(),
+            environment: Environment::empty(),
+            group: ProcessGroup::New,
+            deadlines: self.deadlines,
+            wait: self.wait.clone(),
+            output: Output::new(
+                StdinPolicy::Null,
+                StreamPolicy::Capture {
+                    limit: self.capture,
+                },
+                StreamPolicy::Capture {
+                    limit: self.capture,
+                },
+            ),
+            redaction: Redaction::None,
+            grace: self.grace,
+        }
     }
 }
 
@@ -283,30 +339,13 @@ impl Metric {
     ) -> Result<Spec, MeasureError> {
         let arguments: Vec<String> = self.parser.arguments.iter().chain(files).cloned().collect();
 
-        Ok(Spec {
-            argv: Argv::new(self.parser.program.clone(), arguments).map_err(|source| {
-                MeasureError::Spec {
-                    metric: self.name.clone(),
-                    source,
-                }
-            })?,
-            cwd: jurisdiction.root().to_path_buf(),
-            environment: Environment::empty(),
-            group: ProcessGroup::New,
-            deadlines: bounds.deadlines,
-            wait: bounds.wait.clone(),
-            output: Output::new(
-                StdinPolicy::Null,
-                StreamPolicy::Capture {
-                    limit: bounds.capture,
-                },
-                StreamPolicy::Capture {
-                    limit: bounds.capture,
-                },
-            ),
-            redaction: Redaction::None,
-            grace: bounds.grace,
-        })
+        let argv = Argv::new(self.parser.program.clone(), arguments).map_err(|source| {
+            MeasureError::Spec {
+                metric: self.name.clone(),
+                source,
+            }
+        })?;
+        Ok(bounds.spec(argv, jurisdiction.root()))
     }
 
     /// This metric's lines in a policy rendering.
@@ -318,7 +357,7 @@ impl Metric {
     /// Arguments therefore get one line each rather than being joined by
     /// spaces, which would have made `["-c", "a b"]` and `["-c", "a", "b"]` one
     /// policy under two declarations.
-    fn render(&self, into: &mut String) {
+    pub(crate) fn render(&self, into: &mut String) {
         let _ = writeln!(into, "metric {} language {}", self.name, self.language);
         let _ = writeln!(into, "metric {} target {}", self.name, self.target);
         let _ = writeln!(into, "metric {} program {}", self.name, self.parser.program);
