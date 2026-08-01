@@ -6,10 +6,14 @@ pub const SCHEMA_VERSION: u32 = 1;
 #[cfg(not(target_arch = "wasm32"))]
 mod migrate;
 #[cfg(not(target_arch = "wasm32"))]
+mod read;
+#[cfg(not(target_arch = "wasm32"))]
 mod replay;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use migrate::{MigrationError, OpenError};
+#[cfg(not(target_arch = "wasm32"))]
+pub use read::{FactSnapshot, SnapshotError};
 #[cfg(not(target_arch = "wasm32"))]
 pub use replay::{Verification, VerifyError, Violation, ViolationClass};
 

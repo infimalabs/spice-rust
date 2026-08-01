@@ -222,6 +222,8 @@ name = "fold"
 version = "0.0.0"
 dependencies = [
  "journal",
+ "rusqlite",
+ "serde_json",
  "wire",
 ]
 
