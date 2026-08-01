@@ -7,9 +7,12 @@
 //! allowed to reach browser state.
 
 use serde::de::DeserializeOwned;
-use wire::{CanonicalUuid, Fault, FaultClass, Hello, Response, WireVersion};
+use wire::{CanonicalUuid, Envelope, Fault, FaultClass, Hello, Response, WireVersion};
 
 /// Reasons this door names when it turns a frame away.
+///
+/// Both frame shapes draw from this one vocabulary. A second spelling for the
+/// same failure would let a caller handle one door and miss the other.
 mod reason {
     /// The bytes did not decode as the current DTO.
     pub const UNDECODABLE: &str = "frame::undecodable";
@@ -19,6 +22,62 @@ mod reason {
     pub const EPOCH: &str = "frame::epoch-mismatch";
     /// The discovery file now presents a different capability.
     pub const CAPABILITY: &str = "session::capability-replaced";
+}
+
+/// A frame that passed this session's door.
+///
+/// The inner frame is private and no constructor is public, so the only way to
+/// hold one is to have been given it by a [`Session`]. State accepts this type
+/// rather than a bare DTO, which makes "apply only what was admitted" a fact
+/// the compiler checks instead of a discipline each caller must remember.
+///
+/// Forging an admission does not compile:
+///
+/// ```compile_fail
+/// let forged = app::Admitted(7_u8);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Admitted<T>(T);
+
+impl<T> Admitted<T> {
+    /// The frame this admission carries.
+    #[must_use]
+    pub const fn get(&self) -> &T {
+        &self.0
+    }
+
+    /// Take the frame out of its admission.
+    ///
+    /// Admission is a fact about bytes already checked, not a permission that
+    /// can expire, so unwrapping loses only the proof and not a guarantee.
+    #[must_use]
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+}
+
+/// Decode bytes as the current DTO, reporting a failure rather than repairing.
+fn decode_frame<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, Fault> {
+    wire::decode(bytes).map_err(|error| Fault {
+        class: FaultClass::Protocol,
+        reason: reason::UNDECODABLE.to_owned(),
+        detail: error.to_string(),
+    })
+}
+
+/// Admit a version against the one this build speaks, naming both on mismatch.
+fn admit_wire(observed: WireVersion) -> Result<(), Fault> {
+    if observed.is_current() {
+        return Ok(());
+    }
+    Err(Fault {
+        class: FaultClass::Protocol,
+        reason: reason::WIRE.to_owned(),
+        detail: format!(
+            "frame carried wire {observed}; this build speaks {}",
+            WireVersion::CURRENT
+        ),
+    })
 }
 
 /// One capability-scoped connection to one resident generation.
@@ -82,7 +141,7 @@ impl Session {
         })
     }
 
-    /// Decode one inbound frame and admit it against this session.
+    /// Decode one inbound response and admit it against this session.
     ///
     /// Undecodable bytes, a version this build does not speak, and an epoch
     /// that has moved are all protocol faults. They are reported rather than
@@ -91,23 +150,12 @@ impl Session {
     /// # Errors
     ///
     /// Returns a protocol fault naming which of the three admissions failed.
-    pub fn admit_frame<B: DeserializeOwned>(&self, bytes: &[u8]) -> Result<Response<B>, Fault> {
-        let frame: Response<B> = wire::decode(bytes).map_err(|error| Fault {
-            class: FaultClass::Protocol,
-            reason: reason::UNDECODABLE.to_owned(),
-            detail: error.to_string(),
-        })?;
-        if !frame.v.is_current() {
-            return Err(Fault {
-                class: FaultClass::Protocol,
-                reason: reason::WIRE.to_owned(),
-                detail: format!(
-                    "frame carried wire {}; this build speaks {}",
-                    frame.v,
-                    WireVersion::CURRENT
-                ),
-            });
-        }
+    pub fn admit_frame<B: DeserializeOwned>(
+        &self,
+        bytes: &[u8],
+    ) -> Result<Admitted<Response<B>>, Fault> {
+        let frame: Response<B> = decode_frame(bytes)?;
+        admit_wire(frame.v)?;
         if frame.epoch != self.epoch {
             return Err(Fault {
                 class: FaultClass::Protocol,
@@ -118,6 +166,28 @@ impl Session {
                 ),
             });
         }
-        Ok(frame)
+        Ok(Admitted(frame))
+    }
+
+    /// Decode one streamed fact and admit it against this session.
+    ///
+    /// The stream is what updates browser state, so it needs the same door the
+    /// response frame has. Only two admissions apply: an envelope carries no
+    /// epoch of its own, because the generation was settled by the opening and
+    /// restating it per fact would invite two answers to the same question.
+    /// The session that admits this envelope is the one whose epoch it belongs
+    /// to, and a session never outlives its generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a protocol fault when the bytes do not decode or carry a
+    /// version this build does not speak.
+    pub fn admit_envelope<F: DeserializeOwned>(
+        &self,
+        bytes: &[u8],
+    ) -> Result<Admitted<Envelope<F>>, Fault> {
+        let frame: Envelope<F> = decode_frame(bytes)?;
+        admit_wire(frame.v)?;
+        Ok(Admitted(frame))
     }
 }
