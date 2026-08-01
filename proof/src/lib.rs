@@ -26,8 +26,8 @@ pub use environment::{EnvironmentError, SealedEnvironment, UnsupportedHost, comp
 pub use evidence::{EvidenceError, EvidencePublishError, VerifiedEvidence, publish, verify};
 pub use layout::{Input, InputError, Layout, LayoutError, ReceiptInput};
 pub use manifest::{
-    FileManifestPublisher, ManifestError, ManifestInput, ManifestPublishError, ManifestPublisher,
-    PublishedManifest, publish_manifest,
+    FileManifestPublisher, ManifestAdmissionError, ManifestError, ManifestInput,
+    ManifestPublishError, ManifestPublisher, PublishedManifest, admit_manifest, publish_manifest,
 };
 pub use native::{NativeError, NativeRunner};
 pub use payload::{AdmittedPayload, PayloadError, admit};
