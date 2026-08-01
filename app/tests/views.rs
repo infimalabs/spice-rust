@@ -1,0 +1,169 @@
+//! That every pane answers on exactly one of the four axes.
+//!
+//! The registry cannot audit itself. A test that walked `Pane::ALL` to check
+//! that every pane has an axis would pass forever, because a pane omitted from
+//! `ALL` is a pane the walk never visits. So the panes are gathered here by
+//! exhaustive descent instead: a successor chain whose `match` names every
+//! variant, which the compiler refuses to accept while a variant is missing.
+//!
+//! That gives two independent oracles pointed at each other. The chain fails to
+//! compile when a variant is added without a place in it, and comparing the
+//! chain against `ALL` fails at runtime when a variant reaches the chain but
+//! not the registry. Neither half is sufficient alone, which is the whole
+//! reason both are here.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use app::{Axis, Pane};
+
+/// Every axis, gathered by exhaustive descent rather than by reading `ALL`.
+///
+/// The `match` is exhaustive over [`Axis`], so a fifth axis is a compile error
+/// here before it is a test failure anywhere.
+fn descend_axes() -> Vec<Axis> {
+    std::iter::successors(Some(Axis::Magnitude), |axis| match axis {
+        Axis::Magnitude => Some(Axis::Flow),
+        Axis::Flow => Some(Axis::Topology),
+        Axis::Topology => Some(Axis::Chronology),
+        Axis::Chronology => None,
+    })
+    .collect()
+}
+
+/// Every pane, gathered by exhaustive descent rather than by reading `ALL`.
+///
+/// Adding a variant to [`Pane`] without adding it here is `E0004`, so this
+/// chain is complete by construction rather than by review.
+fn descend_panes() -> Vec<Pane> {
+    std::iter::successors(Some(Pane::Effort), |pane| match pane {
+        Pane::Effort => Some(Pane::Pressure),
+        Pane::Pressure => Some(Pane::Residue),
+        Pane::Residue => Some(Pane::ConsentVolume),
+        Pane::ConsentVolume => Some(Pane::Tasks),
+        Pane::Tasks => Some(Pane::Claims),
+        Pane::Claims => Some(Pane::Deferrals),
+        Pane::Deferrals => Some(Pane::Reviews),
+        Pane::Reviews => Some(Pane::Lanes),
+        Pane::Lanes => Some(Pane::Worktrees),
+        Pane::Worktrees => Some(Pane::Lineage),
+        Pane::Lineage => Some(Pane::Occupancy),
+        Pane::Occupancy => Some(Pane::Residents),
+        Pane::Residents => Some(Pane::Compaction),
+        Pane::Compaction => Some(Pane::Queues),
+        Pane::Queues => Some(Pane::Directives),
+        Pane::Directives => Some(Pane::ConsentDisposition),
+        Pane::ConsentDisposition => Some(Pane::Trust),
+        Pane::Trust => Some(Pane::Commands),
+        Pane::Commands => Some(Pane::Recovery),
+        Pane::Recovery => None,
+    })
+    .collect()
+}
+
+#[test]
+fn the_axis_registry_lists_every_axis_that_exists() {
+    assert_eq!(descend_axes(), Axis::ALL.to_vec());
+}
+
+#[test]
+fn the_pane_registry_lists_every_pane_that_exists() {
+    assert_eq!(descend_panes(), Pane::ALL.to_vec());
+}
+
+#[test]
+fn every_pane_maps_to_one_of_the_four_axes() {
+    let axes: BTreeSet<Axis> = descend_axes().into_iter().collect();
+
+    for pane in descend_panes() {
+        assert!(
+            axes.contains(&pane.axis()),
+            "{} answers on an axis outside the vocabulary",
+            pane.as_str()
+        );
+    }
+}
+
+#[test]
+fn the_axes_partition_the_panes_without_overlap_or_remainder() {
+    let mut byaxis: BTreeMap<Axis, Vec<Pane>> = BTreeMap::new();
+    for pane in descend_panes() {
+        byaxis.entry(pane.axis()).or_default().push(pane);
+    }
+
+    // Total: every pane landed in exactly one bucket, because `axis` returns
+    // one axis and the loop visited each pane once.
+    let placed: usize = byaxis.values().map(Vec::len).sum();
+    assert_eq!(placed, descend_panes().len());
+
+    // No remainder: an axis with no pane is a heading with nothing under it,
+    // which would mean the vocabulary is wider than the surface it describes.
+    for axis in descend_axes() {
+        assert!(
+            byaxis.get(&axis).is_some_and(|panes| !panes.is_empty()),
+            "the {} axis carries no pane",
+            axis.as_str()
+        );
+    }
+}
+
+#[test]
+fn one_plane_standing_on_two_axes_is_two_panes() {
+    // Consent is the case the spec names twice: its budgets and rates are
+    // amounts, and its dispositions are events. Two questions, so two panes,
+    // and the audit above then holds for both rather than being waived for one.
+    assert_eq!(Pane::ConsentVolume.axis(), Axis::Magnitude);
+    assert_eq!(Pane::ConsentDisposition.axis(), Axis::Chronology);
+    assert_ne!(Pane::ConsentVolume, Pane::ConsentDisposition);
+
+    // Claims divide the same way: in motion on flow, possessed on topology.
+    assert_eq!(Pane::Claims.axis(), Axis::Flow);
+    assert_eq!(Pane::Occupancy.axis(), Axis::Topology);
+}
+
+#[test]
+fn trust_is_read_as_a_history_rather_than_as_an_amount() {
+    // Pended, granted, and revoked are transitions in an order, not a count at
+    // a horizon, so trust answers "what happened, in what order" and belongs
+    // beside the other lifecycle panes.
+    assert_eq!(Pane::Trust.axis(), Axis::Chronology);
+}
+
+#[test]
+fn every_pane_spells_itself_once() {
+    let mut seen = BTreeSet::new();
+    for pane in descend_panes() {
+        let spelling = pane.as_str();
+        assert!(!spelling.is_empty(), "{pane:?} renders as the empty string");
+        assert!(
+            spelling
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte == b'-'),
+            "{spelling:?} is not lower-case kebab"
+        );
+        assert!(seen.insert(spelling), "{spelling:?} names two panes");
+    }
+}
+
+#[test]
+fn every_axis_spells_itself_once_and_states_its_own_question() {
+    let mut spellings = BTreeSet::new();
+    let mut questions = BTreeSet::new();
+
+    for axis in descend_axes() {
+        assert!(
+            axis.as_str().bytes().all(|byte| byte.is_ascii_lowercase()),
+            "{:?} is not a lower-case single word",
+            axis.as_str()
+        );
+        assert!(
+            spellings.insert(axis.as_str()),
+            "{:?} names two axes",
+            axis.as_str()
+        );
+        assert!(
+            questions.insert(axis.question()),
+            "{:?} asks a question another axis already asks",
+            axis.as_str()
+        );
+    }
+}

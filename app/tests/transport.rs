@@ -10,11 +10,9 @@
 //! locally declared body would have let this suite pass against a kind no
 //! producer mints.
 
-use app::{Admitted, Answer, Applied, BrowserState, Session};
+use app::{Admitted, Answer, Applied, BrowserState, ChainEnd, Session};
 use serde::{Deserialize, Serialize};
-use wire::{
-    CanonicalUuid, Derived, Envelope, Fact, FaultClass, Overflow, Packed, Seq, WireVersion, body,
-};
+use wire::{CanonicalUuid, Envelope, Fact, FaultClass, Overflow, Packed, Seq, WireVersion, body};
 
 /// Capability this session opens with.
 const CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163c1";
@@ -50,7 +48,8 @@ struct Row(&'static str);
 ///
 /// `at` is written at the one admitted resolution rather than built from a
 /// clock, so this fixture is stable and carries no ambient time.
-fn envelope_bytes(version: u32, seq: u64) -> Vec<u8> {
+fn envelope_bytes_with_cause(version: u32, seq: u64, cause: Option<u64>) -> Vec<u8> {
+    let cause = cause.map_or_else(String::new, |cause| format!("  \"cause\": {cause},\n"));
     format!(
         r#"{{
   "v": {version},
@@ -58,11 +57,15 @@ fn envelope_bytes(version: u32, seq: u64) -> Vec<u8> {
   "at": "2030-04-12T18:44:09.271Z",
   "actor": "lane:018f82d4-6f59-7d06-92e3-bce9131163c2",
   "origin": "task:SPICE-aBcD",
-  "cause": 48190,
-  "fact": {{ "kind": "task::phased", "task": "SPICE-aBcD", "phase": "verify" }}
+{cause}  "fact": {{ "kind": "task::phased", "task": "SPICE-aBcD", "phase": "verify" }}
 }}"#
     )
     .into_bytes()
+}
+
+/// One non-root envelope document, preserving the original fixture shape.
+fn envelope_bytes(version: u32, seq: u64) -> Vec<u8> {
+    envelope_bytes_with_cause(version, seq, Some(48190))
 }
 
 /// One streamed fact at `seq`, admitted the way state must receive it.
@@ -70,6 +73,13 @@ fn envelope(seq: u64) -> Admitted<Envelope<Fact<body::TaskPhased>>> {
     session()
         .admit_envelope(&envelope_bytes(1, seq))
         .expect("fixture envelope is admitted")
+}
+
+/// One streamed fact whose immediate cause is explicit or omitted at a root.
+fn causal_envelope(seq: u64, cause: Option<u64>) -> Admitted<Envelope<Fact<body::TaskPhased>>> {
+    session()
+        .admit_envelope(&envelope_bytes_with_cause(1, seq, cause))
+        .expect("causal fixture envelope is admitted")
 }
 
 /// One committed reply document at `version`, answering `epoch`.
@@ -92,27 +102,6 @@ fn response(version: u32, epoch: &str) -> Vec<u8> {
 /// A position, which every fixture spells above zero.
 fn seq(value: u64) -> Seq {
     Seq::new(value).expect("fixture position is non-zero")
-}
-
-/// A fold-backed answer over `rows`, stamped the way a fold stamps one.
-///
-/// The fold's cursor and the packed horizon are spelled differently on purpose.
-/// They answer different questions — how far this generation applied, and how
-/// far the declared inputs are complete — so a fixture that gave them one value
-/// would let state report either in place of the other and still pass.
-fn fold_backed(rows: Vec<Row>) -> Answer<Row> {
-    Answer::Derived(Derived {
-        fold: "board::backlog"
-            .parse()
-            .expect("fixture fold name is canonical"),
-        r#gen: 17,
-        cursor: seq(48200),
-        packed: Packed {
-            rows,
-            overflow: None,
-            horizon: seq(48213),
-        },
-    })
 }
 
 #[test]
@@ -327,6 +316,82 @@ fn a_gap_advances_without_being_repaired() {
 }
 
 #[test]
+fn a_chain_walk_ends_at_the_received_envelope_that_omits_cause() {
+    let mut state = BrowserState::<Row>::new(uuid(EPOCH));
+    state.apply(&causal_envelope(48190, None));
+    state.apply(&causal_envelope(48213, Some(48190)));
+    state.apply(&causal_envelope(48214, Some(48213)));
+
+    let walk = state.walk(seq(48214));
+
+    assert_eq!(
+        walk.links()
+            .iter()
+            .map(app::CausalLink::seq)
+            .collect::<Vec<_>>(),
+        vec![seq(48214), seq(48213), seq(48190)]
+    );
+    assert_eq!(walk.end(), ChainEnd::Root);
+    assert_eq!(walk.links().last().and_then(app::CausalLink::cause), None);
+    assert!(
+        walk.links()
+            .iter()
+            .all(|link| link.origin().to_string() == "task:SPICE-aBcD")
+    );
+}
+
+#[test]
+fn a_dangling_cause_is_reported_without_inventing_its_position() {
+    let mut state = BrowserState::<Row>::new(uuid(EPOCH));
+    state.apply(&causal_envelope(48214, Some(48213)));
+
+    let walk = state.walk(seq(48214));
+    let unseen = state.walk(seq(48999));
+
+    assert_eq!(
+        walk.links()
+            .iter()
+            .map(app::CausalLink::seq)
+            .collect::<Vec<_>>(),
+        vec![seq(48214)]
+    );
+    assert_eq!(walk.end(), ChainEnd::Dangling(seq(48213)));
+    assert!(unseen.links().is_empty());
+    assert_eq!(unseen.end(), ChainEnd::Dangling(seq(48999)));
+}
+
+#[test]
+fn a_cause_cycle_is_reported_after_each_received_link_once() {
+    let mut state = BrowserState::<Row>::new(uuid(EPOCH));
+    state.apply(&causal_envelope(48213, Some(48214)));
+    state.apply(&causal_envelope(48214, Some(48213)));
+
+    let walk = state.walk(seq(48214));
+
+    assert_eq!(
+        walk.links()
+            .iter()
+            .map(app::CausalLink::seq)
+            .collect::<Vec<_>>(),
+        vec![seq(48214), seq(48213)]
+    );
+    assert_eq!(walk.end(), ChainEnd::Cycle(seq(48214)));
+}
+
+#[test]
+fn a_received_stale_frame_can_complete_a_previously_dangling_walk() {
+    let mut state = BrowserState::<Row>::new(uuid(EPOCH));
+    state.apply(&causal_envelope(48214, Some(48213)));
+    assert_eq!(state.walk(seq(48214)).end(), ChainEnd::Dangling(seq(48213)));
+
+    assert_eq!(state.apply(&causal_envelope(48213, None)), Applied::Stale);
+
+    let completed = state.walk(seq(48214));
+    assert_eq!(completed.end(), ChainEnd::Root);
+    assert_eq!(state.cursor(), Some(seq(48214)));
+}
+
+#[test]
 fn a_later_answer_replaces_the_earlier_one_whole() {
     let mut state = BrowserState::new(uuid(EPOCH));
     state.replace(Answer::HeadDirect(Packed {
@@ -391,78 +456,6 @@ fn a_complete_answer_clears_the_overflow_an_earlier_one_declared() {
 }
 
 #[test]
-fn an_untouched_state_holds_no_answer_to_report_provenance_from() {
-    let state = BrowserState::<Row>::new(uuid(EPOCH));
-
-    assert!(state.answer().is_none());
-}
-
-#[test]
-fn a_fold_backed_answer_keeps_its_provenance_in_state() {
-    let mut state = BrowserState::new(uuid(EPOCH));
-    state.replace(fold_backed(vec![Row("first")]));
-
-    let answer = state.answer().expect("an answer was received");
-
-    assert_eq!(
-        answer.fold().map(wire::FoldName::as_str),
-        Some("board::backlog")
-    );
-    assert_eq!(answer.generation(), Some(17));
-    assert_eq!(answer.cursor(), Some(seq(48200)));
-    assert!(answer.is_derived());
-}
-
-#[test]
-fn a_head_direct_answer_leaves_state_with_no_provenance_to_report() {
-    let mut state = BrowserState::new(uuid(EPOCH));
-    state.replace(Answer::HeadDirect(Packed {
-        rows: vec![Row("only")],
-        overflow: None,
-        horizon: seq(48213),
-    }));
-
-    let answer = state.answer().expect("an answer was received");
-
-    assert_eq!(answer.fold(), None);
-    assert_eq!(answer.generation(), None);
-    assert_eq!(answer.cursor(), None);
-    assert!(!answer.is_derived());
-}
-
-#[test]
-fn the_streams_cursor_and_the_folds_cursor_are_two_positions_not_one() {
-    let mut state = BrowserState::new(uuid(EPOCH));
-    state.apply(&envelope(48213));
-    state.replace(fold_backed(vec![Row("first")]));
-
-    // The browser has applied 48213 from the stream; the fold behind this
-    // answer had applied 48200 when it produced it. Reporting one in place of
-    // the other would make a lagging fold look as current as the stream.
-    assert_eq!(state.cursor(), Some(seq(48213)));
-    assert_eq!(state.answer().and_then(Answer::cursor), Some(seq(48200)));
-}
-
-#[test]
-fn a_head_direct_answer_replacing_a_fold_backed_one_carries_no_provenance_over() {
-    let mut state = BrowserState::new(uuid(EPOCH));
-    state.replace(fold_backed(vec![Row("first")]));
-
-    state.replace(Answer::HeadDirect(Packed {
-        rows: vec![Row("second")],
-        overflow: None,
-        horizon: seq(48214),
-    }));
-
-    // Replacement is whole, so the fold and generation the earlier answer wore
-    // leave with it. A state that kept them would attribute these rows to a
-    // fold that never ranked them.
-    let answer = state.answer().expect("an answer was received");
-    assert_eq!(answer.fold(), None);
-    assert_eq!(answer.generation(), None);
-}
-
-#[test]
 fn reconnecting_to_a_new_generation_starts_empty() {
     let mut state = BrowserState::new(uuid(EPOCH));
     state.apply(&envelope(48213));
@@ -478,6 +471,8 @@ fn reconnecting_to_a_new_generation_starts_empty() {
     assert_eq!(state.cursor(), None);
     assert_eq!(state.horizon(), None);
     assert!(state.rows().is_empty());
+    assert!(state.walk(seq(48213)).links().is_empty());
+    assert_eq!(state.walk(seq(48213)).end(), ChainEnd::Dangling(seq(48213)));
 }
 
 #[test]

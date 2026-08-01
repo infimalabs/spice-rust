@@ -90,7 +90,11 @@ pub struct Packed<T> {
     /// Ranked rows carried by this answer.
     pub rows: Vec<T>,
     /// What was omitted, when anything was.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub overflow: Option<Overflow>,
     /// Greatest position through which the declared inputs are complete.
     pub horizon: Seq,

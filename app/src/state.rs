@@ -1,11 +1,14 @@
 //! One in-browser state over received frames.
 //!
 //! The app appends nothing and derives nothing it was not told. This state
-//! remembers the highest position it has applied and the most recent answer;
-//! it never merges two answers, never repairs a gap, and never reports a
-//! horizon, overflow, or cursor it did not receive.
+//! remembers the highest position it has applied, the causal headers it has
+//! received, and the most recent answer wearing whatever provenance it arrived
+//! with. It never merges two answers, repairs a gap, or reports a horizon,
+//! overflow, cursor, fold, or causal link it did not receive.
 
-use wire::{Body, CanonicalUuid, Derived, Envelope, Fact, FoldName, Overflow, Packed, Seq};
+use std::collections::{BTreeMap, BTreeSet};
+
+use wire::{Body, CanonicalUuid, Derived, Envelope, Fact, FoldName, Origin, Overflow, Packed, Seq};
 
 use crate::socket::Admitted;
 
@@ -32,13 +35,76 @@ impl Applied {
     }
 }
 
+/// One received envelope header in a causal walk.
+///
+/// The browser retains only the fields the walk renders. Every link comes
+/// from an admitted envelope; no missing position is materialized as a link.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CausalLink {
+    seq: Seq,
+    origin: Origin,
+    cause: Option<Seq>,
+}
+
+impl CausalLink {
+    /// This link's durable position.
+    #[must_use]
+    pub const fn seq(&self) -> Seq {
+        self.seq
+    }
+
+    /// Root attribution inherited by this link.
+    #[must_use]
+    pub const fn origin(&self) -> &Origin {
+        &self.origin
+    }
+
+    /// The immediately provoking position, absent only at a root.
+    #[must_use]
+    pub const fn cause(&self) -> Option<Seq> {
+        self.cause
+    }
+}
+
+/// Why a causal walk stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChainEnd {
+    /// The final received envelope omitted `cause` and is the chain root.
+    Root,
+    /// A received envelope cited a position the browser has not received.
+    Dangling(Seq),
+    /// Following causes reached a position already visited by this walk.
+    Cycle(Seq),
+}
+
+/// Received links from a starting position back toward its root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChainWalk {
+    links: Vec<CausalLink>,
+    end: ChainEnd,
+}
+
+impl ChainWalk {
+    /// Links in walk order, beginning at the requested position.
+    #[must_use]
+    pub fn links(&self) -> &[CausalLink] {
+        &self.links
+    }
+
+    /// The observed condition that stopped the walk.
+    #[must_use]
+    pub const fn end(&self) -> ChainEnd {
+        self.end
+    }
+}
+
 /// How a list answer was produced.
 ///
 /// The two arms are the two reads the socket makes, and they differ in exactly
 /// one way that matters downstream: whether the answer can say which fold
 /// generation produced it and how far that generation had applied the journal.
 /// A head-direct read cannot, and this enum gives it nowhere to claim
-/// otherwise, so "never fabricate provenance" holds by shape rather than by a
+/// otherwise, so "never invent that provenance" holds by shape rather than by a
 /// rule a renderer has to remember.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer<T> {
@@ -82,8 +148,8 @@ impl<T> Answer<T> {
     /// How far that generation had applied the journal, or `None` for a
     /// head-direct read.
     ///
-    /// This is deliberately not the packed horizon. The horizon says how far
-    /// the declared inputs are complete; this says how far the fold itself had
+    /// This is deliberately not the packed horizon. The horizon names the
+    /// source completeness boundary; this says how far the fold itself had
     /// gotten. Collapsing the two would let a stale generation read as current.
     #[must_use]
     pub const fn cursor(&self) -> Option<Seq> {
@@ -109,6 +175,7 @@ pub struct BrowserState<T> {
     epoch: CanonicalUuid,
     cursor: Option<Seq>,
     answer: Option<Answer<T>>,
+    causal: BTreeMap<Seq, CausalLink>,
 }
 
 impl<T> BrowserState<T> {
@@ -119,6 +186,7 @@ impl<T> BrowserState<T> {
             epoch,
             cursor: None,
             answer: None,
+            causal: BTreeMap::new(),
         }
     }
 
@@ -128,16 +196,10 @@ impl<T> BrowserState<T> {
         self.epoch
     }
 
-    /// The highest position applied from the stream, or `None` before the
-    /// first frame.
+    /// The highest position applied, or `None` before the first frame.
     ///
     /// Absent is reported as absent. A state that has seen nothing does not
     /// claim position zero.
-    ///
-    /// This is the browser's own progress through the stream, which is not the
-    /// same claim as [`Answer::cursor`]: that one reports how far the fold
-    /// behind an answer had applied. Two subjects walking one journal keep two
-    /// cursors, so they are reached through two receivers and never merged.
     #[must_use]
     pub const fn cursor(&self) -> Option<Seq> {
         self.cursor
@@ -146,7 +208,8 @@ impl<T> BrowserState<T> {
     /// Apply one admitted envelope, keeping the cursor monotone.
     ///
     /// Only a position above the cursor advances it. A duplicate and a
-    /// reordered arrival both leave the cursor and the packed answer alone.
+    /// reordered arrival both leave the cursor and the packed answer alone;
+    /// their admitted header remains available to complete a causal walk.
     ///
     /// The parameter is [`Admitted`] rather than a bare envelope so that a
     /// frame this build cannot read has no path in. Version admission belongs
@@ -158,6 +221,13 @@ impl<T> BrowserState<T> {
     /// on facts a producer can actually mint and on nothing else.
     pub fn apply<F: Body>(&mut self, admitted: &Admitted<Envelope<Fact<F>>>) -> Applied {
         let envelope = admitted.get();
+        self.causal
+            .entry(envelope.seq)
+            .or_insert_with(|| CausalLink {
+                seq: envelope.seq,
+                origin: envelope.origin.clone(),
+                cause: envelope.cause,
+            });
         match self.cursor {
             Some(cursor) if envelope.seq == cursor => Applied::Duplicate,
             Some(cursor) if envelope.seq < cursor => Applied::Stale,
@@ -168,17 +238,57 @@ impl<T> BrowserState<T> {
         }
     }
 
+    /// Walk received cause links from `start` toward a root.
+    ///
+    /// A root is recognized only when its received envelope omits `cause`.
+    /// Missing positions and cycles are terminal observations rather than
+    /// placeholders or repair attempts, so this method always terminates and
+    /// never reports a link the session did not admit.
+    #[must_use]
+    pub fn walk(&self, start: Seq) -> ChainWalk {
+        let mut links = Vec::new();
+        let mut visited = BTreeSet::new();
+        let mut position = start;
+
+        loop {
+            if !visited.insert(position) {
+                return ChainWalk {
+                    links,
+                    end: ChainEnd::Cycle(position),
+                };
+            }
+
+            let Some(link) = self.causal.get(&position) else {
+                return ChainWalk {
+                    links,
+                    end: ChainEnd::Dangling(position),
+                };
+            };
+            links.push(link.clone());
+
+            match link.cause {
+                Some(cause) => position = cause,
+                None => {
+                    return ChainWalk {
+                        links,
+                        end: ChainEnd::Root,
+                    };
+                }
+            }
+        }
+    }
+
     /// Replace the current answer with a newly received one.
     ///
     /// An answer carries its own rank, overflow, and horizon, so a later one
-    /// replaces the earlier whole. Merging two would produce a list no producer
-    /// ever ranked and a horizon no source ever declared.
+    /// replaces the earlier one whole. Merging two answers would produce a list
+    /// no producer ever ranked and a horizon no source ever declared.
     ///
     /// The parameter is [`Answer`] rather than a bare [`Packed`] so that a
     /// fold-backed read arrives with its provenance attached instead of being
     /// flattened on the way in. A state that accepted only the rows would have
-    /// discarded the fold and generation at the door and then had nothing
-    /// honest to render.
+    /// discarded the fold and generation at the door, leaving every pane above
+    /// it with nothing honest to show.
     pub fn replace(&mut self, answer: Answer<T>) {
         self.answer = Some(answer);
     }
@@ -219,15 +329,16 @@ impl<T> BrowserState<T> {
 
     /// Adopt a generation, discarding state that belonged to another.
     ///
-    /// Reconnecting to the same generation resumes: the cursor and the current
-    /// answer remain valid observations of that authority. Reconnecting to a
-    /// new one starts empty, because positions and horizons are only meaningful
-    /// within the generation that assigned them.
+    /// Reconnecting to the same generation resumes: the cursor, causal headers,
+    /// and current answer remain valid observations of that authority.
+    /// Reconnecting to a new one starts empty, because positions and horizons
+    /// are only meaningful within the generation that assigned them.
     pub fn reconnect(&mut self, epoch: CanonicalUuid) {
         if self.epoch != epoch {
             self.epoch = epoch;
             self.cursor = None;
             self.answer = None;
+            self.causal.clear();
         }
     }
 }

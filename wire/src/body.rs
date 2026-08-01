@@ -11,7 +11,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::envelope::{Actor, Seq};
-use crate::ident::{CanonicalUuid, Instant};
+use crate::ident::{CanonicalUuid, Digest, Instant};
 use crate::witness::{Phase, TaskHandle};
 
 /// How a review closed.
@@ -99,7 +99,11 @@ pub struct TaskReviewed {
     /// How the review closed.
     pub verdict: Verdict,
     /// Recorded finding; absent on a clean verdict.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub finding: Option<String>,
 }
 
@@ -217,7 +221,7 @@ pub struct ClaimRenewed {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocApplied {
     /// Normalized plan digest that landed.
-    pub digest: String,
+    pub digest: Digest,
     /// Board barrier the plan was witnessed against.
     pub barrier: Seq,
     /// Operations the plan carried.
@@ -234,7 +238,11 @@ pub struct SteerSent {
     /// Directive text.
     pub text: String,
     /// Control channel the directive drives; absent on plain prose.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub control: Option<String>,
     /// Instant the directive expires without a disposition.
     pub expires: Instant,
@@ -329,7 +337,11 @@ pub struct ConsentGranted {
     /// Rule or operator that allowed it.
     pub rule: String,
     /// Budget remaining after the grant; absent when the rule carries no budget.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub budget: Option<u32>,
 }
 
@@ -510,10 +522,14 @@ pub struct TrustPended {
     /// Executable surface.
     pub surface: String,
     /// Digest that entered quarantine.
-    pub digest: String,
+    pub digest: Digest,
     /// Digest it replaced; absent the first time the surface is seen.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub previous: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub previous: Option<Digest>,
 }
 
 /// The operator approved the exact executable digest.
@@ -522,7 +538,7 @@ pub struct TrustGranted {
     /// Executable surface.
     pub surface: String,
     /// Exact approved digest.
-    pub digest: String,
+    pub digest: Digest,
 }
 
 /// The operator withdrew approval from the exact executable digest.
@@ -531,7 +547,7 @@ pub struct TrustRevoked {
     /// Executable surface.
     pub surface: String,
     /// Exact digest approval was withdrawn from.
-    pub digest: String,
+    pub digest: Digest,
 }
 
 /// The resident recognized a repository commit and bound its receipt verdict.
@@ -540,7 +556,7 @@ pub struct CommitLanded {
     /// Recognized repository commit.
     pub commit: String,
     /// Receipt the commit published.
-    pub receipt: String,
+    pub receipt: Digest,
     /// Verdict bound to the receipt.
     pub verdict: Verdict,
 }
@@ -557,7 +573,7 @@ pub struct GateFound {
     /// Owner the finding is charged to.
     pub owner: Actor,
     /// Receipt the finding originated from.
-    pub receipt: String,
+    pub receipt: Digest,
 }
 
 /// A standing finding resolved at its evidence; the Finding head closed.
@@ -663,7 +679,7 @@ pub struct ProofSealed {
     /// Tree the bundle is bound to.
     pub tree: String,
     /// Manifest the bundle is bound to.
-    pub manifest: String,
+    pub manifest: Digest,
 }
 
 /// One published target entry and its detached proof receipt.
@@ -672,16 +688,16 @@ pub struct PublishedTarget {
     /// Target the entry names.
     pub target: String,
     /// Artifact digest published for the target.
-    pub artifact: String,
+    pub artifact: Digest,
     /// Detached proof receipt the artifact published under.
-    pub receipt: String,
+    pub receipt: Digest,
 }
 
 /// The sealed release manifest digest, and each target entry's artifact digest, published.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReleasePublished {
     /// Sealed release manifest digest.
-    pub manifest: String,
+    pub manifest: Digest,
     /// Each target entry published under its detached proof receipt.
     pub targets: Vec<PublishedTarget>,
 }
