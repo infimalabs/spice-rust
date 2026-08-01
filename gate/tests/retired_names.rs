@@ -21,6 +21,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use gate::retired_matches;
 use syn::punctuated::Punctuated;
@@ -34,27 +35,63 @@ const NAMING_KEYS: &[&str] = &["rename", "alias", "name", "long", "value_name"];
 
 #[test]
 fn workspace_rust_uses_only_current_public_vocabulary() {
-    let root = workspace_root();
-    let mut sources = Vec::new();
-    collect_rust_sources(&root, &mut sources);
-    sources.sort();
-
-    let mut violations = Vec::new();
-    for path in &sources {
-        let source = fs::read_to_string(path).expect("Rust source must be readable");
-        let location = path
-            .strip_prefix(&root)
-            .unwrap_or(path)
-            .display()
-            .to_string();
-        violations.extend(scan_source(&location, &source));
-    }
+    let violations = scan_tree(&workspace_root());
 
     assert!(
         violations.is_empty(),
         "retired public vocabulary found:\n{}",
         violations.join("\n")
     );
+}
+
+/// The walk itself, over a tree this test plants and owns.
+///
+/// The sweep above reads the whole workspace, so it can only fail by finding a
+/// real violation. A clean tree and an empty walk are the same green to it, and
+/// that is the difference this fixture holds: the plant is reachable only by
+/// descending into a subdirectory and reading the file there. Emptying
+/// `collect_rust_sources`, dropping the read loop, or widening
+/// `is_ignored_directory` far enough to swallow `nested` each stop the plant
+/// from being found and turn this red.
+#[test]
+fn the_walk_descends_to_a_planted_violation_and_names_where_it_sat() {
+    let tree = ScratchTree::new("walk");
+    tree.write("surface.rs", "pub struct Lineage;\n");
+    tree.write("nested/deep/planted.rs", "pub struct Team;\n");
+    tree.write("target/generated.rs", "pub struct Team;\n");
+    tree.write(".vendored/carried.rs", "pub struct Team;\n");
+
+    let violations = scan_tree(tree.path());
+    let planted = Path::new("nested").join("deep").join("planted.rs");
+
+    assert_eq!(
+        violations,
+        vec![format!(
+            "{}: \"team\" is retired; use \"lineage\"",
+            planted.display()
+        )],
+        "the walk did not report exactly the planted violation, located at the \
+         path it was planted under",
+    );
+}
+
+/// Every violation in one tree, each located relative to that tree's root.
+fn scan_tree(root: &Path) -> Vec<String> {
+    let mut sources = Vec::new();
+    collect_rust_sources(root, &mut sources);
+    sources.sort();
+
+    let mut violations = Vec::new();
+    for path in &sources {
+        let source = fs::read_to_string(path).expect("Rust source must be readable");
+        let location = path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .display()
+            .to_string();
+        violations.extend(scan_source(&location, &source));
+    }
+    violations
 }
 
 /// The sweep above is enforcement, not an observation that today's tree is
@@ -301,6 +338,43 @@ fn scan_attributes(scan: &mut Scan, attributes: &[syn::Attribute]) {
                 scan.coined(&text.value());
             }
         }
+    }
+}
+
+/// A source tree the fixture plants, removed when the fixture ends.
+///
+/// The walk is driven over this rather than over the real workspace because the
+/// sweep above runs in the same binary: a violation planted in the checkout
+/// would be found by both, so the fixture would fail its neighbour.
+struct ScratchTree(PathBuf);
+
+impl ScratchTree {
+    fn new(label: &str) -> Self {
+        static NEXT: AtomicU32 = AtomicU32::new(0);
+        let unique = NEXT.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "gate-retired-{label}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("create a scratch tree");
+        Self(root)
+    }
+
+    fn write(&self, relative: &str, contents: &str) {
+        let path = self.0.join(relative);
+        let parent = path.parent().expect("a scratch source sits in a directory");
+        fs::create_dir_all(parent).expect("create a scratch directory");
+        fs::write(&path, contents).expect("write a scratch source");
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for ScratchTree {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
     }
 }
 
