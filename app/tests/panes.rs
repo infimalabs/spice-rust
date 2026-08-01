@@ -20,22 +20,30 @@ use app::{
 };
 use serde::{Deserialize, Serialize};
 use wire::{
-    CanonicalUuid, Command, CommandKind, Digest, FaultClass, Outcome, Overflow, Packed, Response,
-    Seq, TaskHandle, TrustState, Witness,
+    Accepted, CanonicalUuid, Command, CommandKind, Digest, FaultClass, Outcome, Overflow, Packed,
+    Response, Seq, TaskHandle, TrustState, Witness,
 };
 
-/// Capability this session opens with.
-const CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163c1";
+/// Capability the operator session opens with.
+const OPERATOR_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163c1";
+/// Capability the lane session opens with.
+const LANE_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163c6";
 /// Generation this session addresses.
 const EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce9131163c3";
 /// A generation that replaced the one above.
 const NEXT_EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce9131163c9";
+/// Capability from the replacement generation.
+const NEXT_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163ca";
 /// The lane a lane-scoped capability is bound to.
 const LANE: &str = "018f82d4-6f59-7d06-92e3-bce9131163c2";
 /// Identity this fixture mints for a submitted command.
 const COMMAND: &str = "018f82d4-6f59-7d06-92e3-bce9131163c4";
 /// Identity of some other command in flight at the same moment.
 const OTHER_COMMAND: &str = "018f82d4-6f59-7d06-92e3-bce9131163c5";
+/// Confidential tape bytes admitted only for the operator fixture.
+const RAW_TAPE_SPAN: &str = "raw transcript span: authorization bearer alpha";
+/// Credential-bearing consent payload admitted only for the operator fixture.
+const CONSENT_CREDENTIAL: &str = "consent request payload: credential beta";
 
 /// Parse a canonical uuid fixture, which is spelled correctly by construction.
 fn uuid(text: &str) -> CanonicalUuid {
@@ -47,9 +55,16 @@ fn seq(value: u64) -> Seq {
     Seq::new(value).expect("fixture position is non-zero")
 }
 
-/// A session opened against [`CAPABILITY`] and [`EPOCH`].
-fn session() -> Session {
-    Session::open(uuid(CAPABILITY), uuid(EPOCH))
+fn operator_session() -> Session {
+    Session::open(uuid(OPERATOR_CAPABILITY), uuid(EPOCH))
+}
+
+fn lane_session() -> Session {
+    Session::open(uuid(LANE_CAPABILITY), uuid(EPOCH))
+}
+
+fn next_session() -> Session {
+    Session::open(uuid(NEXT_CAPABILITY), uuid(NEXT_EPOCH))
 }
 
 /// A ranked row, standing in for whatever a pane lists.
@@ -68,28 +83,34 @@ fn accepted_bytes(actor: &str, epoch: &str) -> Vec<u8> {
     format!(r#"{{ "wire": 1, "actor": "{actor}", "epoch": "{epoch}" }}"#).into_bytes()
 }
 
+/// The resident's admitted principal receipt for one capability-scoped session.
+fn accepted(session: &Session, actor: &str, epoch: &str) -> Admitted<Accepted> {
+    session
+        .admit_accepted(&accepted_bytes(actor, epoch))
+        .expect("the fixture acceptance is admitted")
+}
+
 /// The principal the resident named, admitted the way panes must receive it.
-fn principal(actor: &str) -> Principal {
-    let admitted = session()
-        .admit_accepted(&accepted_bytes(actor, EPOCH))
-        .expect("the fixture acceptance is admitted");
-    Principal::admitted(&admitted)
+fn principal(session: &Session, actor: &str) -> Principal {
+    Principal::admitted(&accepted(session, actor, EPOCH))
 }
 
 /// A session the resident accepted as the operator.
 fn operator() -> Principal {
-    principal("operator")
+    principal(&operator_session(), "operator")
 }
 
 /// A session the resident accepted as one seated lane.
 fn lane() -> Principal {
-    principal(&format!("lane:{LANE}"))
+    principal(&lane_session(), &format!("lane:{LANE}"))
 }
 
 /// State holding one complete answer from this generation.
 fn answered() -> BrowserState<Row> {
-    let mut state = BrowserState::new(uuid(EPOCH));
+    let session = lane_session();
+    let mut state = BrowserState::new(&accepted(&session, &format!("lane:{LANE}"), EPOCH));
     assert!(state.replace(&packed_answer(
+        &session,
         &["SPICE-aBcD", "SPICE-eFgH"],
         Some((41, 48250)),
         48213,
@@ -135,13 +156,14 @@ fn response_bytes(id: &str, outcome: &str) -> Vec<u8> {
 
 /// One admitted answer to `id`, carrying `outcome` verbatim.
 fn response(id: &str, outcome: &str) -> Admitted<Response<Note>> {
-    session()
+    lane_session()
         .admit_frame::<Note>(&response_bytes(id, outcome))
         .expect("the fixture answer is admitted")
 }
 
 /// One packed reply admitted through the session before browser state sees it.
 fn packed_answer(
+    session: &Session,
     rows: &[&str],
     overflow: Option<(u64, u64)>,
     horizon: u64,
@@ -166,7 +188,7 @@ fn packed_answer(
   }}
 }}"#
     );
-    session()
+    session
         .admit_frame(&bytes.into_bytes())
         .expect("the packed fixture answer is admitted")
 }
@@ -188,7 +210,7 @@ fn the_resident_names_the_principal_a_session_acts_as() {
 
 #[test]
 fn an_acceptance_for_another_generation_never_names_a_principal() {
-    let fault = session()
+    let fault = operator_session()
         .admit_accepted(&accepted_bytes("operator", NEXT_EPOCH))
         .expect_err("an acceptance from a replaced generation faults");
 
@@ -202,7 +224,7 @@ fn an_acceptance_at_another_wire_version_never_names_a_principal() {
     let bytes =
         format!(r#"{{ "wire": 99, "actor": "operator", "epoch": "{EPOCH}" }}"#).into_bytes();
 
-    let fault = session()
+    let fault = operator_session()
         .admit_accepted(&bytes)
         .expect_err("a foreign version faults");
 
@@ -211,7 +233,7 @@ fn an_acceptance_at_another_wire_version_never_names_a_principal() {
 
 #[test]
 fn an_acceptance_that_is_not_a_frame_names_no_principal() {
-    let fault = session()
+    let fault = operator_session()
         .admit_accepted(br#"{"wire": 1, "actor":"#)
         .expect_err("truncated bytes fault");
 
@@ -224,11 +246,11 @@ fn an_acceptance_carrying_a_capability_does_not_decode() {
     // echoed it would place a live credential on the return path of every
     // accepted connection, including every lane-scoped one.
     let bytes = format!(
-        r#"{{ "wire": 1, "actor": "lane:{LANE}", "epoch": "{EPOCH}", "capability": "{CAPABILITY}" }}"#
+        r#"{{ "wire": 1, "actor": "lane:{LANE}", "epoch": "{EPOCH}", "capability": "{LANE_CAPABILITY}" }}"#
     )
     .into_bytes();
 
-    let fault = session()
+    let fault = lane_session()
         .admit_accepted(&bytes)
         .expect_err("an acceptance carrying a capability is not a frame this build reads");
 
@@ -259,8 +281,9 @@ fn a_read_pane_shows_the_answer_it_was_given() {
 
 #[test]
 fn a_read_pane_invents_no_rows_horizon_or_overflow_before_an_answer() {
+    let session = operator_session();
     let operator = operator();
-    let state = BrowserState::<Row>::new(uuid(EPOCH));
+    let state = BrowserState::<Row>::new(&accepted(&session, "operator", EPOCH));
 
     let pane = ReadPane::over(&operator, &state).expect("state is from this generation");
 
@@ -274,9 +297,46 @@ fn a_read_pane_invents_no_rows_horizon_or_overflow_before_an_answer() {
 #[test]
 fn a_read_pane_does_not_open_over_another_generations_state() {
     let operator = operator();
-    let state = BrowserState::<Row>::new(uuid(NEXT_EPOCH));
+    let session = next_session();
+    let state = BrowserState::<Row>::new(&accepted(&session, "operator", NEXT_EPOCH));
 
     assert!(ReadPane::over(&operator, &state).is_none());
+}
+
+#[test]
+fn operator_only_packed_state_never_opens_for_a_same_epoch_lane() {
+    let session = operator_session();
+    let acceptance = accepted(&session, "operator", EPOCH);
+    let operator = Principal::admitted(&acceptance);
+    let lane = lane();
+    let mut state = BrowserState::new(&acceptance);
+    assert!(state.replace(&packed_answer(
+        &session,
+        &[OPERATOR_CAPABILITY, RAW_TAPE_SPAN, CONSENT_CREDENTIAL],
+        None,
+        48213,
+    )));
+
+    assert_eq!(
+        operator.epoch(),
+        lane.epoch(),
+        "the fixture shares an epoch"
+    );
+    assert_eq!(
+        ReadPane::over(&operator, &state)
+            .expect("operator owns this answer")
+            .rows()
+            .len(),
+        3
+    );
+    assert!(ReadPane::over(&lane, &state).is_none());
+
+    let lane_answer = packed_answer(&lane_session(), &["lane-visible"], None, 48214);
+    assert!(!state.replace(&lane_answer));
+    let operator_read = ReadPane::over(&operator, &state).expect("operator answer remains whole");
+    assert_eq!(operator_read.rows()[0].0, OPERATOR_CAPABILITY);
+    assert_eq!(operator_read.rows()[1].0, RAW_TAPE_SPAN);
+    assert_eq!(operator_read.rows()[2].0, CONSENT_CREDENTIAL);
 }
 
 #[test]
@@ -286,17 +346,39 @@ fn a_lane_principal_opens_no_grant_pane() {
 }
 
 #[test]
-fn no_rendered_row_promotes_a_lane_principal() {
+fn a_consent_decision_is_an_operator_grant_control() {
     let lane = lane();
-    let mut state = BrowserState::new(uuid(EPOCH));
-    // Rows an occupant can cause to exist: text naming the operator, the
-    // operator actor spelled exactly as the wire spells it, and the session
-    // capability itself.
+    let error = SteerPane::over(&lane)
+        .command(
+            uuid(COMMAND),
+            CommandKind::ConsentDecide,
+            Vec::new(),
+            note(),
+        )
+        .expect_err("a lane cannot decide operator consent");
+
+    assert_eq!(
+        error,
+        Declined::Authority {
+            kind: CommandKind::ConsentDecide,
+            actor: lane.actor().clone(),
+        }
+    );
+    assert!(GrantPane::decisions().any(|kind| kind == CommandKind::ConsentDecide));
+}
+
+#[test]
+fn no_rendered_row_promotes_a_lane_principal() {
+    let session = lane_session();
+    let lane = lane();
+    let mut state = BrowserState::new(&accepted(&session, &format!("lane:{LANE}"), EPOCH));
+    // Unprivileged text may mention authority without carrying it.
     assert!(state.replace(&packed_answer(
+        &session,
         &[
             "operator",
             "actor: operator",
-            "018f82d4-6f59-7d06-92e3-bce9131163c1",
+            "the word capability is ordinary rendered text",
         ],
         None,
         48213,
@@ -475,14 +557,23 @@ fn an_answer_to_another_command_faults_rather_than_being_shown() {
 
 #[test]
 fn no_lane_surface_renders_the_capability_its_session_presented() {
-    let lane = lane();
-    let state = answered();
+    let session = lane_session();
+    let acceptance = accepted(&session, &format!("lane:{LANE}"), EPOCH);
+    let lane = Principal::admitted(&acceptance);
+    let answer = packed_answer(
+        &session,
+        &["SPICE-aBcD", "SPICE-eFgH"],
+        Some((41, 48250)),
+        48213,
+    );
+    let mut state = BrowserState::new(&acceptance);
+    assert!(state.replace(&answer));
     let read = ReadPane::over(&lane, &state).expect("state is from this generation");
     let steer = SteerPane::over(&lane);
     let command = noted(&lane);
 
     let rendered = format!(
-        "{:?} {:?} {:?} {:?} {:?} {:?} {:?}",
+        "{session:?} {acceptance:?} {answer:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
         read.principal(),
         read.rows(),
         read.overflow(),
@@ -493,7 +584,7 @@ fn no_lane_surface_renders_the_capability_its_session_presented() {
     );
 
     assert!(
-        !rendered.contains(CAPABILITY),
+        !rendered.contains(LANE_CAPABILITY),
         "a lane-scoped surface rendered the session capability: {rendered}"
     );
     assert!(

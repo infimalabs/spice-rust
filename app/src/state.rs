@@ -8,9 +8,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use wire::{Body, CanonicalUuid, Envelope, Fact, Origin, Outcome, Overflow, Packed, Response, Seq};
+use wire::{
+    Accepted, Body, CanonicalUuid, Envelope, Fact, Origin, Outcome, Overflow, Packed, Response, Seq,
+};
 
-use crate::socket::Admitted;
+use crate::socket::{Admitted, SessionScope};
 
 /// What applying one envelope did to the state.
 ///
@@ -25,6 +27,8 @@ pub enum Applied {
     Duplicate,
     /// The position precedes the cursor, so a later frame already answered it.
     Stale,
+    /// Another capability-scoped session admitted the frame.
+    ForeignScope,
 }
 
 impl Applied {
@@ -98,12 +102,23 @@ impl ChainWalk {
     }
 }
 
-/// Browser state scoped to one resident generation.
+/// Browser state scoped to one admitted principal and resident generation.
 ///
-/// The generation is part of the state because a reconnect against a new epoch
-/// is a different authority, not a continuation of this one.
+/// Capability scope and generation travel together because a same-epoch peer
+/// is not this principal, and a reconnect against a new epoch is a different
+/// authority rather than a continuation of this one.
+///
+/// An epoch without an admitted principal cannot create browser state:
+///
+/// ```compile_fail
+/// let epoch = "018f82d4-6f59-7d06-92e3-bce9131163c3"
+///     .parse::<wire::CanonicalUuid>()
+///     .unwrap();
+/// let _ = app::BrowserState::<String>::new(epoch);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrowserState<T> {
+    scope: SessionScope,
     epoch: CanonicalUuid,
     cursor: Option<Seq>,
     packed: Option<Packed<T>>,
@@ -111,15 +126,20 @@ pub struct BrowserState<T> {
 }
 
 impl<T> BrowserState<T> {
-    /// Begin empty against one generation.
+    /// Begin empty for the principal named by one admitted acceptance.
     #[must_use]
-    pub const fn new(epoch: CanonicalUuid) -> Self {
+    pub fn new(accepted: &Admitted<Accepted>) -> Self {
         Self {
-            epoch,
+            scope: accepted.scope(),
+            epoch: accepted.get().epoch,
             cursor: None,
             packed: None,
             causal: BTreeMap::new(),
         }
+    }
+
+    pub(crate) const fn scope(&self) -> SessionScope {
+        self.scope
     }
 
     /// The generation this state belongs to.
@@ -137,7 +157,7 @@ impl<T> BrowserState<T> {
         self.cursor
     }
 
-    /// Apply one admitted envelope, keeping the cursor monotone.
+    /// Apply one same-scope admitted envelope, keeping the cursor monotone.
     ///
     /// Only a position above the cursor advances it. A duplicate and a
     /// reordered arrival both leave the cursor and the packed answer alone;
@@ -152,6 +172,9 @@ impl<T> BrowserState<T> {
     /// envelope carried a kind from the closed vocabulary, so state advances
     /// on facts a producer can actually mint and on nothing else.
     pub fn apply<F: Body>(&mut self, admitted: &Admitted<Envelope<Fact<F>>>) -> Applied {
+        if admitted.scope() != self.scope {
+            return Applied::ForeignScope;
+        }
         let envelope = admitted.get();
         self.causal
             .entry(envelope.seq)
@@ -231,7 +254,7 @@ impl<T> BrowserState<T> {
         let Outcome::Reply(reply) = &response.outcome else {
             return false;
         };
-        if response.epoch != self.epoch {
+        if admitted.scope() != self.scope || response.epoch != self.epoch {
             return false;
         }
         self.packed = Some(reply.body.clone());
@@ -262,14 +285,17 @@ impl<T> BrowserState<T> {
         self.overflow().is_some()
     }
 
-    /// Adopt a generation, discarding state that belonged to another.
+    /// Adopt an admitted principal, discarding state that belonged to another.
     ///
-    /// Reconnecting to the same generation resumes: the cursor, causal headers,
-    /// and packed answer remain valid observations of that authority.
-    /// Reconnecting to a new one starts empty, because positions and horizons
-    /// are only meaningful within the generation that assigned them.
-    pub fn reconnect(&mut self, epoch: CanonicalUuid) {
-        if self.epoch != epoch {
+    /// Reconnecting to the same principal and generation resumes: the cursor,
+    /// causal headers, and packed answer remain valid observations of that
+    /// authority. A different capability or generation starts empty, because
+    /// neither observations nor positions transfer across that boundary.
+    pub fn reconnect(&mut self, accepted: &Admitted<Accepted>) {
+        let epoch = accepted.get().epoch;
+        let scope = accepted.scope();
+        if self.epoch != epoch || self.scope != scope {
+            self.scope = scope;
             self.epoch = epoch;
             self.cursor = None;
             self.packed = None;
