@@ -35,7 +35,13 @@ pub(crate) fn execute_typed<B: Serialize>(
         Ok(state) => state,
         Err(error) => return crate::state_failure(&error).outcome(),
     };
-    let discovery = match DiscoveryRead::open(state.canvas()) {
+    let connection = match ambient_lane_identity() {
+        Ok(Some(lane)) => Connection::Lane(lane),
+        Ok(None) => Connection::Operator,
+        Err(outcome) => return outcome,
+    };
+    let discovery_path = selected_discovery_path(state.canvas(), connection);
+    let discovery = match DiscoveryRead::open(&discovery_path) {
         Ok(discovery) => discovery,
         Err(outcome) => return outcome,
     };

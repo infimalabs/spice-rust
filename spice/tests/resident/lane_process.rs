@@ -373,6 +373,92 @@ fn lane_lifecycle_and_recall_cross_the_resident_in_both_forms() {
     wake_and_finish(&fixture, resident, added.lane);
 }
 
+#[test]
+fn typed_task_commands_retain_the_ambient_lane_principal() {
+    let fixture = Fixture::new("lane-task-principal");
+    configure_fake_vendor(&fixture);
+    let mut resident = RunningResident::spawn(&fixture);
+    resident.assert_ready(&fixture);
+
+    let added_lane = reply_body::<wire::intent::LaneChangeAnswer>(&invoke_args(
+        &fixture,
+        &["lane", "add", "--life", "Drive", "--vendor", "claude"],
+        true,
+        None,
+    ));
+    let added_task = reply_body::<wire::intent::TaskAnswer>(&invoke_args(
+        &fixture,
+        &[
+            "task",
+            "add",
+            "Preserve the typed command lane principal",
+            "--project",
+            "spice.client",
+        ],
+        true,
+        None,
+    ));
+
+    let implementation = reply_body::<wire::intent::ClaimAnswer>(&invoke_args(
+        &fixture,
+        &["task", "next"],
+        true,
+        Some(added_lane.lane),
+    ));
+    assert_eq!(
+        (implementation.task, implementation.holder),
+        (added_task.task.clone(), Actor::Lane(added_lane.lane))
+    );
+    let completed = reply_body::<wire::intent::TaskAnswer>(&invoke_args(
+        &fixture,
+        &[
+            "task",
+            "done",
+            "--validation",
+            "lane principal survived typed completion",
+        ],
+        true,
+        Some(added_lane.lane),
+    ));
+    assert_eq!(completed.task, added_task.task);
+
+    let review = reply_body::<wire::intent::ClaimAnswer>(&invoke_args(
+        &fixture,
+        &["task", "next"],
+        true,
+        Some(added_lane.lane),
+    ));
+    assert_eq!(
+        (review.task, review.holder),
+        (added_task.task.clone(), Actor::Lane(added_lane.lane))
+    );
+    let reviewed = reply_body::<wire::intent::TaskAnswer>(&invoke_args(
+        &fixture,
+        &["task", "review", &added_task.task.to_string()],
+        true,
+        Some(added_lane.lane),
+    ));
+    assert_eq!(
+        (reviewed.task, reviewed.status.as_str()),
+        (added_task.task, "completed")
+    );
+
+    let drained = invoke_args(
+        &fixture,
+        &["lane", "drain", &added_lane.lane.to_string()],
+        true,
+        None,
+    );
+    assert!(
+        drained.status.success(),
+        "drain failed: {:?}",
+        drained.stderr
+    );
+    let down = invoke(&fixture, "down");
+    assert!(down.status.success(), "down failed: {:?}", down.stderr);
+    assert!(resident.wait().status.success(), "resident failed");
+}
+
 fn assert_recovered_lane(
     fixture: &Fixture,
     lane: wire::CanonicalUuid,

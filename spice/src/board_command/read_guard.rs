@@ -22,6 +22,10 @@ fn validated_snapshot(
             "a running resident has no current residency head",
         )
     })?;
+    let mut residency = positioned(residency);
+    for lane in &mut residency.body.lanes {
+        lane.capabilities.clear();
+    }
     let mut tasks = Vec::with_capacity(observed.tasks().len());
     let mut entries = Vec::with_capacity(observed.tasks().len());
     for heads in observed.tasks() {
@@ -57,7 +61,7 @@ fn validated_snapshot(
             cursor,
             principal,
             tasks,
-            residency: positioned(residency),
+            residency,
         },
         entries,
     })
