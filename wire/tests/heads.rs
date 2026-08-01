@@ -24,8 +24,7 @@ const WORKFLOW: &str = r#"{
   "status": "pending",
   "review": "unassigned",
   "assignment": "lane:018f82d4-6f59-7d06-92e3-bce913116302",
-  "deferral": "2030-04-12T18:44:09.271Z",
-  "completion": null
+  "deferral": "2030-04-12T18:44:09.271Z"
 }"#;
 
 const CLAIM: &str = r#"{
@@ -110,7 +109,6 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
         WORKFLOW,
         &[
             "assignment",
-            "completion",
             "deferral",
             "flow",
             "phase",

@@ -101,13 +101,25 @@ pub struct Refusal {
     /// Stable reason, suitable for matching rather than display alone.
     pub reason: String,
     /// Failed predicate name, when a witness is what failed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub witness: Option<String>,
     /// Value the predicate required.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub expected: Option<String>,
     /// Value the predicate observed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub observed: Option<String>,
     /// Actionable next step for the caller.
     pub remedy: String,

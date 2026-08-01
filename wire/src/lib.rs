@@ -9,6 +9,14 @@
 //! migration at open, and the browser has no independent clock because the app
 //! is compiled from this crate and embedded in the binary that owns the socket.
 //!
+//! # Absent optional fields are omitted
+//!
+//! Every crossing `Option<T>` has one document spelling for absence: the key
+//! is omitted. A present key must carry a `T`; explicit `null` is refused so
+//! two different documents cannot decode to the same DTO. Authors enforce the
+//! rule with `default`, `skip_serializing_if = "Option::is_none"`, and
+//! `deserialize_with = "crate::optional::present"` on every optional field.
+//!
 //! # The vocabularies are closed, so they stay enumerable
 //!
 //! [`CommandKind`], [`FactKind`], [`Witness`], [`WitnessKind`], and
@@ -42,6 +50,7 @@ pub mod ident;
 /// vocabularies apart, so flattening it away would forfeit that.
 pub mod intent;
 pub mod manifest;
+mod optional;
 pub mod packed;
 pub mod reply;
 pub mod witness;
