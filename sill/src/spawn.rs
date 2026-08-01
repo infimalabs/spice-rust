@@ -126,7 +126,8 @@ pub struct Running {
     started: Instant,
     wake_receiver: std::os::unix::net::UnixDatagram,
     cancellation_wake: std::os::unix::net::UnixDatagram,
-    child_result: Arc<Mutex<Option<io::Result<ExitStatus>>>>,
+    child: Option<Child>,
+    child_exit: Arc<Mutex<Option<io::Result<()>>>>,
     child_reaped: bool,
     stdout: Option<CaptureReader<ChildStdout>>,
     stderr: Option<CaptureReader<ChildStderr>>,
@@ -171,14 +172,15 @@ pub fn spawn(spec: Spec) -> io::Result<Running> {
     let pid = child.id();
     let (stdout, stdout_error) = capture_result(capture_stdout(&mut child, spec.output.stdout()));
     let (stderr, stderr_error) = capture_result(capture_stderr(&mut child, spec.output.stderr()));
-    let child_result = start_waiter(child, waiter_wake);
+    let child_exit = start_exit_watcher(pid, waiter_wake);
     let mut running = Running {
         pid,
         spec,
         started,
         wake_receiver,
         cancellation_wake,
-        child_result,
+        child: Some(child),
+        child_exit,
         child_reaped: false,
         stdout,
         stderr,
@@ -201,22 +203,45 @@ pub fn spawn(_spec: Spec) -> io::Result<Running> {
 }
 
 #[cfg(unix)]
-fn start_waiter(
-    mut child: Child,
+fn start_exit_watcher(
+    pid: u32,
     waiter_wake: std::os::unix::net::UnixDatagram,
-) -> Arc<Mutex<Option<io::Result<ExitStatus>>>> {
-    let child_result = Arc::new(Mutex::new(None));
-    let waiter_result = Arc::clone(&child_result);
+) -> Arc<Mutex<Option<io::Result<()>>>> {
+    let child_exit = Arc::new(Mutex::new(None));
+    let watcher_exit = Arc::clone(&child_exit);
 
     std::thread::spawn(move || {
-        let result = child.wait();
-        if let Ok(mut slot) = waiter_result.lock() {
+        let result = wait_for_exit(pid);
+        if let Ok(mut slot) = watcher_exit.lock() {
             *slot = Some(result);
         }
         let _wake_result = waiter_wake.send(WAKE_BYTE);
     });
 
-    child_result
+    child_exit
+}
+
+#[cfg(unix)]
+fn wait_for_exit(pid: u32) -> io::Result<()> {
+    loop {
+        let mut information = std::mem::MaybeUninit::<platform::SignalInfo>::uninit();
+        let result = unsafe {
+            platform::waitid(
+                platform::P_PID,
+                pid,
+                information.as_mut_ptr(),
+                platform::WEXITED | platform::WNOWAIT,
+            )
+        };
+        if result == 0 {
+            return Ok(());
+        }
+
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -320,7 +345,7 @@ impl Running {
         loop {
             self.drain_outputs()?;
 
-            if let Some(status) = self.take_child_result()? {
+            if let Some(status) = self.take_child_exit()? {
                 return self.finish(Completion::Exited(status));
             }
 
@@ -340,7 +365,7 @@ impl Running {
     }
 
     fn terminate_and_reap(&mut self) -> Result<ExitStatus, WaitError> {
-        if let Some(status) = self.take_child_result()? {
+        if let Some(status) = self.take_child_exit()? {
             return Ok(status);
         }
 
@@ -363,7 +388,7 @@ impl Running {
     fn await_child_for(&mut self, duration: Duration) -> Result<Option<ExitStatus>, WaitError> {
         let started = Instant::now();
         loop {
-            if let Some(status) = self.take_child_result()? {
+            if let Some(status) = self.take_child_exit()? {
                 return Ok(Some(status));
             }
             let elapsed = started.elapsed();
@@ -396,9 +421,9 @@ impl Running {
         })
     }
 
-    fn take_child_result(&mut self) -> Result<Option<ExitStatus>, WaitError> {
-        let result = self
-            .child_result
+    fn take_child_exit(&mut self) -> Result<Option<ExitStatus>, WaitError> {
+        let exit = self
+            .child_exit
             .lock()
             .map_err(|_| {
                 self.io_error(
@@ -408,14 +433,23 @@ impl Running {
             })?
             .take();
 
-        match result {
-            Some(Ok(status)) => {
-                self.child_reaped = true;
-                Ok(Some(status))
-            }
-            Some(Err(source)) => Err(self.io_error("waiting for child completion", source)),
+        match exit {
+            Some(Ok(())) => self.reap_notified_child().map(Some),
+            Some(Err(source)) => Err(self.io_error("watching for child completion", source)),
             None => Ok(None),
         }
+    }
+
+    fn reap_notified_child(&mut self) -> Result<ExitStatus, WaitError> {
+        let status = self
+            .child
+            .as_mut()
+            .expect("an unreaped process owns its child handle")
+            .wait()
+            .map_err(|source| self.io_error("reaping notified child", source))?;
+        self.child.take();
+        self.child_reaped = true;
+        Ok(status)
     }
 
     fn block_for(&mut self, duration: Duration) -> Result<(), WaitError> {

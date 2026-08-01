@@ -5,7 +5,7 @@
 //! A test that built a DTO in memory would prove the app agrees with itself;
 //! these prove it agrees with the wire.
 
-use app::{Applied, BrowserState, Session};
+use app::{Admitted, Applied, BrowserState, Session};
 use serde::{Deserialize, Serialize};
 use wire::{CanonicalUuid, Envelope, FaultClass, Overflow, Packed, Seq, WireVersion, body};
 
@@ -39,14 +39,14 @@ struct Status {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Row(&'static str);
 
-/// One envelope document at `seq`, decoded the way a frame arrives.
+/// One envelope document at `seq` and `version`, as bytes off the stream.
 ///
 /// `at` is written at the one admitted resolution rather than built from a
 /// clock, so this fixture is stable and carries no ambient time.
-fn envelope(seq: u64) -> Envelope<body::TaskPhased> {
-    let document = format!(
+fn envelope_bytes(version: u32, seq: u64) -> Vec<u8> {
+    format!(
         r#"{{
-  "v": 1,
+  "v": {version},
   "seq": {seq},
   "at": "2030-04-12T18:44:09.271Z",
   "actor": "lane:018f82d4-6f59-7d06-92e3-bce9131163c2",
@@ -54,8 +54,15 @@ fn envelope(seq: u64) -> Envelope<body::TaskPhased> {
   "cause": 48190,
   "fact": {{ "kind": "task::phased", "task": "SPICE-aBcD", "phase": "verify" }}
 }}"#
-    );
-    wire::decode(document.as_bytes()).expect("fixture envelope decodes")
+    )
+    .into_bytes()
+}
+
+/// One streamed fact at `seq`, admitted the way state must receive it.
+fn envelope(seq: u64) -> Admitted<Envelope<body::TaskPhased>> {
+    session()
+        .admit_envelope(&envelope_bytes(1, seq))
+        .expect("fixture envelope is admitted")
 }
 
 /// One committed reply document at `version`, answering `epoch`.
@@ -125,12 +132,67 @@ fn a_replaced_capability_faults_rather_than_refreshing_the_session() {
 
 #[test]
 fn a_current_frame_for_this_generation_is_admitted() {
-    let frame = session()
+    let admitted = session()
         .admit_frame::<Status>(&response(1, EPOCH))
         .expect("a current frame is admitted");
+    let frame = admitted.get();
 
     assert_eq!(frame.v, WireVersion::CURRENT);
     assert_eq!(frame.epoch, uuid(EPOCH));
+}
+
+#[test]
+fn a_current_streamed_fact_is_admitted() {
+    let admitted = session()
+        .admit_envelope::<body::TaskPhased>(&envelope_bytes(1, 48213))
+        .expect("a current envelope is admitted");
+    let frame = admitted.get();
+
+    assert_eq!(frame.v, WireVersion::CURRENT);
+    assert_eq!(frame.seq, seq(48213));
+    assert_eq!(frame.fact.body.phase.as_str(), "verify");
+}
+
+#[test]
+fn a_streamed_fact_at_another_wire_version_faults_and_never_reaches_state() {
+    let fault = session()
+        .admit_envelope::<body::TaskPhased>(&envelope_bytes(99, 48213))
+        .expect_err("a foreign version faults");
+
+    assert_eq!(fault.class, FaultClass::Protocol);
+    assert_eq!(fault.reason, "frame::wire-mismatch");
+    assert!(fault.detail.contains("99"), "{}", fault.detail);
+
+    // The door is the only route in, so a state that saw this stream is
+    // indistinguishable from one that saw nothing at all.
+    let state = BrowserState::<Row>::new(uuid(EPOCH));
+    assert_eq!(state.cursor(), None);
+}
+
+#[test]
+fn a_streamed_fact_that_is_not_a_frame_faults_with_the_shared_reason() {
+    let fault = session()
+        .admit_envelope::<body::TaskPhased>(b"{\"v\": 1, \"seq\":")
+        .expect_err("truncated bytes fault");
+
+    assert_eq!(fault.class, FaultClass::Protocol);
+    assert_eq!(fault.reason, "frame::undecodable");
+}
+
+#[test]
+fn both_doors_name_the_same_reason_for_the_same_failure() {
+    let session = session();
+
+    let response_fault = session
+        .admit_frame::<Status>(&response(99, EPOCH))
+        .expect_err("a foreign version faults");
+    let envelope_fault = session
+        .admit_envelope::<body::TaskPhased>(&envelope_bytes(99, 48213))
+        .expect_err("a foreign version faults");
+
+    assert_eq!(response_fault.reason, envelope_fault.reason);
+    assert_eq!(response_fault.detail, envelope_fault.detail);
+    assert_eq!(response_fault.class, envelope_fault.class);
 }
 
 #[test]

@@ -1,273 +1,343 @@
-//! The kind-to-body-to-producer registry.
+//! The command registry and its witness law.
 //!
-//! Every kind in the closed vocabulary registers one body DTO and one producer
-//! class. These fixtures are literal documents: decoding them and re-encoding
-//! to the same JSON proves the body field names are WIRE.md's own nouns rather
-//! than whatever a constructor happened to spell.
+//! WIRE.md states the law directly: the registry carries the witness law with
+//! the command, so a new command without an explicit row does not compile.
+//! That half is enforced by an exhaustive match and cannot be asserted from a
+//! test. These fixtures prove the half that can be: every row names the
+//! witnesses its command requires, a command missing one is refused, a global
+//! journal position is not expressible, and witness order does not move the
+//! canonical bytes an identity binds.
 
 use std::collections::BTreeSet;
+use std::str::FromStr;
 
-use wire::{Fact, FactKind, Producer, body};
+use serde::{Deserialize, Serialize};
+use wire::{
+    Answer, Command, CommandKind, Digest, Disposition, LawError, Name, Standing, TaskHandle, Up,
+    Witness, WitnessKind,
+};
 
-/// Decode, re-encode, and assert the JSON value is unchanged.
-fn round_trip<T>(document: &str) -> T
-where
-    T: serde::Serialize + serde::de::DeserializeOwned,
-{
-    let decoded: T = wire::decode(document.as_bytes()).expect("document decodes");
-    let reencoded: serde_json::Value =
-        serde_json::from_slice(&wire::encode(&decoded).expect("value encodes"))
-            .expect("re-encoded bytes are json");
-    let original: serde_json::Value = serde_json::from_str(document).expect("document is json");
-    assert_eq!(reencoded, original, "round trip changed the document");
-    decoded
+/// Body of the `task::done` command printed in WIRE.md.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct DoneBody {
+    task: TaskHandle,
+    validation: String,
 }
 
-const DOC_APPLIED: &str = r#"{
-  "kind": "doc::applied",
-  "digest": "9f2b4c7d1e6a08b35c4f9d2e7a1b8c05d6e3f4a291b7c8d0e5f6a3b2c1d4e7f80",
-  "barrier": 48213,
-  "operations": 7
-}"#;
-
-const CLAIM_RENEWED: &str = r#"{
-  "kind": "claim::renewed",
-  "task": "SPICE-aBcD",
-  "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
-  "until": "2030-04-12T19:44:09.271Z",
-  "maximum": "2030-04-12T22:44:09.271Z"
-}"#;
-
-const STEER_ACKED: &str = r#"{
-  "kind": "steer::acked",
-  "key": "1kJJP87B",
-  "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
-  "locus": "turn:48213#0"
-}"#;
-
-const GATE_FOUND: &str = r#"{
-  "kind": "gate::found",
-  "identity": "wire::untyped-body",
-  "severity": "high",
-  "locus": "wire/src/fact.rs:213",
-  "owner": "lane:018f82d4-6f59-7d06-92e3-bce9131163c2",
-  "receipt": "018f82d4-6f59-7d06-92e3-bce9131163c7"
-}"#;
-
-const TASTE_CONFIRMED: &str = r#"{
-  "kind": "taste::confirmed",
-  "taste": "polling",
-  "locus": "turn:48213#3"
-}"#;
-
-const RELEASE_PUBLISHED: &str = r#"{
-  "kind": "release::published",
-  "manifest": "4a1b9c2d3e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef",
-  "targets": [
+/// The `task::done` command exactly as WIRE.md prints it.
+const COMMAND: &str = r#"{
+  "v": 1,
+  "id": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+  "kind": "task::done",
+  "expected": [
+    { "kind": "task", "task": "SPICE-aBcD", "head": 48168 },
+    { "kind": "workflow", "task": "SPICE-aBcD", "head": 48169, "phase": "verify" },
+    { "kind": "claim", "task": "SPICE-aBcD", "head": 48172 },
+    { "kind": "lease", "task": "SPICE-aBcD", "head": 48173 },
     {
-      "target": "aarch64-apple-darwin",
-      "artifact": "0f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbccddeeff0",
-      "receipt": "018f82d4-6f59-7d06-92e3-bce9131163c8"
+      "kind": "residency",
+      "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+      "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c5",
+      "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3"
     }
-  ]
+  ],
+  "body": {
+    "task": "SPICE-aBcD",
+    "validation": "cargo test --workspace"
+  }
 }"#;
 
-#[test]
-fn the_command_door_body_matches_the_specified_fields() {
-    let fact: Fact<body::DocApplied> = round_trip(DOC_APPLIED);
-
-    assert_eq!(fact.kind, FactKind::DocApplied);
-    assert_eq!(fact.producer(), Producer::CommandDoor);
-    assert_eq!(fact.body.operations, 7);
-    assert_eq!(fact.body.barrier.get(), 48213);
+fn done() -> Command<DoneBody> {
+    wire::decode(COMMAND.as_bytes()).expect("the specified command decodes")
 }
 
 #[test]
-fn the_bus_timer_body_matches_the_specified_fields() {
-    let fact: Fact<body::ClaimRenewed> = round_trip(CLAIM_RENEWED);
-
-    assert_eq!(fact.kind, FactKind::ClaimRenewed);
-    assert_eq!(fact.producer(), Producer::BusTimer);
-    assert_eq!(fact.body.task.as_str(), "SPICE-aBcD");
-    assert!(
-        fact.body.until < fact.body.maximum,
-        "a renewal extends the lease within its maximum"
-    );
+fn the_specified_command_satisfies_its_own_registry_row() {
+    let command = done();
+    assert_eq!(command.kind, CommandKind::TaskDone);
+    command
+        .witnessed()
+        .expect("WIRE.md's own fixture satisfies the row it documents");
 }
 
 #[test]
-fn the_ack_scanner_body_matches_the_specified_fields() {
-    let fact: Fact<body::SteerAcked> = round_trip(STEER_ACKED);
-
-    assert_eq!(fact.kind, FactKind::SteerAcked);
-    assert_eq!(fact.producer(), Producer::AckScanner);
-    assert_eq!(fact.body.key, "1kJJP87B");
-    assert_eq!(fact.body.locus, "turn:48213#0");
-}
-
-#[test]
-fn the_resident_recognition_body_matches_the_specified_fields() {
-    let fact: Fact<body::GateFound> = round_trip(GATE_FOUND);
-
-    assert_eq!(fact.kind, FactKind::GateFound);
-    assert_eq!(fact.producer(), Producer::ResidentRecognition);
-    assert_eq!(fact.body.severity, body::Severity::High);
-    assert_eq!(fact.body.identity, "wire::untyped-body");
-}
-
-#[test]
-fn the_judge_body_matches_the_specified_fields() {
-    let fact: Fact<body::TasteConfirmed> = round_trip(TASTE_CONFIRMED);
-
-    assert_eq!(fact.kind, FactKind::TasteConfirmed);
-    assert_eq!(fact.producer(), Producer::Judge);
-    assert_eq!(fact.body.taste, "polling");
-}
-
-#[test]
-fn a_nested_body_keeps_its_specified_entry_fields() {
-    let fact: Fact<body::ReleasePublished> = round_trip(RELEASE_PUBLISHED);
-
-    assert_eq!(fact.kind, FactKind::ReleasePublished);
-    let [target] = fact.body.targets.as_slice() else {
-        panic!("the fixture publishes exactly one target");
-    };
-    assert_eq!(target.target, "aarch64-apple-darwin");
-}
-
-#[test]
-fn a_body_refuses_a_kind_it_is_not_registered_against() {
-    let foreign = TASTE_CONFIRMED.replace("taste::confirmed", "taste::cleared");
-
-    let error = wire::decode::<Fact<body::TasteConfirmed>>(foreign.as_bytes())
-        .expect_err("a body does not answer for a kind it is not registered against");
-
-    let detail = error.to_string();
-    assert!(
-        detail.contains("taste::cleared") && detail.contains("taste::confirmed"),
-        "the refusal names the kind it read and the kind it expected: {detail}"
-    );
-}
-
-#[test]
-fn an_unspelled_kind_is_not_a_fact() {
-    let invented = TASTE_CONFIRMED.replace("taste::confirmed", "taste::suspected");
-
-    assert!(
-        wire::decode::<Fact<body::TasteConfirmed>>(invented.as_bytes()).is_err(),
-        "a spelling absent from the vocabulary is not a fact"
-    );
-}
-
-#[test]
-fn a_body_pairs_only_with_its_own_kind() {
-    let fact = Fact::new(body::TaskWoken {
-        task: "SPICE-aBcD".parse().expect("handle"),
-    });
-
-    assert_eq!(fact.kind, FactKind::TaskWoken);
-    assert_eq!(fact.producer(), Producer::CommandDoor);
-}
-
-#[test]
-fn the_vocabulary_is_closed_and_every_spelling_is_distinct() {
-    let spellings: BTreeSet<&str> = FactKind::ALL.iter().map(|kind| kind.as_str()).collect();
-
-    assert_eq!(
-        spellings.len(),
-        FactKind::ALL.len(),
-        "two kinds share a wire spelling"
-    );
-    for kind in FactKind::ALL {
-        let spelling = kind.as_str();
-        let (domain, verb) = spelling
-            .split_once("::")
-            .unwrap_or_else(|| panic!("a kind is a path of single words: {spelling}"));
+fn every_command_names_the_witnesses_it_requires() {
+    for kind in CommandKind::ALL {
+        let law = kind.law();
         assert!(
-            !domain.is_empty() && domain.bytes().all(|byte| byte.is_ascii_lowercase()),
-            "the domain is one lower-case word: {spelling}"
+            !law.required.is_empty(),
+            "{kind} carries a registry row that requires nothing",
         );
-        assert!(
-            !verb.is_empty() && verb.bytes().all(|byte| byte.is_ascii_lowercase()),
-            "the verb is one lower-case word: {spelling}"
-        );
-    }
-}
-
-#[test]
-fn every_kind_names_a_producer_and_every_producer_mints_a_kind() {
-    let mut minted: BTreeSet<&str> = BTreeSet::new();
-    for kind in FactKind::ALL {
-        minted.insert(kind.producer().as_str());
-    }
-
-    let classes = [
-        Producer::CommandDoor,
-        Producer::BusTimer,
-        Producer::AckScanner,
-        Producer::ResidentRecognition,
-        Producer::Judge,
-    ];
-    for class in classes {
-        assert!(
-            minted.contains(class.as_str()),
-            "a producer class that never mints is as dead as a kind with no fold: {class}"
-        );
-    }
-    assert_eq!(
-        minted.len(),
-        classes.len(),
-        "the producer enumeration is closed"
-    );
-}
-
-#[test]
-fn producer_assignment_follows_the_specified_enumeration() {
-    // WIRE.md names the exceptions to the domain: everything else in a domain
-    // follows its lead, so listing them here fails loudly if a row moves.
-    let bus_timers = [
-        FactKind::ClaimLapsed,
-        FactKind::ClaimRenewed,
-        FactKind::SteerLapsed,
-        FactKind::LaneHeld,
-        FactKind::LaneResumed,
-    ];
-    for kind in bus_timers {
-        assert_eq!(
-            kind.producer(),
-            Producer::BusTimer,
-            "{kind} is minted by a bus timer"
-        );
-    }
-
-    let scanned = [
-        FactKind::SteerAcked,
-        FactKind::SteerDeclined,
-        FactKind::SteerMissed,
-    ];
-    for kind in scanned {
-        assert_eq!(
-            kind.producer(),
-            Producer::AckScanner,
-            "{kind} is minted by the ack scanner"
-        );
-    }
-
-    for kind in FactKind::ALL {
-        if bus_timers.contains(kind) || scanned.contains(kind) {
-            continue;
+        for optional in law.optional {
+            assert!(
+                !law.required.contains(optional),
+                "{kind} names {optional:?} as both required and optional",
+            );
         }
-        let spelling = kind.as_str();
-        let expected = match spelling.split_once("::").expect("a domain and a verb").0 {
-            "task" | "doc" | "consent" | "trust" | "up" => Producer::CommandDoor,
-            "taste" => Producer::Judge,
-            "lane" | "canary" | "vendor" | "commit" | "gate" | "journal" | "proof" | "release" => {
-                Producer::ResidentRecognition
-            }
-            // `claim` and `steer` split across the door and the timers, so the
-            // remainder of each is pinned by the explicit lists above.
-            _ => continue,
-        };
-        assert_eq!(kind.producer(), expected, "{kind} names the wrong producer");
     }
+}
+
+#[test]
+fn every_spelling_is_distinct_and_round_trips() {
+    let mut seen = BTreeSet::new();
+    for kind in CommandKind::ALL {
+        assert!(seen.insert(kind.as_str()), "{kind} is spelled twice");
+        assert_eq!(
+            CommandKind::from_str(kind.as_str()).expect("a registry spelling parses"),
+            *kind,
+        );
+        let encoded = serde_json::to_value(kind).expect("a kind encodes");
+        assert_eq!(encoded, serde_json::Value::String(kind.as_str().to_owned()));
+    }
+    assert_eq!(seen.len(), CommandKind::ALL.len());
+}
+
+#[test]
+fn a_spelling_outside_the_registry_is_refused() {
+    for absent in ["task::invented", "task", "TASK::DONE", "", "done"] {
+        assert!(
+            CommandKind::from_str(absent).is_err(),
+            "{absent:?} is not in the closed registry",
+        );
+        let decoded: Result<CommandKind, _> = wire::decode(
+            serde_json::to_vec(&absent)
+                .expect("text encodes")
+                .as_slice(),
+        );
+        assert!(decoded.is_err(), "{absent:?} decoded as a command");
+    }
+}
+
+#[test]
+fn a_command_missing_a_required_witness_is_refused() {
+    let law = CommandKind::TaskDone.law();
+    assert!(!law.required.is_empty());
+
+    // Dropping each required witness in turn must name that predicate.
+    for required in law.required {
+        let mut command = done();
+        command
+            .expected
+            .retain(|witness| witness.kind() != *required);
+        match command.witnessed() {
+            Err(LawError::Missing {
+                command: at,
+                missing,
+            }) => {
+                assert_eq!(at, CommandKind::TaskDone);
+                assert_eq!(missing, *required);
+            }
+            other => panic!("dropping {required:?} was not refused: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_command_carrying_an_unwitnessed_subject_is_refused() {
+    let mut command = done();
+    command.expected.push(Witness::Eligibility {
+        rule: "next".parse().expect("a name"),
+    });
+    match command.witnessed() {
+        Err(LawError::Unadmitted { command: at, extra }) => {
+            assert_eq!(at, CommandKind::TaskDone);
+            assert_eq!(extra, WitnessKind::Eligibility);
+        }
+        other => panic!("an unwitnessed subject was admitted: {other:?}"),
+    }
+}
+
+#[test]
+fn an_optional_witness_is_admitted_without_being_required() {
+    let law = CommandKind::TaskDone.law();
+    assert!(law.optional.contains(&WitnessKind::Assignment));
+
+    // The row admits it, so the bare fixture still passes without it.
+    done().witnessed().expect("optional means not required");
+
+    let mut command = done();
+    command.expected.push(Witness::Assignment {
+        task: "SPICE-aBcD".parse().expect("a handle"),
+        head: wire::Seq(48174.try_into().expect("a position")),
+        reviewer: "lane:018f82d4-6f59-7d06-92e3-bce9131163c2"
+            .parse()
+            .expect("an actor"),
+    });
+    command.witnessed().expect("optional means admitted");
+}
+
+#[test]
+fn witness_order_does_not_change_canonical_bytes() {
+    let forward = done();
+    let mut reversed = forward.clone();
+    reversed.expected.reverse();
+    assert_ne!(
+        forward.expected, reversed.expected,
+        "the fixture must carry enough witnesses to reorder",
+    );
+    assert_eq!(
+        forward.canonical_json().expect("canonical bytes"),
+        reversed.canonical_json().expect("canonical bytes"),
+        "witness order moved the bytes an identity binds",
+    );
+}
+
+#[test]
+fn witness_order_does_not_change_the_law() {
+    let mut reversed = done();
+    reversed.expected.reverse();
+    reversed
+        .witnessed()
+        .expect("the law is over predicate classes, not their order");
+}
+
+#[test]
+fn a_global_journal_position_is_not_expressible() {
+    // A bare position with no subject is not a witness spelling.
+    for bare in [
+        r#"{ "kind": "seq", "head": 48168 }"#,
+        r#"{ "kind": "journal", "seq": 48168 }"#,
+        r#"{ "kind": "snapshot", "head": 48168 }"#,
+    ] {
+        let decoded: Result<Witness, _> = wire::decode(bare.as_bytes());
+        assert!(decoded.is_err(), "{bare} decoded as a witness");
+    }
+
+    // Every witness that exists binds a subject beside any position it names.
+    for witness in sample_witnesses() {
+        let encoded = serde_json::to_value(&witness).expect("a witness encodes");
+        let object = encoded.as_object().expect("a witness is an object");
+        let subjects = object
+            .keys()
+            .filter(|key| key.as_str() != "kind" && key.as_str() != "head")
+            .count();
+        assert!(
+            subjects > 0,
+            "{:?} names a position with no subject",
+            witness.kind(),
+        );
+    }
+}
+
+#[test]
+fn every_witness_class_has_a_sample_and_reports_its_own_kind() {
+    let mut seen = BTreeSet::new();
+    for witness in sample_witnesses() {
+        assert!(
+            seen.insert(witness.kind()),
+            "{:?} is sampled twice",
+            witness.kind(),
+        );
+    }
+
+    // Every class the registry actually cites must be sampled above, so the
+    // subject check cannot silently skip a class.
+    for kind in CommandKind::ALL {
+        let law = kind.law();
+        for cited in law.required.iter().chain(law.optional) {
+            assert!(
+                seen.contains(cited),
+                "{cited:?} is cited by {kind} but never sampled"
+            );
+        }
+    }
+}
+
+/// One value of every witness class, used to prove structural properties that
+/// hold for the whole vocabulary rather than for one command.
+fn sample_witnesses() -> Vec<Witness> {
+    let task: TaskHandle = "SPICE-aBcD".parse().expect("a handle");
+    let uuid = |text: &str| text.parse().expect("a canonical uuid");
+    let seq = |value: u64| wire::Seq(value.try_into().expect("a position"));
+    let name = |text: &str| Name::from_str(text).expect("a name");
+    let digest =
+        |byte: char| Digest::from_str(&String::from(byte).repeat(64)).expect("a digest spelling");
+    let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
+
+    vec![
+        Witness::Task {
+            task: task.clone(),
+            head: seq(1),
+        },
+        Witness::Workflow {
+            task: task.clone(),
+            head: seq(2),
+            phase: "verify".parse().expect("a phase"),
+        },
+        Witness::Claim {
+            task: task.clone(),
+            head: seq(3),
+        },
+        Witness::Lease {
+            task: task.clone(),
+            head: seq(4),
+        },
+        Witness::Residency {
+            lane,
+            occupant: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
+            epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
+        },
+        Witness::Absence { task: task.clone() },
+        Witness::Existence { task: task.clone() },
+        Witness::Edge {
+            task: task.clone(),
+            after: "SPICE-eFgH".parse().expect("a handle"),
+        },
+        Witness::Deferral {
+            task: task.clone(),
+            head: seq(5),
+            deferred: true,
+        },
+        Witness::Eligibility { rule: name("next") },
+        Witness::Assignment {
+            task,
+            head: seq(6),
+            reviewer: "lane:018f82d4-6f59-7d06-92e3-bce9131163c2"
+                .parse()
+                .expect("an actor"),
+        },
+        Witness::Preview {
+            digest: digest('a'),
+        },
+        Witness::Barrier {
+            name: name("board"),
+            digest: digest('b'),
+        },
+        Witness::Directive {
+            steer: lane,
+            disposition: Disposition::Live,
+        },
+        Witness::Lineage { steer: lane },
+        Witness::Consent {
+            request: lane,
+            answer: Answer::Asked,
+        },
+        Witness::Rule {
+            name: name("reads"),
+        },
+        Witness::Budget {
+            rule: name("reads"),
+            remaining: 25,
+        },
+        Witness::Trust {
+            digest: digest('c'),
+            standing: Standing::Pended,
+        },
+        Witness::Taste {
+            name: name("polling"),
+            digest: digest('d'),
+        },
+        Witness::Observation {
+            key: digest('e'),
+            head: seq(7),
+        },
+        Witness::Sealed {
+            proof: digest('f'),
+            manifest: digest('0'),
+        },
+        Witness::Transition {
+            from: Up::Seated,
+            to: Up::Quiescing,
+        },
+    ]
 }

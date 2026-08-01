@@ -7,6 +7,8 @@
 
 use wire::{Body, CanonicalUuid, Envelope, Overflow, Packed, Seq};
 
+use crate::socket::Admitted;
+
 /// What applying one envelope did to the state.
 ///
 /// Frames arrive over a network. A retried delivery repeats a position and a
@@ -67,11 +69,17 @@ impl<T> BrowserState<T> {
         self.cursor
     }
 
-    /// Apply one envelope, keeping the cursor monotone.
+    /// Apply one admitted envelope, keeping the cursor monotone.
     ///
     /// Only a position above the cursor advances it. A duplicate and a
     /// reordered arrival both leave the cursor and the packed answer alone.
-    pub fn apply<F: Body>(&mut self, envelope: &Envelope<F>) -> Applied {
+    ///
+    /// The parameter is [`Admitted`] rather than a bare envelope so that a
+    /// frame this build cannot read has no path in. Version admission belongs
+    /// at the door; requiring the door's own receipt here means state cannot
+    /// be updated by bytes that never reached it.
+    pub fn apply<F: Body>(&mut self, admitted: &Admitted<Envelope<F>>) -> Applied {
+        let envelope = admitted.get();
         match self.cursor {
             Some(cursor) if envelope.seq == cursor => Applied::Duplicate,
             Some(cursor) if envelope.seq < cursor => Applied::Stale,
