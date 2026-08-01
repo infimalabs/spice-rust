@@ -631,7 +631,7 @@ pub struct JournalRestored {
     /// New epoch that recognized the exchange.
     pub epoch: CanonicalUuid,
     /// Authority the restore exchanged.
-    pub authority: CanonicalUuid,
+    pub authority: Digest,
 }
 
 /// The resident acquired the kernel writer lock and minted its epoch.

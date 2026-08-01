@@ -2,11 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::Envelope;
 use crate::envelope::{Seq, WireVersion};
 use crate::fact::AnyFact;
 use crate::ident::{CanonicalUuid, Digest};
 use crate::manifest::ReleaseTarget;
+use crate::{Envelope, Packed};
 
 /// An inclusive range of committed journal positions.
 ///
@@ -197,6 +197,8 @@ pub struct JournalReport {
     pub cursor: Option<Seq>,
     /// Number of canonical fact envelopes in the snapshot.
     pub facts: u64,
+    /// Bounded canonical immutable envelopes in ascending sequence order.
+    pub entries: Packed<Envelope<AnyFact>>,
 }
 
 /// Counts proved by a complete read-only authority verification.
@@ -292,6 +294,8 @@ pub struct FoldState {
     pub horizon: Option<Seq>,
     /// Exact command that recreates the fold.
     pub recovery: String,
+    /// Closed-inventory inputs that bound and explain this answer.
+    pub sources: Vec<String>,
     /// Deterministic derived answer, absent before first replay.
     #[serde(
         default,
@@ -317,8 +321,8 @@ pub struct ThreadReport {
     pub reference: String,
     /// Root fact of the resolved thread.
     pub root: Seq,
-    /// Canonical envelopes ordered from root through descendants.
-    pub entries: Vec<Envelope<AnyFact>>,
+    /// Bounded canonical envelopes ordered from root through descendants.
+    pub entries: Packed<Envelope<AnyFact>>,
 }
 
 /// One fully admitted target named in deterministic release notes.
