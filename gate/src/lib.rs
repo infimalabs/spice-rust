@@ -18,6 +18,8 @@ pub mod measure;
 pub mod message;
 pub mod names;
 pub mod ratchet;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod tree;
 pub mod verdict;
 
 pub use camp::{
@@ -39,4 +41,6 @@ pub use measure::{
 pub use message::{CommitMessageError, OriginTrailer, OriginTrailerError, validate_commit_message};
 pub use names::{RETIRED_NAMES, RetiredMatch, RetiredName, retired_matches};
 pub use ratchet::{Finding, Movement, Ratchet, RatchetError};
+#[cfg(not(target_arch = "wasm32"))]
+pub use tree::{SelectedTree, Selector, TreeError};
 pub use verdict::{PublishError, Run, RunError, Standing, Verdict};
