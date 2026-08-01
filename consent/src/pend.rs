@@ -129,6 +129,16 @@ impl Pending {
         Some(held)
     }
 
+    /// Take a request out of the queue without an operator decision.
+    ///
+    /// The reason the request was queued is gone, so there is nothing left to
+    /// ask about. This is not a [`Ruling`]: the operator never answered, so the
+    /// identity is neither granted nor refused and the lane is free to ask
+    /// again. Recording it as an allow would invent a decision nobody made.
+    pub(crate) fn withdraw(&mut self, request: CanonicalUuid) -> Option<Held> {
+        self.held.remove(&request)
+    }
+
     /// What is held under this request identity, if anything still is.
     #[must_use]
     pub fn held(&self, request: CanonicalUuid) -> Option<&Held> {

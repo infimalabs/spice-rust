@@ -196,8 +196,8 @@ impl Actuator {
         self.budgets.renew(&rule);
         Ok(self
             .pending
-            .release(request)
-            .expect("the inspected request remains held until this release"))
+            .withdraw(request)
+            .expect("the inspected request remains held until this withdrawal"))
     }
 
     /// Record the operator's answer to a held request and state the fact.
