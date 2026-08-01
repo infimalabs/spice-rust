@@ -22,6 +22,12 @@ pub(crate) struct InstallPreview {
 }
 
 pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
+    #[cfg(debug_assertions)]
+    spice::install::configure_test_mutation_rendezvous(
+        crate::bootstrap_environment(spice::install::TEST_PAUSE_CONTROL),
+        crate::bootstrap_environment(spice::install::TEST_PAUSE_ACTION),
+        crate::bootstrap_environment(spice::install::TEST_PAUSE_PATH),
+    );
     let request = if matches.get_flag("unapply") {
         Request::Unapply
     } else if let Some(digest) = matches.get_one::<String>("apply") {
