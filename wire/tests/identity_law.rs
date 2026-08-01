@@ -36,7 +36,7 @@ use wire::{
     FindingState, FoldName, Hello, Instant, LaneResidency, LeaseHead, Name, Origin, Outcome,
     Overflow, Packed, Phase, Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState, Response,
     Seq, SeqRange, Standing, TaskHandle, TaskHead, TrustHead, TrustState, Up, WireVersion, Witness,
-    WitnessClass, WitnessHead, WorkflowHead,
+    WitnessClass, WitnessHead, WitnessKind, WorkflowHead,
 };
 
 /// Names `wire` re-exports that never cross as values, each with its reason.
@@ -653,6 +653,13 @@ fn cover_head_enums(covered: &mut BTreeSet<String>) {
         covered,
         "WitnessClass",
         &[WitnessClass::Assignment, WitnessClass::Transition],
+    );
+    // The predicate classes a command registry row cites. Distinct from
+    // `WitnessClass`, which classifies what a stored witness head carries.
+    law(
+        covered,
+        "WitnessKind",
+        &[WitnessKind::Task, WitnessKind::Transition],
     );
 }
 
