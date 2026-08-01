@@ -19,6 +19,35 @@ struct SurfaceConfig {
     consent: consent::Policy,
 }
 
+struct StartupSurface {
+    config: SurfaceConfig,
+    trust: crate::trust_command::Surface,
+}
+
+fn load_startup_surface(
+    repository: &Repository,
+) -> Result<StartupSurface, spice::config::LoadError> {
+    load_startup_surface_with(repository, || {})
+}
+
+fn load_startup_surface_with<F>(
+    repository: &Repository,
+    after_capture: F,
+) -> Result<StartupSurface, spice::config::LoadError>
+where
+    F: FnOnce(),
+{
+    let loaded = spice::config::capture_coexisting_repository(repository, &[])?;
+    after_capture();
+    Ok(StartupSurface {
+        config: SurfaceConfig {
+            steering: loaded.resolved().root().steer().clone(),
+            consent: loaded.resolved().root().consent().policy().clone(),
+        },
+        trust: crate::trust_command::Surface::from_loaded(&loaded),
+    })
+}
+
 fn require_current_surface(
     repository: &Repository,
     surface: &crate::trust_command::Surface,
@@ -156,21 +185,13 @@ fn up_from(current: &Path) -> Outcome<()> {
         Ok(repository) => repository,
         Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
     };
-    let configuration = match spice::config::load_coexisting_repository(&repository, &[]) {
-        Ok(configuration) => configuration,
+    let startup_surface = match load_startup_surface(&repository) {
+        Ok(surface) => surface,
         Err(error) => return configuration_refusal(&error),
-    };
-    let surface_config = SurfaceConfig {
-        steering: configuration.root().steer().clone(),
-        consent: configuration.root().consent().policy().clone(),
     };
     let paths = match RuntimePaths::from_repository(&repository) {
         Ok(paths) => paths,
         Err(outcome) => return outcome,
-    };
-    let trust_surface = match crate::trust_command::Surface::load(&repository) {
-        Ok(surface) => surface,
-        Err(error) => return crate::trust_command::load_failure(&error),
     };
     if let Err(error) = fs::create_dir_all(&paths.data) {
         return environment_fault("resident::data-unavailable", &error.to_string());
@@ -196,7 +217,13 @@ fn up_from(current: &Path) -> Outcome<()> {
         Ok(bus) => bus,
         Err(error) => return store_fault("bus::start-failed", &error.to_string()),
     };
-    let startup = match commit_startup(&bus, &repository, &trust_surface, epoch, migration) {
+    let startup = match commit_startup(
+        &bus,
+        &repository,
+        &startup_surface.trust,
+        epoch,
+        migration,
+    ) {
         Ok(startup) => startup,
         Err(outcome) => return outcome,
     };
@@ -211,7 +238,7 @@ fn up_from(current: &Path) -> Outcome<()> {
             &repository,
             &paths,
             epoch,
-            &surface_config,
+            &startup_surface.config,
             &mut seats,
         )),
         Err(error) => Err(environment_fault(
