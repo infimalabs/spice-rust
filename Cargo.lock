@@ -2146,6 +2146,7 @@ dependencies = [
  "serde_path_to_error",
  "signal-hook",
  "sill",
+ "socket2",
  "steer",
  "tape",
  "taste",

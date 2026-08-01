@@ -17,7 +17,6 @@ pub(crate) fn read(contract: &Contract) -> Outcome<ConsentQueueAnswer> {
         &canvas,
         contract,
         SelectedCommand::ConsentRead,
-        None,
     ))
 }
 
@@ -26,7 +25,7 @@ pub(crate) fn policy(contract: &Contract) -> Outcome<ConsentPolicyAnswer> {
         Ok(canvas) => canvas,
         Err(outcome) => return outcome,
     };
-    match command_client::execute(&canvas, contract, SelectedCommand::ConsentPolicy, None) {
+    match command_client::execute(&canvas, contract, SelectedCommand::ConsentPolicy) {
         Outcome::Reply(reply) => match reply.body {
             CommandAnswer::ConsentPolicy(body) => Outcome::Reply(Reply {
                 position: reply.position,
@@ -75,7 +74,6 @@ pub(crate) fn decide(
         &canvas,
         read_contract,
         SelectedCommand::ConsentRead,
-        None,
     )) {
         Outcome::Reply(reply) => reply.body,
         Outcome::Refusal(refusal) => return Outcome::Refusal(refusal),
@@ -107,7 +105,6 @@ pub(crate) fn decide(
             answer,
             expected,
         },
-        None,
     ) {
         Outcome::Reply(reply) => match reply.body {
             CommandAnswer::Consent(body) => Outcome::Reply(Reply {

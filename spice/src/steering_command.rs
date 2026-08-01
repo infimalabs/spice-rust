@@ -7,7 +7,7 @@ use spice::repository::Repository;
 use wire::intent::CommandAnswer;
 use wire::{CanonicalUuid, Disposition, Fault, FaultClass, Outcome, Refusal};
 
-use crate::command_client::{SelectedCommand, execute};
+use crate::command_client::{SelectedCommand, execute_steering};
 
 pub(crate) fn run(
     matches: &ArgMatches,
@@ -74,7 +74,7 @@ pub(crate) fn run(
                 Ok(lane) => lane,
                 Err(outcome) => return outcome,
             };
-            return execute(
+            return execute_steering(
                 state.canvas(),
                 contract,
                 SelectedCommand::SteerAck {
@@ -91,7 +91,7 @@ pub(crate) fn run(
             );
         }
     };
-    execute(state.canvas(), contract, selected, lane_context)
+    execute_steering(state.canvas(), contract, selected, lane_context)
 }
 
 fn lane_context(value: Option<OsString>) -> Result<Option<CanonicalUuid>, Outcome<CommandAnswer>> {

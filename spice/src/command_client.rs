@@ -1,12 +1,13 @@
 //! The native client's sole authenticated path to the current resident.
 
 use std::fs::{self, File, Metadata, OpenOptions};
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::process::{Command as ProcessCommand, Stdio};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tungstenite::client::IntoClientRequest;
@@ -19,9 +20,6 @@ use wire::{
 };
 
 use crate::cli::{Contract, Guard, Principal, ReplyPositionLaw};
-
-mod browser;
-mod steering;
 
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_DISCOVERY_BYTES: u64 = 16 * 1024;
@@ -81,6 +79,16 @@ pub(crate) fn execute(
     discovery_path: &Path,
     contract: &Contract,
     selected: SelectedCommand<'_>,
+) -> Outcome<CommandAnswer> {
+    let mapped = MappedCommand::selected(contract, selected);
+    execute_mapped(discovery_path, contract, Connection::Operator, mapped)
+}
+
+/// Submit one steering command with the caller's optional activated lane.
+pub(crate) fn execute_steering(
+    discovery_path: &Path,
+    contract: &Contract,
+    selected: SelectedCommand<'_>,
     lane_context: Option<CanonicalUuid>,
 ) -> Outcome<CommandAnswer> {
     match selected {
@@ -90,14 +98,14 @@ pub(crate) fn execute(
                 Err(outcome) => return outcome,
             };
             let Some(row) = inbox.lanes.iter().find(|row| row.lane == lane) else {
-                return steering::steering_refusal(
+                return steering_refusal(
                     "steer::lane-unknown",
                     Some(lane.to_string()),
                     "seat the lane before sending it direction",
                 );
             };
             let Some(occupant) = row.occupant else {
-                return steering::steering_refusal(
+                return steering_refusal(
                     "steer::lane-vacant",
                     Some(lane.to_string()),
                     "start an occupant in the lane before sending it direction",
@@ -137,7 +145,7 @@ pub(crate) fn execute(
                 .find(|pending| pending.key == key.as_str())
                 .map(|pending| pending.directive);
             let Some(directive) = directive else {
-                return steering::steering_refusal(
+                return steering_refusal(
                     "steer::key-not-live",
                     Some(key.to_string()),
                     "read the current lane inbox and acknowledge one live key",
@@ -168,10 +176,7 @@ pub(crate) fn execute(
                 Err(outcome) => outcome,
             }
         }
-        selected => {
-            let mapped = MappedCommand::selected(contract, selected);
-            execute_mapped(discovery_path, contract, Connection::Operator, mapped)
-        }
+        selected => execute(discovery_path, contract, selected),
     }
 }
 
@@ -199,7 +204,7 @@ fn execute_mapped(
 /// acquisition therefore has one file-identity, ownership, mode, wire-shape,
 /// and loopback-origin admission path rather than a browser-specific reader.
 pub(crate) fn open_canvas(discovery_path: &Path) -> Outcome<wire::CanvasOpen> {
-    open_canvas_with(discovery_path, || {}, browser::system_browser)
+    open_canvas_with(discovery_path, || {}, system_browser)
 }
 
 fn open_canvas_with(
@@ -232,6 +237,41 @@ fn open_canvas_with(
             epoch: discovery.value.epoch,
         },
     })
+}
+
+fn system_browser(endpoint: &str) -> Result<(), String> {
+    let mut command = browser_command(endpoint)?;
+    let status = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|error| format!("the platform browser launcher did not start: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "the platform browser launcher did not accept the current endpoint: {status}"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn browser_command(endpoint: &str) -> Result<ProcessCommand, String> {
+    let mut command = ProcessCommand::new("/usr/bin/open");
+    command.arg("-u").arg(endpoint);
+    Ok(command)
+}
+
+#[cfg(target_os = "linux")]
+fn browser_command(endpoint: &str) -> Result<ProcessCommand, String> {
+    let mut command = ProcessCommand::new("/usr/bin/xdg-open");
+    command.arg(endpoint);
+    Ok(command)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn browser_command(_endpoint: &str) -> Result<ProcessCommand, String> {
+    Err("canvas browser launch is unsupported on this build target".to_owned())
 }
 
 fn rebody<B>(outcome: Outcome<CommandAnswer>) -> Outcome<B> {
@@ -487,6 +527,10 @@ struct DiscoveryRead {
 
 impl DiscoveryRead {
     fn open(path: &Path) -> ClientResult<Self> {
+        Self::open_with(path, || {})
+    }
+
+    fn open_with(path: &Path, before_open: impl FnOnce()) -> ClientResult<Self> {
         let parent = path.parent().ok_or_else(|| {
             environment_fault(
                 "canvas::discovery-unavailable",
@@ -503,6 +547,7 @@ impl DiscoveryRead {
                 "canvas discovery exceeds the current bounded document size",
             ));
         }
+        before_open();
         let mut file = open_discovery(path)?;
         let opened = file.metadata().map_err(discovery_unavailable)?;
         require_secure(&opened, DiscoveryKind::File)?;
@@ -510,7 +555,7 @@ impl DiscoveryRead {
             return Err(discovery_replaced());
         }
         let mut bytes = Vec::new();
-        file.by_ref()
+        Read::by_ref(&mut file)
             .take(MAX_DISCOVERY_BYTES + 1)
             .read_to_end(&mut bytes)
             .map_err(discovery_unavailable)?;
@@ -663,7 +708,7 @@ fn open_discovery(path: &Path) -> ClientResult<File> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
-    options.custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
+    options.custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK);
     options.open(path).map_err(discovery_unavailable)
 }
 
@@ -695,9 +740,106 @@ fn request(
 }
 
 struct AuthenticatedSession {
-    socket: WebSocket<TcpStream>,
+    socket: WebSocket<DeadlineStream>,
     discovery: DiscoveryRead,
     accepted: wire::Accepted,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum IoDirection {
+    Read,
+    Write,
+}
+
+struct DeadlineStream {
+    stream: TcpStream,
+    deadline: Instant,
+    last_failure: Option<IoDirection>,
+}
+
+impl DeadlineStream {
+    fn connect(address: &SocketAddr, deadline: Instant) -> io::Result<Self> {
+        let stream = TcpStream::connect_timeout(address, remaining(deadline)?)?;
+        Ok(Self {
+            stream,
+            deadline,
+            last_failure: None,
+        })
+    }
+
+    fn read_timeout(&mut self) -> io::Result<Duration> {
+        let timeout = remaining(self.deadline)?;
+        self.stream.set_read_timeout(Some(timeout))?;
+        Ok(timeout)
+    }
+
+    fn write_timeout(&mut self) -> io::Result<Duration> {
+        let timeout = remaining(self.deadline)?;
+        self.stream.set_write_timeout(Some(timeout))?;
+        Ok(timeout)
+    }
+}
+
+impl Read for DeadlineStream {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        self.last_failure = None;
+        if let Err(error) = self.read_timeout() {
+            self.last_failure = Some(IoDirection::Read);
+            return Err(error);
+        }
+        match self.stream.read(bytes) {
+            Ok(read) => Ok(read),
+            Err(error) => {
+                self.last_failure = Some(IoDirection::Read);
+                Err(error)
+            }
+        }
+    }
+}
+
+impl Write for DeadlineStream {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        self.last_failure = None;
+        if let Err(error) = self.write_timeout() {
+            self.last_failure = Some(IoDirection::Write);
+            return Err(error);
+        }
+        match self.stream.write(bytes) {
+            Ok(written) => Ok(written),
+            Err(error) => {
+                self.last_failure = Some(IoDirection::Write);
+                Err(error)
+            }
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.last_failure = None;
+        if let Err(error) = self.write_timeout() {
+            self.last_failure = Some(IoDirection::Write);
+            return Err(error);
+        }
+        match self.stream.flush() {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.last_failure = Some(IoDirection::Write);
+                Err(error)
+            }
+        }
+    }
+}
+
+fn remaining(deadline: Instant) -> io::Result<Duration> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "resident command deadline elapsed"))
 }
 
 fn open_session(
@@ -706,7 +848,8 @@ fn open_session(
 ) -> ClientResult<AuthenticatedSession> {
     let (authority, address) = loopback_endpoint(&discovery.value.endpoint)?;
     discovery.verify_current()?;
-    let stream = match TcpStream::connect_timeout(&address, SOCKET_TIMEOUT) {
+    let deadline = Instant::now() + SOCKET_TIMEOUT;
+    let stream = match DeadlineStream::connect(&address, deadline) {
         Ok(stream) => stream,
         Err(error) => {
             return Err(environment_fault(
@@ -715,18 +858,6 @@ fn open_session(
             ));
         }
     };
-    if let Err(error) = stream.set_read_timeout(Some(SOCKET_TIMEOUT)) {
-        return Err(environment_fault(
-            "canvas::timeout-failed",
-            &error.to_string(),
-        ));
-    }
-    if let Err(error) = stream.set_write_timeout(Some(SOCKET_TIMEOUT)) {
-        return Err(environment_fault(
-            "canvas::timeout-failed",
-            &error.to_string(),
-        ));
-    }
     discovery.verify_current()?;
     let mut request = match format!("ws://{authority}/socket").into_client_request() {
         Ok(request) => request,
@@ -928,7 +1059,7 @@ fn discloses_capability(value: &impl Serialize, capability: CanonicalUuid) -> bo
     })
 }
 
-fn send<T: Serialize>(socket: &mut WebSocket<TcpStream>, value: &T) -> ClientResult<()> {
+fn send<T: Serialize>(socket: &mut WebSocket<DeadlineStream>, value: &T) -> ClientResult<()> {
     let bytes = wire::encode(value).map_err(|_| {
         protocol_fault(
             "canvas::request-unencodable",
@@ -940,12 +1071,20 @@ fn send<T: Serialize>(socket: &mut WebSocket<TcpStream>, value: &T) -> ClientRes
         .map_err(|error| environment_fault("canvas::send-failed", &error.to_string()))
 }
 
-fn receive(socket: &mut WebSocket<TcpStream>) -> ClientResult<Vec<u8>> {
+fn receive(socket: &mut WebSocket<DeadlineStream>) -> ClientResult<Vec<u8>> {
     loop {
-        match socket
-            .read()
-            .map_err(|error| environment_fault("canvas::receive-failed", &error.to_string()))?
-        {
+        let message = match socket.read() {
+            Ok(message) => message,
+            Err(error) => {
+                let reason = if socket.get_ref().last_failure == Some(IoDirection::Write) {
+                    "canvas::send-failed"
+                } else {
+                    "canvas::receive-failed"
+                };
+                return Err(environment_fault(reason, &error.to_string()));
+            }
+        };
+        match message {
             Message::Binary(bytes) => return Ok(bytes.to_vec()),
             Message::Text(text) => return Ok(text.as_bytes().to_vec()),
             Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
@@ -977,6 +1116,20 @@ fn capability_disclosed() -> Outcome<CommandAnswer> {
     )
 }
 
+fn steering_refusal(
+    reason: &str,
+    observed: Option<String>,
+    remedy: &str,
+) -> Outcome<CommandAnswer> {
+    Outcome::Refusal(Refusal {
+        reason: reason.to_owned(),
+        witness: Some("steering-inbox".to_owned()),
+        expected: Some("one live directive in the authenticated lane".to_owned()),
+        observed,
+        remedy: remedy.to_owned(),
+    })
+}
+
 fn protocol_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
     Outcome::Fault(Fault {
         class: FaultClass::Protocol,
@@ -994,5 +1147,542 @@ fn environment_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
 }
 
 #[cfg(test)]
-#[path = "command_client/tests.rs"]
-mod tests;
+mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use wire::intent::{StateAnswer, UpChange};
+    use wire::{ResidentState, Seq, SeqRange};
+
+    use super::*;
+    use crate::cli::{ExitOutcome, JournalAccess, ResultClass};
+    use crate::render::{self, Form};
+
+    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+    const COMMAND_CONTRACT: Contract = Contract {
+        path: &["fixture", "command"],
+        syntax: "fixture command",
+        principal: Principal::Operator,
+        journal: JournalAccess::Command,
+        reply_position: ReplyPositionLaw::Committed,
+        facts: &[],
+        guards: &[Guard::Resident, Guard::OperatorCapability],
+        tools: &[],
+        result: ResultClass::Reply,
+        outcomes: ExitOutcome::ALL,
+        battery: "command-client::fixture",
+    };
+
+    struct Fixture {
+        root: PathBuf,
+        canvas: PathBuf,
+    }
+
+    impl Fixture {
+        fn new(name: &str) -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "spice-command-client-{name}-{}-{}",
+                std::process::id(),
+                NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&root).expect("fixture runtime directory");
+            let canvas = root.join("canvas");
+            Self { root, canvas }
+        }
+
+        fn publish(&self) -> canvas::Discovery {
+            let discovery = canvas::Discovery {
+                endpoint: "http://127.0.0.1:48123".to_owned(),
+                capability: uuid(1),
+                epoch: uuid(2),
+            };
+            discovery
+                .publish(&self.canvas)
+                .expect("fixture discovery publishes");
+            discovery
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.root).expect("fixture cleanup");
+        }
+    }
+
+    fn uuid(last: u8) -> CanonicalUuid {
+        format!("00000000-0000-4000-8000-{last:012x}")
+            .parse()
+            .expect("canonical fixture UUID")
+    }
+
+    fn mapped() -> MappedCommand {
+        MappedCommand::new(
+            &COMMAND_CONTRACT,
+            &["fixture", "command"],
+            CommandKind::UpChange,
+            vec![Witness::Transition {
+                from: ResidentState::Seated,
+                to: ResidentState::Dark,
+            }],
+            &UpChange {
+                state: ResidentState::Dark,
+            },
+        )
+        .expect("fixture command maps")
+    }
+
+    fn response(
+        id: CanonicalUuid,
+        epoch: CanonicalUuid,
+        position: ReplyPosition,
+        body: serde_json::Value,
+    ) -> Vec<u8> {
+        wire::encode(&Response {
+            v: wire::WireVersion::CURRENT,
+            id,
+            epoch,
+            outcome: Outcome::Reply(Reply { position, body }),
+        })
+        .expect("fixture response encodes")
+    }
+
+    fn committed() -> ReplyPosition {
+        ReplyPosition::Committed(SeqRange {
+            first: Seq::new(1).expect("fixture position"),
+            last: Seq::new(2).expect("fixture position"),
+        })
+    }
+
+    fn state_body() -> serde_json::Value {
+        serde_json::to_value(StateAnswer {
+            from: ResidentState::Seated,
+            to: ResidentState::Dark,
+        })
+        .expect("fixture answer encodes")
+    }
+
+    #[test]
+    fn mapping_rejects_the_wrong_contract_and_incomplete_body_before_discovery() {
+        let wrong_path = MappedCommand::selected(&COMMAND_CONTRACT, SelectedCommand::Down);
+        let Err(Outcome::Fault(fault)) = wrong_path else {
+            panic!("wrong path must fail mapping");
+        };
+        assert_eq!(fault.reason, "command::mapping-unsupported");
+
+        let incomplete = MappedCommand::new(
+            &COMMAND_CONTRACT,
+            &["fixture", "command"],
+            CommandKind::UpChange,
+            vec![Witness::Transition {
+                from: ResidentState::Seated,
+                to: ResidentState::Dark,
+            }],
+            &serde_json::json!({}),
+        );
+        let Err(Outcome::Fault(fault)) = incomplete else {
+            panic!("incomplete body must fail mapping");
+        };
+        assert_eq!(fault.reason, "command::body-incomplete");
+    }
+
+    #[test]
+    fn mapping_enforces_the_wire_witness_law() {
+        let missing = MappedCommand::new(
+            &COMMAND_CONTRACT,
+            &["fixture", "command"],
+            CommandKind::UpChange,
+            Vec::new(),
+            &UpChange {
+                state: ResidentState::Dark,
+            },
+        );
+        let Err(Outcome::Fault(fault)) = missing else {
+            panic!("missing witness must fail mapping");
+        };
+        assert_eq!(fault.reason, "command::witness-law");
+    }
+
+    #[test]
+    fn discovery_replacement_is_detected_by_file_identity() {
+        let fixture = Fixture::new("replacement");
+        let original = fixture.publish();
+        let read = DiscoveryRead::open(&fixture.canvas).expect("discovery opens");
+        let replacement = canvas::Discovery {
+            capability: uuid(3),
+            epoch: uuid(4),
+            ..original
+        };
+        replacement
+            .publish(&fixture.canvas)
+            .expect("replacement publishes");
+
+        let Err(Outcome::Fault(fault)) = read.verify_current() else {
+            panic!("replacement must invalidate the captured discovery");
+        };
+        assert_eq!(fault.reason, "canvas::discovery-replaced");
+    }
+
+    #[test]
+    fn canvas_opens_the_exact_origin_and_never_crosses_the_capability() {
+        let fixture = Fixture::new("canvas-open");
+        let discovery = fixture.publish();
+        let mut launched = None;
+
+        let outcome = open_canvas_with(
+            &fixture.canvas,
+            || {},
+            |endpoint| {
+                launched = Some(endpoint.to_owned());
+                Ok(())
+            },
+        );
+
+        assert_eq!(launched.as_deref(), Some(discovery.endpoint.as_str()));
+        let Outcome::Reply(Reply { position, body }) = &outcome else {
+            panic!("current Canvas discovery must open: {outcome:?}");
+        };
+        assert_eq!(*position, ReplyPosition::Direct {});
+        assert_eq!(
+            body,
+            &wire::CanvasOpen {
+                endpoint: discovery.endpoint,
+                epoch: discovery.epoch,
+            }
+        );
+
+        let capability = discovery.capability.to_string();
+        let text = render::render(&outcome, Form::Text).expect("Canvas receipt renders as text");
+        let text_body: wire::CanvasOpen =
+            wire::decode(text.document()).expect("text carries the typed body");
+        assert_eq!(text_body, *body);
+        assert!(!String::from_utf8_lossy(text.document()).contains(&capability));
+
+        let json = render::render(&outcome, Form::Json).expect("Canvas receipt renders as JSON");
+        let json_outcome: Outcome<wire::CanvasOpen> =
+            wire::decode(json.document()).expect("JSON carries the typed outcome");
+        assert_eq!(json_outcome, outcome);
+        assert!(!String::from_utf8_lossy(json.document()).contains(&capability));
+    }
+
+    #[test]
+    fn canvas_refuses_missing_malformed_and_nonloopback_discovery_without_launching() {
+        let fixture = Fixture::new("canvas-refusals");
+        let mut launches = 0_u8;
+        let missing = open_canvas_with(
+            &fixture.canvas,
+            || {},
+            |_| {
+                launches += 1;
+                Ok(())
+            },
+        );
+        let Outcome::Fault(missing) = missing else {
+            panic!("missing discovery must fault");
+        };
+        assert_eq!(missing.reason, "canvas::discovery-unavailable");
+
+        fs::write(&fixture.canvas, b"not current discovery").expect("malformed fixture writes");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            fs::set_permissions(&fixture.canvas, fs::Permissions::from_mode(0o600))
+                .expect("malformed fixture becomes owner-only");
+        }
+        let malformed = open_canvas_with(
+            &fixture.canvas,
+            || {},
+            |_| {
+                launches += 1;
+                Ok(())
+            },
+        );
+        let Outcome::Fault(malformed) = malformed else {
+            panic!("malformed discovery must fault");
+        };
+        assert_eq!(malformed.reason, "canvas::discovery-malformed");
+
+        canvas::Discovery {
+            endpoint: "http://192.0.2.1:48123".to_owned(),
+            capability: uuid(3),
+            epoch: uuid(4),
+        }
+        .publish(&fixture.canvas)
+        .expect("nonloopback fixture publishes");
+        let nonloopback = open_canvas_with(
+            &fixture.canvas,
+            || {},
+            |_| {
+                launches += 1;
+                Ok(())
+            },
+        );
+        let Outcome::Fault(nonloopback) = nonloopback else {
+            panic!("nonloopback discovery must fault");
+        };
+        assert_eq!(nonloopback.reason, "canvas::endpoint-not-loopback");
+        assert_eq!(launches, 0, "no refused discovery reached the launcher");
+    }
+
+    #[test]
+    fn canvas_rechecks_discovery_identity_immediately_before_launch() {
+        let fixture = Fixture::new("canvas-stale");
+        let original = fixture.publish();
+        let replacement = canvas::Discovery {
+            capability: uuid(5),
+            epoch: uuid(6),
+            ..original.clone()
+        };
+        let mut launched = false;
+
+        let outcome = open_canvas_with(
+            &fixture.canvas,
+            || {
+                replacement
+                    .publish(&fixture.canvas)
+                    .expect("replacement publishes before the launch check");
+            },
+            |_| {
+                launched = true;
+                Ok(())
+            },
+        );
+
+        let Outcome::Fault(fault) = outcome else {
+            panic!("replaced discovery must fault");
+        };
+        assert_eq!(fault.reason, "canvas::discovery-replaced");
+        assert!(!launched, "stale discovery must not reach the launcher");
+        assert!(!fault.detail.contains(&original.capability.to_string()));
+    }
+
+    #[test]
+    fn canvas_launcher_interruption_is_one_typed_fault() {
+        let fixture = Fixture::new("canvas-launch-interruption");
+        let discovery = fixture.publish();
+
+        let outcome = open_canvas_with(
+            &fixture.canvas,
+            || {},
+            |_| Err("fixture launcher was interrupted".to_owned()),
+        );
+
+        let Outcome::Fault(fault) = outcome else {
+            panic!("launcher interruption must fault");
+        };
+        assert_eq!(fault.reason, "canvas::launch-failed");
+        assert_eq!(fault.detail, "fixture launcher was interrupted");
+        assert!(!fault.detail.contains(&discovery.capability.to_string()));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn canvas_platform_launcher_has_one_fixed_program_and_exact_endpoint() {
+        use std::ffi::OsStr;
+
+        let endpoint = "http://127.0.0.1:48123";
+        let command = browser_command(endpoint).expect("this platform has one launcher");
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(command.get_program(), OsStr::new("/usr/bin/open"));
+            assert_eq!(
+                command.get_args().collect::<Vec<_>>(),
+                [OsStr::new("-u"), OsStr::new(endpoint)]
+            );
+        }
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(command.get_program(), OsStr::new("/usr/bin/xdg-open"));
+            assert_eq!(
+                command.get_args().collect::<Vec<_>>(),
+                [OsStr::new(endpoint)]
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discovery_symlinks_and_public_modes_are_refused() {
+        use std::os::unix::fs::{PermissionsExt as _, symlink};
+
+        let fixture = Fixture::new("insecure");
+        let discovery = fixture.publish();
+        fs::set_permissions(&fixture.canvas, fs::Permissions::from_mode(0o644))
+            .expect("fixture mode changes");
+        let Err(Outcome::Fault(fault)) = DiscoveryRead::open(&fixture.canvas) else {
+            panic!("public discovery must be refused");
+        };
+        assert_eq!(fault.reason, "canvas::discovery-insecure");
+
+        fs::remove_file(&fixture.canvas).expect("public fixture removes");
+        let target = fixture.root.join("target");
+        discovery.publish(&target).expect("target publishes");
+        symlink(&target, &fixture.canvas).expect("fixture symlink");
+        let Err(Outcome::Fault(fault)) = DiscoveryRead::open(&fixture.canvas) else {
+            panic!("symlink discovery must be refused");
+        };
+        assert_eq!(fault.reason, "canvas::discovery-insecure");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discovery_fifo_substitution_is_nonblocking_and_refused_from_the_descriptor() {
+        use rustix::fs::{OFlags, fcntl_getfl};
+        use std::os::unix::fs::OpenOptionsExt as _;
+
+        let fixture = Fixture::new("fifo-substitution");
+        let discovery = fixture.publish();
+        let mut anchor = None;
+
+        let started = Instant::now();
+        let outcome = DiscoveryRead::open_with(&fixture.canvas, || {
+            fs::remove_file(&fixture.canvas).expect("regular discovery removes");
+            let status = ProcessCommand::new("mkfifo")
+                .arg(&fixture.canvas)
+                .status()
+                .expect("mkfifo launches");
+            assert!(status.success(), "mkfifo creates the substitution");
+            anchor = Some(
+                OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .custom_flags(libc::O_CLOEXEC | libc::O_NONBLOCK)
+                    .open(&fixture.canvas)
+                    .expect("fixture anchor opens without waiting"),
+            );
+        });
+
+        let Err(Outcome::Fault(fault)) = outcome else {
+            panic!("FIFO substitution must fault");
+        };
+        assert_eq!(fault.reason, "canvas::discovery-insecure");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "FIFO substitution must not wait for a writer"
+        );
+        assert!(!fault.detail.contains(&discovery.capability.to_string()));
+
+        let opened = open_discovery(&fixture.canvas).expect("FIFO descriptor opens");
+        let flags = fcntl_getfl(&opened).expect("FIFO descriptor flags read");
+        assert!(flags.contains(OFlags::NONBLOCK));
+        drop(anchor);
+    }
+
+    #[test]
+    fn response_binds_identity_epoch_position_and_answer_shape() {
+        let mapped = mapped();
+        let epoch = uuid(5);
+        let bytes = response(mapped.id, epoch, committed(), state_body());
+        let outcome = decode_response(
+            &bytes,
+            &COMMAND_CONTRACT,
+            mapped.id,
+            mapped.kind,
+            epoch,
+            uuid(6),
+        );
+        assert!(matches!(
+            outcome,
+            Outcome::Reply(Reply {
+                position: ReplyPosition::Committed(_),
+                body: CommandAnswer::State(StateAnswer {
+                    to: ResidentState::Dark,
+                    ..
+                })
+            })
+        ));
+
+        let replay = decode_response(
+            &bytes,
+            &COMMAND_CONTRACT,
+            uuid(7),
+            mapped.kind,
+            epoch,
+            uuid(6),
+        );
+        let Outcome::Fault(fault) = replay else {
+            panic!("a replayed response cannot answer a different command");
+        };
+        assert_eq!(fault.reason, "command::answer-mismatch");
+
+        let snapshot = response(
+            mapped.id,
+            epoch,
+            ReplyPosition::Snapshot(Seq::new(1).expect("fixture position")),
+            state_body(),
+        );
+        let Outcome::Fault(fault) = decode_response(
+            &snapshot,
+            &COMMAND_CONTRACT,
+            mapped.id,
+            mapped.kind,
+            epoch,
+            uuid(6),
+        ) else {
+            panic!("snapshot cannot answer a mutating contract");
+        };
+        assert_eq!(fault.reason, "command::position-mismatch");
+
+        let malformed = response(
+            mapped.id,
+            epoch,
+            committed(),
+            serde_json::json!({ "from": "seated" }),
+        );
+        let Outcome::Fault(fault) = decode_response(
+            &malformed,
+            &COMMAND_CONTRACT,
+            mapped.id,
+            mapped.kind,
+            epoch,
+            uuid(6),
+        ) else {
+            panic!("wrong answer shape must fault");
+        };
+        assert_eq!(fault.reason, "command::answer-binding");
+    }
+
+    #[test]
+    fn remote_outcomes_cannot_echo_the_discovery_capability() {
+        let capability = uuid(8);
+        let discovery = canvas::Discovery {
+            endpoint: "http://127.0.0.1:48123".to_owned(),
+            capability,
+            epoch: uuid(9),
+        };
+        let refusal = Refusal {
+            reason: "hello::fixture".to_owned(),
+            witness: None,
+            expected: None,
+            observed: Some(capability.to_string()),
+            remedy: "use current discovery".to_owned(),
+        };
+        let opening = wire::encode(&refusal).expect("fixture refusal encodes");
+        let Err(Outcome::Fault(fault)) = decode_opening(&opening, &discovery) else {
+            panic!("opening capability echo must fault");
+        };
+        assert_eq!(fault.reason, "canvas::capability-disclosed");
+        assert!(!fault.detail.contains(&capability.to_string()));
+
+        let mapped = mapped();
+        let response = wire::encode(&Response {
+            v: wire::WireVersion::CURRENT,
+            id: mapped.id,
+            epoch: discovery.epoch,
+            outcome: Outcome::<serde_json::Value>::Refusal(refusal),
+        })
+        .expect("fixture response encodes");
+        let Outcome::Fault(fault) = decode_response(
+            &response,
+            &COMMAND_CONTRACT,
+            mapped.id,
+            mapped.kind,
+            discovery.epoch,
+            capability,
+        ) else {
+            panic!("response capability echo must fault");
+        };
+        assert_eq!(fault.reason, "canvas::capability-disclosed");
+        assert!(!fault.detail.contains(&capability.to_string()));
+    }
+}

@@ -109,7 +109,6 @@ pub(crate) fn run(matches: &ArgMatches, contract: &crate::cli::Contract) -> RunR
             release: &prepared.release,
             state: prepared.state,
         },
-        None,
     );
     RunResult::Published(recognition_outcome(outcome))
 }

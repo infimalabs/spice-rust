@@ -316,7 +316,6 @@ fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outcome<()> {
         &paths.canvas,
         contract,
         crate::command_client::SelectedCommand::Down,
-        None,
     );
     let outcome = decode_dark_outcome(outcome);
     if matches!(outcome, Outcome::Reply(_))
