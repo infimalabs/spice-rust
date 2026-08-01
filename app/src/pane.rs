@@ -20,12 +20,12 @@ use std::error::Error;
 use std::fmt;
 
 use wire::{
-    Accepted, Actor, CanonicalUuid, Command, CommandKind, Fault, FaultClass, LawError, Outcome,
-    Overflow, Response, Seq, WireVersion, Witness,
+    Accepted, Actor, CanonicalUuid, Command, CommandKind, Fault, FaultClass, FoldName, LawError,
+    Outcome, Overflow, Response, Seq, WireVersion, Witness,
 };
 
 use crate::socket::{Admitted, SessionScope};
-use crate::state::BrowserState;
+use crate::state::{Answer, BrowserState};
 
 /// Reason named when an answer does not belong to the command it was paired
 /// with.
@@ -239,10 +239,44 @@ impl<'a, T> ReadPane<'a, T> {
         self.state.is_overflowing()
     }
 
-    /// The highest position applied, or `None` before the first frame.
+    /// The highest position applied from the stream, or `None` before the first
+    /// frame.
+    ///
+    /// This is the browser's own progress, which is not the claim
+    /// [`ReadPane::generation_cursor`] makes. Two subjects walking one journal
+    /// keep two cursors, so they are read through two names and never merged.
     #[must_use]
     pub const fn cursor(&self) -> Option<Seq> {
         self.state.cursor()
+    }
+
+    /// The fold that produced the current answer, or `None` when a head-direct
+    /// read did.
+    ///
+    /// A fold-backed read arrives wrapped in [`wire::Derived`] and can say
+    /// which generation answered; a head-direct read is a bare
+    /// [`wire::Packed`] with nowhere to hold one. The pane reports the absence
+    /// rather than inventing a fold, because there is no field here to invent
+    /// it from.
+    #[must_use]
+    pub fn fold(&self) -> Option<&'a FoldName> {
+        self.state.answer().and_then(Answer::fold)
+    }
+
+    /// The generation of that fold, or `None` when a head-direct read answered.
+    #[must_use]
+    pub fn generation(&self) -> Option<u64> {
+        self.state.answer().and_then(Answer::generation)
+    }
+
+    /// How far that generation had applied the journal, or `None` when a
+    /// head-direct read answered.
+    ///
+    /// Distinct from [`ReadPane::horizon`], which names the source completeness
+    /// boundary the answer declared rather than the fold's own progress.
+    #[must_use]
+    pub fn generation_cursor(&self) -> Option<Seq> {
+        self.state.answer().and_then(Answer::cursor)
     }
 }
 
