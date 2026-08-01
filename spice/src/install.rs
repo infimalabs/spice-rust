@@ -5,7 +5,6 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -13,24 +12,34 @@ use wire::{Digest, Domain};
 
 use crate::repository::Repository;
 
+mod binding;
 mod error;
 mod files;
 mod path;
+mod progress;
+mod record;
 
+use binding::{BoundDestination, bind_destination, validate_operation_binding};
+pub use binding::{Generation, ParentObservation};
 pub use error::InstallError;
 use files::{
     cleanup_parents, matches_generated, materialize_generated, observe, publish_operation,
-    publish_record, restore_operation,
+    restore_operation,
 };
 use path::{relative_parents, validate_relative};
+use progress::{apply_with_interruption, unapply_with_interruption, verify_progress};
+use record::read_record;
+#[cfg(test)]
+use record::record_path;
 
-const PLAN_VERSION: u16 = 1;
-const RECORD_VERSION: u16 = 1;
+const PLAN_VERSION: u16 = 2;
+const RECORD_VERSION: u16 = 2;
 const LEGACY_RECORDS: [(&str, &str); 2] = [
     (".spice/install", "SURFACE-1kJQkpFs"),
     (".spice/rust/install.json", "SURFACE-1kJRGpf2"),
 ];
 const RECORD_NAME: &str = "install.json";
+const RECORD_PATH: &str = ".spice-rust/install.json";
 const RECORD_MODE: u32 = 0o600;
 const DIRECTORY_MODE: u32 = 0o700;
 const DATA_MODE: u32 = 0o644;
@@ -80,6 +89,32 @@ impl Location {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RepositoryIdentity {
+    worktree: PathBuf,
+    common_git: PathBuf,
+}
+
+impl RepositoryIdentity {
+    fn capture(repository: &Repository) -> Self {
+        Self {
+            worktree: repository.worktree_root().to_path_buf(),
+            common_git: repository.common_dir().to_path_buf(),
+        }
+    }
+
+    fn validate(&self, repository: &Repository) -> Result<(), InstallError> {
+        if self == &Self::capture(repository) {
+            Ok(())
+        } else {
+            Err(InstallError::InvalidRecord(
+                "install record belongs to another repository".to_owned(),
+            ))
+        }
+    }
+}
+
 /// Complete bytes, mode, and content identity of one regular file.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -87,6 +122,19 @@ pub struct FileImage {
     mode: u32,
     bytes: Vec<u8>,
     digest: Digest,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ObservedFile {
+    image: FileImage,
+    generation: Generation,
+}
+
+impl ObservedFile {
+    fn generated(&self) -> GeneratedImage {
+        self.image.generated()
+    }
 }
 
 impl FileImage {
@@ -169,8 +217,10 @@ pub struct Operation {
     asset: Asset,
     location: Location,
     path: String,
+    destination: String,
+    parent: ParentObservation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    previous: Option<FileImage>,
+    previous: Option<ObservedFile>,
     generated: GeneratedImage,
     introduced_parents: Vec<String>,
 }
@@ -197,7 +247,10 @@ impl Operation {
     /// Prior regular-file image, or absence when this install introduces it.
     #[must_use]
     pub const fn previous(&self) -> Option<&FileImage> {
-        self.previous.as_ref()
+        match self.previous.as_ref() {
+            Some(previous) => Some(&previous.image),
+            None => None,
+        }
     }
 
     /// Exact image this install places.
@@ -213,7 +266,7 @@ impl Operation {
     }
 
     fn destination(&self, repository: &Repository) -> PathBuf {
-        self.location.root(repository).join(&self.path)
+        self.location.root(repository).join(&self.destination)
     }
 }
 
@@ -222,6 +275,8 @@ impl Operation {
 #[serde(deny_unknown_fields)]
 pub struct InstallPlan {
     version: u16,
+    repository: RepositoryIdentity,
+    record: BoundDestination,
     operations: Vec<Operation>,
 }
 
@@ -284,9 +339,59 @@ impl InstallPlan {
             ));
         }
 
+        if !self.repository.worktree.is_absolute() || !self.repository.common_git.is_absolute() {
+            return Err(InstallError::InvalidRecord(
+                "install repository identity is not absolute".to_owned(),
+            ));
+        }
+        validate_relative(&self.record.destination)?;
         let mut introduced = BTreeSet::new();
+        let mut destinations = BTreeSet::new();
         for operation in &self.operations {
             validate_operation(operation, &mut introduced)?;
+            if !destinations.insert((operation.location, operation.destination.clone())) {
+                return Err(InstallError::InvalidRecord(
+                    "install plan duplicates a physical destination".to_owned(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_for_repository(&self, repository: &Repository) -> Result<(), InstallError> {
+        self.validate()?;
+        self.repository.validate(repository)?;
+        binding::validate_record_binding(repository.common_dir(), &self.record, RECORD_PATH)?;
+        for operation in &self.operations {
+            validate_operation_binding(
+                repository,
+                operation.location,
+                &operation.path,
+                &operation.destination,
+                &operation.parent,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn validate_pristine(&self, repository: &Repository) -> Result<(), InstallError> {
+        self.validate_for_repository(repository)?;
+        if bind_destination(repository.common_dir(), RECORD_PATH)? != self.record {
+            return Err(InstallError::ParentChanged(
+                repository.common_dir().join(RECORD_PATH),
+            ));
+        }
+        for operation in &self.operations {
+            let current = bind_destination(operation.location.root(repository), &operation.path)?;
+            if current.destination != operation.destination || current.parent != operation.parent {
+                return Err(InstallError::ParentChanged(
+                    operation.location.root(repository).join(&operation.path),
+                ));
+            }
+            let observed = observe(&operation.destination(repository))?;
+            if observed != operation.previous {
+                return Err(drift(operation, observed));
+            }
         }
         Ok(())
     }
@@ -338,77 +443,18 @@ impl InstallReceipt {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-struct InstallRecord {
-    version: u16,
-    plan: InstallPlan,
-    plan_digest: Digest,
-    status: InstallStatus,
-    completed: usize,
-}
-
-impl InstallRecord {
-    fn new(plan: InstallPlan) -> Result<Self, InstallError> {
-        let plan_digest = plan.digest()?;
-        Ok(Self {
-            version: RECORD_VERSION,
-            plan,
-            plan_digest,
-            status: InstallStatus::Applying,
-            completed: 0,
-        })
-    }
-
-    fn validate(&self) -> Result<(), InstallError> {
-        if self.version != RECORD_VERSION {
-            return Err(InstallError::InvalidRecord(format!(
-                "install record version {} is not {RECORD_VERSION}",
-                self.version
-            )));
-        }
-        self.plan.validate()?;
-        if self.plan_digest != self.plan.digest()? {
-            return Err(InstallError::InvalidRecord(
-                "install record plan digest does not match its canonical plan".to_owned(),
-            ));
-        }
-        if self.completed > self.plan.operations.len() {
-            return Err(InstallError::InvalidRecord(
-                "install progress is past the operation inventory".to_owned(),
-            ));
-        }
-        if matches!(
-            self.status,
-            InstallStatus::Complete | InstallStatus::Uninstalled
-        ) && self.completed != self.plan.operations.len()
-        {
-            return Err(InstallError::InvalidRecord(
-                "terminal install record has incomplete progress".to_owned(),
-            ));
-        }
-        Ok(())
-    }
-
-    fn receipt(&self) -> InstallReceipt {
-        InstallReceipt {
-            plan: self.plan.clone(),
-            digest: self.plan_digest.clone(),
-            status: self.status,
-            completed: self.completed,
-        }
-    }
-}
-
 /// Inspect one repository and derive the exact coexistence installation plan.
 pub fn plan(
     repository: &Repository,
     rust_binary: Option<&Path>,
 ) -> Result<InstallPlan, InstallError> {
-    if let Some(record) = read_record(repository)? {
-        record.validate()?;
+    if let Some(loaded) = read_record(repository)? {
+        let record = loaded.record;
         verify_binary_context(&record.plan, rust_binary)?;
         verify_progress(repository, &record)?;
+        if record.status == InstallStatus::Uninstalled {
+            return build_plan(repository, rust_binary);
+        }
         return Ok(record.plan);
     }
     build_plan(repository, rust_binary)
@@ -435,15 +481,17 @@ fn build_plan(
     let mut virtual_directories = BTreeSet::new();
     let mut operations = Vec::new();
 
-    let exclude_previous = observe(&repository.common_dir().join(EXCLUDE_PATH))?;
-    let exclude_bytes = exclusions(exclude_previous.as_ref().map(FileImage::bytes))?;
-    let exclude_mode = exclude_previous.as_ref().map_or(DATA_MODE, FileImage::mode);
+    let (exclude_bound, exclude_previous) =
+        destination_state(repository, Location::CommonGit, EXCLUDE_PATH)?;
+    let exclude_image = exclude_previous.as_ref().map(|previous| &previous.image);
+    let exclude_bytes = exclusions(exclude_image.map(FileImage::bytes))?;
+    let exclude_mode = exclude_image.map_or(DATA_MODE, FileImage::mode);
     operations.push(operation(
-        repository,
         &mut virtual_directories,
         Asset::Exclusions,
         Location::CommonGit,
         EXCLUDE_PATH,
+        exclude_bound,
         exclude_previous,
         GeneratedImage::new(exclude_mode, &exclude_bytes),
     )?);
@@ -463,70 +511,79 @@ fn build_plan(
         ),
         (Asset::Skill, SKILL_PATH, SKILL.as_bytes(), DATA_MODE),
     ] {
+        let (bound, previous) = destination_state(repository, Location::Worktree, path)?;
         operations.push(operation(
-            repository,
             &mut virtual_directories,
             asset,
             Location::Worktree,
             path,
-            observe(&repository.worktree_root().join(path))?,
+            bound,
+            previous,
             GeneratedImage::new(mode, bytes),
         )?);
     }
 
     if let Some(binary) = rust_binary {
         let bytes = read_binary(binary)?;
+        let (bound, previous) = destination_state(repository, Location::Worktree, BINARY_PATH)?;
         operations.push(operation(
-            repository,
             &mut virtual_directories,
             Asset::Binary,
             Location::Worktree,
             BINARY_PATH,
-            observe(&repository.worktree_root().join(BINARY_PATH))?,
+            bound,
+            previous,
             GeneratedImage::new(EXECUTABLE_MODE, &bytes),
         )?);
     }
 
+    let record = bind_destination(repository.common_dir(), RECORD_PATH)?;
     let plan = InstallPlan {
         version: PLAN_VERSION,
+        repository: RepositoryIdentity::capture(repository),
+        record,
         operations,
     };
-    plan.validate()?;
+    plan.validate_pristine(repository)?;
     Ok(plan)
 }
 
 fn operation(
-    repository: &Repository,
     virtual_directories: &mut BTreeSet<(Location, String)>,
     asset: Asset,
     location: Location,
     path: &str,
-    previous: Option<FileImage>,
+    bound: BoundDestination,
+    previous: Option<ObservedFile>,
     generated: GeneratedImage,
 ) -> Result<Operation, InstallError> {
     let mut introduced_parents = Vec::new();
-    for parent in relative_parents(path)? {
+    for parent in bound.introduced_parents {
         let key = (location, parent.clone());
         if virtual_directories.insert(key) {
-            let absolute = location.root(repository).join(&parent);
-            match fs::symlink_metadata(&absolute) {
-                Ok(metadata) if metadata.is_dir() => {}
-                Ok(_) => return Err(InstallError::PathShape(absolute)),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    introduced_parents.push(parent);
-                }
-                Err(source) => return Err(InstallError::io("inspect directory", absolute, source)),
-            }
+            introduced_parents.push(parent);
         }
     }
     Ok(Operation {
         asset,
         location,
         path: path.to_owned(),
+        destination: bound.destination,
+        parent: bound.parent,
         previous,
         generated,
         introduced_parents,
     })
+}
+
+fn destination_state(
+    repository: &Repository,
+    location: Location,
+    path: &str,
+) -> Result<(BoundDestination, Option<ObservedFile>), InstallError> {
+    let bound = bind_destination(location.root(repository), path)?;
+    let previous = observe(&location.root(repository).join(&bound.destination))?;
+    Ok((bound, previous))
 }
 
 fn exclusions(previous: Option<&[u8]>) -> Result<Vec<u8>, InstallError> {
@@ -585,221 +642,6 @@ fn verify_binary_context(
     }
 }
 
-fn apply_with_interruption(
-    repository: &Repository,
-    rust_binary: Option<&Path>,
-    expected: &Digest,
-    interrupt_after_write: Option<usize>,
-) -> Result<InstallReceipt, InstallError> {
-    let existing = read_record(repository)?;
-    let mut record = match existing {
-        Some(record) => {
-            record.validate()?;
-            verify_binary_context(&record.plan, rust_binary)?;
-            if &record.plan_digest != expected {
-                return Err(InstallError::DigestMismatch {
-                    expected: expected.clone(),
-                    observed: record.plan_digest,
-                });
-            }
-            match record.status {
-                InstallStatus::Complete => {
-                    verify_progress(repository, &record)?;
-                    return Ok(record.receipt());
-                }
-                InstallStatus::Unapplying => return Err(InstallError::UnapplyInProgress),
-                InstallStatus::Uninstalled => {
-                    verify_progress(repository, &record)?;
-                    InstallRecord {
-                        status: InstallStatus::Applying,
-                        completed: 0,
-                        ..record
-                    }
-                }
-                InstallStatus::Applying => {
-                    verify_progress(repository, &record)?;
-                    record
-                }
-            }
-        }
-        None => {
-            let plan = build_plan(repository, rust_binary)?;
-            let observed = plan.digest()?;
-            if &observed != expected {
-                return Err(InstallError::DigestMismatch {
-                    expected: expected.clone(),
-                    observed,
-                });
-            }
-            InstallRecord::new(plan)?
-        }
-    };
-
-    let generated = record
-        .plan
-        .operations
-        .iter()
-        .map(|operation| materialize_generated(operation, rust_binary))
-        .collect::<Result<Vec<_>, _>>()?;
-    write_record(repository, &record)?;
-    while record.completed < record.plan.operations.len() {
-        let index = record.completed;
-        let operation = &record.plan.operations[index];
-        let current = observe(&operation.destination(repository))?;
-        if !matches_generated(current.as_ref(), operation) {
-            if current != operation.previous {
-                return Err(drift(operation, current));
-            }
-            publish_operation(repository, operation, &generated[index])?;
-        }
-        if interrupt_after_write == Some(index) {
-            return Err(InstallError::Interrupted { operation: index });
-        }
-        record.completed += 1;
-        write_record(repository, &record)?;
-    }
-    record.status = InstallStatus::Complete;
-    write_record(repository, &record)?;
-    Ok(record.receipt())
-}
-
-fn unapply_with_interruption(
-    repository: &Repository,
-    interrupt_after_write: Option<usize>,
-) -> Result<InstallReceipt, InstallError> {
-    let mut record = read_record(repository)?.ok_or(InstallError::RecordMissing)?;
-    record.validate()?;
-    match record.status {
-        InstallStatus::Applying => return Err(InstallError::ApplyInProgress),
-        InstallStatus::Uninstalled => {
-            verify_progress(repository, &record)?;
-            return Ok(record.receipt());
-        }
-        InstallStatus::Complete => {
-            verify_progress(repository, &record)?;
-            record.status = InstallStatus::Unapplying;
-            record.completed = 0;
-            write_record(repository, &record)?;
-        }
-        InstallStatus::Unapplying => verify_progress(repository, &record)?,
-    }
-
-    while record.completed < record.plan.operations.len() {
-        let reverse = record.plan.operations.len() - 1 - record.completed;
-        let operation = &record.plan.operations[reverse];
-        let current = observe(&operation.destination(repository))?;
-        if current != operation.previous {
-            if !matches_generated(current.as_ref(), operation) {
-                return Err(drift(operation, current));
-            }
-            restore_operation(repository, operation)?;
-        }
-        cleanup_parents(repository, operation)?;
-        if interrupt_after_write == Some(reverse) {
-            return Err(InstallError::Interrupted { operation: reverse });
-        }
-        record.completed += 1;
-        write_record(repository, &record)?;
-    }
-    record.status = InstallStatus::Uninstalled;
-    write_record(repository, &record)?;
-    Ok(record.receipt())
-}
-
-fn verify_progress(repository: &Repository, record: &InstallRecord) -> Result<(), InstallError> {
-    for (index, operation) in record.plan.operations.iter().enumerate() {
-        let observed = observe(&operation.destination(repository))?;
-        let valid = match record.status {
-            InstallStatus::Applying => {
-                if index < record.completed {
-                    matches_generated(observed.as_ref(), operation)
-                } else if index == record.completed {
-                    matches_generated(observed.as_ref(), operation)
-                        || observed == operation.previous
-                } else {
-                    observed == operation.previous
-                }
-            }
-            InstallStatus::Complete => matches_generated(observed.as_ref(), operation),
-            InstallStatus::Unapplying => {
-                let reversed = record.plan.operations.len() - 1 - index;
-                if reversed < record.completed {
-                    observed == operation.previous
-                } else if reversed == record.completed {
-                    observed == operation.previous
-                        || matches_generated(observed.as_ref(), operation)
-                } else {
-                    matches_generated(observed.as_ref(), operation)
-                }
-            }
-            InstallStatus::Uninstalled => observed == operation.previous,
-        };
-        if !valid {
-            return Err(drift(operation, observed));
-        }
-    }
-    Ok(())
-}
-
-fn read_record(repository: &Repository) -> Result<Option<InstallRecord>, InstallError> {
-    refuse_legacy_record(repository)?;
-    let state_root = repository.state_root();
-    match fs::symlink_metadata(&state_root) {
-        Ok(metadata) if metadata.is_dir() => {}
-        Ok(_) => return Err(InstallError::PathShape(state_root)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(source) => {
-            return Err(InstallError::io(
-                "inspect install record directory",
-                state_root,
-                source,
-            ));
-        }
-    }
-    let path = record_path(repository);
-    let metadata = match fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(source) => return Err(InstallError::io("inspect install record", path, source)),
-    };
-    if !metadata.file_type().is_file() {
-        return Err(InstallError::PathShape(path));
-    }
-    let bytes =
-        fs::read(&path).map_err(|source| InstallError::io("read install record", &path, source))?;
-    let record: InstallRecord = wire::decode(&bytes).map_err(InstallError::Decode)?;
-    record.validate()?;
-    Ok(Some(record))
-}
-
-fn refuse_legacy_record(repository: &Repository) -> Result<(), InstallError> {
-    for (relative, owner) in LEGACY_RECORDS {
-        let path = repository.common_dir().join(relative);
-        match fs::symlink_metadata(&path) {
-            Ok(_) => return Err(InstallError::LegacyRecord { path, owner }),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(source) => {
-                return Err(InstallError::io(
-                    "inspect legacy install record",
-                    path,
-                    source,
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn write_record(repository: &Repository, record: &InstallRecord) -> Result<(), InstallError> {
-    record.validate()?;
-    let bytes = wire::encode(record).map_err(InstallError::Encode)?;
-    publish_record(repository, RECORD_NAME, bytes)
-}
-
-fn record_path(repository: &Repository) -> PathBuf {
-    repository.state_root().join(RECORD_NAME)
-}
-
 fn validate_operation(
     operation: &Operation,
     introduced: &mut BTreeSet<(Location, String)>,
@@ -809,9 +651,20 @@ fn validate_operation(
         Asset::Exclusions => operation
             .previous
             .as_ref()
-            .map_or(DATA_MODE, FileImage::mode),
+            .map_or(DATA_MODE, |previous| previous.image.mode()),
         _ => fixed_mode,
     };
+    validate_operation_contract(operation, location, path, expected_mode)?;
+    validate_generated_content(operation, expected_mode)?;
+    validate_introduced_parents(operation, introduced)
+}
+
+fn validate_operation_contract(
+    operation: &Operation,
+    location: Location,
+    path: &str,
+    expected_mode: u32,
+) -> Result<(), InstallError> {
     if operation.location != location
         || operation.path != path
         || operation.generated.mode != expected_mode
@@ -822,19 +675,38 @@ fn validate_operation(
         )));
     }
     validate_relative(&operation.path)?;
+    validate_relative(&operation.destination)?;
+    let expected_parent = Path::new(&operation.parent.ancestor).join(&operation.parent.missing);
+    if Path::new(&operation.destination).parent() != Some(expected_parent.as_path()) {
+        return Err(InstallError::InvalidRecord(
+            "install destination does not match its bound parent".to_owned(),
+        ));
+    }
     if !operation.generated.validate()
         || operation
             .previous
             .as_ref()
-            .is_some_and(|image| !image.validate())
+            .is_some_and(|observed| !observed.image.validate())
     {
         return Err(InstallError::InvalidRecord(
             "install operation carries an invalid file image".to_owned(),
         ));
     }
+    Ok(())
+}
+
+fn validate_generated_content(
+    operation: &Operation,
+    expected_mode: u32,
+) -> Result<(), InstallError> {
     match operation.asset {
         Asset::Exclusions => {
-            let bytes = exclusions(operation.previous.as_ref().map(FileImage::bytes))?;
+            let bytes = exclusions(
+                operation
+                    .previous
+                    .as_ref()
+                    .map(|previous| previous.image.bytes()),
+            )?;
             let expected = GeneratedImage::new(expected_mode, &bytes);
             if operation.generated != expected {
                 return Err(InstallError::InvalidRecord(
@@ -878,7 +750,14 @@ fn validate_operation(
         }
         _ => {}
     }
-    let parents = relative_parents(&operation.path)?;
+    Ok(())
+}
+
+fn validate_introduced_parents(
+    operation: &Operation,
+    introduced: &mut BTreeSet<(Location, String)>,
+) -> Result<(), InstallError> {
+    let parents = relative_parents(&operation.destination)?;
     if operation.previous.is_some() && !operation.introduced_parents.is_empty() {
         return Err(InstallError::InvalidRecord(
             "an existing target cannot have introduced parent directories".to_owned(),
@@ -915,10 +794,10 @@ fn asset_contract(asset: Asset) -> (Location, &'static str, u32) {
     }
 }
 
-fn drift(operation: &Operation, observed: Option<FileImage>) -> InstallError {
+fn drift(operation: &Operation, observed: Option<ObservedFile>) -> InstallError {
     InstallError::Drift {
         path: operation.path.clone(),
-        observed: observed.map(|image| image.digest),
+        observed: observed.map(|observed| observed.image.digest),
     }
 }
 
