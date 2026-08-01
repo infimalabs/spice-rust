@@ -10,6 +10,8 @@ pub mod apply;
 pub mod claim;
 pub mod graph;
 pub mod handout;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod lapse;
 pub mod next;
 pub mod oops;
 pub mod phase;
