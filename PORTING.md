@@ -59,8 +59,8 @@ operator authorizes cutover.
 
 ## Rust contracts
 
-The registry contains 63 command leaves. Forty have executable dispatch,
-so current executable coverage is 40/63, or 63.5 percent. Completed domain
+The registry contains 63 command leaves. Fifty-five have executable dispatch,
+so current executable coverage is 55/63, or 87.3 percent. Completed domain
 libraries do not count as landed command surfaces.
 
 ### Landed
@@ -105,24 +105,6 @@ libraries do not count as landed command surfaces.
 - `fold`
 - `thread`
 - `canvas`
-
-The local command group retains the Python-first ownership boundary described
-above: plain `install` is a side-effect-free plan, and only an exact
-`--apply=<digest>` crosses its fixed authored mutation plan. Rust binaries and
-hook stages remain namespaced below worktree `.spice/rust`, while the install
-receipt lives below Git-common `.spice-rust`. The plan does not replace the
-ambient command or active `core.hooksPath`. Durable receipts at the retired
-`.spice/install` and `.spice/rust/install.json` locations are refused with
-their owning installer task named; they are never read as a fallback.
-
-`doctor`, `version`, and `up` are executable but not yet usable against the
-current worktree state; the configuration and bootstrap tasks above own those
-operational gaps. `release publish` admits its sealed stage against the Rust
-journal and resident discovery under `<git-common>/.spice-rust`; it does not
-read the Python authority under `<git-common>/.spice`.
-
-### `BOARD-1kJQlDDt`
-
 - `board`
 - `board graph`
 - `board handout`
@@ -138,6 +120,21 @@ read the Python authority under `<git-common>/.spice`.
 - `task depends`
 - `doc`
 - `doc ledger`
+
+The local command group retains the Python-first ownership boundary described
+above: plain `install` is a side-effect-free plan, and only an exact
+`--apply=<digest>` crosses its fixed authored mutation plan. Rust binaries and
+hook stages remain namespaced below worktree `.spice/rust`, while the install
+receipt lives below Git-common `.spice-rust`. The plan does not replace the
+ambient command or active `core.hooksPath`. Durable receipts at the retired
+`.spice/install` and `.spice/rust/install.json` locations are refused with
+their owning installer task named; they are never read as a fallback.
+
+`doctor`, `version`, and `up` are executable but not yet usable against the
+current worktree state; the configuration and bootstrap tasks above own those
+operational gaps. `release publish` admits its sealed stage against the Rust
+journal and resident discovery under `<git-common>/.spice-rust`; it does not
+read the Python authority under `<git-common>/.spice`.
 
 ### `COORDIN-1kJQlDjc`
 

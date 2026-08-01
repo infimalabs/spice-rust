@@ -13,6 +13,8 @@ use listen::{RetroSelector, StreamOutcome, SurfaceError, Watch};
 use wire::{Fault, FaultClass, Outcome, Refusal};
 
 #[cfg(not(target_arch = "wasm32"))]
+mod board_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod canvas_command;
 mod cli;
 #[cfg(not(target_arch = "wasm32"))]
@@ -162,6 +164,21 @@ fn main() {
             release_command::RunResult::Plan(outcome) => deliver(&outcome, form),
             release_command::RunResult::Published(outcome) => deliver(&outcome, form),
         },
+        ["board"]
+        | ["board", "graph"]
+        | ["board", "handout"]
+        | ["task", "next"]
+        | ["task", "add"]
+        | ["task", "done"]
+        | ["task", "review"]
+        | ["task", "note"]
+        | ["task", "defer"]
+        | ["task", "wake"]
+        | ["task", "free"]
+        | ["task", "oops"]
+        | ["task", "depends"]
+        | ["doc"]
+        | ["doc", "ledger"] => deliver(&board_command::run(leaf, contract), form),
         ["steer"] | ["steer", "cancel"] | ["inbox"] | ["ack"] => deliver(
             &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
             form,

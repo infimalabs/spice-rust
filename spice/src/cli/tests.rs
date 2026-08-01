@@ -117,7 +117,7 @@ fn every_contract_has_an_executable_succession_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 40);
+    assert_eq!(landed, 55);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
     assert_eq!(landing(&["lock", "run"]), Landing::Landed);
@@ -157,7 +157,7 @@ fn every_contract_has_an_executable_succession_disposition() {
         .collect::<BTreeSet<_>>();
     assert_eq!(
         owning_tasks,
-        BTreeSet::from(["BOARD-1kJQlDDt", "COORDIN-1kJQlDjc", "POLICY-1kJQlFB6",])
+        BTreeSet::from(["COORDIN-1kJQlDjc", "POLICY-1kJQlFB6"])
     );
 
     let (rust_ledger, _) = include_str!("../../../PORTING.md")
@@ -200,6 +200,112 @@ fn every_contract_has_an_executable_succession_disposition() {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+enum PythonTaskDisposition {
+    Landed(&'static [&'static str]),
+    Intentional(&'static str),
+}
+
+#[test]
+fn every_python_task_control_has_one_tested_current_disposition() {
+    use PythonTaskDisposition::{Intentional, Landed};
+
+    let mappings = [
+        ("task", Landed(&["board"])),
+        ("task add", Landed(&["task", "add"])),
+        (
+            "task artifact",
+            Intentional("task evidence remains journal facts, not a second authority"),
+        ),
+        (
+            "task artifact add",
+            Intentional("task evidence remains journal facts, not a second authority"),
+        ),
+        (
+            "task artifact list",
+            Intentional("task evidence remains journal facts, not a second authority"),
+        ),
+        (
+            "task artifact prune",
+            Intentional("release one has no second retention authority"),
+        ),
+        (
+            "task artifact show",
+            Intentional("task evidence remains journal facts, not a second authority"),
+        ),
+        ("task capture", Landed(&["task", "add"])),
+        ("task claim", Landed(&["task", "next"])),
+        ("task delete", Landed(&["doc"])),
+        ("task depends", Landed(&["task", "depends"])),
+        ("task doctor", Landed(&["board"])),
+        ("task done", Landed(&["task", "done"])),
+        ("task graph", Landed(&["board", "graph"])),
+        ("task handout", Landed(&["board", "handout"])),
+        ("task ingest", Landed(&["doc"])),
+        ("task ledger", Landed(&["doc", "ledger"])),
+        ("task list", Landed(&["board"])),
+        ("task modify", Landed(&["doc"])),
+        ("task next", Landed(&["task", "next"])),
+        ("task note", Landed(&["task", "note"])),
+        ("task oops", Landed(&["task", "oops"])),
+        (
+            "task reclaim",
+            Intentional("resident claim renewal is automatic and has no manual control"),
+        ),
+        ("task review", Landed(&["task", "review"])),
+        ("task reword", Landed(&["doc"])),
+        ("task show", Landed(&["board"])),
+        ("task sizing", Landed(&["board", "graph"])),
+        ("task stale", Landed(&["board"])),
+        ("task status", Landed(&["board"])),
+        ("task unclaim", Landed(&["task", "free"])),
+        ("task wake", Landed(&["task", "wake"])),
+    ];
+
+    let task_plane = include_str!("../../../PORTING.md")
+        .split_once("### Task plane")
+        .expect("the audit names the Python task plane")
+        .1
+        .split_once("Mounted repository commands")
+        .expect("the task plane has a finite boundary")
+        .0;
+    let audited = task_plane
+        .lines()
+        .filter_map(|line| line.strip_prefix("- `"))
+        .filter_map(|line| line.split_once('`').map(|(path, _)| path))
+        .collect::<BTreeSet<_>>();
+    let mapped = mappings
+        .iter()
+        .map(|(path, _)| *path)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(mapped, audited, "the executable fixture and audit drifted");
+    assert_eq!(
+        mapped.len(),
+        mappings.len(),
+        "a Python control was repeated"
+    );
+
+    for (python, disposition) in mappings {
+        match disposition {
+            Landed(path) => {
+                assert!(
+                    contracts().iter().any(|contract| contract.path == path),
+                    "Python `{python}` maps to an unknown Rust leaf: {path:?}",
+                );
+                assert_eq!(
+                    landing(path),
+                    Landing::Landed,
+                    "Python `{python}` maps to an unlanded Rust leaf: {path:?}",
+                );
+            }
+            Intentional(boundary) => assert!(
+                !boundary.trim().is_empty(),
+                "Python `{python}` has an unnamed release boundary",
+            ),
+        }
+    }
+}
+
 #[test]
 fn closure_check_names_both_directions_of_drift() {
     let parser_with_orphan = command().subcommand(Command::new("orphan"));
@@ -228,6 +334,34 @@ fn closure_check_names_both_directions_of_drift() {
     assert_eq!(
         missing_command.contracts_without_commands,
         BTreeSet::from(["missing".to_owned()])
+    );
+}
+
+#[test]
+fn review_finding_and_note_are_declared_on_the_only_review_leaf() {
+    let matches = command()
+        .try_get_matches_from([
+            "spice",
+            "task",
+            "review",
+            "BOARD-review01",
+            "--finding",
+            "missing negative-path evidence",
+            "--note",
+            "add a refusal fixture",
+        ])
+        .expect("declared review operands parse");
+    let contract = selected_contract(&matches).expect("review selects a contract");
+    let leaf = selected_matches(&matches);
+
+    assert_eq!(contract.path, ["task", "review"]);
+    assert_eq!(
+        leaf.get_one::<String>("finding").map(String::as_str),
+        Some("missing negative-path evidence")
+    );
+    assert_eq!(
+        leaf.get_one::<String>("note").map(String::as_str),
+        Some("add a refusal fixture")
     );
 }
 
