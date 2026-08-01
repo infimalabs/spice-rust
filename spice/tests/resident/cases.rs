@@ -348,6 +348,7 @@ fn resident_startup_refuses_linked_policy_components_without_trust_effects() {
 
     for linked in ["tracked-file", "local-parent"] {
         let fixture = Fixture::new(linked);
+        // Seed authority first so startup refusal can be proved byte-for-byte inert.
         fs::create_dir_all(fixture.journal().parent().expect("journal data parent"))
             .expect("create journal data parent");
         drop(journal::Journal::open(fixture.journal()).expect("baseline journal opens"));

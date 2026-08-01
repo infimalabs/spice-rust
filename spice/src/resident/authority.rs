@@ -348,6 +348,7 @@ where
         Ok(proposed) => proposed,
         Err(outcome) => return outcome,
     };
+    // Commit evaluates the generation guard after this deterministic race seam.
     before_commit();
     commit_trust_rule(bus, proposal, answer)
 }
