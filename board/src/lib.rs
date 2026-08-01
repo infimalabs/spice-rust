@@ -18,6 +18,8 @@ pub mod oops;
 pub mod phase;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod possession;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod renew;
 pub mod task;
 pub mod urgency;
 
