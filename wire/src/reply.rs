@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::envelope::{Seq, WireVersion};
 use crate::ident::{CanonicalUuid, Digest};
+use crate::manifest::ReleaseTarget;
 
 /// An inclusive range of committed journal positions.
 ///
@@ -153,6 +154,26 @@ pub struct Version {
     pub journal: u32,
     /// Digest of the app bytes embedded in the native executable.
     pub app: Digest,
+}
+
+/// Verified identities returned by both daemonless proof leaves.
+///
+/// This body has no standing or success flag: its existence is the clean
+/// outcome. Proof verification admits only clean evidence before producing
+/// this document, while a refused replay travels as [`Outcome::Refusal`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProofEvidence {
+    /// Release tuple covered by the payload, replay, and receipt.
+    pub target: ReleaseTarget,
+    /// Canonical identity of the receipt-free target payload.
+    pub payload: Digest,
+    /// Canonical identity of the detached proof receipt.
+    pub receipt: Digest,
+    /// Canonical identity of the ordered proof battery.
+    pub battery: Digest,
+    /// Canonical identity of the complete replay verdict.
+    pub replay: Digest,
 }
 
 /// An answer about an event that did not occur.
