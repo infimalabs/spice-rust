@@ -20,6 +20,8 @@ pub enum InstallError {
         source: io::Error,
     },
     PathShape(PathBuf),
+    PathOutsideRoot(PathBuf),
+    ParentChanged(PathBuf),
     ExclusionsNotUtf8,
     DivergentExclusions,
     BinaryNotRegular(PathBuf),
@@ -72,6 +74,16 @@ impl fmt::Display for InstallError {
             Self::PathShape(path) => write!(
                 formatter,
                 "install path is not a real regular file or directory: {}",
+                path.display()
+            ),
+            Self::PathOutsideRoot(path) => write!(
+                formatter,
+                "install path resolves outside its canonical permitted root: {}",
+                path.display()
+            ),
+            Self::ParentChanged(path) => write!(
+                formatter,
+                "install destination parent generation changed after planning: {}",
                 path.display()
             ),
             Self::ExclusionsNotUtf8 => formatter.write_str("Git exclusions are not UTF-8"),
