@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use gate::{
     BASELINE_PATH, BaselineError, Contract, ContractError, LONG_LINE_LIMIT, PolicyError, Standing,
 };
+use serde::Deserialize;
 
 const TRACKED_POLICY: &str = include_str!("../../spice.toml");
 const TRACKED_BASELINE: &str = include_str!("../../baseline.toml");
@@ -98,11 +99,11 @@ fn admitted_walk_intent_moves_policy_without_selecting_an_executable() {
 
     let refused = fixture_contract("[gate]\nprogram = \"/bin/true\"\n", TRACKED_BASELINE)
         .expect_err("tracked bytes cannot select an executable");
-    let ContractError::Policy(PolicyError::Field(field)) = refused else {
-        panic!("unknown executable key lost its typed field refusal: {refused:?}");
+    let ContractError::Policy(PolicyError::Toml { path, source }) = refused else {
+        panic!("unknown executable key lost its typed config refusal: {refused:?}");
     };
-    assert_eq!(field.path(), policy_path());
-    assert_eq!(field.field(), "gate.program");
+    assert_eq!(path, policy_path());
+    assert!(source.to_string().contains("program"));
 }
 
 #[test]
@@ -199,18 +200,31 @@ fn malformed_policy_and_unknown_gate_fields_refuse_before_a_contract_exists() {
 
     let unknown = fixture_contract("[gate.walk]\nskip = []\ntimeout = 1\n", TRACKED_BASELINE)
         .expect_err("unknown gate field is refused");
-    let ContractError::Policy(PolicyError::Field(field)) = unknown else {
-        panic!("unknown gate key lost its exact field: {unknown:?}");
+    let ContractError::Policy(PolicyError::Toml { path, source }) = unknown else {
+        panic!("unknown gate key lost its typed config refusal: {unknown:?}");
     };
-    assert_eq!(field.path(), policy_path());
-    assert_eq!(field.field(), "gate.walk.timeout");
+    assert_eq!(path, policy_path());
+    assert!(source.to_string().contains("timeout"));
 
-    let selector = fixture_contract("[gate.walk]\nskip = [\"fixtures/**\"]\n", TRACKED_BASELINE)
+    let source = "[gate.walk]\nskip = [\"fixtures/**\"]\n";
+    let selector = fixture_contract(source, TRACKED_BASELINE)
         .expect("documented crossing-star skip is admitted");
+    let configured = toml::from_str::<GateDocument>(source)
+        .expect("the same tracked bytes decode through the configuration tree");
     assert_eq!(
         selector.policy().ignore().render(),
         ".git/\ntarget/\nfixtures/**\n"
     );
+    assert_eq!(
+        &selector.policy().ignore().rules()[2..],
+        configured.gate.walk().skip().rules(),
+        "input policy must retain the domain configuration's exact admitted rules"
+    );
+}
+
+#[derive(Deserialize)]
+struct GateDocument {
+    gate: gate::Config,
 }
 
 fn fixture_contract(policy: &str, baseline: &str) -> Result<Contract, ContractError> {

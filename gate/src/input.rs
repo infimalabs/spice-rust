@@ -15,10 +15,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use serde::Deserialize;
 use sill::{Argv, Completion, Deadlines, SpecError, WaitError, spawn};
 use wire::{Digest, Domain};
 
-use crate::jurisdiction::{Ignore, IgnoreError, Rule};
+use crate::jurisdiction::{Ignore, IgnoreError};
 use crate::measure::{Bounds, Metric, MetricError, Parser, Policy};
 use crate::ratchet::Ratchet;
 
@@ -114,19 +115,39 @@ impl ToolDeclaration {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MetricDeclaration {
+    tool: String,
+    metric: Metric,
+}
+
+impl MetricDeclaration {
+    fn new(tool: &str, metric: Metric) -> Self {
+        Self {
+            tool: tool.to_owned(),
+            metric,
+        }
+    }
+
+    fn render(&self, into: &mut String) {
+        let _ = writeln!(into, "metric {} tool {}", self.metric.name(), self.tool);
+        self.metric.render(into);
+    }
+}
+
 /// The compiled checks and floor names this build can execute.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GateSet {
-    metrics: Vec<Metric>,
+    metrics: Vec<MetricDeclaration>,
     floors: Vec<FloorDeclaration>,
     tools: Vec<ToolDeclaration>,
 }
 
 impl GateSet {
-    fn current() -> Result<Self, MetricError> {
+    fn current() -> Result<Self, GateSetError> {
         let program =
             format!("length($0) > {LONG_LINE_LIMIT} {{ debt += 1 }} END {{ print debt + 0 }}");
-        let parser = Parser::new(AWK, [program])?;
+        let parser = Parser::new(AWK, [program]).map_err(GateSetError::Metric)?;
         let metric = Metric::new(
             "rust.long-lines",
             "rust",
@@ -134,15 +155,71 @@ impl GateSet {
             parser,
             "*.rs",
             "",
-        )?;
+        )
+        .map_err(GateSetError::Metric)?;
 
-        Ok(Self {
-            metrics: vec![metric],
-            floors: vec![
+        Self::admit(
+            vec![MetricDeclaration::new("awk", metric)],
+            vec![
                 FloorDeclaration::new("rust.long-lines", FloorKind::Measurement),
                 FloorDeclaration::new("rust.mutation-survivors", FloorKind::Mutation),
             ],
-            tools: vec![ToolDeclaration::awk()],
+            vec![ToolDeclaration::awk()],
+        )
+    }
+
+    fn admit(
+        metrics: Vec<MetricDeclaration>,
+        floors: Vec<FloorDeclaration>,
+        tools: Vec<ToolDeclaration>,
+    ) -> Result<Self, GateSetError> {
+        let mut names = BTreeSet::new();
+        let mut programs = BTreeSet::new();
+        for tool in &tools {
+            if !names.insert(tool.name.clone()) {
+                return Err(GateSetError::DuplicateToolName {
+                    name: tool.name.clone(),
+                });
+            }
+            if !programs.insert(tool.program.clone()) {
+                return Err(GateSetError::DuplicateToolProgram {
+                    program: tool.program.clone(),
+                });
+            }
+        }
+
+        let mut used = BTreeSet::new();
+        for declaration in &metrics {
+            let Some(tool) = tools.iter().find(|tool| tool.name == declaration.tool) else {
+                return Err(GateSetError::MissingTool {
+                    metric: declaration.metric.name().to_owned(),
+                    tool: declaration.tool.clone(),
+                    parser_program: declaration.metric.parser().program().to_owned(),
+                });
+            };
+            let parser_program = declaration.metric.parser().program();
+            if parser_program != tool.program {
+                return Err(GateSetError::MismatchedTool {
+                    metric: declaration.metric.name().to_owned(),
+                    tool: tool.name.clone(),
+                    parser_program: parser_program.to_owned(),
+                    tool_program: tool.program.clone(),
+                });
+            }
+            used.insert(tool.name.clone());
+        }
+
+        if let Some(tool) = tools.iter().find(|tool| !used.contains(&tool.name)) {
+            return Err(GateSetError::UnusedTool {
+                tool: tool.name.clone(),
+                program: tool.program.clone(),
+            });
+        }
+
+        Ok(Self {
+            metrics,
+            floors,
+            tools,
         })
     }
 
@@ -163,8 +240,8 @@ impl GateSet {
         for tool in &self.tools {
             tool.render(&mut rendered);
         }
-        for metric in &self.metrics {
-            metric.render(&mut rendered);
+        for declaration in &self.metrics {
+            declaration.render(&mut rendered);
         }
         rendered
     }
@@ -519,11 +596,15 @@ impl Contract {
         baseline_path: &Path,
         baseline_text: &str,
     ) -> Result<Self, ContractError> {
-        let gate_set = GateSet::current().map_err(ContractError::Metric)?;
+        let gate_set = GateSet::current().map_err(ContractError::GateSet)?;
         let bounds = current_bounds().map_err(ContractError::Bounds)?;
         let ignore = tracked_ignore(policy_path, policy_text).map_err(ContractError::Policy)?;
-        let policy =
-            Policy::new(ignore, gate_set.metrics.clone()).map_err(ContractError::Metric)?;
+        let metrics: Vec<Metric> = gate_set
+            .metrics
+            .iter()
+            .map(|declaration| declaration.metric.clone())
+            .collect();
+        let policy = Policy::new(ignore, metrics).map_err(ContractError::Metric)?;
         let baseline = Baseline::parse(baseline_path, baseline_text, &gate_set)
             .map_err(ContractError::Baseline)?;
         let ratchet = baseline.ratchet(&gate_set);
@@ -602,94 +683,27 @@ fn read_tracked(path: &Path) -> Result<String, ContractError> {
     })
 }
 
-fn tracked_ignore(path: &Path, text: &str) -> Result<Ignore, PolicyError> {
-    let document = text
-        .parse::<toml::Table>()
-        .map_err(|source| PolicyError::Toml {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    let mut rules: Vec<String> = DEFAULT_SKIP.iter().map(|rule| (*rule).to_owned()).collect();
-    let Some(gate) = document.get("gate") else {
-        return parse_ignore(path, &rules);
-    };
-    let gate = gate
-        .as_table()
-        .ok_or_else(|| PolicyError::Field(FieldError::type_mismatch(path, "gate", "a table")))?;
-    reject_unknown_keys(path, "gate", gate, &["walk"]).map_err(PolicyError::Field)?;
-
-    let walk = required(path, gate, "gate.walk").map_err(PolicyError::Field)?;
-    let walk = walk.as_table().ok_or_else(|| {
-        PolicyError::Field(FieldError::type_mismatch(path, "gate.walk", "a table"))
-    })?;
-    reject_unknown_keys(path, "gate.walk", walk, &["skip"]).map_err(PolicyError::Field)?;
-
-    let skip = required(path, walk, "gate.walk.skip").map_err(PolicyError::Field)?;
-    let skip = skip.as_array().ok_or_else(|| {
-        PolicyError::Field(FieldError::type_mismatch(
-            path,
-            "gate.walk.skip",
-            "an array of strings",
-        ))
-    })?;
-
-    let mut seen: BTreeSet<String> = rules.iter().cloned().collect();
-    let mut previous: Option<&str> = None;
-    for (index, value) in skip.iter().enumerate() {
-        let field = format!("gate.walk.skip[{index}]");
-        let value = value.as_str().ok_or_else(|| {
-            PolicyError::Field(FieldError::type_mismatch(path, &field, "a string"))
-        })?;
-        if previous == Some(value) || !seen.insert(value.to_owned()) {
-            return Err(PolicyError::Duplicate {
-                path: path.to_path_buf(),
-                field,
-                value: value.to_owned(),
-            });
-        }
-        if previous.is_some_and(|earlier| earlier > value) {
-            return Err(PolicyError::Unsorted {
-                path: path.to_path_buf(),
-                field,
-                previous: previous
-                    .expect("comparison proved a previous skip")
-                    .to_owned(),
-                value: value.to_owned(),
-            });
-        }
-        let Some(rule) = Rule::parse(value).map_err(|source| PolicyError::Selector {
-            path: path.to_path_buf(),
-            field: format!("gate.walk.skip[{index}]"),
-            source,
-        })?
-        else {
-            return Err(PolicyError::Value {
-                path: path.to_path_buf(),
-                field,
-                reason: "must name one exclusion rule".to_owned(),
-            });
-        };
-        if rule.negated() {
-            return Err(PolicyError::Value {
-                path: path.to_path_buf(),
-                field,
-                reason: "must exclude rather than re-admit".to_owned(),
-            });
-        }
-        previous = Some(value);
-        rules.push(value.to_owned());
-    }
-
-    parse_ignore(path, &rules)
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct TrackedPolicy {
+    gate: crate::config::Config,
 }
 
-fn parse_ignore(path: &Path, rules: &[String]) -> Result<Ignore, PolicyError> {
-    let rendered = rules.join("\n") + "\n";
-    Ignore::parse(&rendered).map_err(|source| PolicyError::Selector {
+fn tracked_ignore(path: &Path, text: &str) -> Result<Ignore, PolicyError> {
+    let tracked = toml::from_str::<TrackedPolicy>(text).map_err(|source| PolicyError::Toml {
         path: path.to_path_buf(),
-        field: "gate.walk.skip".to_owned(),
         source,
-    })
+    })?;
+    let defaults = Ignore::parse(&(DEFAULT_SKIP.join("\n") + "\n")).map_err(|source| {
+        PolicyError::Selector {
+            path: path.to_path_buf(),
+            field: "compiled gate.walk.skip".to_owned(),
+            source,
+        }
+    })?;
+    let mut rules = defaults.rules().to_vec();
+    rules.extend_from_slice(tracked.gate.walk().skip().rules());
+    Ok(Ignore::from_rules(rules))
 }
 
 fn required<'a>(
@@ -863,48 +877,116 @@ impl fmt::Display for FieldError {
 
 impl Error for FieldError {}
 
+/// Why the compiled metrics and executable declarations do not form one closed set.
+#[derive(Debug)]
+pub enum GateSetError {
+    /// One parser or metric declaration is internally invalid.
+    Metric(MetricError),
+    /// A metric names no compiled tool declaration.
+    MissingTool {
+        /// Metric whose parser would otherwise execute without a probe.
+        metric: String,
+        /// Tool name bound by the metric declaration.
+        tool: String,
+        /// Executable the parser would invoke.
+        parser_program: String,
+    },
+    /// Two compiled tools share one identity name.
+    DuplicateToolName {
+        /// Repeated tool name.
+        name: String,
+    },
+    /// One executable maps to more than one compiled tool declaration.
+    DuplicateToolProgram {
+        /// Repeated executable path.
+        program: String,
+    },
+    /// The named tool probe and metric parser would execute different programs.
+    MismatchedTool {
+        /// Metric with the unsafe binding.
+        metric: String,
+        /// Named compiled tool.
+        tool: String,
+        /// Executable the metric parser would invoke.
+        parser_program: String,
+        /// Executable the named tool declaration would probe.
+        tool_program: String,
+    },
+    /// A compiled tool has no metric parser consumer.
+    UnusedTool {
+        /// Unused tool name.
+        tool: String,
+        /// Executable the unused declaration would probe.
+        program: String,
+    },
+}
+
+impl fmt::Display for GateSetError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Metric(source) => write!(formatter, "invalid metric declaration: {source}"),
+            Self::MissingTool {
+                metric,
+                tool,
+                parser_program,
+            } => write!(
+                formatter,
+                "metric {metric} parser {parser_program} names missing tool {tool}"
+            ),
+            Self::DuplicateToolName { name } => {
+                write!(
+                    formatter,
+                    "compiled tool name {name} is declared more than once"
+                )
+            }
+            Self::DuplicateToolProgram { program } => write!(
+                formatter,
+                "compiled tool program {program} is declared more than once"
+            ),
+            Self::MismatchedTool {
+                metric,
+                tool,
+                parser_program,
+                tool_program,
+            } => write!(
+                formatter,
+                "metric {metric} parser {parser_program} does not match tool {tool} program \
+                 {tool_program}"
+            ),
+            Self::UnusedTool { tool, program } => {
+                write!(
+                    formatter,
+                    "compiled tool {tool} program {program} has no metric"
+                )
+            }
+        }
+    }
+}
+
+impl Error for GateSetError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Metric(source) => Some(source),
+            Self::MissingTool { .. }
+            | Self::DuplicateToolName { .. }
+            | Self::DuplicateToolProgram { .. }
+            | Self::MismatchedTool { .. }
+            | Self::UnusedTool { .. } => None,
+        }
+    }
+}
+
 /// Why tracked gate intent did not produce one walk policy.
 #[derive(Debug)]
 pub enum PolicyError {
-    /// The shared tracked document is not TOML.
+    /// The shared tracked document is not valid current gate configuration.
     Toml {
         /// Fixed policy path.
         path: PathBuf,
-        /// Parser refusal with source position.
+        /// Typed TOML decoder refusal with source position.
         source: toml::de::Error,
     },
-    /// A required, typed, or admitted field was violated.
-    Field(FieldError),
-    /// One skip repeats a compiled or tracked skip.
-    Duplicate {
-        /// Fixed policy path.
-        path: PathBuf,
-        /// Exact array element.
-        field: String,
-        /// Repeated rule.
-        value: String,
-    },
-    /// Tracked skip entries are not in canonical order.
-    Unsorted {
-        /// Fixed policy path.
-        path: PathBuf,
-        /// Exact array element.
-        field: String,
-        /// Rule immediately above it.
-        previous: String,
-        /// Rule that sorted first.
-        value: String,
-    },
-    /// One value has the right TOML type but no admitted meaning.
-    Value {
-        /// Fixed policy path.
-        path: PathBuf,
-        /// Exact field path.
-        field: String,
-        /// Refusal reason.
-        reason: String,
-    },
-    /// One skip rule is not a current jurisdiction spelling.
+    /// A compiled default skip is not a current jurisdiction spelling.
     Selector {
         /// Fixed policy path.
         path: PathBuf,
@@ -919,29 +1001,12 @@ impl fmt::Display for PolicyError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Toml { path, source } => {
-                write!(formatter, "{} is not valid TOML: {source}", path.display())
+                write!(
+                    formatter,
+                    "{} is not valid gate configuration: {source}",
+                    path.display()
+                )
             }
-            Self::Field(error) => write!(formatter, "{error}"),
-            Self::Duplicate { path, field, value } => write!(
-                formatter,
-                "{} field {field} repeats skip {value:?}",
-                path.display()
-            ),
-            Self::Unsorted {
-                path,
-                field,
-                previous,
-                value,
-            } => write!(
-                formatter,
-                "{} field {field} skip {value:?} sorts before {previous:?}",
-                path.display()
-            ),
-            Self::Value {
-                path,
-                field,
-                reason,
-            } => write!(formatter, "{} field {field} {reason}", path.display()),
             Self::Selector {
                 path,
                 field,
@@ -955,9 +1020,7 @@ impl Error for PolicyError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Toml { source, .. } => Some(source),
-            Self::Field(error) => Some(error),
             Self::Selector { source, .. } => Some(source),
-            Self::Duplicate { .. } | Self::Unsorted { .. } | Self::Value { .. } => None,
         }
     }
 }
@@ -1212,6 +1275,8 @@ pub enum ContractError {
     Policy(PolicyError),
     /// Tracked lower-is-better state was refused.
     Baseline(BaselineError),
+    /// The compiled metrics and tool declarations did not form a closed set.
+    GateSet(GateSetError),
     /// A compiled metric declaration was internally invalid.
     Metric(MetricError),
     /// Compiled process bounds were internally invalid.
@@ -1232,6 +1297,7 @@ impl fmt::Display for ContractError {
             }
             Self::Policy(source) => write!(formatter, "gate policy: {source}"),
             Self::Baseline(source) => write!(formatter, "gate baseline: {source}"),
+            Self::GateSet(source) => write!(formatter, "compiled gate set: {source}"),
             Self::Metric(source) => write!(formatter, "compiled gate set: {source}"),
             Self::Bounds(source) => write!(formatter, "compiled gate bounds: {source}"),
             Self::Tool(source) => write!(formatter, "gate tool preflight: {source}"),
@@ -1245,6 +1311,7 @@ impl Error for ContractError {
             Self::Read { source, .. } => Some(source),
             Self::Policy(source) => Some(source),
             Self::Baseline(source) => Some(source),
+            Self::GateSet(source) => Some(source),
             Self::Metric(source) => Some(source),
             Self::Bounds(source) => Some(source),
             Self::Tool(source) => Some(source),
@@ -1289,6 +1356,68 @@ mod tests {
     }
 
     #[test]
+    fn gate_set_admission_closes_every_metric_over_exactly_one_used_tool() {
+        let current = GateSet::current().expect("compiled gate set");
+
+        let mut missing = current.clone();
+        missing.tools.clear();
+        assert!(matches!(
+            readmit(missing),
+            Err(GateSetError::MissingTool {
+                ref metric,
+                ref tool,
+                ref parser_program,
+            }) if metric == "rust.long-lines" && tool == "awk" && parser_program == AWK
+        ));
+
+        let mut duplicate_name = current.clone();
+        let mut second = duplicate_name.tools[0].clone();
+        second.program = "/bin/sh".to_owned();
+        duplicate_name.tools.push(second);
+        assert!(matches!(
+            readmit(duplicate_name),
+            Err(GateSetError::DuplicateToolName { ref name }) if name == "awk"
+        ));
+
+        let mut duplicate_program = current.clone();
+        let mut second = duplicate_program.tools[0].clone();
+        second.name = "awk-copy".to_owned();
+        duplicate_program.tools.push(second);
+        assert!(matches!(
+            readmit(duplicate_program),
+            Err(GateSetError::DuplicateToolProgram { ref program }) if program == AWK
+        ));
+
+        let mut mismatched = current.clone();
+        mismatched.tools[0].program = "/bin/sh".to_owned();
+        assert!(matches!(
+            readmit(mismatched),
+            Err(GateSetError::MismatchedTool {
+                ref metric,
+                ref tool,
+                ref parser_program,
+                ref tool_program,
+            }) if metric == "rust.long-lines" && tool == "awk"
+                && parser_program == AWK && tool_program == "/bin/sh"
+        ));
+
+        let mut unused = current;
+        unused.tools.push(ToolDeclaration {
+            name: "sh".to_owned(),
+            program: "/bin/sh".to_owned(),
+            probe_arguments: vec!["-c".to_owned(), "printf unused".to_owned()],
+            probe_output: "unused".to_owned(),
+        });
+        assert!(matches!(
+            readmit(unused),
+            Err(GateSetError::UnusedTool {
+                ref tool,
+                ref program,
+            }) if tool == "sh" && program == "/bin/sh"
+        ));
+    }
+
+    #[test]
     fn executable_and_bound_declarations_move_their_own_identities() {
         let current = GateSet::current().expect("compiled gate set");
         let mut changed = current.clone();
@@ -1321,5 +1450,9 @@ mod tests {
             .parent()
             .expect("gate is a direct workspace member")
             .to_path_buf()
+    }
+
+    fn readmit(candidate: GateSet) -> Result<GateSet, GateSetError> {
+        GateSet::admit(candidate.metrics, candidate.floors, candidate.tools)
     }
 }
