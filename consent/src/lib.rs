@@ -1,7 +1,8 @@
 //! The pre-action actuator: vendor asks, consent decides.
 //!
-//! A request arrives as [`wire::body::ConsentAsked`] and leaves as exactly one
-//! [`Outcome`], which carries the fact that records the decision. The three
+//! A request's first arrival as [`wire::body::ConsentAsked`] leaves as exactly
+//! one [`Outcome`], which carries the fact that records the decision. Reusing
+//! its identity is refused before another fact or budget spend. The three
 //! modules are the three things a decision needs: [`policy`] states which named
 //! rule answers, [`budget`] bounds how many times a rule may grant before an
 //! operator renews it, and [`pend`] holds what the operator must answer while
@@ -69,6 +70,14 @@ impl Outcome {
             }),
         }
     }
+
+    const fn terminal_disposition(&self) -> Option<pend::TerminalDisposition> {
+        match self {
+            Self::Granted(_) => Some(pend::TerminalDisposition::Granted),
+            Self::Denied(_) => Some(pend::TerminalDisposition::Denied),
+            Self::Queued(_) => None,
+        }
+    }
 }
 
 /// The seat that decides whether a requested action proceeds.
@@ -95,10 +104,20 @@ impl Actuator {
     /// A rule that grants under a budget grants until its bound and then
     /// queues, so the bound is reached by queueing for renewal rather than by
     /// quietly granting past it.
-    pub fn decide(&mut self, asked: &ConsentAsked, reversibility: Reversibility) -> Outcome {
+    ///
+    /// # Errors
+    ///
+    /// Returns a loud refusal without recording another fact when consent has
+    /// already seen this request identity.
+    pub fn decide(
+        &mut self,
+        asked: &ConsentAsked,
+        reversibility: Reversibility,
+    ) -> Result<Outcome, wire::Refusal> {
+        self.pending.ensure_unseen(asked.request)?;
         let decision = self.policy.decide(&asked.operation);
         let rule = decision.authority().name().to_owned();
-        match decision.answer() {
+        let outcome = match decision.answer() {
             Answer::Deny => Outcome::Denied(ConsentDenied {
                 request: asked.request,
                 lane: asked.lane,
@@ -109,7 +128,7 @@ impl Actuator {
                 reversibility,
                 rule,
                 ConsentQueueCause::Policy {},
-            )),
+            )?),
             Answer::Allow => match decision.bound() {
                 None => Outcome::Granted(ConsentGranted {
                     request: asked.request,
@@ -129,10 +148,14 @@ impl Actuator {
                         reversibility,
                         rule,
                         ConsentQueueCause::BudgetExhausted { bound },
-                    )),
+                    )?),
                 },
             },
+        };
+        if let Some(disposition) = outcome.terminal_disposition() {
+            self.pending.record(asked.request, disposition)?;
         }
+        Ok(outcome)
     }
 
     /// Whether this request's action proceeds while requests are held.
@@ -161,11 +184,14 @@ impl Actuator {
 
     /// Renew the budget named by one exact exhausted request and release it.
     ///
+    /// A successful renewal returns the operator grant that terminally answers
+    /// the queued request.
+    ///
     /// # Errors
     ///
     /// Returns a loud refusal when the request is not held or was queued by
     /// policy rather than by an exhausted budget.
-    pub fn renew(&mut self, request: wire::CanonicalUuid) -> Result<Held, wire::Refusal> {
+    pub fn renew(&mut self, request: wire::CanonicalUuid) -> Result<Outcome, wire::Refusal> {
         let Some(held) = self.pending.get(request) else {
             return Err(wire::Refusal {
                 reason: "consent::request-not-held".to_owned(),
@@ -194,11 +220,7 @@ impl Actuator {
 
         let rule = held.rule().to_owned();
         self.budgets.renew(&rule);
-        // Renewing is the operator granting the renewal the exhausted budget
-        // queued for, so the request leaves the queue allowed rather than
-        // refused and its action proceeds.
         Ok(self
-            .pending
             .release(request, Ruling::Allow)
             .expect("the inspected request remains held until this release"))
     }
