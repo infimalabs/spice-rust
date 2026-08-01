@@ -677,6 +677,13 @@ fn cover_head_enums(covered: &mut BTreeSet<String>) {
         "WitnessClass",
         &[WitnessClass::Assignment, WitnessClass::Transition],
     );
+    // The predicate classes a command registry row cites. Distinct from
+    // `WitnessClass`, which classifies what a stored witness head carries.
+    law(
+        covered,
+        "WitnessKind",
+        &[WitnessKind::Task, WitnessKind::Transition],
+    );
 }
 
 /// The frames a caller sends across the socket.
@@ -1010,7 +1017,16 @@ fn a_seq_cannot_encode_a_zero_position() {
 /// The closed sets a frame names rather than spells out.
 ///
 /// Each is a fixed vocabulary, so the law that matters is that one variant has
-/// exactly one spelling and two variants never share one.
+/// exactly one spelling and two variants never share one. Every set here goes
+/// through `spelling_law` rather than the weaker helper: these types derive
+/// `Ord` and `Hash`, so they owe rank-and-spelling agreement too. `Law` holds
+/// `WitnessKind` in static slices and asks `contains`, and any of them can key
+/// a map or sort a rendered column.
+///
+/// The sweep is over the whole variant set rather than a sample, because a
+/// closed set is exactly the case where the whole set is nameable: `ALL` and
+/// the enumerated arms cost the same to write as two values and catch the
+/// variant a sample would skip.
 fn cover_vocabularies(covered: &mut BTreeSet<String>) {
     spelling_law(covered, "Producer", Producer::ALL);
     spelling_law(covered, "WitnessKind", WitnessKind::ALL);
