@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::envelope::{Seq, WireVersion};
-use crate::ident::CanonicalUuid;
+use crate::ident::{CanonicalUuid, Digest};
 
 /// An inclusive range of committed journal positions.
 ///
@@ -99,6 +99,25 @@ pub struct Reply<B> {
     pub position: ReplyPosition,
     /// Kind-specific result.
     pub body: B,
+}
+
+/// Compiled identities reported by the daemonless `version` leaf.
+///
+/// These four values are one machine document rather than independent prose:
+/// the native artifact and embedded app identify what was built, while the
+/// wire and journal versions identify the only crossing and authority schemas
+/// that build admits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Version {
+    /// Digest of the native executable for its release target.
+    pub binary: Digest,
+    /// The one wire schema this build speaks.
+    pub wire: WireVersion,
+    /// Finalized journal schema this build observed without migrating it.
+    pub journal: u32,
+    /// Digest of the app bytes embedded in the native executable.
+    pub app: Digest,
 }
 
 /// An answer about an event that did not occur.
