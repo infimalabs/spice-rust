@@ -189,11 +189,13 @@ impl SurfaceState {
         #[cfg(test)]
         self.admission_observed
             .send_replace(Some(AdmissionObservation::Ordering(command.id())));
-        let permit = self
-            .commands
-            .reserve()
-            .await
-            .map_err(|_| EnqueueError::ControlClosed)?;
+        let permit = tokio::select! {
+            biased;
+            _ = self.connections.cancelled() => return Err(EnqueueError::NotAdmitting),
+            permit = self.commands.reserve() => {
+                permit.map_err(|_| EnqueueError::ControlClosed)?
+            }
+        };
         let (answer, returned) = oneshot::channel();
         let (sent, response_sent) = oneshot::channel();
         if dark {
@@ -220,9 +222,9 @@ impl SurfaceState {
     }
 
     async fn close(&self) {
-        *self.admission.lock().await = Admission::Closed;
         self.closed.send_replace(true);
         self.connections.cancel();
+        *self.admission.lock().await = Admission::Closed;
     }
 }
 
@@ -656,12 +658,18 @@ async fn route_command(
             return SessionFlow::Close;
         }
     };
-    let Ok(outcome) = pending.returned.await else {
+    let PendingResponse { returned, sent } = pending;
+    let returned = tokio::select! {
+        biased;
+        _ = state.connections.cancelled() => return SessionFlow::Close,
+        returned = returned => returned,
+    };
+    let Ok(outcome) = returned else {
         return SessionFlow::Close;
     };
     let reached_dark = dark && matches!(outcome, wire::Outcome::Reply(_));
     send_encoded(socket, &response.response(outcome)).await;
-    let _ = pending.sent.send(());
+    let _ = sent.send(());
     if dark && !reached_dark {
         state.reopen_after_dark_refusal().await;
     }
@@ -1168,6 +1176,49 @@ mod tests {
             .expect("server stops before deadline")
             .expect("server task")
             .expect("server stops");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn shutdown_interrupts_a_queue_reservation_blocked_by_saturation() {
+        let mut capabilities = Capabilities::default();
+        capabilities
+            .insert(operator(), wire::Actor::Operator)
+            .expect("operator capability");
+        let (server, _control) = Server::bind_with_capacity(epoch(), capabilities, 1)
+            .await
+            .expect("binds");
+        let state = Arc::clone(&server.state);
+        let mut observed = state.admission_observed.subscribe();
+        let address = server.local_addr().expect("local address");
+        let (shutdown, stopped) = oneshot::channel();
+        let server_task = tokio::spawn(server.up_until(async move {
+            let _ = stopped.await;
+        }));
+        let (mut queued, _) = authenticate(address, operator(), epoch()).await;
+        let (mut blocked, _) = authenticate(address, operator(), epoch()).await;
+
+        let queued_id = identity(0xe4);
+        send_change(&mut queued, queued_id, epoch(), wire::ResidentState::Seated).await;
+        wait_for_admission(&mut observed, AdmissionObservation::Queued(queued_id)).await;
+
+        let blocked_id = identity(0xe5);
+        send_change(
+            &mut blocked,
+            blocked_id,
+            epoch(),
+            wire::ResidentState::Seated,
+        )
+        .await;
+        wait_for_admission(&mut observed, AdmissionObservation::Ordering(blocked_id)).await;
+
+        shutdown.send(()).expect("shutdown requests");
+        timeout(ASSERTION_DEADLINE, server_task)
+            .await
+            .expect("saturated shutdown stops before deadline")
+            .expect("server task")
+            .expect("server stops");
+        assert_socket_terminated(&mut queued).await;
+        assert_socket_terminated(&mut blocked).await;
     }
 
     fn command_client(address: SocketAddr) {
