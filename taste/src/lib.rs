@@ -3,7 +3,9 @@
 #![forbid(unsafe_code)]
 
 mod bag;
+mod config;
 mod judge;
 
 pub use bag::{Bag, BagError, Hit, Span, Taste, Trigger, TriggerError};
+pub use config::{ConfigError, configured};
 pub use judge::{Decision, Judgment, judge};
