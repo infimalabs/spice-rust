@@ -14,8 +14,10 @@ use gate::measure::{Bounds, MeasureError, Measurement};
 use gate::ratchet::{Malady, Movement};
 use gate::{
     Ignore, Jurisdiction, Metric, Parser, Policy, Ratchet, Run, RunError, Standing, Verdict,
+    measurement_digest,
 };
 use sill::Deadlines;
+use wire::{Digest, Domain};
 
 /// A line counter written entirely in shell builtins.
 ///
@@ -191,6 +193,78 @@ fn a_walk_is_a_total_function_of_the_tree() {
     let mut sorted = paths.clone();
     sorted.sort_unstable();
     assert_eq!(paths, sorted, "entries are sorted, not merely stable");
+}
+
+/// Gate publishes five digest classes, including the file digest nested inside
+/// the tree listing. Freeze every spelling so moving one mint site to another
+/// domain cannot silently change what an existing receipt identity means.
+#[test]
+fn every_gate_digest_is_frozen_at_its_published_spelling() {
+    let tree = Tree::new("digest-domains");
+    let file_bytes = b"one\ntwo\n";
+    tree.write(
+        "fixture.txt",
+        std::str::from_utf8(file_bytes).expect("fixture is text"),
+    );
+    let jurisdiction = Jurisdiction::walk(
+        &tree.root,
+        &Ignore::parse("").expect("parse an empty policy"),
+    )
+    .expect("walk the fixture");
+
+    // `tree_digest` mints the file identity internally. Reconstructing its
+    // one-entry listing with the named file domain ties that nested mint site
+    // to this fixture without exposing a file-digest API solely for a test.
+    let file_digest = Digest::compute(Domain::GateFile, file_bytes);
+    let tree_listing = format!("{file_digest} fixture.txt\n");
+    let tree_digest = jurisdiction.tree_digest().expect("digest the tree");
+    assert_eq!(
+        tree_digest,
+        Digest::compute(Domain::GateTree, tree_listing.as_bytes()),
+        "the tree must nest GateFile identities under GateTree",
+    );
+
+    let policy = Policy::new(
+        Ignore::parse("*.tmp\n").expect("parse the fixture policy"),
+        Vec::<Metric>::new(),
+    )
+    .expect("declare the fixture policy");
+    let measurements = [Measurement::new("fixture.lines", 2, ["fixture.txt"])];
+
+    for (class, computed, frozen) in [
+        (
+            Domain::GateFile,
+            file_digest,
+            "2edc805176833b058cd6136c912ff6c9e3b7c430d158e7172b0e56a6bec84f2c",
+        ),
+        (
+            Domain::GateTree,
+            tree_digest,
+            "73c42b39bc0fcbdeb3f3e38250edb0b703aa168b353726e224bbc91254c73f2e",
+        ),
+        (
+            Domain::GateInventory,
+            jurisdiction.inventory_digest(),
+            "f01b9548a1181e65ac91efa6bf4489560340c29e075b3db3ca79e741a5be0171",
+        ),
+        (
+            Domain::GatePolicy,
+            policy.digest(),
+            "18a0e223485c527ffdbe4332a5a49790c4eff66ed1deb536acaa665d82265cdc",
+        ),
+        (
+            Domain::GateMeasurement,
+            measurement_digest(&measurements),
+            "61d093ca25f57ff332ea5154d018806347b75dfec952b70a3153f9cd1d3496d9",
+        ),
+    ] {
+        assert_eq!(
+            computed.as_str(),
+            frozen,
+            "{} no longer digests to the spelling it published",
+            class.tag(),
+        );
+    }
 }
 
 #[test]
