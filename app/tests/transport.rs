@@ -456,6 +456,38 @@ fn a_received_stale_frame_can_complete_a_previously_dangling_walk() {
 }
 
 #[test]
+fn retention_stops_at_the_stated_window_and_dangles_where_it_evicted() {
+    let window = u64::try_from(app::CAUSAL_HEADERS).expect("the window fits a position");
+    let root = 1;
+    let last = root + window - 1;
+    let mut state = browser_state::<Row>();
+
+    state.apply(&causal_envelope(root, None));
+    for position in (root + 1)..=last {
+        state.apply(&causal_envelope(position, Some(position - 1)));
+    }
+
+    // A window exactly full still holds its root, so the eviction below is what
+    // changes this walk rather than the chain having been short all along.
+    let whole = state.walk(seq(last));
+    assert_eq!(whole.end(), ChainEnd::Root);
+    assert_eq!(whole.links().len(), app::CAUSAL_HEADERS);
+
+    state.apply(&causal_envelope(last + 1, Some(last)));
+
+    let walk = state.walk(seq(last + 1));
+    assert_eq!(walk.end(), ChainEnd::Dangling(seq(root)));
+    assert_eq!(walk.links().len(), app::CAUSAL_HEADERS);
+    assert_eq!(
+        walk.links().last().and_then(app::CausalLink::cause),
+        Some(seq(root))
+    );
+    assert!(state.walk(seq(root)).links().is_empty());
+    assert_eq!(state.walk(seq(root)).end(), ChainEnd::Dangling(seq(root)));
+    assert_eq!(state.cursor(), Some(seq(last + 1)));
+}
+
+#[test]
 fn a_later_answer_replaces_the_earlier_one_whole() {
     let mut state = browser_state();
     assert!(state.replace(&packed_answer(&["first", "second"], None, 48213)));
