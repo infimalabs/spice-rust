@@ -57,7 +57,10 @@ pub mod packed;
 pub mod reply;
 pub mod witness;
 
-pub use command::{Authority, Command, CommandKind, CommandKindError, Law, LawError};
+pub use command::{
+    AdmittedCommand, Authority, Command, CommandKind, CommandKindError, CommandRejection, Law,
+    LawError,
+};
 pub use config::{ConfigSource, DurationWord, DurationWordError, Provenance};
 pub use doctor::{
     DoctorCommand, DoctorConfigProvenance, DoctorEnvironment, DoctorLocations, DoctorObservation,

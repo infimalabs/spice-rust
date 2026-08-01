@@ -290,6 +290,7 @@ impl<'a> SteerPane<'a> {
         let command = Command {
             v: WireVersion::CURRENT,
             id,
+            epoch: self.principal.epoch(),
             kind,
             expected,
             body,
