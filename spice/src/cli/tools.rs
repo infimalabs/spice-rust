@@ -182,7 +182,7 @@ pub(super) fn posture_violations(contracts: &[Contract]) -> Vec<String> {
                     tool.name
                 ));
             }
-            if !declarations.insert(*tool) {
+            if !declarations.insert(tool.name) {
                 violations.push(format!(
                     "{path}: external tool {:?} is declared more than once",
                     tool.name
