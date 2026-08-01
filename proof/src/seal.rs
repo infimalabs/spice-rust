@@ -73,7 +73,7 @@ where
 
     let replay = run().map_err(SealError::Replay)?;
     if replay.standing() != ProofStanding::Clean {
-        return Err(SealError::Refused(ReplayRefusal { replay }));
+        return Err(SealError::Refused(ReplayRefusal::new(replay)));
     }
 
     let receipt = replay
@@ -109,6 +109,10 @@ pub struct ReplayRefusal {
 }
 
 impl ReplayRefusal {
+    pub(crate) const fn new(replay: ReplayVerdict) -> Self {
+        Self { replay }
+    }
+
     /// The complete typed replay, including every member's standing.
     #[must_use]
     pub const fn replay(&self) -> &ReplayVerdict {

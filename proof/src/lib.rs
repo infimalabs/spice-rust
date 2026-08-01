@@ -15,6 +15,7 @@ pub mod evidence;
 pub mod layout;
 pub mod native;
 pub mod payload;
+pub mod rederive;
 pub mod replay;
 pub mod seal;
 
@@ -25,6 +26,7 @@ pub use evidence::{EvidenceError, EvidencePublishError, VerifiedEvidence, publis
 pub use layout::{Input, InputError, Layout, LayoutError, ReceiptInput};
 pub use native::{NativeError, NativeRunner};
 pub use payload::{AdmittedPayload, PayloadError, admit};
+pub use rederive::{RederiveError, rederive};
 pub use replay::{
     Battery, Check, CheckKind, CheckStanding, CheckVerdict, ReceiptError, ReplayError,
     ReplayVerdict, replay,

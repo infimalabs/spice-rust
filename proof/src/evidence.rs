@@ -23,6 +23,25 @@ pub struct VerifiedEvidence {
     replay: Digest,
 }
 
+/// One canonical current receipt admitted before replay execution.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AdmittedReceipt {
+    value: ProofReceipt,
+    digest: Digest,
+}
+
+impl AdmittedReceipt {
+    #[cfg(test)]
+    pub(crate) const fn digest(&self) -> &Digest {
+        &self.digest
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replace_digest(&mut self, digest: Digest) {
+        self.digest = digest;
+    }
+}
+
 impl VerifiedEvidence {
     #[must_use]
     pub const fn target(&self) -> ReleaseTarget {
@@ -75,6 +94,11 @@ pub fn verify(
     receipt_bytes: &[u8],
     replay: &ReplayVerdict,
 ) -> Result<VerifiedEvidence, EvidenceError> {
+    let receipt = admit_receipt(receipt_bytes)?;
+    verify_admitted(admitted, &receipt, replay)
+}
+
+pub(crate) fn admit_receipt(receipt_bytes: &[u8]) -> Result<AdmittedReceipt, EvidenceError> {
     let receipt: ProofReceipt = wire::decode(receipt_bytes)
         .map_err(|source| EvidenceError::DecodeReceipt(source.to_string()))?;
     let canonical_receipt =
@@ -86,6 +110,18 @@ pub fn verify(
         return Err(EvidenceError::ReceiptVersion(receipt.version));
     }
 
+    Ok(AdmittedReceipt {
+        value: receipt,
+        digest: Digest::compute(Domain::ProofReceiptV2, &canonical_receipt),
+    })
+}
+
+pub(crate) fn verify_admitted(
+    admitted: &AdmittedPayload,
+    admitted_receipt: &AdmittedReceipt,
+    replay: &ReplayVerdict,
+) -> Result<VerifiedEvidence, EvidenceError> {
+    let receipt = &admitted_receipt.value;
     let payload = admitted.value();
     let payload_digest = admitted.digest();
     if receipt.target != payload.target {
@@ -115,7 +151,7 @@ pub fn verify(
         return Err(EvidenceError::Environment {
             target: payload.target,
             payload_pin: payload.pins.proof_container.clone(),
-            receipt: receipt.environment,
+            receipt: receipt.environment.clone(),
             replay: replay.environment().clone(),
         });
     }
@@ -134,13 +170,24 @@ pub fn verify(
         return Err(EvidenceError::Refused);
     }
 
-    let receipt_digest = Digest::compute(Domain::ProofReceiptV2, &canonical_receipt);
+    let rederived_receipt = replay
+        .receipt(payload, payload_digest.clone())
+        .map_err(|_| EvidenceError::ReplayTarget {
+            payload: payload.target,
+            replay: replay.target(),
+        })?;
+    let rederived_bytes = wire::encode(&rederived_receipt)
+        .map_err(|source| EvidenceError::Encode(source.to_string()))?;
+    if admitted_receipt.digest != Digest::compute(Domain::ProofReceiptV2, &rederived_bytes) {
+        return Err(EvidenceError::ReceiptDigest);
+    }
+
     Ok(VerifiedEvidence {
         target: payload.target,
         payload: payload_digest.clone(),
-        receipt: receipt_digest,
-        battery: receipt.battery,
-        replay: receipt.replay,
+        receipt: admitted_receipt.digest.clone(),
+        battery: receipt.battery.clone(),
+        replay: receipt.replay.clone(),
     })
 }
 
@@ -187,6 +234,7 @@ pub enum EvidenceError {
     ReplayDigest,
     Standing,
     Refused,
+    ReceiptDigest,
 }
 
 impl fmt::Display for EvidenceError {
@@ -238,6 +286,8 @@ impl fmt::Display for EvidenceError {
             Self::Refused => {
                 formatter.write_str("refused proof evidence cannot be verified as a release proof")
             }
+            Self::ReceiptDigest => formatter
+                .write_str("stored proof receipt identity disagrees with re-derived evidence"),
         }
     }
 }
