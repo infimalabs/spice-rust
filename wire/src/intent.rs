@@ -11,7 +11,7 @@
 //! assigns all of those; a body that named one would let a caller forge it.
 //!
 //! Several kinds share one shape on purpose. Renewing, freeing, and lapsing a
-//! claim all name a task and nothing else, so they share [`ClaimRef`] rather
+//! claim all name a task and nothing else, so they share [`TaskRef`] rather
 //! than carrying three identical structs that could drift apart.
 
 use serde::{Deserialize, Serialize};
