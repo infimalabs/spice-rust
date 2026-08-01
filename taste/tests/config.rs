@@ -1,0 +1,386 @@
+//! The tracked document is the only place a taste is named.
+//!
+//! Every assertion about the installed set is made against tracked bytes, and
+//! every assertion about decoder behavior is made against a synthetic document
+//! written here. No test spells a seed name, trigger word, or message: an
+//! oracle that repeated those values would agree with the configuration only
+//! until an operator commit moved one of them, which is precisely the drift
+//! sourcing the set from configuration exists to prevent.
+
+use listen::{Event, Locus, Prose};
+use taste::{Bag, ConfigError, configured};
+
+/// The tracked curation document, which owns the seeds and their rationale.
+const TASTES: &str = include_str!("../../TASTES.md");
+
+/// The tracked repository configuration, in full and unedited.
+const TRACKED: &str = include_str!("../../spice.toml");
+
+/// The seed block exactly as `TASTES.md` publishes it.
+///
+/// The block is lifted rather than retyped, so this file states where the
+/// seeds live without stating what they are. Exactly one block must be found:
+/// a second one added later is an ambiguity about which is authoritative, and
+/// silently taking the first would resolve it by accident.
+fn documented_seeds() -> &'static str {
+    let opens = TASTES.match_indices("```toml").collect::<Vec<_>>();
+    assert_eq!(
+        opens.len(),
+        1,
+        "TASTES.md must publish exactly one toml seed block",
+    );
+    let body = &TASTES[opens[0].0 + "```toml".len()..];
+    let end = body.find("```").expect("the seed block must be closed");
+    &body[..end]
+}
+
+fn prose(text: &str) -> Event {
+    Event::Prose(Prose {
+        text: text.to_owned(),
+        phase: Some("final".to_owned()),
+        locus: Locus::new(7, 31, text.len() as u64),
+    })
+}
+
+fn refusal(document: &str) -> ConfigError {
+    configured(document).expect_err("this document must be refused")
+}
+
+#[test]
+fn the_documented_seed_block_decodes_as_a_complete_tracked_document() {
+    let bag = configured(documented_seeds()).expect("the published seeds decode");
+
+    assert_eq!(
+        bag.tastes().len(),
+        6,
+        "TASTES.md publishes a seed set of six; a seed was added or dropped",
+    );
+}
+
+#[test]
+fn every_documented_seed_selects_prose_containing_its_own_tracked_words() {
+    let bag = configured(documented_seeds()).expect("the published seeds decode");
+    let mut proven = 0;
+
+    for taste in bag.tastes() {
+        // Selection alone would ratify a decoder that altered a word, because
+        // the probe below is built from whatever the decoder returned and
+        // would match its own corruption. Each decoded value is therefore
+        // first required to appear in the tracked block as TOML spells it:
+        // quoted in full, so a truncated `word*` no longer matches.
+        let block = documented_seeds();
+        assert!(
+            block.contains(&format!("[taste.{}]", taste.name())),
+            "taste {} is not a table in the tracked block",
+            taste.name(),
+        );
+        assert!(
+            block.contains(&format!("\"{}\"", taste.message())),
+            "the message decoded for {} is not the one tracked",
+            taste.name(),
+        );
+
+        for trigger in taste.triggers() {
+            assert!(
+                block.contains(&format!("\"{}\"", trigger.as_str())),
+                "taste {} carries a selector the tracked block does not spell: {:?}",
+                taste.name(),
+                trigger.as_str(),
+            );
+
+            // The probe is built from the tracked selector itself, so this
+            // file still names no word. Dropping the one admitted trailing
+            // `*` turns a suffix glob into a word it must cover.
+            let probe = trigger.as_str().replace('*', "");
+            let hits = bag.hits(&prose(&format!("we should {probe} instead")));
+            let hit = hits
+                .iter()
+                .find(|hit| hit.taste() == taste.name() && hit.trigger() == trigger.as_str())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "taste {} selector {:?} selected nothing it describes",
+                        taste.name(),
+                        trigger.as_str(),
+                    )
+                });
+            assert_eq!(
+                hit.message(),
+                taste.message(),
+                "a candidate must carry the message tracked beside its words",
+            );
+            proven += 1;
+        }
+    }
+
+    assert_eq!(
+        proven,
+        bag.tastes()
+            .iter()
+            .map(|taste| taste.triggers().len())
+            .sum::<usize>(),
+        "every tracked selector must be proven, not merely iterated",
+    );
+    assert!(proven > 0, "the seed set must carry selectors");
+}
+
+#[test]
+fn the_seeds_decode_unchanged_beside_the_tracked_root_configuration() {
+    // `spice.toml` carries root sections this crate has no opinion about,
+    // including arrays and integers under `[tasks]`. Composing the real
+    // document with the published seeds proves those sections are ignored
+    // rather than merely absent from a fixture written to avoid them.
+    let composed = format!("{TRACKED}\n{}", documented_seeds());
+
+    assert_eq!(
+        configured(&composed).expect("unrelated root sections are ignored"),
+        configured(documented_seeds()).expect("the published seeds decode"),
+        "an unrelated root section must not change the active set",
+    );
+}
+
+#[test]
+fn the_tracked_root_configuration_carries_no_taste_section_today() {
+    // The seeds are not installed in `spice.toml` yet: the Python scaffold
+    // harness governs that document during the interregnum and refuses a root
+    // key its schema does not name. This asserts the current tracked state so
+    // that installing the seeds is a deliberate edit here rather than a
+    // silent one, and so the refusal is exercised against real bytes.
+    assert!(
+        matches!(refusal(TRACKED), ConfigError::Absent),
+        "spice.toml must parse and reach the taste question",
+    );
+}
+
+#[test]
+fn rows_arrive_in_tracked_order_rather_than_sorted() {
+    let bag = configured(
+        r#"
+[taste.zulu]
+words = ["aardvark"]
+message = "Prefer the last letter."
+
+[taste.alpha]
+words = ["buffalo"]
+message = "Prefer the first letter."
+"#,
+    )
+    .expect("two rows decode");
+
+    assert_eq!(
+        bag.tastes()
+            .iter()
+            .map(|taste| taste.name().as_str())
+            .collect::<Vec<_>>(),
+        vec!["zulu", "alpha"],
+        "the active set must follow the tracked document, not an imposed sort",
+    );
+}
+
+#[test]
+fn adding_editing_and_removing_a_row_moves_the_active_set_with_no_rust_edit() {
+    let one = configured(
+        r#"
+[taste.alpha]
+words = ["aardvark"]
+message = "Prefer the first letter."
+"#,
+    )
+    .expect("one row decodes");
+    let added = configured(
+        r#"
+[taste.alpha]
+words = ["aardvark"]
+message = "Prefer the first letter."
+
+[taste.beta]
+words = ["buffalo"]
+message = "Prefer the second letter."
+"#,
+    )
+    .expect("two rows decode");
+    let edited = configured(
+        r#"
+[taste.alpha]
+words = ["chinchilla"]
+message = "Prefer the third letter."
+"#,
+    )
+    .expect("an edited row decodes");
+
+    let names = |bag: &Bag| {
+        bag.tastes()
+            .iter()
+            .map(|taste| taste.name().to_string())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names(&one), vec!["alpha"]);
+    assert_eq!(names(&added), vec!["alpha", "beta"]);
+    assert_eq!(names(&edited), vec!["alpha"]);
+
+    // Identity is not the whole claim: matching must move too.
+    assert!(one.hits(&prose("one buffalo here")).is_empty());
+    assert_eq!(added.hits(&prose("one buffalo here")).len(), 1);
+    assert_eq!(added.hits(&prose("one aardvark here")).len(), 1);
+
+    // Removing the added row retires exactly the matching it brought.
+    assert_eq!(one.hits(&prose("one aardvark here")).len(), 1);
+
+    // Editing one row replaces both its words and its message under a name
+    // that did not change, which no identity check alone would notice.
+    assert!(edited.hits(&prose("one aardvark here")).is_empty());
+    let hit = edited
+        .hits(&prose("one chinchilla here"))
+        .into_iter()
+        .next()
+        .expect("the edited words select");
+    assert_eq!(hit.message(), "Prefer the third letter.");
+}
+
+#[test]
+fn malformed_toml_is_refused_with_the_parser_position() {
+    let error = refusal("[taste.alpha\nwords = [\"aardvark\"]\n");
+
+    assert!(matches!(error, ConfigError::Parse(_)));
+    assert!(
+        error.to_string().contains("not valid TOML"),
+        "refusal must name the parse failure: {error}",
+    );
+}
+
+#[test]
+fn a_missing_taste_section_and_an_empty_one_are_refused_apart() {
+    assert!(matches!(
+        refusal("[tasks]\nstems = [\"taste\"]\n"),
+        ConfigError::Absent,
+    ));
+    assert!(matches!(refusal("[taste]\n"), ConfigError::Empty));
+}
+
+#[test]
+fn a_repeated_table_or_key_is_refused_by_the_parser() {
+    let table = refusal(
+        r#"
+[taste.alpha]
+words = ["aardvark"]
+message = "Prefer the first letter."
+
+[taste.alpha]
+words = ["buffalo"]
+message = "Prefer the second letter."
+"#,
+    );
+    let key = refusal(
+        r#"
+[taste.alpha]
+words = ["aardvark"]
+words = ["buffalo"]
+message = "Prefer the first letter."
+"#,
+    );
+
+    // Both are refused before this decoder sees them, so each carries the
+    // parser's own context rather than a taste identity this crate supplied.
+    // A repeated table is reported at the table, and a repeated key at the
+    // key, which is why they are asserted apart instead of through one loop
+    // that would pass on whichever context happened to be present.
+    assert!(matches!(table, ConfigError::Parse(_)));
+    assert!(
+        table.to_string().contains("alpha"),
+        "a repeated table must name the table: {table}",
+    );
+
+    assert!(matches!(key, ConfigError::Parse(_)));
+    let reported = key.to_string();
+    assert!(
+        reported.contains("words") && reported.contains("line 4"),
+        "a repeated key must name the key and where it sits: {key}",
+    );
+}
+
+#[test]
+fn a_table_name_that_is_not_a_taste_name_is_refused_with_that_name() {
+    let error = refusal(
+        r#"
+[taste.Alpha]
+words = ["aardvark"]
+message = "Prefer the first letter."
+"#,
+    );
+
+    assert!(matches!(&error, ConfigError::Name { name, .. } if name == "Alpha"));
+    assert!(
+        error.to_string().contains("[taste.Alpha]"),
+        "refusal must name the offending table: {error}",
+    );
+}
+
+#[test]
+fn a_row_that_is_not_shaped_like_a_taste_is_refused_with_its_taste_name() {
+    let misspelled = refusal(
+        r#"
+[taste.alpha]
+word = ["aardvark"]
+message = "Prefer the first letter."
+"#,
+    );
+    let mistyped = refusal(
+        r#"
+[taste.alpha]
+words = "aardvark"
+message = "Prefer the first letter."
+"#,
+    );
+    // A key beside a complete and valid row. Nothing else refuses this one:
+    // the words and message are both present and both admissible, so only
+    // closing the row's shape catches a stray key that reads as configuration
+    // but steers nothing.
+    let extra = refusal(
+        r#"
+[taste.alpha]
+words = ["aardvark"]
+message = "Prefer the first letter."
+severity = "high"
+"#,
+    );
+
+    for error in [misspelled, mistyped, extra] {
+        assert!(matches!(&error, ConfigError::Row { name, .. } if name == "alpha"));
+        assert!(
+            error.to_string().contains("[taste.alpha]"),
+            "refusal must name the offending row: {error}",
+        );
+    }
+}
+
+#[test]
+fn an_invalid_trigger_empty_bag_or_empty_message_is_refused_with_its_taste_name() {
+    let documents = [
+        r#"
+[taste.alpha]
+words = ["aard*vark"]
+message = "Prefer the first letter."
+"#,
+        r#"
+[taste.alpha]
+words = []
+message = "Prefer the first letter."
+"#,
+        r#"
+[taste.alpha]
+words = ["aardvark"]
+message = "   "
+"#,
+    ];
+
+    for document in documents {
+        let error = refusal(document);
+        assert!(
+            matches!(&error, ConfigError::Taste { name, .. } if name == "alpha"),
+            "expected a taste refusal, got {error}",
+        );
+        assert!(
+            error.to_string().contains("[taste.alpha]"),
+            "refusal must name the offending taste: {error}",
+        );
+    }
+}

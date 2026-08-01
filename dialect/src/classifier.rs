@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::declared::{PROJECT_MAX_DEPTH, PROJECT_MIN_DEPTH};
 use crate::ledger::emit;
 use crate::node::{
     DOCUMENT_ROOT_SLUG, DOCUMENT_ROOT_TITLE, Document, Edge, EdgeKind, Node, NodeKind, Phase,
@@ -1004,7 +1005,7 @@ fn is_slug_spelling(target: &str) -> bool {
 
 fn valid_project(project: &str) -> bool {
     let segments = project.split('.').collect::<Vec<_>>();
-    (2..=3).contains(&segments.len())
+    (PROJECT_MIN_DEPTH..=PROJECT_MAX_DEPTH).contains(&segments.len())
         && segments.iter().all(|segment| {
             !segment.is_empty()
                 && segment

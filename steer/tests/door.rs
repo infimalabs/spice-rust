@@ -1,0 +1,312 @@
+//! What the steering loop does against a real filesystem.
+//!
+//! The scan and the reducer are pure and prove themselves inline. Everything
+//! here is the part that touches disk: a rendering published whole, a wrapper
+//! that reads it and hands the command through anyway, and interception that
+//! either matches the build that installed it or says which stage did not.
+//!
+//! These are the paths a lane's hearing actually runs through, so they are
+//! exercised through the same calls the door makes rather than through their
+//! parts.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use steer::ack::keys::Key;
+use steer::directives::{Ledger, Steering};
+use steer::hook::{Hooks, Refusal, STAGES};
+use steer::{inbox, run};
+use wire::CanonicalUuid;
+use wire::body::SteerSent;
+
+/// The lane most of these tests speak to.
+const LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
+
+/// A second lane, which must hear none of the first lane's direction.
+const OTHER: &str = "018f82d4-6f59-7d06-92e3-bce913116303";
+
+/// The key a rendering is sealed under.
+const SEAL: &str = "1kJK6N3R";
+
+/// A lane's rendering carries its own pending direction, sealed, and nobody
+/// else's.
+///
+/// The seal is what lets a lane tell spice's direction from prose that merely
+/// looks like it, so a rendering that lost its seal would be indistinguishable
+/// from anything else that reached the same file.
+#[test]
+fn a_rendering_carries_one_lane_sealed() {
+    let scratch = Scratch::new("rendering");
+    let inbox_root = scratch.path().join("inbox");
+    let ledger = ledger();
+    let lane = lane(LANE);
+
+    inbox::publish(&inbox_root, lane, &seal(), &ledger.pending(lane)).expect("rendering publishes");
+
+    let rendered = fs::read_to_string(inbox::path(&inbox_root, lane)).expect("rendering readable");
+    assert_eq!(
+        rendered,
+        "\
+<1kJK6N3R>
+key=1kJK6M0V expires=2026-08-01T07:07:19.000Z control=drive-drain-queue
+DRAIN QUEUE ASAP
+key=1kJK7Sqy expires=2026-08-01T08:07:19.000Z
+feed the board
+</1kJK6N3R>
+"
+    );
+}
+
+/// A lane owed nothing is rendered empty rather than sealed around nothing, and
+/// the wrapper reports that there was nothing to hear.
+///
+/// An empty seal would read as direction the lane could not make out, which is
+/// a different thing from silence.
+#[test]
+fn nothing_pending_renders_empty_and_the_wrapper_stays_quiet() {
+    let scratch = Scratch::new("quiet");
+    let inbox_root = scratch.path().join("inbox");
+    let lane = lane(OTHER);
+
+    inbox::publish(&inbox_root, lane, &seal(), &[]).expect("empty rendering publishes");
+
+    let rendering = inbox::path(&inbox_root, lane);
+    assert_eq!(fs::read_to_string(&rendering).expect("readable"), "");
+
+    let mut heard = Vec::new();
+    assert!(!run::emit(&rendering, &mut heard).expect("emit reads"));
+    assert!(heard.is_empty());
+}
+
+/// The wrapper writes exactly what was rendered and reports that it did.
+#[test]
+fn the_wrapper_writes_what_was_rendered() {
+    let scratch = Scratch::new("emit");
+    let inbox_root = scratch.path().join("inbox");
+    let ledger = ledger();
+    let lane = lane(LANE);
+
+    inbox::publish(&inbox_root, lane, &seal(), &ledger.pending(lane)).expect("rendering publishes");
+
+    let rendering = inbox::path(&inbox_root, lane);
+    let mut heard = Vec::new();
+    assert!(run::emit(&rendering, &mut heard).expect("emit reads"));
+    assert_eq!(heard, fs::read(&rendering).expect("rendering readable"));
+}
+
+/// An absent rendering is ordinary, not a failure.
+///
+/// The rendering is disposable and disposition lives in the journal, so a
+/// wrapper that treated absence as an error would refuse to run commands over a
+/// file nobody promised would be there.
+#[test]
+fn an_absent_rendering_is_ordinary() {
+    let scratch = Scratch::new("absent");
+    let mut heard = Vec::new();
+
+    assert!(
+        !run::emit(&scratch.path().join("never-written"), &mut heard)
+            .expect("absence is not an error")
+    );
+    assert!(heard.is_empty());
+}
+
+/// The wrapper hands the command through and reports what it did, rather than
+/// standing in for it.
+#[cfg(unix)]
+#[test]
+fn the_wrapper_hands_the_command_through() {
+    use std::ffi::OsStr;
+
+    let status = run::hand(OsStr::new("/bin/sh"), ["-c", "exit 3"]).expect("command spawns");
+
+    assert_eq!(status.code(), Some(3));
+}
+
+/// A rendering is replaced whole, so a second publication leaves no trace of
+/// the first — including when the first was longer.
+#[test]
+fn publishing_replaces_the_rendering_whole() {
+    let scratch = Scratch::new("replace");
+    let inbox_root = scratch.path().join("inbox");
+    let ledger = ledger();
+    let lane = lane(LANE);
+
+    inbox::publish(&inbox_root, lane, &seal(), &ledger.pending(lane)).expect("first publishes");
+    inbox::publish(&inbox_root, lane, &seal(), &[]).expect("second publishes");
+
+    assert_eq!(
+        fs::read_to_string(inbox::path(&inbox_root, lane)).expect("rendering readable"),
+        ""
+    );
+}
+
+/// Installation places every stage with the bytes this build carries, runnable,
+/// and installing again over the same build changes nothing.
+#[test]
+fn installation_places_every_stage_and_repeats_cleanly() {
+    let scratch = Scratch::new("install");
+    let hooks = Hooks::new(scratch.path().join("hooks"));
+
+    hooks.install().expect("first installation");
+    hooks.install().expect("second installation");
+
+    for stage in STAGES {
+        let path = hooks.stage(stage);
+        assert_eq!(
+            fs::read_to_string(&path).expect("stage readable"),
+            stage.bytes(),
+            "{} carries this build's bytes",
+            path.display()
+        );
+        assert_executable(&path);
+    }
+}
+
+/// Proof answers from the environment the caller hands in, so the same call
+/// runs identically in a test and under a shell that really did reexec.
+#[test]
+fn activation_is_proven_from_the_environment_it_is_handed() {
+    let scratch = Scratch::new("proof");
+    let hooks = Hooks::new(scratch.path().join("hooks"));
+    hooks.install().expect("installation");
+
+    let activation = hooks
+        .proof(&environment(&[(steer::hook::PROOF, LANE)]))
+        .expect("proof");
+    assert_eq!(activation.lane(), lane(LANE));
+
+    assert_eq!(hooks.proof(&environment(&[])), Err(Refusal::Unproven));
+    assert_eq!(
+        hooks.proof(&environment(&[(steer::hook::PROOF, "not-a-lane")])),
+        Err(Refusal::Unnamed {
+            text: "not-a-lane".to_owned()
+        })
+    );
+}
+
+/// Every way interception fails to prove itself is named by the stage that
+/// failed, because "interception is broken" does not tell an operator which
+/// file to look at.
+#[test]
+fn a_stage_that_is_missing_or_drifted_is_named() {
+    let scratch = Scratch::new("stages");
+    let hooks = Hooks::new(scratch.path().join("hooks"));
+    let proven = environment(&[(steer::hook::PROOF, LANE)]);
+
+    assert_eq!(
+        hooks.proof(&proven),
+        Err(Refusal::Absent {
+            stage: hooks.stage(STAGES[0])
+        })
+    );
+
+    hooks.install().expect("installation");
+    for stage in STAGES {
+        let path = hooks.stage(stage);
+        fs::write(&path, "# drifted\n").expect("stage rewritten");
+        assert_eq!(
+            hooks.proof(&proven),
+            Err(Refusal::Divergent {
+                stage: path.clone()
+            })
+        );
+        fs::write(&path, stage.bytes()).expect("stage restored");
+    }
+
+    hooks.proof(&proven).expect("restored stages prove");
+}
+
+/// The ledger both other tests read their pending direction out of.
+fn ledger() -> Ledger {
+    let mut ledger = Ledger::new();
+    for (key, addressee, text, control, expires) in [
+        (
+            "1kJK6M0V",
+            LANE,
+            "DRAIN QUEUE ASAP",
+            Some("drive-drain-queue"),
+            "2026-08-01T07:07:19.000Z",
+        ),
+        (
+            "1kJK7Sqy",
+            LANE,
+            "feed the board",
+            None,
+            "2026-08-01T08:07:19.000Z",
+        ),
+        (
+            "1kJK8KcW",
+            OTHER,
+            "another lane's direction",
+            None,
+            "2026-08-01T09:07:19.000Z",
+        ),
+    ] {
+        ledger
+            .absorb(Steering::Sent(&SteerSent {
+                key: key.to_owned(),
+                lane: lane(addressee),
+                text: text.to_owned(),
+                control: control.map(str::to_owned),
+                expires: expires.parse().expect("instant"),
+            }))
+            .expect("directive absorbs");
+    }
+    ledger
+}
+
+fn seal() -> Key {
+    SEAL.parse().expect("seal")
+}
+
+fn lane(text: &str) -> CanonicalUuid {
+    text.parse().expect("lane")
+}
+
+fn environment(entries: &[(&str, &str)]) -> sill::Environment {
+    sill::Environment::new(entries.iter().copied()).expect("environment")
+}
+
+#[cfg(unix)]
+fn assert_executable(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mode = fs::metadata(path)
+        .expect("stage metadata")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o755, "{} is runnable", path.display());
+}
+
+#[cfg(not(unix))]
+fn assert_executable(_path: &Path) {}
+
+/// A directory of this test's own, removed when it drops.
+struct Scratch(PathBuf);
+
+static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
+
+impl Scratch {
+    fn new(label: &str) -> Self {
+        let sequence = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "spice-steer-{label}-{}-{sequence}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("scratch directory is created");
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}

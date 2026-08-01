@@ -198,6 +198,48 @@ mod tests {
     }
 
     #[test]
+    fn verifier_steps_match_the_complete_command_guard() {
+        const GUARDED_STEPS: [Step; 5] = [
+            Step::new(
+                "cargo fmt --all -- --check",
+                &["fmt", "--all", "--", "--check"],
+            ),
+            Step::new(
+                "cargo clippy --locked --workspace --all-targets -- -D warnings",
+                &[
+                    "clippy",
+                    "--locked",
+                    "--workspace",
+                    "--all-targets",
+                    "--",
+                    "-D",
+                    "warnings",
+                ],
+            ),
+            Step::new(
+                "cargo check --locked --workspace --target wasm32-unknown-unknown",
+                &[
+                    "check",
+                    "--locked",
+                    "--workspace",
+                    "--target",
+                    "wasm32-unknown-unknown",
+                ],
+            ),
+            Step::new(
+                "cargo test --locked --workspace --all-targets",
+                &["test", "--locked", "--workspace", "--all-targets"],
+            ),
+            Step::new(
+                "cargo test --locked --workspace --doc",
+                &["test", "--locked", "--workspace", "--doc"],
+            ),
+        ];
+
+        assert_eq!(VERIFY_STEPS.as_slice(), GUARDED_STEPS.as_slice());
+    }
+
+    #[test]
     fn verifier_explicitly_runs_workspace_doctests() {
         let step = VERIFY_STEPS
             .iter()

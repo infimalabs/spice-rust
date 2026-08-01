@@ -1,10 +1,11 @@
 //! One in-browser state over received frames.
 //!
 //! The app appends nothing and derives nothing it was not told. This state
-//! remembers the highest position it has applied, the causal headers it has
-//! received, and the most recent answer wearing whatever provenance it arrived
-//! with. It never merges two answers, repairs a gap, or reports a horizon,
-//! overflow, cursor, fold, or causal link it did not receive.
+//! remembers the highest position it has applied, a bounded window of the
+//! causal headers it has received, and the most recent answer wearing whatever
+//! provenance it arrived with. It never merges two answers, repairs a gap, or
+//! reports a horizon, overflow, cursor, fold, or causal link it did not
+//! receive.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -40,9 +41,43 @@ impl Applied {
     }
 }
 
+/// Causal headers one state retains, keeping the highest positions received.
+///
+/// Retention is bounded because the app is a long-lived tab. A browser held
+/// open against one generation receives positions for as long as that
+/// generation lasts, and a per-position header nothing ever releases is a leak
+/// by construction rather than a tuning question. Every other field of
+/// [`BrowserState`] is a single value or one packed answer, so this is the only
+/// place growth had nowhere to stop, and wasm32 linear memory is the tightest
+/// budget any spice surface runs under.
+///
+/// The window keeps the newest positions because a walk starts where a reader
+/// just looked and follows causes backward, so the chains that render whole are
+/// the recent ones. An evicted header reads exactly like a position the session
+/// never received: the walk stops at it as [`ChainEnd::Dangling`]. That is the
+/// point of evicting rather than compacting, since a summarized or stitched
+/// window would report a link no producer minted.
+///
+/// The number is 1024 because it clears two marks at once. A chain a pane
+/// renders whole — a command and the facts it provoked, a task and its phases —
+/// runs to tens of links, so a window of 1024 leaves roughly a hundredfold of
+/// headroom before a reader meets a dangle where the whole chain would
+/// otherwise have rendered. And a retained header costs about a hundred bytes: a
+/// [`Seq`], an [`Origin`] such as `task:SPICE-aBcD` or `lane:<uuid>`, an
+/// optional [`Seq`], plus the map node that keys it. The window is therefore near
+/// 100 KiB — a fixed price a tab pays once against a cost that previously had no
+/// ceiling at all.
+///
+/// It is a constant rather than configuration because the socket is this
+/// crate's whole system boundary. A configured bound could only arrive from the
+/// server, which would let the far side of the wire size the tab's memory, and
+/// the bound exists to protect the tab rather than to express operator policy.
+pub const CAUSAL_HEADERS: usize = 1024;
+
 /// One received envelope header in a causal walk.
 ///
-/// The browser retains only the fields the walk renders. Every link comes
+/// The browser retains only the fields the walk renders, and only for the
+/// [`CAUSAL_HEADERS`] highest positions it has received. Every link comes
 /// from an admitted envelope; no missing position is materialized as a link.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CausalLink {
@@ -76,7 +111,8 @@ impl CausalLink {
 pub enum ChainEnd {
     /// The final received envelope omitted `cause` and is the chain root.
     Root,
-    /// A received envelope cited a position the browser has not received.
+    /// A received envelope cited a position the browser does not hold, because
+    /// it never arrived or because the retention window evicted its header.
     Dangling(Seq),
     /// Following causes reached a position already visited by this walk.
     Cycle(Seq),
@@ -201,12 +237,6 @@ impl<T> Answer<T> {
             Self::HeadDirect(_) => None,
         }
     }
-
-    /// True when this answer carries fold provenance at all.
-    #[must_use]
-    pub const fn is_derived(&self) -> bool {
-        matches!(self, Self::Derived(_))
-    }
 }
 
 /// Browser state scoped to one admitted principal and resident generation.
@@ -278,6 +308,11 @@ impl<T> BrowserState<T> {
     /// [`Body`] bounds the fact for the same reason one step earlier: the
     /// envelope carried a kind from the closed vocabulary, so state advances
     /// on facts a producer can actually mint and on nothing else.
+    ///
+    /// Retaining the header may evict the lowest one held, since the window is
+    /// the [`CAUSAL_HEADERS`] highest positions received and nothing else. The
+    /// eviction is silent to this call's answer: whether a header was dropped
+    /// says nothing about what this envelope did to the cursor.
     pub fn apply<F: Body>(&mut self, admitted: &Admitted<Envelope<Fact<F>>>) -> Applied {
         if admitted.scope() != self.scope {
             return Applied::ForeignScope;
@@ -290,6 +325,9 @@ impl<T> BrowserState<T> {
                 origin: envelope.origin.clone(),
                 cause: envelope.cause,
             });
+        while self.causal.len() > CAUSAL_HEADERS {
+            self.causal.pop_first();
+        }
         match self.cursor {
             Some(cursor) if envelope.seq == cursor => Applied::Duplicate,
             Some(cursor) if envelope.seq < cursor => Applied::Stale,
@@ -306,6 +344,11 @@ impl<T> BrowserState<T> {
     /// Missing positions and cycles are terminal observations rather than
     /// placeholders or repair attempts, so this method always terminates and
     /// never reports a link the session did not admit.
+    ///
+    /// A position [`CAUSAL_HEADERS`] retention has evicted is missing in
+    /// exactly that sense. A chain reaching past the window stops there as
+    /// [`ChainEnd::Dangling`], never as [`ChainEnd::Root`], because a root is
+    /// read off a received envelope and an evicted one is no longer held.
     #[must_use]
     pub fn walk(&self, start: Seq) -> ChainWalk {
         let mut links = Vec::new();
