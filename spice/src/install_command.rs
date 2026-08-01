@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use spice::install::{InstallError, InstallPlan, InstallReceipt};
 use spice::repository::Repository;
+use spice::repository::StateError;
 use wire::{Digest, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
 pub(crate) enum Answer {
@@ -134,7 +135,20 @@ fn failure<B>(error: InstallError) -> Outcome<B> {
             observed: Some(detail),
             remedy: refusal_remedy.to_owned(),
         }),
-        InstallError::Repository(_) | InstallError::Io { .. } => Outcome::Fault(Fault {
+        InstallError::State(
+            StateError::Linked { .. }
+            | StateError::NotDirectory { .. }
+            | StateError::NotRegularFile { .. },
+        ) => Outcome::Refusal(Refusal {
+            reason: refusal_reason.to_owned(),
+            witness: Some("install-state".to_owned()),
+            expected: Some("unlinked Rust-owned repository state".to_owned()),
+            observed: Some(detail),
+            remedy: "repair the named Rust state component before retrying".to_owned(),
+        }),
+        InstallError::Repository(_)
+        | InstallError::State(StateError::Filesystem { .. })
+        | InstallError::Io { .. } => Outcome::Fault(Fault {
             class: FaultClass::Environment,
             reason: "install::environment-failed".to_owned(),
             detail,
@@ -162,6 +176,7 @@ fn install_refusal_reason(error: &InstallError) -> &'static str {
         InstallError::Drift { .. } => "install::drift",
         InstallError::PathOutsideRoot(_) => "install::path-outside-root",
         InstallError::ParentChanged(_) => "install::parent-changed",
+        InstallError::State(_) => "install::state-refused",
         _ => "install::input-refused",
     }
 }

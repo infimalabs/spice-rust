@@ -48,7 +48,10 @@ journal, and `down` reads the discovery published at
 `<git-common>/.spice-rust/canvas`.
 
 The same root owns resident locks, lane tape, degraded-state evidence, command
-locks, and proof receipts. Rust startup does not inspect Python databases below
+locks, and proof receipts. Resident, version, lock, proof, and release commands
+first admit the fixed root and parent components without following links; a
+linked or malformed component returns `repository::state-path-refused` with
+its exact path. Rust startup does not inspect Python databases below
 `<git-common>/.spice`. An unfinalized or incompatible `.spice-rust` journal
 returns the typed `journal::schema-refused` outcome naming its state. The
 ambient `spice` command and `.spice/hooks` remain Python-owned until the

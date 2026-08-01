@@ -5,12 +5,13 @@ use std::path::PathBuf;
 
 use wire::Digest;
 
-use crate::repository::ResolveError;
+use crate::repository::{ResolveError, StateError};
 
 /// Planning, admission, publication, or reversal failure.
 #[derive(Debug)]
 pub enum InstallError {
     Repository(ResolveError),
+    State(StateError),
     Encode(serde_json::Error),
     Decode(serde_json::Error),
     Atomic(atomic::Error),
@@ -62,6 +63,7 @@ impl fmt::Display for InstallError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Repository(error) => error.fmt(formatter),
+            Self::State(error) => error.fmt(formatter),
             Self::Encode(error) => write!(formatter, "install plan did not encode: {error}"),
             Self::Decode(error) => write!(formatter, "install record did not decode: {error}"),
             Self::Atomic(error) => write!(formatter, "install publication failed: {error}"),
@@ -138,6 +140,7 @@ impl Error for InstallError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Repository(error) => Some(error),
+            Self::State(error) => Some(error),
             Self::Encode(error) | Self::Decode(error) => Some(error),
             Self::Atomic(error) => Some(error),
             Self::Io { source, .. } => Some(source),
@@ -149,5 +152,11 @@ impl Error for InstallError {
 impl From<ResolveError> for InstallError {
     fn from(error: ResolveError) -> Self {
         Self::Repository(error)
+    }
+}
+
+impl From<StateError> for InstallError {
+    fn from(error: StateError) -> Self {
+        Self::State(error)
     }
 }

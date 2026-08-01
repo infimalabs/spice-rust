@@ -204,7 +204,7 @@ fn refused_batteries_keep_receipt_and_repository_bytes_unchanged_in_both_forms()
 }
 
 #[test]
-fn runner_refusal_process_fault_and_publication_io_fault_stay_distinct() {
+fn runner_refusal_process_fault_and_state_parent_refusal_stay_distinct() {
     let fixture = Fixture::new();
     fs::remove_file(&fixture.selected_runtime).expect("remove selected runtime");
     let missing_runtime = snapshot(fixture.repository());
@@ -231,13 +231,15 @@ fn runner_refusal_process_fault_and_publication_io_fault_stay_distinct() {
     fs::write(fixture.proof_root(), b"blocks receipt directory")
         .expect("plant publication obstruction");
     let obstructed = snapshot(fixture.repository());
-    let publication = fault_pair(&fixture, &["proof"], "proof::publication-failed");
-    assert_eq!(publication.class, wire::FaultClass::Store);
-    assert_eq!(snapshot(fixture.repository()), obstructed);
-    assert_eq!(
-        fixture.battery_invocations(),
-        2 * proof::CheckKind::ALL.len()
+    let state = refusal_pair(&fixture, &["proof"], "repository::state-path-refused");
+    assert!(
+        state
+            .observed
+            .as_deref()
+            .is_some_and(|observed| observed.contains(&fixture.proof_root().display().to_string()))
     );
+    assert_eq!(snapshot(fixture.repository()), obstructed);
+    assert_eq!(fixture.battery_invocations(), 0);
     fixture.assert_daemonless();
 }
 

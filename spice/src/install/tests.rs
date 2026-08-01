@@ -42,7 +42,7 @@ fn planning_is_canonical_digest_bound_and_side_effect_free() {
         ]
     );
     assert_eq!(fs::read(scratch.exclude()).unwrap(), b"# local ignore\n");
-    assert!(!record_path(&repository).exists());
+    assert!(!record_path(&repository).unwrap().exists());
     assert!(!scratch.join(ENTRY_PATH).exists());
     assert!(!scratch.join(SKILL_PATH).exists());
 }
@@ -79,10 +79,14 @@ fn apply_is_idempotent_preserves_python_and_unapply_is_exact() {
     );
     assert_eq!(fs::read_to_string(scratch.join(SKILL_PATH)).unwrap(), SKILL);
     assert_eq!(
-        record_path(&repository),
-        repository.state_root().join(RECORD_NAME)
+        record_path(&repository).unwrap(),
+        repository
+            .admit_state()
+            .unwrap()
+            .runtime()
+            .join(RECORD_NAME)
     );
-    assert_eq!(mode(&record_path(&repository)), RECORD_MODE);
+    assert_eq!(mode(&record_path(&repository).unwrap()), RECORD_MODE);
     assert!(
         !repository
             .common_dir()
@@ -102,7 +106,7 @@ fn apply_is_idempotent_preserves_python_and_unapply_is_exact() {
             .map(|observed| observed.image);
         assert_eq!(observed, operation.previous().cloned());
     }
-    assert!(record_path(&repository).is_file());
+    assert!(record_path(&repository).unwrap().is_file());
 }
 
 #[test]
@@ -137,7 +141,7 @@ fn stale_plan_refuses_before_record_or_target_mutation() {
         fs::read(scratch.exclude()).unwrap(),
         b"operator changed this\n"
     );
-    assert!(!record_path(&repository).exists());
+    assert!(!record_path(&repository).unwrap().exists());
     assert!(!scratch.join(ENTRY_PATH).exists());
 }
 
@@ -151,7 +155,7 @@ fn changed_optional_binary_refuses_the_planned_digest() {
 
     let error = apply(&repository, Some(&binary), &stale).unwrap_err();
     assert!(matches!(error, InstallError::DigestMismatch { .. }));
-    assert!(!record_path(&repository).exists());
+    assert!(!record_path(&repository).unwrap().exists());
     assert!(!scratch.join(BINARY_PATH).exists());
 }
 
@@ -235,8 +239,12 @@ fn operator_drift_refuses_unapply_before_any_reversal() {
 fn malformed_record_and_divergent_exclusions_refuse_without_mutation() {
     let malformed = Scratch::new("malformed");
     let repository = malformed.repository();
-    fs::create_dir_all(record_path(&repository).parent().unwrap()).unwrap();
-    fs::write(record_path(&repository), b"{\"unexpected\":true}\n").unwrap();
+    fs::create_dir_all(record_path(&repository).unwrap().parent().unwrap()).unwrap();
+    fs::write(
+        record_path(&repository).unwrap(),
+        b"{\"unexpected\":true}\n",
+    )
+    .unwrap();
     let error = plan(&repository, None).unwrap_err();
     assert!(matches!(error, InstallError::Decode(_)));
     assert!(!malformed.join(ENTRY_PATH).exists());
@@ -246,7 +254,7 @@ fn malformed_record_and_divergent_exclusions_refuse_without_mutation() {
     fs::write(divergent.exclude(), format!("{EXCLUDE_BEGIN}\nwrong\n")).unwrap();
     let error = plan(&repository, None).unwrap_err();
     assert!(matches!(error, InstallError::DivergentExclusions));
-    assert!(!record_path(&repository).exists());
+    assert!(!record_path(&repository).unwrap().exists());
 
     let duplicate = Scratch::new("duplicate-block");
     let repository = duplicate.repository();
@@ -257,7 +265,7 @@ fn malformed_record_and_divergent_exclusions_refuse_without_mutation() {
     .unwrap();
     let error = plan(&repository, None).unwrap_err();
     assert!(matches!(error, InstallError::DivergentExclusions));
-    assert!(!record_path(&repository).exists());
+    assert!(!record_path(&repository).unwrap().exists());
 }
 
 #[test]
@@ -278,7 +286,7 @@ fn legacy_record_names_its_owning_release_and_refuses_without_mutation() {
         ));
         assert!(error.to_string().contains(owner));
         assert_eq!(fs::read(scratch.exclude()).unwrap(), before_exclude);
-        assert!(!record_path(&repository).exists());
+        assert!(!record_path(&repository).unwrap().exists());
         assert!(!scratch.join(ENTRY_PATH).exists());
     }
 }
@@ -292,7 +300,11 @@ fn record_digest_tampering_refuses_before_unapply_mutation() {
     let generated = images(&repository, &planned);
     let mut record = read_record(&repository).unwrap().unwrap().record;
     record.plan_digest = Digest::compute(Domain::InstallPlan, b"tampered");
-    fs::write(record_path(&repository), wire::encode(&record).unwrap()).unwrap();
+    fs::write(
+        record_path(&repository).unwrap(),
+        wire::encode(&record).unwrap(),
+    )
+    .unwrap();
 
     let error = unapply(&repository).unwrap_err();
     assert!(matches!(error, InstallError::InvalidRecord(_)));
@@ -345,12 +357,16 @@ fn planning_binds_internal_symlinked_install_parents_and_refuses_escape() {
     let repository = state.repository();
     let outside = state.join("outside-state");
     fs::create_dir(&outside).unwrap();
-    symlink(&outside, repository.state_root()).unwrap();
+    let state_root = repository
+        .common_dir()
+        .join(crate::repository::STATE_DIRECTORY);
+    symlink(&outside, &state_root).unwrap();
 
     let error = plan(&repository, None).unwrap_err();
     assert!(matches!(
         error,
-        InstallError::PathShape(path) if path == repository.state_root()
+        InstallError::State(crate::repository::StateError::Linked { path })
+            if path == state_root
     ));
     assert!(fs::read_dir(&outside).unwrap().next().is_none());
 }
