@@ -11,6 +11,7 @@
 //! each other, and the qualifier is what keeps a reader from believing
 //! otherwise.
 
+pub mod input;
 pub mod jurisdiction;
 pub mod measure;
 pub mod message;
@@ -18,6 +19,11 @@ pub mod names;
 pub mod ratchet;
 pub mod verdict;
 
+pub use input::{
+    BASELINE_PATH, BASELINE_VERSION, Baseline, BaselineError, Contract, ContractError, FieldError,
+    Floor, FloorDeclaration, FloorKind, GateSet, LONG_LINE_LIMIT, POLICY_PATH, PolicyError,
+    ToolError, ToolIdentity,
+};
 pub use jurisdiction::{
     Admission, Entry, Ignore, IgnoreError, Jurisdiction, Rule, Shape, WalkError,
 };

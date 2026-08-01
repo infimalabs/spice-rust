@@ -482,6 +482,7 @@ dependencies = [
  "serde_json",
  "sill",
  "syn 3.0.3",
+ "toml",
  "wire",
 ]
 
