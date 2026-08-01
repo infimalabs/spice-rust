@@ -38,6 +38,7 @@
 
 pub mod body;
 pub mod command;
+pub mod config;
 pub mod envelope;
 pub mod fact;
 pub mod head;
@@ -56,6 +57,7 @@ pub mod reply;
 pub mod witness;
 
 pub use command::{Authority, Command, CommandKind, CommandKindError, Law, LawError};
+pub use config::{ConfigSource, DurationWord, DurationWordError, Provenance};
 pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVersion};
 pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{
