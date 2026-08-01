@@ -24,7 +24,7 @@ pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVe
 pub use fact::{Fact, FactKind};
 pub use head::{
     ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency, LeaseHead,
-    ResidencyHead, ResidentState, TaskHead, TrustHead, TrustState, WitnessHead, WitnessKind,
+    PredicateClass, ResidencyHead, ResidentState, TaskHead, TrustHead, TrustState, WitnessHead,
     WorkflowHead,
 };
 pub use hello::{Hello, Rejected};

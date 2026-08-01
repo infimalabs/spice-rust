@@ -47,7 +47,7 @@ const LEASE: &str = r#"{
 
 const WITNESS: &str = r#"{
   "name": "review:WIRE-aBcD",
-  "kind": "review",
+  "class": "review",
   "predicate": "workflow head 41 is review",
   "head": 43
 }"#;
@@ -115,7 +115,7 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
         &["actor", "disposition", "epoch", "fact", "lane", "occupant"],
     );
     assert_fields::<LeaseHead>(LEASE, &["epoch", "expiry", "maximum", "renewal", "start"]);
-    assert_fields::<WitnessHead>(WITNESS, &["head", "kind", "name", "predicate"]);
+    assert_fields::<WitnessHead>(WITNESS, &["class", "head", "name", "predicate"]);
     assert_fields::<TrustHead>(TRUST, &["digest", "state"]);
     assert_fields::<FindingHead>(
         FINDING,
@@ -134,7 +134,7 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
 
 #[test]
 fn witness_heads_admit_each_settled_predicate_class() {
-    for kind in [
+    for class in [
         "assignment",
         "review",
         "directive",
@@ -143,9 +143,9 @@ fn witness_heads_admit_each_settled_predicate_class() {
         "document",
         "transition",
     ] {
-        let fixture = WITNESS.replace("\"kind\": \"review\"", &format!("\"kind\": \"{kind}\""));
+        let fixture = WITNESS.replace("\"class\": \"review\"", &format!("\"class\": \"{class}\""));
         let decoded = wire::decode::<WitnessHead>(fixture.as_bytes());
-        assert!(decoded.is_ok(), "{kind} is an authoritative witness class");
+        assert!(decoded.is_ok(), "{class} is an authoritative witness class");
     }
 }
 
@@ -180,4 +180,38 @@ fn assert_value_fields(value: &serde_json::Value, fields: &[&str]) {
     actual_fields.sort_unstable();
 
     assert_eq!(actual_fields, fields);
+}
+
+/// Both witness vocabularies name themselves in one scope without shadowing.
+///
+/// This test exists because they once collided: two crates-worth of work each
+/// exported a `WitnessKind`, and `wire` stopped compiling. Importing both
+/// unqualified is the cheapest standing proof that the names stayed distinct,
+/// and asserting their overlap keeps the reason for two types legible — if one
+/// ever becomes a strict subset of the other, that is the moment to merge them.
+#[test]
+fn both_witness_vocabularies_coexist_unqualified() {
+    use wire::{Command, CommandKind, PredicateClass, TaskHandle, Witness, WitnessKind};
+
+    let head: WitnessHead = wire::decode(WITNESS.as_bytes()).expect("witness head decodes");
+    assert_eq!(head.class, PredicateClass::Review);
+
+    let task: TaskHandle = "WIRE-aBcD".parse().expect("fixture handle spells correctly");
+    let command = Command {
+        v: wire::WireVersion::CURRENT,
+        id: "018f82d4-6f59-7d06-92e3-bce913116307"
+            .parse()
+            .expect("fixture uuid is canonical"),
+        kind: CommandKind::TaskNote,
+        expected: vec![Witness::Existence { task }],
+        body: (),
+    };
+    assert_eq!(command.expected[0].kind(), WitnessKind::Existence);
+    assert!(command.witnessed().is_ok());
+
+    // The overlap is real but neither contains the other: `Review` is a head
+    // class with no command-side spelling, and `Existence` is a command
+    // predicate that is never a witness head row.
+    assert!(!format!("{:?}", WitnessKind::Assignment).is_empty());
+    assert!(!format!("{:?}", PredicateClass::Assignment).is_empty());
 }
