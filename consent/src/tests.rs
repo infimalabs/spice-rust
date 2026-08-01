@@ -1,4 +1,4 @@
-use wire::body::ConsentAsked;
+use wire::body::{ConsentAsked, ConsentQueueCause};
 
 use crate::{
     Actuator, Answer, Authority, Budgets, Outcome, POSTURE, Pending, Policy, PolicyError,
@@ -148,13 +148,27 @@ fn a_bounded_rule_grants_to_its_bound_and_then_queues_for_renewal() {
 
     let first = actuator.decide(&asked("read"), Reversibility::Reversible);
     let second = actuator.decide(&asked("read"), Reversibility::Reversible);
-    let third = actuator.decide(&asked("read"), Reversibility::Reversible);
+    let third_request = asked("read");
+    let third = actuator.decide(&third_request, Reversibility::Reversible);
 
     assert_eq!(granted_budget(&first), Some(Some(1)));
     assert_eq!(granted_budget(&second), Some(Some(0)));
-    assert!(
-        matches!(third, Outcome::Queued(_)),
-        "a spent budget queues for renewal, but the third request answered {third:?}",
+    let Outcome::Queued(queued) = &third else {
+        panic!("a spent budget queues for renewal, but the third request answered {third:?}");
+    };
+    assert_eq!(queued.rule, "reads");
+    assert_eq!(
+        queued.cause,
+        ConsentQueueCause::BudgetExhausted { bound: 2 }
+    );
+    let held = actuator
+        .pending()
+        .get(third_request.request)
+        .expect("the exhausted request remains held");
+    assert_eq!(held.rule(), "reads");
+    assert_eq!(
+        held.cause(),
+        ConsentQueueCause::BudgetExhausted { bound: 2 }
     );
     assert_eq!(actuator.budgets().remaining("reads", 2), 0);
 }
@@ -179,12 +193,21 @@ fn renewal_restores_the_bound_rather_than_extending_it() {
         actuator.decide(&asked("read"), Reversibility::Reversible),
         Outcome::Granted(_)
     ));
+    let exhausted = asked("read");
     assert!(matches!(
-        actuator.decide(&asked("read"), Reversibility::Reversible),
+        actuator.decide(&exhausted, Reversibility::Reversible),
         Outcome::Queued(_)
     ));
 
-    actuator.renew("reads");
+    let renewed = actuator
+        .renew(exhausted.request)
+        .expect("the exhausted request names the budget to renew");
+    assert_eq!(renewed.rule(), "reads");
+    assert_eq!(
+        renewed.cause(),
+        ConsentQueueCause::BudgetExhausted { bound: 1 }
+    );
+    assert!(!actuator.pending().holds(exhausted.request));
     let after = actuator.decide(&asked("read"), Reversibility::Reversible);
 
     assert_eq!(
@@ -220,7 +243,11 @@ fn a_held_request_lets_reversible_work_continue_while_the_irreversible_waits() {
 
     let outcome = actuator.decide(&request, Reversibility::Irreversible);
 
-    assert!(matches!(outcome, Outcome::Queued(_)));
+    let Outcome::Queued(queued) = outcome else {
+        panic!("the queue rule must pend its request");
+    };
+    assert_eq!(queued.rule, "pushes");
+    assert_eq!(queued.cause, ConsentQueueCause::Policy {});
     assert!(actuator.pending().holds(request.request));
     assert!(
         actuator.proceeds(request.request, Reversibility::Reversible),
@@ -230,6 +257,12 @@ fn a_held_request_lets_reversible_work_continue_while_the_irreversible_waits() {
         !actuator.proceeds(request.request, Reversibility::Irreversible),
         "an irreversible action has no undo, so it waits for the operator",
     );
+    let refused = actuator
+        .renew(request.request)
+        .expect_err("a policy queue is resolved directly rather than renewed");
+    assert_eq!(refused.reason, "consent::renewal-not-required");
+    assert_eq!(refused.witness.as_deref(), Some("pushes"));
+    assert!(actuator.pending().holds(request.request));
 
     let released = actuator.release(request.request).expect("held request");
 
@@ -332,12 +365,28 @@ fn a_queue_holds_each_request_under_its_own_identity() {
     let first = asked("git push");
     let second = asked("git push --force");
 
-    pending.hold(&first, Reversibility::Irreversible);
-    pending.hold(&second, Reversibility::Reversible);
+    pending.hold(
+        &first,
+        Reversibility::Irreversible,
+        "pushes".to_owned(),
+        ConsentQueueCause::Policy {},
+    );
+    pending.hold(
+        &second,
+        Reversibility::Reversible,
+        "writes".to_owned(),
+        ConsentQueueCause::BudgetExhausted { bound: 4 },
+    );
 
     assert_eq!(pending.len(), 2);
     assert!(pending.holds(first.request));
     assert!(pending.holds(second.request));
+    let held = pending.get(second.request).expect("second request is held");
+    assert_eq!(held.rule(), "writes");
+    assert_eq!(
+        held.cause(),
+        ConsentQueueCause::BudgetExhausted { bound: 4 }
+    );
     assert_eq!(
         pending.release(first.request).map(|held| held.lane()),
         Some(first.lane)
@@ -376,13 +425,17 @@ fn a_denial_refuses_loudly_and_a_grant_or_a_queue_does_not_refuse_at_all() {
         None,
         "a grant happened, so it cannot pretend to be a refusal",
     );
+    let posture = actuator.decide(&asked("anything else"), Reversibility::Reversible);
     assert_eq!(
-        actuator
-            .decide(&asked("anything else"), Reversibility::Reversible)
-            .refusal(),
+        posture.refusal(),
         None,
         "a queued request is not answered yet, so it is not a refusal either",
     );
+    let Outcome::Queued(queued) = posture else {
+        panic!("an unmatched request follows the queue posture");
+    };
+    assert_eq!(queued.rule, POSTURE);
+    assert_eq!(queued.cause, ConsentQueueCause::Policy {});
 }
 
 #[test]

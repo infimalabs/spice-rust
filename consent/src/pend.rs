@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use wire::CanonicalUuid;
-use wire::body::{ConsentAsked, ConsentQueued};
+use wire::body::{ConsentAsked, ConsentQueueCause, ConsentQueued};
 
 /// Whether the action a request covers can be taken back.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -18,6 +18,8 @@ pub struct Held {
     lane: CanonicalUuid,
     operation: String,
     reversibility: Reversibility,
+    rule: String,
+    cause: ConsentQueueCause,
 }
 
 impl Held {
@@ -38,6 +40,18 @@ impl Held {
     pub const fn reversibility(&self) -> Reversibility {
         self.reversibility
     }
+
+    /// Rule or posture that queued this request.
+    #[must_use]
+    pub fn rule(&self) -> &str {
+        &self.rule
+    }
+
+    /// Whether policy asked directly or a named budget requires renewal.
+    #[must_use]
+    pub const fn cause(&self) -> ConsentQueueCause {
+        self.cause
+    }
 }
 
 /// Requests pended to the operator, keyed by request identity.
@@ -57,19 +71,30 @@ impl Pending {
     }
 
     /// Hold this request for the operator and state the fact that says so.
-    pub fn hold(&mut self, asked: &ConsentAsked, reversibility: Reversibility) -> ConsentQueued {
+    pub fn hold(
+        &mut self,
+        asked: &ConsentAsked,
+        reversibility: Reversibility,
+        rule: String,
+        cause: ConsentQueueCause,
+    ) -> ConsentQueued {
+        let queued = ConsentQueued {
+            request: asked.request,
+            lane: asked.lane,
+            rule,
+            cause,
+        };
         self.held.insert(
             asked.request,
             Held {
                 lane: asked.lane,
                 operation: asked.operation.clone(),
                 reversibility,
+                rule: queued.rule.clone(),
+                cause,
             },
         );
-        ConsentQueued {
-            request: asked.request,
-            lane: asked.lane,
-        }
+        queued
     }
 
     /// Release a decided request, yielding what was held.
@@ -81,6 +106,12 @@ impl Pending {
     #[must_use]
     pub fn holds(&self, request: CanonicalUuid) -> bool {
         self.held.contains_key(&request)
+    }
+
+    /// The request held under this identity, if it is still pending.
+    #[must_use]
+    pub fn get(&self, request: CanonicalUuid) -> Option<&Held> {
+        self.held.get(&request)
     }
 
     /// Whether this request's action proceeds while requests are held.

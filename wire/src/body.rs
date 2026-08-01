@@ -356,13 +356,31 @@ pub struct ConsentDenied {
     pub rule: String,
 }
 
+/// Why a consent request pended to the operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum ConsentQueueCause {
+    /// The deciding rule or posture explicitly requires an operator answer.
+    Policy {},
+    /// The deciding rule spent its last admitted grant and requires renewal.
+    BudgetExhausted {
+        /// Grants the named rule admits between renewals.
+        bound: u32,
+    },
+}
+
 /// The request pended to the operator while reversible work could continue.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConsentQueued {
     /// Pending request.
     pub request: CanonicalUuid,
     /// Lane the request came from.
     pub lane: CanonicalUuid,
+    /// Rule or posture that queued it.
+    pub rule: String,
+    /// Whether policy asked directly or a named budget requires renewal.
+    pub cause: ConsentQueueCause,
 }
 
 /// A non-ACP lane's consent floor was recorded once for its occupancy.

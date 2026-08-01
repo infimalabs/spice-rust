@@ -20,7 +20,7 @@ pub use budget::{Budgets, Spend};
 pub use pend::{Held, Pending, Reversibility};
 pub use policy::{Answer, Authority, Decision, POSTURE, Policy, PolicyError, Rule};
 
-use wire::body::{ConsentAsked, ConsentDenied, ConsentGranted, ConsentQueued};
+use wire::body::{ConsentAsked, ConsentDenied, ConsentGranted, ConsentQueueCause, ConsentQueued};
 
 /// The one disposition a request received.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -100,7 +100,12 @@ impl Actuator {
                 lane: asked.lane,
                 rule,
             }),
-            Answer::Queue => Outcome::Queued(self.pending.hold(asked, reversibility)),
+            Answer::Queue => Outcome::Queued(self.pending.hold(
+                asked,
+                reversibility,
+                rule,
+                ConsentQueueCause::Policy {},
+            )),
             Answer::Allow => match decision.bound() {
                 None => Outcome::Granted(ConsentGranted {
                     request: asked.request,
@@ -115,7 +120,12 @@ impl Actuator {
                         rule,
                         budget: Some(remaining),
                     }),
-                    Spend::Exhausted => Outcome::Queued(self.pending.hold(asked, reversibility)),
+                    Spend::Exhausted => Outcome::Queued(self.pending.hold(
+                        asked,
+                        reversibility,
+                        rule,
+                        ConsentQueueCause::BudgetExhausted { bound },
+                    )),
                 },
             },
         }
@@ -145,9 +155,45 @@ impl Actuator {
         &self.pending
     }
 
-    /// Renew a rule's budget after an operator grants the renewal.
-    pub fn renew(&mut self, rule: &str) {
-        self.budgets.renew(rule);
+    /// Renew the budget named by one exact exhausted request and release it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a loud refusal when the request is not held or was queued by
+    /// policy rather than by an exhausted budget.
+    pub fn renew(&mut self, request: wire::CanonicalUuid) -> Result<Held, wire::Refusal> {
+        let Some(held) = self.pending.get(request) else {
+            return Err(wire::Refusal {
+                reason: "consent::request-not-held".to_owned(),
+                witness: Some(request.to_string()),
+                expected: Some("a held budget-exhausted request".to_owned()),
+                observed: Some("no held request".to_owned()),
+                remedy: "re-read the consent queue and renew a request that is still held"
+                    .to_owned(),
+            });
+        };
+        match held.cause() {
+            ConsentQueueCause::Policy {} => {
+                return Err(wire::Refusal {
+                    reason: "consent::renewal-not-required".to_owned(),
+                    witness: Some(held.rule().to_owned()),
+                    expected: Some("budget-exhausted queue".to_owned()),
+                    observed: Some("policy queue".to_owned()),
+                    remedy: format!(
+                        "decide request {request} directly; the `{}` rule did not exhaust a budget",
+                        held.rule()
+                    ),
+                });
+            }
+            ConsentQueueCause::BudgetExhausted { .. } => {}
+        }
+
+        let rule = held.rule().to_owned();
+        self.budgets.renew(&rule);
+        Ok(self
+            .pending
+            .release(request)
+            .expect("the inspected request remains held until this release"))
     }
 
     /// Release a held request once the operator has answered it.
