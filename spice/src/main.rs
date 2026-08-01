@@ -120,7 +120,7 @@ fn main() {
             install_command::Answer::Plan(outcome) => deliver(&outcome, form),
             install_command::Answer::Receipt(outcome) => deliver(&outcome, form),
         },
-        ["config"] => deliver(&config_command::run(leaf), form),
+        ["config"] => deliver_config(&config_command::run(leaf), form),
         ["lock"] => deliver(&lock_command::report(), form),
         ["lock", "run"] => match lock_command::run(leaf) {
             lock_command::RunResult::Child(status) => terminate_child(status),
@@ -581,6 +581,24 @@ fn deliver_with_code<B: serde::Serialize>(outcome: &Outcome<B>, form: Form, code
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn deliver_config(outcome: &Outcome<config_command::ConfigReport>, form: Form) -> ! {
+    if form == Form::Text
+        && let Outcome::Reply(reply) = outcome
+    {
+        match reply.body.text() {
+            Ok(document) => {
+                let mut stdout = io::stdout().lock();
+                let _ = stdout.write_all(&document);
+                let _ = stdout.flush();
+                terminate_code(REPLY_EXIT);
+            }
+            Err(error) => deliver_fault(render_fault(error.to_string()), Form::Text),
+        }
+    }
+    deliver(outcome, form)
+}
+
 /// Acquire one ambient bootstrap value before typed configuration crosses
 /// into the library graph.
 #[expect(
@@ -589,6 +607,17 @@ fn deliver_with_code<B: serde::Serialize>(outcome: &Outcome<B>, form: Form, code
 )]
 pub fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
     std::env::var_os(name)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn working_directory() -> Result<PathBuf, Outcome<()>> {
+    std::env::current_dir().map_err(|error| {
+        Outcome::Fault(Fault {
+            class: FaultClass::Environment,
+            reason: "environment::working-directory-unavailable".to_owned(),
+            detail: error.to_string(),
+        })
+    })
 }
 
 /// Terminate the process after the command result has returned to the binary

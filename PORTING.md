@@ -96,9 +96,12 @@ libraries do not count as landed command surfaces.
 
 The local command group retains the Python-first ownership boundary described
 above: plain `install` is a side-effect-free plan, and only an exact
-`--apply=<digest>` crosses its fixed authored mutation plan. Rust binaries,
-hook stages, and install records remain namespaced below `.spice/rust`; the
-plan does not replace the ambient command or active `core.hooksPath`.
+`--apply=<digest>` crosses its fixed authored mutation plan. Rust binaries and
+hook stages remain namespaced below worktree `.spice/rust`, while the install
+receipt lives below Git-common `.spice-rust`. The plan does not replace the
+ambient command or active `core.hooksPath`. Durable receipts at the retired
+`.spice/install` and `.spice/rust/install.json` locations are refused with
+their owning installer task named; they are never read as a fallback.
 
 `doctor`, `version`, and `up` are executable but not yet usable against the
 current worktree state; the configuration and bootstrap tasks above own those
@@ -184,8 +187,8 @@ the registry exposes them even though argparse requires a child action.
 - `config judge`: tracked `taste` policy; `POLICY-1kJQlFB6`.
 - `config personality`: typed `config` and vendor launch; `LOCAL-1kJQlG6b`.
 - `config say`: typed canvas speech; `SPEECH-1kJQnmkd`.
-- `config set`: landed `config` refuses writes until a digest-bound mutation
-  contract is admitted.
+- `config set`: landed typed machine-local writes with atomic replacement and
+  digest receipts; tracked task and policy authority remains read-only.
 - `config show`: landed Rust `config`.
 - `config system`: landed typed `config` provenance.
 - `config trust`: namespace; Rust `trust`; `POLICY-1kJQlFB6`.
