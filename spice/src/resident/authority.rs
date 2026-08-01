@@ -326,6 +326,20 @@ fn dispatch_trust_rule(
     command: &wire::AdmittedCommand,
     reference: &TrustRef,
 ) -> Outcome<CommandAnswer> {
+    dispatch_trust_rule_with(bus, repository, epoch, command, reference, || {})
+}
+
+fn dispatch_trust_rule_with<F>(
+    bus: &Bus,
+    repository: &Repository,
+    epoch: CanonicalUuid,
+    command: &wire::AdmittedCommand,
+    reference: &TrustRef,
+    before_commit: F,
+) -> Outcome<CommandAnswer>
+where
+    F: FnOnce(),
+{
     let plan = match prepare_trust_rule(bus, repository, epoch, command, reference) {
         Ok(plan) => plan,
         Err(outcome) => return outcome,
@@ -334,6 +348,8 @@ fn dispatch_trust_rule(
         Ok(proposed) => proposed,
         Err(outcome) => return outcome,
     };
+    // Commit evaluates the generation guard after this deterministic race seam.
+    before_commit();
     commit_trust_rule(bus, proposal, answer)
 }
 
@@ -505,11 +521,7 @@ fn guard_trust_rule(
     let guarded_digest = reference.digest.clone();
     let from = plan.from;
     proposal.guard(JournalGuard::new(move |read| {
-        let current = crate::trust_command::Surface::load(&guarded_repository)
-            .map_err(|_| GuardError::refused("trust::surface-moved"))?;
-        if current != guarded_surface {
-            return Err(GuardError::refused("trust::surface-moved"));
-        }
+        require_current_surface(&guarded_repository, &guarded_surface)?;
         let current = read
             .trust_head(&guarded_digest)?
             .ok_or_else(|| GuardError::refused("trust::digest-unknown"))?;
