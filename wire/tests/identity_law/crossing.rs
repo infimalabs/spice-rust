@@ -39,6 +39,7 @@ fn every_crossing_type_obeys_the_identity_law() {
     let mut covered = BTreeSet::new();
 
     cover_spellings(&mut covered);
+    cover_config_scalars(&mut covered);
     cover_journal_frames(&mut covered);
     cover_task_heads(&mut covered);
     cover_claim_heads(&mut covered);
@@ -53,6 +54,42 @@ fn every_crossing_type_obeys_the_identity_law() {
     cover_vocabularies(&mut covered);
 
     assert_coverage_is_complete(&covered);
+}
+
+/// Shared configuration words and the typed provenance surrounding them.
+fn cover_config_scalars(covered: &mut BTreeSet<String>) {
+    spelling_law(
+        covered,
+        "DurationWord",
+        &[
+            "0s".parse::<DurationWord>().expect("duration word"),
+            "00s".parse::<DurationWord>().expect("duration word"),
+            "15m".parse::<DurationWord>().expect("duration word"),
+            format!("{}s", u64::MAX)
+                .parse::<DurationWord>()
+                .expect("maximum duration word"),
+        ],
+    );
+
+    law(
+        covered,
+        "Provenance",
+        &[
+            Provenance::<DurationWord>::Builtin {},
+            Provenance::Tracked { builtin: None },
+            Provenance::Tracked {
+                builtin: Some("5m".parse().expect("duration word")),
+            },
+            Provenance::Local { builtin: None },
+            Provenance::Local {
+                builtin: Some("10m".parse().expect("duration word")),
+            },
+            Provenance::Flag { builtin: None },
+            Provenance::Flag {
+                builtin: Some("15m".parse().expect("duration word")),
+            },
+        ],
+    );
 }
 
 /// The spelling newtypes.

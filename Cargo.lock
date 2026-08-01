@@ -1595,6 +1595,7 @@ dependencies = [
  "serde_json",
  "syn 3.0.3",
  "thiserror",
+ "toml",
  "uuid",
 ]
 
