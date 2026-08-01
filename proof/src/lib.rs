@@ -13,6 +13,7 @@ pub mod container;
 pub mod environment;
 pub mod evidence;
 pub mod layout;
+pub mod manifest;
 pub mod native;
 pub mod payload;
 pub mod rederive;
@@ -24,6 +25,10 @@ pub use container::{Container, ContainerError, Limits, OciRuntime};
 pub use environment::{EnvironmentError, SealedEnvironment, UnsupportedHost, compiled_target};
 pub use evidence::{EvidenceError, EvidencePublishError, VerifiedEvidence, publish, verify};
 pub use layout::{Input, InputError, Layout, LayoutError, ReceiptInput};
+pub use manifest::{
+    FileManifestPublisher, ManifestError, ManifestInput, ManifestPublishError, ManifestPublisher,
+    PublishedManifest, publish_manifest,
+};
 pub use native::{NativeError, NativeRunner};
 pub use payload::{AdmittedPayload, PayloadError, admit};
 pub use rederive::{RederiveError, rederive};
