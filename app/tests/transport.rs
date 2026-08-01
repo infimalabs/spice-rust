@@ -10,7 +10,7 @@
 //! locally declared body would have let this suite pass against a kind no
 //! producer mints.
 
-use app::{Admitted, Applied, BrowserState, Session};
+use app::{Admitted, Applied, BrowserState, ChainEnd, Session};
 use serde::{Deserialize, Serialize};
 use wire::{CanonicalUuid, Envelope, Fact, FaultClass, Overflow, Packed, Seq, WireVersion, body};
 
@@ -48,7 +48,8 @@ struct Row(&'static str);
 ///
 /// `at` is written at the one admitted resolution rather than built from a
 /// clock, so this fixture is stable and carries no ambient time.
-fn envelope_bytes(version: u32, seq: u64) -> Vec<u8> {
+fn envelope_bytes_with_cause(version: u32, seq: u64, cause: Option<u64>) -> Vec<u8> {
+    let cause = cause.map_or_else(String::new, |cause| format!("  \"cause\": {cause},\n"));
     format!(
         r#"{{
   "v": {version},
@@ -56,11 +57,15 @@ fn envelope_bytes(version: u32, seq: u64) -> Vec<u8> {
   "at": "2030-04-12T18:44:09.271Z",
   "actor": "lane:018f82d4-6f59-7d06-92e3-bce9131163c2",
   "origin": "task:SPICE-aBcD",
-  "cause": 48190,
-  "fact": {{ "kind": "task::phased", "task": "SPICE-aBcD", "phase": "verify" }}
+{cause}  "fact": {{ "kind": "task::phased", "task": "SPICE-aBcD", "phase": "verify" }}
 }}"#
     )
     .into_bytes()
+}
+
+/// One non-root envelope document, preserving the original fixture shape.
+fn envelope_bytes(version: u32, seq: u64) -> Vec<u8> {
+    envelope_bytes_with_cause(version, seq, Some(48190))
 }
 
 /// One streamed fact at `seq`, admitted the way state must receive it.
@@ -68,6 +73,13 @@ fn envelope(seq: u64) -> Admitted<Envelope<Fact<body::TaskPhased>>> {
     session()
         .admit_envelope(&envelope_bytes(1, seq))
         .expect("fixture envelope is admitted")
+}
+
+/// One streamed fact whose immediate cause is explicit or omitted at a root.
+fn causal_envelope(seq: u64, cause: Option<u64>) -> Admitted<Envelope<Fact<body::TaskPhased>>> {
+    session()
+        .admit_envelope(&envelope_bytes_with_cause(1, seq, cause))
+        .expect("causal fixture envelope is admitted")
 }
 
 /// One committed reply document at `version`, answering `epoch`.
@@ -304,6 +316,82 @@ fn a_gap_advances_without_being_repaired() {
 }
 
 #[test]
+fn a_chain_walk_ends_at_the_received_envelope_that_omits_cause() {
+    let mut state = BrowserState::<Row>::new(uuid(EPOCH));
+    state.apply(&causal_envelope(48190, None));
+    state.apply(&causal_envelope(48213, Some(48190)));
+    state.apply(&causal_envelope(48214, Some(48213)));
+
+    let walk = state.walk(seq(48214));
+
+    assert_eq!(
+        walk.links()
+            .iter()
+            .map(app::CausalLink::seq)
+            .collect::<Vec<_>>(),
+        vec![seq(48214), seq(48213), seq(48190)]
+    );
+    assert_eq!(walk.end(), ChainEnd::Root);
+    assert_eq!(walk.links().last().and_then(app::CausalLink::cause), None);
+    assert!(
+        walk.links()
+            .iter()
+            .all(|link| link.origin().to_string() == "task:SPICE-aBcD")
+    );
+}
+
+#[test]
+fn a_dangling_cause_is_reported_without_inventing_its_position() {
+    let mut state = BrowserState::<Row>::new(uuid(EPOCH));
+    state.apply(&causal_envelope(48214, Some(48213)));
+
+    let walk = state.walk(seq(48214));
+    let unseen = state.walk(seq(48999));
+
+    assert_eq!(
+        walk.links()
+            .iter()
+            .map(app::CausalLink::seq)
+            .collect::<Vec<_>>(),
+        vec![seq(48214)]
+    );
+    assert_eq!(walk.end(), ChainEnd::Dangling(seq(48213)));
+    assert!(unseen.links().is_empty());
+    assert_eq!(unseen.end(), ChainEnd::Dangling(seq(48999)));
+}
+
+#[test]
+fn a_cause_cycle_is_reported_after_each_received_link_once() {
+    let mut state = BrowserState::<Row>::new(uuid(EPOCH));
+    state.apply(&causal_envelope(48213, Some(48214)));
+    state.apply(&causal_envelope(48214, Some(48213)));
+
+    let walk = state.walk(seq(48214));
+
+    assert_eq!(
+        walk.links()
+            .iter()
+            .map(app::CausalLink::seq)
+            .collect::<Vec<_>>(),
+        vec![seq(48214), seq(48213)]
+    );
+    assert_eq!(walk.end(), ChainEnd::Cycle(seq(48214)));
+}
+
+#[test]
+fn a_received_stale_frame_can_complete_a_previously_dangling_walk() {
+    let mut state = BrowserState::<Row>::new(uuid(EPOCH));
+    state.apply(&causal_envelope(48214, Some(48213)));
+    assert_eq!(state.walk(seq(48214)).end(), ChainEnd::Dangling(seq(48213)));
+
+    assert_eq!(state.apply(&causal_envelope(48213, None)), Applied::Stale);
+
+    let completed = state.walk(seq(48214));
+    assert_eq!(completed.end(), ChainEnd::Root);
+    assert_eq!(state.cursor(), Some(seq(48214)));
+}
+
+#[test]
 fn a_later_answer_replaces_the_earlier_one_whole() {
     let mut state = BrowserState::new(uuid(EPOCH));
     state.replace(Packed {
@@ -383,6 +471,8 @@ fn reconnecting_to_a_new_generation_starts_empty() {
     assert_eq!(state.cursor(), None);
     assert_eq!(state.horizon(), None);
     assert!(state.rows().is_empty());
+    assert!(state.walk(seq(48213)).links().is_empty());
+    assert_eq!(state.walk(seq(48213)).end(), ChainEnd::Dangling(seq(48213)));
 }
 
 #[test]

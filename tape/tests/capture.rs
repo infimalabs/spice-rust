@@ -241,21 +241,105 @@ fn the_index_round_trips_through_its_byte_stable_form() {
     );
 }
 
+/// The accept half of "parse admits exactly what render emits".
+///
+/// The refusal fixture below is the other half. Together they pin the index to
+/// one spelling: these forms parse and render back to the identical bytes, and
+/// every departure from them named below is refused rather than repaired.
+#[test]
+fn every_rendered_index_is_admitted_and_renders_back_unchanged() {
+    for (sealed, text) in [
+        (0, "tape 1\n"),
+        (1, "tape 1\nmember 000000000001 3\n"),
+        (
+            3,
+            "tape 1\nmember 000000000001 1\nmember 000000000002 65535\nmember 000000000003 12\n",
+        ),
+    ] {
+        let index = Index::parse(text).expect("a rendered index is admitted");
+        assert_eq!(
+            index.members().len(),
+            sealed,
+            "{text:?} named other members"
+        );
+        assert_eq!(index.render(), text, "{text:?} has a second spelling");
+        assert_eq!(
+            index.next_member(),
+            sealed as u64 + 1,
+            "{text:?} appends to the wrong member",
+        );
+    }
+}
+
 #[test]
 fn an_index_that_is_not_the_current_form_is_refused_by_line() {
-    for broken in [
-        "",
-        "tape 2\n",
-        "tape 1\nmember 1 5\n",
-        "tape 1\nmember 000000000001\n",
-        "tape 1\nmember 000000000001 five\n",
-        "tape 1\nmember 000000000002 5\nmember 000000000001 5\n",
-        "tape 1\nmembers 000000000001 5\n",
+    for (law, broken) in [
+        ("text naming no format at all", ""),
+        ("a format this build does not write", "tape 2\n"),
+        ("a carriage return the renderer never emits", "tape 1\r\n"),
+        // A terminal newline is what distinguishes a whole index from one
+        // truncated mid-write. `str::lines` yields identical segments either
+        // way, so accepting both would accept a partial file as current.
+        ("a format line with no terminal newline", "tape 1"),
+        (
+            "a member line with no terminal newline",
+            "tape 1\nmember 000000000001 5",
+        ),
+        ("a misspelled keyword", "tape 1\nmembers 000000000001 5\n"),
+        ("a blank line between members", "tape 1\n\n"),
+        ("a member number that is not padded", "tape 1\nmember 1 5\n"),
+        (
+            "a member number padded to another width",
+            "tape 1\nmember 0000000000001 5\n",
+        ),
+        (
+            "a member line carrying no length",
+            "tape 1\nmember 000000000001\n",
+        ),
+        (
+            "a length that is not a number",
+            "tape 1\nmember 000000000001 five\n",
+        ),
+        // Rendered lengths are plain decimals, so a leading zero is a second
+        // spelling of a number that already has one.
+        (
+            "a length spelled with a leading zero",
+            "tape 1\nmember 000000000001 05\n",
+        ),
+        (
+            "text trailing the length",
+            "tape 1\nmember 000000000001 5 5\n",
+        ),
+        // An empty member seals as `Seal::Empty` and is never named, so a
+        // sealed member of no bytes is a member that never existed.
+        (
+            "a sealed member holding no bytes",
+            "tape 1\nmember 000000000001 0\n",
+        ),
+        // Members are numbered from one and sealed one after another, so the
+        // run is contiguous and a locus can name every member it lists.
+        ("member zero", "tape 1\nmember 000000000000 5\n"),
+        (
+            "a run starting past member one",
+            "tape 1\nmember 000000000002 5\n",
+        ),
+        (
+            "a gap in the run",
+            "tape 1\nmember 000000000001 5\nmember 000000000003 5\n",
+        ),
+        (
+            "one member given two lengths",
+            "tape 1\nmember 000000000001 5\nmember 000000000001 6\n",
+        ),
+        (
+            "members out of order",
+            "tape 1\nmember 000000000002 5\nmember 000000000001 5\n",
+        ),
     ] {
-        let error = Index::parse(broken).expect_err("a non-current index is refused");
+        let error = Index::parse(broken).expect_err(law);
         assert!(
             matches!(error.refusal(), Some(Refusal::MalformedIndex { .. })),
-            "{broken:?} produced {error}"
+            "{law}: {broken:?} produced {error}",
         );
     }
 }

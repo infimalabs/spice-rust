@@ -236,7 +236,7 @@ fn verify_fact_row(row: &FactRow, violations: &mut Vec<Violation>) {
         && envelope.actor.to_string() == row.actor
         && envelope.origin.as_str() == row.origin
         && envelope.cause.map(wire::Seq::get) == cause
-        && envelope.fact.kind.as_str() == row.kind;
+        && envelope.fact.kind().as_str() == row.kind;
     if !envelope.v.is_current() || !agreed {
         violations.push(Violation::new(
             ViolationClass::Envelope,
@@ -415,7 +415,7 @@ fn verify_heads(
         "trust_heads",
         violations,
         |key, _seq, head| {
-            (head.digest == key)
+            (head.digest.as_str() == key)
                 .then_some(())
                 .ok_or_else(|| "trust digest disagrees with the row".to_owned())
         },

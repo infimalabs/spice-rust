@@ -14,7 +14,7 @@ use wire::Digest;
 
 use crate::jurisdiction::{Jurisdiction, WalkError};
 use crate::measure::{Bounds, MeasureError, Measurement, Policy, measurement_digest};
-use crate::ratchet::{Baseline, Finding};
+use crate::ratchet::{Finding, Ratchet};
 
 /// Whether a run passed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,7 +23,7 @@ pub enum Standing {
     /// Every metric held, shrank, or is newly declared.
     Clean,
     /// At least one metric regressed or lost the declaration behind its
-    /// ceiling.
+    /// baseline.
     Refused,
 }
 
@@ -82,7 +82,7 @@ pub struct Run {
 }
 
 impl Run {
-    /// Walk a foreign repository, measure it, and judge it against a baseline.
+    /// Walk a foreign repository, measure it, and judge it against a ratchet.
     ///
     /// # Errors
     ///
@@ -92,7 +92,7 @@ impl Run {
     pub fn adjudicate(
         policy: &Policy,
         root: &Path,
-        baseline: &Baseline,
+        ratchet: &Ratchet,
         bounds: &Bounds,
     ) -> Result<Self, RunError> {
         let jurisdiction = Jurisdiction::walk(root, policy.ignore()).map_err(RunError::Walk)?;
@@ -100,7 +100,7 @@ impl Run {
             .measure(&jurisdiction, bounds)
             .map_err(RunError::Measure)?;
 
-        let findings = baseline.compare(&measurements);
+        let findings = ratchet.compare(&measurements);
         let standing = if findings.iter().all(|finding| finding.movement.passes()) {
             Standing::Clean
         } else {
@@ -141,16 +141,16 @@ impl Run {
         &self.verdict
     }
 
-    /// The baseline this run earns, absent when the run was refused.
+    /// The ratchet this run earns, absent when the run was refused.
     ///
-    /// A refused run earns nothing. Letting one tighten would take the ceiling
+    /// A refused run earns nothing. Letting one tighten would take the baseline
     /// of every metric that behaved and hand it to a tree that has already
     /// failed, which is how a regression buys itself a lower bar somewhere
     /// else.
     #[must_use]
-    pub fn earned(&self, baseline: &Baseline) -> Option<Baseline> {
+    pub fn earned(&self, ratchet: &Ratchet) -> Option<Ratchet> {
         match self.verdict.standing {
-            Standing::Clean => Some(baseline.tighten(&self.measurements)),
+            Standing::Clean => Some(ratchet.tighten(&self.measurements)),
             Standing::Refused => None,
         }
     }

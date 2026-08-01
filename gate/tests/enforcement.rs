@@ -12,7 +12,7 @@ use std::time::Duration;
 use gate::jurisdiction::{Admission, Shape};
 use gate::measure::{Bounds, MeasureError, Measurement};
 use gate::ratchet::{Malady, Movement};
-use gate::{Baseline, Ignore, Jurisdiction, Metric, Parser, Policy, Run, Standing, Verdict};
+use gate::{Ignore, Jurisdiction, Metric, Parser, Policy, Ratchet, Run, Standing, Verdict};
 use sill::Deadlines;
 
 /// A line counter written entirely in shell builtins.
@@ -96,8 +96,8 @@ fn policy(ignore: &str) -> Policy {
     .expect("declare a policy")
 }
 
-fn baseline(text: &str) -> Baseline {
-    Baseline::parse(text).expect("parse the fixture baseline")
+fn ratchet(text: &str) -> Ratchet {
+    Ratchet::parse(text).expect("parse the fixture ratchet")
 }
 
 #[test]
@@ -210,18 +210,18 @@ fn a_clean_run_earns_a_tighter_baseline_and_a_regression_earns_nothing() {
     tree.write("src/lib.rs", "one\ntwo\nthree\n");
 
     let policy = policy("/target/\n");
-    let held = baseline("rust.lines 3\n");
+    let held = ratchet("rust.lines 3\n");
     let run = Run::adjudicate(&policy, &tree.root, &held, &bounds()).expect("adjudicate");
 
     assert_eq!(run.verdict().standing, Standing::Clean);
     assert_eq!(run.measurements()[0].value(), 3);
     assert_eq!(
         run.verdict().findings[0].movement,
-        Movement::Held { ceiling: 3 }
+        Movement::Held { baseline: 3 }
     );
     assert_eq!(
         run.earned(&held)
-            .expect("a clean run earns a baseline")
+            .expect("a clean run earns a ratchet")
             .render(),
         "rust.lines 3\n"
     );
@@ -233,29 +233,29 @@ fn a_clean_run_earns_a_tighter_baseline_and_a_regression_earns_nothing() {
     assert_eq!(
         regressed.verdict().findings[0].movement,
         Movement::Regressed {
-            ceiling: 3,
+            baseline: 3,
             measured: 4
         }
     );
     assert!(
         regressed.earned(&held).is_none(),
-        "a refused run must not hand a lower ceiling to a tree that failed"
+        "a refused run must not hand a lower baseline to a tree that failed"
     );
 }
 
 #[test]
-fn an_improvement_lowers_the_ceiling_and_no_run_ever_raises_one() {
+fn an_improvement_lowers_the_baseline_and_no_run_ever_raises_one() {
     let tree = Tree::new("improved");
     tree.write("src/lib.rs", "one\n");
 
-    let held = baseline("rust.lines 9\n");
+    let held = ratchet("rust.lines 9\n");
     let run = Run::adjudicate(&policy(""), &tree.root, &held, &bounds()).expect("adjudicate");
 
     assert_eq!(run.verdict().standing, Standing::Clean);
     assert_eq!(
         run.verdict().findings[0].movement,
         Movement::Shrank {
-            ceiling: 9,
+            baseline: 9,
             measured: 1
         }
     );
@@ -268,36 +268,36 @@ fn an_improvement_lowers_the_ceiling_and_no_run_ever_raises_one() {
     // one this fixture happened to walk into. Both sides are varied, because a
     // sweep that holds the measurement still would pass just as happily against
     // a `tighten` that took whatever it was handed.
-    for ceiling in 0..12_u64 {
-        let committed = baseline(&format!("rust.lines {ceiling}\n"));
+    for baseline in 0..12_u64 {
+        let committed = ratchet(&format!("rust.lines {baseline}\n"));
         for measured in 0..12_u64 {
             let taken = [Measurement::new("rust.lines", measured, ["src/lib.rs"])];
-            let earned = committed.tighten(&taken).ceiling("rust.lines");
+            let earned = committed.tighten(&taken).baseline("rust.lines");
             assert_eq!(
                 earned,
-                Some(ceiling.min(measured)),
-                "tightening {ceiling} against {measured} did not take the lower"
+                Some(baseline.min(measured)),
+                "tightening {baseline} against {measured} did not take the lower"
             );
         }
     }
 }
 
 #[test]
-fn a_ceiling_whose_metric_stopped_being_declared_refuses_rather_than_evaporating() {
+fn a_baseline_whose_metric_stopped_being_declared_refuses_rather_than_evaporating() {
     let tree = Tree::new("retired");
     tree.write("src/lib.rs", "one\n");
 
-    let held = baseline("rust.lines 4\nrust.unsafe 0\n");
+    let held = ratchet("rust.lines 4\nrust.unsafe 0\n");
     let run = Run::adjudicate(&policy(""), &tree.root, &held, &bounds()).expect("adjudicate");
 
     assert_eq!(
         run.verdict().standing,
         Standing::Refused,
-        "a ceiling nothing measures has risen to infinity in all but spelling"
+        "a baseline nothing measures has risen to infinity in all but spelling"
     );
     assert_eq!(
         run.verdict().findings[1].movement,
-        Movement::Retired { ceiling: 0 }
+        Movement::Retired { baseline: 0 }
     );
     assert!(run.earned(&held).is_none());
 }
@@ -311,11 +311,11 @@ fn a_malformed_baseline_is_refused_by_line_and_never_half_read() {
         ("a 1\na 2\n", 2, Malady::Duplicate),
         ("b 1\na 2\n", 2, Malady::Unsorted),
     ] {
-        let refused = Baseline::parse(text).expect_err("a malformed baseline is refused");
+        let refused = Ratchet::parse(text).expect_err("a malformed ratchet is refused");
         assert_eq!((refused.number(), refused.malady()), (number, malady));
     }
 
-    let read = baseline("a 1\nb 2\n");
+    let read = ratchet("a 1\nb 2\n");
     assert_eq!(read.render(), "a 1\nb 2\n", "one baseline, one spelling");
 }
 
@@ -324,7 +324,7 @@ fn a_receipt_moves_when_any_one_of_its_four_inputs_moves() {
     let tree = Tree::new("receipt");
     tree.write("src/lib.rs", "one\ntwo\n");
 
-    let held = baseline("rust.lines 2\n");
+    let held = ratchet("rust.lines 2\n");
     let first = Run::adjudicate(&policy(""), &tree.root, &held, &bounds()).expect("adjudicate");
     let original = first.verdict().clone();
 
@@ -364,7 +364,7 @@ fn a_published_receipt_survives_a_round_trip_and_an_interrupted_successor() {
     tree.write("src/lib.rs", "one\n");
     let receipt = tree.path("verdict.json");
 
-    let held = baseline("rust.lines 1\n");
+    let held = ratchet("rust.lines 1\n");
     let run = Run::adjudicate(&policy(""), &tree.root, &held, &bounds()).expect("adjudicate");
     run.verdict()
         .publish(&receipt)
@@ -483,7 +483,7 @@ fn a_policy_renders_every_declaration_doctrine_names() {
 
     assert!(
         Policy::new(policy("").ignore().clone(), [line_metric(), line_metric()]).is_err(),
-        "two metrics under one name would make a baseline line ambiguous"
+        "two metrics under one name would make a ratchet line ambiguous"
     );
 }
 

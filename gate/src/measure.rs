@@ -33,7 +33,7 @@ impl Parser {
     /// long that may be. The cap is declared here so a jurisdiction that
     /// outgrows it is refused by name rather than by a spawn failure whose
     /// message is about the kernel instead of about the metric.
-    pub const FILE_CEILING: usize = 4096;
+    pub const FILE_LIMIT: usize = 4096;
 
     /// Declare a parser.
     ///
@@ -223,7 +223,7 @@ impl Metric {
         bounds: &Bounds,
     ) -> Result<Measurement, MeasureError> {
         let files = self.selection(jurisdiction);
-        if files.len() > Parser::FILE_CEILING {
+        if files.len() > Parser::FILE_LIMIT {
             return Err(MeasureError::TooManyFiles {
                 metric: self.name.clone(),
                 files: files.len(),
@@ -439,7 +439,7 @@ impl Policy {
     /// # Errors
     ///
     /// Returns [`MetricError::DuplicateName`] when two metrics share a name,
-    /// which would make a baseline line ambiguous.
+    /// which would make a ratchet line ambiguous.
     pub fn new(
         ignore: Ignore,
         metrics: impl IntoIterator<Item = Metric>,
@@ -616,7 +616,7 @@ impl fmt::Display for MeasureError {
             Self::TooManyFiles { metric, files } => write!(
                 formatter,
                 "{metric} selected {files} files, past the {} one invocation may name",
-                Parser::FILE_CEILING
+                Parser::FILE_LIMIT
             ),
             Self::Spec { metric, source } => write!(formatter, "{metric} parser spec: {source}"),
             Self::Spawn { metric, source } => write!(formatter, "{metric} parser spawn: {source}"),

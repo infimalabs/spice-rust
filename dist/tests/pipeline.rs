@@ -7,8 +7,8 @@ use dist::{
     BuildError, Builder, PinError, PinName, Pipeline, PublishError, Publisher, RequiredPins,
     StageError,
 };
-use wire::Digest;
 use wire::manifest::{BuildPins, ReleaseTarget, TargetPayload};
+use wire::{Digest, Domain};
 
 const OLD_PAYLOAD: &[u8] = b"old-payload";
 
@@ -181,6 +181,49 @@ fn target_payload_pointers_and_native_identities_do_not_alias() {
         darwin.staged.payload.embedded_app,
         linux.staged.payload.embedded_app
     );
+}
+
+/// Digests already published under a domain tag have to keep meaning what they
+/// meant, so the four classes are pinned here at their exact spellings rather
+/// than merely compared against each other. A test that only checked the four
+/// differ would pass just as happily if every one of them changed together,
+/// which is precisely what re-tagging or re-framing the hash input would do.
+#[test]
+fn every_domain_digest_is_frozen_at_its_published_spelling() {
+    let required = pins();
+    let pipeline = Pipeline::new(RequiredPins::new(required.clone()).expect("pins are valid"));
+    let run = run_stage(&pipeline, &required, ReleaseTarget::Aarch64AppleDarwin);
+    let payload = &run.staged.payload;
+
+    for (class, computed, frozen) in [
+        (
+            Domain::TargetPayload,
+            &run.staged.payload_digest,
+            "5ee967e0354678e62a3a659a1a30ed03dbc1cc29471137325de51b5d79fd0222",
+        ),
+        (
+            Domain::Artifact,
+            &payload.app,
+            "5e76593b47a13fefa0febcf111adc0eae5529e489946c120cd2a65f0122c349a",
+        ),
+        (
+            Domain::Pins,
+            &payload.pins_digest,
+            "68678864490d2f47da44311d8b97bf9a0d73919388417296f20c7f4e703bba4d",
+        ),
+        (
+            Domain::Inventory,
+            &payload.inventory_digest,
+            "63123aa2330474002ad2693b421dea9378c2d34246dfacac54d9f0756bcaf91d",
+        ),
+    ] {
+        assert_eq!(
+            computed.as_str(),
+            frozen,
+            "{} no longer digests to the spelling it published",
+            class.tag(),
+        );
+    }
 }
 
 #[test]

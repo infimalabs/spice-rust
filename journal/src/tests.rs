@@ -3,10 +3,11 @@ use std::collections::BTreeSet;
 use rusqlite::{Connection, params};
 use serde_json::json;
 use wire::{
-    Actor, AnyFact, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind, Envelope,
-    FactKind, FindingHead, FindingState, Instant, LaneResidency, LeaseHead, Origin, Outcome, Phase,
-    Reply, ReplyPosition, ResidencyHead, ResidentState, Response, Seq, SeqRange, TaskHandle,
-    TaskHead, TrustHead, TrustState, WireVersion, Witness, WitnessClass, WitnessHead, WorkflowHead,
+    Actor, AnyFact, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind, Digest,
+    Envelope, FactKind, FindingHead, FindingState, Instant, LaneResidency, LeaseHead, Origin,
+    Outcome, Phase, Reply, ReplyPosition, ResidencyHead, ResidentState, Response, Seq, SeqRange,
+    TaskHandle, TaskHead, TrustHead, TrustState, WireVersion, Witness, WitnessClass, WitnessHead,
+    WorkflowHead,
 };
 
 use crate::{Journal, MigrationError, OpenError, SCHEMA_VERSION, ViolationClass};
@@ -85,6 +86,58 @@ fn unknown_states_and_occupied_databases_are_refused_by_name() {
 }
 
 #[test]
+fn malformed_schema_identity_is_refused_by_name() {
+    let duplicate = schema_fixture(1, "finalized", None, None, None);
+    duplicate
+        .execute(
+            "INSERT INTO journal_schema(singleton, version, state) VALUES (2, 1, 'finalized')",
+            [],
+        )
+        .expect("insert duplicate schema row");
+    let error = Journal::from_connection(duplicate).expect_err("two schema rows refuse open");
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::SchemaRowCount { count: 2 })
+    ));
+    assert!(error.to_string().contains("exactly one row, found 2"));
+
+    let missing = schema_fixture(1, "finalized", None, None, None);
+    missing
+        .execute("UPDATE journal_schema SET singleton = 2", [])
+        .expect("move schema row away from singleton one");
+    let error = Journal::from_connection(missing).expect_err("missing singleton refuses open");
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::MissingSingleton)
+    ));
+    assert!(error.to_string().contains("singleton row 1 is missing"));
+
+    let unknown = schema_fixture(0, "finalized", None, None, None);
+    let error = Journal::from_connection(unknown).expect_err("unknown version refuses open");
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::UnknownVersion { found: 0 })
+    ));
+    assert!(error.to_string().contains("schema 0 has no migration path"));
+
+    let disagreement = schema_fixture(1, "finalized", None, None, None);
+    disagreement
+        .pragma_update(None, "user_version", 0)
+        .expect("make pragma disagree with schema row");
+    let error =
+        Journal::from_connection(disagreement).expect_err("version disagreement refuses open");
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::VersionDisagreement { row: 1, pragma: 0 })
+    ));
+    assert!(
+        error
+            .to_string()
+            .contains("row names version 1, but SQLite user_version names 0")
+    );
+}
+
+#[test]
 fn coherent_authority_verifies_every_required_plane() {
     let journal = authority_fixture();
 
@@ -93,6 +146,17 @@ fn coherent_authority_verifies_every_required_plane() {
     assert_eq!(verified.threads, 2);
     assert_eq!(verified.receipts, 1);
     assert_eq!(verified.heads, 8);
+}
+
+#[test]
+fn fact_snapshot_reads_the_canonical_authority_stream() {
+    let journal = authority_fixture();
+    let snapshot = journal.fact_snapshot().expect("fact snapshot");
+
+    assert_eq!(snapshot.facts().len(), 2);
+    assert_eq!(snapshot.horizon(), Some(Seq::new(2).expect("horizon")));
+    assert_eq!(snapshot.facts()[0].fact.kind(), FactKind::TaskAdded);
+    assert_eq!(snapshot.facts()[1].fact.kind(), FactKind::TaskPhased);
 }
 
 #[test]
@@ -125,9 +189,20 @@ fn verify_names_envelope_head_receipt_cursor_and_thread_defects() {
 
 #[test]
 fn verify_names_schema_and_sequence_defects() {
-    let classes = refused_classes(&structure_defect_fixture());
-    assert!(classes.contains(&ViolationClass::Schema));
-    assert!(classes.contains(&ViolationClass::Sequence));
+    let violations = refused_violations(&structure_defect_fixture());
+    let sequence = violations
+        .iter()
+        .find(|violation| violation.class == ViolationClass::Sequence)
+        .expect("sequence plane names the history gap");
+    assert_eq!(sequence.subject, "4");
+    assert!(sequence.detail.contains("expected contiguous seq 3"));
+
+    let schema = violations
+        .iter()
+        .find(|violation| violation.class == ViolationClass::Schema)
+        .expect("schema plane names the unresolved foreign key");
+    assert!(schema.subject.contains("thread_index"));
+    assert!(schema.detail.contains("fact_envelopes"));
 }
 
 #[test]
@@ -173,13 +248,18 @@ fn plane_fixture(class: ViolationClass) -> &'static str {
 }
 
 fn refused_classes(journal: &Journal) -> BTreeSet<ViolationClass> {
+    refused_violations(journal)
+        .into_iter()
+        .map(|violation| violation.class)
+        .collect()
+}
+
+fn refused_violations(journal: &Journal) -> Vec<crate::Violation> {
     journal
         .verify()
         .expect_err("a corrupt authority must fail verification")
         .violations()
-        .iter()
-        .map(|violation| violation.class)
-        .collect()
+        .to_vec()
 }
 
 /// An authority whose rows decode but disagree with what they are stored under.
@@ -232,7 +312,12 @@ fn structure_defect_fixture() -> Journal {
     let journal = authority_fixture();
     insert_fact(
         &journal,
-        fact(4, None, FactKind::TaskNoted, json!({"task": "JOURNAL-a1"})),
+        fact(
+            4,
+            None,
+            FactKind::TaskNoted,
+            json!({"task": "JOURNAL-a1", "note": "Journal fixture note"}),
+        ),
     );
     journal
         .connection
@@ -301,7 +386,22 @@ fn authority_fixture() -> Journal {
     let journal = Journal::in_memory().expect("create authority fixture");
     insert_fact(
         &journal,
-        fact(1, None, FactKind::TaskAdded, json!({"task": "JOURNAL-a1"})),
+        fact(
+            1,
+            None,
+            FactKind::TaskAdded,
+            json!({
+                "task": "JOURNAL-a1",
+                "uuid": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+                "title": "Journal fixture",
+                "project": "task.journal",
+                "tags": [],
+                "depends": [],
+                "flow": ["todo", "review"],
+                "phase": "todo",
+                "revision": 1
+            }),
+        ),
     );
     insert_fact(
         &journal,
@@ -333,7 +433,7 @@ fn authority_fixture() -> Journal {
 
 fn insert_fact(journal: &Journal, envelope: Envelope<AnyFact>) {
     let bytes = wire::encode(&envelope).expect("encode fact fixture");
-    let kind = envelope.fact.kind.as_str();
+    let kind = envelope.fact.kind().as_str();
     let seq = i64::try_from(envelope.seq.get()).expect("fixture seq fits SQLite");
     let cause = envelope
         .cause
@@ -357,6 +457,13 @@ fn fact(
     kind: FactKind,
     body: serde_json::Value,
 ) -> Envelope<AnyFact> {
+    let mut fields = body.as_object().cloned().expect("a fact body is an object");
+    fields.insert(
+        "kind".to_owned(),
+        serde_json::to_value(kind).expect("a fact kind encodes"),
+    );
+    let bytes = serde_json::to_vec(&fields).expect("fact fields encode");
+    let fact = wire::decode(&bytes).expect("fact fields match the registered body");
     Envelope {
         v: WireVersion::CURRENT,
         seq: Seq::new(seq).expect("nonzero fixture seq"),
@@ -364,10 +471,7 @@ fn fact(
         actor: Actor::Spice,
         origin: "task:JOURNAL-a1".parse::<Origin>().expect("fixture origin"),
         cause: cause.map(|cause| Seq::new(cause).expect("nonzero fixture cause")),
-        fact: AnyFact {
-            kind,
-            body: body.as_object().cloned().expect("a fact body is an object"),
-        },
+        fact,
     }
 }
 
@@ -412,14 +516,15 @@ fn insert_heads(journal: &Journal) {
         2,
         &witness_head(),
     );
+    let trust_digest = digest("a");
     insert_head(
         &journal.connection,
         "trust_heads",
         "digest",
-        "sha256:fixture",
+        trust_digest.as_str(),
         2,
         &TrustHead {
-            digest: "sha256:fixture".to_owned(),
+            digest: trust_digest.clone(),
             state: TrustState::Pended,
         },
     );
@@ -434,7 +539,7 @@ fn insert_heads(journal: &Journal) {
             severity: "error".to_owned(),
             locus: "journal:fixture".to_owned(),
             owner: "task.journal".to_owned(),
-            receipt: "receipt:fixture".to_owned(),
+            receipt: digest("b"),
             state: FindingState::Open,
         },
     );
@@ -621,6 +726,10 @@ fn expected_tables() -> BTreeSet<String> {
 
 fn uuid(text: &str) -> CanonicalUuid {
     text.parse().expect("canonical fixture uuid")
+}
+
+fn digest(nibble: &str) -> Digest {
+    nibble.repeat(64).parse().expect("canonical digest")
 }
 
 fn instant() -> Instant {

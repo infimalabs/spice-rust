@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::envelope::WireVersion;
 use crate::ident::CanonicalUuid;
-use crate::witness::{Witness, WitnessKind, WitnessKind as W};
+use crate::witness::{Witness, WitnessKind};
 
 /// Every admitted command discriminant.
 ///
@@ -137,130 +137,150 @@ impl Law {
     /// Intended handle is absent and every dependency handle exists at its
     /// named workflow head.
     pub const ADD: Self = Self {
-        required: &[W::Absence],
-        optional: &[W::Workflow],
+        required: &[WitnessKind::Absence],
+        optional: &[WitnessKind::Workflow],
     };
     /// Exact task statement head.
     pub const EDIT: Self = Self {
-        required: &[W::Task],
+        required: &[WitnessKind::Task],
         optional: &[],
     };
     /// Task identity; no statement revision witness, because notes append
     /// rather than replace.
     pub const NOTE: Self = Self {
-        required: &[W::Existence],
+        required: &[WitnessKind::Existence],
         optional: &[],
     };
     /// Exact workflow head and current defer disposition.
     pub const DEFER: Self = Self {
-        required: &[W::Workflow, W::Deferral],
+        required: &[WitnessKind::Workflow, WitnessKind::Deferral],
         optional: &[],
     };
     /// Exact task statement and workflow heads of both tasks and the absence
     /// of the edge; no board barrier.
     pub const DEPENDS: Self = Self {
-        required: &[W::Task, W::Workflow, W::Edge],
+        required: &[WitnessKind::Task, WitnessKind::Workflow, WitnessKind::Edge],
         optional: &[],
     };
     /// Exact task statement and workflow heads, winning claim head, live
     /// lease, assignment or review witness where required, bound lane and
     /// occupant, and resident epoch.
     pub const PROGRESS: Self = Self {
-        required: &[W::Task, W::Workflow, W::Claim, W::Lease, W::Residency],
-        optional: &[W::Assignment],
+        required: &[
+            WitnessKind::Task,
+            WitnessKind::Workflow,
+            WitnessKind::Claim,
+            WitnessKind::Lease,
+            WitnessKind::Residency,
+        ],
+        optional: &[WitnessKind::Assignment],
     };
     /// The review path is the one that always carries the assignment.
     pub const REVIEW: Self = Self {
         required: &[
-            W::Task,
-            W::Workflow,
-            W::Claim,
-            W::Lease,
-            W::Residency,
-            W::Assignment,
+            WitnessKind::Task,
+            WitnessKind::Workflow,
+            WitnessKind::Claim,
+            WitnessKind::Lease,
+            WitnessKind::Residency,
+            WitnessKind::Assignment,
         ],
         optional: &[],
     };
     /// Exact workflow and claim heads plus the anti-self-review witness.
     pub const ASSIGN: Self = Self {
-        required: &[W::Workflow, W::Claim, W::Assignment],
+        required: &[
+            WitnessKind::Workflow,
+            WitnessKind::Claim,
+            WitnessKind::Assignment,
+        ],
         optional: &[],
     };
     /// Exact task statement and workflow heads, current claim head,
     /// eligibility rule, lane occupancy, and resident epoch.
     pub const WIN: Self = Self {
-        required: &[W::Task, W::Workflow, W::Claim, W::Eligibility, W::Residency],
+        required: &[
+            WitnessKind::Task,
+            WitnessKind::Workflow,
+            WitnessKind::Claim,
+            WitnessKind::Eligibility,
+            WitnessKind::Residency,
+        ],
         optional: &[],
     };
     /// Exact claim head, lease head, bound lane and occupant, and resident
     /// epoch.
     pub const POSSESSION: Self = Self {
-        required: &[W::Claim, W::Lease, W::Residency],
+        required: &[
+            WitnessKind::Claim,
+            WitnessKind::Lease,
+            WitnessKind::Residency,
+        ],
         optional: &[],
     };
     /// Exact normalized preview digest and one named board barrier containing
     /// the task and workflow heads the preview read.
     pub const APPLY: Self = Self {
-        required: &[W::Preview, W::Barrier],
+        required: &[WitnessKind::Preview, WitnessKind::Barrier],
         optional: &[],
     };
     /// A new directive names the lane it lands on; there is no prior
     /// disposition to re-prove.
     pub const SEND: Self = Self {
-        required: &[W::Residency],
+        required: &[WitnessKind::Residency],
         optional: &[],
     };
     /// Exact directive disposition; resend also names the preceding directive
     /// in its lineage.
     pub const RESEND: Self = Self {
-        required: &[W::Directive, W::Lineage],
+        required: &[WitnessKind::Directive, WitnessKind::Lineage],
         optional: &[],
     };
     /// Exact directive disposition. Cancel additionally requires operator
     /// capability, which the connection carries rather than the witness list.
     pub const DISPOSE: Self = Self {
-        required: &[W::Directive],
+        required: &[WitnessKind::Directive],
         optional: &[],
     };
     /// Exact request disposition, named rule, and budget predicate when a rule
     /// spends or renews a budget.
     pub const DECIDE: Self = Self {
-        required: &[W::Consent, W::Rule],
-        optional: &[W::Budget],
+        required: &[WitnessKind::Consent, WitnessKind::Rule],
+        optional: &[WitnessKind::Budget],
     };
     /// Exact executable digest and its current trust state. Grant and revoke
     /// additionally require operator capability.
     pub const TRUST: Self = Self {
-        required: &[W::Trust],
+        required: &[WitnessKind::Trust],
         optional: &[],
     };
     /// Exact residency head, lane and occupant identities when present, and
     /// resident epoch.
     pub const LANE: Self = Self {
-        required: &[W::Residency],
+        required: &[WitnessKind::Residency],
         optional: &[],
     };
     /// Exact bag, evidence locus, and tracked taste configuration digest.
     pub const TASTE: Self = Self {
-        required: &[W::Taste],
+        required: &[WitnessKind::Taste],
         optional: &[],
     };
     /// Exact observation key and the current head that makes recognition
     /// idempotent.
     pub const RECOGNIZE: Self = Self {
-        required: &[W::Observation],
+        required: &[WitnessKind::Observation],
         optional: &[],
     };
     /// Publication also witnesses the sealed proof and canonical manifest
     /// digest.
     pub const PUBLISH: Self = Self {
-        required: &[W::Observation, W::Sealed],
+        required: &[WitnessKind::Observation, WitnessKind::Sealed],
         optional: &[],
     };
     /// Exact residency head, current epoch, and the deadline or completion
     /// predicate admitting the requested edge.
     pub const UP: Self = Self {
-        required: &[W::Residency, W::Transition],
+        required: &[WitnessKind::Residency, WitnessKind::Transition],
         optional: &[],
     };
 }
@@ -440,7 +460,7 @@ impl<'de> Deserialize<'de> for CommandKind {
 ///
 /// The body contains no caller-authored actor, lane, epoch, journal position,
 /// result, or fact envelope; the commit door assigns all of those.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Command<B> {
     /// Current wire version.
@@ -454,6 +474,49 @@ pub struct Command<B> {
     /// Kind-specific intent.
     pub body: B,
 }
+
+/// The expected predicates in a settled order, so two lists can be compared
+/// as the sets they represent.
+///
+/// This ranks by [`Witness`]'s own order while [`Command::canonical_json`]
+/// ranks by rendered text, and the two disagree about which predicate comes
+/// first. That is harmless and the difference is not worth erasing: sorting by
+/// any total order yields one representative per multiset, so both agree about
+/// which lists are the same list, which is the only question either is asked.
+///
+/// Sorting borrows rather than clones because the caller only needs the two
+/// sequences side by side for one comparison.
+fn ranked(expected: &[Witness]) -> Vec<&Witness> {
+    let mut ranked: Vec<&Witness> = expected.iter().collect();
+    ranked.sort_unstable();
+    ranked
+}
+
+impl<B: PartialEq> PartialEq for Command<B> {
+    /// Two requests are the same request when they canonicalize alike.
+    ///
+    /// `expected` is a set of predicates carried in a list, so the order a
+    /// client typed them in is not part of what it asked for.
+    /// [`Command::canonical_json`] already sorts that order away, and deriving
+    /// this would compare the vector position-wise and call two byte-identical
+    /// requests different. One value would then have two identities, which is
+    /// the same defect as one value having two spellings: a de-duplicating
+    /// caller and the canonical bytes would disagree about what it had already
+    /// seen.
+    ///
+    /// Multiplicity is kept rather than collapsed. Canonicalization sorts and
+    /// does not deduplicate, so a predicate named twice survives into the
+    /// bytes, and equality has to see what the bytes see.
+    fn eq(&self, other: &Self) -> bool {
+        self.v == other.v
+            && self.id == other.id
+            && self.kind == other.kind
+            && self.body == other.body
+            && ranked(&self.expected) == ranked(&other.expected)
+    }
+}
+
+impl<B: Eq> Eq for Command<B> {}
 
 impl<B> Command<B> {
     /// Check `expected` against this command's registry row.

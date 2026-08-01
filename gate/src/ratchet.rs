@@ -1,11 +1,11 @@
-//! Ceilings that fall on their own and rise only by an operator's hand.
+//! Baselines that fall on their own and rise only by an operator's hand.
 //!
 //! A ratchet is a promise about direction, not about any particular number.
 //! Everything here is arranged so the promise cannot be broken quietly: a
-//! measurement above its ceiling is a regression and never a new ceiling,
-//! tightening lowers or holds but has no path that raises, and a ceiling whose
+//! measurement above its baseline is a regression and never a new baseline,
+//! tightening lowers or holds but has no path that raises, and a baseline whose
 //! metric has stopped being declared stays in the file rather than evaporating,
-//! because a ceiling that disappears has effectively risen to infinity.
+//! because a baseline that disappears has effectively risen to infinity.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -15,45 +15,45 @@ use serde::{Deserialize, Serialize};
 
 use crate::measure::Measurement;
 
-/// Where one metric stands against its ceiling.
+/// Where one metric stands against its baseline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase", tag = "movement")]
 pub enum Movement {
-    /// The measurement sits exactly at its ceiling.
+    /// The measurement sits exactly at its baseline.
     Held {
-        /// The ceiling, which is also the measurement.
-        ceiling: u64,
+        /// The baseline, which is also the measurement.
+        baseline: u64,
     },
-    /// The measurement is below its ceiling, so the ceiling may fall to it.
+    /// The measurement is below its baseline, so the baseline may fall to it.
     Shrank {
-        /// The ceiling before this run.
-        ceiling: u64,
+        /// The baseline before this run.
+        baseline: u64,
         /// What was measured.
         measured: u64,
     },
-    /// The measurement is above its ceiling.
+    /// The measurement is above its baseline.
     Regressed {
-        /// The ceiling this run passed.
-        ceiling: u64,
+        /// The baseline this run passed.
+        baseline: u64,
         /// What was measured.
         measured: u64,
     },
-    /// The metric is declared and measured but has no ceiling yet.
+    /// The metric is declared and measured but has no baseline yet.
     Unbaselined {
         /// What was measured.
         measured: u64,
     },
-    /// A ceiling survives for a metric the policy no longer declares.
+    /// A baseline survives for a metric the policy no longer declares.
     Retired {
-        /// The ceiling nothing measures any more.
-        ceiling: u64,
+        /// The baseline nothing measures any more.
+        baseline: u64,
     },
 }
 
 impl Movement {
     /// Whether this movement lets a run pass.
     ///
-    /// A retired ceiling fails: it is the one shape in which a ratchet can rise
+    /// A retired baseline fails: it is the one shape in which a ratchet can rise
     /// without anyone writing a larger number, so it has to be settled by the
     /// same operator commit any other rise would need.
     #[must_use]
@@ -68,16 +68,16 @@ impl Movement {
 impl fmt::Display for Movement {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Held { ceiling } => write!(formatter, "held at {ceiling}"),
-            Self::Shrank { ceiling, measured } => {
-                write!(formatter, "shrank from {ceiling} to {measured}")
+            Self::Held { baseline } => write!(formatter, "held at {baseline}"),
+            Self::Shrank { baseline, measured } => {
+                write!(formatter, "shrank from {baseline} to {measured}")
             }
-            Self::Regressed { ceiling, measured } => {
-                write!(formatter, "regressed past {ceiling} to {measured}")
+            Self::Regressed { baseline, measured } => {
+                write!(formatter, "regressed past {baseline} to {measured}")
             }
             Self::Unbaselined { measured } => write!(formatter, "unbaselined at {measured}"),
-            Self::Retired { ceiling } => {
-                write!(formatter, "ceiling {ceiling} has no declared metric")
+            Self::Retired { baseline } => {
+                write!(formatter, "baseline {baseline} has no declared metric")
             }
         }
     }
@@ -93,40 +93,40 @@ pub struct Finding {
     pub movement: Movement,
 }
 
-/// The committed ceilings a run is judged against.
+/// The committed baselines a run is judged against.
 ///
-/// The file is one `metric value` line per ceiling, sorted and unique, because
+/// The file is one `metric value` line per baseline, sorted and unique, because
 /// a ratchet file is read by operators in diffs. Two spellings of the same
-/// ceiling set would make a diff say something happened when nothing did.
+/// baseline set would make a diff say something happened when nothing did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Baseline {
-    ceilings: BTreeMap<String, u64>,
+pub struct Ratchet {
+    baselines: BTreeMap<String, u64>,
 }
 
-impl Baseline {
-    /// Read a committed baseline.
+impl Ratchet {
+    /// Read a committed ratchet.
     ///
     /// # Errors
     ///
     /// Returns the first line that is not an admitted spelling, carrying that
-    /// line as evidence. A malformed baseline is never partially accepted: a
-    /// baseline read as half its ceilings would let the missing half regress
+    /// line as evidence. A malformed ratchet is never partially accepted: a
+    /// ratchet read as half its baselines would let the missing half regress
     /// unnoticed.
-    pub fn parse(text: &str) -> Result<Self, BaselineError> {
-        let mut ceilings: BTreeMap<String, u64> = BTreeMap::new();
+    pub fn parse(text: &str) -> Result<Self, RatchetError> {
+        let mut baselines: BTreeMap<String, u64> = BTreeMap::new();
         let mut previous: Option<&str> = None;
 
         for (offset, line) in text.lines().enumerate() {
             let number = offset + 1;
-            let refuse = |malady| Err(BaselineError::new(number, line, malady));
+            let refuse = |malady| Err(RatchetError::new(number, line, malady));
 
-            let Some((metric, ceiling)) = line.split_once(' ') else {
+            let Some((metric, baseline)) = line.split_once(' ') else {
                 return refuse(Malady::NotTwoFields);
             };
-            if metric.is_empty() || ceiling.is_empty() {
+            if metric.is_empty() || baseline.is_empty() {
                 return refuse(Malady::NotTwoFields);
             }
-            let Ok(ceiling) = ceiling.parse::<u64>() else {
+            let Ok(baseline) = baseline.parse::<u64>() else {
                 return refuse(Malady::NotACount);
             };
             if previous.is_some_and(|earlier| earlier == metric) {
@@ -137,54 +137,61 @@ impl Baseline {
             }
 
             previous = Some(metric);
-            ceilings.insert(metric.to_owned(), ceiling);
+            baselines.insert(metric.to_owned(), baseline);
         }
 
-        Ok(Self { ceilings })
+        Ok(Self { baselines })
     }
 
     /// The canonical rendering, ready to commit.
     #[must_use]
     pub fn render(&self) -> String {
         let mut rendered = String::new();
-        for (metric, ceiling) in &self.ceilings {
-            let _ = writeln!(rendered, "{metric} {ceiling}");
+        for (metric, baseline) in &self.baselines {
+            let _ = writeln!(rendered, "{metric} {baseline}");
         }
         rendered
     }
 
-    /// One metric's ceiling, absent when it has none.
+    /// One metric's baseline, absent when it has none.
     #[must_use]
-    pub fn ceiling(&self, metric: &str) -> Option<u64> {
-        self.ceilings.get(metric).copied()
+    pub fn baseline(&self, metric: &str) -> Option<u64> {
+        self.baselines.get(metric).copied()
     }
 
-    /// Every ceiling, in metric order.
-    pub fn ceilings(&self) -> impl Iterator<Item = (&str, u64)> {
-        self.ceilings
+    /// Every baseline, in metric order.
+    pub fn baselines(&self) -> impl Iterator<Item = (&str, u64)> {
+        self.baselines
             .iter()
-            .map(|(metric, ceiling)| (metric.as_str(), *ceiling))
+            .map(|(metric, baseline)| (metric.as_str(), *baseline))
     }
 
     /// Where every metric stands, in metric order.
     ///
-    /// Ceilings without a measurement are reported too, so a metric that stops
-    /// being declared cannot take its ceiling with it in silence.
+    /// Baselines without a measurement are reported too, so a metric that stops
+    /// being declared cannot take its baseline with it in silence.
     #[must_use]
     pub fn compare(&self, measurements: &[Measurement]) -> Vec<Finding> {
         let mut findings: BTreeMap<&str, Movement> = self
-            .ceilings
+            .baselines
             .iter()
-            .map(|(metric, ceiling)| (metric.as_str(), Movement::Retired { ceiling: *ceiling }))
+            .map(|(metric, baseline)| {
+                (
+                    metric.as_str(),
+                    Movement::Retired {
+                        baseline: *baseline,
+                    },
+                )
+            })
             .collect();
 
         for measurement in measurements {
             let measured = measurement.value();
-            let movement = match self.ceiling(measurement.metric()) {
+            let movement = match self.baseline(measurement.metric()) {
                 None => Movement::Unbaselined { measured },
-                Some(ceiling) if measured == ceiling => Movement::Held { ceiling },
-                Some(ceiling) if measured < ceiling => Movement::Shrank { ceiling, measured },
-                Some(ceiling) => Movement::Regressed { ceiling, measured },
+                Some(baseline) if measured == baseline => Movement::Held { baseline },
+                Some(baseline) if measured < baseline => Movement::Shrank { baseline, measured },
+                Some(baseline) => Movement::Regressed { baseline, measured },
             };
             findings.insert(measurement.metric(), movement);
         }
@@ -198,27 +205,27 @@ impl Baseline {
             .collect()
     }
 
-    /// The baseline this run earns.
+    /// The ratchet this run earns.
     ///
-    /// Every path through this function either lowers a ceiling or leaves it
+    /// Every path through this function either lowers a baseline or leaves it
     /// alone. There is deliberately no branch that writes a larger number than
     /// the one already committed, which is what makes "shrink-only" a property
     /// of the code rather than of the caller's discipline.
     #[must_use]
     pub fn tighten(&self, measurements: &[Measurement]) -> Self {
-        let mut ceilings = self.ceilings.clone();
+        let mut baselines = self.baselines.clone();
         for measurement in measurements {
-            let earned = match ceilings.get(measurement.metric()) {
-                Some(ceiling) => (*ceiling).min(measurement.value()),
+            let earned = match baselines.get(measurement.metric()) {
+                Some(baseline) => (*baseline).min(measurement.value()),
                 None => measurement.value(),
             };
-            ceilings.insert(measurement.metric().to_owned(), earned);
+            baselines.insert(measurement.metric().to_owned(), earned);
         }
-        Self { ceilings }
+        Self { baselines }
     }
 }
 
-/// What is wrong with one baseline line.
+/// What is wrong with one ratchet line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Malady {
     /// The line is not exactly a metric and a count separated by one space.
@@ -244,15 +251,15 @@ impl fmt::Display for Malady {
     }
 }
 
-/// A baseline line that is not one of the admitted spellings.
+/// A ratchet line that is not one of the admitted spellings.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BaselineError {
+pub struct RatchetError {
     number: usize,
     line: String,
     malady: Malady,
 }
 
-impl BaselineError {
+impl RatchetError {
     fn new(number: usize, line: &str, malady: Malady) -> Self {
         Self {
             number,
@@ -280,7 +287,7 @@ impl BaselineError {
     }
 }
 
-impl fmt::Display for BaselineError {
+impl fmt::Display for RatchetError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
@@ -290,4 +297,4 @@ impl fmt::Display for BaselineError {
     }
 }
 
-impl std::error::Error for BaselineError {}
+impl std::error::Error for RatchetError {}
