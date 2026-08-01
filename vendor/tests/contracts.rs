@@ -7,10 +7,9 @@ use sill::{
     Cancellation, Deadlines, Environment, ProcessGroup, Redaction, RestartDisposition, StdinPolicy,
     StreamPolicy, WaitPolicy,
 };
-use vendor::claude::Attribution;
 use vendor::{
-    Effort, Launch, McpServer, Process, Record, RecordStream, Resume, SessionId, SteeringHook,
-    SteeringKey, claude, codex, permission_request,
+    Attribution, Effort, Launch, McpServer, Process, Record, RecordStream, Resume, SessionId,
+    SteeringHook, SteeringKey, claude, codex, permission_request,
 };
 use wire::CanonicalUuid;
 
@@ -220,12 +219,9 @@ fn a_repository_that_refuses_claudes_trailer_gets_attribution_withheld() {
         CLAUDE_SETTINGS_WITHOUT_ATTRIBUTION
     );
 
-    let withheld = claude::record_with_attribution(
-        "/opt/claude",
-        &fixture(CLAUDE_MODEL, Resume::Fresh),
-        Attribution::Withheld,
-    )
-    .expect("valid record");
+    let mut launch = fixture(CLAUDE_MODEL, Resume::Fresh);
+    launch.attribution = Attribution::Withheld;
+    let withheld = claude::record("/opt/claude", &launch).expect("valid record");
     assert_arguments_contain(
         &withheld,
         &["--settings", CLAUDE_SETTINGS_WITHOUT_ATTRIBUTION],
@@ -233,19 +229,13 @@ fn a_repository_that_refuses_claudes_trailer_gets_attribution_withheld() {
 }
 
 #[test]
-fn claude_withholds_only_the_one_effort_it_has_no_spelling_for() {
+fn both_vendors_carry_every_configured_effort() {
     for effort in Effort::ALL {
         let mut launch = fixture(CLAUDE_MODEL, Resume::Fresh);
         launch.effort = *effort;
         let record = claude::record("/opt/claude", &launch).expect("valid record");
-        let carried = arguments(&record).contains(&"--effort".to_owned());
-        assert_eq!(
-            carried,
-            *effort != Effort::Max,
-            "Claude takes every configured effort but max: {}",
-            effort.as_str()
-        );
-        // Codex spells all of them, so nothing is ever dropped on its side.
+        assert_arguments_contain(&record, &["--effort", effort.as_str()]);
+
         let codex = codex::record("/opt/codex", &launch).expect("valid record");
         assert!(
             arguments(&codex).contains(&format!("model_reasoning_effort=\"{}\"", effort.as_str())),
@@ -307,6 +297,7 @@ fn fixture(model: &str, resume: Resume) -> Launch {
         effort: Effort::High,
         personality: None,
         fast_mode: false,
+        attribution: Attribution::Harness,
         hook: SteeringHook {
             command: HOOK_COMMAND.to_owned(),
         },

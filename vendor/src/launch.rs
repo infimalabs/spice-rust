@@ -13,12 +13,7 @@ pub const POST_TOOL_HOOK_TIMEOUT_SECONDS: u32 = 30;
 /// What the vendor shows an operator while steering is being delivered.
 pub const POST_TOOL_HOOK_STATUS_MESSAGE: &str = "Checking spice steering";
 
-/// Reasoning effort in the one vocabulary spice configures.
-///
-/// The set is Codex-shaped because that is what an operator writes in
-/// configuration. Claude accepts the same spellings except `Max`, so the
-/// crossing is lossy in exactly one place and [`Effort::claude`] names it
-/// rather than leaving each launch site to rediscover it.
+/// Reasoning effort in the one vocabulary both vendor CLIs accept.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Effort {
     Low,
@@ -32,7 +27,7 @@ impl Effort {
     /// Every effort in ascending order of how hard the agent is asked to think.
     pub const ALL: &[Self] = &[Self::Low, Self::Medium, Self::High, Self::XHigh, Self::Max];
 
-    /// The spelling spice configures and Codex accepts.
+    /// The spelling spice configures and both vendor CLIs accept.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -43,18 +38,16 @@ impl Effort {
             Self::Max => "max",
         }
     }
+}
 
-    /// The spelling Claude's `--effort` accepts, when it accepts one.
-    ///
-    /// Claude has no `max`, so a launch configured for it withholds the flag
-    /// instead of sending a value the CLI would reject.
-    #[must_use]
-    pub const fn claude(self) -> Option<&'static str> {
-        match self {
-            Self::Max => None,
-            other => Some(other.as_str()),
-        }
-    }
+/// Whether Claude may stamp its own authorship onto the commits it makes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Attribution {
+    /// Claude's native trailer and session URL govern, as the harness intends.
+    #[default]
+    Harness,
+    /// This repository's trailer policy rejects that trailer, so both are off.
+    Withheld,
 }
 
 /// The MCP server both dialects register under one name.
@@ -130,6 +123,11 @@ pub struct Launch {
     pub personality: Option<String>,
     /// Whether to ask for the vendor's faster output mode.
     pub fast_mode: bool,
+    /// Caller-resolved disposition for Claude's native commit attribution.
+    ///
+    /// The repository-policy read stays outside this I/O-free crate. Codex has
+    /// no corresponding launch setting and ignores this field.
+    pub attribution: Attribution,
     /// How steering reaches the running agent.
     pub hook: SteeringHook,
     /// How the agent authenticates the steering it receives.

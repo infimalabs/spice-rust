@@ -8,7 +8,7 @@ use serde::Serialize;
 use sill::{Running, SpecError};
 
 use crate::launch::{
-    Launch, McpServer, POST_TOOL_HOOK_EVENT, POST_TOOL_HOOK_STATUS_MESSAGE,
+    Attribution, Launch, McpServer, POST_TOOL_HOOK_EVENT, POST_TOOL_HOOK_STATUS_MESSAGE,
     POST_TOOL_HOOK_TIMEOUT_SECONDS, SteeringHook,
 };
 use crate::{LaunchError, Process, Record, RecordStream};
@@ -44,39 +44,12 @@ pub const DENIED_TOOLS: &[&str] = &[
     "Monitor",
 ];
 
-/// Whether Claude may stamp its own authorship onto the commits it makes.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Attribution {
-    /// Claude's native trailer and session URL govern, as the harness intends.
-    #[default]
-    Harness,
-    /// This repository's trailer policy rejects that trailer, so both are off.
-    Withheld,
-}
-
 /// Build the exact current Claude Code invocation without performing I/O.
 ///
 /// # Errors
 ///
 /// Returns [`SpecError`] when `binary` is empty.
 pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, SpecError> {
-    record_with_attribution(binary, launch, Attribution::Harness)
-}
-
-/// Build that same invocation for a repository that refuses Claude's trailer.
-///
-/// Whether a repository's commit-message policy rejects the attribution trailer
-/// is read from that repository, which this crate will not do. The caller that
-/// already resolved the policy states the answer here instead.
-///
-/// # Errors
-///
-/// Returns [`SpecError`] when `binary` is empty.
-pub fn record_with_attribution(
-    binary: impl Into<OsString>,
-    launch: &Launch,
-    attribution: Attribution,
-) -> Result<Record, SpecError> {
     let system_prompt = system_prompt(launch);
     let mut arguments = vec![
         OsString::from("--print"),
@@ -94,14 +67,12 @@ pub fn record_with_attribution(
         OsString::from("--mcp-config"),
         OsString::from(mcp_config_json(&launch.mcp)),
         OsString::from("--settings"),
-        OsString::from(settings_json(&launch.hook, attribution)),
+        OsString::from(settings_json(&launch.hook, launch.attribution)),
         OsString::from("--append-system-prompt"),
         OsString::from(system_prompt.as_str()),
+        OsString::from("--effort"),
+        OsString::from(launch.effort.as_str()),
     ];
-    if let Some(effort) = launch.effort.claude() {
-        arguments.push(OsString::from("--effort"));
-        arguments.push(OsString::from(effort));
-    }
     if let Some(session) = launch.resume.session_id() {
         arguments.push(OsString::from("--resume"));
         arguments.push(OsString::from(dashed_uuid(session)));
