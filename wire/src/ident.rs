@@ -87,8 +87,16 @@ pub enum Domain {
     GateFile,
     /// The admitted file set of one gate jurisdiction, by content.
     GateTree,
+    /// The compiled checks one current gate build can execute.
+    GateSet,
     /// The enforcement policy one gate run read.
     GatePolicy,
+    /// The process bounds every current gate tool answers to.
+    GateBounds,
+    /// The complete versioned lower-is-better floor state.
+    GateBaseline,
+    /// One declared gate tool together with the executable bytes found.
+    GateTool,
     /// Every path one gate walk reached, admitted or not, with its reason.
     GateInventory,
     /// The quantities one gate run measured.
@@ -114,7 +122,11 @@ impl Domain {
             Self::ProofReceipt => "spice.proof.receipt.v1",
             Self::GateFile => "spice.gate.file.v1",
             Self::GateTree => "spice.gate.tree.v1",
+            Self::GateSet => "spice.gate.set.v1",
             Self::GatePolicy => "spice.gate.policy.v1",
+            Self::GateBounds => "spice.gate.bounds.v1",
+            Self::GateBaseline => "spice.gate.baseline.v1",
+            Self::GateTool => "spice.gate.tool.v1",
             Self::GateInventory => "spice.gate.inventory.v1",
             Self::GateMeasurement => "spice.gate.measurement.v1",
         }
