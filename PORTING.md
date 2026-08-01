@@ -28,8 +28,8 @@ fact.
 
 ## Rust contracts
 
-The registry contains 63 command leaves. Fourteen have executable dispatch,
-so current executable coverage is 14/63, or 22.2 percent. Completed domain
+The registry contains 63 command leaves. Seventeen have executable dispatch,
+so current executable coverage is 17/63, or 27.0 percent. Completed domain
 libraries do not count as landed command surfaces.
 
 ### Landed
@@ -42,12 +42,15 @@ libraries do not count as landed command surfaces.
 - `gate camp`
 - `gate kill`
 - `gate receipt`
+- `lock`
+- `lock run`
 - `proof`
 - `proof replay`
 - `release notes`
 - `up`
 - `down`
 - `run`
+- `config`
 
 `doctor`, `version`, and `up` are executable but not yet usable against the
 current worktree state; the configuration and bootstrap tasks above own those
@@ -56,10 +59,7 @@ operational gaps.
 ### `LOCAL-1kJQlG6b`
 
 - `install`
-- `lock`
-- `lock run`
 - `restore verify`
-- `config`
 
 ### `BOARD-1kJQlDDt`
 
@@ -145,15 +145,16 @@ the registry exposes them even though argparse requires a child action.
 
 ### Configuration
 
-- `config`: namespace in Python; Rust leaf `config`; `LOCAL-1kJQlG6b`.
+- `config`: namespace in Python; landed Rust leaf `config`.
 - `config agent`: `config` plus vendor launch; `LOCAL-1kJQlG6b`.
-- `config defaults`: typed `config` provenance; `LOCAL-1kJQlG6b`.
+- `config defaults`: landed typed `config` provenance.
 - `config judge`: tracked `taste` policy; `POLICY-1kJQlFB6`.
 - `config personality`: typed `config` and vendor launch; `LOCAL-1kJQlG6b`.
 - `config say`: typed canvas speech; `SPEECH-1kJQnmkd`.
-- `config set`: Rust `config`; `LOCAL-1kJQlG6b`.
-- `config show`: Rust `config`; `LOCAL-1kJQlG6b`.
-- `config system`: typed `config` provenance; `LOCAL-1kJQlG6b`.
+- `config set`: landed `config` refuses writes until a digest-bound mutation
+  contract is admitted.
+- `config show`: landed Rust `config`.
+- `config system`: landed typed `config` provenance.
 - `config trust`: namespace; Rust `trust`; `POLICY-1kJQlFB6`.
 - `config trust grant`: `trust grant`; `POLICY-1kJQlFB6`.
 - `config trust revoke`: `trust revoke`; `POLICY-1kJQlFB6`.

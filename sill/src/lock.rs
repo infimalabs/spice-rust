@@ -12,7 +12,12 @@ pub struct LockName(String);
 impl LockName {
     pub fn new(name: impl Into<String>) -> Result<Self, LockNameError> {
         let name = name.into();
-        if name.is_empty() {
+        if name.is_empty()
+            || matches!(name.as_str(), "." | "..")
+            || name
+                .chars()
+                .any(|character| character == '/' || character == '\\' || character == '\0')
+        {
             return Err(LockNameError);
         }
         Ok(Self(name))
@@ -28,7 +33,7 @@ pub struct LockNameError;
 
 impl fmt::Display for LockNameError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("lock name must not be empty")
+        formatter.write_str("lock name must be one nonempty path component")
     }
 }
 

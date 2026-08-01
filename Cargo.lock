@@ -267,8 +267,10 @@ dependencies = [
  "fold",
  "journal",
  "serde",
+ "serde_json",
  "tokio",
  "toml",
+ "tungstenite",
  "wire",
 ]
 
