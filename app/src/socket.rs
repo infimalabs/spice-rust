@@ -6,6 +6,8 @@
 //! Nothing here decides authority; admission only decides whether bytes are
 //! allowed to reach browser state.
 
+use std::fmt;
+
 use serde::de::DeserializeOwned;
 use wire::{
     Accepted, Body, CanonicalUuid, Envelope, Fact, Fault, FaultClass, Hello, Response, WireVersion,
@@ -39,13 +41,16 @@ mod reason {
 /// let forged = app::Admitted(7_u8);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Admitted<T>(T);
+pub struct Admitted<T> {
+    frame: T,
+    scope: SessionScope,
+}
 
 impl<T> Admitted<T> {
     /// The frame this admission carries.
     #[must_use]
     pub const fn get(&self) -> &T {
-        &self.0
+        &self.frame
     }
 
     /// Take the frame out of its admission.
@@ -54,7 +59,24 @@ impl<T> Admitted<T> {
     /// can expire, so unwrapping loses only the proof and not a guarantee.
     #[must_use]
     pub fn into_inner(self) -> T {
-        self.0
+        self.frame
+    }
+
+    pub(crate) const fn scope(&self) -> SessionScope {
+        self.scope
+    }
+}
+
+/// Unrendered identity of the capability-scoped socket that admitted a frame.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SessionScope {
+    capability: CanonicalUuid,
+    epoch: CanonicalUuid,
+}
+
+impl fmt::Debug for SessionScope {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SessionScope([redacted])")
     }
 }
 
@@ -87,10 +109,20 @@ fn admit_wire(observed: WireVersion) -> Result<(), Fault> {
 /// A session is the smallest thing that can be stale. Each `spice up` replaces
 /// endpoint, capability, and epoch together, so a session never outlives the
 /// generation it opened against and never silently adopts a new capability.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Session {
     capability: CanonicalUuid,
     epoch: CanonicalUuid,
+}
+
+impl fmt::Debug for Session {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Session")
+            .field("capability", &"[redacted]")
+            .field("epoch", &self.epoch)
+            .finish()
+    }
 }
 
 impl Session {
@@ -104,6 +136,13 @@ impl Session {
     #[must_use]
     pub const fn epoch(&self) -> CanonicalUuid {
         self.epoch
+    }
+
+    const fn scope(&self) -> SessionScope {
+        SessionScope {
+            capability: self.capability,
+            epoch: self.epoch,
+        }
     }
 
     /// The opening frame, always at the version this build speaks.
@@ -159,7 +198,10 @@ impl Session {
         let frame: Accepted = decode_frame(bytes)?;
         admit_wire(frame.wire)?;
         self.admit_epoch(frame.epoch)?;
-        Ok(Admitted(frame))
+        Ok(Admitted {
+            frame,
+            scope: self.scope(),
+        })
     }
 
     /// Decode one inbound response and admit it against this session.
@@ -178,7 +220,10 @@ impl Session {
         let frame: Response<B> = decode_frame(bytes)?;
         admit_wire(frame.v)?;
         self.admit_epoch(frame.epoch)?;
-        Ok(Admitted(frame))
+        Ok(Admitted {
+            frame,
+            scope: self.scope(),
+        })
     }
 
     /// Admit a generation against the one this session opened on.
@@ -224,6 +269,9 @@ impl Session {
     ) -> Result<Admitted<Envelope<Fact<F>>>, Fault> {
         let frame: Envelope<Fact<F>> = decode_frame(bytes)?;
         admit_wire(frame.v)?;
-        Ok(Admitted(frame))
+        Ok(Admitted {
+            frame,
+            scope: self.scope(),
+        })
     }
 }
