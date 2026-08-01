@@ -6,7 +6,7 @@
 
 use std::cmp::Ordering;
 
-use wire::{CanonicalUuid, IdentError, Instant};
+use wire::{CanonicalUuid, Digest, Domain, IdentError, Instant};
 
 const CANONICAL: &str = "018f82d4-6f59-7d06-92e3-bce9131163c2";
 
@@ -53,6 +53,143 @@ fn a_non_canonical_uuid_is_refused_by_the_decoder_too() {
 
     assert!(admitted.is_ok(), "the canonical spelling decodes");
     assert!(refused.is_err(), "upper-case text is not a canonical uuid");
+}
+
+/// Every domain, so a new class cannot be added without being swept here.
+const DOMAINS: [Domain; 4] = [
+    Domain::TargetPayload,
+    Domain::Artifact,
+    Domain::Pins,
+    Domain::Inventory,
+];
+
+#[test]
+fn the_same_bytes_under_two_domains_never_collide() {
+    for bytes in [b"".as_slice(), b"\x00", b"payload", b"\xff\xfe\x00\x01"] {
+        let computed: Vec<Digest> = DOMAINS
+            .iter()
+            .map(|domain| Digest::compute(*domain, bytes))
+            .collect();
+
+        for (index, digest) in computed.iter().enumerate() {
+            for other in &computed[index + 1..] {
+                assert_ne!(
+                    digest, other,
+                    "the same bytes under two domains produced one identity"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
+    // The tags are the durable half of the identity: changing one silently
+    // re-points every digest already published under it.
+    let tags: Vec<&str> = DOMAINS.iter().map(|domain| domain.tag()).collect();
+    assert_eq!(
+        tags,
+        [
+            "spice.dist.target-payload.v1",
+            "spice.dist.artifact.v1",
+            "spice.dist.pins.v1",
+            "spice.dist.inventory.v1",
+        ],
+        "a domain tag changed; that re-points digests already published under it"
+    );
+
+    for (index, tag) in tags.iter().enumerate() {
+        assert!(
+            !tag.contains('\0'),
+            "{tag} contains a NUL, so the domain framing is no longer injective"
+        );
+        for other in &tags[index + 1..] {
+            assert_ne!(tag, other, "two domains share one tag");
+        }
+    }
+}
+
+#[test]
+fn a_computed_digest_is_already_the_one_admitted_spelling() {
+    // compute and FromStr share one predicate; this proves they agree rather
+    // than assuming it, so a mint can never produce what a decode would refuse.
+    for domain in DOMAINS {
+        let computed = Digest::compute(domain, b"payload");
+        let reparsed: Digest = computed
+            .as_str()
+            .parse()
+            .expect("a computed digest is a canonical spelling");
+
+        assert_eq!(computed, reparsed, "minting and decoding disagree");
+        assert_eq!(computed.as_str().len(), 64);
+        assert!(
+            computed
+                .as_str()
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+            "a computed digest must render lower-case hex"
+        );
+    }
+}
+
+#[test]
+fn the_domain_framing_separates_the_tag_from_the_bytes() {
+    // Without the separator, tag+bytes concatenation would let one domain's
+    // long tag and another's leading bytes hash identically. Stating the exact
+    // framing here pins the construction against a silent change.
+    let mut expected = blake3::Hasher::new();
+    expected.update(Domain::Artifact.tag().as_bytes());
+    expected.update(&[0]);
+    expected.update(b"payload");
+
+    assert_eq!(
+        Digest::compute(Domain::Artifact, b"payload").as_str(),
+        expected.finalize().to_hex().as_str(),
+        "the digest is BLAKE3 over tag, NUL, then bytes"
+    );
+}
+
+#[test]
+fn only_the_canonical_digest_spelling_is_admitted() {
+    let canonical = Digest::compute(Domain::Pins, b"pins").as_str().to_owned();
+    let upper = canonical.to_ascii_uppercase();
+
+    for spelling in [
+        "",
+        "abc",
+        upper.as_str(),
+        &canonical[..63],
+        &format!("{canonical}0"),
+        &format!("sha256:{canonical}"),
+        &canonical.replace('a', "g"),
+    ] {
+        assert_eq!(
+            spelling.parse::<Digest>(),
+            Err(IdentError::Digest(spelling.to_owned())),
+            "the {spelling:?} spelling must be refused, not repaired"
+        );
+    }
+
+    assert!(
+        canonical.parse::<Digest>().is_ok(),
+        "the canonical spelling is admitted"
+    );
+}
+
+#[test]
+fn a_non_canonical_digest_is_refused_by_the_decoder_too() {
+    // Same reason as the uuid decoder fixture: a caller-side check would let a
+    // decoded frame carry a spelling the parser rejects.
+    let canonical = Digest::compute(Domain::Inventory, b"inventory")
+        .as_str()
+        .to_owned();
+
+    let admitted = wire::decode::<Digest>(format!("\"{canonical}\"").as_bytes());
+    let refused =
+        wire::decode::<Digest>(format!("\"{}\"", canonical.to_ascii_uppercase()).as_bytes());
+
+    assert!(admitted.is_ok(), "the canonical spelling decodes");
+    assert!(refused.is_err(), "upper-case hex is not a canonical digest");
 }
 
 #[test]

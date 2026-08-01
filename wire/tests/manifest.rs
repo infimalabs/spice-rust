@@ -1,24 +1,29 @@
-use std::str::FromStr;
-
-use wire::Digest;
 use wire::manifest::{BuildPins, InventoryEntry, ReleaseTarget, TargetPayload};
+use wire::{Digest, Domain};
 
-const SHA256_HEX_LEN: usize = 64;
+/// Hex width of an OCI `sha256:` reference.
+///
+/// This is a foreign registry's spelling, not WIRE's. It is unrelated to the
+/// BLAKE3 digests [`Digest`] mints and only happens to be the same width.
+const OCI_SHA256_HEX_LEN: usize = 64;
 
-fn digest(spelling: char) -> Digest {
-    Digest::from_str(&spelling.to_string().repeat(SHA256_HEX_LEN))
-        .expect("fixture digest is canonical")
+/// Mint a fixture digest the way production mints one.
+///
+/// Fixtures compute rather than spell a digest out, so a fixture can never
+/// carry a spelling that [`Digest::compute`] would not produce.
+fn digest(marker: &str) -> Digest {
+    Digest::compute(Domain::Artifact, marker.as_bytes())
 }
 
-fn payload(target: ReleaseTarget, marker: char) -> TargetPayload {
+fn payload(target: ReleaseTarget, marker: &str) -> TargetPayload {
     let artifact = digest(marker);
     TargetPayload {
         version: 1,
         target,
-        source: digest('1'),
+        source: digest("source"),
         app: artifact.clone(),
-        embedded_app: digest('2'),
-        native: digest('3'),
+        embedded_app: digest("embedded-app"),
+        native: digest("native"),
         pins: BuildPins {
             rust: "rustc 1.97.1".to_owned(),
             wasm_target: "wasm32-unknown-unknown".to_owned(),
@@ -26,24 +31,24 @@ fn payload(target: ReleaseTarget, marker: char) -> TargetPayload {
             cargo_mutants: "cargo-mutants 27.1.0".to_owned(),
             proof_container: format!(
                 "registry.example/proof@sha256:{}",
-                "4".repeat(SHA256_HEX_LEN)
+                "4".repeat(OCI_SHA256_HEX_LEN)
             ),
         },
-        pins_digest: digest('5'),
+        pins_digest: Digest::compute(Domain::Pins, marker.as_bytes()),
         inventory: vec![InventoryEntry {
             path: "bin/spice".to_owned(),
             mode: 0o755,
             bytes: 12,
             digest: artifact,
         }],
-        inventory_digest: digest('6'),
+        inventory_digest: Digest::compute(Domain::Inventory, marker.as_bytes()),
     }
 }
 
 #[test]
 fn release_payloads_round_trip_without_aliasing_targets() {
-    let darwin = payload(ReleaseTarget::Aarch64AppleDarwin, 'a');
-    let linux = payload(ReleaseTarget::X86_64UnknownLinuxMusl, 'b');
+    let darwin = payload(ReleaseTarget::Aarch64AppleDarwin, "darwin");
+    let linux = payload(ReleaseTarget::X86_64UnknownLinuxMusl, "linux");
     let darwin_bytes = wire::encode(&darwin).expect("darwin payload encodes");
     let linux_bytes = wire::encode(&linux).expect("linux payload encodes");
 

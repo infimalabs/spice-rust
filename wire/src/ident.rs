@@ -53,11 +53,47 @@ pub enum IdentError {
     Digest(String),
 }
 
+/// The class of thing a durable digest stands for.
+///
+/// WIRE fixes one algorithm set so no leaf chooses its own, and the domain tag
+/// is the half of that set a caller still has to name. The classes are closed
+/// here rather than spelled at each call site: a new class is a new variant in
+/// this file, which is what stops two leaves from minting the same class under
+/// two spellings and calling the results the same identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Domain {
+    /// The payload manifest of one release target.
+    TargetPayload,
+    /// The bytes of one staged artifact.
+    Artifact,
+    /// The build pin set a staging run resolved.
+    Pins,
+    /// The inventory of what a staging run published.
+    Inventory,
+}
+
+impl Domain {
+    /// The frozen tag this class mixes into its digests.
+    ///
+    /// Tags carry a version because widening what a class covers is a new tag,
+    /// never a redefinition of an existing one: a digest already published
+    /// under `v1` has to keep meaning what it meant when it was published.
+    #[must_use]
+    pub const fn tag(self) -> &'static str {
+        match self {
+            Self::TargetPayload => "spice.dist.target-payload.v1",
+            Self::Artifact => "spice.dist.artifact.v1",
+            Self::Pins => "spice.dist.pins.v1",
+            Self::Inventory => "spice.dist.inventory.v1",
+        }
+    }
+}
+
 /// A durable content digest with exactly one admitted spelling.
 ///
 /// Every digest WIRE names is BLAKE3 over domain-tagged input, so the same
-/// bytes under two domains never collide. This newtype owns only the
-/// spelling; the domain-tagged computation that mints one is separate.
+/// bytes under two domains never collide. [`Digest::compute`] is how one is
+/// minted; [`FromStr`] only re-admits a spelling that already crossed.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Digest(String);
 
@@ -65,10 +101,38 @@ impl Digest {
     /// Character length of the one admitted spelling.
     const SPELLING_LEN: usize = 64;
 
+    /// Compute the digest of these bytes under one domain.
+    ///
+    /// The hash covers the domain tag, then a NUL, then the bytes. No tag
+    /// contains a NUL, so the first NUL in that input is always the separator
+    /// and the pair can be read back off it unambiguously. Cross-domain
+    /// collision is therefore impossible by framing rather than merely
+    /// improbable by hash strength: two different `(domain, bytes)` pairs never
+    /// produce the same hashed input in the first place.
+    #[must_use]
+    pub fn compute(domain: Domain, bytes: &[u8]) -> Self {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(domain.tag().as_bytes());
+        hasher.update(&[0]);
+        hasher.update(bytes);
+        Self(hasher.finalize().to_hex().as_str().to_owned())
+    }
+
     /// The digest as written.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Whether this text is the one spelling WIRE admits.
+    ///
+    /// [`Digest::compute`] and [`FromStr`] share this predicate so a minted
+    /// digest and a decoded one cannot disagree about what canonical means.
+    fn admits(text: &str) -> bool {
+        text.len() == Self::SPELLING_LEN
+            && text.bytes().all(|byte| {
+                byte.is_ascii_digit() || (byte.is_ascii_lowercase() && byte.is_ascii_hexdigit())
+            })
     }
 }
 
@@ -76,11 +140,7 @@ impl FromStr for Digest {
     type Err = IdentError;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let canonical = text.len() == Self::SPELLING_LEN
-            && text.bytes().all(|byte| {
-                byte.is_ascii_digit() || (byte.is_ascii_lowercase() && byte.is_ascii_hexdigit())
-            });
-        if canonical {
+        if Self::admits(text) {
             Ok(Self(text.to_owned()))
         } else {
             Err(IdentError::Digest(text.to_owned()))

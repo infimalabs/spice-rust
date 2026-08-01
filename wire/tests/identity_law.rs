@@ -72,6 +72,10 @@ const NOT_CROSSING: &[(&str, &str)] = &[
         "parse refusal; returned to a caller, never encoded",
     ),
     (
+        "Domain",
+        "names a digest class at computation time; the computed Digest crosses instead",
+    ),
+    (
         "FoldNameError",
         "parse refusal; returned to a caller, never encoded",
     ),
