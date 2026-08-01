@@ -588,13 +588,18 @@ impl RepositoryScratch {
         let scratch = Self::new();
         let connection = Connection::open(scratch.journal_path()).expect("open schema fixture");
         connection
-            .execute_batch(
-                "CREATE TABLE journal_schema(singleton INTEGER PRIMARY KEY, version INTEGER NOT NULL, state TEXT NOT NULL, from_version INTEGER, to_version INTEGER, plan_digest TEXT);",
-            )
+            .execute_batch(concat!(
+                "CREATE TABLE journal_schema(singleton INTEGER PRIMARY KEY, ",
+                "version INTEGER NOT NULL, state TEXT NOT NULL, ",
+                "from_version INTEGER, to_version INTEGER, plan_digest TEXT);",
+            ))
             .expect("create schema identity");
         connection
             .execute(
-                "INSERT INTO journal_schema(singleton, version, state, from_version, to_version) VALUES (1, ?1, ?2, ?3, ?4)",
+                concat!(
+                    "INSERT INTO journal_schema(singleton, version, state, ",
+                    "from_version, to_version) VALUES (1, ?1, ?2, ?3, ?4)"
+                ),
                 params![version, state, from, to],
             )
             .expect("insert schema identity");

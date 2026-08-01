@@ -172,8 +172,11 @@ fn journal_version_failure(error: journal::OpenError) -> Outcome<wire::Version> 
                 journal::SCHEMA_VERSION
             )),
             observed: Some(migration.to_string()),
-            remedy: "finish or replace the unfinalized or incompatible authority before asking for version"
-                .to_owned(),
+            remedy: concat!(
+                "finish or replace the unfinalized or incompatible authority ",
+                "before asking for version"
+            )
+            .to_owned(),
         }),
         error => Outcome::Fault(Fault {
             class: FaultClass::Store,
