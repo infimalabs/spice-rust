@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Serialize;
-use spice::repository::Repository;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::header::ORIGIN;
 use tungstenite::{Message, WebSocket};
@@ -39,7 +38,7 @@ pub(crate) enum SelectedCommand<'a> {
 
 /// Submit one contract-bound command to the current repository resident.
 pub(crate) fn execute(
-    repository: &Repository,
+    discovery_path: &Path,
     contract: &Contract,
     selected: SelectedCommand<'_>,
 ) -> Outcome<CommandAnswer> {
@@ -47,8 +46,7 @@ pub(crate) fn execute(
         Ok(mapped) => mapped,
         Err(outcome) => return outcome,
     };
-    let discovery_path = repository.state_root().join("canvas");
-    let discovery = match DiscoveryRead::open(&discovery_path) {
+    let discovery = match DiscoveryRead::open(discovery_path) {
         Ok(discovery) => discovery,
         Err(outcome) => return outcome,
     };
