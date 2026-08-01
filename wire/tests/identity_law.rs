@@ -36,7 +36,7 @@ use wire::{
     FindingState, FoldName, Hello, Instant, LaneResidency, LeaseHead, Name, Origin, Outcome,
     Overflow, Packed, Phase, Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState, Response,
     Seq, SeqRange, Standing, TaskHandle, TaskHead, TrustHead, TrustState, Up, WireVersion, Witness,
-    WitnessClass, WitnessHead, WitnessKind, WorkflowHead,
+    WitnessClass, WitnessHead, WorkflowHead,
 };
 
 /// Names `wire` re-exports that never cross as values, each with its reason.
@@ -741,11 +741,6 @@ fn cover_witness_values(covered: &mut BTreeSet<String>) {
     law(covered, "Answer", &[Answer::Asked, Answer::Denied]);
     law(covered, "Standing", &[Standing::Pended, Standing::Revoked]);
     law(covered, "Up", &[Up::Seated, Up::Dark]);
-    law(
-        covered,
-        "WitnessKind",
-        &[WitnessKind::Task, WitnessKind::Transition],
-    );
 }
 
 /// The paged frames, sampled with and without an overflow tail.
