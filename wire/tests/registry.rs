@@ -12,9 +12,10 @@ use std::collections::BTreeSet;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+use wire::witness::WitnessKind;
 use wire::{
     Answer, Command, CommandKind, Digest, Disposition, LawError, Name, Standing, TaskHandle, Up,
-    Witness, WitnessKind,
+    Witness,
 };
 
 /// Body of the `task::done` command printed in WIRE.md.
