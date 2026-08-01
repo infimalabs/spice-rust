@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+"$root/scripts/verify.sh"
+exec spice dev pre-commit

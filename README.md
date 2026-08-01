@@ -1,11 +1,23 @@
 # Spice Rust
 
-## Workspace verification
+## Development hooks
 
-Run the lattice verification before handing work to another agent:
+Install the tracked hooks once per checkout or linked worktree:
 
 ```sh
-cargo test --workspace --all-targets
+./scripts/install-hooks.sh
+```
+
+The pre-commit hook runs formatting, Clippy, and the complete workspace test
+suite through `scripts/verify.sh`. It prints each command before execution and
+names the command and exit status when verification fails.
+
+## Workspace verification
+
+Run the same verification outside a commit with:
+
+```sh
+./scripts/verify.sh
 ```
 
 The `gate` integration test compares every local path dependency with the
