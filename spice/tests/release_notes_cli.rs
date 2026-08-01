@@ -54,8 +54,12 @@ impl Fixture {
             concat!(
                 "manifest = 'dist/stage/release-manifest.json'\n",
                 "summary = 'Release one closes the daemonless utility surface.'\n",
-                "operator_actions = ['Regenerate the installed skill with the previewed install plan.']\n",
-                "fixed_refusals = ['Restore verification now names checksum and inventory drift.']\n",
+                "operator_actions = [",
+                "'Regenerate the installed skill with the previewed install plan.'",
+                "]\n",
+                "fixed_refusals = [",
+                "'Restore verification now names checksum and inventory drift.'",
+                "]\n",
             ),
         )
         .expect("write release narrative");

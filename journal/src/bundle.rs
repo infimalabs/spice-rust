@@ -361,7 +361,11 @@ impl fmt::Display for BundleError {
                 current,
             } => write!(
                 formatter,
-                "bundle journal schema {found} disagrees with declaration {declared} or current schema {current}"
+                concat!(
+                    "bundle journal schema {} disagrees with declaration ",
+                    "{} or current schema {}"
+                ),
+                found, declared, current,
             ),
             Self::Journal(error) => write!(
                 formatter,

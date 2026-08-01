@@ -14,19 +14,32 @@ use wire::{Digest, Domain, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosi
 const SKILL_SOURCE: &str = include_str!("../../.agents/skills/spice/SKILL.md");
 const SPICE_CONFIG: &str = include_str!("../../spice.toml");
 const BASELINE: &str = include_str!("../../baseline.toml");
-const SYSTEMD_UNIT: &str = "[Unit]\nDescription=Spice repository resident\nAfter=network.target\n\n[Service]\nType=simple\nExecStart=spice up\nExecStop=spice down\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n";
-const LAUNCHD_UNIT: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>dev.spice.resident</string>
-  <key>ProgramArguments</key>
-  <array><string>spice</string><string>up</string></array>
-  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
-  <key>ProcessType</key><string>Background</string>
-</dict>
-</plist>
-"#;
+const SYSTEMD_UNIT: &str = concat!(
+    "[Unit]\n",
+    "Description=Spice repository resident\n",
+    "After=network.target\n\n",
+    "[Service]\n",
+    "Type=simple\n",
+    "ExecStart=spice up\n",
+    "ExecStop=spice down\n",
+    "Restart=on-failure\n\n",
+    "[Install]\n",
+    "WantedBy=default.target\n",
+);
+const LAUNCHD_UNIT: &str = concat!(
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
+    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" ",
+    "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n",
+    "<plist version=\"1.0\">\n",
+    "<dict>\n",
+    "  <key>Label</key><string>dev.spice.resident</string>\n",
+    "  <key>ProgramArguments</key>\n",
+    "  <array><string>spice</string><string>up</string></array>\n",
+    "  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>\n",
+    "  <key>ProcessType</key><string>Background</string>\n",
+    "</dict>\n",
+    "</plist>\n",
+);
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]

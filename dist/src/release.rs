@@ -78,7 +78,14 @@ impl ReleaseNotes {
     #[must_use]
     pub fn markdown(&self) -> String {
         let mut document = format!(
-            "# Spice {}\n\n{}\n\n## Build Identity\n\n- Manifest: `{}`\n- Source: `{}`\n- Git range: `{}`..`{}`\n- Journal schema: {} -> {}\n\n## Supported Targets\n\n",
+            concat!(
+                "# Spice {}\n\n{}\n\n## Build Identity\n\n",
+                "- Manifest: `{}`\n",
+                "- Source: `{}`\n",
+                "- Git range: `{}`..`{}`\n",
+                "- Journal schema: {} -> {}\n\n",
+                "## Supported Targets\n\n",
+            ),
             self.release,
             self.summary,
             self.build,
