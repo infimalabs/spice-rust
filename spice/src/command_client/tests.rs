@@ -173,6 +173,11 @@ fn every_landed_task_mutation_leaf_uses_one_current_command_kind() {
         (&["taste", "add"][..], CommandKind::TaskAdd),
         (&["taste", "drop"][..], CommandKind::TaskAdd),
     ];
+    assert_eq!(
+        kind_for(&["taste"]),
+        None,
+        "the taste read authenticates without entering the mutation mapper"
+    );
 
     for (path, kind) in expected {
         assert_eq!(
