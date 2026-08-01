@@ -114,6 +114,18 @@ pub struct CommandKindError(String);
 /// opened the session. Nothing here is serializable for that reason: a client
 /// that could author its own authority would be answering the question the
 /// capability exists to answer.
+///
+/// A client cannot encode an authority into a request:
+///
+/// ```compile_fail
+/// let _ = wire::encode(&wire::Authority::Connected);
+/// ```
+///
+/// Nor can bytes crossing the socket manufacture one:
+///
+/// ```compile_fail
+/// let _ = wire::decode::<wire::Authority>(b"null");
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Authority {
     /// Any authenticated connection may submit, operator or lane alike.

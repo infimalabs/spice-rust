@@ -16,7 +16,7 @@ pub(crate) enum Principal {
 
 /// Relationship a leaf has with the authoritative journal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Authority {
+pub(crate) enum JournalAccess {
     None,
     Read,
     Command,
@@ -72,7 +72,7 @@ pub(crate) struct Contract {
     pub(crate) path: &'static [&'static str],
     pub(crate) syntax: &'static str,
     pub(crate) principal: Principal,
-    pub(crate) authority: Authority,
+    pub(crate) journal: JournalAccess,
     pub(crate) facts: &'static [FactKind],
     pub(crate) guards: &'static [Guard],
     pub(crate) result: ResultClass,
@@ -82,14 +82,14 @@ pub(crate) struct Contract {
 
 macro_rules! row {
     (
-        [$($path:literal),+], $syntax:literal, $principal:ident, $authority:ident,
+        [$($path:literal),+], $syntax:literal, $principal:ident, $journal:ident,
         [$($fact:ident),*], [$($guard:ident),*], $result:ident, $battery:literal
     ) => {
         Contract {
             path: &[$($path),+],
             syntax: $syntax,
             principal: Principal::$principal,
-            authority: Authority::$authority,
+            journal: JournalAccess::$journal,
             facts: &[$(FactKind::$fact),*],
             guards: &[$(Guard::$guard),*],
             result: ResultClass::$result,
@@ -1075,10 +1075,10 @@ mod tests {
                 contract.facts.len(),
                 "fact kind repeated in {contract:?}",
             );
-            if contract.authority == Authority::Command {
+            if contract.journal == JournalAccess::Command {
                 assert!(
                     contract.guards.contains(&Guard::Resident),
-                    "command authority has no resident guard: {contract:?}",
+                    "command journal access has no resident guard: {contract:?}",
                 );
             }
             if contract.result == ResultClass::Plan {
@@ -1104,7 +1104,7 @@ mod tests {
             path: &["missing"],
             syntax: "missing",
             principal: Principal::Local,
-            authority: Authority::None,
+            journal: JournalAccess::None,
             facts: &[],
             guards: &[],
             result: ResultClass::Reply,
