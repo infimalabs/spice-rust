@@ -71,6 +71,12 @@ pub enum Domain {
     BoardDocument,
     /// One complete machine-local configuration document.
     ConfigLocal,
+    /// One file installed by a repository-local installation plan.
+    InstallArtifact,
+    /// The complete ordered repository installation plan.
+    InstallPlan,
+    /// The durable record needed to reverse one applied installation.
+    InstallRecord,
     /// The payload manifest of one release target.
     DistTargetPayload,
     /// The bytes of one staged artifact.
@@ -120,6 +126,9 @@ impl Domain {
         match self {
             Self::BoardDocument => "spice.board.document.v1",
             Self::ConfigLocal => "spice.config.local.v1",
+            Self::InstallArtifact => "spice.install.artifact.v1",
+            Self::InstallPlan => "spice.install.plan.v1",
+            Self::InstallRecord => "spice.install.record.v1",
             Self::DistTargetPayload => "spice.dist.target-payload.v1",
             Self::DistArtifact => "spice.dist.artifact.v1",
             Self::DistPins => "spice.dist.pins.v1",

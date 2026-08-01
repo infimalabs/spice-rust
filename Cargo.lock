@@ -2109,6 +2109,7 @@ dependencies = [
  "dialect",
  "fold",
  "gate",
+ "gix-config",
  "jiff",
  "journal",
  "lane",

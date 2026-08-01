@@ -31,6 +31,7 @@ vendor = { path = "../vendor" }
 wire = { path = "../wire" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+gix-config = "0.59.0"
 jiff = "0.2.35"
 notify = "8.2.0"
 signal-hook = "0.3.18"

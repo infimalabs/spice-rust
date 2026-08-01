@@ -20,6 +20,8 @@ mod doctor;
 #[cfg(not(target_arch = "wasm32"))]
 mod gate_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod install_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod lock_command;
 mod proof_command;
 mod render;
@@ -74,6 +76,7 @@ fn main() {
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
         ["gate", "receipt"] => deliver(&gate_command::receipt(), form),
+        ["install"] => deliver(&install_command::run(leaf), form),
         ["config"] => deliver_config(&config_command::run(leaf), form),
         ["lock"] => deliver(&lock_command::status(), form),
         ["version"] => deliver(&version_outcome(), form),
