@@ -21,6 +21,52 @@ pub struct Locations {
     local: PathBuf,
 }
 
+/// One admitted configuration load together with the exact documents that
+/// produced it.
+///
+/// Keeping the acquired text beside the resolved tree lets trust and other
+/// admission surfaces bind the same bytes that were parsed. Callers do not
+/// need to reopen either path and race a replacement after validation.
+#[derive(Debug)]
+pub struct Loaded {
+    resolved: Resolved,
+    locations: Locations,
+    tracked: Option<String>,
+    local: Option<String>,
+}
+
+impl Loaded {
+    /// Effective typed configuration resolved from the captured documents.
+    #[must_use]
+    pub const fn resolved(&self) -> &Resolved {
+        &self.resolved
+    }
+
+    /// Exact repository configuration locations used for this capture.
+    #[must_use]
+    pub const fn locations(&self) -> &Locations {
+        &self.locations
+    }
+
+    /// Exact tracked document text, absent when the path did not exist.
+    #[must_use]
+    pub fn tracked(&self) -> Option<&str> {
+        self.tracked.as_deref()
+    }
+
+    /// Exact machine-local document text, absent when the path did not exist.
+    #[must_use]
+    pub fn local(&self) -> Option<&str> {
+        self.local.as_deref()
+    }
+
+    /// Consume the capture and retain only the effective typed configuration.
+    #[must_use]
+    pub fn into_resolved(self) -> Resolved {
+        self.resolved
+    }
+}
+
 impl Locations {
     /// Tracked worktree policy document.
     #[must_use]
@@ -236,6 +282,19 @@ pub fn load_repository(
     repository: &Repository,
     flags: &[FlagOverride],
 ) -> Result<Resolved, LoadError> {
+    capture_repository(repository, flags).map(Loaded::into_resolved)
+}
+
+/// Capture the exact repository documents and their effective configuration.
+///
+/// # Errors
+///
+/// Returns every acquisition and resolution diagnostic found after both exact
+/// document paths have been inspected.
+pub fn capture_repository(
+    repository: &Repository,
+    flags: &[FlagOverride],
+) -> Result<Loaded, LoadError> {
     let locations = locations(repository);
     let tracked_path = locations.tracked();
     let local_path = locations.local();
@@ -256,7 +315,12 @@ pub fn load_repository(
     ));
 
     match (acquisition.is_empty(), resolved) {
-        (true, Ok(resolved)) => Ok(resolved),
+        (true, Ok(resolved)) => Ok(Loaded {
+            resolved,
+            locations,
+            tracked,
+            local,
+        }),
         (_, result) => Err(LoadError::configuration(acquisition, result.err())),
     }
 }

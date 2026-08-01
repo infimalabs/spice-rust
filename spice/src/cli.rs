@@ -850,6 +850,9 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["down"]
         | ["run"]
         | ["config"]
+        | ["trust"]
+        | ["trust", "grant"]
+        | ["trust", "revoke"]
         | ["release", "publish"]
         | ["restore", "verify"] => Landing::Landed,
         ["board"]
@@ -882,10 +885,7 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["consent", "policy"]
         | ["taste"]
         | ["taste", "add"]
-        | ["taste", "drop"]
-        | ["trust"]
-        | ["trust", "grant"]
-        | ["trust", "revoke"] => Landing::Gap("POLICY-1kJQlFB6"),
+        | ["taste", "drop"] => Landing::Gap("POLICY-1kJQlFB6"),
         ["backup"]
         | ["restore"]
         | ["journal"]
