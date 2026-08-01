@@ -9,7 +9,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use sill::LockReport;
+use sill::{LockAvailability, LockReport};
 use wire::{Outcome, ReplyPosition};
 
 const BUSY_EXIT: i32 = 71;
@@ -120,6 +120,14 @@ fn report_has_text_json_parity_and_never_materializes_lock_state() {
             .collect::<Vec<_>>(),
         [("pool", 2), ("single", 1)]
     );
+    assert!(
+        reply
+            .body
+            .pools
+            .iter()
+            .flat_map(|pool| &pool.entries)
+            .all(|entry| entry.availability == LockAvailability::Available)
+    );
     assert!(!expected_root.exists(), "JSON reporting created lock state");
 }
 
@@ -217,6 +225,12 @@ fn separate_processes_prove_busy_taken_full_and_release() {
     let repository = Scratch::repository("contention");
     let single = Holder::spawn(repository.path(), "single", 0, false);
 
+    let held_report = lock_report(repository.path());
+    assert_eq!(
+        shard(&held_report, "single", 0).availability,
+        LockAvailability::Held
+    );
+
     let taken = invoke(
         repository.path(),
         &[
@@ -254,11 +268,37 @@ fn separate_processes_prove_busy_taken_full_and_release() {
     single.release();
     pool_zero.release();
     pool_one.release();
+    let released_report = lock_report(repository.path());
+    assert_eq!(
+        shard(&released_report, "single", 0).availability,
+        LockAvailability::Available
+    );
     let retry = invoke(
         repository.path(),
         &["lock", "run", "single", "--", "/usr/bin/true"],
     );
     assert_eq!(retry.status.code(), Some(0));
+}
+
+fn lock_report(repository: &Path) -> LockReport {
+    let spoken = invoke(repository, &["--json", "lock"]);
+    assert_eq!(spoken.status.code(), Some(0));
+    assert!(spoken.err.is_empty());
+    let Outcome::Reply(reply) =
+        wire::decode::<Outcome<LockReport>>(&spoken.out).expect("lock report decodes")
+    else {
+        panic!("lock status must reply");
+    };
+    reply.body
+}
+
+fn shard<'a>(report: &'a LockReport, name: &str, number: u32) -> &'a sill::LockShardReport {
+    report
+        .pools
+        .iter()
+        .find(|pool| pool.name == name)
+        .and_then(|pool| pool.entries.iter().find(|entry| entry.shard == number))
+        .expect("configured shard is reported")
 }
 
 #[test]

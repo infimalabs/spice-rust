@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Acquisition, ExitCode, LockConfig, LockFile, LockName, Possession};
+use crate::{Acquisition, Availability, ExitCode, LockConfig, LockFile, LockName, Possession};
 
 /// Read-only rendering of the configured lock topology.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -37,7 +37,24 @@ pub struct LockExitReport {
 pub struct LockPoolReport {
     pub name: String,
     pub shards: u32,
-    pub paths: Vec<String>,
+    pub entries: Vec<LockShardReport>,
+}
+
+/// One fixed shard path and its point-in-time kernel availability.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LockShardReport {
+    pub shard: u32,
+    pub path: String,
+    pub availability: LockAvailability,
+}
+
+/// Whether a nonblocking acquisition would have succeeded when observed.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LockAvailability {
+    Available,
+    Held,
 }
 
 /// Repository-common lock topology plus its admitted policy.
@@ -57,22 +74,32 @@ impl LockTopology {
         }
     }
 
-    /// Render every configured path without creating or opening one.
-    #[must_use]
-    pub fn report(&self) -> LockReport {
+    /// Render every configured path and its availability without creating one.
+    ///
+    /// Existing shard files are opened only for a nonblocking kernel probe;
+    /// absent shard files and directories remain absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed inspection failure when an existing shard cannot be
+    /// opened or observed.
+    pub fn report(&self) -> Result<LockReport, LockSurfaceError> {
         let exits = self.config.exits();
         let pools = self
             .config
             .named()
-            .map(|(name, shards)| LockPoolReport {
-                name: name.as_str().to_owned(),
-                shards: shards.get(),
-                paths: (0..shards.get())
-                    .map(|shard| self.shard_path(name, shard).display().to_string())
-                    .collect(),
+            .map(|(name, shards)| {
+                let entries = (0..shards.get())
+                    .map(|shard| self.observe_shard(name, shard))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(LockPoolReport {
+                    name: name.as_str().to_owned(),
+                    shards: shards.get(),
+                    entries,
+                })
             })
-            .collect();
-        LockReport {
+            .collect::<Result<Vec<_>, LockSurfaceError>>()?;
+        Ok(LockReport {
             root: self.root.display().to_string(),
             exits: LockExitReport {
                 busy: exits.busy().get(),
@@ -80,7 +107,7 @@ impl LockTopology {
                 full: exits.full().get(),
             },
             pools,
-        }
+        })
     }
 
     /// Try one selected shard, or the first free shard in stable order.
@@ -160,6 +187,29 @@ impl LockTopology {
     fn shard_path(&self, name: &LockName, shard: u32) -> PathBuf {
         self.root.join(name.as_str()).join(shard.to_string())
     }
+
+    fn observe_shard(
+        &self,
+        name: &LockName,
+        shard: u32,
+    ) -> Result<LockShardReport, LockSurfaceError> {
+        let path = self.shard_path(name, shard);
+        let lock = LockFile::new(name.clone(), &path);
+        let availability = lock
+            .availability()
+            .map_err(|source| LockSurfaceError::Inspect {
+                path: path.clone(),
+                source,
+            })?;
+        Ok(LockShardReport {
+            shard,
+            path: path.display().to_string(),
+            availability: match availability {
+                Availability::Available => LockAvailability::Available,
+                Availability::Held => LockAvailability::Held,
+            },
+        })
+    }
 }
 
 /// One nonblocking pool acquisition.
@@ -225,6 +275,10 @@ pub enum LockSurfaceError {
         path: PathBuf,
         source: io::Error,
     },
+    Inspect {
+        path: PathBuf,
+        source: io::Error,
+    },
 }
 
 impl fmt::Display for LockSurfaceError {
@@ -246,6 +300,9 @@ impl fmt::Display for LockSurfaceError {
             Self::Acquire { path, source } => {
                 write!(formatter, "cannot acquire {}: {source}", path.display())
             }
+            Self::Inspect { path, source } => {
+                write!(formatter, "cannot inspect {}: {source}", path.display())
+            }
         }
     }
 }
@@ -253,7 +310,9 @@ impl fmt::Display for LockSurfaceError {
 impl Error for LockSurfaceError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Prepare { source, .. } | Self::Acquire { source, .. } => Some(source),
+            Self::Prepare { source, .. }
+            | Self::Acquire { source, .. }
+            | Self::Inspect { source, .. } => Some(source),
             Self::InvalidName(_) | Self::UnknownName(_) | Self::ShardOutOfRange { .. } => None,
         }
     }
@@ -276,7 +335,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use super::{Contention, LockAttempt, LockSurfaceError, LockTopology};
+    use super::{Contention, LockAttempt, LockAvailability, LockSurfaceError, LockTopology};
     use crate::LockConfig;
 
     const BUSY_EXIT: u64 = 71;
@@ -323,7 +382,7 @@ mod tests {
     fn report_is_stable_and_does_not_materialize_the_topology() {
         let scratch = Scratch::new("report");
         let root = scratch.path().join("state/locks");
-        let report = topology(&root).report();
+        let report = topology(&root).report().expect("topology is observable");
 
         assert_eq!(report.root, root.display().to_string());
         assert_eq!(report.exits.busy, BUSY_EXIT as i32);
@@ -338,13 +397,61 @@ mod tests {
             [("pool", 2), ("single", 1)]
         );
         assert_eq!(
-            report.pools[0].paths,
+            report.pools[0]
+                .entries
+                .iter()
+                .map(|entry| entry.path.clone())
+                .collect::<Vec<_>>(),
             [
                 root.join("pool/0").display().to_string(),
                 root.join("pool/1").display().to_string(),
             ]
         );
+        assert!(
+            report
+                .pools
+                .iter()
+                .flat_map(|pool| &pool.entries)
+                .all(|entry| entry.availability == LockAvailability::Available)
+        );
         assert!(!root.exists(), "reporting created lock state");
+    }
+
+    #[test]
+    fn report_observes_held_and_released_shards_without_creating_missing_ones() {
+        let scratch = Scratch::new("availability");
+        let root = scratch.path().join("locks");
+        let topology = topology(&root);
+        let held = match topology
+            .try_acquire("pool", Some(0))
+            .expect("selected shard is observable")
+        {
+            LockAttempt::Acquired(held) => held,
+            LockAttempt::Contended { .. } => panic!("fresh shard was contended"),
+        };
+
+        let report = topology.report().expect("held topology is observable");
+        let pool = report
+            .pools
+            .iter()
+            .find(|pool| pool.name == "pool")
+            .expect("pool is reported");
+        assert_eq!(pool.entries[0].availability, LockAvailability::Held);
+        assert_eq!(pool.entries[1].availability, LockAvailability::Available);
+        assert!(root.join("pool/0").is_file());
+        assert!(
+            !root.join("pool/1").exists(),
+            "observing an absent shard created it"
+        );
+
+        drop(held);
+        let released = topology.report().expect("released topology is observable");
+        let pool = released
+            .pools
+            .iter()
+            .find(|pool| pool.name == "pool")
+            .expect("pool is reported");
+        assert_eq!(pool.entries[0].availability, LockAvailability::Available);
     }
 
     #[test]
