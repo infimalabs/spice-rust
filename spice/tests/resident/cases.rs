@@ -341,6 +341,59 @@ fn unfinalized_rust_schema_refuses_startup_with_its_exact_state() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn resident_startup_refuses_linked_policy_components_without_trust_effects() {
+    use std::os::unix::fs::symlink;
+
+    for linked in ["tracked-file", "local-parent"] {
+        let fixture = Fixture::new(linked);
+        fs::create_dir_all(fixture.journal().parent().expect("journal data parent"))
+            .expect("create journal data parent");
+        drop(journal::Journal::open(fixture.journal()).expect("baseline journal opens"));
+        let before = fs::read(fixture.journal()).expect("baseline journal bytes");
+        match linked {
+            "tracked-file" => {
+                let target = fixture.root.join("outside-tracked.toml");
+                fs::write(&target, "# linked tracked policy\n").expect("write tracked target");
+                symlink(&target, fixture.root.join("spice.toml"))
+                    .expect("link tracked policy file");
+            }
+            "local-parent" => {
+                let target = fixture.root.join("outside-local");
+                fs::create_dir(&target).expect("create local target directory");
+                fs::write(target.join("config.toml"), "# linked local policy\n")
+                    .expect("write local target");
+                symlink(&target, fixture.root.join(".git/.spice"))
+                    .expect("link local policy parent");
+            }
+            _ => unreachable!("fixture names the closed linked cases"),
+        }
+
+        let output = invoke(&fixture, "up");
+        assert_eq!(output.status.code(), Some(REFUSAL_EXIT), "{linked}");
+        let Outcome::Refusal(refusal) = outcome(&output) else {
+            panic!("{linked} startup did not return a typed refusal");
+        };
+        assert_eq!(refusal.reason, "resident::configuration-refused");
+        assert_eq!(
+            fs::read(fixture.journal()).expect("journal bytes after refusal"),
+            before,
+            "{linked} refusal changed authority"
+        );
+        let snapshot = journal::JournalReader::open(fixture.journal())
+            .expect("refused authority opens")
+            .fact_snapshot()
+            .expect("refused authority reads");
+        assert!(
+            snapshot.facts().iter().all(|fact| !matches!(
+                fact.fact.kind(),
+                FactKind::TrustPended | FactKind::UpSeated
+            ))
+        );
+    }
+}
+
 #[test]
 fn operator_trust_process_binds_policy_bytes_across_reconnect_and_restart() {
     let fixture = trust_fixture();
