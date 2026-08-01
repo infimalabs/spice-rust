@@ -267,6 +267,7 @@ dependencies = [
  "journal",
  "serde",
  "tokio",
+ "toml",
  "wire",
 ]
 
@@ -1618,6 +1619,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tape",
+ "toml",
  "wire",
 ]
 
@@ -2023,6 +2025,11 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 [[package]]
 name = "sill"
 version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml",
+]
 
 [[package]]
 name = "simd-adler32"
