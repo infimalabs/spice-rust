@@ -13,8 +13,5 @@ sill = { path = "../sill" }
 thiserror = "2.0.19"
 wire = { path = "../wire" }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-gix = { version = "0.86.0", default-features = false, features = ["revision", "sha1"] }
-
 [lints]
 workspace = true

@@ -150,7 +150,7 @@ fn prepare() -> Result<Prepared, Box<Outcome<ReleasePlan>>> {
     })?;
     let state = observe(&snapshot, &release)
         .map_err(|error| Box::new(refusal::<ReleasePlan>("release::evidence-refused", &error)))?;
-    let canvas = repository.common_dir().join(".spice/canvas");
+    let canvas = repository.state_root().join("canvas");
     let discovery = resident::read_operator_discovery(&canvas)
         .map_err(|outcome| Box::new(map_outcome(outcome, |_| unreachable!())))?;
     Ok(Prepared {
@@ -336,24 +336,20 @@ fn map_outcome<A, B>(outcome: Outcome<A>, map: impl FnOnce(A) -> B) -> Outcome<B
 }
 
 pub(crate) fn notes(matches: &clap::ArgMatches) -> Outcome<ReleaseNotes> {
-    let range = matches
-        .get_one::<String>("RANGE")
-        .expect("release notes requires its generated RANGE operand");
-    let manifest = matches
-        .get_one::<String>("MANIFEST")
-        .expect("release notes requires its generated MANIFEST operand");
-    let repository = match std::env::current_dir() {
-        Ok(repository) => repository,
+    let input = matches
+        .get_one::<String>("INPUT")
+        .expect("release notes requires its generated INPUT operand");
+    let bytes = match fs::read(Path::new(input)) {
+        Ok(bytes) => bytes,
         Err(error) => {
             return Outcome::Fault(Fault {
                 class: FaultClass::Environment,
-                reason: "release::working-directory-unavailable".to_owned(),
-                detail: error.to_string(),
+                reason: "release::input-unreadable".to_owned(),
+                detail: format!("cannot read release input {input:?}: {error}"),
             });
         }
     };
-    let battery = proof::Battery::current();
-    match dist::release_notes(&repository, range, Path::new(manifest), battery.digest()) {
+    match dist::release_notes(&bytes) {
         Ok(body) => Outcome::Reply(Reply {
             position: ReplyPosition::Direct {},
             body,
@@ -363,37 +359,11 @@ pub(crate) fn notes(matches: &clap::ArgMatches) -> Outcome<ReleaseNotes> {
 }
 
 fn failure(error: dist::NotesError) -> Outcome<ReleaseNotes> {
-    use dist::NotesError;
-
-    match error {
-        refusal @ (NotesError::ManifestMissing(_)
-        | NotesError::ManifestInvalid(_)
-        | NotesError::Range(_)
-        | NotesError::Schema(_)
-        | NotesError::SourceMismatch { .. }
-        | NotesError::Authored(_)) => Outcome::Refusal(Refusal {
-            reason: "release::notes-refused".to_owned(),
-            witness: Some("release-evidence".to_owned()),
-            expected: Some(
-                "one immutable first-parent range and its canonical sealed manifest".to_owned(),
-            ),
-            observed: Some(refusal.to_string()),
-            remedy: "seal consistent evidence and resolve every authored placeholder".to_owned(),
-        }),
-        unavailable @ NotesError::Repository { .. } => Outcome::Fault(Fault {
-            class: FaultClass::Environment,
-            reason: "release::repository-unavailable".to_owned(),
-            detail: unavailable.to_string(),
-        }),
-        unreadable @ NotesError::ManifestIo { .. } => Outcome::Fault(Fault {
-            class: FaultClass::Environment,
-            reason: "release::manifest-unreadable".to_owned(),
-            detail: unreadable.to_string(),
-        }),
-        invalid @ NotesError::GitObject { .. } => Outcome::Fault(Fault {
-            class: FaultClass::Store,
-            reason: "release::git-object-invalid".to_owned(),
-            detail: invalid.to_string(),
-        }),
-    }
+    Outcome::Refusal(Refusal {
+        reason: "release::notes-refused".to_owned(),
+        witness: Some("release-input".to_owned()),
+        expected: Some("one canonical current ordered release evidence document".to_owned()),
+        observed: Some(error.to_string()),
+        remedy: "supply both target-matched proof and gate receipts for one source".to_owned(),
+    })
 }

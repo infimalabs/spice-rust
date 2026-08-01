@@ -38,7 +38,7 @@ struct RuntimePaths {
 impl RuntimePaths {
     fn discover(start: &Path) -> Result<Self, ResolveError> {
         let repository = Repository::discover(start)?;
-        let runtime = repository.common_dir().join(".spice");
+        let runtime = repository.state_root();
         let data = runtime.join("data");
         Ok(Self {
             journal: repository.journal_path(),
@@ -154,7 +154,7 @@ fn up_from(current: &Path) -> Outcome<()> {
 
     let journal = match journal::Journal::open(&paths.journal) {
         Ok(journal) => journal,
-        Err(error) => return store_fault("journal::open-failed", &error.to_string()),
+        Err(error) => return journal_open_failure(error),
     };
     let migration = journal.migration();
     let epoch = new_uuid();
@@ -188,6 +188,23 @@ fn up_from(current: &Path) -> Outcome<()> {
         return store_fault("bus::shutdown-failed", &error.to_string());
     }
     answer
+}
+
+fn journal_open_failure(error: journal::OpenError) -> Outcome<()> {
+    match error {
+        journal::OpenError::Migration(migration) => Outcome::Refusal(Refusal {
+            reason: "journal::schema-refused".to_owned(),
+            witness: None,
+            expected: Some(format!("Rust journal schema {}", journal::SCHEMA_VERSION,)),
+            observed: Some(migration.to_string()),
+            remedy: concat!(
+                "finish or replace the unfinalized or incompatible Rust authority ",
+                "before starting the resident"
+            )
+            .to_owned(),
+        }),
+        error => store_fault("journal::open-failed", &error.to_string()),
+    }
 }
 
 fn settle_surface(
@@ -1140,10 +1157,10 @@ mod tests {
         let paths = RuntimePaths::discover(&nested).expect("paths resolve");
         let common = fs::canonicalize(root.join(".git")).expect("canonical common directory");
 
-        assert_eq!(paths.runtime, common.join(".spice"));
+        assert_eq!(paths.runtime, common.join(".spice-rust"));
         assert_eq!(
             paths.journal,
-            common.join(".spice/data/spicejournal.sqlite3")
+            common.join(".spice-rust/data/spicejournal.sqlite3")
         );
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
@@ -1166,7 +1183,7 @@ mod tests {
         let paths = RuntimePaths::discover(&worktree).expect("paths resolve");
         let common = fs::canonicalize(&common).expect("canonical common directory");
 
-        assert_eq!(paths.runtime, common.join(".spice"));
+        assert_eq!(paths.runtime, common.join(".spice-rust"));
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 
