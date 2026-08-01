@@ -415,7 +415,7 @@ const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "review"],
-        "task review HANDLE",
+        "task review HANDLE [--finding TEXT] [--note TEXT]",
         Lane,
         Command,
         [TaskReviewed],
@@ -851,8 +851,8 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["run"]
         | ["config"]
         | ["release", "publish"]
-        | ["restore", "verify"] => Landing::Landed,
-        ["board"]
+        | ["restore", "verify"]
+        | ["board"]
         | ["board", "graph"]
         | ["board", "handout"]
         | ["task", "next"]
@@ -866,7 +866,7 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["task", "oops"]
         | ["task", "depends"]
         | ["doc"]
-        | ["doc", "ledger"] => Landing::Gap("BOARD-1kJQlDDt"),
+        | ["doc", "ledger"] => Landing::Landed,
         ["lane"]
         | ["lane", "add"]
         | ["lane", "drain"]
@@ -960,6 +960,12 @@ fn child_names(contracts: &[Contract], path: &[&str]) -> BTreeSet<&'static str> 
 
 fn contract_at<'a>(contracts: &'a [Contract], path: &[&str]) -> Option<&'a Contract> {
     contracts.iter().find(|contract| contract.path == path)
+}
+
+/// Recover one registered contract for an internal typed client preflight.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn contract(path: &[&str]) -> Option<&'static Contract> {
+    contract_at(contracts(), path)
 }
 
 /// Recover the contract selected by the generated parser.

@@ -25,6 +25,14 @@ use crate::witness::{Witness, WitnessKind};
 /// selects the body DTO, witness schema, transition, and reply DTO together.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CommandKind {
+    /// Read the validated current board heads.
+    BoardRead,
+    /// Render one deterministic board graph.
+    BoardGraph,
+    /// Compose one deterministic board handout.
+    BoardHandout,
+    /// Emit one canonical authored-document ledger.
+    DocLedger,
     /// Add one task as direct intent.
     TaskAdd,
     /// Replace an unsettled task statement.
@@ -162,6 +170,18 @@ pub struct Law {
 }
 
 impl Law {
+    /// Authenticated read with no caller-proposed authority predicate.
+    pub const READ: Self = Self {
+        required: &[],
+        optional: &[],
+        authority: Authority::Connected,
+    };
+    /// Operator-only authenticated read.
+    pub const OPERATOR_READ: Self = Self {
+        required: &[],
+        optional: &[],
+        authority: Authority::Operator,
+    };
     /// True when this law admits `kind` at all.
     #[must_use]
     pub fn admits(&self, kind: WitnessKind) -> bool {
@@ -399,6 +419,10 @@ pub enum LawError {
 impl CommandKind {
     /// Every command in the closed registry, in declaration order.
     pub const ALL: &'static [Self] = &[
+        Self::BoardRead,
+        Self::BoardGraph,
+        Self::BoardHandout,
+        Self::DocLedger,
         Self::TaskAdd,
         Self::TaskEdit,
         Self::TaskNote,
@@ -440,6 +464,10 @@ impl CommandKind {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::BoardRead => "board::read",
+            Self::BoardGraph => "board::graph",
+            Self::BoardHandout => "board::handout",
+            Self::DocLedger => "doc::ledger",
             Self::TaskAdd => "task::add",
             Self::TaskEdit => "task::edit",
             Self::TaskNote => "task::note",
@@ -485,6 +513,8 @@ impl CommandKind {
     #[must_use]
     pub const fn law(self) -> Law {
         match self {
+            Self::BoardRead | Self::BoardGraph | Self::DocLedger => Law::READ,
+            Self::BoardHandout => Law::OPERATOR_READ,
             Self::TaskAdd => Law::ADD,
             Self::TaskEdit => Law::EDIT,
             Self::TaskNote => Law::NOTE,
@@ -514,6 +544,15 @@ impl CommandKind {
             Self::ReleasePublish => Law::PUBLISH,
             Self::UpChange => Law::UP,
         }
+    }
+
+    /// Whether this request reads one snapshot and commits no authority fact.
+    #[must_use]
+    pub const fn is_read(self) -> bool {
+        matches!(
+            self,
+            Self::BoardRead | Self::BoardGraph | Self::BoardHandout | Self::DocLedger
+        )
     }
 }
 

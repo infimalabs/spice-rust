@@ -69,6 +69,10 @@ pub enum IdentError {
 pub enum Domain {
     /// The exact authored bytes of one board document.
     BoardDocument,
+    /// Stable task identity derived from one canonical authored node.
+    BoardTaskIdentity,
+    /// The task and workflow heads read by one board document preview.
+    BoardBarrier,
     /// The canonical inventory document for one journal backup bundle.
     JournalBackupManifest,
     /// The exact bytes of one member in a journal backup bundle.
@@ -133,6 +137,8 @@ impl Domain {
     pub const fn tag(self) -> &'static str {
         match self {
             Self::BoardDocument => "spice.board.document.v1",
+            Self::BoardTaskIdentity => "spice.board.task-identity.v1",
+            Self::BoardBarrier => "spice.board.barrier.v1",
             Self::JournalBackupManifest => "spice.journal.backup-manifest.v1",
             Self::JournalBackupMember => "spice.journal.backup-member.v1",
             Self::DistTargetPayload => "spice.dist.target-payload.v1",

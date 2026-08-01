@@ -13,7 +13,7 @@ mod runtime {
 
     use journal::{
         CommitFault, FactSnapshot, GuardError, GuardRefusal, Journal, JournalHead, JournalWrite,
-        SnapshotError, Verification, VerifyError,
+        SnapshotError, TaskHeads, Verification, VerifyError,
     };
 
     const REQUEST_CAPACITY: usize = 64;
@@ -64,6 +64,31 @@ mod runtime {
         Refused(GuardRefusal),
         /// Storage or encoding faulted and rolled the transaction back.
         Fault(CommitFault),
+    }
+
+    /// One queued, immutable view of the heads needed by board requests.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct TaskSnapshot {
+        cursor: Option<journal::crossing::Seq>,
+        tasks: Vec<TaskHeads>,
+        residency: Option<JournalHead<journal::crossing::ResidencyHead>>,
+    }
+
+    impl TaskSnapshot {
+        #[must_use]
+        pub const fn cursor(&self) -> Option<journal::crossing::Seq> {
+            self.cursor
+        }
+
+        #[must_use]
+        pub fn tasks(&self) -> &[TaskHeads] {
+            &self.tasks
+        }
+
+        #[must_use]
+        pub fn residency(&self) -> Option<&JournalHead<journal::crossing::ResidencyHead>> {
+            self.residency.as_ref()
+        }
     }
 
     /// Receiver for post-durability commit broadcasts.
@@ -146,6 +171,18 @@ mod runtime {
                 .map_err(BusReadError::Snapshot)
         }
 
+        /// Read board and residency heads together through the writer queue.
+        pub fn task_snapshot(&self) -> Result<TaskSnapshot, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::Tasks { answer })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+                .map_err(BusReadError::Head)
+        }
+
         /// Read the current resident and lane head through the writer queue.
         pub fn residency_head(
             &self,
@@ -212,6 +249,9 @@ mod runtime {
         Snapshot {
             answer: SyncSender<Result<FactSnapshot, SnapshotError>>,
         },
+        Tasks {
+            answer: SyncSender<Result<TaskSnapshot, GuardError>>,
+        },
         Residency {
             answer: SyncSender<
                 Result<Option<JournalHead<journal::crossing::ResidencyHead>>, GuardError>,
@@ -249,6 +289,16 @@ mod runtime {
                 }
                 Request::Snapshot { answer } => {
                     let _ = answer.send(journal.fact_snapshot());
+                }
+                Request::Tasks { answer } => {
+                    let snapshot = journal.read(|read| {
+                        Ok(TaskSnapshot {
+                            cursor: read.cursor()?,
+                            tasks: read.task_heads()?,
+                            residency: read.residency_head()?,
+                        })
+                    });
+                    let _ = answer.send(snapshot);
                 }
                 Request::Residency { answer } => {
                     let _ = answer.send(journal.read(|read| read.residency_head()));
@@ -336,4 +386,5 @@ mod runtime {
 #[cfg(not(target_arch = "wasm32"))]
 pub use runtime::{
     Bus, BusError, BusReadError, BusVerifyError, CommitOutcome, CommitSubscriber, JournalCommit,
+    TaskSnapshot,
 };

@@ -65,9 +65,10 @@ fn the_specified_command_satisfies_its_own_registry_row() {
 fn every_command_names_the_witnesses_it_requires() {
     for kind in CommandKind::ALL {
         let law = kind.law();
-        assert!(
-            !law.required.is_empty(),
-            "{kind} carries a registry row that requires nothing",
+        assert_eq!(
+            law.required.is_empty(),
+            kind.is_read(),
+            "only read requests may carry a witness-free registry row",
         );
         for optional in law.optional {
             assert!(

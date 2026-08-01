@@ -402,6 +402,9 @@ fn dispatch_command(
     seats: &mut Seats,
     command: &wire::AdmittedCommand,
 ) -> Outcome<CommandAnswer> {
+    if let Some(outcome) = crate::board_command::dispatch(bus, command) {
+        return outcome;
+    }
     match (command.kind(), command.body()) {
         (CommandKind::UpChange, Intent::UpChange(change)) => {
             dispatch_up_change(bus, paths, epoch, seats, command, change)

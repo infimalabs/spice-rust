@@ -57,7 +57,7 @@ operator authorizes cutover.
 ## Rust contracts
 
 The registry contains 63 command leaves. Twenty have executable dispatch,
-so current executable coverage is 20/63, or 31.7 percent. Completed domain
+so current executable coverage is 35/63, or 55.6 percent. Completed domain
 libraries do not count as landed command surfaces.
 
 ### Landed
@@ -82,21 +82,6 @@ libraries do not count as landed command surfaces.
 - `run`
 - `config`
 - `restore verify`
-
-The local command group retains the Python-first ownership boundary described
-above: plain `install` is a side-effect-free plan, and only an exact
-`--apply=<digest>` crosses its fixed authored mutation plan. Rust binaries,
-hook stages, and install records remain namespaced below `.spice/rust`; the
-plan does not replace the ambient command or active `core.hooksPath`.
-
-`doctor`, `version`, and `up` are executable but not yet usable against the
-current worktree state; the configuration and bootstrap tasks above own those
-operational gaps. `release publish` admits its sealed stage against the Rust
-journal and resident discovery under `<git-common>/.spice-rust`; it does not
-read the Python authority under `<git-common>/.spice`.
-
-### `BOARD-1kJQlDDt`
-
 - `board`
 - `board graph`
 - `board handout`
@@ -112,6 +97,18 @@ read the Python authority under `<git-common>/.spice`.
 - `task depends`
 - `doc`
 - `doc ledger`
+
+The local command group retains the Python-first ownership boundary described
+above: plain `install` is a side-effect-free plan, and only an exact
+`--apply=<digest>` crosses its fixed authored mutation plan. Rust binaries,
+hook stages, and install records remain namespaced below `.spice/rust`; the
+plan does not replace the ambient command or active `core.hooksPath`.
+
+`doctor`, `version`, and `up` are executable but not yet usable against the
+current worktree state; the configuration and bootstrap tasks above own those
+operational gaps. `release publish` admits its sealed stage against the Rust
+journal and resident discovery under `<git-common>/.spice-rust`; it does not
+read the Python authority under `<git-common>/.spice`.
 
 ### `COORDIN-1kJQlDjc`
 
