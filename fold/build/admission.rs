@@ -1,21 +1,10 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-/// One fact row parsed from wire's generated vocabulary declaration.
-#[derive(Clone, Debug)]
-pub struct FactRegistration {
-    pub variant: String,
-    pub kind: String,
-    pub producer: Option<String>,
-}
-
 /// One fact or head family an answer says it contains.
 #[derive(Clone, Copy, Debug)]
 pub enum AnswerContent {
-    Fact {
-        variant: &'static str,
-        kind: &'static str,
-    },
+    Fact(wire::FactKind),
     Facts {
         plane: &'static str,
         pattern: &'static str,
@@ -29,10 +18,7 @@ pub enum AnswerContent {
 /// One generated fold input.
 #[derive(Clone, Copy, Debug)]
 pub enum Source {
-    Fact {
-        variant: &'static str,
-        kind: &'static str,
-    },
+    Fact(wire::FactKind),
     Facts {
         plane: &'static str,
         pattern: &'static str,
@@ -114,14 +100,6 @@ const EXPECTED_ROWS: &[(&str, &str)] = &[
     ("BusRefusals", "bus::refusals"),
 ];
 
-const ADMITTED_PRODUCERS: &[&str] = &[
-    "CommandDoor",
-    "BusTimer",
-    "AckScanner",
-    "ResidentRecognition",
-    "Judge",
-];
-
 const FACT_PLANES: &[(&str, &str)] = &[
     ("Task", "task::*"),
     ("Claim", "claim::*"),
@@ -156,47 +134,14 @@ const ADMITTED_TAPES: &[(&str, &str)] = &[("DeclaredExtents", "declared-extents"
 
 /// Validate the generated wire/fold join before the fold crate compiles.
 pub fn validate(
-    facts: &[FactRegistration],
+    facts: &[wire::FactKind],
     folds: &[FoldRegistration],
     rings: &[RingRegistration],
 ) -> Result<(), Refusal> {
-    validate_facts(facts)?;
     validate_rows(folds, rings)?;
     validate_sources(facts, folds, rings)?;
     validate_consumers(facts, folds)?;
     validate_answers(facts, folds)?;
-    Ok(())
-}
-
-fn validate_facts(facts: &[FactRegistration]) -> Result<(), Refusal> {
-    let mut kinds = BTreeSet::new();
-    let mut variants = BTreeSet::new();
-    for fact in facts {
-        if !kinds.insert(fact.kind.as_str()) {
-            return Err(Refusal::new(format!(
-                "fact kind {} is registered more than once",
-                fact.kind
-            )));
-        }
-        if !variants.insert(fact.variant.as_str()) {
-            return Err(Refusal::new(format!(
-                "fact variant {} is registered more than once",
-                fact.variant
-            )));
-        }
-        let Some(producer) = fact.producer.as_deref().filter(|name| !name.is_empty()) else {
-            return Err(Refusal::new(format!(
-                "fact kind {} has no registered producer class",
-                fact.kind
-            )));
-        };
-        if !ADMITTED_PRODUCERS.contains(&producer) {
-            return Err(Refusal::new(format!(
-                "fact kind {} names unknown producer class {producer}",
-                fact.kind
-            )));
-        }
-    }
     Ok(())
 }
 
@@ -264,16 +209,14 @@ fn validate_rows(folds: &[FoldRegistration], rings: &[RingRegistration]) -> Resu
 }
 
 fn validate_sources(
-    facts: &[FactRegistration],
+    facts: &[wire::FactKind],
     folds: &[FoldRegistration],
     rings: &[RingRegistration],
 ) -> Result<(), Refusal> {
     for (position, fold) in folds.iter().enumerate() {
         for source in fold.sources {
             match source {
-                Source::Fact { variant, kind } => {
-                    require_fact(facts, fold.name, variant, kind)?;
-                }
+                Source::Fact(_) => {}
                 Source::Facts { plane, pattern } => {
                     require_fact_pattern(facts, fold.name, plane, pattern)?;
                 }
@@ -330,44 +273,36 @@ fn validate_sources(
     Ok(())
 }
 
-fn validate_consumers(
-    facts: &[FactRegistration],
-    folds: &[FoldRegistration],
-) -> Result<(), Refusal> {
-    for fact in facts {
+fn validate_consumers(facts: &[wire::FactKind], folds: &[FoldRegistration]) -> Result<(), Refusal> {
+    for &fact in facts {
         let consumed = folds.iter().any(|fold| {
             fold.sources
                 .iter()
-                .any(|source| source_supplies_fact(*source, &fact.kind))
+                .any(|source| source_supplies_fact(*source, fact))
         });
         if !consumed {
             return Err(Refusal::new(format!(
-                "fact kind {} has no consuming fold",
-                fact.kind
+                "fact kind {} from producer {} has no consuming fold",
+                fact.as_str(),
+                fact.producer(),
             )));
         }
     }
     Ok(())
 }
 
-fn validate_answers(facts: &[FactRegistration], folds: &[FoldRegistration]) -> Result<(), Refusal> {
+fn validate_answers(facts: &[wire::FactKind], folds: &[FoldRegistration]) -> Result<(), Refusal> {
     for fold in folds {
         for content in fold.content {
             match content {
-                AnswerContent::Fact { variant, kind } => {
-                    if !fact_is_registered(facts, variant, kind) {
-                        return Err(Refusal::new(format!(
-                            "fold {} answer names fact content {kind}, but no admitted kind can supply it",
-                            fold.name
-                        )));
-                    }
+                AnswerContent::Fact(_) => {
                     require_answer_source(fold, *content)?;
                 }
                 AnswerContent::Facts { plane, pattern } => {
                     let declared = FACT_PLANES.contains(&(*plane, *pattern));
                     let supplied = facts
                         .iter()
-                        .any(|fact| pattern_matches(pattern, &fact.kind));
+                        .any(|fact| pattern_matches(pattern, fact.as_str()));
                     if !declared || !supplied {
                         return Err(Refusal::new(format!(
                             "fold {} answer names fact content {pattern}, but no admitted kind can supply it",
@@ -391,40 +326,21 @@ fn validate_answers(facts: &[FactRegistration], folds: &[FoldRegistration]) -> R
     Ok(())
 }
 
-fn require_fact(
-    facts: &[FactRegistration],
-    fold: &str,
-    variant: &str,
-    kind: &str,
-) -> Result<(), Refusal> {
-    if fact_is_registered(facts, variant, kind) {
-        Ok(())
-    } else {
-        Err(Refusal::new(format!(
-            "fold {fold} names unknown fact source {kind}"
-        )))
-    }
-}
-
 fn require_fact_pattern(
-    facts: &[FactRegistration],
+    facts: &[wire::FactKind],
     fold: &str,
     plane: &str,
     pattern: &str,
 ) -> Result<(), Refusal> {
-    if !FACT_PLANES.contains(&(plane, pattern)) {
-        return Err(Refusal::new(format!(
-            "fold {fold} names unknown fact family {plane} => {pattern}"
-        )));
-    }
-    if facts
+    let declared = FACT_PLANES.contains(&(plane, pattern));
+    let supplied = facts
         .iter()
-        .any(|fact| pattern_matches(pattern, &fact.kind))
-    {
+        .any(|fact| pattern_matches(pattern, fact.as_str()));
+    if declared && supplied {
         Ok(())
     } else {
         Err(Refusal::new(format!(
-            "fold {fold} names empty fact family {pattern}"
+            "fold {fold} names unknown fact family {plane} => {pattern}"
         )))
     }
 }
@@ -447,12 +363,12 @@ fn require_pair(
 
 fn require_answer_source(fold: &FoldRegistration, content: AnswerContent) -> Result<(), Refusal> {
     let supplied = match content {
-        AnswerContent::Fact { kind, .. } => fold
+        AnswerContent::Fact(kind) => fold
             .sources
             .iter()
             .any(|source| source_supplies_fact(*source, kind)),
         AnswerContent::Facts { pattern, .. } => fold.sources.iter().any(|source| match source {
-            Source::Fact { kind, .. } => pattern_matches(pattern, kind),
+            Source::Fact(kind) => pattern_matches(pattern, kind.as_str()),
             Source::Facts {
                 pattern: source_pattern,
                 ..
@@ -476,16 +392,10 @@ fn require_answer_source(fold: &FoldRegistration, content: AnswerContent) -> Res
     }
 }
 
-fn fact_is_registered(facts: &[FactRegistration], variant: &str, kind: &str) -> bool {
-    facts
-        .iter()
-        .any(|fact| fact.variant == variant && fact.kind == kind)
-}
-
-fn source_supplies_fact(source: Source, kind: &str) -> bool {
+fn source_supplies_fact(source: Source, kind: wire::FactKind) -> bool {
     match source {
-        Source::Fact { kind: source, .. } => source == kind,
-        Source::Facts { pattern, .. } => pattern_matches(pattern, kind),
+        Source::Fact(source) => source == kind,
+        Source::Facts { pattern, .. } => pattern_matches(pattern, kind.as_str()),
         Source::Fold { .. }
         | Source::Head { .. }
         | Source::Ring { .. }
@@ -507,7 +417,7 @@ fn pattern_matches(pattern: &str, kind: &str) -> bool {
 
 fn content_name(content: AnswerContent) -> &'static str {
     match content {
-        AnswerContent::Fact { kind, .. } => kind,
+        AnswerContent::Fact(kind) => kind.as_str(),
         AnswerContent::Facts { pattern, .. } => pattern,
         AnswerContent::Head { name, .. } => name,
     }

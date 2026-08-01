@@ -117,16 +117,16 @@ fold_registry! {
         answer: "Lanes, worktrees, occupant lineage, and possession.";
         content: [
             Facts(Lane => "lane::*"),
-            Fact(ClaimCarried => "claim::carried"),
-            Fact(ClaimRenewed => "claim::renewed"),
+            Fact(ClaimCarried),
+            Fact(ClaimRenewed),
             Facts(Resident => "up::*"),
             Head(Claim => "claim"),
             Head(Residency => "residency"),
         ];
         sources: [
             Facts(Lane => "lane::*"),
-            Fact(ClaimCarried => "claim::carried"),
-            Fact(ClaimRenewed => "claim::renewed"),
+            Fact(ClaimCarried),
+            Fact(ClaimRenewed),
             Facts(Resident => "up::*"),
             Head(Claim => "claim"),
             Head(Residency => "residency"),
