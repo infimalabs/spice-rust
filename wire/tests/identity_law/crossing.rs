@@ -1,3 +1,5 @@
+// Executable samples covering every custom wire-crossing identity.
+
 fn at(text: &str) -> Instant {
     text.parse().expect("instant")
 }
@@ -660,4 +662,3 @@ fn cover_reply_frames(covered: &mut BTreeSet<String>) {
         ],
     );
 }
-

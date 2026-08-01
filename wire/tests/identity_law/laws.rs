@@ -1,4 +1,6 @@
 
+// Generic identity, hash, spelling, and rank laws shared by this fixture.
+
 /// Row used by the packed frames.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Row {
@@ -342,4 +344,3 @@ fn a_lane_ranks_before_the_operator_because_its_spelling_does() {
         "a lane must rank before the operator, as their spellings do",
     );
 }
-

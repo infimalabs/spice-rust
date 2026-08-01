@@ -1,3 +1,5 @@
+// Refusal and closed-vocabulary checks that complete the identity-law sweep.
+
 #[test]
 fn a_seq_cannot_encode_a_zero_position() {
     // Seq wraps NonZeroU64, so the law above can never sample a zero. The

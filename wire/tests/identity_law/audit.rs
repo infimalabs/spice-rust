@@ -1,3 +1,5 @@
+// Source audit proving that every public export has structural or sampled coverage.
+
 /// Fail by name when a re-exported type has no executable or structural proof.
 fn assert_coverage_is_complete(covered: &BTreeSet<String>) {
     let source = fs::read_to_string(lib_source()).expect("wire/src/lib.rs is readable");
@@ -397,4 +399,3 @@ fn a_custom_encoder_still_requires_executable_law_samples() {
     assert!(sampled.unaccounted.is_empty());
     assert!(sampled.stale.is_empty());
 }
-
