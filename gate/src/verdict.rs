@@ -81,6 +81,22 @@ pub struct Run {
     verdict: Verdict,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SnapshotIntegrity {
+    KernelChangeIdentity,
+    Unsupported,
+}
+
+impl SnapshotIntegrity {
+    const fn native() -> Self {
+        if cfg!(target_family = "unix") {
+            Self::KernelChangeIdentity
+        } else {
+            Self::Unsupported
+        }
+    }
+}
+
 impl Run {
     /// Walk a foreign repository, measure it, and judge it against a ratchet.
     ///
@@ -95,6 +111,20 @@ impl Run {
         ratchet: &Ratchet,
         bounds: &Bounds,
     ) -> Result<Self, RunError> {
+        Self::adjudicate_with_integrity(policy, root, ratchet, bounds, SnapshotIntegrity::native())
+    }
+
+    fn adjudicate_with_integrity(
+        policy: &Policy,
+        root: &Path,
+        ratchet: &Ratchet,
+        bounds: &Bounds,
+        snapshot_integrity: SnapshotIntegrity,
+    ) -> Result<Self, RunError> {
+        if snapshot_integrity == SnapshotIntegrity::Unsupported {
+            return Err(RunError::SnapshotIntegrityUnsupported);
+        }
+
         let jurisdiction = Jurisdiction::walk(root, policy.ignore()).map_err(RunError::Walk)?;
         let inventory = jurisdiction.inventory_digest();
         let snapshot = jurisdiction.snapshot().map_err(RunError::Walk)?;
@@ -185,6 +215,8 @@ impl Run {
 /// What stopped a run.
 #[derive(Debug)]
 pub enum RunError {
+    /// This target cannot prove that a parser left its snapshot unchanged.
+    SnapshotIntegrityUnsupported,
     /// The jurisdiction could not be established.
     Walk(WalkError),
     /// A metric could not be measured.
@@ -218,6 +250,10 @@ pub enum RunError {
 impl fmt::Display for RunError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::SnapshotIntegrityUnsupported => write!(
+                formatter,
+                "snapshot integrity is unsupported on this target; no parser was launched"
+            ),
             Self::Walk(source) => write!(formatter, "{source}"),
             Self::Measure(source) => write!(formatter, "{source}"),
             Self::JurisdictionChanged {
@@ -250,8 +286,81 @@ impl std::error::Error for RunError {
         match self {
             Self::Walk(source) => Some(source),
             Self::Measure(source) => Some(source),
-            Self::JurisdictionChanged { .. } | Self::SnapshotChanged { .. } => None,
+            Self::SnapshotIntegrityUnsupported
+            | Self::JurisdictionChanged { .. }
+            | Self::SnapshotChanged { .. } => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::time::Duration;
+
+    use sill::Deadlines;
+
+    use super::*;
+    use crate::jurisdiction::Ignore;
+    use crate::measure::{Metric, Parser};
+
+    #[cfg(not(target_family = "unix"))]
+    #[test]
+    fn a_non_unix_target_selects_the_fail_closed_snapshot_path() {
+        assert_eq!(SnapshotIntegrity::native(), SnapshotIntegrity::Unsupported);
+    }
+
+    #[test]
+    fn unsupported_snapshot_integrity_refuses_before_a_restoring_parser_can_run() {
+        static NEXT: AtomicU32 = AtomicU32::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "gate-unsupported-snapshot-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(root.join("src")).expect("create fixture tree");
+        fs::write(root.join("src/lib.rs"), "one\n").expect("write fixture source");
+
+        let metric = Metric::new(
+            "rust.lines",
+            "rust",
+            "transient lines restored with their metadata",
+            Parser::new(
+                "same-length-restore-parser-must-not-launch",
+                std::iter::empty::<&str>(),
+            )
+            .expect("declare parser"),
+            "*.rs\n",
+            "",
+        )
+        .expect("declare metric");
+        let policy = Policy::new(Ignore::parse("").expect("parse ignore"), [metric])
+            .expect("declare policy");
+        let bounds = Bounds::new(
+            "unsupported-snapshot-fixture",
+            Deadlines::new(
+                Duration::from_secs(1),
+                Duration::from_secs(1),
+                Duration::from_secs(1),
+            )
+            .expect("declare deadlines"),
+            Duration::from_millis(10),
+            1024,
+        )
+        .expect("declare bounds");
+
+        let refused = Run::adjudicate_with_integrity(
+            &policy,
+            &root,
+            &Ratchet::parse("rust.lines 1\n").expect("parse ratchet"),
+            &bounds,
+            SnapshotIntegrity::Unsupported,
+        )
+        .expect_err("unsupported snapshot integrity must fail before parser launch");
+
+        assert!(matches!(refused, RunError::SnapshotIntegrityUnsupported));
+        fs::remove_dir_all(root).expect("remove fixture tree");
     }
 }
 
