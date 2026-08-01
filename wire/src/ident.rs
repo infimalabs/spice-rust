@@ -91,6 +91,8 @@ pub enum Domain {
     DistReleaseManifest,
     /// The complete deterministic release-note input document.
     DistReleaseNotes,
+    /// One operator-previewed publication of an exact sealed manifest.
+    DistReleasePlan,
     /// The ordered command inventory one sealed proof replay consumes.
     ProofBattery,
     /// The complete typed result of one sealed proof replay.
@@ -142,6 +144,7 @@ impl Domain {
             Self::DistSourceCommit => "spice.dist.source-commit.v1",
             Self::DistReleaseManifest => "spice.dist.release-manifest.v1",
             Self::DistReleaseNotes => "spice.dist.release-notes.v1",
+            Self::DistReleasePlan => "spice.dist.release-plan.v1",
             Self::ProofBattery => "spice.proof.battery.v1",
             Self::ProofReplayV2 => "spice.proof.replay.v2",
             Self::ProofReceiptV2 => "spice.proof.receipt.v2",

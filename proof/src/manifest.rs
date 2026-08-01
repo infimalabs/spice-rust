@@ -8,11 +8,13 @@ use std::io::{self, Write as _};
 use std::path::{Component, Path, PathBuf};
 
 use wire::manifest::{
-    ProofStanding, RELEASE_MANIFEST_VERSION, ReleaseManifest, ReleaseManifestTarget, ReleaseTarget,
+    ProofEnvironment, ProofStanding, RELEASE_MANIFEST_VERSION, ReleaseManifest,
+    ReleaseManifestTarget, ReleaseTarget, TargetPayload,
 };
 use wire::{Digest, Domain};
 
-use crate::{EvidenceError, PayloadError, ReplayVerdict, admit, verify};
+use crate::evidence::admit_receipt;
+use crate::{Battery, EvidenceError, PayloadError, ReplayVerdict, admit, verify};
 
 const DATA_MODE: u32 = 0o644;
 const MANIFEST_POINTER: &str = "release/manifest.json";
@@ -102,6 +104,314 @@ impl ManifestPublisher for FileManifestPublisher {
     }
 }
 
+/// Admit the current fixed manifest pointer and every object it names.
+///
+/// The caller supplies the executable identities observed at the binary rim.
+/// Both target payloads must carry the embedded app, and the payload matching
+/// `native_target` must carry the invoking executable itself.
+///
+/// # Errors
+///
+/// Refuses missing, non-regular, symlinked, noncanonical, stale, partial, or
+/// mixed-target evidence. Every content-addressed object is re-read and its
+/// digest and typed bindings are checked before a manifest is returned.
+pub fn admit_manifest(
+    root: &Path,
+    embedded_app: &Digest,
+    native_target: ReleaseTarget,
+    native: &Digest,
+) -> Result<PublishedManifest, ManifestAdmissionError> {
+    let root = admit_stage_root(root)?;
+    let published = admit_pointer(&root)?;
+    let battery = Battery::current();
+    let mut first_payload = None;
+    for (index, (entry, expected_target)) in
+        published.manifest.targets.iter().zip(TARGETS).enumerate()
+    {
+        let payload = admit_target(
+            &root,
+            &published.manifest,
+            entry,
+            expected_target,
+            index,
+            embedded_app,
+            native_target,
+            native,
+            battery.digest(),
+        )?;
+        admit_shared_payload(first_payload.as_ref(), &payload)?;
+        first_payload.get_or_insert(payload);
+    }
+    Ok(published)
+}
+
+fn admit_stage_root(root: &Path) -> Result<PathBuf, ManifestAdmissionError> {
+    let stage_metadata =
+        fs::symlink_metadata(root).map_err(|source| ManifestAdmissionError::Input {
+            label: "release stage",
+            path: root.to_path_buf(),
+            source,
+        })?;
+    if stage_metadata.file_type().is_symlink() {
+        return Err(ManifestAdmissionError::StageSymlink(root.to_path_buf()));
+    }
+    if !stage_metadata.is_dir() {
+        return Err(ManifestAdmissionError::StageNotDirectory(
+            root.to_path_buf(),
+        ));
+    }
+    fs::canonicalize(root).map_err(|source| ManifestAdmissionError::Input {
+        label: "release stage",
+        path: root.to_path_buf(),
+        source,
+    })
+}
+
+fn admit_pointer(root: &Path) -> Result<PublishedManifest, ManifestAdmissionError> {
+    let pointer = PathBuf::from(MANIFEST_POINTER);
+    let bytes = read_regular(root, &pointer, "release manifest pointer")?;
+    let manifest: ReleaseManifest = wire::decode(&bytes)
+        .map_err(|source| ManifestAdmissionError::ManifestDecode(source.to_string()))?;
+    let canonical = wire::encode(&manifest)
+        .map_err(|source| ManifestAdmissionError::ManifestEncode(source.to_string()))?;
+    if canonical != bytes {
+        return Err(ManifestAdmissionError::ManifestNonCanonical);
+    }
+    if manifest.version != RELEASE_MANIFEST_VERSION {
+        return Err(ManifestAdmissionError::ManifestVersion(manifest.version));
+    }
+    if manifest.targets.len() != TARGETS.len() {
+        return Err(ManifestAdmissionError::EntryCount(manifest.targets.len()));
+    }
+
+    let digest = Digest::compute(Domain::DistReleaseManifest, &bytes);
+    let object = object_path("manifest", &digest);
+    if read_regular(root, &object, "release manifest object")? != bytes {
+        return Err(ManifestAdmissionError::ManifestObject);
+    }
+    Ok(PublishedManifest {
+        manifest,
+        bytes,
+        digest,
+        pointer,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn admit_target(
+    root: &Path,
+    manifest: &ReleaseManifest,
+    entry: &ReleaseManifestTarget,
+    expected_target: ReleaseTarget,
+    index: usize,
+    embedded_app: &Digest,
+    native_target: ReleaseTarget,
+    native: &Digest,
+    battery: &Digest,
+) -> Result<TargetPayload, ManifestAdmissionError> {
+    if entry.target != expected_target {
+        return Err(ManifestAdmissionError::TargetOrder {
+            index,
+            expected: expected_target,
+            observed: entry.target,
+        });
+    }
+    let payload = admit_target_payload(
+        root,
+        manifest,
+        entry,
+        index,
+        embedded_app,
+        native_target,
+        native,
+    )?;
+    admit_target_receipt(root, entry, index, &payload, battery)?;
+    Ok(payload)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn admit_target_payload(
+    root: &Path,
+    manifest: &ReleaseManifest,
+    entry: &ReleaseManifestTarget,
+    index: usize,
+    embedded_app: &Digest,
+    native_target: ReleaseTarget,
+    native: &Digest,
+) -> Result<TargetPayload, ManifestAdmissionError> {
+    let bytes = read_regular(
+        root,
+        &object_path("payload", &entry.payload),
+        "target payload object",
+    )?;
+    let payload =
+        admit(&bytes).map_err(|source| ManifestAdmissionError::Payload { index, source })?;
+    let value = payload.value();
+    require_binding(payload.digest() == &entry.payload, index, "payload digest")?;
+    require_binding(value.target == entry.target, index, "payload target")?;
+    require_binding(value.source == manifest.source, index, "payload source")?;
+    require_binding(
+        value.embedded_app == *embedded_app,
+        index,
+        "embedded app identity",
+    )?;
+    require_binding(
+        value.target != native_target || value.native == *native,
+        index,
+        "native executable identity",
+    )?;
+    Ok(value.clone())
+}
+
+fn admit_target_receipt(
+    root: &Path,
+    entry: &ReleaseManifestTarget,
+    index: usize,
+    payload: &TargetPayload,
+    battery: &Digest,
+) -> Result<(), ManifestAdmissionError> {
+    let bytes = read_regular(
+        root,
+        &object_path("receipt", &entry.receipt),
+        "detached proof receipt object",
+    )?;
+    let admitted = admit_receipt(&bytes)
+        .map_err(|source| ManifestAdmissionError::Receipt { index, source })?;
+    require_binding(admitted.digest() == &entry.receipt, index, "receipt digest")?;
+    let receipt = admitted.value();
+    for (matches, field) in [
+        (receipt.target == entry.target, "receipt target"),
+        (receipt.payload == entry.payload, "receipt payload"),
+        (receipt.battery == entry.battery, "receipt battery"),
+        (receipt.replay == entry.replay, "receipt replay"),
+        (
+            receipt.environment == entry.environment,
+            "receipt environment",
+        ),
+        (receipt.standing == entry.standing, "receipt standing"),
+        (entry.battery == *battery, "current proof battery"),
+        (
+            entry.standing == ProofStanding::Clean,
+            "clean proof standing",
+        ),
+    ] {
+        require_binding(matches, index, field)?;
+    }
+    require_binding(
+        target_environment_matches(entry, payload),
+        index,
+        "target proof environment",
+    )
+}
+
+fn target_environment_matches(entry: &ReleaseManifestTarget, payload: &TargetPayload) -> bool {
+    match (&entry.environment, entry.target) {
+        (ProofEnvironment::Native { .. }, ReleaseTarget::Aarch64AppleDarwin) => true,
+        (ProofEnvironment::Oci { image }, ReleaseTarget::X86_64UnknownLinuxMusl) => {
+            image.as_str() == payload.pins.proof_container
+        }
+        _ => false,
+    }
+}
+
+fn admit_shared_payload(
+    first: Option<&TargetPayload>,
+    observed: &TargetPayload,
+) -> Result<(), ManifestAdmissionError> {
+    let Some(first) = first else {
+        return Ok(());
+    };
+    for (matches, field) in [
+        (observed.app == first.app, "app identity"),
+        (
+            observed.embedded_app == first.embedded_app,
+            "embedded app identity",
+        ),
+        (observed.pins == first.pins, "toolchain and container pins"),
+    ] {
+        if !matches {
+            return Err(ManifestAdmissionError::Mixed { field });
+        }
+    }
+    Ok(())
+}
+
+fn require_binding(
+    matches: bool,
+    index: usize,
+    field: &'static str,
+) -> Result<(), ManifestAdmissionError> {
+    if matches {
+        Ok(())
+    } else {
+        Err(ManifestAdmissionError::Binding { index, field })
+    }
+}
+
+fn read_regular(
+    root: &Path,
+    relative: &Path,
+    label: &'static str,
+) -> Result<Vec<u8>, ManifestAdmissionError> {
+    validate_relative(relative).map_err(|_| ManifestAdmissionError::OutsideRoot {
+        label,
+        path: relative.to_path_buf(),
+    })?;
+    let mut component_path = root.to_path_buf();
+    for component in relative
+        .parent()
+        .expect("fixed object paths have parents")
+        .components()
+    {
+        component_path.push(component.as_os_str());
+        let metadata = fs::symlink_metadata(&component_path).map_err(|source| {
+            ManifestAdmissionError::Input {
+                label,
+                path: component_path.clone(),
+                source,
+            }
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(ManifestAdmissionError::Symlink {
+                label,
+                path: component_path,
+            });
+        }
+        if !metadata.is_dir() {
+            return Err(ManifestAdmissionError::NotDirectory {
+                label,
+                path: component_path,
+            });
+        }
+    }
+    let path = root.join(relative);
+    let metadata = fs::symlink_metadata(&path).map_err(|source| ManifestAdmissionError::Input {
+        label,
+        path: path.clone(),
+        source,
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(ManifestAdmissionError::Symlink { label, path });
+    }
+    if !metadata.is_file() {
+        return Err(ManifestAdmissionError::NotRegular { label, path });
+    }
+    let parent = fs::canonicalize(path.parent().expect("fixed object paths have parents"))
+        .map_err(|source| ManifestAdmissionError::Input {
+            label,
+            path: path.clone(),
+            source,
+        })?;
+    if !parent.starts_with(root) {
+        return Err(ManifestAdmissionError::OutsideRoot { label, path });
+    }
+    fs::read(&path).map_err(|source| ManifestAdmissionError::Input {
+        label,
+        path,
+        source,
+    })
+}
+
 /// Verify both proofs, compose one manifest, and publish its pointer last.
 ///
 /// # Errors
@@ -124,6 +434,7 @@ where
     }
 
     let mut source = None;
+    let mut first_payload: Option<TargetPayload> = None;
     let mut seen = BTreeSet::new();
     let mut targets = Vec::with_capacity(TARGETS.len());
     let mut objects = Vec::with_capacity(TARGETS.len() * 2 + 1);
@@ -149,6 +460,25 @@ where
                 });
             }
             Some(_) => {}
+        }
+        if let Some(first) = &first_payload {
+            for (matches, field) in [
+                (admitted.value().app == first.app, "app identity"),
+                (
+                    admitted.value().embedded_app == first.embedded_app,
+                    "embedded app identity",
+                ),
+                (
+                    admitted.value().pins == first.pins,
+                    "toolchain and container pins",
+                ),
+            ] {
+                if !matches {
+                    return Err(ManifestError::Mixed { field });
+                }
+            }
+        } else {
+            first_payload = Some(admitted.value().clone());
         }
 
         let verified = verify(&admitted, input.receipt, input.replay)
@@ -249,6 +579,9 @@ pub enum ManifestError {
         first: Digest,
         observed: Digest,
     },
+    Mixed {
+        field: &'static str,
+    },
     Evidence {
         index: usize,
         source: EvidenceError,
@@ -288,6 +621,9 @@ impl fmt::Display for ManifestError {
                 formatter,
                 "release manifest source {observed} disagrees with first source {first}"
             ),
+            Self::Mixed { field } => {
+                write!(formatter, "release manifest mixes target {field}")
+            }
             Self::Evidence { index, source } => {
                 write!(
                     formatter,
@@ -314,7 +650,164 @@ impl Error for ManifestError {
             | Self::TargetOrder { .. }
             | Self::DuplicateTarget(_)
             | Self::SourceMismatch { .. }
+            | Self::Mixed { .. }
             | Self::Encode(_) => None,
+        }
+    }
+}
+
+/// Why a sealed release pointer or one of its immutable objects was refused.
+#[derive(Debug)]
+pub enum ManifestAdmissionError {
+    Input {
+        label: &'static str,
+        path: PathBuf,
+        source: io::Error,
+    },
+    Symlink {
+        label: &'static str,
+        path: PathBuf,
+    },
+    NotRegular {
+        label: &'static str,
+        path: PathBuf,
+    },
+    NotDirectory {
+        label: &'static str,
+        path: PathBuf,
+    },
+    OutsideRoot {
+        label: &'static str,
+        path: PathBuf,
+    },
+    StageSymlink(PathBuf),
+    StageNotDirectory(PathBuf),
+    ManifestDecode(String),
+    ManifestEncode(String),
+    ManifestNonCanonical,
+    ManifestVersion(u16),
+    ManifestObject,
+    EntryCount(usize),
+    TargetOrder {
+        index: usize,
+        expected: ReleaseTarget,
+        observed: ReleaseTarget,
+    },
+    Payload {
+        index: usize,
+        source: PayloadError,
+    },
+    Receipt {
+        index: usize,
+        source: EvidenceError,
+    },
+    Binding {
+        index: usize,
+        field: &'static str,
+    },
+    Mixed {
+        field: &'static str,
+    },
+}
+
+impl fmt::Display for ManifestAdmissionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Input {
+                label,
+                path,
+                source,
+            } => write!(
+                formatter,
+                "{label} {} is unreadable: {source}",
+                path.display()
+            ),
+            Self::Symlink { label, path } => {
+                write!(formatter, "{label} {} is a symlink", path.display())
+            }
+            Self::NotRegular { label, path } => {
+                write!(
+                    formatter,
+                    "{label} {} is not a regular file",
+                    path.display()
+                )
+            }
+            Self::NotDirectory { label, path } => {
+                write!(
+                    formatter,
+                    "{label} parent {} is not a directory",
+                    path.display()
+                )
+            }
+            Self::OutsideRoot { label, path } => {
+                write!(
+                    formatter,
+                    "{label} {} escapes the release stage",
+                    path.display()
+                )
+            }
+            Self::StageSymlink(path) => {
+                write!(formatter, "release stage {} is a symlink", path.display())
+            }
+            Self::StageNotDirectory(path) => write!(
+                formatter,
+                "release stage {} is not a directory",
+                path.display()
+            ),
+            Self::ManifestDecode(source) => {
+                write!(formatter, "release manifest does not decode: {source}")
+            }
+            Self::ManifestEncode(source) => {
+                write!(formatter, "release manifest does not encode: {source}")
+            }
+            Self::ManifestNonCanonical => {
+                formatter.write_str("release manifest pointer is not canonical")
+            }
+            Self::ManifestVersion(version) => {
+                write!(
+                    formatter,
+                    "release manifest version {version} is not current"
+                )
+            }
+            Self::ManifestObject => {
+                formatter.write_str("release manifest object disagrees with the current pointer")
+            }
+            Self::EntryCount(count) => write!(
+                formatter,
+                "release manifest requires exactly two targets, found {count}"
+            ),
+            Self::TargetOrder {
+                index,
+                expected,
+                observed,
+            } => write!(
+                formatter,
+                "release manifest target {index} is {observed}, expected {expected}"
+            ),
+            Self::Payload { index, source } => {
+                write!(formatter, "release payload {index} is refused: {source}")
+            }
+            Self::Receipt { index, source } => {
+                write!(formatter, "release receipt {index} is refused: {source}")
+            }
+            Self::Binding { index, field } => {
+                write!(
+                    formatter,
+                    "release target {index} has a stale or mismatched {field}"
+                )
+            }
+            Self::Mixed { field } => write!(formatter, "release targets mix {field}"),
+        }
+    }
+}
+
+impl Error for ManifestAdmissionError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Input { source, .. } => Some(source),
+            Self::Payload { source, .. } => Some(source),
+            Self::Receipt { source, .. } => Some(source),
+            _ => None,
         }
     }
 }
@@ -377,8 +870,9 @@ mod tests {
     use wire::{Digest, Domain};
 
     use super::{
-        FileManifestPublisher, MANIFEST_POINTER, ManifestError, ManifestInput,
-        ManifestPublishError, ManifestPublisher, publish_manifest,
+        FileManifestPublisher, MANIFEST_POINTER, ManifestAdmissionError, ManifestError,
+        ManifestInput, ManifestPublishError, ManifestPublisher, admit_manifest, object_path,
+        publish_manifest,
     };
     use crate::{Battery, CheckKind, CheckStanding, EvidenceError, ReplayVerdict};
 
@@ -525,6 +1019,7 @@ mod tests {
         );
         let linux = prepared(ReleaseTarget::X86_64UnknownLinuxMusl, first_source, true);
         let other_linux = prepared(ReleaseTarget::X86_64UnknownLinuxMusl, other_source, true);
+        let drifted_linux = drift_toolchain(&linux);
         let refused_linux = prepared(
             ReleaseTarget::X86_64UnknownLinuxMusl,
             digest(Domain::DistArtifact, b"first source"),
@@ -535,6 +1030,12 @@ mod tests {
         let mixed = publish_manifest(inputs(&darwin, &other_linux), &mut publisher)
             .expect_err("mixed sources refuse");
         assert!(matches!(mixed, ManifestError::SourceMismatch { .. }));
+        assert!(publisher.writes.is_empty());
+
+        let mut publisher = MemoryPublisher::default();
+        let mixed = publish_manifest(inputs(&darwin, &drifted_linux), &mut publisher)
+            .expect_err("mixed toolchain pins refuse");
+        assert!(matches!(mixed, ManifestError::Mixed { .. }));
         assert!(publisher.writes.is_empty());
 
         let mismatched = ManifestInput::new(&darwin.payload, &linux.receipt, &linux.replay);
@@ -624,7 +1125,33 @@ mod tests {
 
         let published = publish_manifest(inputs(&darwin, &linux), &mut publisher)
             .expect("filesystem publication succeeds");
+        let darwin_payload: TargetPayload =
+            wire::decode(&darwin.payload).expect("Darwin payload decodes");
+        let admitted = admit_manifest(
+            &scratch.root,
+            &darwin_payload.embedded_app,
+            ReleaseTarget::Aarch64AppleDarwin,
+            &darwin_payload.native,
+        )
+        .expect("the complete published object graph admits");
 
+        assert_eq!(admitted, published);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+
+            let linked = scratch.root.join("linked-stage");
+            symlink(&scratch.root, &linked).expect("stage symlink fixture");
+            assert!(matches!(
+                admit_manifest(
+                    &linked,
+                    &darwin_payload.embedded_app,
+                    ReleaseTarget::Aarch64AppleDarwin,
+                    &darwin_payload.native,
+                ),
+                Err(ManifestAdmissionError::StageSymlink(_))
+            ));
+        }
         assert_eq!(
             fs::read(scratch.root.join(&published.pointer)).expect("pointer is readable"),
             published.bytes
@@ -653,6 +1180,77 @@ mod tests {
                 0o644
             );
         }
+    }
+
+    #[test]
+    fn manifest_admission_refuses_missing_stale_and_mixed_objects() {
+        let source = digest(Domain::DistArtifact, b"source");
+        let darwin = prepared(ReleaseTarget::Aarch64AppleDarwin, source.clone(), true);
+        let linux = prepared(ReleaseTarget::X86_64UnknownLinuxMusl, source, true);
+        let expected: TargetPayload = wire::decode(&darwin.payload).expect("payload decodes");
+
+        let missing = Scratch::new();
+        let mut publisher = FileManifestPublisher::new(&missing.root);
+        let published =
+            publish_manifest(inputs(&darwin, &linux), &mut publisher).expect("fixture publishes");
+        fs::remove_file(missing.root.join(object_path(
+            "receipt",
+            &published.manifest.targets[1].receipt,
+        )))
+        .expect("remove receipt object");
+        assert!(matches!(
+            admit_manifest(
+                &missing.root,
+                &expected.embedded_app,
+                expected.target,
+                &expected.native,
+            ),
+            Err(ManifestAdmissionError::Input { .. })
+        ));
+
+        let stale = Scratch::new();
+        let mut publisher = FileManifestPublisher::new(&stale.root);
+        publish_manifest(inputs(&darwin, &linux), &mut publisher).expect("fixture publishes");
+        let mut pointer: ReleaseManifest =
+            wire::decode(&fs::read(stale.root.join(MANIFEST_POINTER)).expect("read pointer"))
+                .expect("pointer decodes");
+        pointer.version += 1;
+        fs::write(
+            stale.root.join(MANIFEST_POINTER),
+            wire::encode(&pointer).expect("stale pointer encodes"),
+        )
+        .expect("write stale pointer");
+        assert!(matches!(
+            admit_manifest(
+                &stale.root,
+                &expected.embedded_app,
+                expected.target,
+                &expected.native,
+            ),
+            Err(ManifestAdmissionError::ManifestVersion(_))
+        ));
+
+        let mixed = Scratch::new();
+        let mut publisher = FileManifestPublisher::new(&mixed.root);
+        let published =
+            publish_manifest(inputs(&darwin, &linux), &mut publisher).expect("fixture publishes");
+        fs::write(
+            mixed.root.join(object_path(
+                "payload",
+                &published.manifest.targets[1].payload,
+            )),
+            &darwin.payload,
+        )
+        .expect("replace Linux object with Darwin bytes");
+        assert!(matches!(
+            admit_manifest(
+                &mixed.root,
+                &expected.embedded_app,
+                expected.target,
+                &expected.native,
+            ),
+            Err(ManifestAdmissionError::Binding { .. })
+        ));
     }
 
     #[test]
@@ -777,6 +1375,29 @@ mod tests {
             payload: payload_bytes,
             receipt: wire::encode(&receipt).expect("receipt encodes"),
             replay,
+        }
+    }
+
+    fn drift_toolchain(prepared: &Prepared) -> Prepared {
+        let mut payload: TargetPayload =
+            wire::decode(&prepared.payload).expect("fixture payload decodes");
+        payload.pins.trunk.push_str("-drifted");
+        payload.pins_digest = digest(
+            Domain::DistPins,
+            &wire::encode(&payload.pins).expect("drifted pins encode"),
+        );
+        let payload = wire::encode(&payload).expect("drifted payload encodes");
+        let receipt = prepared
+            .replay
+            .receipt(
+                &wire::decode(&payload).expect("drifted payload decodes"),
+                digest(Domain::DistTargetPayload, &payload),
+            )
+            .expect("drifted payload remains target matched");
+        Prepared {
+            payload,
+            receipt: wire::encode(&receipt).expect("drifted receipt encodes"),
+            replay: prepared.replay.clone(),
         }
     }
 
