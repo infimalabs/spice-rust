@@ -4,6 +4,8 @@
 pub const SCHEMA_VERSION: u32 = 1;
 
 #[cfg(not(target_arch = "wasm32"))]
+mod guard;
+#[cfg(not(target_arch = "wasm32"))]
 mod migrate;
 #[cfg(not(target_arch = "wasm32"))]
 mod read;
@@ -11,11 +13,28 @@ mod read;
 mod replay;
 
 #[cfg(not(target_arch = "wasm32"))]
+pub use guard::{
+    Applied, BuildError, CommitError, CommitFault, FactCause, GuardError, GuardRefusal,
+    JournalGuard, JournalHead, JournalRead, JournalWrite, PendingFact,
+};
+#[cfg(not(target_arch = "wasm32"))]
 pub use migrate::{MigrationError, OpenError};
 #[cfg(not(target_arch = "wasm32"))]
 pub use read::{FactSnapshot, SnapshotError};
 #[cfg(not(target_arch = "wasm32"))]
 pub use replay::{Verification, VerifyError, Violation, ViolationClass};
+
+/// Current crossing types used to prepare journal work without depending on
+/// the journal's storage implementation.
+pub mod crossing {
+    pub use wire::body;
+    pub use wire::intent;
+    pub use wire::{
+        Actor, CanonicalUuid, ClaimHead, Command, CommandKind, Digest, Fact, FactKind, FindingHead,
+        Instant, LeaseHead, Origin, Phase, Producer, ResidencyHead, Seq, TaskHandle, TaskHead,
+        TrustHead, WireVersion, Witness, WitnessHead, WorkflowHead,
+    };
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;

@@ -44,3 +44,32 @@ fn a_name_outside_the_registry_is_a_clap_refusal() {
     let stderr = String::from_utf8(output.stderr).expect("refusal is UTF-8");
     assert!(stderr.contains("unrecognized subcommand 'removed-command'"));
 }
+
+#[test]
+fn a_required_contract_operand_is_enforced_at_the_process_boundary() {
+    let output = spice()
+        .args(["task", "add"])
+        .output()
+        .expect("spice launches");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("refusal is UTF-8");
+    assert!(stderr.contains("required arguments were not provided"));
+    assert!(stderr.contains("<TITLE>"));
+    assert!(!stderr.contains("release::not-landed"));
+}
+
+#[test]
+fn an_operand_outside_a_leaf_contract_is_rejected_by_clap() {
+    let output = spice()
+        .args(["doctor", "garbage"])
+        .output()
+        .expect("spice launches");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("refusal is UTF-8");
+    assert!(stderr.contains("unexpected argument 'garbage'"));
+    assert!(!stderr.contains("release::not-landed"));
+}

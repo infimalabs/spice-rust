@@ -237,9 +237,10 @@ fn a_held_request_lets_reversible_work_continue_while_the_irreversible_waits() {
         None,
     )]));
 
-    assert!(actuator.proceeds(Reversibility::Irreversible));
-
     let request = asked("git push --force");
+
+    assert!(actuator.proceeds(request.request, Reversibility::Irreversible));
+
     let outcome = actuator.decide(&request, Reversibility::Irreversible);
 
     let Outcome::Queued(queued) = outcome else {
@@ -249,11 +250,11 @@ fn a_held_request_lets_reversible_work_continue_while_the_irreversible_waits() {
     assert_eq!(queued.cause, ConsentQueueCause::Policy {});
     assert!(actuator.pending().holds(request.request));
     assert!(
-        actuator.proceeds(Reversibility::Reversible),
+        actuator.proceeds(request.request, Reversibility::Reversible),
         "queueing must not stop reversible work; that is why it is not a denial",
     );
     assert!(
-        !actuator.proceeds(Reversibility::Irreversible),
+        !actuator.proceeds(request.request, Reversibility::Irreversible),
         "an irreversible action has no undo, so it waits for the operator",
     );
     let refused = actuator
@@ -267,7 +268,95 @@ fn a_held_request_lets_reversible_work_continue_while_the_irreversible_waits() {
 
     assert_eq!(released.operation(), "git push --force");
     assert_eq!(released.reversibility(), Reversibility::Irreversible);
-    assert!(actuator.proceeds(Reversibility::Irreversible));
+    assert!(actuator.proceeds(request.request, Reversibility::Irreversible));
+}
+
+/// A held request governs its own action and no other.
+///
+/// The queue holds a decision about one named operation. A different operation
+/// has its own rule and gets its own answer while that request waits. Gating on
+/// whether anything at all is held would make the first queued request a halt
+/// on unrelated work the operator already allowed by rule.
+#[test]
+fn a_held_request_leaves_a_distinct_irreversible_request_independently_decidable() {
+    let mut actuator = Actuator::new(table(vec![
+        rule("pushes", "git push*", Answer::Queue, None),
+        rule("tags", "git tag*", Answer::Allow, None),
+    ]));
+    let push = asked("git push --force");
+    let tag = asked("git tag v1.0.0");
+
+    assert!(matches!(
+        actuator.decide(&push, Reversibility::Irreversible),
+        Outcome::Queued(_)
+    ));
+
+    assert!(
+        !actuator.proceeds(push.request, Reversibility::Irreversible),
+        "the request the operator was asked about is the one that waits",
+    );
+    assert!(
+        matches!(
+            actuator.decide(&tag, Reversibility::Irreversible),
+            Outcome::Granted(_)
+        ),
+        "a distinct operation is answered by its own rule while another request is held",
+    );
+    assert!(
+        actuator.proceeds(tag.request, Reversibility::Irreversible),
+        "an irreversible action no request holds proceeds, even while another one waits",
+    );
+    assert!(
+        actuator.pending().holds(push.request),
+        "deciding the second request must not answer the first",
+    );
+}
+
+/// Releasing one request answers that request alone.
+#[test]
+fn releasing_one_held_request_leaves_every_other_request_held() {
+    let mut actuator = Actuator::new(table(vec![rule(
+        "pushes",
+        "git push*",
+        Answer::Queue,
+        None,
+    )]));
+    let first = asked("git push --force");
+    let second = asked("git push --mirror");
+
+    assert!(matches!(
+        actuator.decide(&first, Reversibility::Irreversible),
+        Outcome::Queued(_)
+    ));
+    assert!(matches!(
+        actuator.decide(&second, Reversibility::Irreversible),
+        Outcome::Queued(_)
+    ));
+
+    assert_eq!(actuator.pending().len(), 2);
+    assert!(
+        actuator.proceeds(first.request, Reversibility::Reversible)
+            && actuator.proceeds(second.request, Reversibility::Reversible),
+        "reversible work continues with many requests held, not just one",
+    );
+
+    assert_eq!(
+        actuator
+            .release(first.request)
+            .map(|held| held.operation().to_owned()),
+        Some("git push --force".to_owned()),
+    );
+
+    assert!(
+        actuator.proceeds(first.request, Reversibility::Irreversible),
+        "the answered request's own action proceeds once it is released",
+    );
+    assert!(
+        !actuator.proceeds(second.request, Reversibility::Irreversible),
+        "releasing one request must not release another",
+    );
+    assert!(actuator.pending().holds(second.request));
+    assert_eq!(actuator.pending().len(), 1);
 }
 
 #[test]

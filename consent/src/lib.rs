@@ -131,10 +131,10 @@ impl Actuator {
         }
     }
 
-    /// Whether work of this reversibility proceeds while requests are held.
+    /// Whether this request's action proceeds while requests are held.
     #[must_use]
-    pub fn proceeds(&self, reversibility: Reversibility) -> bool {
-        self.pending.proceeds(reversibility)
+    pub fn proceeds(&self, request: wire::CanonicalUuid, reversibility: Reversibility) -> bool {
+        self.pending.proceeds(request, reversibility)
     }
 
     /// The rule table this seat decides by.
