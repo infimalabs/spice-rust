@@ -8,6 +8,23 @@
 //! the socket admits the current version only, the journal runs one forward
 //! migration at open, and the browser has no independent clock because the app
 //! is compiled from this crate and embedded in the binary that owns the socket.
+//!
+//! # The vocabularies are closed, so they stay enumerable
+//!
+//! [`CommandKind`], [`FactKind`], [`Witness`], and [`witness::WitnessKind`]
+//! each name a closed set, and none of them is `#[non_exhaustive]`. That
+//! attribute protects consumers compiled against an older release of a
+//! published crate, and this crate has no such consumer: the socket admits the
+//! current version only, the journal runs one forward migration at open, and
+//! the browser app is compiled from this crate into the binary that owns the
+//! socket. Every consumer recompiles from this source.
+//!
+//! What the attribute costs is what decides it. Marking these enums
+//! non-exhaustive obliges every fold, producer, and view outside this crate to
+//! carry a wildcard arm, which turns "a kind was added" from a build failure
+//! naming the unhandled variant into a value that quietly takes the default
+//! branch. Exhaustive matching is the strongest enforcement a closed vocabulary
+//! can have, and these sets are declared closed precisely so they can have it.
 
 pub mod body;
 pub mod command;
@@ -37,9 +54,16 @@ pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
     Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, Response, SeqRange, SeqRangeError,
 };
+// `WitnessKind` is deliberately absent here and reached as
+// `wire::witness::WitnessKind`. Two vocabularies currently claim that name:
+// `head::WitnessKind` names the predicate classes a witness head carries,
+// while `witness::WitnessKind` names the command registry's discriminants.
+// They overlap at different granularity, and WIRE-1kJJZ3Y7 owns deciding
+// whether they are one concept. This keeps the crate compiling without
+// prejudging that decision by renaming or deleting either one.
 pub use witness::{
     Answer, Disposition, Name, NameError, Phase, PhaseError, Standing, TaskHandle, TaskHandleError,
-    Up, Witness, WitnessKind,
+    Up, Witness,
 };
 
 /// Decode wire bytes into a DTO.

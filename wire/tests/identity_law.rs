@@ -30,13 +30,14 @@ use std::num::NonZeroU64;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use wire::witness::WitnessKind;
 use wire::{
     Actor, Answer, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind, CursorHead,
     Derived, Digest, Disposition, Envelope, Fact, Fault, FaultClass, FindingHead, FindingState,
     FoldName, Hello, Instant, LaneResidency, LeaseHead, Name, Origin, Outcome, Overflow, Packed,
     Phase, Producer, Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState, Response, Seq,
     SeqRange, Standing, TaskHandle, TaskHead, TrustHead, TrustState, Up, WireVersion, Witness,
-    WitnessHead, WitnessKind, WorkflowHead, body,
+    WitnessHead, WorkflowHead, body,
 };
 
 /// Names `wire` re-exports that never cross as values, each with its reason.
@@ -974,7 +975,12 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
 /// exactly one spelling and two variants never share one.
 fn cover_vocabularies(covered: &mut BTreeSet<String>) {
     spelling_law(covered, "Producer", Producer::ALL);
-    spelling_law(covered, "WitnessKind", WitnessKind::ALL);
+    // `witness::WitnessKind` is not a root re-export while WIRE-1kJJZ3Y7 decides
+    // whether it and `head::WitnessKind` are one concept, so the ratchet does
+    // not govern it and recording it here would read as stale. The law still
+    // applies to it, so it is asserted against a scratch ledger instead.
+    let mut ungoverned = BTreeSet::new();
+    spelling_law(&mut ungoverned, "WitnessKind", WitnessKind::ALL);
     spelling_law(
         covered,
         "Disposition",

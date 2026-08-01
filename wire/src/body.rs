@@ -17,7 +17,6 @@ use crate::witness::{Phase, TaskHandle};
 /// How a review closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-#[non_exhaustive]
 pub enum Verdict {
     /// The reviewer found nothing to record.
     Clean,
@@ -28,7 +27,6 @@ pub enum Verdict {
 /// What returned a held lane to seating eligibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-#[non_exhaustive]
 pub enum Release {
     /// The operator woke the lane.
     Wake,
@@ -39,7 +37,6 @@ pub enum Release {
 /// A gate finding's standing weight.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-#[non_exhaustive]
 pub enum Severity {
     /// Recorded, not blocking.
     Low,

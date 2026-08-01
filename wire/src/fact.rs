@@ -20,7 +20,6 @@ use serde::{Deserialize, Serialize};
 /// that never fires is a generated-check failure, not a quiet stall.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-#[non_exhaustive]
 pub enum Producer {
     /// The command door, admitting a client-proposed transition.
     CommandDoor,
@@ -93,7 +92,6 @@ macro_rules! vocabulary {
         #[derive(
             Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
         )]
-        #[non_exhaustive]
         pub enum FactKind {
             $(
                 $(#[doc = $doc])+
