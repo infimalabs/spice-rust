@@ -1,0 +1,222 @@
+//! Causal walks over the authority snapshot and current head positions.
+
+use std::collections::BTreeMap;
+use std::error::Error;
+use std::fmt;
+
+use crate::view::pack_ranked;
+
+/// Validated causal index derived from one immutable authority snapshot.
+#[derive(Clone, Debug)]
+pub struct ThreadIndex {
+    entries: BTreeMap<wire::Seq, wire::Envelope<wire::AnyFact>>,
+    horizon: Option<wire::Seq>,
+}
+
+impl ThreadIndex {
+    /// Build an index, refusing dangling or cross-origin causes.
+    pub fn from_snapshot(snapshot: &journal::FactSnapshot) -> Result<Self, ThreadError> {
+        let mut entries = BTreeMap::<wire::Seq, wire::Envelope<wire::AnyFact>>::new();
+        for envelope in snapshot.facts() {
+            if let Some(cause) = envelope.cause {
+                let parent = entries.get(&cause).ok_or(ThreadError::MissingCause {
+                    seq: envelope.seq,
+                    cause,
+                })?;
+                if parent.origin != envelope.origin {
+                    return Err(ThreadError::CrossedOrigin {
+                        seq: envelope.seq,
+                        cause,
+                    });
+                }
+            }
+            entries.insert(envelope.seq, envelope.clone());
+        }
+        Ok(Self {
+            entries,
+            horizon: snapshot.horizon(),
+        })
+    }
+
+    /// Pack one same-origin cause chain from `position` toward its root.
+    pub fn walk(
+        &self,
+        position: wire::Seq,
+        limit: usize,
+    ) -> Result<wire::Packed<wire::Envelope<wire::AnyFact>>, ThreadError> {
+        let horizon = self.horizon.ok_or(ThreadError::UnknownPosition(position))?;
+        let mut rows = Vec::new();
+        let mut cursor = Some(position);
+        while let Some(current) = cursor {
+            let envelope = self
+                .entries
+                .get(&current)
+                .ok_or(ThreadError::UnknownPosition(current))?;
+            rows.push(envelope.clone());
+            cursor = envelope.cause;
+        }
+        Ok(pack_ranked(rows, limit, horizon, |envelope| envelope.seq))
+    }
+
+    /// Walk from the fact position establishing an authoritative head.
+    pub fn walk_head<T>(
+        &self,
+        head: &journal::JournalHead<T>,
+        limit: usize,
+    ) -> Result<wire::Packed<wire::Envelope<wire::AnyFact>>, ThreadError> {
+        self.walk(head.position(), limit)
+    }
+}
+
+/// Bus-backed reader that takes each walk from one queued authority snapshot.
+#[derive(Debug)]
+pub struct ThreadReader<'a> {
+    bus: &'a bus::Bus,
+}
+
+impl<'a> ThreadReader<'a> {
+    #[must_use]
+    pub const fn new(bus: &'a bus::Bus) -> Self {
+        Self { bus }
+    }
+
+    pub fn walk(
+        &self,
+        position: wire::Seq,
+        limit: usize,
+    ) -> Result<wire::Packed<wire::Envelope<wire::AnyFact>>, ThreadReadError> {
+        let snapshot = self.bus.fact_snapshot().map_err(ThreadReadError::Bus)?;
+        let index = ThreadIndex::from_snapshot(&snapshot).map_err(ThreadReadError::Thread)?;
+        index.walk(position, limit).map_err(ThreadReadError::Thread)
+    }
+
+    pub fn walk_head<T>(
+        &self,
+        head: &journal::JournalHead<T>,
+        limit: usize,
+    ) -> Result<wire::Packed<wire::Envelope<wire::AnyFact>>, ThreadReadError> {
+        self.walk(head.position(), limit)
+    }
+}
+
+/// A causal index is inconsistent with the immutable fact stream.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ThreadError {
+    UnknownPosition(wire::Seq),
+    MissingCause { seq: wire::Seq, cause: wire::Seq },
+    CrossedOrigin { seq: wire::Seq, cause: wire::Seq },
+}
+
+impl fmt::Display for ThreadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownPosition(position) => {
+                write!(formatter, "thread position {position} is absent")
+            }
+            Self::MissingCause { seq, cause } => {
+                write!(
+                    formatter,
+                    "thread fact {seq} names absent prior cause {cause}"
+                )
+            }
+            Self::CrossedOrigin { seq, cause } => {
+                write!(
+                    formatter,
+                    "thread fact {seq} crosses the origin of cause {cause}"
+                )
+            }
+        }
+    }
+}
+
+impl Error for ThreadError {}
+
+/// The bus could not provide a snapshot or the snapshot carried a bad thread.
+#[derive(Debug)]
+pub enum ThreadReadError {
+    Bus(bus::BusReadError),
+    Thread(ThreadError),
+}
+
+impl fmt::Display for ThreadReadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Bus(error) => error.fmt(formatter),
+            Self::Thread(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for ThreadReadError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Bus(error) => Some(error),
+            Self::Thread(error) => Some(error),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn envelope(seq: u64, cause: Option<u64>, origin: &str) -> wire::Envelope<wire::AnyFact> {
+        let cause = cause.map(|value| wire::Seq::new(value).expect("non-zero cause"));
+        let cause = cause.map_or_else(String::new, |value| format!(r#", "cause": {value}"#));
+        let document = format!(
+            r#"{{"v":1,"seq":{seq},"at":"2026-08-01T00:00:00.000Z","actor":"operator","origin":"{origin}"{cause},"fact":{{"kind":"task::woken","task":"SPICE-aBcD"}}}}"#
+        );
+        wire::decode(document.as_bytes()).expect("canonical envelope fixture")
+    }
+
+    fn snapshot(rows: Vec<wire::Envelope<wire::AnyFact>>) -> journal::FactSnapshot {
+        journal::FactSnapshot::from_facts(rows).expect("contiguous snapshot")
+    }
+
+    #[test]
+    fn a_walk_follows_one_cause_chain_and_names_overflow() {
+        let snapshot = snapshot(vec![
+            envelope(1, None, "task:SPICE-aBcD"),
+            envelope(2, Some(1), "task:SPICE-aBcD"),
+            envelope(3, Some(2), "task:SPICE-aBcD"),
+            envelope(4, None, "task:SPICE-zYxW"),
+        ]);
+        let index = ThreadIndex::from_snapshot(&snapshot).expect("valid causal index");
+        let walked = index
+            .walk(wire::Seq::new(3).expect("position"), 2)
+            .expect("walk");
+
+        assert_eq!(
+            walked
+                .rows
+                .iter()
+                .map(|row| row.seq.get())
+                .collect::<Vec<_>>(),
+            [3, 2]
+        );
+        assert_eq!(
+            walked.overflow,
+            Some(wire::Overflow {
+                omitted: 1,
+                continuation: wire::Seq::new(1).expect("position"),
+            })
+        );
+        assert_eq!(walked.horizon, wire::Seq::new(4).expect("horizon"));
+    }
+
+    #[test]
+    fn a_cause_cannot_cross_origins() {
+        let snapshot = snapshot(vec![
+            envelope(1, None, "task:SPICE-aBcD"),
+            envelope(2, Some(1), "task:SPICE-zYxW"),
+        ]);
+
+        assert_eq!(
+            ThreadIndex::from_snapshot(&snapshot).expect_err("cross-origin cause refuses"),
+            ThreadError::CrossedOrigin {
+                seq: wire::Seq::new(2).expect("position"),
+                cause: wire::Seq::new(1).expect("position"),
+            }
+        );
+    }
+}

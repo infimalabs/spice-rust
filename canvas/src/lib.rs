@@ -1,1 +1,12 @@
-//! Loopback canvas crate skeleton.
+//! Loopback operator surface, derived reads, and causal thread walks.
+
+#![forbid(unsafe_code)]
+
+mod asset;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod axum;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod thread;
+pub mod view;
+
+pub use asset::{Discovery, EMBEDDED_APP, EmbeddedApp, PublishError};
