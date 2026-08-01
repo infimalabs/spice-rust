@@ -155,8 +155,8 @@ fn fact_snapshot_reads_the_canonical_authority_stream() {
 
     assert_eq!(snapshot.facts().len(), 2);
     assert_eq!(snapshot.horizon(), Some(Seq::new(2).expect("horizon")));
-    assert_eq!(snapshot.facts()[0].fact.kind, FactKind::TaskAdded);
-    assert_eq!(snapshot.facts()[1].fact.kind, FactKind::TaskPhased);
+    assert_eq!(snapshot.facts()[0].fact.kind(), FactKind::TaskAdded);
+    assert_eq!(snapshot.facts()[1].fact.kind(), FactKind::TaskPhased);
 }
 
 #[test]

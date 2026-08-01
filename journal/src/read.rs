@@ -94,7 +94,7 @@ fn decode_fact(
     })?;
     if encoded != bytes
         || seq != Some(fact.seq.get())
-        || indexed_kind != fact.fact.kind.as_str()
+        || indexed_kind != fact.fact.kind().as_str()
         || !fact.v.is_current()
     {
         return Err(SnapshotError::Invalid {
