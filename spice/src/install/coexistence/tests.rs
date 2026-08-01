@@ -267,7 +267,7 @@ fn record_digest_tampering_refuses_before_unapply_mutation() {
     apply(&repository, None, &planned.digest().unwrap()).unwrap();
     let generated = images(&repository, &planned);
     let mut record = read_record(&repository).unwrap().unwrap();
-    record.plan_digest = Digest::compute(Domain::SpiceInstallPlan, b"tampered");
+    record.plan_digest = Digest::compute(Domain::InstallCoexistencePlan, b"tampered");
     fs::write(record_path(&repository), wire::encode(&record).unwrap()).unwrap();
 
     let error = unapply(&repository).unwrap_err();
