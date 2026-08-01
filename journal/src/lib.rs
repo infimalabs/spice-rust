@@ -15,7 +15,7 @@ mod replay;
 #[cfg(not(target_arch = "wasm32"))]
 pub use guard::{
     Applied, BuildError, CommitError, CommitFault, FactCause, GuardError, GuardRefusal,
-    JournalGuard, JournalHead, JournalRead, JournalWrite, PendingFact,
+    JournalGuard, JournalHead, JournalRead, JournalWrite, PendingFact, TaskHeads,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use migrate::{MigrationError, OpenError};
