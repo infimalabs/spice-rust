@@ -1,907 +1,835 @@
-//! Digest-bound repository installation and exact recorded reversal.
+//! Digest-bound, repository-local Rust coexistence installation.
+//!
+//! It keeps the ambient `spice` entrypoint and records every namespaced asset.
+//! Plans are side-effect free; apply re-plans and reverses only exact images.
 
-use std::ffi::OsString;
-use std::fmt;
+use std::collections::BTreeSet;
 use std::fs;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use wire::{Digest, Domain, Fault, FaultClass, Refusal};
+use wire::{Digest, Domain};
 
 use crate::repository::Repository;
 
+mod binding;
+mod error;
+mod files;
+mod path;
+mod progress;
 mod record;
-mod support;
 
-use record::{
-    preflight_unapply, prepare_unapplied, restore_snapshot, rollback_unapply,
-    validate_existing_record, validate_installed_state,
+use binding::{BoundDestination, bind_destination, validate_operation_binding};
+pub use binding::{Generation, ParentObservation};
+pub use error::InstallError;
+use files::{
+    cleanup_parents, matches_generated, materialize_generated, observe, publish_operation,
+    restore_operation,
 };
-use support::*;
+use path::{relative_parents, validate_relative};
+use progress::{apply_with_interruption, unapply_with_interruption, verify_progress};
+use record::read_record;
+#[cfg(test)]
+use record::record_path;
 
 const PLAN_VERSION: u16 = 2;
 const RECORD_VERSION: u16 = 2;
+const LEGACY_RECORD_PATH: &str = ".spice/install";
+const RECORD_PATH: &str = ".spice/rust/install.json";
+const RECORD_MODE: u32 = 0o600;
+const DIRECTORY_MODE: u32 = 0o700;
 const DATA_MODE: u32 = 0o644;
 const EXECUTABLE_MODE: u32 = 0o755;
-const RECORD_MODE: u32 = 0o600;
-const TRACKED_POLICY: &str = include_str!("../../spice.toml");
-const BASELINE: &[u8] = include_bytes!("../../baseline.toml");
-const SKILL: &[u8] = include_bytes!("../../.agents/skills/spice/SKILL.md");
-const HOOK_ENTRY: &[u8] = include_bytes!("../../steer/hooks/entry.sh");
-const HOOK_STAGE: &[u8] = include_bytes!("../../steer/hooks/static/stage.sh");
-const TASTE_NAMES: [&str; 6] = [
-    "polling",
-    "fallbacks",
-    "compatibility",
-    "shims",
-    "aliases",
-    "legacy",
-];
 
-/// What one plan operation will do to its destination.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Change {
-    Create,
-    Replace,
-    Remove,
-    Retain,
+const EXCLUDE_PATH: &str = "info/exclude";
+const CONFIG_PATH: &str = ".spice/config.toml";
+const ENTRY_PATH: &str = ".spice/rust/hooks/entry.sh";
+const STATIC_PATH: &str = ".spice/rust/hooks/static/stage.sh";
+const SKILL_PATH: &str = ".agents/skills/spice-rust/SKILL.md";
+const BINARY_PATH: &str = ".spice/rust/bin/spice-rust";
+
+const EXCLUDE_BEGIN: &str = "# BEGIN spice-rust coexistence";
+const EXCLUDE_END: &str = "# END spice-rust coexistence";
+const EXCLUDE_BLOCK: &str = concat!(
+    "# BEGIN spice-rust coexistence\n",
+    "/.spice/rust/\n",
+    "/.agents/skills/spice-rust/\n",
+    "# END spice-rust coexistence\n",
+);
+const STARTER_CONFIG: &str = concat!(
+    "# Machine-local configuration for the explicit Rust Spice command.\n",
+    "# Tracked release-one policy remains repository-authored.\n",
+);
+const SKILL: &str = include_str!("install/skill.md");
+
+/// One Rust-owned asset in canonical installation order.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Asset {
+    Exclusions,
+    Configuration,
+    HookEntry,
+    HookStatic,
+    Skill,
+    Binary,
 }
 
-/// Stable native identity of one observed filesystem object.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Generation {
-    pub device: u64,
-    pub inode: u64,
+/// Root against which an operation's relative path resolves.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Location {
+    Worktree,
+    CommonGit,
 }
 
-/// The resolved existing ancestor that anchors a destination parent.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ParentObservation {
-    pub ancestor: PathBuf,
-    pub generation: Generation,
-    pub missing: PathBuf,
-}
-
-/// The state observed at a filesystem destination before the plan was built.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
-pub enum Observation {
-    Absent,
-    File {
-        digest: Digest,
-        mode: u32,
-        generation: Generation,
-    },
-}
-
-/// One explicit value state for the Git hook selection.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
-pub enum HookValue {
-    Absent,
-    Value { value: String },
-}
-
-impl HookValue {
-    fn from_option(value: Option<String>) -> Self {
-        match value {
-            Some(value) => Self::Value { value },
-            None => Self::Absent,
-        }
-    }
-
-    fn as_deref(&self) -> Option<&str> {
+impl Location {
+    fn root(self, repository: &Repository) -> &Path {
         match self {
-            Self::Absent => None,
-            Self::Value { value } => Some(value),
-        }
-    }
-
-    fn into_option(self) -> Option<String> {
-        match self {
-            Self::Absent => None,
-            Self::Value { value } => Some(value),
+            Self::Worktree => repository.worktree_root(),
+            Self::CommonGit => repository.common_dir(),
         }
     }
 }
 
-/// One exact filesystem operation in an installation plan.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RepositoryIdentity {
+    worktree: PathBuf,
+    common_git: PathBuf,
+}
+
+impl RepositoryIdentity {
+    fn capture(repository: &Repository) -> Self {
+        Self {
+            worktree: repository.worktree_root().to_path_buf(),
+            common_git: repository.common_dir().to_path_buf(),
+        }
+    }
+
+    fn validate(&self, repository: &Repository) -> Result<(), InstallError> {
+        if self == &Self::capture(repository) {
+            Ok(())
+        } else {
+            Err(InstallError::InvalidRecord(
+                "install record belongs to another repository".to_owned(),
+            ))
+        }
+    }
+}
+
+/// Complete bytes, mode, and content identity of one regular file.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileImage {
+    mode: u32,
+    bytes: Vec<u8>,
+    digest: Digest,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ObservedFile {
+    image: FileImage,
+    generation: Generation,
+}
+
+impl ObservedFile {
+    fn generated(&self) -> GeneratedImage {
+        self.image.generated()
+    }
+}
+
+impl FileImage {
+    fn new(mode: u32, bytes: Vec<u8>) -> Self {
+        let digest = Digest::compute(Domain::InstallArtifact, &bytes);
+        Self {
+            mode,
+            bytes,
+            digest,
+        }
+    }
+
+    /// Installed permission bits.
+    #[must_use]
+    pub const fn mode(&self) -> u32 {
+        self.mode
+    }
+
+    /// Exact file bytes.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Content identity of the file bytes.
+    #[must_use]
+    pub const fn digest(&self) -> &Digest {
+        &self.digest
+    }
+
+    fn validate(&self) -> bool {
+        self.mode <= 0o777 && self.digest == Digest::compute(Domain::InstallArtifact, &self.bytes)
+    }
+
+    fn generated(&self) -> GeneratedImage {
+        GeneratedImage {
+            mode: self.mode,
+            digest: self.digest.clone(),
+        }
+    }
+}
+
+/// Mode and content identity of bytes an install operation will publish.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeneratedImage {
+    mode: u32,
+    digest: Digest,
+}
+
+impl GeneratedImage {
+    fn new(mode: u32, bytes: &[u8]) -> Self {
+        Self {
+            mode,
+            digest: Digest::compute(Domain::InstallArtifact, bytes),
+        }
+    }
+
+    /// Installed permission bits.
+    #[must_use]
+    pub const fn mode(&self) -> u32 {
+        self.mode
+    }
+
+    /// Identity of the exact bytes selected by the plan.
+    #[must_use]
+    pub const fn digest(&self) -> &Digest {
+        &self.digest
+    }
+
+    fn validate(&self) -> bool {
+        self.mode <= 0o777
+    }
+}
+
+/// One exact file replacement and the state it observed before installation.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Operation {
-    pub path: PathBuf,
-    pub parent: ParentObservation,
-    pub change: Change,
-    pub observed: Observation,
-    pub desired: Digest,
-    pub mode: u32,
-}
-
-/// The Git hook-selection edit included in the plan.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct HookSelection {
-    pub config: PathBuf,
-    pub parent: ParentObservation,
-    pub observed: Observation,
-    pub previous: HookValue,
-    pub selected: HookValue,
-    pub mode: u32,
-    pub change: Change,
-}
-
-/// State of the plan returned by the command.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Action {
-    Preview,
-    Applied,
-    Unapplied,
-}
-
-/// The complete deterministic install answer.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Plan {
-    pub version: u16,
-    pub action: Action,
-    pub repository: PathBuf,
-    pub operations: Vec<Operation>,
-    pub hook: HookSelection,
-    pub digest: Digest,
-}
-
-/// A typed installation failure already classified for the process rim.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Error {
-    Refusal(Refusal),
-    Fault(Fault),
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Refusal(error) => write!(formatter, "{}: {}", error.reason, error.remedy),
-            Self::Fault(error) => write!(formatter, "{}: {}", error.reason, error.detail),
-        }
-    }
-}
-
-impl std::error::Error for Error {}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-struct Record {
-    version: u16,
-    repository: PathBuf,
-    home: PathBuf,
-    plan: Digest,
-    operations: Vec<Operation>,
-    selection: HookSelection,
-    hook: RecordedHook,
-    writes: Vec<RecordedWrite>,
-}
-
-#[derive(Deserialize)]
-struct RecordHeader {
-    version: u16,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-struct RecordedHook {
-    config: PathBuf,
-    previous: Option<String>,
-    selected: String,
-    prior: Snapshot,
-    installed: Digest,
-    mode: u32,
-    changed: bool,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-struct RecordedWrite {
-    path: PathBuf,
-    prior: Snapshot,
-    installed: Digest,
-    mode: u32,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
-enum Snapshot {
-    Absent,
-    File {
-        bytes: Vec<u8>,
-        mode: u32,
-        generation: Generation,
-    },
-}
-
-#[derive(Clone, Debug)]
-struct Destination {
-    logical: PathBuf,
-    path: PathBuf,
-    root: PathBuf,
+    asset: Asset,
+    location: Location,
+    path: String,
+    destination: String,
     parent: ParentObservation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    previous: Option<ObservedFile>,
+    generated: GeneratedImage,
+    introduced_parents: Vec<String>,
 }
 
-#[derive(Clone, Debug)]
-struct Artifact {
-    destination: Destination,
-    operation: Operation,
-    desired: Vec<u8>,
-    prior: Snapshot,
+impl Operation {
+    /// Kind of asset this operation owns.
+    #[must_use]
+    pub const fn asset(&self) -> Asset {
+        self.asset
+    }
+
+    /// Root against which [`Self::path`] resolves.
+    #[must_use]
+    pub const fn location(&self) -> Location {
+        self.location
+    }
+
+    /// Repository-relative destination spelling.
+    #[must_use]
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Prior regular-file image, or absence when this install introduces it.
+    #[must_use]
+    pub const fn previous(&self) -> Option<&FileImage> {
+        match self.previous.as_ref() {
+            Some(previous) => Some(&previous.image),
+            None => None,
+        }
+    }
+
+    /// Exact image this install places.
+    #[must_use]
+    pub const fn generated(&self) -> &GeneratedImage {
+        &self.generated
+    }
+
+    /// Parent directories absent when the plan was derived, outermost first.
+    #[must_use]
+    pub fn introduced_parents(&self) -> &[String] {
+        &self.introduced_parents
+    }
+
+    fn destination(&self, repository: &Repository) -> PathBuf {
+        self.location.root(repository).join(&self.destination)
+    }
 }
 
-#[derive(Clone, Debug)]
-struct Prepared {
-    repository: Repository,
-    home: PathBuf,
-    plan: Plan,
-    artifacts: Vec<Artifact>,
-    config_bytes: Vec<u8>,
-    config_mode: u32,
-    config_prior: Snapshot,
-    hook_destination: Destination,
-    record: Destination,
-}
-
-#[derive(Serialize)]
-struct PlanIdentity<'a> {
+/// Side-effect-free canonical installation plan.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstallPlan {
     version: u16,
-    repository: &'a Path,
-    operations: &'a [Operation],
-    hook: &'a HookSelection,
+    repository: RepositoryIdentity,
+    record: BoundDestination,
+    operations: Vec<Operation>,
 }
 
-/// Preview an installation without changing repository or user state.
-pub fn preview(start: &Path, executable: &Path, home: &Path) -> Result<Plan, Error> {
-    prepare(start, executable, home).map(|prepared| prepared.plan)
-}
-
-/// Apply exactly the plan whose digest the caller accepted.
-pub fn apply(start: &Path, executable: &Path, home: &Path, accepted: &str) -> Result<Plan, Error> {
-    let mut prepared = prepare(start, executable, home)?;
-    if prepared.plan.digest.as_str() != accepted {
-        return Err(refusal(
-            "install::plan-changed",
-            Some(prepared.plan.digest.to_string()),
-            Some(accepted.to_owned()),
-            "run spice install again and apply the digest it prints",
-        ));
+impl InstallPlan {
+    /// Install schema version carried by canonical plan bytes.
+    #[must_use]
+    pub const fn version(&self) -> u16 {
+        self.version
     }
-    if prepared.record.path.exists() {
-        validate_existing_record(&prepared)?;
-        prepared.plan.action = Action::Applied;
-        return Ok(prepared.plan);
-    }
-    apply_prepared(&prepared)?;
-    prepared.plan.action = Action::Applied;
-    Ok(prepared.plan)
-}
 
-/// Reverse only the exact files and hook selection named by the install record.
-pub fn unapply(start: &Path, home: &Path) -> Result<Plan, Error> {
-    let repository = Repository::discover(start).map_err(repository_error)?;
-    let home = canonical_directory(home, "install::home")?;
-    let record_destination = destination(
-        repository.common_dir().join(".spice/install"),
-        repository.common_dir(),
-    )?;
-    let record = read_record(&record_destination.path)?;
-    let preflight = preflight_unapply(&repository, &home, &record)?;
-    let mut restored = Vec::new();
-    for index in (0..record.writes.len()).rev() {
-        let write = &record.writes[index];
-        if let Err(error) = restore_snapshot(&preflight.destinations[index], &write.prior) {
-            rollback_unapply(&preflight, &restored);
-            return Err(error);
+    /// Operations in their sole application order.
+    #[must_use]
+    pub fn operations(&self) -> &[Operation] {
+        &self.operations
+    }
+
+    /// Canonical plan bytes consumed by preview and digest admission.
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, InstallError> {
+        wire::encode(self).map_err(InstallError::Encode)
+    }
+
+    /// Dedicated identity of the canonical plan bytes.
+    pub fn digest(&self) -> Result<Digest, InstallError> {
+        Ok(Digest::compute(
+            Domain::InstallPlan,
+            &self.canonical_bytes()?,
+        ))
+    }
+
+    fn validate(&self) -> Result<(), InstallError> {
+        if self.version != PLAN_VERSION {
+            return Err(InstallError::InvalidRecord(format!(
+                "install plan version {} is not {PLAN_VERSION}",
+                self.version
+            )));
         }
-        restored.push(index);
-    }
-    if record.hook.changed
-        && let Err(error) = restore_snapshot(&preflight.hook, &record.hook.prior)
-    {
-        rollback_unapply(&preflight, &restored);
-        return Err(error);
-    }
-    if let Err(source) = fs::remove_file(&record_destination.path) {
-        if record.hook.changed {
-            let _ = restore_snapshot(&preflight.hook, &preflight.hook_observed);
+        let expected = [
+            Asset::Exclusions,
+            Asset::Configuration,
+            Asset::HookEntry,
+            Asset::HookStatic,
+            Asset::Skill,
+        ];
+        if self.operations.len() != expected.len() && self.operations.len() != expected.len() + 1 {
+            return Err(InstallError::InvalidRecord(
+                "install plan has an incomplete or extra operation inventory".to_owned(),
+            ));
         }
-        rollback_unapply(&preflight, &restored);
-        return Err(io_fault(
-            "remove install record",
-            &record_destination.path,
-            source,
-        ));
-    }
-    let prepared = prepare_unapplied(
-        &repository,
-        record,
-        &preflight.installed,
-        &preflight.hook_observed,
-    )?;
-    Ok(prepared)
-}
-
-fn prepare(start: &Path, executable: &Path, home: &Path) -> Result<Prepared, Error> {
-    let repository = Repository::discover(start).map_err(repository_error)?;
-    let executable = canonical_file(executable, "install::executable")?;
-    let home = canonical_directory(home, "install::home")?;
-    let repository_id = Digest::compute(
-        Domain::InstallRepository,
-        repository.worktree_root().as_os_str().as_encoded_bytes(),
-    );
-    let artifacts = artifacts(&repository, &executable, &home, &repository_id)?;
-    let hook = hook_selection(&repository)?;
-    let operations = artifacts
-        .iter()
-        .map(|artifact| artifact.operation.clone())
-        .collect::<Vec<_>>();
-    let identity = PlanIdentity {
-        version: PLAN_VERSION,
-        repository: repository.worktree_root(),
-        operations: &operations,
-        hook: &hook.selection,
-    };
-    let bytes = wire::encode(&identity).map_err(|source| encode_fault("install plan", source))?;
-    let digest = Digest::compute(Domain::InstallPlan, &bytes);
-    let plan = Plan {
-        version: PLAN_VERSION,
-        action: Action::Preview,
-        repository: repository.worktree_root().to_path_buf(),
-        operations,
-        hook: hook.selection,
-        digest,
-    };
-    let record = destination(
-        repository.common_dir().join(".spice/install"),
-        repository.common_dir(),
-    )?;
-    Ok(Prepared {
-        repository,
-        home,
-        plan,
-        artifacts,
-        config_bytes: hook.bytes,
-        config_mode: hook.mode,
-        config_prior: hook.prior,
-        hook_destination: hook.destination,
-        record,
-    })
-}
-
-struct PreparedHook {
-    destination: Destination,
-    selection: HookSelection,
-    bytes: Vec<u8>,
-    mode: u32,
-    prior: Snapshot,
-}
-
-fn hook_selection(repository: &Repository) -> Result<PreparedHook, Error> {
-    let config_destination = destination(
-        repository.common_dir().join("config"),
-        repository.common_dir(),
-    )?;
-    let snapshot = snapshot(&config_destination.path)?;
-    let observed = observation(&snapshot);
-    let (bytes, mode) = match &snapshot {
-        Snapshot::Absent => (Vec::new(), DATA_MODE),
-        Snapshot::File { bytes, mode, .. } => (bytes.clone(), *mode),
-    };
-    let text = String::from_utf8(bytes.clone()).map_err(|_| {
-        refusal(
-            "install::git-config-encoding",
-            Some("UTF-8 Git configuration".to_owned()),
-            Some(config_destination.path.display().to_string()),
-            "repair the Git configuration before installing",
-        )
-    })?;
-    let parsed = parse_hook(&text)?;
-    let hook_entry = destination(
-        repository.common_dir().join(".spice/hooks/pre-commit"),
-        repository.common_dir(),
-    )?;
-    let selected = hook_entry
-        .path
-        .parent()
-        .expect("the installed hook has a parent")
-        .display()
-        .to_string();
-    let change = if parsed.value.as_deref() == Some(&selected) {
-        Change::Retain
-    } else if parsed.value.is_some() {
-        Change::Replace
-    } else {
-        Change::Create
-    };
-    Ok(PreparedHook {
-        selection: HookSelection {
-            config: config_destination.path.clone(),
-            parent: config_destination.parent.clone(),
-            observed,
-            previous: HookValue::from_option(parsed.value),
-            selected: HookValue::Value { value: selected },
-            mode,
-            change,
-        },
-        bytes,
-        mode,
-        prior: snapshot,
-        destination: config_destination,
-    })
-}
-
-fn artifacts(
-    repository: &Repository,
-    executable: &Path,
-    home: &Path,
-    repository_id: &Digest,
-) -> Result<Vec<Artifact>, Error> {
-    let root = repository.worktree_root();
-    let suffix = &repository_id.as_str()[..12];
-    let policy = seeded_policy(root.join("spice.toml"))?;
-    let destinations = install_destinations(repository, home)?;
-    let installed_executable = destinations[0].path.clone();
-    let executable_bytes = fs::read(executable)
-        .map_err(|source| io_fault("read Rust executable", executable, source))?;
-    let pre_commit = pre_commit(&installed_executable);
-    let systemd = systemd_unit(&installed_executable, root);
-    let launchd = launchd_unit(&installed_executable, root, suffix);
-    let desired = vec![
-        (executable_bytes, EXECUTABLE_MODE),
-        (HOOK_ENTRY.to_vec(), EXECUTABLE_MODE),
-        (HOOK_STAGE.to_vec(), EXECUTABLE_MODE),
-        (pre_commit.into_bytes(), EXECUTABLE_MODE),
-        (SKILL.to_vec(), DATA_MODE),
-        (policy, DATA_MODE),
-        (seeded_baseline(root.join("baseline.toml"))?, DATA_MODE),
-        (systemd.into_bytes(), DATA_MODE),
-        (launchd.into_bytes(), DATA_MODE),
-    ];
-    destinations
-        .into_iter()
-        .zip(desired)
-        .map(|(destination, (bytes, mode))| artifact(destination, bytes, mode))
-        .collect()
-}
-
-fn install_destinations(repository: &Repository, home: &Path) -> Result<Vec<Destination>, Error> {
-    let root = repository.worktree_root();
-    let common = repository.common_dir();
-    let hooks = common.join(".spice/hooks");
-    let repository_id = Digest::compute(
-        Domain::InstallRepository,
-        root.as_os_str().as_encoded_bytes(),
-    );
-    let suffix = &repository_id.as_str()[..12];
-    [
-        (home.join(".local/bin/spice-rust"), home),
-        (hooks.join("entry.sh"), common),
-        (hooks.join("static/stage.sh"), common),
-        (hooks.join("pre-commit"), common),
-        (root.join(".agents/skills/spice/SKILL.md"), root),
-        (root.join("spice.toml"), root),
-        (root.join("baseline.toml"), root),
-        (
-            home.join(format!(".config/systemd/user/spice-{suffix}.service")),
-            home,
-        ),
-        (
-            home.join(format!("Library/LaunchAgents/dev.spice.{suffix}.plist")),
-            home,
-        ),
-    ]
-    .into_iter()
-    .map(|(path, permitted_root)| destination(path, permitted_root))
-    .collect()
-}
-
-fn artifact(destination: Destination, desired: Vec<u8>, mode: u32) -> Result<Artifact, Error> {
-    let mode = effective_mode(mode);
-    let prior = snapshot(&destination.path)?;
-    let observed_digest = snapshot_digest(&prior);
-    let desired_digest = Digest::compute(Domain::InstallArtifact, &desired);
-    let change = match (&prior, observed_digest.as_ref()) {
-        (Snapshot::Absent, _) => Change::Create,
-        (Snapshot::File { mode: found, .. }, Some(digest))
-            if digest == &desired_digest && *found == mode =>
-        {
-            Change::Retain
-        }
-        (Snapshot::File { .. }, _) => Change::Replace,
-    };
-    Ok(Artifact {
-        operation: Operation {
-            path: destination.path.clone(),
-            parent: destination.parent.clone(),
-            change,
-            observed: observation(&prior),
-            desired: desired_digest,
-            mode,
-        },
-        destination,
-        desired,
-        prior,
-    })
-}
-
-fn destination(logical: PathBuf, root: &Path) -> Result<Destination, Error> {
-    if !logical.is_absolute() || !logical.starts_with(root) {
-        return Err(destination_root_refusal(&logical, root));
-    }
-    let file_name = logical.file_name().ok_or_else(|| {
-        refusal(
-            "install::destination-shape",
-            Some("one absolute file destination".to_owned()),
-            Some(logical.display().to_string()),
-            "repair the compiled installation destination",
-        )
-    })?;
-    let mut candidate = logical
-        .parent()
-        .expect("a destination with a file name has a parent")
-        .to_path_buf();
-    let mut missing = Vec::<OsString>::new();
-    let (ancestor, generation) = loop {
-        match fs::symlink_metadata(&candidate) {
-            Ok(_) => {
-                let canonical = fs::canonicalize(&candidate).map_err(|source| {
-                    io_fault("resolve install destination parent", &candidate, source)
-                })?;
-                let metadata = fs::metadata(&canonical).map_err(|source| {
-                    io_fault("inspect install destination parent", &canonical, source)
-                })?;
-                if !metadata.is_dir() {
-                    return Err(refusal(
-                        "install::destination-shape",
-                        Some("directory destination parent".to_owned()),
-                        Some(canonical.display().to_string()),
-                        "move the non-directory parent aside before installing",
-                    ));
-                }
-                break (canonical, generation(&metadata));
-            }
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-                let name = candidate.file_name().ok_or_else(|| {
-                    io_fault("resolve install destination parent", &candidate, source)
-                })?;
-                missing.push(name.to_os_string());
-                candidate = candidate
-                    .parent()
-                    .expect("an absolute missing path has an ancestor")
-                    .to_path_buf();
-            }
-            Err(source) => {
-                return Err(io_fault(
-                    "inspect install destination parent",
-                    &candidate,
-                    source,
+        for (operation, asset) in self.operations.iter().zip(expected) {
+            if operation.asset != asset {
+                return Err(InstallError::InvalidRecord(
+                    "install plan operation order is not canonical".to_owned(),
                 ));
             }
         }
-    };
-    let mut missing_path = PathBuf::new();
-    for component in missing.into_iter().rev() {
-        missing_path.push(component);
-    }
-    let path = ancestor.join(&missing_path).join(file_name);
-    if !path.starts_with(root) {
-        return Err(destination_root_refusal(&path, root));
-    }
-    Ok(Destination {
-        logical,
-        path,
-        root: root.to_path_buf(),
-        parent: ParentObservation {
-            ancestor,
-            generation,
-            missing: missing_path,
-        },
-    })
-}
-
-fn validate_destination(expected: &Destination) -> Result<(), Error> {
-    let observed = destination(expected.logical.clone(), &expected.root)?;
-    if observed.path != expected.path || observed.parent != expected.parent {
-        return Err(refusal(
-            "install::destination-drift",
-            Some(format!(
-                "{} at {:?}",
-                expected.path.display(),
-                expected.parent
-            )),
-            Some(format!(
-                "{} at {:?}",
-                observed.path.display(),
-                observed.parent
-            )),
-            "preview the installation again after destination parents settle",
-        ));
-    }
-    Ok(())
-}
-
-fn snapshot(path: &Path) -> Result<Snapshot, Error> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Snapshot::Absent);
-        }
-        Err(source) => return Err(io_fault("inspect install destination", path, source)),
-    };
-    if !metadata.file_type().is_file() {
-        return Err(refusal(
-            "install::destination-shape",
-            Some("regular file or absence".to_owned()),
-            Some(path.display().to_string()),
-            "move the non-file destination aside before installing",
-        ));
-    }
-    let mut file = fs::File::open(path)
-        .map_err(|source| io_fault("open install destination", path, source))?;
-    let opened = file
-        .metadata()
-        .map_err(|source| io_fault("inspect open install destination", path, source))?;
-    if generation(&metadata) != generation(&opened) {
-        return Err(destination_drift_refusal(path));
-    }
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
-        .map_err(|source| io_fault("read install destination", path, source))?;
-    let read = file
-        .metadata()
-        .map_err(|source| io_fault("reinspect open install destination", path, source))?;
-    let after = fs::symlink_metadata(path)
-        .map_err(|source| io_fault("reinspect install destination", path, source))?;
-    if snapshot_signature(&metadata) != snapshot_signature(&opened)
-        || snapshot_signature(&opened) != snapshot_signature(&read)
-        || snapshot_signature(&read) != snapshot_signature(&after)
-    {
-        return Err(destination_drift_refusal(path));
-    }
-    Ok(Snapshot::File {
-        bytes,
-        mode: file_mode(&metadata),
-        generation: generation(&metadata),
-    })
-}
-
-fn snapshot_digest(snapshot: &Snapshot) -> Option<Digest> {
-    match snapshot {
-        Snapshot::Absent => None,
-        Snapshot::File { bytes, .. } => Some(Digest::compute(Domain::InstallArtifact, bytes)),
-    }
-}
-
-fn observation(snapshot: &Snapshot) -> Observation {
-    match snapshot {
-        Snapshot::Absent => Observation::Absent,
-        Snapshot::File {
-            bytes,
-            mode,
-            generation,
-        } => Observation::File {
-            digest: Digest::compute(Domain::InstallArtifact, bytes),
-            mode: *mode,
-            generation: *generation,
-        },
-    }
-}
-
-fn record_from(prepared: &Prepared) -> Result<Record, Error> {
-    let writes = prepared
-        .artifacts
-        .iter()
-        .filter(|artifact| artifact.operation.change != Change::Retain)
-        .map(|artifact| {
-            validate_installed_state(
-                &artifact.operation.path,
-                &artifact.operation.desired,
-                artifact.operation.mode,
-            )?;
-            Ok(RecordedWrite {
-                path: artifact.operation.path.clone(),
-                prior: artifact.prior.clone(),
-                installed: artifact.operation.desired.clone(),
-                mode: artifact.operation.mode,
-            })
-        })
-        .collect::<Result<Vec<_>, Error>>()?;
-    let installed_hook = hook_bytes(prepared, prepared.plan.hook.selected.as_deref())?;
-    let installed_hook_digest = Digest::compute(Domain::InstallArtifact, &installed_hook);
-    validate_installed_state(
-        &prepared.plan.hook.config,
-        &installed_hook_digest,
-        prepared.config_mode,
-    )?;
-    Ok(Record {
-        version: RECORD_VERSION,
-        repository: prepared.repository.worktree_root().to_path_buf(),
-        home: prepared.home.clone(),
-        plan: prepared.plan.digest.clone(),
-        operations: prepared.plan.operations.clone(),
-        selection: prepared.plan.hook.clone(),
-        hook: RecordedHook {
-            config: prepared.plan.hook.config.clone(),
-            previous: prepared.plan.hook.previous.clone().into_option(),
-            selected: prepared
-                .plan
-                .hook
-                .selected
-                .as_deref()
-                .expect("installation always selects one hook path")
-                .to_owned(),
-            prior: prepared.config_prior.clone(),
-            installed: installed_hook_digest,
-            mode: prepared.config_mode,
-            changed: prepared.plan.hook.change != Change::Retain,
-        },
-        writes,
-    })
-}
-
-fn apply_prepared(prepared: &Prepared) -> Result<(), Error> {
-    preflight_apply(prepared)?;
-    let mut written = Vec::new();
-    for artifact in &prepared.artifacts {
-        if artifact.operation.change == Change::Retain {
-            continue;
-        }
-        if let Err(error) = publish(
-            &artifact.destination,
-            &artifact.desired,
-            artifact.operation.mode,
-        ) {
-            let _ = restore_snapshot(&artifact.destination, &artifact.prior);
-            rollback_writes(&written);
-            return Err(error);
-        }
-        written.push(artifact);
-    }
-    let hook_changed = prepared.plan.hook.change != Change::Retain;
-    if hook_changed && let Err(error) = write_hook(prepared, prepared.plan.hook.selected.as_deref())
-    {
-        let _ = restore_snapshot(&prepared.hook_destination, &prepared.config_prior);
-        rollback_writes(&written);
-        return Err(error);
-    }
-    let record = match record_from(prepared) {
-        Ok(record) => record,
-        Err(error) => {
-            if hook_changed {
-                let _ = restore_snapshot(&prepared.hook_destination, &prepared.config_prior);
-            }
-            rollback_writes(&written);
-            return Err(error);
-        }
-    };
-    let record_bytes =
-        wire::encode(&record).map_err(|source| encode_fault("install record", source))?;
-    if let Err(error) = publish(&prepared.record, &record_bytes, RECORD_MODE) {
-        let _ = fs::remove_file(&prepared.record.path);
-        if hook_changed {
-            let _ = restore_snapshot(&prepared.hook_destination, &prepared.config_prior);
-        }
-        rollback_writes(&written);
-        return Err(error);
-    }
-    Ok(())
-}
-
-fn write_hook(prepared: &Prepared, value: Option<&str>) -> Result<(), Error> {
-    let updated = hook_bytes(prepared, value)?;
-    publish(&prepared.hook_destination, &updated, prepared.config_mode)
-}
-
-fn hook_bytes(prepared: &Prepared, value: Option<&str>) -> Result<Vec<u8>, Error> {
-    let text = String::from_utf8(prepared.config_bytes.clone()).map_err(|_| {
-        fault(
-            "install::git-config-encoding",
-            "Git configuration stopped being UTF-8",
-        )
-    })?;
-    let updated = set_hook(&text, value)?;
-    Ok(updated.into_bytes())
-}
-
-fn rollback_writes(written: &[&Artifact]) {
-    for artifact in written.iter().rev() {
-        let _ = restore_snapshot(&artifact.destination, &artifact.prior);
-    }
-}
-
-fn preflight_apply(prepared: &Prepared) -> Result<(), Error> {
-    for artifact in &prepared.artifacts {
-        validate_destination(&artifact.destination)?;
-    }
-    validate_destination(&prepared.hook_destination)?;
-    validate_destination(&prepared.record)?;
-    for artifact in &prepared.artifacts {
-        if snapshot(&artifact.operation.path)? != artifact.prior {
-            return Err(destination_drift_refusal(&artifact.operation.path));
-        }
-    }
-    if snapshot(&prepared.plan.hook.config)? != prepared.config_prior {
-        return Err(destination_drift_refusal(&prepared.plan.hook.config));
-    }
-    if snapshot(&prepared.record.path)? != Snapshot::Absent {
-        return Err(destination_drift_refusal(&prepared.record.path));
-    }
-    Ok(())
-}
-
-fn publish(destination: &Destination, bytes: &[u8], mode: u32) -> Result<(), Error> {
-    let path = &destination.path;
-    let parent = path.parent().ok_or_else(|| {
-        fault(
-            "install::destination",
-            format!("{} has no parent", path.display()),
-        )
-    })?;
-    fs::create_dir_all(parent)
-        .map_err(|source| io_fault("create install directory", parent, source))?;
-    let canonical_parent = fs::canonicalize(parent)
-        .map_err(|source| io_fault("resolve install publication parent", parent, source))?;
-    if canonical_parent != parent || !canonical_parent.starts_with(&destination.root) {
-        return Err(destination_drift_refusal(path));
-    }
-    let destination = atomic::Destination::new(path)
-        .map_err(|source| fault("install::publication", source.to_string()))?;
-    destination
-        .publish(|staged| {
-            staged.write_all(bytes)?;
-            set_mode(staged.temporary_path(), mode)
-        })
-        .map_err(|source| fault("install::publication", source.to_string()))
-}
-
-fn read_record(path: &Path) -> Result<Record, Error> {
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-            return Err(refusal(
-                "install::record-missing",
-                Some(path.display().to_string()),
-                None,
-                "run spice install and apply its digest before unapplying",
+        if self.operations.len() > expected.len()
+            && self.operations.last().map(|operation| operation.asset) != Some(Asset::Binary)
+        {
+            return Err(InstallError::InvalidRecord(
+                "optional binary is not the final operation".to_owned(),
             ));
         }
-        Err(source) => return Err(io_fault("read install record", path, source)),
-    };
-    let header: RecordHeader = wire::decode(&bytes).map_err(|source| {
-        refusal(
-            "install::record-invalid",
-            Some("one current canonical install record".to_owned()),
-            Some(source.to_string()),
-            "restore the exact install record or reconcile the installation manually",
-        )
-    })?;
-    if header.version != RECORD_VERSION {
-        return Err(record_version_refusal(header.version));
+
+        if !self.repository.worktree.is_absolute() || !self.repository.common_git.is_absolute() {
+            return Err(InstallError::InvalidRecord(
+                "install repository identity is not absolute".to_owned(),
+            ));
+        }
+        validate_relative(&self.record.destination)?;
+        let mut introduced = BTreeSet::new();
+        let mut destinations = BTreeSet::new();
+        for operation in &self.operations {
+            validate_operation(operation, &mut introduced)?;
+            if !destinations.insert((operation.location, operation.destination.clone())) {
+                return Err(InstallError::InvalidRecord(
+                    "install plan duplicates a physical destination".to_owned(),
+                ));
+            }
+        }
+        Ok(())
     }
-    let record: Record = wire::decode(&bytes).map_err(|source| {
-        refusal(
-            "install::record-invalid",
-            Some("one current canonical install record".to_owned()),
-            Some(source.to_string()),
-            "restore the exact install record or reconcile the installation manually",
-        )
-    })?;
-    let canonical =
-        wire::encode(&record).map_err(|source| encode_fault("install record", source))?;
-    if canonical != bytes {
-        return Err(record_shape_refusal(
-            "install record bytes are not the one canonical encoding",
+
+    fn validate_for_repository(&self, repository: &Repository) -> Result<(), InstallError> {
+        self.validate()?;
+        self.repository.validate(repository)?;
+        binding::validate_record_binding(repository.common_dir(), &self.record, RECORD_PATH)?;
+        for operation in &self.operations {
+            validate_operation_binding(
+                repository,
+                operation.location,
+                &operation.path,
+                &operation.destination,
+                &operation.parent,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn validate_pristine(&self, repository: &Repository) -> Result<(), InstallError> {
+        self.validate_for_repository(repository)?;
+        if bind_destination(repository.common_dir(), RECORD_PATH)? != self.record {
+            return Err(InstallError::ParentChanged(
+                repository.common_dir().join(RECORD_PATH),
+            ));
+        }
+        for operation in &self.operations {
+            let current = bind_destination(operation.location.root(repository), &operation.path)?;
+            if current.destination != operation.destination || current.parent != operation.parent {
+                return Err(InstallError::ParentChanged(
+                    operation.location.root(repository).join(&operation.path),
+                ));
+            }
+            let observed = observe(&operation.destination(repository))?;
+            if observed != operation.previous {
+                return Err(drift(operation, observed));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Durable progress state for apply and reversal.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InstallStatus {
+    Applying,
+    Complete,
+    Unapplying,
+    Uninstalled,
+}
+
+/// Current strict installation receipt.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct InstallReceipt {
+    plan: InstallPlan,
+    digest: Digest,
+    status: InstallStatus,
+    completed: usize,
+}
+
+impl InstallReceipt {
+    /// Exact plan retained for reversal and repeat application.
+    #[must_use]
+    pub const fn plan(&self) -> &InstallPlan {
+        &self.plan
+    }
+
+    /// Plan identity admitted by apply.
+    #[must_use]
+    pub const fn digest(&self) -> &Digest {
+        &self.digest
+    }
+
+    /// Durable progress state.
+    #[must_use]
+    pub const fn status(&self) -> InstallStatus {
+        self.status
+    }
+
+    /// Operations durably acknowledged in the current direction.
+    #[must_use]
+    pub const fn completed(&self) -> usize {
+        self.completed
+    }
+}
+
+/// Inspect one repository and derive the exact coexistence installation plan.
+pub fn plan(
+    repository: &Repository,
+    rust_binary: Option<&Path>,
+) -> Result<InstallPlan, InstallError> {
+    if let Some(loaded) = read_record(repository)? {
+        let record = loaded.record;
+        verify_binary_context(&record.plan, rust_binary)?;
+        verify_progress(repository, &record)?;
+        if record.status == InstallStatus::Uninstalled {
+            return build_plan(repository, rust_binary);
+        }
+        return Ok(record.plan);
+    }
+    build_plan(repository, rust_binary)
+}
+
+/// Apply only the exact current plan named by `expected`.
+pub fn apply(
+    repository: &Repository,
+    rust_binary: Option<&Path>,
+    expected: &Digest,
+) -> Result<InstallReceipt, InstallError> {
+    apply_with_interruption(repository, rust_binary, expected, None)
+}
+
+/// Reverse the complete current install without touching drifted targets.
+pub fn unapply(repository: &Repository) -> Result<InstallReceipt, InstallError> {
+    unapply_with_interruption(repository, None)
+}
+
+fn build_plan(
+    repository: &Repository,
+    rust_binary: Option<&Path>,
+) -> Result<InstallPlan, InstallError> {
+    let mut virtual_directories = BTreeSet::new();
+    let mut operations = Vec::new();
+
+    let (exclude_bound, exclude_previous) =
+        destination_state(repository, Location::CommonGit, EXCLUDE_PATH)?;
+    let exclude_image = exclude_previous.as_ref().map(|previous| &previous.image);
+    let exclude_bytes = exclusions(exclude_image.map(FileImage::bytes))?;
+    let exclude_mode = exclude_image.map_or(DATA_MODE, FileImage::mode);
+    operations.push(operation(
+        &mut virtual_directories,
+        Asset::Exclusions,
+        Location::CommonGit,
+        EXCLUDE_PATH,
+        exclude_bound,
+        exclude_previous,
+        GeneratedImage::new(exclude_mode, &exclude_bytes),
+    )?);
+
+    let (config_bound, config_previous) =
+        destination_state(repository, Location::CommonGit, CONFIG_PATH)?;
+    let config_generated = config_previous.as_ref().map_or_else(
+        || GeneratedImage::new(DATA_MODE, STARTER_CONFIG.as_bytes()),
+        ObservedFile::generated,
+    );
+    operations.push(operation(
+        &mut virtual_directories,
+        Asset::Configuration,
+        Location::CommonGit,
+        CONFIG_PATH,
+        config_bound,
+        config_previous,
+        config_generated,
+    )?);
+
+    for (asset, path, bytes, mode) in [
+        (
+            Asset::HookEntry,
+            ENTRY_PATH,
+            steer::hook::STAGES[0].bytes().as_bytes(),
+            EXECUTABLE_MODE,
+        ),
+        (
+            Asset::HookStatic,
+            STATIC_PATH,
+            steer::hook::STAGES[1].bytes().as_bytes(),
+            EXECUTABLE_MODE,
+        ),
+        (Asset::Skill, SKILL_PATH, SKILL.as_bytes(), DATA_MODE),
+    ] {
+        let (bound, previous) = destination_state(repository, Location::Worktree, path)?;
+        operations.push(operation(
+            &mut virtual_directories,
+            asset,
+            Location::Worktree,
+            path,
+            bound,
+            previous,
+            GeneratedImage::new(mode, bytes),
+        )?);
+    }
+
+    if let Some(binary) = rust_binary {
+        let bytes = read_binary(binary)?;
+        let (bound, previous) = destination_state(repository, Location::Worktree, BINARY_PATH)?;
+        operations.push(operation(
+            &mut virtual_directories,
+            Asset::Binary,
+            Location::Worktree,
+            BINARY_PATH,
+            bound,
+            previous,
+            GeneratedImage::new(EXECUTABLE_MODE, &bytes),
+        )?);
+    }
+
+    let record = bind_destination(repository.common_dir(), RECORD_PATH)?;
+    let plan = InstallPlan {
+        version: PLAN_VERSION,
+        repository: RepositoryIdentity::capture(repository),
+        record,
+        operations,
+    };
+    plan.validate_pristine(repository)?;
+    Ok(plan)
+}
+
+fn operation(
+    virtual_directories: &mut BTreeSet<(Location, String)>,
+    asset: Asset,
+    location: Location,
+    path: &str,
+    bound: BoundDestination,
+    previous: Option<ObservedFile>,
+    generated: GeneratedImage,
+) -> Result<Operation, InstallError> {
+    let mut introduced_parents = Vec::new();
+    for parent in bound.introduced_parents {
+        let key = (location, parent.clone());
+        if virtual_directories.insert(key) {
+            introduced_parents.push(parent);
+        }
+    }
+    Ok(Operation {
+        asset,
+        location,
+        path: path.to_owned(),
+        destination: bound.destination,
+        parent: bound.parent,
+        previous,
+        generated,
+        introduced_parents,
+    })
+}
+
+fn destination_state(
+    repository: &Repository,
+    location: Location,
+    path: &str,
+) -> Result<(BoundDestination, Option<ObservedFile>), InstallError> {
+    let bound = bind_destination(location.root(repository), path)?;
+    let previous = observe(&location.root(repository).join(&bound.destination))?;
+    Ok((bound, previous))
+}
+
+fn exclusions(previous: Option<&[u8]>) -> Result<Vec<u8>, InstallError> {
+    let previous = previous.unwrap_or_default();
+    let text = std::str::from_utf8(previous).map_err(|_| InstallError::ExclusionsNotUtf8)?;
+    let begin_count = text.matches(EXCLUDE_BEGIN).count();
+    let end_count = text.matches(EXCLUDE_END).count();
+    if begin_count == 1 && end_count == 1 && text.matches(EXCLUDE_BLOCK).count() == 1 {
+        return Ok(previous.to_vec());
+    }
+    if begin_count != 0 || end_count != 0 {
+        return Err(InstallError::DivergentExclusions);
+    }
+    let mut generated = previous.to_vec();
+    if !generated.is_empty() && !generated.ends_with(b"\n") {
+        generated.push(b'\n');
+    }
+    generated.extend_from_slice(EXCLUDE_BLOCK.as_bytes());
+    Ok(generated)
+}
+
+fn read_binary(path: &Path) -> Result<Vec<u8>, InstallError> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|source| InstallError::io("inspect Rust binary", path, source))?;
+    if !metadata.file_type().is_file() {
+        return Err(InstallError::BinaryNotRegular(path.to_path_buf()));
+    }
+    let bytes =
+        fs::read(path).map_err(|source| InstallError::io("read Rust binary", path, source))?;
+    if bytes.is_empty() {
+        return Err(InstallError::BinaryEmpty(path.to_path_buf()));
+    }
+    Ok(bytes)
+}
+
+fn verify_binary_context(
+    plan: &InstallPlan,
+    rust_binary: Option<&Path>,
+) -> Result<(), InstallError> {
+    let planned = plan
+        .operations
+        .iter()
+        .find(|operation| operation.asset == Asset::Binary);
+    match (planned, rust_binary) {
+        (None, None) => Ok(()),
+        (Some(operation), Some(path)) => {
+            let bytes = read_binary(path)?;
+            let observed = GeneratedImage::new(EXECUTABLE_MODE, &bytes);
+            if observed == operation.generated {
+                Ok(())
+            } else {
+                Err(InstallError::BinaryContextChanged)
+            }
+        }
+        _ => Err(InstallError::BinaryContextChanged),
+    }
+}
+
+fn validate_operation(
+    operation: &Operation,
+    introduced: &mut BTreeSet<(Location, String)>,
+) -> Result<(), InstallError> {
+    let (location, path, fixed_mode) = asset_contract(operation.asset);
+    let expected_mode = match operation.asset {
+        Asset::Exclusions | Asset::Configuration => operation
+            .previous
+            .as_ref()
+            .map_or(DATA_MODE, |previous| previous.image.mode()),
+        _ => fixed_mode,
+    };
+    validate_operation_contract(operation, location, path, expected_mode)?;
+    validate_generated_content(operation, expected_mode)?;
+    validate_introduced_parents(operation, introduced)
+}
+
+fn validate_operation_contract(
+    operation: &Operation,
+    location: Location,
+    path: &str,
+    expected_mode: u32,
+) -> Result<(), InstallError> {
+    if operation.location != location
+        || operation.path != path
+        || operation.generated.mode != expected_mode
+    {
+        return Err(InstallError::InvalidRecord(format!(
+            "install operation {:?} does not match its fixed contract",
+            operation.asset
+        )));
+    }
+    validate_relative(&operation.path)?;
+    validate_relative(&operation.destination)?;
+    let expected_parent = Path::new(&operation.parent.ancestor).join(&operation.parent.missing);
+    if Path::new(&operation.destination).parent() != Some(expected_parent.as_path()) {
+        return Err(InstallError::InvalidRecord(
+            "install destination does not match its bound parent".to_owned(),
         ));
     }
-    Ok(record)
+    if !operation.generated.validate()
+        || operation
+            .previous
+            .as_ref()
+            .is_some_and(|observed| !observed.image.validate())
+    {
+        return Err(InstallError::InvalidRecord(
+            "install operation carries an invalid file image".to_owned(),
+        ));
+    }
+    Ok(())
 }
+
+fn validate_generated_content(
+    operation: &Operation,
+    expected_mode: u32,
+) -> Result<(), InstallError> {
+    match operation.asset {
+        Asset::Exclusions => {
+            let bytes = exclusions(
+                operation
+                    .previous
+                    .as_ref()
+                    .map(|previous| previous.image.bytes()),
+            )?;
+            let expected = GeneratedImage::new(expected_mode, &bytes);
+            if operation.generated != expected {
+                return Err(InstallError::InvalidRecord(
+                    "exclusion operation is not the exact managed block edit".to_owned(),
+                ));
+            }
+        }
+        Asset::Configuration => {
+            let expected = operation.previous.as_ref().map_or_else(
+                || GeneratedImage::new(DATA_MODE, STARTER_CONFIG.as_bytes()),
+                ObservedFile::generated,
+            );
+            if operation.generated != expected {
+                return Err(InstallError::InvalidRecord(
+                    "configuration operation does not preserve or create the starter".to_owned(),
+                ));
+            }
+        }
+        Asset::HookEntry
+            if operation.generated
+                != GeneratedImage::new(
+                    EXECUTABLE_MODE,
+                    steer::hook::STAGES[0].bytes().as_bytes(),
+                ) =>
+        {
+            return Err(InstallError::InvalidRecord(
+                "entry hook differs from this build".to_owned(),
+            ));
+        }
+        Asset::HookStatic
+            if operation.generated
+                != GeneratedImage::new(
+                    EXECUTABLE_MODE,
+                    steer::hook::STAGES[1].bytes().as_bytes(),
+                ) =>
+        {
+            return Err(InstallError::InvalidRecord(
+                "static hook differs from this build".to_owned(),
+            ));
+        }
+        Asset::Skill if operation.generated != GeneratedImage::new(DATA_MODE, SKILL.as_bytes()) => {
+            return Err(InstallError::InvalidRecord(
+                "generated skill differs from this build".to_owned(),
+            ));
+        }
+        Asset::Binary
+            if operation.generated.digest == Digest::compute(Domain::InstallArtifact, &[]) =>
+        {
+            return Err(InstallError::InvalidRecord(
+                "explicit Rust binary is empty".to_owned(),
+            ));
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_introduced_parents(
+    operation: &Operation,
+    introduced: &mut BTreeSet<(Location, String)>,
+) -> Result<(), InstallError> {
+    let parents = relative_parents(&operation.destination)?;
+    if operation.previous.is_some() && !operation.introduced_parents.is_empty() {
+        return Err(InstallError::InvalidRecord(
+            "an existing target cannot have introduced parent directories".to_owned(),
+        ));
+    }
+    let mut minimum_parent = 0;
+    for relative in &operation.introduced_parents {
+        validate_relative(relative)?;
+        let Some(offset) = parents[minimum_parent..]
+            .iter()
+            .position(|parent| parent == relative)
+        else {
+            return Err(InstallError::InvalidRecord(
+                "introduced directories are not canonical target parents".to_owned(),
+            ));
+        };
+        minimum_parent += offset + 1;
+        if !introduced.insert((operation.location, relative.clone())) {
+            return Err(InstallError::InvalidRecord(
+                "introduced directory is duplicated across operations".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn asset_contract(asset: Asset) -> (Location, &'static str, u32) {
+    match asset {
+        Asset::Exclusions => (Location::CommonGit, EXCLUDE_PATH, DATA_MODE),
+        Asset::Configuration => (Location::CommonGit, CONFIG_PATH, DATA_MODE),
+        Asset::HookEntry => (Location::Worktree, ENTRY_PATH, EXECUTABLE_MODE),
+        Asset::HookStatic => (Location::Worktree, STATIC_PATH, EXECUTABLE_MODE),
+        Asset::Skill => (Location::Worktree, SKILL_PATH, DATA_MODE),
+        Asset::Binary => (Location::Worktree, BINARY_PATH, EXECUTABLE_MODE),
+    }
+}
+
+fn drift(operation: &Operation, observed: Option<ObservedFile>) -> InstallError {
+    InstallError::Drift {
+        path: operation.path.clone(),
+        observed: observed.map(|observed| observed.image.digest),
+    }
+}
+
+#[cfg(test)]
+mod tests;
