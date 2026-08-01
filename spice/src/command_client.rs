@@ -10,6 +10,7 @@ use std::process::{Command as ProcessCommand, Stdio};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
+use spice::repository::Repository;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::header::ORIGIN;
 use tungstenite::{Message, WebSocket};
@@ -209,6 +210,61 @@ fn execute_mapped(
         Err(outcome) => return outcome,
     };
     request(contract, mapped, discovery)
+}
+
+/// Submit one already-typed family request through the sole resident client.
+pub(crate) fn execute_typed<B: Serialize>(
+    repository: &Repository,
+    contract: &Contract,
+    kind: CommandKind,
+    expected: Vec<Witness>,
+    body: &B,
+) -> Outcome<CommandAnswer> {
+    let Some(mapped_kind) = kind_for(contract.path) else {
+        return protocol_fault(
+            "command::mapping-unsupported",
+            "selected CLI contract has no resident command mapping",
+        );
+    };
+    if mapped_kind != kind {
+        return protocol_fault(
+            "command::mapping-mismatch",
+            "selected CLI contract does not own the requested wire kind",
+        );
+    }
+    let mapped = match MappedCommand::new(contract, contract.path, kind, expected, body) {
+        Ok(mapped) => mapped,
+        Err(outcome) => return outcome,
+    };
+    let state = match repository.admit_state() {
+        Ok(state) => state,
+        Err(error) => return crate::state_failure(&error).outcome(),
+    };
+    let discovery = match DiscoveryRead::open(state.canvas()) {
+        Ok(discovery) => discovery,
+        Err(outcome) => return outcome,
+    };
+    request(contract, mapped, discovery)
+}
+
+fn kind_for(path: &[&str]) -> Option<CommandKind> {
+    Some(match path {
+        ["board"] => CommandKind::BoardRead,
+        ["board", "graph"] => CommandKind::BoardGraph,
+        ["board", "handout"] => CommandKind::BoardHandout,
+        ["task", "next"] => CommandKind::ClaimWin,
+        ["task", "add"] | ["task", "oops"] => CommandKind::TaskAdd,
+        ["task", "done"] => CommandKind::TaskDone,
+        ["task", "review"] => CommandKind::TaskReview,
+        ["task", "note"] => CommandKind::TaskNote,
+        ["task", "defer"] => CommandKind::TaskDefer,
+        ["task", "wake"] => CommandKind::TaskWake,
+        ["task", "free"] => CommandKind::ClaimFree,
+        ["task", "depends"] => CommandKind::TaskDepends,
+        ["doc"] => CommandKind::DocApply,
+        ["doc", "ledger"] => CommandKind::DocLedger,
+        _ => return None,
+    })
 }
 
 /// Open the browser surface named by the current owner-only discovery file.
@@ -571,6 +627,7 @@ impl MappedCommand {
         if contract.path != mapped_path
             || !contract.guards.contains(&Guard::Resident)
             || matches!(contract.principal, Principal::Local)
+            || kind.is_read() != matches!(contract.journal, crate::cli::JournalAccess::Read)
         {
             return Err(protocol_fault(
                 "command::mapping-unsupported",
@@ -1429,6 +1486,46 @@ mod tests {
             panic!("missing witness must fail mapping");
         };
         assert_eq!(fault.reason, "command::witness-law");
+    }
+
+    #[test]
+    fn every_landed_board_family_leaf_uses_one_current_command_kind() {
+        let expected = [
+            (&["board"][..], CommandKind::BoardRead),
+            (&["board", "graph"][..], CommandKind::BoardGraph),
+            (&["board", "handout"][..], CommandKind::BoardHandout),
+            (&["task", "next"][..], CommandKind::ClaimWin),
+            (&["task", "add"][..], CommandKind::TaskAdd),
+            (&["task", "done"][..], CommandKind::TaskDone),
+            (&["task", "review"][..], CommandKind::TaskReview),
+            (&["task", "note"][..], CommandKind::TaskNote),
+            (&["task", "defer"][..], CommandKind::TaskDefer),
+            (&["task", "wake"][..], CommandKind::TaskWake),
+            (&["task", "free"][..], CommandKind::ClaimFree),
+            (&["task", "oops"][..], CommandKind::TaskAdd),
+            (&["task", "depends"][..], CommandKind::TaskDepends),
+            (&["doc"][..], CommandKind::DocApply),
+            (&["doc", "ledger"][..], CommandKind::DocLedger),
+        ];
+
+        for (path, kind) in expected {
+            assert_eq!(
+                kind_for(path),
+                Some(kind),
+                "current mapping moved: {path:?}"
+            );
+            assert_eq!(
+                crate::cli::landing(path),
+                crate::cli::Landing::Landed,
+                "mapped family leaf is not visible: {path:?}",
+            );
+        }
+        let mapped_family_leaves = crate::cli::contracts()
+            .iter()
+            .filter(|contract| matches!(contract.path[0], "board" | "task" | "doc"))
+            .filter(|contract| kind_for(contract.path).is_some())
+            .count();
+        assert_eq!(mapped_family_leaves, expected.len());
     }
 
     #[test]

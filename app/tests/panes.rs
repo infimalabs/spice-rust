@@ -638,6 +638,7 @@ fn the_grant_pane_presents_exactly_the_commands_wire_gives_operator_authority() 
     assert_eq!(
         classified,
         BTreeSet::from([
+            CommandKind::BoardHandout,
             CommandKind::SteerSend,
             CommandKind::SteerCancel,
             CommandKind::ConsentRead,
@@ -671,11 +672,11 @@ fn every_command_states_an_authority_and_most_need_no_operator() {
         }
     }
 
-    assert_eq!(operator, 12);
-    assert_eq!(connected, 26);
+    assert_eq!(operator, 13);
+    assert_eq!(connected, 29);
     assert_eq!(
         CommandKind::ALL.len(),
-        38,
+        42,
         "a command joined or left the registry; the counts above are the claim \
          to re-make, not the number to bump"
     );

@@ -434,7 +434,7 @@ const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "review"],
-        "task review HANDLE",
+        "task review HANDLE [--finding TEXT] [--note TEXT]",
         Lane,
         Command,
         [TaskReviewed],
@@ -895,8 +895,8 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["consent"]
         | ["consent", "allow"]
         | ["consent", "deny"]
-        | ["consent", "policy"] => Landing::Landed,
-        ["board"]
+        | ["consent", "policy"]
+        | ["board"]
         | ["board", "graph"]
         | ["board", "handout"]
         | ["task", "next"]
@@ -910,7 +910,7 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["task", "oops"]
         | ["task", "depends"]
         | ["doc"]
-        | ["doc", "ledger"] => Landing::Gap("BOARD-1kJQlDDt"),
+        | ["doc", "ledger"] => Landing::Landed,
         ["taste"] | ["taste", "add"] | ["taste", "drop"] => Landing::Gap("POLICY-1kJQlFB6"),
         _ => Landing::Unaccounted,
     }
@@ -982,7 +982,7 @@ fn contract_at<'a>(contracts: &'a [Contract], path: &[&str]) -> Option<&'a Contr
     contracts.iter().find(|contract| contract.path == path)
 }
 
-/// Recover one registered contract by its complete command path.
+/// Recover one registered contract for an internal typed client preflight.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn contract(path: &[&str]) -> Option<&'static Contract> {
     contract_at(contracts(), path)

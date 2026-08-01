@@ -47,6 +47,9 @@ impl<'a> Surface<'a> {
         seats: &mut Seats,
         command: &wire::AdmittedCommand,
     ) -> Outcome<CommandAnswer> {
+        if let Some(outcome) = crate::board_command::dispatch(self.bus, command) {
+            return outcome;
+        }
         match (command.kind(), command.body()) {
             (CommandKind::UpChange, Intent::UpChange(change)) => {
                 dispatch_up_change(self.bus, self.paths, self.epoch, seats, command, change)
