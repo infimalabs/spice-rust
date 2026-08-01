@@ -65,6 +65,10 @@ impl LockFile {
         try_acquire(self)
     }
 
+    pub(crate) fn try_acquire_opened(&self, file: File) -> io::Result<Acquisition> {
+        try_acquire_opened(self, file)
+    }
+
     /// Observe whether the kernel would grant this existing lock now.
     ///
     /// Missing lock files are available. This operation never creates a file;
@@ -77,6 +81,10 @@ impl LockFile {
     /// target.
     pub fn availability(&self) -> io::Result<Availability> {
         availability(self)
+    }
+
+    pub(crate) fn availability_opened(&self, file: File) -> io::Result<Availability> {
+        availability_opened(file)
     }
 
     /// Block until the kernel grants exclusive possession.
@@ -128,13 +136,21 @@ fn try_acquire(lock: &LockFile) -> io::Result<Acquisition> {
 }
 
 #[cfg(unix)]
+fn try_acquire_opened(lock: &LockFile, file: File) -> io::Result<Acquisition> {
+    match acquire_opened(lock, file, platform::LOCK_EX | platform::LOCK_NB) {
+        Ok(possession) => Ok(Acquisition::Acquired(possession)),
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(Acquisition::Contended),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(unix)]
 fn acquire(lock: &LockFile) -> io::Result<Possession> {
     acquire_with(lock, platform::LOCK_EX)
 }
 
 #[cfg(unix)]
 fn acquire_with(lock: &LockFile, operation: std::os::raw::c_int) -> io::Result<Possession> {
-    use std::os::fd::AsRawFd;
     use std::os::unix::fs::OpenOptionsExt;
 
     let file = OpenOptions::new()
@@ -142,8 +158,20 @@ fn acquire_with(lock: &LockFile, operation: std::os::raw::c_int) -> io::Result<P
         .write(true)
         .create(true)
         .mode(0o600)
-        .custom_flags(platform::O_CLOEXEC)
+        .custom_flags(platform::O_CLOEXEC | platform::O_NOFOLLOW)
         .open(&lock.path)?;
+    acquire_opened(lock, file, operation)
+}
+
+#[cfg(unix)]
+fn acquire_opened(
+    lock: &LockFile,
+    file: File,
+    operation: std::os::raw::c_int,
+) -> io::Result<Possession> {
+    use std::os::fd::AsRawFd;
+
+    require_regular(&file)?;
     ensure_cloexec(&file)?;
 
     let result = unsafe { platform::flock(file.as_raw_fd(), operation) };
@@ -158,7 +186,6 @@ fn acquire_with(lock: &LockFile, operation: std::os::raw::c_int) -> io::Result<P
 
 #[cfg(unix)]
 fn availability(lock: &LockFile) -> io::Result<Availability> {
-    use std::os::fd::AsRawFd;
     use std::os::unix::fs::OpenOptionsExt;
 
     let file = match OpenOptions::new()
@@ -173,12 +200,14 @@ fn availability(lock: &LockFile) -> io::Result<Availability> {
         }
         Err(error) => return Err(error),
     };
-    if !file.metadata()?.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "lock target is not a regular file",
-        ));
-    }
+    availability_opened(file)
+}
+
+#[cfg(unix)]
+fn availability_opened(file: File) -> io::Result<Availability> {
+    use std::os::fd::AsRawFd;
+
+    require_regular(&file)?;
     ensure_cloexec(&file)?;
     let result =
         unsafe { platform::flock(file.as_raw_fd(), platform::LOCK_EX | platform::LOCK_NB) };
@@ -190,6 +219,18 @@ fn availability(lock: &LockFile) -> io::Result<Availability> {
         Ok(Availability::Held)
     } else {
         Err(error)
+    }
+}
+
+#[cfg(unix)]
+fn require_regular(file: &File) -> io::Result<()> {
+    if file.metadata()?.is_file() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "lock target is not a regular file",
+        ))
     }
 }
 
@@ -218,6 +259,14 @@ fn try_acquire(_lock: &LockFile) -> io::Result<Acquisition> {
 }
 
 #[cfg(not(unix))]
+fn try_acquire_opened(_lock: &LockFile, _file: File) -> io::Result<Acquisition> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "flock possession requires a Unix target",
+    ))
+}
+
+#[cfg(not(unix))]
 fn acquire(_lock: &LockFile) -> io::Result<Possession> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
@@ -227,6 +276,14 @@ fn acquire(_lock: &LockFile) -> io::Result<Possession> {
 
 #[cfg(not(unix))]
 fn availability(_lock: &LockFile) -> io::Result<Availability> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "flock observation requires a Unix target",
+    ))
+}
+
+#[cfg(not(unix))]
+fn availability_opened(_file: File) -> io::Result<Availability> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "flock observation requires a Unix target",
