@@ -12,7 +12,7 @@
 use std::collections::BTreeSet;
 
 use wire::CommandKind;
-use wire::intent::{AnswerShape, BodyShape, Intent};
+use wire::intent::{AnswerShape, BodyShape, CommandAnswer, Intent};
 
 /// Every command body, spelled as WIRE spells it, paired with the kind whose
 /// binding must decode it.
@@ -160,6 +160,58 @@ const BODIES: &[(CommandKind, &str)] = &[
     (CommandKind::UpChange, r#"{ "state": "quiescing" }"#),
 ];
 
+/// One successful reply body for every declared answer shape.
+const ANSWERS: &[(AnswerShape, &str)] = &[
+    (
+        AnswerShape::Task,
+        r#"{ "task": "SPICE-aBcD", "status": "done" }"#,
+    ),
+    (
+        AnswerShape::Claim,
+        r#"{ "task": "SPICE-aBcD", "holder": "operator" }"#,
+    ),
+    (
+        AnswerShape::Doc,
+        r#"{
+  "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "touched": ["SPICE-aBcD"]
+}"#,
+    ),
+    (
+        AnswerShape::Directive,
+        r#"{
+  "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+  "disposition": "acked"
+}"#,
+    ),
+    (
+        AnswerShape::Consent,
+        r#"{ "request": "018f82d4-6f59-7d06-92e3-bce9131163c4", "answer": "granted" }"#,
+    ),
+    (
+        AnswerShape::Trust,
+        r#"{
+  "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "standing": "granted"
+}"#,
+    ),
+    (
+        AnswerShape::State,
+        r#"{ "from": "seated", "to": "quiescing" }"#,
+    ),
+    (
+        AnswerShape::Taste,
+        r#"{ "name": "polling", "confirmed": true }"#,
+    ),
+    (
+        AnswerShape::Recognition,
+        r#"{
+  "key": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "fresh": true
+}"#,
+    ),
+];
+
 #[test]
 fn every_command_kind_has_a_body_spelling() {
     let spelled: BTreeSet<_> = BODIES.iter().map(|(kind, _)| *kind).collect();
@@ -204,6 +256,39 @@ fn every_body_re_encodes_unchanged() {
             "{kind} did not re-encode to the spelling it was decoded from",
         );
     }
+}
+
+#[test]
+fn every_answer_decodes_as_the_shape_that_names_its_dto() {
+    for (shape, body) in ANSWERS {
+        let answer = shape
+            .decode(body.as_bytes())
+            .unwrap_or_else(|error| panic!("{shape:?} answer does not decode: {error}"));
+        assert_eq!(answer.shape(), *shape);
+    }
+}
+
+#[test]
+fn every_answer_re_encodes_unchanged() {
+    for (shape, body) in ANSWERS {
+        let answer = shape.decode(body.as_bytes()).expect("the fixture decodes");
+        let spelled: serde_json::Value =
+            serde_json::from_str(body).expect("the fixture is well-formed JSON");
+        let round_tripped = serde_json::to_value(&answer).expect("an answer encodes");
+        assert_eq!(
+            round_tripped, spelled,
+            "{shape:?} did not re-encode to the spelling it was decoded from",
+        );
+    }
+}
+
+#[test]
+fn the_answer_union_reports_the_shape_it_carries() {
+    let answer = CommandAnswer::Taste(wire::intent::TasteAnswer {
+        name: "polling".parse().expect("a name"),
+        confirmed: true,
+    });
+    assert_eq!(answer.shape(), AnswerShape::Taste);
 }
 
 #[test]

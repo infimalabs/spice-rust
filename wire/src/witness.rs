@@ -12,6 +12,7 @@ use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 
 use crate::envelope::{Actor, Seq};
+use crate::head::{ResidentState, TrustState};
 use crate::ident::{CanonicalUuid, Digest};
 
 /// A task handle such as `SPICE-aBcD`.
@@ -195,38 +196,6 @@ pub enum Answer {
     Queued,
 }
 
-/// The trust state of an executable surface digest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Standing {
-    /// Changed bytes entered quarantine; no earlier arm runs meanwhile.
-    Pended,
-    /// The operator approved this exact digest.
-    Granted,
-    /// The operator withdrew approval from this exact digest.
-    Revoked,
-}
-
-/// A resident lifecycle state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Up {
-    /// Holding the writer lock under a minted epoch.
-    Seated,
-    /// Admission stopped; a graceful end began.
-    Quiescing,
-    /// Preserving admitted work and ending occupants.
-    Draining,
-    /// Grace expired; unfinished occupants are ending.
-    Terminating,
-    /// Bounded escalation against survivors.
-    Killing,
-    /// Verifying claims, seals, and residue.
-    Verifying,
-    /// The verified terminal state before authority is released.
-    Dark,
-}
-
 /// One named predicate over a single command subject.
 ///
 /// Every variant binds the subject it constrains, so no variant can express a
@@ -368,7 +337,7 @@ pub enum Witness {
         /// Subject executable digest.
         digest: Digest,
         /// Trust state the command relies on.
-        standing: Standing,
+        standing: TrustState,
     },
     /// A taste's word bag and the tracked configuration that carried it.
     Taste {
@@ -394,9 +363,9 @@ pub enum Witness {
     /// The resident lifecycle edge the command requests.
     Transition {
         /// State the resident currently occupies.
-        from: Up,
+        from: ResidentState,
         /// State the command drives it to.
-        to: Up,
+        to: ResidentState,
     },
 }
 
@@ -457,6 +426,38 @@ pub enum WitnessKind {
     Sealed,
     /// A resident lifecycle edge.
     Transition,
+}
+
+impl WitnessKind {
+    /// Every predicate class, in the order [`Witness`] declares them.
+    ///
+    /// The set is closed, so a caller sweeping it sweeps the whole of what a
+    /// command can be asked to re-prove rather than a list it restated.
+    pub const ALL: &[Self] = &[
+        Self::Task,
+        Self::Workflow,
+        Self::Claim,
+        Self::Lease,
+        Self::Residency,
+        Self::Absence,
+        Self::Existence,
+        Self::Edge,
+        Self::Deferral,
+        Self::Eligibility,
+        Self::Assignment,
+        Self::Preview,
+        Self::Barrier,
+        Self::Directive,
+        Self::Lineage,
+        Self::Consent,
+        Self::Rule,
+        Self::Budget,
+        Self::Trust,
+        Self::Taste,
+        Self::Observation,
+        Self::Sealed,
+        Self::Transition,
+    ];
 }
 
 impl Witness {

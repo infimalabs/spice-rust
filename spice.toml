@@ -4,7 +4,7 @@
 # predecessor's Python runtime configuration -- no wrapper argv, no pytest or
 # release commands, no suite-seam paths, no interpreter-specific env allowlist.
 # Those describe how a Python checkout runs itself; this repository builds a
-# Rust workspace, and `scripts/verify.sh` already owns its verification.
+# Rust workspace, and `cargo xtask verify` already owns its verification.
 
 [tasks]
 # The public project stems work may route to, beyond the base `task` and
