@@ -234,7 +234,6 @@ pub enum Up {
 /// traffic cannot lose a race because it is not witnessed.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
-#[non_exhaustive]
 pub enum Witness {
     /// The task statement head.
     Task {
@@ -408,7 +407,6 @@ pub enum Witness {
 /// witness is known at compile time while the value it proves is not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-#[non_exhaustive]
 pub enum WitnessKind {
     /// The task statement head.
     Task,
