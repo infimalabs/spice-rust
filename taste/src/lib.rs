@@ -6,4 +6,4 @@ mod bag;
 mod judge;
 
 pub use bag::{Bag, BagError, Hit, Span, Taste, Trigger, TriggerError};
-pub use judge::{Decision, Judgment, judge};
+pub use judge::{Decision, Judgment, JudgmentFact, judge};
