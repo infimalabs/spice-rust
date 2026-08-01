@@ -36,6 +36,13 @@ fn failure(error: journal::BackupVerifyError) -> Outcome<RestoreVerification> {
             remedy: "verify the bundle with the Spice release that owns its backup schema"
                 .to_owned(),
         }),
+        version @ BackupVerifyError::UnsupportedWire { .. } => Outcome::Refusal(Refusal {
+            reason: "restore::wire-version".to_owned(),
+            witness: Some("wire-schema".to_owned()),
+            expected: Some(wire::WireVersion::CURRENT.to_string()),
+            observed: Some(version.to_string()),
+            remedy: "verify the bundle with the Spice release that owns its wire schema".to_owned(),
+        }),
         schema @ (BackupVerifyError::ForwardSchema { .. }
         | BackupVerifyError::Authority(journal::OpenError::Migration(
             journal::MigrationError::ForwardSchema { .. },

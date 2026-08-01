@@ -261,6 +261,11 @@ fn commit_startup(
     epoch: CanonicalUuid,
     migration: Option<journal::Migration>,
 ) -> CommandResult<StartupCommit> {
+    let lanes = bus
+        .residency_head()
+        .map_err(|error| store_fault("resident::head-unreadable", &error.to_string()))?
+        .map(|head| head.into_body().lanes)
+        .unwrap_or_default();
     let mut first = None;
     let mut cause = FactCause::Root;
     if let Some(migration) = migration {
@@ -287,7 +292,7 @@ fn commit_startup(
     write.residency_head(seated, move |_| ResidencyHead {
         epoch,
         state: ResidentState::Seated,
-        lanes: Vec::new(),
+        lanes,
     });
     let committed = commit(bus, write)?;
     Ok(StartupCommit {
@@ -307,6 +312,16 @@ async fn run_surface(
     capabilities
         .insert(operator, Actor::Operator)
         .map_err(|error| environment_fault("canvas::capability-invalid", &error.to_string()))?;
+    let residency = current_residency(bus, epoch)?;
+    for lane in &residency.body().lanes {
+        for capability in &lane.capabilities {
+            capabilities
+                .insert(*capability, Actor::Lane(lane.lane))
+                .map_err(|error| {
+                    environment_fault("canvas::capability-invalid", &error.to_string())
+                })?;
+        }
+    }
     let (server, mut control) = canvas::axum::Server::bind(epoch, capabilities)
         .await
         .map_err(|error| environment_fault("canvas::bind-failed", &error.to_string()))?;
@@ -335,12 +350,12 @@ async fn run_surface(
         let dark = is_dark_command(request.command());
         let outcome = dispatch_command(bus, paths, epoch, seats, request.command());
         let reached_dark = dark && matches!(outcome, Outcome::Reply(_));
-        let _ = request.respond(outcome);
+        let response = request.respond(outcome);
         if reached_dark {
-            control.close();
-            while let Some(pending) = control.try_recv() {
-                let _ = pending.respond(not_admitting());
+            if let Ok(response) = response {
+                response.wait().await;
             }
+            control.close();
             drop(published);
             let _ = shutdown.send(());
             return match server_task.await {
@@ -464,21 +479,9 @@ fn dispatch_up_change(
     }
 }
 
-fn not_admitting() -> Outcome<CommandAnswer> {
-    Outcome::Refusal(Refusal {
-        reason: "resident::not-admitting".to_owned(),
-        witness: Some("resident-state".to_owned()),
-        expected: Some("seated".to_owned()),
-        observed: Some("quiescing".to_owned()),
-        remedy: "wait for shutdown to finish and reconnect to the next resident epoch".to_owned(),
-    })
-}
-
 mod shutdown;
 
-#[cfg(test)]
-use shutdown::current_residency;
-use shutdown::drive_shutdown;
+use shutdown::{current_residency, drive_shutdown};
 
 fn write(actor: Actor, epoch: CanonicalUuid, producer: Producer) -> CommandResult<JournalWrite> {
     let origin = format!("resident:{epoch}")
