@@ -6,7 +6,7 @@ use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::Journal;
+use crate::{Journal, JournalReader};
 
 /// Counts proved by a successful authority verification.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -94,25 +94,36 @@ impl Error for VerifyError {
 impl Journal {
     /// Verifies schema identity, immutable history, heads, receipts, and indexes.
     pub fn verify(&self) -> Result<Verification, VerifyError> {
-        crate::migrate::finalized_version(&self.connection).map_err(VerifyError::Open)?;
-        let mut violations = Vec::new();
-        verify_sqlite(&self.connection, &mut violations)?;
-        let facts = verify_facts(&self.connection, &mut violations)?;
-        let threads = verify_threads(&self.connection, &facts, &mut violations)?;
-        let heads = verify_heads(&self.connection, &mut violations)?;
-        let receipts = verify_receipts(&self.connection, &mut violations)?;
-        verify_cursor(&self.connection, &facts, &mut violations)?;
+        verify_connection(&self.connection)
+    }
+}
 
-        if violations.is_empty() {
-            Ok(Verification {
-                facts: facts.len(),
-                receipts,
-                heads,
-                threads,
-            })
-        } else {
-            Err(VerifyError::Violations(violations))
-        }
+impl JournalReader {
+    /// Verifies a finalized authority without acquiring writer capability.
+    pub fn verify(&self) -> Result<Verification, VerifyError> {
+        verify_connection(&self.connection)
+    }
+}
+
+fn verify_connection(connection: &Connection) -> Result<Verification, VerifyError> {
+    crate::migrate::finalized_version(connection).map_err(VerifyError::Open)?;
+    let mut violations = Vec::new();
+    verify_sqlite(connection, &mut violations)?;
+    let facts = verify_facts(connection, &mut violations)?;
+    let threads = verify_threads(connection, &facts, &mut violations)?;
+    let heads = verify_heads(connection, &mut violations)?;
+    let receipts = verify_receipts(connection, &mut violations)?;
+    verify_cursor(connection, &facts, &mut violations)?;
+
+    if violations.is_empty() {
+        Ok(Verification {
+            facts: facts.len(),
+            receipts,
+            heads,
+            threads,
+        })
+    } else {
+        Err(VerifyError::Violations(violations))
     }
 }
 

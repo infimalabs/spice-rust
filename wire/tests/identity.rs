@@ -63,24 +63,26 @@ fn a_non_canonical_uuid_is_refused_by_the_decoder_too() {
 const fn position(domain: Domain) -> usize {
     match domain {
         Domain::BoardDocument => 0,
-        Domain::DistTargetPayload => 1,
-        Domain::DistArtifact => 2,
-        Domain::DistPins => 3,
-        Domain::DistInventory => 4,
-        Domain::ProofBattery => 5,
-        Domain::ProofReplayV2 => 6,
-        Domain::ProofReceiptV2 => 7,
-        Domain::ProofNativeRunner => 8,
-        Domain::GateFile => 9,
-        Domain::GateTree => 10,
-        Domain::GateSet => 11,
-        Domain::GatePolicy => 12,
-        Domain::GateBounds => 13,
-        Domain::GateBaseline => 14,
-        Domain::GateTool => 15,
-        Domain::GateInventory => 16,
-        Domain::GateMeasurement => 17,
-        Domain::GateReceipt => 18,
+        Domain::JournalBackupManifest => 1,
+        Domain::JournalBackupMember => 2,
+        Domain::DistTargetPayload => 3,
+        Domain::DistArtifact => 4,
+        Domain::DistPins => 5,
+        Domain::DistInventory => 6,
+        Domain::ProofBattery => 7,
+        Domain::ProofReplayV2 => 8,
+        Domain::ProofReceiptV2 => 9,
+        Domain::ProofNativeRunner => 10,
+        Domain::GateFile => 11,
+        Domain::GateTree => 12,
+        Domain::GateSet => 13,
+        Domain::GatePolicy => 14,
+        Domain::GateBounds => 15,
+        Domain::GateBaseline => 16,
+        Domain::GateTool => 17,
+        Domain::GateInventory => 18,
+        Domain::GateMeasurement => 19,
+        Domain::GateReceipt => 20,
     }
 }
 
@@ -96,8 +98,10 @@ fn the_sweep_names_every_domain_exactly_once() {
 }
 
 /// Every domain, so a new class cannot be added without being swept here.
-const DOMAINS: [Domain; 19] = [
+const DOMAINS: [Domain; 21] = [
     Domain::BoardDocument,
+    Domain::JournalBackupManifest,
+    Domain::JournalBackupMember,
     Domain::DistTargetPayload,
     Domain::DistArtifact,
     Domain::DistPins,
@@ -168,6 +172,8 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
         tags,
         [
             "spice.board.document.v1",
+            "spice.journal.backup-manifest.v1",
+            "spice.journal.backup-member.v1",
             "spice.dist.target-payload.v1",
             "spice.dist.artifact.v1",
             "spice.dist.pins.v1",
