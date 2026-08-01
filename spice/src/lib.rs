@@ -3,4 +3,5 @@
 #![forbid(unsafe_code)]
 
 pub mod config;
+pub mod install;
 pub mod repository;
