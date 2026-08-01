@@ -9,7 +9,8 @@ use serde_json::json;
 use crate::store::STORE_SCHEMA_VERSION;
 use crate::{
     Availability, Beyond, ConfigSource, Cursor, FactPlane, FoldId, HeadSource, Horizon, INVENTORY,
-    RebuildCause, Reducer, Reduction, Refusal, RingId, Source, Store, StoreError, TapeSource,
+    Materialization, RebuildCause, Reducer, Reduction, Refusal, RingId, Source, Store, StoreError,
+    TapeSource,
 };
 
 static NEXT_STORE: AtomicU64 = AtomicU64::new(0);
@@ -41,6 +42,7 @@ fn inventory_accounts_for_every_fold_fact_head_and_ring() {
     }
     assert_source_sets(definitions);
     assert_fold_order(definitions);
+    assert_beyond_policies(definitions);
 }
 
 fn source_contains(source: Source, kind: wire::FactKind) -> bool {
@@ -140,20 +142,25 @@ fn assert_fold_order(definitions: &[crate::Definition]) {
     }
 }
 
-#[test]
-fn horizon_policy_marks_or_waits_beyond_completeness() {
-    let horizon = Horizon::at(seq(2));
+fn assert_beyond_policies(definitions: &[crate::Definition]) {
     assert_eq!(
-        horizon.availability(seq(2), Beyond::Wait),
-        Availability::Complete
-    );
-    assert_eq!(
-        horizon.availability(seq(3), Beyond::Wait),
-        Availability::Wait
-    );
-    assert_eq!(
-        horizon.availability(seq(3), Beyond::Answer),
-        Availability::Marked(horizon)
+        definitions
+            .iter()
+            .map(|definition| (definition.fold, definition.beyond))
+            .collect::<Vec<_>>(),
+        vec![
+            (FoldId::SteerInbox, Beyond::Wait),
+            (FoldId::ConsentQueue, Beyond::Wait),
+            (FoldId::LaneCanary, Beyond::Wait),
+            (FoldId::TasteActive, Beyond::Answer),
+            (FoldId::CanvasVerdicts, Beyond::Answer),
+            (FoldId::CanvasMagnitude, Beyond::Answer),
+            (FoldId::CanvasFlow, Beyond::Answer),
+            (FoldId::CanvasTopology, Beyond::Answer),
+            (FoldId::CanvasChronology, Beyond::Answer),
+            (FoldId::ReleaseHistory, Beyond::Answer),
+        ],
+        "every declared policy is an executable part of the fold contract",
     );
 }
 
@@ -280,9 +287,7 @@ fn replacement_keeps_old_readers_whole_and_payload_bytes_deterministic() {
     assert_eq!(held.generation, 1);
     assert_eq!(held.payload_bytes(), replacement.payload_bytes());
     assert_eq!(
-        left.read(FoldId::ReleaseHistory)
-            .expect("read current")
-            .expect("generation exists"),
+        complete_read(left.read(FoldId::ReleaseHistory, seq(2))),
         replacement
     );
 }
@@ -309,10 +314,7 @@ fn a_replacement_may_never_retreat_the_applied_cursor() {
         }
     );
     assert_eq!(
-        store
-            .read(FoldId::TasteActive)
-            .expect("read current")
-            .expect("the refused publication left the old generation whole"),
+        complete_read(store.read(FoldId::TasteActive, seq(2))),
         ahead.materialization
     );
 }
@@ -365,27 +367,50 @@ fn a_bounded_fold_publishes_an_answer_that_trails_the_facts_it_applied() {
     assert_ne!(published.cursor.position(), published.horizon.position());
 
     // The gap survives storage rather than being normalized away on read.
-    let stored = store
-        .read(FoldId::LaneCanary)
-        .expect("read current")
-        .expect("generation exists");
+    let stored = complete_read(store.read(FoldId::LaneCanary, seq(2)));
     assert_eq!(stored.cursor, Cursor::at(seq(3)));
     assert_eq!(stored.horizon, Horizon::at(seq(2)));
 
-    // Readers meet the gap through the horizon, not by rebuilding forever.
+    // Readers meet the gap through the inventory policy, not by rebuilding forever.
     assert_eq!(
-        stored.horizon.availability(seq(2), Beyond::Answer),
-        Availability::Complete
-    );
-    assert_eq!(
-        stored.horizon.availability(seq(3), Beyond::Answer),
-        Availability::Marked(Horizon::at(seq(2)))
+        store
+            .read(FoldId::LaneCanary, seq(3))
+            .expect("read beyond the horizon")
+            .expect("generation exists"),
+        Availability::Wait,
     );
     let reread = store
         .read_or_rebuild_snapshot(&snapshot(3), &reducer)
         .expect("second read");
     assert_eq!(reread.rebuilt, None, "a trailing horizon is not staleness");
     assert_eq!(reread.materialization, published);
+}
+
+#[test]
+fn inventory_policy_controls_reads_past_the_same_horizon() {
+    let mut store = Store::in_memory().expect("fold store");
+    let horizon = Horizon::at(seq(2));
+    let waiting = bounded_materialization(&mut store, FoldId::LaneCanary, horizon);
+    let answering = bounded_materialization(&mut store, FoldId::CanvasFlow, horizon);
+
+    assert_eq!(waiting.horizon, answering.horizon);
+    assert_eq!(
+        store
+            .read(FoldId::LaneCanary, seq(3))
+            .expect("read waiting fold")
+            .expect("waiting generation exists"),
+        Availability::Wait,
+    );
+    assert_eq!(
+        store
+            .read(FoldId::CanvasFlow, seq(3))
+            .expect("read answering fold")
+            .expect("answering generation exists"),
+        Availability::Marked {
+            answer: answering,
+            horizon,
+        },
+    );
 }
 
 #[test]
@@ -501,10 +526,7 @@ fn a_concurrent_reader_sees_one_whole_generation_across_a_publish() {
 
     let reader = Store::open(&path).expect("a second connection to the same store");
     assert_eq!(
-        reader
-            .read(FoldId::CanvasVerdicts)
-            .expect("reader sees the first generation")
-            .expect("generation exists"),
+        complete_read(reader.read(FoldId::CanvasVerdicts, seq(1))),
         first
     );
 
@@ -516,16 +538,13 @@ fn a_concurrent_reader_sees_one_whole_generation_across_a_publish() {
 
     // The reader crosses the publish and lands on exactly one whole generation:
     // never the predecessor that was deleted, never a head without a row.
-    let observed = reader
-        .read(FoldId::CanvasVerdicts)
-        .expect("reader crosses the publish")
-        .expect("a head always points at a row that exists");
+    let observed = complete_read(reader.read(FoldId::CanvasVerdicts, seq(2)));
     assert_eq!(observed, second);
     assert_eq!(
         reader
-            .read(FoldId::CanvasVerdicts)
+            .read(FoldId::CanvasVerdicts, seq(2))
             .expect("a corrupt or dangling head would surface here"),
-        Some(second.clone())
+        Some(Availability::Complete(second.clone()))
     );
     drop(reader);
     drop(writer);
@@ -644,6 +663,30 @@ impl Reducer for DeclaredReducer {
     fn rebuild(&self, _facts: &journal::FactSnapshot) -> Result<Reduction, String> {
         Reduction::bounded(self.cursor, self.horizon, json!({"declared": true}))
             .map_err(|refusal| format!("{refusal:?}"))
+    }
+}
+
+fn bounded_materialization(store: &mut Store, fold: FoldId, horizon: Horizon) -> Materialization {
+    store
+        .read_or_rebuild_snapshot(
+            &snapshot(3),
+            &DeclaredReducer {
+                fold,
+                version: 1,
+                cursor: Cursor::at(seq(3)),
+                horizon,
+            },
+        )
+        .expect("bounded generation publishes")
+        .materialization
+}
+
+fn complete_read(
+    outcome: Result<Option<Availability<Materialization>>, StoreError>,
+) -> Materialization {
+    match outcome {
+        Ok(Some(Availability::Complete(materialization))) => materialization,
+        other => panic!("expected a complete fold answer, got {other:?}"),
     }
 }
 
