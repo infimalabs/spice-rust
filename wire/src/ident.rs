@@ -55,6 +55,8 @@ pub enum IdentError {
 
 /// The class of thing a durable digest stands for.
 ///
+/// identity-law: non-crossing - computation input whose resulting Digest crosses.
+///
 /// WIRE fixes one algorithm set so no leaf chooses its own, and the domain tag
 /// is the half of that set a caller still has to name. The classes are closed
 /// here rather than spelled at each call site: a new class is a new variant in
