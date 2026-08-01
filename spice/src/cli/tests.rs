@@ -117,12 +117,16 @@ fn every_contract_has_an_executable_succession_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 31);
+    assert_eq!(landed, 36);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
     assert_eq!(landing(&["lock", "run"]), Landing::Landed);
     assert_eq!(landing(&["release", "publish"]), Landing::Landed);
     assert_eq!(landing(&["restore", "verify"]), Landing::Landed);
+    assert_eq!(landing(&["consent"]), Landing::Landed);
+    assert_eq!(landing(&["consent", "allow"]), Landing::Landed);
+    assert_eq!(landing(&["consent", "deny"]), Landing::Landed);
+    assert_eq!(landing(&["consent", "policy"]), Landing::Landed);
     assert_eq!(landing(&["trust"]), Landing::Landed);
     assert_eq!(landing(&["trust", "grant"]), Landing::Landed);
     assert_eq!(landing(&["trust", "revoke"]), Landing::Landed);
@@ -135,6 +139,7 @@ fn every_contract_has_an_executable_succession_disposition() {
         &["journal", "verify"][..],
         &["fold"][..],
         &["thread"][..],
+        &["canvas"][..],
     ] {
         assert_eq!(landing(path), Landing::Landed, "{path:?}");
     }
@@ -148,12 +153,7 @@ fn every_contract_has_an_executable_succession_disposition() {
         .collect::<BTreeSet<_>>();
     assert_eq!(
         owning_tasks,
-        BTreeSet::from([
-            "BOARD-1kJQlDDt",
-            "COORDIN-1kJQlDjc",
-            "POLICY-1kJQlFB6",
-            "PUBLISH-1kJQlGb0",
-        ])
+        BTreeSet::from(["BOARD-1kJQlDDt", "COORDIN-1kJQlDjc", "POLICY-1kJQlFB6",])
     );
 
     let (rust_ledger, _) = include_str!("../../../PORTING.md")
@@ -424,6 +424,7 @@ fn contract_syntax_drives_argument_registration() {
         &["spice", "restore", "verify", "bundle"],
         &["spice", "run", "--", "cargo", "test", "--locked"],
         &["spice", "config", "key", "value"],
+        &["spice", "config", "key", "value", "--apply=digest"],
     ] {
         parser
             .clone()

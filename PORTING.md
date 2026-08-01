@@ -59,8 +59,8 @@ operator authorizes cutover.
 
 ## Rust contracts
 
-The registry contains 63 command leaves. Thirty-one have executable dispatch,
-so current executable coverage is 31/63, or 49.2 percent. Completed domain
+The registry contains 63 command leaves. Thirty-six have executable dispatch,
+so current executable coverage is 36/63, or 57.1 percent. Completed domain
 libraries do not count as landed command surfaces.
 
 ### Landed
@@ -85,6 +85,10 @@ libraries do not count as landed command surfaces.
 - `run`
 - `config`
 - `restore verify`
+- `consent`
+- `consent allow`
+- `consent deny`
+- `consent policy`
 - `trust`
 - `trust grant`
 - `trust revoke`
@@ -96,6 +100,7 @@ libraries do not count as landed command surfaces.
 - `journal verify`
 - `fold`
 - `thread`
+- `canvas`
 
 The local command group retains the Python-first ownership boundary described
 above: plain `install` is a side-effect-free plan, and only an exact
@@ -144,17 +149,9 @@ read the Python authority under `<git-common>/.spice`.
 
 ### `POLICY-1kJQlFB6`
 
-- `consent`
-- `consent allow`
-- `consent deny`
-- `consent policy`
 - `taste`
 - `taste add`
 - `taste drop`
-
-### `PUBLISH-1kJQlGb0`
-
-- `canvas`
 
 `spice/src/cli.rs::landing` carries the same classification. Its closure test
 fails for any registered Rust leaf without a disposition. A leaf classified
@@ -187,8 +184,8 @@ the registry exposes them even though argparse requires a child action.
 - `config judge`: tracked `taste` policy; `POLICY-1kJQlFB6`.
 - `config personality`: typed `config` and vendor launch; `LOCAL-1kJQlG6b`.
 - `config say`: typed canvas speech; `SPEECH-1kJQnmkd`.
-- `config set`: landed typed machine-local writes with atomic replacement and
-  digest receipts; tracked task and policy authority remains read-only.
+- `config set`: landed typed machine-local preview plus exact digest apply with
+  atomic replacement; tracked task and policy authority remains read-only.
 - `config show`: landed Rust `config`.
 - `config system`: landed typed `config` provenance.
 - `config trust`: namespace; Rust `trust`; `POLICY-1kJQlFB6`.
@@ -269,9 +266,9 @@ not a shipped one-for-one product verb. `VERIFY-1kJQlH5b` owns policy parity.
 
 ### Operator canvas
 
-- `serve`: Rust `canvas`; `PUBLISH-1kJQlGb0`.
+- `serve`: landed Rust `canvas`.
 - `serve browser-artifact-path`: embedded canvas discovery;
-  `PUBLISH-1kJQlGb0`.
+  landed Rust `canvas`.
 - `serve rebuild-projections`: `journal replay` and `fold`;
   `JOURNAL-1kJQlFfS`.
 - `serve teams`: `lane` and `board`; coordination and board tasks.
