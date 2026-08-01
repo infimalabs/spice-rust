@@ -16,13 +16,13 @@ pub enum SpiceVariable {
     /// Rendered lane direction.
     #[serde(rename = "SPICE_INBOX")] // env-policy: allow
     Inbox,
-    /// Install mutation action selected by the process-test rendezvous.
+    /// Debug install mutation-rendezvous action.
     #[serde(rename = "SPICE_INSTALL_TEST_PAUSE_ACTION")] // env-policy: allow
     InstallTestPauseAction,
-    /// Install mutation rendezvous directory selected by process tests.
+    /// Debug install mutation-rendezvous control directory.
     #[serde(rename = "SPICE_INSTALL_TEST_PAUSE_CONTROL")] // env-policy: allow
     InstallTestPauseControl,
-    /// Install mutation destination selected by the process-test rendezvous.
+    /// Debug install mutation-rendezvous destination path.
     #[serde(rename = "SPICE_INSTALL_TEST_PAUSE_PATH")] // env-policy: allow
     InstallTestPausePath,
     /// Lane bound to an intercepted shell.
@@ -59,15 +59,19 @@ impl SpiceVariable {
         match self {
             Self::Hooks => "SPICE_HOOKS", // env-policy: allow
             Self::Inbox => "SPICE_INBOX", // env-policy: allow
-            Self::InstallTestPauseAction => "SPICE_INSTALL_TEST_PAUSE_ACTION", // env-policy: allow
+            Self::InstallTestPauseAction => {
+                "SPICE_INSTALL_TEST_PAUSE_ACTION" // env-policy: allow
+            }
             Self::InstallTestPauseControl => {
                 "SPICE_INSTALL_TEST_PAUSE_CONTROL" // env-policy: allow
             }
-            Self::InstallTestPausePath => "SPICE_INSTALL_TEST_PAUSE_PATH", // env-policy: allow
-            Self::Lane => "SPICE_LANE",                                    // env-policy: allow
-            Self::MutationAttempt => "SPICE_MUTATION_ATTEMPT",             // env-policy: allow
-            Self::MutationSeed => "SPICE_MUTATION_SEED",                   // env-policy: allow
-            Self::Proof => "SPICE_PROOF",                                  // env-policy: allow
+            Self::InstallTestPausePath => {
+                "SPICE_INSTALL_TEST_PAUSE_PATH" // env-policy: allow
+            }
+            Self::Lane => "SPICE_LANE", // env-policy: allow
+            Self::MutationAttempt => "SPICE_MUTATION_ATTEMPT", // env-policy: allow
+            Self::MutationSeed => "SPICE_MUTATION_SEED", // env-policy: allow
+            Self::Proof => "SPICE_PROOF", // env-policy: allow
         }
     }
 }
