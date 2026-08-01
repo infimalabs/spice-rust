@@ -175,6 +175,34 @@ fn recognition_outcome(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use wire::intent::{CommandAnswer, StateAnswer};
+    use wire::{ResidentState, Seq, SeqRange};
+
+    use super::*;
+
+    #[test]
+    fn publication_wrapper_refuses_an_answer_outside_its_command_binding() {
+        let outcome = Outcome::Reply(Reply {
+            position: ReplyPosition::Committed(SeqRange {
+                first: Seq::new(1).expect("fixture position"),
+                last: Seq::new(1).expect("fixture position"),
+            }),
+            body: CommandAnswer::State(StateAnswer {
+                from: ResidentState::Seated,
+                to: ResidentState::Dark,
+            }),
+        });
+
+        let Outcome::Fault(fault) = recognition_outcome(outcome) else {
+            panic!("a release reply with another command's answer must fault");
+        };
+        assert_eq!(fault.class, FaultClass::Protocol);
+        assert_eq!(fault.reason, "release::answer-shape");
+    }
+}
+
 pub(crate) fn admit_stage(root: &Path) -> Result<AdmittedRelease, ReleaseError> {
     let executable = std::env::current_exe().map_err(ReleaseError::CurrentExecutable)?;
     let bytes = fs::read(&executable).map_err(|source| ReleaseError::ReadExecutable {
