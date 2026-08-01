@@ -30,6 +30,7 @@ pub enum InstallError {
         observed: Digest,
     },
     InvalidRecord(String),
+    LegacyRecord(PathBuf),
     RecordMissing,
     ApplyInProgress,
     UnapplyInProgress,
@@ -95,6 +96,15 @@ impl fmt::Display for InstallError {
                 "install plan digest mismatch: expected {expected}, observed {observed}"
             ),
             Self::InvalidRecord(reason) => write!(formatter, "invalid install record: {reason}"),
+            Self::LegacyRecord(path) => write!(
+                formatter,
+                concat!(
+                    "legacy install record at {} belongs to the retired ",
+                    "SURFACE-1kJQkpFs installer; unapply it with the release that wrote it ",
+                    "before using the coexistence installer"
+                ),
+                path.display()
+            ),
             Self::RecordMissing => formatter.write_str("no Rust install record exists"),
             Self::ApplyInProgress => formatter.write_str("Rust installation is incomplete"),
             Self::UnapplyInProgress => formatter.write_str("Rust unapply is incomplete"),

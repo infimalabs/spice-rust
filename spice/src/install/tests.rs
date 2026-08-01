@@ -260,6 +260,27 @@ fn malformed_record_and_divergent_exclusions_refuse_without_mutation() {
 }
 
 #[test]
+fn legacy_record_names_its_owning_release_and_refuses_without_mutation() {
+    let scratch = Scratch::new("legacy-record");
+    let repository = scratch.repository();
+    let legacy = repository.common_dir().join(LEGACY_RECORD_PATH);
+    fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    fs::write(&legacy, b"legacy record bytes\n").unwrap();
+    let before_exclude = fs::read(scratch.exclude()).unwrap();
+
+    let error = plan(&repository, None).unwrap_err();
+    assert!(matches!(
+        &error,
+        InstallError::LegacyRecord(path) if path == &legacy
+    ));
+    assert!(error.to_string().contains("SURFACE-1kJQkpFs"));
+    assert_eq!(fs::read(scratch.exclude()).unwrap(), before_exclude);
+    assert!(!record_path(&repository).exists());
+    assert!(!scratch.common(CONFIG_PATH).exists());
+    assert!(!scratch.join(ENTRY_PATH).exists());
+}
+
+#[test]
 fn record_digest_tampering_refuses_before_unapply_mutation() {
     let scratch = Scratch::new("record-digest");
     let repository = scratch.repository();
@@ -267,7 +288,7 @@ fn record_digest_tampering_refuses_before_unapply_mutation() {
     apply(&repository, None, &planned.digest().unwrap()).unwrap();
     let generated = images(&repository, &planned);
     let mut record = read_record(&repository).unwrap().unwrap();
-    record.plan_digest = Digest::compute(Domain::InstallCoexistencePlan, b"tampered");
+    record.plan_digest = Digest::compute(Domain::InstallPlan, b"tampered");
     fs::write(record_path(&repository), wire::encode(&record).unwrap()).unwrap();
 
     let error = unapply(&repository).unwrap_err();

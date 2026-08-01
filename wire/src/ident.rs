@@ -77,14 +77,10 @@ pub enum Domain {
     DistTargetPayload,
     /// The bytes of one staged artifact.
     DistArtifact,
-    /// The repository identity used to qualify installation artifacts.
-    InstallRepository,
     /// The bytes of one file selected by an installation plan.
     InstallArtifact,
     /// The complete observed installation plan.
     InstallPlan,
-    /// The ordered repository-local Rust coexistence plan.
-    InstallCoexistencePlan,
     /// The build pin set a staging run resolved.
     DistPins,
     /// The inventory of what a staging run published.
@@ -135,10 +131,8 @@ impl Domain {
             Self::JournalBackupMember => "spice.journal.backup-member.v1",
             Self::DistTargetPayload => "spice.dist.target-payload.v1",
             Self::DistArtifact => "spice.dist.artifact.v1",
-            Self::InstallRepository => "spice.install.repository.v1",
             Self::InstallArtifact => "spice.install.artifact.v1",
-            Self::InstallPlan => "spice.install.plan.v1",
-            Self::InstallCoexistencePlan => "spice.install.coexistence-plan.v1",
+            Self::InstallPlan => "spice.install.coexistence-plan.v1",
             Self::DistPins => "spice.dist.pins.v1",
             Self::DistInventory => "spice.dist.inventory.v1",
             Self::DistReleaseManifest => "spice.dist.release-manifest.v1",
