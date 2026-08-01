@@ -276,6 +276,7 @@ pub struct InventoryEntry {
 pub struct TargetPayload {
     pub version: u16,
     pub target: ReleaseTarget,
+    /// Domain-separated identity of the immutable Git commit built.
     pub source: Digest,
     pub app: Digest,
     pub embedded_app: Digest,

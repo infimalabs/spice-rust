@@ -180,6 +180,72 @@ pub struct RestoreVerification {
     pub threads: u64,
 }
 
+/// The immutable first-parent Git interval summarized by release notes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseNotesRange {
+    /// Excluded lower commit of the interval.
+    pub from: String,
+    /// Included release commit whose source identity the manifest binds.
+    pub to: String,
+    /// Number of first-parent commits after `from` through `to`.
+    pub commits: u64,
+}
+
+/// Journal schema movement carried by one exact Git interval.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchemaMovement {
+    /// Schema compiled by the excluded lower commit.
+    pub from: u32,
+    /// Schema compiled by the included release commit.
+    pub to: u32,
+}
+
+/// One proof-admitted target named in operator-facing release notes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseNotesTarget {
+    /// Supported Rust target tuple.
+    pub target: ReleaseTarget,
+    /// Canonical receipt-free target-payload identity.
+    pub payload: Digest,
+    /// Detached proof receipt that admitted the payload.
+    pub receipt: Digest,
+}
+
+/// One landed first-parent change in an explicit release interval.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseNoteChange {
+    /// Full immutable Git commit identity.
+    pub commit: String,
+    /// Authored first line of the commit message.
+    pub subject: String,
+}
+
+/// Concise release facts derived from one Git interval and sealed manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseNotes {
+    /// Identity of the canonical sealed release-manifest bytes.
+    pub manifest: Digest,
+    /// Manifest-bound source-commit identity.
+    pub build: Digest,
+    /// Exact first-parent Git interval summarized.
+    pub range: ReleaseNotesRange,
+    /// Journal schema movement across the interval endpoints.
+    pub schema: SchemaMovement,
+    /// Both proof-admitted supported targets in declaration order.
+    pub targets: Vec<ReleaseNotesTarget>,
+    /// Explicit `Release-Operator-Action` trailers in landed order.
+    pub operator_actions: Vec<String>,
+    /// Explicit `Release-Fixed-Refusal` trailers in landed order.
+    pub fixed_refusals: Vec<String>,
+    /// Landed first-parent subjects in chronological order.
+    pub changes: Vec<ReleaseNoteChange>,
+}
+
 /// Verified identities returned by both daemonless proof leaves.
 ///
 /// This body has no standing or success flag: its existence is the clean

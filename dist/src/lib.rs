@@ -4,9 +4,13 @@
 //! pin admission, content identities, stage layout, and receipt-free wire
 //! payload. A pin mismatch returns before any builder method is called.
 
+#[cfg(not(target_arch = "wasm32"))]
+mod notes;
 mod pins;
 mod stage;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use notes::{NotesError, release_notes, source_commit_digest};
 pub use pins::{PinError, PinName, RequiredPins};
 pub use stage::{
     BuildError, BuildStep, Builder, FilePublisher, Pipeline, PublishError, Publisher, StageError,
