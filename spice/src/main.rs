@@ -85,6 +85,10 @@ fn main() {
         ["version"] => deliver(&version_outcome(), form),
         ["release", "notes"] => deliver(&release_command::notes(leaf), form),
         ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
+        ["release", "publish"] => match release_command::run(leaf) {
+            release_command::RunResult::Plan(outcome) => deliver(&outcome, form),
+            release_command::RunResult::Published(outcome) => deliver(&outcome, form),
+        },
         _ => {}
     }
     #[cfg(target_arch = "wasm32")]

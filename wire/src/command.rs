@@ -363,7 +363,7 @@ impl Law {
     pub const PUBLISH: Self = Self {
         required: &[WitnessKind::Observation, WitnessKind::Sealed],
         optional: &[],
-        authority: Authority::Connected,
+        authority: Authority::Operator,
     };
     /// Current lifecycle edge. The command envelope separately binds the
     /// resident epoch, so an operator lifecycle request does not fabricate a
