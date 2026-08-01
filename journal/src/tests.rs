@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use rusqlite::{Connection, params};
 use serde_json::json;
 use wire::{
-    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind, Envelope, Fact,
+    Actor, AnyFact, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind, Envelope,
     FactKind, FindingHead, FindingState, Instant, LaneResidency, LeaseHead, Origin, Outcome, Phase,
     Reply, ReplyPosition, ResidencyHead, ResidentState, Response, Seq, SeqRange, TaskHandle,
     TaskHead, TrustHead, TrustState, WireVersion, Witness, WitnessClass, WitnessHead, WorkflowHead,
@@ -174,10 +174,9 @@ fn authority_fixture() -> Journal {
     journal
 }
 
-fn insert_fact(journal: &Journal, envelope: Envelope<serde_json::Value>) {
+fn insert_fact(journal: &Journal, envelope: Envelope<AnyFact>) {
     let bytes = wire::encode(&envelope).expect("encode fact fixture");
-    let value: serde_json::Value = serde_json::from_slice(&bytes).expect("fact fixture is JSON");
-    let kind = value["fact"]["kind"].as_str().expect("fact kind");
+    let kind = envelope.fact.kind.as_str();
     let seq = i64::try_from(envelope.seq.get()).expect("fixture seq fits SQLite");
     let cause = envelope
         .cause
@@ -200,7 +199,7 @@ fn fact(
     cause: Option<u64>,
     kind: FactKind,
     body: serde_json::Value,
-) -> Envelope<serde_json::Value> {
+) -> Envelope<AnyFact> {
     Envelope {
         v: WireVersion::CURRENT,
         seq: Seq::new(seq).expect("nonzero fixture seq"),
@@ -208,7 +207,10 @@ fn fact(
         actor: Actor::Spice,
         origin: "task:JOURNAL-a1".parse::<Origin>().expect("fixture origin"),
         cause: cause.map(|cause| Seq::new(cause).expect("nonzero fixture cause")),
-        fact: Fact::new(kind, body),
+        fact: AnyFact {
+            kind,
+            body: body.as_object().cloned().expect("a fact body is an object"),
+        },
     }
 }
 

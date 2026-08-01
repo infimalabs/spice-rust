@@ -31,12 +31,12 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use wire::{
-    Actor, Answer, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind, CursorHead,
-    Derived, Digest, Disposition, Envelope, Fact, Fault, FaultClass, FindingHead, FindingState,
-    FoldName, Hello, Instant, LaneResidency, LeaseHead, Name, Origin, Outcome, Overflow, Packed,
-    Phase, Producer, Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState, Response, Seq,
-    SeqRange, Standing, TaskHandle, TaskHead, TrustHead, TrustState, Up, WireVersion, Witness,
-    WitnessClass, WitnessHead, WitnessKind, WorkflowHead, body,
+    Actor, Answer, AnyFact, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind,
+    CursorHead, Derived, Digest, Disposition, Envelope, Fact, Fault, FaultClass, FindingHead,
+    FindingState, FoldName, Hello, Instant, LaneResidency, LeaseHead, Name, Origin, Outcome,
+    Overflow, Packed, Phase, Producer, Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState,
+    Response, Seq, SeqRange, Standing, TaskHandle, TaskHead, TrustHead, TrustState, Up,
+    WireVersion, Witness, WitnessClass, WitnessHead, WitnessKind, WorkflowHead, body,
 };
 
 /// Names `wire` re-exports that never cross as values, each with its reason.
@@ -77,18 +77,6 @@ const NOT_CROSSING: &[(&str, &str)] = &[
     ),
     (
         "IdentError",
-        "parse refusal; returned to a caller, never encoded",
-    ),
-    (
-        "Law",
-        "compile-time command registry metadata; concrete Witness values cross instead",
-    ),
-    (
-        "LawError",
-        "command validation refusal; returned to a caller, never encoded",
-    ),
-    (
-        "NameError",
         "parse refusal; returned to a caller, never encoded",
     ),
     (
@@ -425,6 +413,25 @@ fn cover_journal_frames(covered: &mut BTreeSet<String>) {
             Fact::new(body("cargo test --workspace")),
         ],
     );
+
+    // The opaque read of the same fact. It obeys the identity law for the same
+    // reason the typed one does — a verifier that re-encodes a row it read must
+    // get the row back — and the samples are the typed bodies above so a drift
+    // between the two readings would show up here as a byte difference.
+    law(
+        covered,
+        "AnyFact",
+        &[
+            any_fact(Fact::new(body("checked"))),
+            any_fact(Fact::new(body("cargo test --workspace"))),
+        ],
+    );
+}
+
+/// Read a typed fact back the way a journal verifier reads a stored row.
+fn any_fact<F: wire::Body>(fact: Fact<F>) -> AnyFact {
+    let bytes = wire::encode(&fact).expect("a typed fact encodes");
+    wire::decode(&bytes).expect("a stored fact reads back without its body type")
 }
 
 /// Task statement and workflow heads.
@@ -1001,6 +1008,21 @@ fn the_excuse_list_stays_anchored_to_the_source() {
             "{name} is excused without a reason",
         );
     }
+
+    // Two rows for one name is how a merge leaves this list: both sides excuse
+    // the same type and only the first reason is ever read, so the second is a
+    // claim about the crate that nothing checks.
+    let mut seen = BTreeSet::new();
+    let repeated: Vec<&str> = NOT_CROSSING
+        .iter()
+        .filter(|(name, _)| !seen.insert(*name))
+        .map(|(name, _)| *name)
+        .collect();
+    assert!(
+        repeated.is_empty(),
+        "NOT_CROSSING excuses these names more than once, so a reason is going \
+         unread: {repeated:?}",
+    );
 }
 
 #[test]

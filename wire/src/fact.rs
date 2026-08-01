@@ -308,6 +308,29 @@ fn registered_kind<'de, F: Body, D: Deserializer<'de>>(
     }
 }
 
+/// A fact read back without naming the type of its body.
+///
+/// [`Fact`] ties a body to the one kind it is registered against, which is what
+/// keeps an invented fact off the socket. That tie needs a body type, and a
+/// reader sweeping rows it did not write does not have one: a journal verifier
+/// or a migration learns the kind from the bytes in front of it. It reads the
+/// discriminant, which is not part of the body, and leaves the body as the
+/// fields it arrived as.
+///
+/// This gives up nothing the registration was protecting. The vocabulary is
+/// enforced where a fact is minted and where a typed consumer decodes one; a
+/// reader that never interprets the body cannot mistake one kind for another.
+/// What it must not do is round-trip an opaque body back onto the socket, which
+/// is why nothing here converts into a [`Fact`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnyFact {
+    /// Discriminant from the closed vocabulary, refused if it is not one.
+    pub kind: FactKind,
+    /// The remaining fields, uninterpreted.
+    #[serde(flatten)]
+    pub body: serde_json::Map<String, serde_json::Value>,
+}
+
 impl<F: Body> Fact<F> {
     /// Pair a body with the one discriminant it is registered against.
     #[must_use]

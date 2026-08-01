@@ -109,7 +109,7 @@ const REPLY: &str = r#"{
 
 #[test]
 fn envelope_matches_the_specified_document() {
-    let envelope: Envelope<body::TaskPhased> = round_trip(ENVELOPE);
+    let envelope: Envelope<Fact<body::TaskPhased>> = round_trip(ENVELOPE);
 
     assert_eq!(envelope.v, WireVersion::CURRENT);
     assert_eq!(envelope.seq, seq(48213));
@@ -148,7 +148,8 @@ fn envelope_omits_cause_at_a_chain_root() {
         "a chain root omits cause entirely rather than sending a sentinel: {encoded}"
     );
 
-    let decoded: Envelope<body::TaskPhased> = wire::decode(encoded.as_bytes()).expect("decodes");
+    let decoded: Envelope<Fact<body::TaskPhased>> =
+        wire::decode(encoded.as_bytes()).expect("decodes");
     assert_eq!(decoded, root);
     assert!(decoded.is_root());
 }
@@ -159,11 +160,11 @@ fn a_zero_or_null_cause_sentinel_is_refused() {
     let null = ENVELOPE.replace("\"cause\": 48190", "\"cause\": null");
 
     assert!(
-        wire::decode::<Envelope<body::TaskPhased>>(zero.as_bytes()).is_err(),
+        wire::decode::<Envelope<Fact<body::TaskPhased>>>(zero.as_bytes()).is_err(),
         "zero is not a position"
     );
     assert!(
-        wire::decode::<Envelope<body::TaskPhased>>(null.as_bytes()).is_err(),
+        wire::decode::<Envelope<Fact<body::TaskPhased>>>(null.as_bytes()).is_err(),
         "null is not a position"
     );
 }

@@ -17,8 +17,10 @@
 //! What is read is the `vocabulary!` table, because that table is where a kind
 //! is declared: one row names the variant, its spelling, and the producer class
 //! that mints it, and the enum, the spellings, and the body registry are all
-//! expanded from it. Reading the expansion instead would read this crate\'s own
-//! output back to itself.
+//! expanded from it. Reading the expansion instead would read this crate's own
+//! output back to itself, which is why the parser below looks for the table and
+//! not for `pub enum FactKind` — that enum is now generated, so a parser aimed
+//! at it would find no variants and prove nothing about all 59 of them.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;

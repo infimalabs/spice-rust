@@ -12,7 +12,7 @@
 
 use app::{Admitted, Applied, BrowserState, Session};
 use serde::{Deserialize, Serialize};
-use wire::{CanonicalUuid, Envelope, FaultClass, Overflow, Packed, Seq, WireVersion, body};
+use wire::{CanonicalUuid, Envelope, Fact, FaultClass, Overflow, Packed, Seq, WireVersion, body};
 
 /// Capability this session opens with.
 const CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163c1";
@@ -64,7 +64,7 @@ fn envelope_bytes(version: u32, seq: u64) -> Vec<u8> {
 }
 
 /// One streamed fact at `seq`, admitted the way state must receive it.
-fn envelope(seq: u64) -> Admitted<Envelope<body::TaskPhased>> {
+fn envelope(seq: u64) -> Admitted<Envelope<Fact<body::TaskPhased>>> {
     session()
         .admit_envelope(&envelope_bytes(1, seq))
         .expect("fixture envelope is admitted")

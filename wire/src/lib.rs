@@ -48,7 +48,7 @@ pub mod witness;
 
 pub use command::{Command, CommandKind, CommandKindError, Law, LawError};
 pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVersion};
-pub use fact::{Body, Fact, FactKind, Producer};
+pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{
     ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency, LeaseHead,
     ResidencyHead, ResidentState, TaskHead, TrustHead, TrustState, WitnessClass, WitnessHead,
