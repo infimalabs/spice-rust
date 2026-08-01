@@ -72,11 +72,10 @@ fn main() {
         ["gate", "receipt"] => deliver(&gate_command::receipt(), form),
         ["install"] => deliver(&install_command::run(leaf), form),
         ["config"] => deliver_config(&config_command::run(leaf), form),
-        ["lock"] => deliver(&lock_command::status(), form),
+        ["lock"] => deliver(&lock_command::report(), form),
         ["lock", "run"] => match lock_command::run(leaf) {
-            lock_command::RunOutcome::Child(status) => terminate_child(status),
-            lock_command::RunOutcome::Outcome(outcome) => deliver(&outcome, form),
-            lock_command::RunOutcome::Contended { outcome, code } => {
+            lock_command::RunResult::Child(status) => terminate_child(status),
+            lock_command::RunResult::Rejected { outcome, code } => {
                 deliver_with_code(&outcome, form, code)
             }
         },
@@ -531,15 +530,6 @@ fn deliver_config(outcome: &Outcome<config_command::ConfigReport>, form: Form) -
 )]
 pub fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
     std::env::var_os(name)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the binary rim owns ambient bootstrap acquisition"
-)]
-fn bootstrap_environment_entries() -> Vec<(OsString, OsString)> {
-    std::env::vars_os().collect()
 }
 
 #[cfg(not(target_arch = "wasm32"))]

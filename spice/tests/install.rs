@@ -41,7 +41,7 @@ fn installed_rust_binary_coexists_with_the_python_entrypoint() {
         fs::metadata(rust).unwrap().len()
     );
     assert!(
-        fs::metadata(scratch.join(".git/.spice/rust/install.json"))
+        fs::metadata(scratch.join(".git/.spice-rust/install.json"))
             .unwrap()
             .len()
             < MAX_COMPACT_RECORD_BYTES

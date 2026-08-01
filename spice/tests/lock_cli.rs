@@ -1,12 +1,13 @@
 #![cfg(unix)]
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use serde_json::Value;
+use sill::{Acquisition, LockAvailability, LockFile, LockName, LockReport, Possession};
 use wire::Outcome;
 
 const BUSY_EXIT: i32 = 70;
@@ -101,7 +102,9 @@ impl Fixture {
     }
 
     fn lock_root(&self) -> PathBuf {
-        self.root.join(".git/.spice/locks")
+        fs::canonicalize(self.root.join(".git"))
+            .expect("fixture Git directory canonicalizes")
+            .join(".spice-rust/locks")
     }
 }
 
@@ -151,18 +154,24 @@ fn status_is_a_stable_read_only_direct_report_in_both_forms() {
 
     assert_eq!(text.code, Some(0));
     assert!(text.err.is_empty());
-    let text: Value = wire::decode(&text.out).expect("text body is the typed report");
-    let json: Outcome<Value> = wire::decode(&json.out).expect("JSON is a typed outcome");
+    let text: LockReport = wire::decode(&text.out).expect("text body is the typed report");
+    let json: Outcome<LockReport> = wire::decode(&json.out).expect("JSON is a typed outcome");
     let Outcome::Reply(json) = json else {
         panic!("lock status must reply: {json:?}");
     };
     assert_eq!(json.position, wire::ReplyPosition::Direct {});
     assert_eq!(text, json.body);
-
-    let rows = text["locks"].as_array().expect("lock rows are an array");
-    assert_eq!(rows.len(), 3);
-    assert!(rows.iter().all(|row| row["state"] == "available"));
-    assert!(rows.iter().all(|row| row.get("holder").is_none()));
+    assert_eq!(text.root, fixture.lock_root().display().to_string());
+    assert_eq!(text.exits.busy, BUSY_EXIT);
+    assert_eq!(text.exits.taken, TAKEN_EXIT);
+    assert_eq!(text.exits.full, FULL_EXIT);
+    assert_eq!(text.pools.iter().map(|pool| pool.shards).sum::<u32>(), 3);
+    assert!(
+        text.pools
+            .iter()
+            .flat_map(|pool| &pool.entries)
+            .all(|entry| { entry.availability == LockAvailability::Available })
+    );
     assert!(
         !fixture.lock_root().exists(),
         "a status read does not create lock state"
@@ -207,23 +216,13 @@ fn run_preserves_exact_argv_environment_cwd_and_child_status() {
 }
 
 #[test]
-fn holder_reports_and_all_three_contention_classes_are_observable() {
+fn all_three_contention_classes_and_held_status_are_observable() {
     let fixture = Fixture::new("contention");
     let solo = fixture.hold("solo", None);
 
     let status = fixture.invoke(&["lock", "--json"]);
     let report = reply_body(status);
-    let solo_row = rows(&report)
-        .iter()
-        .find(|row| row["name"] == "solo")
-        .expect("solo status row exists");
-    assert_eq!(solo_row["state"], "held");
-    assert_eq!(
-        solo_row["holder"]["cwd"],
-        fixture.root.to_string_lossy().as_ref()
-    );
-    assert!(solo_row["holder"]["pid"].as_u64().is_some());
-    assert!(solo_row["holder"]["started"].as_str().is_some());
+    assert_eq!(availability(&report, "solo", 0), LockAvailability::Held);
 
     assert_contention(
         fixture.invoke(&["--json", "lock", "run", "solo", "--", "/usr/bin/true"]),
@@ -257,7 +256,13 @@ fn holder_reports_and_all_three_contention_classes_are_observable() {
     pool_zero.release();
     solo.release();
     let report = reply_body(fixture.invoke(&["lock", "--json"]));
-    assert!(rows(&report).iter().all(|row| row["state"] == "available"));
+    assert!(
+        report
+            .pools
+            .iter()
+            .flat_map(|pool| &pool.entries)
+            .all(|entry| { entry.availability == LockAvailability::Available })
+    );
 }
 
 #[test]
@@ -344,33 +349,173 @@ fn malformed_names_shards_and_configuration_refuse_without_running_a_child() {
         .expect("write invalid lock configuration");
     let invalid = fixture.invoke(&["lock", "--json"]);
     assert_eq!(invalid.code, Some(2));
-    let invalid: Outcome<Value> = wire::decode(&invalid.err).expect("config refusal decodes");
+    let invalid: Outcome<()> = wire::decode(&invalid.err).expect("config refusal decodes");
     let Outcome::Refusal(invalid) = invalid else {
         panic!("invalid config must refuse: {invalid:?}");
     };
     assert_eq!(invalid.reason, "lock::configuration-refused");
 }
 
-fn reply_body(spoken: Spoken) -> Value {
+fn reply_body(spoken: Spoken) -> LockReport {
     assert_eq!(spoken.code, Some(0));
     assert!(spoken.err.is_empty());
-    let outcome: Outcome<Value> = wire::decode(&spoken.out).expect("typed reply decodes");
+    let outcome: Outcome<LockReport> = wire::decode(&spoken.out).expect("typed reply decodes");
     let Outcome::Reply(reply) = outcome else {
         panic!("lock status must reply: {outcome:?}");
     };
     reply.body
 }
 
-fn rows(report: &Value) -> &[Value] {
-    report["locks"].as_array().expect("lock report rows")
+fn availability(report: &LockReport, name: &str, shard: u32) -> LockAvailability {
+    report
+        .pools
+        .iter()
+        .find(|pool| pool.name == name)
+        .expect("configured lock pool is reported")
+        .entries
+        .iter()
+        .find(|entry| entry.shard == shard)
+        .expect("configured shard is reported")
+        .availability
 }
 
 fn assert_contention(spoken: Spoken, code: i32, reason: &str) {
     assert_eq!(spoken.code, Some(code));
+
     assert!(spoken.out.is_empty());
     let outcome: Outcome<()> = wire::decode(&spoken.err).expect("contention refusal decodes");
     let Outcome::Refusal(refusal) = outcome else {
         panic!("lock contention must refuse: {outcome:?}");
     };
     assert_eq!(refusal.reason, reason);
+}
+
+#[test]
+fn final_and_intermediate_symlinks_never_escape_the_configured_topology() {
+    use std::os::unix::fs::symlink;
+
+    let final_link = Fixture::new("final-symlink");
+    let final_external = final_link.root.join("external-final");
+    fs::write(&final_external, b"external final lock").expect("external lock writes");
+    let final_hold = hold_external(&final_external, "external-final");
+    let final_pool = final_link.lock_root().join("solo");
+    fs::create_dir_all(&final_pool).expect("final-link pool creates");
+    symlink(&final_external, final_pool.join("0")).expect("final shard symlink creates");
+    assert_symlink_refusal(&final_link, "solo", &final_hold);
+
+    let intermediate = Fixture::new("intermediate-symlink");
+    let external_pool = intermediate.root.join("external-pool");
+    fs::create_dir(&external_pool).expect("external pool creates");
+    let external_shard = external_pool.join("0");
+    fs::write(&external_shard, b"external intermediate lock").expect("external shard writes");
+    let intermediate_hold = hold_external(&external_shard, "external-intermediate");
+    fs::create_dir_all(intermediate.lock_root()).expect("lock root creates");
+    symlink(&external_pool, intermediate.lock_root().join("pool"))
+        .expect("intermediate pool symlink creates");
+    assert_symlink_refusal(&intermediate, "pool", &intermediate_hold);
+}
+
+fn hold_external(path: &Path, name: &str) -> Possession {
+    let lock = LockFile::new(
+        LockName::new(name.to_owned()).expect("external lock name is valid"),
+        path,
+    );
+    match lock.try_acquire().expect("external lock is observable") {
+        Acquisition::Acquired(possession) => possession,
+        Acquisition::Contended => panic!("fresh external lock was contended"),
+    }
+}
+
+fn assert_symlink_refusal(repository: &Fixture, name: &str, external: &Possession) {
+    let child_marker = repository.root.join("child-launched");
+    let child_marker = child_marker.to_str().expect("fixture path is UTF-8");
+    let before = tree(&repository.root);
+
+    assert_state_fault(&repository.invoke(&["--json", "lock"]));
+    assert_state_fault(&repository.invoke(&[
+        "--json",
+        "lock",
+        "run",
+        name,
+        "--shard",
+        "0",
+        "--",
+        "/bin/sh",
+        "-c",
+        "printf launched > \"$1\"",
+        "lock-child",
+        child_marker,
+    ]));
+
+    assert!(
+        !Path::new(child_marker).exists(),
+        "a refused symlink path launched its child"
+    );
+    assert_eq!(tree(&repository.root), before, "a refusal changed state");
+    let contender = external
+        .lock()
+        .try_acquire()
+        .expect("external lock remains observable");
+    assert!(matches!(contender, Acquisition::Contended));
+}
+
+fn assert_state_fault(spoken: &Spoken) {
+    assert_eq!(spoken.code, Some(1));
+    assert!(spoken.out.is_empty());
+    let outcome: Outcome<()> = wire::decode(&spoken.err).expect("state fault is typed JSON");
+    assert!(matches!(
+        outcome,
+        Outcome::Fault(fault) if fault.reason == "lock::state-unavailable"
+    ));
+}
+
+fn tree(root: &Path) -> BTreeMap<String, (u32, String, Vec<u8>)> {
+    let mut state = BTreeMap::new();
+    walk_tree(root, root, &mut state);
+    state
+}
+
+fn walk_tree(root: &Path, directory: &Path, state: &mut BTreeMap<String, (u32, String, Vec<u8>)>) {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut entries = fs::read_dir(directory)
+        .expect("snapshot directory reads")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("snapshot entries read");
+    entries.sort_by_key(fs::DirEntry::file_name);
+    for entry in entries {
+        let path = entry.path();
+        let relative = path
+            .strip_prefix(root)
+            .expect("snapshot path is rooted")
+            .to_string_lossy()
+            .into_owned();
+        let metadata = fs::symlink_metadata(&path).expect("snapshot metadata reads");
+        let mode = metadata.permissions().mode() & 0o7777;
+        if metadata.is_dir() {
+            state.insert(relative, (mode, "directory".to_owned(), Vec::new()));
+            walk_tree(root, &path, state);
+        } else if metadata.is_file() {
+            state.insert(
+                relative,
+                (mode, "file".to_owned(), fs::read(path).expect("file reads")),
+            );
+        } else if metadata.file_type().is_symlink() {
+            state.insert(
+                relative,
+                (
+                    mode,
+                    "symlink".to_owned(),
+                    fs::read_link(path)
+                        .expect("symlink reads")
+                        .as_os_str()
+                        .as_bytes()
+                        .to_vec(),
+                ),
+            );
+        } else {
+            panic!("snapshot encountered an unsupported file type at {relative}");
+        }
+    }
 }

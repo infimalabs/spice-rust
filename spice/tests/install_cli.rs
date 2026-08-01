@@ -26,9 +26,21 @@ impl Fixture {
             std::process::id()
         ));
         fs::create_dir_all(root.join(".git/info")).expect("create repository metadata");
+        fs::create_dir_all(root.join(".git/.spice/data"))
+            .expect("create Python authority sentinel directory");
         fs::create_dir_all(root.join("bin")).expect("create predecessor bin directory");
         let exclude_bytes = b"# python-owned exclusions\n/cache/\n".to_vec();
         fs::write(root.join(".git/info/exclude"), &exclude_bytes).expect("write exclusions");
+        fs::write(
+            root.join(".git/.spice/data/spicejournal.sqlite3"),
+            b"python authority sentinel\n",
+        )
+        .expect("write Python authority sentinel");
+        fs::write(
+            root.join(".git/.spice/config.toml"),
+            b"[operator]\nmode = 'python'\n",
+        )
+        .expect("write Python local configuration sentinel");
         let tracked_bytes = b"[tasks]\nmax_parallel = 7\n\n[policy]\nowner = \"python\"\n".to_vec();
         fs::write(root.join("spice.toml"), &tracked_bytes).expect("write tracked intent");
         let python = root.join("bin/spice");
@@ -65,6 +77,20 @@ impl Fixture {
             fs::read(self.root.join("spice.toml")).unwrap(),
             self.tracked_bytes
         );
+        assert_eq!(
+            fs::read(self.root.join(".git/.spice/data/spicejournal.sqlite3")).unwrap(),
+            b"python authority sentinel\n"
+        );
+        assert_eq!(
+            fs::read(self.root.join(".git/.spice/config.toml")).unwrap(),
+            b"[operator]\nmode = 'python'\n"
+        );
+        let mut entries = fs::read_dir(self.root.join(".git/.spice"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        entries.sort();
+        assert_eq!(entries, ["config.toml", "data"]);
     }
 
     fn installed_binary(&self) -> PathBuf {
@@ -72,7 +98,7 @@ impl Fixture {
     }
 
     fn record(&self) -> PathBuf {
-        self.root.join(".git/.spice/rust/install.json")
+        self.root.join(".git/.spice-rust/install.json")
     }
 }
 
@@ -101,9 +127,10 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
     let preview = reply_body(json);
     assert_eq!(text, preview);
     assert_eq!(preview["action"], "preview");
-    assert_eq!(preview["plan"]["operations"].as_array().unwrap().len(), 6);
+    assert_eq!(preview["plan"]["operations"].as_array().unwrap().len(), 5);
     assert!(!fixture.installed_binary().exists());
     assert!(!fixture.record().exists());
+    assert!(!fixture.root.join(".git/.spice-rust").exists());
     assert_eq!(
         fs::read(fixture.root.join(".git/info/exclude")).unwrap(),
         fixture.exclude_bytes
@@ -122,7 +149,7 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
     let applied = reply_body(fixture.invoke(&["--json", "install", &format!("--apply={digest}")]));
     assert_eq!(applied["action"], "applied");
     assert_eq!(applied["status"], "complete");
-    assert_eq!(applied["completed"], 6);
+    assert_eq!(applied["completed"], 5);
     assert_eq!(
         fs::read(fixture.installed_binary()).unwrap(),
         fs::read(env!("CARGO_BIN_EXE_spice")).unwrap()
@@ -143,14 +170,13 @@ fn unapply_restores_exact_prior_images_and_keeps_the_namespaced_receipt() {
     let unapplied = reply_body(fixture.invoke(&["--json", "install", "--unapply"]));
     assert_eq!(unapplied["action"], "unapplied");
     assert_eq!(unapplied["status"], "uninstalled");
-    assert_eq!(unapplied["completed"], 6);
+    assert_eq!(unapplied["completed"], 5);
     assert!(!fixture.installed_binary().exists());
     assert!(fixture.record().is_file());
     assert_eq!(
         fs::read(fixture.root.join(".git/info/exclude")).unwrap(),
         fixture.exclude_bytes
     );
-    assert!(!fixture.root.join(".git/.spice/config.toml").exists());
     fixture.assert_python_authority_unchanged();
 
     let python = Command::new(&fixture.python)
