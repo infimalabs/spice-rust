@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use spice::config::{Builtin, PolicyClass, Root, ValueKind, descriptor, descriptors};
+use spice::config::{Builtin, PathSegment, PolicyClass, Root, ValueKind, descriptor, descriptors};
 use toml::Value;
 use wire::ConfigSource;
 
@@ -66,6 +66,12 @@ shards = 2
 [lock.zeta]
 shards = 4
 
+[lock."a.b"]
+shards = 5
+
+[lock."a[0]"]
+shards = 6
+
 [canvas.pack]
 rows = 80
 
@@ -83,39 +89,50 @@ fn encoded(root: &Root) -> Value {
     toml::from_str(&document).expect("encoded root is TOML")
 }
 
-fn leaves(value: &Value) -> Vec<(String, Value)> {
-    fn walk(path: &str, value: &Value, output: &mut Vec<(String, Value)>) {
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum OwnedSegment {
+    Key(String),
+    Index(usize),
+}
+
+fn borrowed(path: &[OwnedSegment]) -> Vec<PathSegment<'_>> {
+    path.iter()
+        .map(|segment| match segment {
+            OwnedSegment::Key(key) => PathSegment::Key(key),
+            OwnedSegment::Index(index) => PathSegment::Index(*index),
+        })
+        .collect()
+}
+
+fn leaves(value: &Value) -> Vec<(Vec<OwnedSegment>, Value)> {
+    fn walk(
+        path: &mut Vec<OwnedSegment>,
+        value: &Value,
+        output: &mut Vec<(Vec<OwnedSegment>, Value)>,
+    ) {
         match value {
             Value::Table(table) => {
                 for (field, child) in table {
-                    let next = if path.is_empty() {
-                        field.clone()
-                    } else {
-                        format!("{path}.{field}")
-                    };
-                    walk(&next, child, output);
+                    path.push(OwnedSegment::Key(field.clone()));
+                    walk(path, child, output);
+                    path.pop();
                 }
             }
             Value::Array(values) if values.iter().all(Value::is_table) && !values.is_empty() => {
                 for (index, child) in values.iter().enumerate() {
-                    walk(&format!("{path}[{index}]"), child, output);
+                    path.push(OwnedSegment::Index(index));
+                    walk(path, child, output);
+                    path.pop();
                 }
             }
-            Value::Array(values) if values.is_empty() && is_indexed_collection(path) => {}
-            _ => output.push((path.to_owned(), value.clone())),
+            Value::Array(values) if values.is_empty() && descriptor(&borrowed(path)).is_none() => {}
+            _ => output.push((path.clone(), value.clone())),
         }
     }
 
     let mut output = Vec::new();
-    walk("", value, &mut output);
+    walk(&mut Vec::new(), value, &mut output);
     output
-}
-
-fn is_indexed_collection(path: &str) -> bool {
-    let prefix = format!("{path}[]");
-    descriptors()
-        .iter()
-        .any(|entry| entry.template().as_str().starts_with(&prefix))
 }
 
 fn builtin_matches(builtin: Builtin, value: &Value) -> bool {
@@ -134,6 +151,21 @@ fn builtin_matches(builtin: Builtin, value: &Value) -> bool {
         (Builtin::Float(expected), Value::Float(actual)) => actual == &expected,
         _ => false,
     }
+}
+
+fn sample_path(template: &str) -> Vec<OwnedSegment> {
+    let mut path = Vec::new();
+    for segment in template.split('.') {
+        if segment == "<name>" {
+            path.push(OwnedSegment::Key("alpha".to_owned()));
+        } else if let Some(key) = segment.strip_suffix("[]") {
+            path.push(OwnedSegment::Key(key.to_owned()));
+            path.push(OwnedSegment::Index(0));
+        } else {
+            path.push(OwnedSegment::Key(segment.to_owned()));
+        }
+    }
+    path
 }
 
 #[test]
@@ -171,11 +203,12 @@ fn one_registry_row_covers_every_populated_serde_leaf() {
     let mut coverage = BTreeMap::<&str, usize>::new();
 
     for (path, _) in leaves(&encoded(&root)) {
+        let path_segments = borrowed(&path);
         let matches = descriptors()
             .iter()
-            .filter(|entry| entry.template().matches(&path))
+            .filter(|entry| entry.template().matches(&path_segments))
             .collect::<Vec<_>>();
-        assert_eq!(matches.len(), 1, "{path} matched {matches:?}");
+        assert_eq!(matches.len(), 1, "{path:?} matched {matches:?}");
         *coverage.entry(matches[0].template().as_str()).or_default() += 1;
     }
 
@@ -193,13 +226,14 @@ fn one_registry_row_covers_every_populated_serde_leaf() {
 fn registry_builtins_are_the_typed_root_defaults() {
     let mut seen = BTreeSet::new();
     for (path, value) in leaves(&encoded(&Root::default())) {
-        let entry = descriptor(&path).unwrap_or_else(|| panic!("unregistered default {path}"));
+        let entry =
+            descriptor(&borrowed(&path)).unwrap_or_else(|| panic!("unregistered default {path:?}"));
         let builtin = entry
             .builtin()
-            .unwrap_or_else(|| panic!("default {path} has no builtin metadata"));
+            .unwrap_or_else(|| panic!("default {path:?} has no builtin metadata"));
         assert!(
             builtin_matches(builtin, &value),
-            "{path}: {builtin:?} != {value:?}"
+            "{path:?}: {builtin:?} != {value:?}"
         );
         assert!(seen.insert(entry.template().as_str()));
     }
@@ -213,7 +247,8 @@ fn registry_builtins_are_the_typed_root_defaults() {
             .collect()
     );
     assert_eq!(
-        descriptor("proof.image").and_then(|entry| entry.builtin()),
+        descriptor(&[PathSegment::Key("proof"), PathSegment::Key("image"),])
+            .and_then(|entry| entry.builtin()),
         Some(Builtin::String(proof::DEFAULT_IMAGE))
     );
 }
@@ -260,6 +295,11 @@ fn templates_are_unique_single_word_non_overlapping_and_stably_ordered() {
     for entry in descriptors() {
         let template = entry.template().as_str();
         assert!(unique.insert(template), "duplicate template {template}");
+        assert_eq!(
+            entry.template().is_dynamic(),
+            template.contains("<name>") || template.contains("[]"),
+            "template shape drifted for {template}"
+        );
         for segment in template.split('.') {
             let word = segment
                 .strip_suffix("[]")
@@ -274,14 +314,28 @@ fn templates_are_unique_single_word_non_overlapping_and_stably_ordered() {
             );
         }
 
-        let concrete = template.replace("<name>", "alpha").replace("[]", "[0]");
+        let concrete = sample_path(template);
+        let concrete_segments = borrowed(&concrete);
         assert_eq!(
             descriptors()
                 .iter()
-                .filter(|candidate| candidate.template().matches(&concrete))
+                .filter(|candidate| candidate.template().matches(&concrete_segments))
                 .count(),
             1,
-            "overlap at {concrete}"
+            "overlap at {concrete:?}"
+        );
+    }
+
+    for name in ["a.b", "a[0]", ""] {
+        let path = [
+            PathSegment::Key("lock"),
+            PathSegment::Key(name),
+            PathSegment::Key("shards"),
+        ];
+        assert_eq!(
+            descriptor(&path).map(|entry| entry.template().as_str()),
+            Some("lock.<name>.shards"),
+            "the registry must leave {name:?} to the lock name authority"
         );
     }
 }
