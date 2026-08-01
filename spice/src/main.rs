@@ -135,7 +135,7 @@ fn install_outcome(matches: &clap::ArgMatches) -> Outcome<spice::install::Plan> 
         }
     };
     let result = if matches.get_flag("unapply") {
-        spice::install::unapply(&working)
+        spice::install::unapply(&working, &home)
     } else if let Some(digest) = matches.get_one::<String>("apply") {
         spice::install::apply(&working, &executable, &home, digest)
     } else {

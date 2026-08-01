@@ -1,8 +1,9 @@
 //! Digest-bound repository installation and exact recorded reversal.
 
+use std::ffi::OsString;
 use std::fmt;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -10,8 +11,17 @@ use wire::{Digest, Domain, Fault, FaultClass, Refusal};
 
 use crate::repository::Repository;
 
-const PLAN_VERSION: u16 = 1;
-const RECORD_VERSION: u16 = 1;
+mod record;
+mod support;
+
+use record::{
+    preflight_unapply, prepare_unapplied, restore_snapshot, rollback_unapply,
+    validate_existing_record, validate_installed_state,
+};
+use support::*;
+
+const PLAN_VERSION: u16 = 2;
+const RECORD_VERSION: u16 = 2;
 const DATA_MODE: u32 = 0o644;
 const EXECUTABLE_MODE: u32 = 0o755;
 const RECORD_MODE: u32 = 0o600;
@@ -39,12 +49,33 @@ pub enum Change {
     Retain,
 }
 
+/// Stable native identity of one observed filesystem object.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Generation {
+    pub device: u64,
+    pub inode: u64,
+}
+
+/// The resolved existing ancestor that anchors a destination parent.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ParentObservation {
+    pub ancestor: PathBuf,
+    pub generation: Generation,
+    pub missing: PathBuf,
+}
+
 /// The state observed at a filesystem destination before the plan was built.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Observation {
     Absent,
-    File { digest: Digest, mode: u32 },
+    File {
+        digest: Digest,
+        mode: u32,
+        generation: Generation,
+    },
 }
 
 /// One explicit value state for the Git hook selection.
@@ -83,6 +114,7 @@ impl HookValue {
 #[serde(deny_unknown_fields)]
 pub struct Operation {
     pub path: PathBuf,
+    pub parent: ParentObservation,
     pub change: Change,
     pub observed: Observation,
     pub desired: Digest,
@@ -94,6 +126,7 @@ pub struct Operation {
 #[serde(deny_unknown_fields)]
 pub struct HookSelection {
     pub config: PathBuf,
+    pub parent: ParentObservation,
     pub observed: Observation,
     pub previous: HookValue,
     pub selected: HookValue,
@@ -144,9 +177,18 @@ impl std::error::Error for Error {}
 #[serde(deny_unknown_fields)]
 struct Record {
     version: u16,
+    repository: PathBuf,
+    home: PathBuf,
     plan: Digest,
+    operations: Vec<Operation>,
+    selection: HookSelection,
     hook: RecordedHook,
     writes: Vec<RecordedWrite>,
+}
+
+#[derive(Deserialize)]
+struct RecordHeader {
+    version: u16,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -174,11 +216,24 @@ struct RecordedWrite {
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 enum Snapshot {
     Absent,
-    File { bytes: Vec<u8>, mode: u32 },
+    File {
+        bytes: Vec<u8>,
+        mode: u32,
+        generation: Generation,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct Destination {
+    logical: PathBuf,
+    path: PathBuf,
+    root: PathBuf,
+    parent: ParentObservation,
 }
 
 #[derive(Clone, Debug)]
 struct Artifact {
+    destination: Destination,
     operation: Operation,
     desired: Vec<u8>,
     prior: Snapshot,
@@ -186,12 +241,15 @@ struct Artifact {
 
 #[derive(Clone, Debug)]
 struct Prepared {
+    repository: Repository,
+    home: PathBuf,
     plan: Plan,
     artifacts: Vec<Artifact>,
     config_bytes: Vec<u8>,
     config_mode: u32,
     config_prior: Snapshot,
-    record: PathBuf,
+    hook_destination: Destination,
+    record: Destination,
 }
 
 #[derive(Serialize)]
@@ -218,46 +276,58 @@ pub fn apply(start: &Path, executable: &Path, home: &Path, accepted: &str) -> Re
             "run spice install again and apply the digest it prints",
         ));
     }
-    if prepared.record.exists() {
+    if prepared.record.path.exists() {
         validate_existing_record(&prepared)?;
         prepared.plan.action = Action::Applied;
         return Ok(prepared.plan);
     }
-    let record = record_from(&prepared)?;
-    apply_prepared(&prepared, &record)?;
+    apply_prepared(&prepared)?;
     prepared.plan.action = Action::Applied;
     Ok(prepared.plan)
 }
 
 /// Reverse only the exact files and hook selection named by the install record.
-pub fn unapply(start: &Path) -> Result<Plan, Error> {
+pub fn unapply(start: &Path, home: &Path) -> Result<Plan, Error> {
     let repository = Repository::discover(start).map_err(repository_error)?;
-    let record_path = record_path(&repository);
-    let record = read_record(&record_path)?;
-    let (installed, hook_observed) = preflight_unapply(&record)?;
+    let home = canonical_directory(home, "install::home")?;
+    let record_destination = destination(
+        repository.common_dir().join(".spice/install"),
+        repository.common_dir(),
+    )?;
+    let record = read_record(&record_destination.path)?;
+    let preflight = preflight_unapply(&repository, &home, &record)?;
     let mut restored = Vec::new();
     for index in (0..record.writes.len()).rev() {
         let write = &record.writes[index];
-        if let Err(error) = restore_snapshot(&write.path, &write.prior) {
-            rollback_unapply(&record, &installed, &restored);
+        if let Err(error) = restore_snapshot(&preflight.destinations[index], &write.prior) {
+            rollback_unapply(&preflight, &restored);
             return Err(error);
         }
         restored.push(index);
     }
     if record.hook.changed
-        && let Err(error) = restore_snapshot(&record.hook.config, &record.hook.prior)
+        && let Err(error) = restore_snapshot(&preflight.hook, &record.hook.prior)
     {
-        rollback_unapply(&record, &installed, &restored);
+        rollback_unapply(&preflight, &restored);
         return Err(error);
     }
-    if let Err(source) = fs::remove_file(&record_path) {
+    if let Err(source) = fs::remove_file(&record_destination.path) {
         if record.hook.changed {
-            let _ = restore_snapshot(&record.hook.config, &hook_observed);
+            let _ = restore_snapshot(&preflight.hook, &preflight.hook_observed);
         }
-        rollback_unapply(&record, &installed, &restored);
-        return Err(io_fault("remove install record", &record_path, source));
+        rollback_unapply(&preflight, &restored);
+        return Err(io_fault(
+            "remove install record",
+            &record_destination.path,
+            source,
+        ));
     }
-    let prepared = prepare_unapplied(&repository, record, &hook_observed)?;
+    let prepared = prepare_unapplied(
+        &repository,
+        record,
+        &preflight.installed,
+        &preflight.hook_observed,
+    )?;
     Ok(prepared)
 }
 
@@ -291,17 +361,25 @@ fn prepare(start: &Path, executable: &Path, home: &Path) -> Result<Prepared, Err
         hook: hook.selection,
         digest,
     };
+    let record = destination(
+        repository.common_dir().join(".spice/install"),
+        repository.common_dir(),
+    )?;
     Ok(Prepared {
+        repository,
+        home,
         plan,
         artifacts,
         config_bytes: hook.bytes,
         config_mode: hook.mode,
         config_prior: hook.prior,
-        record: record_path(&repository),
+        hook_destination: hook.destination,
+        record,
     })
 }
 
 struct PreparedHook {
+    destination: Destination,
     selection: HookSelection,
     bytes: Vec<u8>,
     mode: u32,
@@ -309,25 +387,33 @@ struct PreparedHook {
 }
 
 fn hook_selection(repository: &Repository) -> Result<PreparedHook, Error> {
-    let config = repository.common_dir().join("config");
-    let snapshot = snapshot(&config)?;
+    let config_destination = destination(
+        repository.common_dir().join("config"),
+        repository.common_dir(),
+    )?;
+    let snapshot = snapshot(&config_destination.path)?;
     let observed = observation(&snapshot);
     let (bytes, mode) = match &snapshot {
         Snapshot::Absent => (Vec::new(), DATA_MODE),
-        Snapshot::File { bytes, mode } => (bytes.clone(), *mode),
+        Snapshot::File { bytes, mode, .. } => (bytes.clone(), *mode),
     };
     let text = String::from_utf8(bytes.clone()).map_err(|_| {
         refusal(
             "install::git-config-encoding",
             Some("UTF-8 Git configuration".to_owned()),
-            Some(config.display().to_string()),
+            Some(config_destination.path.display().to_string()),
             "repair the Git configuration before installing",
         )
     })?;
     let parsed = parse_hook(&text)?;
-    let selected = repository
-        .common_dir()
-        .join(".spice/hooks")
+    let hook_entry = destination(
+        repository.common_dir().join(".spice/hooks/pre-commit"),
+        repository.common_dir(),
+    )?;
+    let selected = hook_entry
+        .path
+        .parent()
+        .expect("the installed hook has a parent")
         .display()
         .to_string();
     let change = if parsed.value.as_deref() == Some(&selected) {
@@ -339,7 +425,8 @@ fn hook_selection(repository: &Repository) -> Result<PreparedHook, Error> {
     };
     Ok(PreparedHook {
         selection: HookSelection {
-            config,
+            config: config_destination.path.clone(),
+            parent: config_destination.parent.clone(),
             observed,
             previous: HookValue::from_option(parsed.value),
             selected: HookValue::Value { value: selected },
@@ -349,6 +436,7 @@ fn hook_selection(repository: &Repository) -> Result<PreparedHook, Error> {
         bytes,
         mode,
         prior: snapshot,
+        destination: config_destination,
     })
 }
 
@@ -359,60 +447,67 @@ fn artifacts(
     repository_id: &Digest,
 ) -> Result<Vec<Artifact>, Error> {
     let root = repository.worktree_root();
-    let state = repository.common_dir().join(".spice");
-    let hooks = state.join("hooks");
     let suffix = &repository_id.as_str()[..12];
     let policy = seeded_policy(root.join("spice.toml"))?;
-    let installed_executable = home.join(".local/bin/spice-rust");
+    let destinations = install_destinations(repository, home)?;
+    let installed_executable = destinations[0].path.clone();
     let executable_bytes = fs::read(executable)
         .map_err(|source| io_fault("read Rust executable", executable, source))?;
     let pre_commit = pre_commit(&installed_executable);
     let systemd = systemd_unit(&installed_executable, root);
     let launchd = launchd_unit(&installed_executable, root, suffix);
-    let specifications = vec![
-        (installed_executable, executable_bytes, EXECUTABLE_MODE),
-        (hooks.join("entry.sh"), HOOK_ENTRY.to_vec(), EXECUTABLE_MODE),
-        (
-            hooks.join("static/stage.sh"),
-            HOOK_STAGE.to_vec(),
-            EXECUTABLE_MODE,
-        ),
-        (
-            hooks.join("pre-commit"),
-            pre_commit.into_bytes(),
-            EXECUTABLE_MODE,
-        ),
-        (
-            root.join(".agents/skills/spice/SKILL.md"),
-            SKILL.to_vec(),
-            DATA_MODE,
-        ),
-        (root.join("spice.toml"), policy, DATA_MODE),
-        (
-            root.join("baseline.toml"),
-            seeded_baseline(root.join("baseline.toml"))?,
-            DATA_MODE,
-        ),
-        (
-            home.join(format!(".config/systemd/user/spice-{suffix}.service")),
-            systemd.into_bytes(),
-            DATA_MODE,
-        ),
-        (
-            home.join(format!("Library/LaunchAgents/dev.spice.{suffix}.plist")),
-            launchd.into_bytes(),
-            DATA_MODE,
-        ),
+    let desired = vec![
+        (executable_bytes, EXECUTABLE_MODE),
+        (HOOK_ENTRY.to_vec(), EXECUTABLE_MODE),
+        (HOOK_STAGE.to_vec(), EXECUTABLE_MODE),
+        (pre_commit.into_bytes(), EXECUTABLE_MODE),
+        (SKILL.to_vec(), DATA_MODE),
+        (policy, DATA_MODE),
+        (seeded_baseline(root.join("baseline.toml"))?, DATA_MODE),
+        (systemd.into_bytes(), DATA_MODE),
+        (launchd.into_bytes(), DATA_MODE),
     ];
-    specifications
+    destinations
         .into_iter()
-        .map(|(path, bytes, mode)| artifact(path, bytes, mode))
+        .zip(desired)
+        .map(|(destination, (bytes, mode))| artifact(destination, bytes, mode))
         .collect()
 }
 
-fn artifact(path: PathBuf, desired: Vec<u8>, mode: u32) -> Result<Artifact, Error> {
+fn install_destinations(repository: &Repository, home: &Path) -> Result<Vec<Destination>, Error> {
+    let root = repository.worktree_root();
+    let common = repository.common_dir();
+    let hooks = common.join(".spice/hooks");
+    let repository_id = Digest::compute(
+        Domain::InstallRepository,
+        root.as_os_str().as_encoded_bytes(),
+    );
+    let suffix = &repository_id.as_str()[..12];
+    [
+        (home.join(".local/bin/spice-rust"), home),
+        (hooks.join("entry.sh"), common),
+        (hooks.join("static/stage.sh"), common),
+        (hooks.join("pre-commit"), common),
+        (root.join(".agents/skills/spice/SKILL.md"), root),
+        (root.join("spice.toml"), root),
+        (root.join("baseline.toml"), root),
+        (
+            home.join(format!(".config/systemd/user/spice-{suffix}.service")),
+            home,
+        ),
+        (
+            home.join(format!("Library/LaunchAgents/dev.spice.{suffix}.plist")),
+            home,
+        ),
+    ]
+    .into_iter()
+    .map(|(path, permitted_root)| destination(path, permitted_root))
+    .collect()
+}
+
+fn artifact(destination: Destination, desired: Vec<u8>, mode: u32) -> Result<Artifact, Error> {
     let mode = effective_mode(mode);
-    let prior = snapshot(&path)?;
+    let prior = snapshot(&destination.path)?;
     let observed_digest = snapshot_digest(&prior);
     let desired_digest = Digest::compute(Domain::InstallArtifact, &desired);
     let change = match (&prior, observed_digest.as_ref()) {
@@ -426,15 +521,113 @@ fn artifact(path: PathBuf, desired: Vec<u8>, mode: u32) -> Result<Artifact, Erro
     };
     Ok(Artifact {
         operation: Operation {
-            path,
+            path: destination.path.clone(),
+            parent: destination.parent.clone(),
             change,
             observed: observation(&prior),
             desired: desired_digest,
             mode,
         },
+        destination,
         desired,
         prior,
     })
+}
+
+fn destination(logical: PathBuf, root: &Path) -> Result<Destination, Error> {
+    if !logical.is_absolute() || !logical.starts_with(root) {
+        return Err(destination_root_refusal(&logical, root));
+    }
+    let file_name = logical.file_name().ok_or_else(|| {
+        refusal(
+            "install::destination-shape",
+            Some("one absolute file destination".to_owned()),
+            Some(logical.display().to_string()),
+            "repair the compiled installation destination",
+        )
+    })?;
+    let mut candidate = logical
+        .parent()
+        .expect("a destination with a file name has a parent")
+        .to_path_buf();
+    let mut missing = Vec::<OsString>::new();
+    let (ancestor, generation) = loop {
+        match fs::symlink_metadata(&candidate) {
+            Ok(_) => {
+                let canonical = fs::canonicalize(&candidate).map_err(|source| {
+                    io_fault("resolve install destination parent", &candidate, source)
+                })?;
+                let metadata = fs::metadata(&canonical).map_err(|source| {
+                    io_fault("inspect install destination parent", &canonical, source)
+                })?;
+                if !metadata.is_dir() {
+                    return Err(refusal(
+                        "install::destination-shape",
+                        Some("directory destination parent".to_owned()),
+                        Some(canonical.display().to_string()),
+                        "move the non-directory parent aside before installing",
+                    ));
+                }
+                break (canonical, generation(&metadata));
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                let name = candidate.file_name().ok_or_else(|| {
+                    io_fault("resolve install destination parent", &candidate, source)
+                })?;
+                missing.push(name.to_os_string());
+                candidate = candidate
+                    .parent()
+                    .expect("an absolute missing path has an ancestor")
+                    .to_path_buf();
+            }
+            Err(source) => {
+                return Err(io_fault(
+                    "inspect install destination parent",
+                    &candidate,
+                    source,
+                ));
+            }
+        }
+    };
+    let mut missing_path = PathBuf::new();
+    for component in missing.into_iter().rev() {
+        missing_path.push(component);
+    }
+    let path = ancestor.join(&missing_path).join(file_name);
+    if !path.starts_with(root) {
+        return Err(destination_root_refusal(&path, root));
+    }
+    Ok(Destination {
+        logical,
+        path,
+        root: root.to_path_buf(),
+        parent: ParentObservation {
+            ancestor,
+            generation,
+            missing: missing_path,
+        },
+    })
+}
+
+fn validate_destination(expected: &Destination) -> Result<(), Error> {
+    let observed = destination(expected.logical.clone(), &expected.root)?;
+    if observed.path != expected.path || observed.parent != expected.parent {
+        return Err(refusal(
+            "install::destination-drift",
+            Some(format!(
+                "{} at {:?}",
+                expected.path.display(),
+                expected.parent
+            )),
+            Some(format!(
+                "{} at {:?}",
+                observed.path.display(),
+                observed.parent
+            )),
+            "preview the installation again after destination parents settle",
+        ));
+    }
+    Ok(())
 }
 
 fn snapshot(path: &Path) -> Result<Snapshot, Error> {
@@ -453,11 +646,32 @@ fn snapshot(path: &Path) -> Result<Snapshot, Error> {
             "move the non-file destination aside before installing",
         ));
     }
-    let bytes =
-        fs::read(path).map_err(|source| io_fault("read install destination", path, source))?;
+    let mut file = fs::File::open(path)
+        .map_err(|source| io_fault("open install destination", path, source))?;
+    let opened = file
+        .metadata()
+        .map_err(|source| io_fault("inspect open install destination", path, source))?;
+    if generation(&metadata) != generation(&opened) {
+        return Err(destination_drift_refusal(path));
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|source| io_fault("read install destination", path, source))?;
+    let read = file
+        .metadata()
+        .map_err(|source| io_fault("reinspect open install destination", path, source))?;
+    let after = fs::symlink_metadata(path)
+        .map_err(|source| io_fault("reinspect install destination", path, source))?;
+    if snapshot_signature(&metadata) != snapshot_signature(&opened)
+        || snapshot_signature(&opened) != snapshot_signature(&read)
+        || snapshot_signature(&read) != snapshot_signature(&after)
+    {
+        return Err(destination_drift_refusal(path));
+    }
     Ok(Snapshot::File {
         bytes,
         mode: file_mode(&metadata),
+        generation: generation(&metadata),
     })
 }
 
@@ -471,9 +685,14 @@ fn snapshot_digest(snapshot: &Snapshot) -> Option<Digest> {
 fn observation(snapshot: &Snapshot) -> Observation {
     match snapshot {
         Snapshot::Absent => Observation::Absent,
-        Snapshot::File { bytes, mode } => Observation::File {
+        Snapshot::File {
+            bytes,
+            mode,
+            generation,
+        } => Observation::File {
             digest: Digest::compute(Domain::InstallArtifact, bytes),
             mode: *mode,
+            generation: *generation,
         },
     }
 }
@@ -483,17 +702,34 @@ fn record_from(prepared: &Prepared) -> Result<Record, Error> {
         .artifacts
         .iter()
         .filter(|artifact| artifact.operation.change != Change::Retain)
-        .map(|artifact| RecordedWrite {
-            path: artifact.operation.path.clone(),
-            prior: artifact.prior.clone(),
-            installed: artifact.operation.desired.clone(),
-            mode: artifact.operation.mode,
+        .map(|artifact| {
+            validate_installed_state(
+                &artifact.operation.path,
+                &artifact.operation.desired,
+                artifact.operation.mode,
+            )?;
+            Ok(RecordedWrite {
+                path: artifact.operation.path.clone(),
+                prior: artifact.prior.clone(),
+                installed: artifact.operation.desired.clone(),
+                mode: artifact.operation.mode,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, Error>>()?;
     let installed_hook = hook_bytes(prepared, prepared.plan.hook.selected.as_deref())?;
+    let installed_hook_digest = Digest::compute(Domain::InstallArtifact, &installed_hook);
+    validate_installed_state(
+        &prepared.plan.hook.config,
+        &installed_hook_digest,
+        prepared.config_mode,
+    )?;
     Ok(Record {
         version: RECORD_VERSION,
+        repository: prepared.repository.worktree_root().to_path_buf(),
+        home: prepared.home.clone(),
         plan: prepared.plan.digest.clone(),
+        operations: prepared.plan.operations.clone(),
+        selection: prepared.plan.hook.clone(),
         hook: RecordedHook {
             config: prepared.plan.hook.config.clone(),
             previous: prepared.plan.hook.previous.clone().into_option(),
@@ -505,7 +741,7 @@ fn record_from(prepared: &Prepared) -> Result<Record, Error> {
                 .expect("installation always selects one hook path")
                 .to_owned(),
             prior: prepared.config_prior.clone(),
-            installed: Digest::compute(Domain::InstallArtifact, &installed_hook),
+            installed: installed_hook_digest,
             mode: prepared.config_mode,
             changed: prepared.plan.hook.change != Change::Retain,
         },
@@ -513,18 +749,19 @@ fn record_from(prepared: &Prepared) -> Result<Record, Error> {
     })
 }
 
-fn apply_prepared(prepared: &Prepared, record: &Record) -> Result<(), Error> {
+fn apply_prepared(prepared: &Prepared) -> Result<(), Error> {
+    preflight_apply(prepared)?;
     let mut written = Vec::new();
     for artifact in &prepared.artifacts {
         if artifact.operation.change == Change::Retain {
             continue;
         }
         if let Err(error) = publish(
-            &artifact.operation.path,
+            &artifact.destination,
             &artifact.desired,
             artifact.operation.mode,
         ) {
-            let _ = restore_snapshot(&artifact.operation.path, &artifact.prior);
+            let _ = restore_snapshot(&artifact.destination, &artifact.prior);
             rollback_writes(&written);
             return Err(error);
         }
@@ -533,16 +770,26 @@ fn apply_prepared(prepared: &Prepared, record: &Record) -> Result<(), Error> {
     let hook_changed = prepared.plan.hook.change != Change::Retain;
     if hook_changed && let Err(error) = write_hook(prepared, prepared.plan.hook.selected.as_deref())
     {
-        let _ = restore_snapshot(&prepared.plan.hook.config, &prepared.config_prior);
+        let _ = restore_snapshot(&prepared.hook_destination, &prepared.config_prior);
         rollback_writes(&written);
         return Err(error);
     }
+    let record = match record_from(prepared) {
+        Ok(record) => record,
+        Err(error) => {
+            if hook_changed {
+                let _ = restore_snapshot(&prepared.hook_destination, &prepared.config_prior);
+            }
+            rollback_writes(&written);
+            return Err(error);
+        }
+    };
     let record_bytes =
-        wire::encode(record).map_err(|source| encode_fault("install record", source))?;
+        wire::encode(&record).map_err(|source| encode_fault("install record", source))?;
     if let Err(error) = publish(&prepared.record, &record_bytes, RECORD_MODE) {
-        let _ = fs::remove_file(&prepared.record);
+        let _ = fs::remove_file(&prepared.record.path);
         if hook_changed {
-            let _ = restore_snapshot(&prepared.plan.hook.config, &prepared.config_prior);
+            let _ = restore_snapshot(&prepared.hook_destination, &prepared.config_prior);
         }
         rollback_writes(&written);
         return Err(error);
@@ -552,7 +799,7 @@ fn apply_prepared(prepared: &Prepared, record: &Record) -> Result<(), Error> {
 
 fn write_hook(prepared: &Prepared, value: Option<&str>) -> Result<(), Error> {
     let updated = hook_bytes(prepared, value)?;
-    publish(&prepared.plan.hook.config, &updated, prepared.config_mode)
+    publish(&prepared.hook_destination, &updated, prepared.config_mode)
 }
 
 fn hook_bytes(prepared: &Prepared, value: Option<&str>) -> Result<Vec<u8>, Error> {
@@ -568,149 +815,32 @@ fn hook_bytes(prepared: &Prepared, value: Option<&str>) -> Result<Vec<u8>, Error
 
 fn rollback_writes(written: &[&Artifact]) {
     for artifact in written.iter().rev() {
-        let _ = restore_snapshot(&artifact.operation.path, &artifact.prior);
+        let _ = restore_snapshot(&artifact.destination, &artifact.prior);
     }
 }
 
-fn validate_existing_record(prepared: &Prepared) -> Result<(), Error> {
-    let record = read_record(&prepared.record)?;
-    if prepared
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.operation.change != Change::Retain)
-    {
-        return Err(refusal(
-            "install::already-applied",
-            Some("the recorded installed artifact set".to_owned()),
-            Some(prepared.plan.digest.to_string()),
-            "unapply the recorded installation before applying changed artifacts",
-        ));
+fn preflight_apply(prepared: &Prepared) -> Result<(), Error> {
+    for artifact in &prepared.artifacts {
+        validate_destination(&artifact.destination)?;
     }
-    for write in &record.writes {
-        validate_installed(write)?;
+    validate_destination(&prepared.hook_destination)?;
+    validate_destination(&prepared.record)?;
+    for artifact in &prepared.artifacts {
+        if snapshot(&artifact.operation.path)? != artifact.prior {
+            return Err(destination_drift_refusal(&artifact.operation.path));
+        }
     }
-    validate_installed_hook(&record.hook)?;
+    if snapshot(&prepared.plan.hook.config)? != prepared.config_prior {
+        return Err(destination_drift_refusal(&prepared.plan.hook.config));
+    }
+    if snapshot(&prepared.record.path)? != Snapshot::Absent {
+        return Err(destination_drift_refusal(&prepared.record.path));
+    }
     Ok(())
 }
 
-fn preflight_unapply(record: &Record) -> Result<(Vec<Snapshot>, Snapshot), Error> {
-    if record.version != RECORD_VERSION {
-        return Err(refusal(
-            "install::record-version",
-            Some(RECORD_VERSION.to_string()),
-            Some(record.version.to_string()),
-            "use the Spice release that wrote this install record",
-        ));
-    }
-    let installed = record
-        .writes
-        .iter()
-        .map(validate_installed)
-        .collect::<Result<Vec<_>, _>>()?;
-    let hook_observed = validate_installed_hook(&record.hook)?;
-    Ok((installed, hook_observed))
-}
-
-fn validate_installed_hook(hook: &RecordedHook) -> Result<Snapshot, Error> {
-    let snapshot = snapshot(&hook.config)?;
-    if hook.changed
-        && (snapshot_digest(&snapshot).as_ref() != Some(&hook.installed)
-            || snapshot_mode(&snapshot) != Some(hook.mode))
-    {
-        return Err(drift_refusal(&hook.config));
-    }
-    Ok(snapshot)
-}
-
-fn validate_installed(write: &RecordedWrite) -> Result<Snapshot, Error> {
-    let snapshot = snapshot(&write.path)?;
-    let digest = snapshot_digest(&snapshot);
-    let mode = match &snapshot {
-        Snapshot::File { mode, .. } => Some(mode),
-        Snapshot::Absent => None,
-    };
-    if digest.as_ref() != Some(&write.installed) || mode.copied() != Some(write.mode) {
-        Err(drift_refusal(&write.path))
-    } else {
-        Ok(snapshot)
-    }
-}
-
-fn rollback_unapply(record: &Record, installed: &[Snapshot], restored: &[usize]) {
-    for index in restored.iter().rev() {
-        let write = &record.writes[*index];
-        let _ = restore_snapshot(&write.path, &installed[*index]);
-    }
-}
-
-fn restore_snapshot(path: &Path, snapshot: &Snapshot) -> Result<(), Error> {
-    match snapshot {
-        Snapshot::Absent => match fs::remove_file(path) {
-            Ok(()) => Ok(()),
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(source) => Err(io_fault("remove installed file", path, source)),
-        },
-        Snapshot::File { bytes, mode } => publish(path, bytes, *mode),
-    }
-}
-
-fn prepare_unapplied(
-    repository: &Repository,
-    record: Record,
-    hook_observed: &Snapshot,
-) -> Result<Plan, Error> {
-    let operations = record
-        .writes
-        .iter()
-        .map(|write| {
-            let (change, desired, mode) = match &write.prior {
-                Snapshot::Absent => (
-                    Change::Remove,
-                    Digest::compute(Domain::InstallArtifact, &[]),
-                    0,
-                ),
-                Snapshot::File { bytes, mode } => (
-                    Change::Replace,
-                    Digest::compute(Domain::InstallArtifact, bytes),
-                    *mode,
-                ),
-            };
-            Operation {
-                path: write.path.clone(),
-                change,
-                observed: Observation::File {
-                    digest: write.installed.clone(),
-                    mode: write.mode,
-                },
-                desired,
-                mode,
-            }
-        })
-        .collect();
-    Ok(Plan {
-        version: PLAN_VERSION,
-        action: Action::Unapplied,
-        repository: repository.worktree_root().to_path_buf(),
-        operations,
-        hook: HookSelection {
-            config: record.hook.config,
-            observed: observation(hook_observed),
-            previous: HookValue::Value {
-                value: record.hook.selected,
-            },
-            selected: HookValue::from_option(record.hook.previous),
-            mode: snapshot_mode(&record.hook.prior).unwrap_or(0),
-            change: if record.hook.changed {
-                Change::Replace
-            } else {
-                Change::Retain
-            },
-        },
-        digest: record.plan,
-    })
-}
-
-fn publish(path: &Path, bytes: &[u8], mode: u32) -> Result<(), Error> {
+fn publish(destination: &Destination, bytes: &[u8], mode: u32) -> Result<(), Error> {
+    let path = &destination.path;
     let parent = path.parent().ok_or_else(|| {
         fault(
             "install::destination",
@@ -719,6 +849,11 @@ fn publish(path: &Path, bytes: &[u8], mode: u32) -> Result<(), Error> {
     })?;
     fs::create_dir_all(parent)
         .map_err(|source| io_fault("create install directory", parent, source))?;
+    let canonical_parent = fs::canonicalize(parent)
+        .map_err(|source| io_fault("resolve install publication parent", parent, source))?;
+    if canonical_parent != parent || !canonical_parent.starts_with(&destination.root) {
+        return Err(destination_drift_refusal(path));
+    }
     let destination = atomic::Destination::new(path)
         .map_err(|source| fault("install::publication", source.to_string()))?;
     destination
@@ -742,435 +877,31 @@ fn read_record(path: &Path) -> Result<Record, Error> {
         }
         Err(source) => return Err(io_fault("read install record", path, source)),
     };
-    wire::decode(&bytes).map_err(|source| fault("install::record-invalid", source.to_string()))
-}
-
-fn seeded_policy(path: PathBuf) -> Result<Vec<u8>, Error> {
-    let existing = match fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(source) => return Err(io_fault("read tracked configuration", &path, source)),
-    };
-    let text = String::from_utf8(existing).map_err(|_| {
+    let header: RecordHeader = wire::decode(&bytes).map_err(|source| {
         refusal(
-            "install::tracked-config-encoding",
-            Some("UTF-8 TOML".to_owned()),
-            Some(path.display().to_string()),
-            "repair spice.toml before installing",
-        )
-    })?;
-    if !text.is_empty() {
-        toml::from_str::<toml::Value>(&text).map_err(|source| {
-            refusal(
-                "install::tracked-config-invalid",
-                Some("valid TOML".to_owned()),
-                Some(source.to_string()),
-                "repair spice.toml before installing",
-            )
-        })?;
-    }
-    seed_tastes(text)
-}
-
-fn seed_tastes(mut text: String) -> Result<Vec<u8>, Error> {
-    let parsed = if text.is_empty() {
-        toml::Value::Table(toml::Table::new())
-    } else {
-        toml::from_str::<toml::Value>(&text)
-            .map_err(|source| fault("install::tracked-config-invalid", source.to_string()))?
-    };
-    let present = parsed.get("taste").and_then(toml::Value::as_table);
-    for name in TASTE_NAMES {
-        if present.is_some_and(|table| table.contains_key(name)) {
-            continue;
-        }
-        if !text.is_empty() && !text.ends_with('\n') {
-            text.push('\n');
-        }
-        if !text.is_empty() {
-            text.push('\n');
-        }
-        text.push_str(taste_block(name)?);
-    }
-    toml::from_str::<toml::Value>(&text).map_err(|source| {
-        refusal(
-            "install::tracked-config-shape",
-            Some("taste must be a table that accepts generated seed rows".to_owned()),
+            "install::record-invalid",
+            Some("one current canonical install record".to_owned()),
             Some(source.to_string()),
-            "repair the taste configuration before installing",
+            "restore the exact install record or reconcile the installation manually",
         )
     })?;
-    Ok(text.into_bytes())
-}
-
-fn taste_block(name: &str) -> Result<&'static str, Error> {
-    let heading = format!("[taste.{name}]");
-    let start = TRACKED_POLICY.find(&heading).ok_or_else(|| {
-        fault(
-            "install::seed-missing",
-            format!("compiled policy omitted {heading}"),
+    if header.version != RECORD_VERSION {
+        return Err(record_version_refusal(header.version));
+    }
+    let record: Record = wire::decode(&bytes).map_err(|source| {
+        refusal(
+            "install::record-invalid",
+            Some("one current canonical install record".to_owned()),
+            Some(source.to_string()),
+            "restore the exact install record or reconcile the installation manually",
         )
     })?;
-    let rest = &TRACKED_POLICY[start..];
-    let end = rest[heading.len()..]
-        .find("\n[taste.")
-        .map_or(rest.len(), |offset| heading.len() + offset + 1);
-    Ok(rest[..end].trim_end())
-}
-
-fn seeded_baseline(path: PathBuf) -> Result<Vec<u8>, Error> {
-    match fs::read(&path) {
-        Ok(bytes) => {
-            let text = String::from_utf8(bytes.clone()).map_err(|_| {
-                refusal(
-                    "install::baseline-encoding",
-                    Some("UTF-8 TOML".to_owned()),
-                    Some(path.display().to_string()),
-                    "repair baseline.toml before installing",
-                )
-            })?;
-            toml::from_str::<toml::Value>(&text).map_err(|source| {
-                refusal(
-                    "install::baseline-invalid",
-                    Some("valid TOML".to_owned()),
-                    Some(source.to_string()),
-                    "repair baseline.toml before installing",
-                )
-            })?;
-            Ok(bytes)
-        }
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(BASELINE.to_vec()),
-        Err(source) => Err(io_fault("read baseline", &path, source)),
-    }
-}
-
-fn pre_commit(executable: &Path) -> String {
-    format!(
-        "#!/bin/sh\nset -eu\nexec {} gate\n",
-        shell_word(&executable.display().to_string())
-    )
-}
-
-fn systemd_unit(executable: &Path, root: &Path) -> String {
-    format!(
-        concat!(
-            "[Unit]\nDescription=Spice repository resident\n\n",
-            "[Service]\nType=simple\nExecStart={} up\nWorkingDirectory={}\n",
-            "Restart=on-failure\n\n[Install]\nWantedBy=default.target\n",
-        ),
-        systemd_word(&executable.display().to_string()),
-        systemd_word(&root.display().to_string()),
-    )
-}
-
-fn launchd_unit(executable: &Path, root: &Path, suffix: &str) -> String {
-    format!(
-        concat!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
-            "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" ",
-            "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n",
-            "<plist version=\"1.0\"><dict>\n",
-            "<key>Label</key><string>dev.spice.{}</string>\n",
-            "<key>ProgramArguments</key><array><string>{}</string><string>up</string></array>\n",
-            "<key>WorkingDirectory</key><string>{}</string>\n",
-            "<key>KeepAlive</key><true/>\n</dict></plist>\n",
-        ),
-        suffix,
-        xml(&executable.display().to_string()),
-        xml(&root.display().to_string()),
-    )
-}
-
-fn shell_word(text: &str) -> String {
-    format!("'{}'", text.replace('\'', "'\\''"))
-}
-
-fn systemd_word(text: &str) -> String {
-    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-fn xml(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
-#[derive(Clone, Debug)]
-struct ParsedHook {
-    value: Option<String>,
-    line: Option<usize>,
-    core_end: Option<usize>,
-}
-
-fn parse_hook(text: &str) -> Result<ParsedHook, Error> {
-    let mut section = String::new();
-    let mut value = None;
-    let mut line_index = None;
-    let mut core_end = None;
-    for (index, line) in text.split('\n').enumerate() {
-        let trimmed = line.trim();
-        if let Some(name) = section_name(trimmed) {
-            if section == "core" && core_end.is_none() {
-                core_end = Some(index);
-            }
-            section = name;
-            continue;
-        }
-        if section != "core" || trimmed.is_empty() || trimmed.starts_with(['#', ';']) {
-            continue;
-        }
-        let Some(found) = config_value(trimmed, "hookspath")? else {
-            continue;
-        };
-        if value.is_some() {
-            return Err(refusal(
-                "install::hook-setting-ambiguous",
-                Some("at most one core.hooksPath".to_owned()),
-                Some("multiple values".to_owned()),
-                "reduce core.hooksPath to one value before installing",
-            ));
-        }
-        value = Some(found);
-        line_index = Some(index);
-    }
-    if section == "core" && core_end.is_none() {
-        core_end = Some(text.split('\n').count());
-    }
-    Ok(ParsedHook {
-        value,
-        line: line_index,
-        core_end,
-    })
-}
-
-fn section_name(line: &str) -> Option<String> {
-    let body = line.strip_prefix('[')?.strip_suffix(']')?;
-    Some(body.split_whitespace().next()?.to_ascii_lowercase())
-}
-
-fn config_value(line: &str, expected: &str) -> Result<Option<String>, Error> {
-    let (key, raw) = match line.split_once('=') {
-        Some((key, raw)) => (key.trim(), raw.trim()),
-        None => {
-            let mut parts = line.splitn(2, char::is_whitespace);
-            (
-                parts.next().unwrap_or_default(),
-                parts.next().unwrap_or_default().trim(),
-            )
-        }
-    };
-    if !key.eq_ignore_ascii_case(expected) {
-        return Ok(None);
-    }
-    decode_config_value(raw).map(Some)
-}
-
-fn decode_config_value(raw: &str) -> Result<String, Error> {
-    if !raw.starts_with('"') {
-        return Ok(raw.to_owned());
-    }
-    if !raw.ends_with('"') || raw.len() < 2 {
-        return Err(config_shape_refusal(raw));
-    }
-    let mut decoded = String::new();
-    let mut escaped = false;
-    for character in raw[1..raw.len() - 1].chars() {
-        if escaped {
-            match character {
-                '\\' | '"' => decoded.push(character),
-                'n' => decoded.push('\n'),
-                't' => decoded.push('\t'),
-                'b' => decoded.push('\u{0008}'),
-                _ => return Err(config_shape_refusal(raw)),
-            }
-            escaped = false;
-        } else if character == '\\' {
-            escaped = true;
-        } else {
-            decoded.push(character);
-        }
-    }
-    if escaped {
-        return Err(config_shape_refusal(raw));
-    }
-    Ok(decoded)
-}
-
-fn set_hook(text: &str, value: Option<&str>) -> Result<String, Error> {
-    let parsed = parse_hook(text)?;
-    let mut lines = text.split('\n').map(str::to_owned).collect::<Vec<_>>();
-    let replacement = value.map(|value| format!("\thooksPath = {}", encode_config_value(value)));
-    match (parsed.line, replacement) {
-        (Some(index), Some(line)) => lines[index] = line,
-        (Some(index), None) => {
-            lines.remove(index);
-        }
-        (None, Some(line)) => insert_hook(&mut lines, parsed.core_end, line),
-        (None, None) => {}
-    }
-    Ok(lines.join("\n"))
-}
-
-fn insert_hook(lines: &mut Vec<String>, core_end: Option<usize>, line: String) {
-    match core_end {
-        Some(index) => lines.insert(index.min(lines.len()), line),
-        None => {
-            if lines.last().is_some_and(|line| !line.is_empty()) {
-                lines.push(String::new());
-            }
-            lines.push("[core]".to_owned());
-            lines.push(line);
-        }
-    }
-}
-
-fn encode_config_value(value: &str) -> String {
-    format!(
-        "\"{}\"",
-        value
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-            .replace('\t', "\\t")
-    )
-}
-
-fn snapshot_mode(snapshot: &Snapshot) -> Option<u32> {
-    match snapshot {
-        Snapshot::Absent => None,
-        Snapshot::File { mode, .. } => Some(*mode),
-    }
-}
-
-fn canonical_file(path: &Path, reason: &str) -> Result<PathBuf, Error> {
     let canonical =
-        fs::canonicalize(path).map_err(|source| io_fault("resolve executable", path, source))?;
-    let metadata = fs::metadata(&canonical)
-        .map_err(|source| io_fault("inspect executable", &canonical, source))?;
-    if !metadata.is_file() {
-        return Err(refusal(
-            reason,
-            Some("regular file".to_owned()),
-            Some(canonical.display().to_string()),
-            "run the installed Rust spice executable directly",
+        wire::encode(&record).map_err(|source| encode_fault("install record", source))?;
+    if canonical != bytes {
+        return Err(record_shape_refusal(
+            "install record bytes are not the one canonical encoding",
         ));
     }
-    Ok(canonical)
-}
-
-fn canonical_directory(path: &Path, reason: &str) -> Result<PathBuf, Error> {
-    let canonical =
-        fs::canonicalize(path).map_err(|source| io_fault("resolve home", path, source))?;
-    let metadata =
-        fs::metadata(&canonical).map_err(|source| io_fault("inspect home", &canonical, source))?;
-    if !metadata.is_dir() {
-        return Err(refusal(
-            reason,
-            Some("directory".to_owned()),
-            Some(canonical.display().to_string()),
-            "select an existing home directory",
-        ));
-    }
-    Ok(canonical)
-}
-
-fn record_path(repository: &Repository) -> PathBuf {
-    repository.common_dir().join(".spice/install")
-}
-
-fn repository_error(error: crate::repository::ResolveError) -> Error {
-    refusal(
-        "install::repository",
-        Some("one containing Git repository".to_owned()),
-        Some(error.to_string()),
-        "run spice install from inside the repository to configure",
-    )
-}
-
-fn drift_refusal(path: &Path) -> Error {
-    refusal(
-        "install::drift",
-        Some("the bytes and mode recorded at apply".to_owned()),
-        Some(path.display().to_string()),
-        "restore the installed bytes or reconcile the path before unapplying",
-    )
-}
-
-fn config_shape_refusal(observed: &str) -> Error {
-    refusal(
-        "install::git-config-shape",
-        Some("one ordinary core.hooksPath value".to_owned()),
-        Some(observed.to_owned()),
-        "normalize core.hooksPath before installing",
-    )
-}
-
-fn refusal(
-    reason: &str,
-    expected: Option<String>,
-    observed: Option<String>,
-    remedy: &str,
-) -> Error {
-    Error::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: None,
-        expected,
-        observed,
-        remedy: remedy.to_owned(),
-    })
-}
-
-fn fault(reason: &str, detail: impl Into<String>) -> Error {
-    Error::Fault(Fault {
-        class: FaultClass::Environment,
-        reason: reason.to_owned(),
-        detail: detail.into(),
-    })
-}
-
-fn io_fault(operation: &str, path: &Path, source: std::io::Error) -> Error {
-    fault(
-        "install::filesystem",
-        format!("{operation} at {}: {source}", path.display()),
-    )
-}
-
-fn encode_fault(subject: &str, source: impl fmt::Display) -> Error {
-    fault("install::encoding", format!("encode {subject}: {source}"))
-}
-
-#[cfg(unix)]
-fn file_mode(metadata: &fs::Metadata) -> u32 {
-    use std::os::unix::fs::PermissionsExt;
-
-    metadata.permissions().mode() & 0o777
-}
-
-#[cfg(not(unix))]
-fn file_mode(_metadata: &fs::Metadata) -> u32 {
-    DATA_MODE
-}
-
-#[cfg(unix)]
-fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    fs::set_permissions(path, fs::Permissions::from_mode(mode))
-}
-
-#[cfg(not(unix))]
-fn set_mode(_path: &Path, _mode: u32) -> std::io::Result<()> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn effective_mode(mode: u32) -> u32 {
-    mode
-}
-
-#[cfg(not(unix))]
-fn effective_mode(_mode: u32) -> u32 {
-    DATA_MODE
+    Ok(record)
 }

@@ -3,8 +3,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use spice::install::{Action, Change, HookValue, Observation, Plan};
-use wire::{Outcome, ReplyPosition};
+use serde::{Deserialize, Serialize};
+use spice::install::{
+    Action, Change, Generation, HookSelection, HookValue, Observation, Operation, Plan,
+};
+use wire::{Digest, Domain, Outcome, ReplyPosition};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -179,6 +182,169 @@ fn accepted_digest_binds_observed_modes_and_git_config_bytes() {
     assert_eq!(fixture.snapshot(), changed);
 }
 
+#[cfg(unix)]
+#[test]
+fn stable_parent_symlinks_are_bound_and_retargeted_parents_refuse() {
+    use std::os::unix::fs::symlink;
+
+    let stable = Fixture::main("stable-parent-symlink");
+    let stable_target = stable.home.join("local-target/bin");
+    fs::create_dir_all(&stable_target).expect("create stable symlink target");
+    symlink("local-target", stable.home.join(".local")).expect("link stable install parent");
+    let preview = reply(&stable.invoke(&["--json", "install"]).stdout);
+    assert_eq!(preview.operations[0].path, stable_target.join("spice-rust"));
+    assert_eq!(
+        stable
+            .invoke(&["--json", "install", &format!("--apply={}", preview.digest)])
+            .status
+            .code(),
+        Some(0),
+    );
+    let installed = stable_target.join("spice-rust").display().to_string();
+    let hook = fs::read_to_string(stable.common.join(".spice/hooks/pre-commit"))
+        .expect("read installed hook");
+    let systemd = only_file_text(&stable.home.join(".config/systemd/user"));
+    let launchd = only_file_text(&stable.home.join("Library/LaunchAgents"));
+    for generated in [hook, systemd, launchd] {
+        assert!(generated.contains(&installed));
+    }
+    assert_eq!(
+        stable
+            .invoke(&["--json", "install", "--unapply"])
+            .status
+            .code(),
+        Some(0),
+    );
+    stable.assert_unapplied();
+
+    let swapped = Fixture::main("swapped-parent-symlink");
+    fs::create_dir_all(swapped.home.join("targets/first/bin")).expect("create first target");
+    fs::create_dir_all(swapped.home.join("targets/second/bin")).expect("create second target");
+    symlink("targets/first", swapped.home.join(".local")).expect("link first target");
+    let preview = reply(&swapped.invoke(&["--json", "install"]).stdout);
+    fs::remove_file(swapped.home.join(".local")).expect("remove first link");
+    symlink("targets/second", swapped.home.join(".local")).expect("link second target");
+    let before = swapped.snapshot();
+    let refused = swapped.invoke(&["--json", "install", &format!("--apply={}", preview.digest)]);
+    assert_eq!(refused.status.code(), Some(2));
+    assert_eq!(refusal_reason(&refused.stderr), "install::plan-changed");
+    assert_eq!(swapped.snapshot(), before);
+    assert!(!swapped.home.join("targets/second/bin/spice-rust").exists());
+
+    let escaped = Fixture::main("escaped-parent-symlink");
+    let outside = escaped.scratch.path().join("outside-home/bin");
+    fs::create_dir_all(&outside).expect("create escaped target");
+    symlink(
+        outside.parent().expect("outside target has a parent"),
+        escaped.home.join(".local"),
+    )
+    .expect("link escaped install parent");
+    let before = escaped.snapshot();
+    let refused = escaped.invoke(&["--json", "install"]);
+    assert_eq!(refused.status.code(), Some(2));
+    assert_eq!(refusal_reason(&refused.stderr), "install::destination-root");
+    assert_eq!(escaped.snapshot(), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn new_replaced_parents_and_same_byte_file_generations_invalidate_the_plan() {
+    let created = Fixture::main("created-parent");
+    let preview = reply(&created.invoke(&["--json", "install"]).stdout);
+    fs::create_dir_all(created.home.join(".local/bin")).expect("create previewed parent");
+    assert_stale_plan_is_inert(&created, &preview);
+
+    let replaced = Fixture::main("replaced-parent");
+    fs::create_dir_all(replaced.home.join(".local/bin")).expect("create original parent");
+    let preview = reply(&replaced.invoke(&["--json", "install"]).stdout);
+    fs::rename(
+        replaced.home.join(".local"),
+        replaced.home.join("retired-local"),
+    )
+    .expect("retire original parent");
+    fs::create_dir_all(replaced.home.join(".local/bin")).expect("replace parent generation");
+    assert_stale_plan_is_inert(&replaced, &preview);
+
+    let replaced_file = Fixture::main("replaced-file-generation");
+    let preview = reply(&replaced_file.invoke(&["--json", "install"]).stdout);
+    let policy = replaced_file.root.join("spice.toml");
+    let replacement = replaced_file.root.join("replacement-policy");
+    fs::write(&replacement, fs::read(&policy).expect("read policy")).expect("stage same bytes");
+    fs::rename(&replacement, &policy).expect("replace policy generation");
+    assert_stale_plan_is_inert(&replaced_file, &preview);
+}
+
+#[test]
+fn copied_corrupt_and_noncanonical_records_refuse_without_mutation() {
+    let source = applied_fixture("record-source");
+    let target = applied_fixture("record-target");
+    fs::copy(source.record(), target.record()).expect("copy foreign record");
+    assert_record_failure_is_inert(&target, "install::record-shape");
+
+    let noncanonical = applied_fixture("record-noncanonical");
+    let mut bytes = fs::read(noncanonical.record()).expect("read canonical record");
+    bytes.push(b'\n');
+    fs::write(noncanonical.record(), bytes).expect("write noncanonical record");
+    assert_record_failure_is_inert(&noncanonical, "install::record-shape");
+
+    let corrupt = applied_fixture("record-corrupt");
+    fs::write(corrupt.record(), b"{not-json").expect("write corrupt record");
+    assert_record_failure_is_inert(&corrupt, "install::record-invalid");
+
+    let old_version = applied_fixture("record-old-version");
+    let mut record = read_record(&old_version);
+    record.version -= 1;
+    write_record(&old_version, &record);
+    assert_record_failure_is_inert(&old_version, "install::record-version");
+}
+
+#[test]
+fn resigned_out_of_root_reordered_and_prior_tampered_records_refuse() {
+    let out_of_root = applied_fixture("record-out-of-root");
+    let mut record = read_record(&out_of_root);
+    let original = record.operations[0].path.clone();
+    let outside = out_of_root.scratch.path().join("outside-target");
+    record.operations[0].path = outside.clone();
+    record
+        .writes
+        .iter_mut()
+        .find(|write| write.path == original)
+        .expect("first write")
+        .path = outside;
+    resign(&mut record);
+    write_record(&out_of_root, &record);
+    assert_record_failure_is_inert(&out_of_root, "install::record-shape");
+
+    let reordered = applied_fixture("record-reordered");
+    let mut record = read_record(&reordered);
+    record.operations.swap(0, 1);
+    record.writes.swap(0, 1);
+    resign(&mut record);
+    write_record(&reordered, &record);
+    assert_record_failure_is_inert(&reordered, "install::record-shape");
+
+    let duplicated = applied_fixture("record-duplicated");
+    let mut record = read_record(&duplicated);
+    record.operations[1] = record.operations[0].clone();
+    record.writes[1] = record.writes[0].clone();
+    resign(&mut record);
+    write_record(&duplicated, &record);
+    assert_record_failure_is_inert(&duplicated, "install::record-shape");
+
+    let tampered = applied_fixture("record-prior-tampered");
+    let mut record = read_record(&tampered);
+    record.writes.swap(0, 4);
+    resign(&mut record);
+    write_record(&tampered, &record);
+    assert_record_failure_is_inert(&tampered, "install::record-shape");
+
+    let mismatched = applied_fixture("record-plan-mismatch");
+    let mut record = read_record(&mismatched);
+    record.plan = Digest::compute(Domain::InstallPlan, b"mismatched plan");
+    write_record(&mismatched, &record);
+    assert_record_failure_is_inert(&mismatched, "install::record-shape");
+}
+
 #[test]
 fn linked_worktree_uses_the_shared_git_state_and_text_matches_json() {
     let fixture = Fixture::linked("linked");
@@ -274,6 +440,114 @@ fn refusal_reason(bytes: &[u8]) -> String {
     refusal.reason
 }
 
+fn failure_reason(bytes: &[u8]) -> String {
+    let outcome: Outcome<Plan> = wire::decode(bytes).expect("typed install failure");
+    match outcome {
+        Outcome::Refusal(refusal) => refusal.reason,
+        Outcome::Fault(fault) => fault.reason,
+        other => panic!("install must fail: {other:?}"),
+    }
+}
+
+fn assert_stale_plan_is_inert(fixture: &Fixture, preview: &Plan) {
+    let before = fixture.snapshot();
+    let stale = fixture.invoke(&["--json", "install", &format!("--apply={}", preview.digest)]);
+    assert_eq!(stale.status.code(), Some(2));
+    assert_eq!(refusal_reason(&stale.stderr), "install::plan-changed");
+    assert_eq!(fixture.snapshot(), before);
+    assert!(!fixture.home.join(".local/bin/spice-rust").exists());
+}
+
+fn applied_fixture(name: &str) -> Fixture {
+    let fixture = Fixture::main(name);
+    let preview = reply(&fixture.invoke(&["--json", "install"]).stdout);
+    let applied = fixture.invoke(&["--json", "install", &format!("--apply={}", preview.digest)]);
+    assert_eq!(applied.status.code(), Some(0));
+    fixture
+}
+
+fn assert_record_failure_is_inert(fixture: &Fixture, expected: &str) {
+    let before = fixture.snapshot();
+    let failed = fixture.invoke(&["--json", "install", "--unapply"]);
+    assert_ne!(failed.status.code(), Some(0));
+    assert_eq!(failure_reason(&failed.stderr), expected);
+    assert_eq!(fixture.snapshot(), before);
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct StoredRecord {
+    version: u16,
+    repository: PathBuf,
+    home: PathBuf,
+    plan: Digest,
+    operations: Vec<Operation>,
+    selection: HookSelection,
+    hook: StoredHook,
+    writes: Vec<StoredWrite>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct StoredHook {
+    config: PathBuf,
+    previous: Option<String>,
+    selected: String,
+    prior: StoredSnapshot,
+    installed: Digest,
+    mode: u32,
+    changed: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct StoredWrite {
+    path: PathBuf,
+    prior: StoredSnapshot,
+    installed: Digest,
+    mode: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+enum StoredSnapshot {
+    Absent,
+    File {
+        bytes: Vec<u8>,
+        mode: u32,
+        generation: Generation,
+    },
+}
+
+#[derive(Serialize)]
+struct StoredPlanIdentity<'a> {
+    version: u16,
+    repository: &'a Path,
+    operations: &'a [Operation],
+    hook: &'a HookSelection,
+}
+
+fn read_record(fixture: &Fixture) -> StoredRecord {
+    let bytes = fs::read(fixture.record()).expect("read install record");
+    wire::decode(&bytes).expect("decode install record")
+}
+
+fn write_record(fixture: &Fixture, record: &StoredRecord) {
+    let bytes = wire::encode(record).expect("encode install record");
+    fs::write(fixture.record(), bytes).expect("write install record");
+}
+
+fn resign(record: &mut StoredRecord) {
+    let identity = StoredPlanIdentity {
+        version: record.version,
+        repository: &record.repository,
+        operations: &record.operations,
+        hook: &record.selection,
+    };
+    let bytes = wire::encode(&identity).expect("encode recorded plan identity");
+    record.plan = Digest::compute(Domain::InstallPlan, &bytes);
+}
+
 struct Fixture {
     scratch: Scratch,
     root: PathBuf,
@@ -315,7 +589,13 @@ impl Fixture {
         fs::create_dir_all(home.join("bin")).expect("create fixture home");
         let home = fs::canonicalize(home).expect("canonical fixture home");
         fs::create_dir_all(root.join(".agents/skills/spice")).expect("create skill parent");
-        let prior_policy = b"[lane]\nvendor = \"codex\"\n\n[taste.polling]\nwords = [\"wait*\"]\nmessage = \"Wait for evidence.\"\n".to_vec();
+        let prior_policy = concat!(
+            "[lane]\nvendor = \"codex\"\n\n",
+            "[taste.polling]\nwords = [\"wait*\"]\n",
+            "message = \"Wait for evidence.\"\n",
+        )
+        .as_bytes()
+        .to_vec();
         let prior_baseline = b"version = 9\n".to_vec();
         let prior_skill = b"python harness skill\n".to_vec();
         let prior_entrypoint = b"python harness entrypoint\n".to_vec();
