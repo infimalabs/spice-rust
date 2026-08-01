@@ -104,7 +104,25 @@ pub enum CommandKind {
 #[error("not a command in the closed registry: {0:?}")]
 pub struct CommandKindError(String);
 
-/// The witness law one command carries.
+/// The capability a connection must carry to submit one command.
+///
+/// identity-law: non-crossing - registry metadata held in static process memory.
+///
+/// This is law rather than witness. A witness proves a fact about the board
+/// and travels in the command's `expected` list; authority proves who is
+/// asking, and the resident derives it from the authenticated capability that
+/// opened the session. Nothing here is serializable for that reason: a client
+/// that could author its own authority would be answering the question the
+/// capability exists to answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Authority {
+    /// Any authenticated connection may submit, operator or lane alike.
+    Connected,
+    /// Only an operator connection may submit.
+    Operator,
+}
+
+/// The law one command carries.
 ///
 /// identity-law: non-crossing - registry metadata held in static process memory.
 ///
@@ -113,12 +131,19 @@ pub struct CommandKindError(String);
 /// the review path, a budget predicate when a rule spends one. Anything
 /// outside the union is refused, because a command witnesses only the
 /// subjects it relies on.
+///
+/// `authority` states the same row's capability requirement. It sits here
+/// rather than beside a reader because a row that named its witnesses and left
+/// its authority to prose would be restated by everyone who consumed it, and
+/// restatements drift.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Law {
     /// Predicates every instance of this command must prove.
     pub required: &'static [WitnessKind],
     /// Predicates this command admits but does not always require.
     pub optional: &'static [WitnessKind],
+    /// The capability a connection must carry to submit this command.
+    pub authority: Authority,
 }
 
 impl Law {
@@ -141,28 +166,33 @@ impl Law {
     pub const ADD: Self = Self {
         required: &[WitnessKind::Absence],
         optional: &[WitnessKind::Workflow],
+        authority: Authority::Connected,
     };
     /// Exact task statement head.
     pub const EDIT: Self = Self {
         required: &[WitnessKind::Task],
         optional: &[],
+        authority: Authority::Connected,
     };
     /// Task identity; no statement revision witness, because notes append
     /// rather than replace.
     pub const NOTE: Self = Self {
         required: &[WitnessKind::Existence],
         optional: &[],
+        authority: Authority::Connected,
     };
     /// Exact workflow head and current defer disposition.
     pub const DEFER: Self = Self {
         required: &[WitnessKind::Workflow, WitnessKind::Deferral],
         optional: &[],
+        authority: Authority::Connected,
     };
     /// Exact task statement and workflow heads of both tasks and the absence
     /// of the edge; no board barrier.
     pub const DEPENDS: Self = Self {
         required: &[WitnessKind::Task, WitnessKind::Workflow, WitnessKind::Edge],
         optional: &[],
+        authority: Authority::Connected,
     };
     /// Exact task statement and workflow heads, winning claim head, live
     /// lease, assignment or review witness where required, bound lane and
@@ -176,6 +206,7 @@ impl Law {
             WitnessKind::Residency,
         ],
         optional: &[WitnessKind::Assignment],
+        authority: Authority::Connected,
     };
     /// The review path is the one that always carries the assignment.
     pub const REVIEW: Self = Self {
@@ -188,6 +219,7 @@ impl Law {
             WitnessKind::Assignment,
         ],
         optional: &[],
+        authority: Authority::Connected,
     };
     /// Exact workflow and claim heads plus the anti-self-review witness.
     pub const ASSIGN: Self = Self {
@@ -197,6 +229,7 @@ impl Law {
             WitnessKind::Assignment,
         ],
         optional: &[],
+        authority: Authority::Connected,
     };
     /// Exact task statement and workflow heads, current claim head,
     /// eligibility rule, lane occupancy, and resident epoch.
@@ -209,6 +242,7 @@ impl Law {
             WitnessKind::Residency,
         ],
         optional: &[],
+        authority: Authority::Connected,
     };
     /// Exact claim head, lease head, bound lane and occupant, and resident
     /// epoch.
@@ -219,72 +253,109 @@ impl Law {
             WitnessKind::Residency,
         ],
         optional: &[],
+        authority: Authority::Connected,
     };
     /// Exact normalized preview digest and one named board barrier containing
     /// the task and workflow heads the preview read.
     pub const APPLY: Self = Self {
         required: &[WitnessKind::Preview, WitnessKind::Barrier],
         optional: &[],
+        authority: Authority::Connected,
     };
     /// A new directive names the lane it lands on; there is no prior
     /// disposition to re-prove.
     pub const SEND: Self = Self {
         required: &[WitnessKind::Residency],
         optional: &[],
+        authority: Authority::Connected,
     };
     /// Exact directive disposition; resend also names the preceding directive
     /// in its lineage.
     pub const RESEND: Self = Self {
         required: &[WitnessKind::Directive, WitnessKind::Lineage],
         optional: &[],
+        authority: Authority::Connected,
     };
-    /// Exact directive disposition. Cancel additionally requires operator
-    /// capability, which the connection carries rather than the witness list.
+    /// Exact directive disposition.
     pub const DISPOSE: Self = Self {
         required: &[WitnessKind::Directive],
         optional: &[],
+        authority: Authority::Connected,
+    };
+    /// Exact directive disposition, withdrawn as operator intent.
+    ///
+    /// Cancel witnesses exactly what dispose witnesses and answers to a
+    /// different capability, so it is its own row. Sharing one with dispose
+    /// would leave the authority unsayable here and restated elsewhere.
+    pub const CANCEL: Self = Self {
+        required: &[WitnessKind::Directive],
+        optional: &[],
+        authority: Authority::Operator,
     };
     /// Exact request disposition, named rule, and budget predicate when a rule
-    /// spends or renews a budget. The `consent::decide` command additionally
-    /// requires operator capability.
+    /// spends or renews a budget, decided as the operator.
+    ///
+    /// WIRE.md's registry row states the predicates without naming a
+    /// capability. Consent is the operator's answer to a request raised on
+    /// their behalf, and a lane deciding its own request would be granting
+    /// itself the consent it was asked to wait for.
     pub const DECIDE: Self = Self {
         required: &[WitnessKind::Consent, WitnessKind::Rule],
         optional: &[WitnessKind::Budget],
+        authority: Authority::Operator,
     };
-    /// Exact executable digest and its current trust state. Grant and revoke
-    /// additionally require operator capability.
+    /// Exact executable digest and its current trust state.
+    ///
+    /// Pending quarantines a digest, which is a report that a surface changed
+    /// rather than a judgment about it.
+    pub const PEND: Self = Self {
+        required: &[WitnessKind::Trust],
+        optional: &[],
+        authority: Authority::Connected,
+    };
+    /// Exact executable digest and its current trust state, judged as the
+    /// operator.
+    ///
+    /// Granting and revoking are the judgment pending asks for, so they carry
+    /// the capability that can give it.
     pub const TRUST: Self = Self {
         required: &[WitnessKind::Trust],
         optional: &[],
+        authority: Authority::Operator,
     };
     /// Exact residency head, lane and occupant identities when present, and
     /// resident epoch.
     pub const LANE: Self = Self {
         required: &[WitnessKind::Residency],
         optional: &[],
+        authority: Authority::Connected,
     };
     /// Exact bag, evidence locus, and tracked taste configuration digest.
     pub const TASTE: Self = Self {
         required: &[WitnessKind::Taste],
         optional: &[],
+        authority: Authority::Connected,
     };
     /// Exact observation key and the current head that makes recognition
     /// idempotent.
     pub const RECOGNIZE: Self = Self {
         required: &[WitnessKind::Observation],
         optional: &[],
+        authority: Authority::Connected,
     };
     /// Publication also witnesses the sealed proof and canonical manifest
     /// digest.
     pub const PUBLISH: Self = Self {
         required: &[WitnessKind::Observation, WitnessKind::Sealed],
         optional: &[],
+        authority: Authority::Connected,
     };
     /// Exact residency head, current epoch, and the deadline or completion
     /// predicate admitting the requested edge.
     pub const UP: Self = Self {
         required: &[WitnessKind::Residency, WitnessKind::Transition],
         optional: &[],
+        authority: Authority::Connected,
     };
 }
 
@@ -413,9 +484,11 @@ impl CommandKind {
             Self::DocApply => Law::APPLY,
             Self::SteerSend => Law::SEND,
             Self::SteerResend => Law::RESEND,
-            Self::SteerDispose | Self::SteerCancel => Law::DISPOSE,
+            Self::SteerDispose => Law::DISPOSE,
+            Self::SteerCancel => Law::CANCEL,
             Self::ConsentDecide => Law::DECIDE,
-            Self::TrustPend | Self::TrustGrant | Self::TrustRevoke => Law::TRUST,
+            Self::TrustPend => Law::PEND,
+            Self::TrustGrant | Self::TrustRevoke => Law::TRUST,
             Self::LaneSeat | Self::LaneState => Law::LANE,
             Self::TasteRecord => Law::TASTE,
             Self::CanaryRecognize

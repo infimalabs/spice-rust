@@ -55,7 +55,7 @@ pub mod packed;
 pub mod reply;
 pub mod witness;
 
-pub use command::{Command, CommandKind, CommandKindError, Law, LawError};
+pub use command::{Authority, Command, CommandKind, CommandKindError, Law, LawError};
 pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVersion};
 pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{
