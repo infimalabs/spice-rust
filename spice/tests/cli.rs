@@ -1,9 +1,63 @@
-use std::process::Command;
+use std::fs;
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
+use std::time::Duration;
 
+use listen::{Mode, Observation, StreamOutcome};
+use tape::Tape;
 use wire::Outcome;
 
 /// The exit a refused request carries, in either form.
 const REFUSAL_EXIT: i32 = 2;
+
+const CODEX_PROSE: &[u8] =
+    br#"{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"working"}}"#;
+
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new(label: &str) -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "spice-cli-{label}-{}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).expect("scratch root is exclusively created");
+        Self(root)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+
+    fn remove(self) {
+        fs::remove_dir_all(&self.0).expect("scratch root is explicitly removed");
+        assert!(!self.0.exists(), "scratch root outlived removal");
+        std::mem::forget(self);
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn record(bytes: &[u8]) -> Vec<u8> {
+    let mut record = bytes.to_vec();
+    record.push(b'\n');
+    record
+}
+
+fn session(root: &Path) -> (PathBuf, Tape) {
+    let path = root.join("lane-a/codex");
+    let tape = Tape::open(&path).expect("fixture tape opens");
+    (path, tape)
+}
 
 /// One invocation, as the process boundary reports it.
 struct Spoken {
@@ -26,6 +80,157 @@ fn invoke(argv: &[&str]) -> Spoken {
 
 fn utf8(bytes: Vec<u8>) -> String {
     String::from_utf8(bytes).expect("spice speaks UTF-8")
+}
+
+#[test]
+fn landed_transcript_leaves_share_typed_text_json_and_success_exit() {
+    let scratch = Scratch::new("transcript-leaves");
+    let (path, tape) = session(scratch.path());
+    tape.tee(&record(CODEX_PROSE))
+        .expect("fixture record is durable");
+    let root = scratch.path().to_string_lossy().into_owned();
+    let session = path.to_string_lossy().into_owned();
+
+    let text = invoke(&["watch", &root, "--once"]);
+    assert_eq!(text.code, Some(0));
+    assert!(text.err.is_empty());
+    let text = utf8(text.out);
+    assert!(text.contains("event lane=lane-a dialect=codex"));
+    assert!(text.contains("kind=prose"));
+    assert!(
+        text.contains("working"),
+        "text renders the typed event payload"
+    );
+    assert!(!text.contains("\n\n"), "records have no blank separators");
+
+    let json = invoke(&["--json", "watch", &root, "--once"]);
+    assert_eq!(json.code, Some(0));
+    assert!(json.err.is_empty());
+    assert_eq!(json.out.iter().filter(|byte| **byte == b'\n').count(), 1);
+    let watched: StreamOutcome = wire::decode(&json.out).expect("watch emits its typed DTO");
+    assert_eq!(watched.mode, Mode::Watch);
+    assert!(watched.observations.iter().any(
+        |observation| matches!(observation, Observation::Event { kind, .. } if kind == "prose")
+    ));
+
+    let retro = invoke(&["--json", "retro", &session]);
+    assert_eq!(retro.code, Some(0));
+    assert!(retro.err.is_empty());
+    let replayed: StreamOutcome = wire::decode(&retro.out).expect("retro emits its typed DTO");
+    assert_eq!(replayed.mode, Mode::Retro);
+    assert!(replayed.observations.iter().any(
+        |observation| matches!(observation, Observation::Event { kind, .. } if kind == "prose")
+    ));
+
+    let missing = scratch.path().join("missing/codex");
+    let missing = missing.to_string_lossy().into_owned();
+    let missing = invoke(&["--json", "retro", &missing]);
+    assert_eq!(missing.code, Some(0));
+    let accounted: StreamOutcome =
+        wire::decode(&missing.out).expect("a missing path remains a typed observation");
+    assert!(matches!(
+        accounted.observations.as_slice(),
+        [Observation::Missing { .. }]
+    ));
+
+    scratch.remove();
+}
+
+#[test]
+fn malformed_locus_is_a_typed_refusal_without_selector_fallthrough() {
+    let spoken = invoke(&["--json", "retro", "one:two:three"]);
+
+    assert_eq!(spoken.code, Some(REFUSAL_EXIT));
+    assert!(spoken.out.is_empty());
+    let decoded: Outcome<()> = wire::decode(&spoken.err).expect("refusal is a wire DTO");
+    let Outcome::Refusal(refusal) = decoded else {
+        panic!("malformed selector must refuse: {decoded:?}");
+    };
+    assert_eq!(refusal.reason, "retro::selector");
+    assert_eq!(refusal.observed.as_deref(), Some("one:two:three"));
+}
+
+#[test]
+fn watch_follows_a_real_filesystem_notification_then_reconciles_tape() {
+    let scratch = Scratch::new("watch-notification");
+    let (_, tape) = session(scratch.path());
+    let root = scratch.path().to_string_lossy().into_owned();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_spice"))
+        .args(["--json", "watch", &root])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("watch launches");
+    let stdout = child.stdout.take().expect("stdout is piped");
+    let (sender, receiver) = mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            if sender.send(line.expect("watch speaks UTF-8")).is_err() {
+                break;
+            }
+        }
+    });
+
+    let first = receiver
+        .recv_timeout(Duration::from_secs(10))
+        .expect("armed watch emits its initial cursor state");
+    let initial: StreamOutcome = wire::decode(first.as_bytes()).expect("initial DTO decodes");
+    assert!(matches!(
+        initial.observations.as_slice(),
+        [Observation::Absent { .. }]
+    ));
+
+    tape.tee(&record(CODEX_PROSE))
+        .expect("a record arrives after the watcher is armed");
+    let observed = loop {
+        let line = receiver
+            .recv_timeout(Duration::from_secs(10))
+            .expect("filesystem activity wakes the blocking watcher");
+        let outcome: StreamOutcome = wire::decode(line.as_bytes()).expect("wake DTO decodes");
+        if outcome
+            .observations
+            .iter()
+            .any(|observation| matches!(observation, Observation::Event { .. }))
+        {
+            break outcome;
+        }
+    };
+    assert_eq!(observed.mode, Mode::Watch);
+
+    child.kill().expect("fixture follower stops");
+    let status = child.wait().expect("fixture follower is reaped");
+    assert!(
+        !status.success(),
+        "the endless follower was explicitly stopped"
+    );
+    drop(receiver);
+    reader.join().expect("stdout reader joins");
+    scratch.remove();
+}
+
+#[cfg(unix)]
+#[test]
+fn watch_accounts_for_a_selected_symlink_without_following_it() {
+    use std::os::unix::fs::symlink;
+
+    let scratch = Scratch::new("watch-symlink");
+    let (session, tape) = session(scratch.path());
+    tape.tee(&record(CODEX_PROSE))
+        .expect("real fixture record is durable");
+    let alias = scratch.path().join("alias");
+    symlink(&session, &alias).expect("fixture symlink exists");
+    let alias = alias.to_string_lossy().into_owned();
+
+    let spoken = invoke(&["--json", "watch", &alias]);
+    assert_eq!(spoken.code, Some(0), "a symlink is finite, not followed");
+    assert!(spoken.err.is_empty());
+    let outcome: StreamOutcome = wire::decode(&spoken.out).expect("absence DTO decodes");
+    assert!(matches!(
+        outcome.observations.as_slice(),
+        [Observation::Absent { .. }]
+    ));
+
+    scratch.remove();
 }
 
 #[test]
