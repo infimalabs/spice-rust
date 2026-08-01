@@ -108,7 +108,7 @@ NOTE: the Retired table is generated INTO a gate deny-list [J78].
    watch · retro · doctor · version [J46] · install
    [--apply=<digest>|--unapply] · lock · lock run [J39] · restore
    verify [J35] · gate [--at REV] [J45] · gate camp · gate kill ·
-   gate receipt · proof · proof replay · release notes.
+   gate receipt · proof · proof replay · release notes INPUT.
 3. Resident band [POP]:
    up [J51] · down [J44 states named] · board [FAMILY] [J41] ·
    board graph VIEW / board handout OUTPUT [J41] ·
