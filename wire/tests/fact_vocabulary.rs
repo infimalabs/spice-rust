@@ -239,6 +239,12 @@ fn every_fact_kind_carries_an_explicit_spelling() {
     // name, so `CommitLanded` would cross as "CommitLanded" and pass any test
     // that only checks a round trip. The spelling law has to be asserted where
     // it is declared, not inferred from whatever serde happens to emit.
+    //
+    // The macro grammar forecloses that today — a row is `Variant = "spelling"
+    // by Producer;` and dropping the spelling fails expansion rather than this
+    // assertion. Two live drifts still land here: a grammar loosened to make
+    // the spelling optional, and a parser that accepts a row it cannot read a
+    // spelling out of.
     let unspelled: Vec<String> = declared_kinds()
         .into_iter()
         .filter(|kind| kind.spelling.is_none())
@@ -416,9 +422,12 @@ fn every_pinned_spelling_still_decodes_to_its_kind() {
 
 #[test]
 fn the_pinned_table_and_the_declaring_source_name_the_same_kinds() {
-    // Neither list may move alone. This also hardens the parser above: a change
-    // to the vocabulary macro that made it read most rows instead of all of
-    // them would clear its own length guard and be caught only here.
+    // Neither list may move alone. This also hardens the parser above, whose
+    // own guard only asserts that it read more than one row. A parser that
+    // silently stopped reading part of the table would clear that guard, and
+    // this names every row it stopped seeing. The plane check catches such a
+    // drift only when the lost rows empty a whole plane, so a few rows dropped
+    // from the middle of one are visible here and nowhere else.
     let declared = rows(
         declared_kinds()
             .into_iter()
