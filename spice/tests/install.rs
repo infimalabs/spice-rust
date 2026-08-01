@@ -3,11 +3,12 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use spice::install::{InstallStatus, apply, plan, unapply};
+use spice::install::{InstallPlan, InstallReceipt, InstallStatus, apply, plan, unapply};
 use spice::repository::Repository;
+use wire::{Outcome, ReplyPosition};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 const MAX_COMPACT_RECORD_BYTES: u64 = 64 * 1024;
@@ -53,6 +54,110 @@ fn installed_rust_binary_coexists_with_the_python_entrypoint() {
     );
     assert!(!installed.exists());
     assert_eq!(run(&python, &[]), b"python-spice\n");
+}
+
+#[test]
+fn cli_preview_apply_and_unapply_are_typed_idempotent_and_python_first() {
+    let scratch = Scratch::new();
+    let python = scratch.executable(
+        "bin/spice",
+        b"#!/usr/bin/env python3\nprint('python-spice')\n",
+    );
+    let hook = scratch.executable(
+        ".spice/hooks/pre-commit",
+        b"#!/bin/sh\nexec spice dev pre-commit \"$@\"\n",
+    );
+    let git_config = scratch.join(".git/config");
+    fs::write(&git_config, b"[core]\n\thooksPath = .spice/hooks\n").unwrap();
+    let python_before = image(&python);
+    let hook_before = image(&hook);
+    let config_before = image(&git_config);
+
+    let invalid = invoke(
+        scratch.path(),
+        &["--json", "install", "--apply=not-a-digest"],
+    );
+    assert_eq!(invalid.status.code(), Some(2));
+    let invalid: Outcome<InstallReceipt> = wire::decode(&invalid.stderr).unwrap();
+    let Outcome::Refusal(refusal) = invalid else {
+        panic!("invalid install digest must refuse");
+    };
+    assert_eq!(refusal.reason, "install::digest-refused");
+    assert!(!scratch.join(".spice/rust").exists());
+
+    let text_plan = invoke(scratch.path(), &["install"]);
+    let json_plan = invoke(scratch.path(), &["--json", "install"]);
+    assert!(text_plan.status.success());
+    assert!(json_plan.status.success());
+    let text_plan: InstallPlan = wire::decode(&text_plan.stdout).unwrap();
+    let json_plan: Outcome<InstallPlan> = wire::decode(&json_plan.stdout).unwrap();
+    let Outcome::Reply(json_plan) = json_plan else {
+        panic!("JSON install preview must reply");
+    };
+    assert_eq!(json_plan.position, ReplyPosition::Direct {});
+    assert_eq!(json_plan.body, text_plan);
+    assert!(!scratch.join(".spice/rust").exists());
+
+    let apply_argument = format!("--apply={}", text_plan.digest().unwrap());
+    let text_apply = invoke(scratch.path(), &["install", &apply_argument]);
+    let json_apply = invoke(scratch.path(), &["--json", "install", &apply_argument]);
+    let text_apply: InstallReceipt = successful_body(text_apply);
+    let json_apply: InstallReceipt = successful_reply(json_apply);
+    assert_eq!(text_apply, json_apply);
+    assert_eq!(text_apply.status(), InstallStatus::Complete);
+
+    let text_unapply: InstallReceipt =
+        successful_body(invoke(scratch.path(), &["install", "--unapply"]));
+    let json_unapply: InstallReceipt =
+        successful_reply(invoke(scratch.path(), &["--json", "install", "--unapply"]));
+    assert_eq!(text_unapply, json_unapply);
+    assert_eq!(text_unapply.status(), InstallStatus::Uninstalled);
+
+    assert_eq!(image(&python), python_before);
+    assert_eq!(image(&hook), hook_before);
+    assert_eq!(image(&git_config), config_before);
+    assert_eq!(run(&python, &[]), b"python-spice\n");
+}
+
+fn invoke(repository: &Path, arguments: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_spice"))
+        .args(arguments)
+        .current_dir(repository)
+        .env_remove(steer::hook::INBOX)
+        .output()
+        .unwrap()
+}
+
+fn successful_body<T: serde::de::DeserializeOwned>(output: Output) -> T {
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    wire::decode(&output.stdout).unwrap()
+}
+
+fn successful_reply<T: serde::de::DeserializeOwned>(output: Output) -> T {
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let outcome: Outcome<T> = wire::decode(&output.stdout).unwrap();
+    let Outcome::Reply(reply) = outcome else {
+        panic!("JSON install command must reply");
+    };
+    assert_eq!(reply.position, ReplyPosition::Direct {});
+    reply.body
+}
+
+fn image(path: &Path) -> (Vec<u8>, u32) {
+    (
+        fs::read(path).unwrap(),
+        fs::metadata(path).unwrap().permissions().mode(),
+    )
 }
 
 fn run(path: &Path, arguments: &[&str]) -> Vec<u8> {

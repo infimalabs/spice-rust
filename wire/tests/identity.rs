@@ -75,20 +75,21 @@ const fn position(domain: Domain) -> usize {
         Domain::DistSourceCommit => 10,
         Domain::DistReleaseManifest => 11,
         Domain::DistReleaseNotes => 12,
-        Domain::ProofBattery => 13,
-        Domain::ProofReplayV2 => 14,
-        Domain::ProofReceiptV2 => 15,
-        Domain::ProofNativeRunner => 16,
-        Domain::GateFile => 17,
-        Domain::GateTree => 18,
-        Domain::GateSet => 19,
-        Domain::GatePolicy => 20,
-        Domain::GateBounds => 21,
-        Domain::GateBaseline => 22,
-        Domain::GateTool => 23,
-        Domain::GateInventory => 24,
-        Domain::GateMeasurement => 25,
-        Domain::GateReceipt => 26,
+        Domain::DistReleasePlan => 13,
+        Domain::ProofBattery => 14,
+        Domain::ProofReplayV2 => 15,
+        Domain::ProofReceiptV2 => 16,
+        Domain::ProofNativeRunner => 17,
+        Domain::GateFile => 18,
+        Domain::GateTree => 19,
+        Domain::GateSet => 20,
+        Domain::GatePolicy => 21,
+        Domain::GateBounds => 22,
+        Domain::GateBaseline => 23,
+        Domain::GateTool => 24,
+        Domain::GateInventory => 25,
+        Domain::GateMeasurement => 26,
+        Domain::GateReceipt => 27,
     }
 }
 
@@ -104,7 +105,7 @@ fn the_sweep_names_every_domain_exactly_once() {
 }
 
 /// Every domain, so a new class cannot be added without being swept here.
-const DOMAINS: [Domain; 27] = [
+const DOMAINS: [Domain; 28] = [
     Domain::BoardDocument,
     Domain::ConfigLocal,
     Domain::JournalBackupManifest,
@@ -118,6 +119,7 @@ const DOMAINS: [Domain; 27] = [
     Domain::DistSourceCommit,
     Domain::DistReleaseManifest,
     Domain::DistReleaseNotes,
+    Domain::DistReleasePlan,
     Domain::ProofBattery,
     Domain::ProofReplayV2,
     Domain::ProofReceiptV2,
@@ -196,6 +198,7 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
             "spice.dist.source-commit.v1",
             "spice.dist.release-manifest.v1",
             "spice.dist.release-notes.v1",
+            "spice.dist.release-plan.v1",
             "spice.proof.battery.v1",
             "spice.proof.replay.v2",
             "spice.proof.receipt.v2",

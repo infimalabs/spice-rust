@@ -56,8 +56,8 @@ operator authorizes cutover.
 
 ## Rust contracts
 
-The registry contains 63 command leaves. Nineteen have executable dispatch,
-so current executable coverage is 19/63, or 30.2 percent. Completed domain
+The registry contains 63 command leaves. Twenty have executable dispatch,
+so current executable coverage is 20/63, or 31.7 percent. Completed domain
 libraries do not count as landed command surfaces.
 
 ### Landed
@@ -76,15 +76,25 @@ libraries do not count as landed command surfaces.
 - `proof`
 - `proof replay`
 - `release notes`
+- `release publish`
 - `up`
 - `down`
 - `run`
 - `config`
 - `restore verify`
 
+The local command group retains the Python-first ownership boundary described
+above: plain `install` is a side-effect-free plan, and only an exact
+`--apply=<digest>` crosses its fixed authored mutation plan. Rust binaries and
+hook stages remain namespaced below worktree `.spice/rust`, while the install
+receipt lives below Git-common `.spice-rust`. The plan does not replace the
+ambient command or active `core.hooksPath`.
+
 `doctor`, `version`, and `up` are executable but not yet usable against the
 current worktree state; the configuration and bootstrap tasks above own those
-operational gaps.
+operational gaps. `release publish` admits its sealed stage against the Rust
+journal and resident discovery under `<git-common>/.spice-rust`; it does not
+read the Python authority under `<git-common>/.spice`.
 
 ### `BOARD-1kJQlDDt`
 
@@ -143,7 +153,6 @@ operational gaps.
 ### `PUBLISH-1kJQlGb0`
 
 - `canvas`
-- `release publish`
 
 `spice/src/cli.rs::landing` carries the same classification. Its closure test
 fails for any registered Rust leaf without a disposition. A leaf classified

@@ -70,7 +70,10 @@ fn main() {
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
         ["gate", "receipt"] => deliver(&gate_command::receipt(), form),
-        ["install"] => deliver(&install_command::run(leaf), form),
+        ["install"] => match install_command::run(leaf) {
+            install_command::Answer::Plan(outcome) => deliver(&outcome, form),
+            install_command::Answer::Receipt(outcome) => deliver(&outcome, form),
+        },
         ["config"] => deliver_config(&config_command::run(leaf), form),
         ["lock"] => deliver(&lock_command::report(), form),
         ["lock", "run"] => match lock_command::run(leaf) {
@@ -82,6 +85,10 @@ fn main() {
         ["version"] => deliver(&version_outcome(), form),
         ["release", "notes"] => deliver(&release_command::notes(leaf), form),
         ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
+        ["release", "publish"] => match release_command::run(leaf) {
+            release_command::RunResult::Plan(outcome) => deliver(&outcome, form),
+            release_command::RunResult::Published(outcome) => deliver(&outcome, form),
+        },
         _ => {}
     }
     #[cfg(target_arch = "wasm32")]
@@ -101,7 +108,19 @@ fn main() {
             Fault {
                 class: FaultClass::Environment,
                 reason: "release::target-unsupported".to_owned(),
-                detail: "immutable Git object inspection is unavailable on wasm32".to_owned(),
+                detail: "reading the explicit release notes INPUT file is unavailable on wasm32"
+                    .to_owned(),
+            },
+            form,
+        );
+    }
+    #[cfg(target_arch = "wasm32")]
+    if contract.path == ["install"] {
+        deliver_fault(
+            Fault {
+                class: FaultClass::Environment,
+                reason: "install::target-unsupported".to_owned(),
+                detail: "filesystem installation is unavailable on wasm32".to_owned(),
             },
             form,
         );

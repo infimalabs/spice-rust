@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use serde_json::Value;
+use serde::de::DeserializeOwned;
+use spice::install::{InstallPlan, InstallReceipt, InstallStatus};
 use wire::Outcome;
 
 struct Fixture {
@@ -123,11 +124,10 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
     let fixture = Fixture::new("digest");
     let text = fixture.invoke(&["install"]);
     let json = fixture.invoke(&["--json", "install"]);
-    let text = text_body(text);
-    let preview = reply_body(json);
+    let text: InstallPlan = text_body(text);
+    let preview: InstallPlan = reply_body(json);
     assert_eq!(text, preview);
-    assert_eq!(preview["action"], "preview");
-    assert_eq!(preview["plan"]["operations"].as_array().unwrap().len(), 5);
+    assert_eq!(preview.operations().len(), 5);
     assert!(!fixture.installed_binary().exists());
     assert!(!fixture.record().exists());
     assert!(!fixture.root.join(".git/.spice-rust").exists());
@@ -137,19 +137,19 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
     );
     fixture.assert_python_authority_unchanged();
 
-    let digest = preview["digest"].as_str().expect("preview digest");
-    let moved = alternate_digest(digest);
+    let digest = preview.digest().expect("preview digest");
+    let moved = alternate_digest(digest.as_str());
     let refused = fixture.invoke(&["--json", "install", &format!("--apply={moved}")]);
     assert_eq!(refused.code, Some(2));
     assert!(refused.out.is_empty());
-    assert_refusal(&refused.err, "install::plan-moved");
+    assert_refusal(&refused.err, "install::digest-moved");
     assert!(!fixture.installed_binary().exists());
     assert!(!fixture.record().exists());
 
-    let applied = reply_body(fixture.invoke(&["--json", "install", &format!("--apply={digest}")]));
-    assert_eq!(applied["action"], "applied");
-    assert_eq!(applied["status"], "complete");
-    assert_eq!(applied["completed"], 5);
+    let applied: InstallReceipt =
+        reply_body(fixture.invoke(&["--json", "install", &format!("--apply={digest}")]));
+    assert_eq!(applied.status(), InstallStatus::Complete);
+    assert_eq!(applied.completed(), 5);
     assert_eq!(
         fs::read(fixture.installed_binary()).unwrap(),
         fs::read(env!("CARGO_BIN_EXE_spice")).unwrap()
@@ -161,16 +161,15 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
 #[test]
 fn unapply_restores_exact_prior_images_and_keeps_the_namespaced_receipt() {
     let fixture = Fixture::new("unapply");
-    let preview = reply_body(fixture.invoke(&["--json", "install"]));
-    let digest = preview["digest"].as_str().unwrap();
+    let preview: InstallPlan = reply_body(fixture.invoke(&["--json", "install"]));
+    let digest = preview.digest().unwrap();
     let applied = fixture.invoke(&["install", &format!("--apply={digest}")]);
     assert_eq!(applied.code, Some(0));
     assert!(applied.err.is_empty());
 
-    let unapplied = reply_body(fixture.invoke(&["--json", "install", "--unapply"]));
-    assert_eq!(unapplied["action"], "unapplied");
-    assert_eq!(unapplied["status"], "uninstalled");
-    assert_eq!(unapplied["completed"], 5);
+    let unapplied: InstallReceipt = reply_body(fixture.invoke(&["--json", "install", "--unapply"]));
+    assert_eq!(unapplied.status(), InstallStatus::Uninstalled);
+    assert_eq!(unapplied.completed(), 5);
     assert!(!fixture.installed_binary().exists());
     assert!(fixture.record().is_file());
     assert_eq!(
@@ -189,8 +188,8 @@ fn unapply_restores_exact_prior_images_and_keeps_the_namespaced_receipt() {
 #[test]
 fn drift_refuses_reversal_without_overwriting_the_changed_target() {
     let fixture = Fixture::new("drift");
-    let preview = reply_body(fixture.invoke(&["--json", "install"]));
-    let digest = preview["digest"].as_str().unwrap();
+    let preview: InstallPlan = reply_body(fixture.invoke(&["--json", "install"]));
+    let digest = preview.digest().unwrap();
     assert_eq!(
         fixture
             .invoke(&["install", &format!("--apply={digest}")])
@@ -209,16 +208,16 @@ fn drift_refuses_reversal_without_overwriting_the_changed_target() {
     fixture.assert_python_authority_unchanged();
 }
 
-fn text_body(spoken: Spoken) -> Value {
+fn text_body<T: DeserializeOwned>(spoken: Spoken) -> T {
     assert_eq!(spoken.code, Some(0));
     assert!(spoken.err.is_empty());
     wire::decode(&spoken.out).expect("text body decodes")
 }
 
-fn reply_body(spoken: Spoken) -> Value {
+fn reply_body<T: DeserializeOwned + std::fmt::Debug>(spoken: Spoken) -> T {
     assert_eq!(spoken.code, Some(0));
     assert!(spoken.err.is_empty());
-    let outcome: Outcome<Value> = wire::decode(&spoken.out).expect("JSON outcome decodes");
+    let outcome: Outcome<T> = wire::decode(&spoken.out).expect("JSON outcome decodes");
     let Outcome::Reply(reply) = outcome else {
         panic!("install must reply: {outcome:?}");
     };

@@ -1,193 +1,163 @@
-use std::path::PathBuf;
-use std::str::FromStr;
+//! Native rim for the digest-bound coexistence installer.
 
-use clap::ArgMatches;
-use serde::Serialize;
-use spice::install::{self, InstallError, InstallPlan, InstallReceipt, InstallStatus};
+use std::path::PathBuf;
+
+use spice::install::{InstallError, InstallPlan, InstallReceipt};
 use spice::repository::Repository;
 use wire::{Digest, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-enum Action {
-    Preview,
-    Applied,
-    Unapplied,
+pub(crate) enum Answer {
+    Plan(Outcome<InstallPlan>),
+    Receipt(Outcome<InstallReceipt>),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub(crate) struct InstallReport {
-    action: Action,
-    digest: Digest,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    status: Option<InstallStatus>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    completed: Option<usize>,
-    plan: InstallPlan,
-}
-
-pub(crate) fn run(matches: &ArgMatches) -> Outcome<InstallReport> {
-    let repository = match repository() {
-        Ok(repository) => repository,
-        Err(outcome) => return map_outcome(outcome),
+pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
+    let request = if matches.get_flag("unapply") {
+        Request::Unapply
+    } else if let Some(digest) = matches.get_one::<String>("apply") {
+        Request::Apply(digest.clone())
+    } else {
+        Request::Plan
     };
-    if matches.get_flag("unapply") {
-        return match install::unapply(&repository) {
-            Ok(receipt) => reply(receipt_report(Action::Unapplied, &receipt)),
-            Err(error) => map_outcome(failure(&error)),
-        };
-    }
-
-    let binary = match current_binary() {
-        Ok(binary) => binary,
-        Err(outcome) => return map_outcome(outcome),
-    };
-    let plan = match install::plan(&repository, Some(&binary)) {
-        Ok(plan) => plan,
-        Err(error) => return map_outcome(failure(&error)),
-    };
-    let digest = match plan.digest() {
-        Ok(digest) => digest,
-        Err(error) => return map_outcome(failure(&error)),
-    };
-    let Some(requested) = matches.get_one::<String>("apply") else {
-        return reply(InstallReport {
-            action: Action::Preview,
-            digest,
-            status: None,
-            completed: None,
-            plan,
-        });
-    };
-    let requested = match Digest::from_str(requested) {
-        Ok(requested) => requested,
+    let working = match std::env::current_dir() {
+        Ok(working) => working,
         Err(error) => {
-            return map_outcome(refusal(
-                "install::digest-refused",
-                Some(error.to_string()),
-                "apply the canonical digest emitted by the current install preview",
-            ));
+            return request.fault("install::working-directory-unavailable", error.to_string());
         }
     };
-    if requested != digest {
-        return map_outcome(refusal(
-            "install::plan-moved",
-            Some(format!("requested {requested}; current {digest}")),
-            "preview the current plan and apply its exact digest",
-        ));
+    let repository = match Repository::discover(&working) {
+        Ok(repository) => repository,
+        Err(error) => {
+            return request.fault("install::repository-unresolved", error.to_string());
+        }
+    };
+
+    match request {
+        Request::Plan => {
+            let executable = match executable() {
+                Ok(executable) => executable,
+                Err(outcome) => return Answer::Plan(outcome),
+            };
+            Answer::Plan(result(spice::install::plan(&repository, Some(&executable))))
+        }
+        Request::Apply(spelling) => {
+            let digest = match spelling.parse::<Digest>() {
+                Ok(digest) => digest,
+                Err(error) => {
+                    return Answer::Receipt(Outcome::Refusal(Refusal {
+                        reason: "install::digest-refused".to_owned(),
+                        witness: Some("install-plan".to_owned()),
+                        expected: Some("canonical install plan digest".to_owned()),
+                        observed: Some(spelling),
+                        remedy: format!(
+                            "run install without --apply and use its exact digest: {error}"
+                        ),
+                    }));
+                }
+            };
+            let executable = match executable() {
+                Ok(executable) => executable,
+                Err(outcome) => return Answer::Receipt(outcome),
+            };
+            Answer::Receipt(result(spice::install::apply(
+                &repository,
+                Some(&executable),
+                &digest,
+            )))
+        }
+        Request::Unapply => Answer::Receipt(result(spice::install::unapply(&repository))),
     }
-    match install::apply(&repository, Some(&binary), &requested) {
-        Ok(receipt) => reply(receipt_report(Action::Applied, &receipt)),
-        Err(error) => map_outcome(failure(&error)),
-    }
 }
 
-fn repository() -> Result<Repository, Outcome<()>> {
-    let current = crate::working_directory()?;
-    Repository::discover(current).map_err(|error| {
-        fault(
-            FaultClass::Environment,
-            "install::repository-unresolved",
-            error.to_string(),
-        )
-    })
+enum Request {
+    Plan,
+    Apply(String),
+    Unapply,
 }
 
-fn current_binary() -> Result<PathBuf, Outcome<()>> {
-    std::env::current_exe().map_err(|error| {
-        fault(
-            FaultClass::Environment,
-            "install::binary-unresolved",
-            error.to_string(),
-        )
-    })
-}
-
-fn receipt_report(action: Action, receipt: &InstallReceipt) -> InstallReport {
-    InstallReport {
-        action,
-        digest: receipt.digest().clone(),
-        status: Some(receipt.status()),
-        completed: Some(receipt.completed()),
-        plan: receipt.plan().clone(),
-    }
-}
-
-fn reply(report: InstallReport) -> Outcome<InstallReport> {
-    Outcome::Reply(Reply {
-        position: ReplyPosition::Direct {},
-        body: report,
-    })
-}
-
-fn failure(error: &InstallError) -> Outcome<()> {
-    let detail = error.to_string();
-    match error {
-        InstallError::DigestMismatch { .. } => refusal(
-            "install::plan-moved",
-            Some(detail),
-            "preview the current plan and apply its exact digest",
-        ),
-        InstallError::RecordMissing => refusal(
-            "install::record-absent",
-            None,
-            "apply an installation plan before unapplying it",
-        ),
-        InstallError::Drift { .. } => refusal(
-            "install::drift",
-            Some(detail),
-            "restore the recorded installed bytes before retrying reversal",
-        ),
-        InstallError::ExclusionsNotUtf8
-        | InstallError::DivergentExclusions
-        | InstallError::BinaryContextChanged
-        | InstallError::LegacyRecord(_)
-        | InstallError::ApplyInProgress
-        | InstallError::UnapplyInProgress => refusal(
-            "install::state-refused",
-            Some(detail),
-            "repair or complete the named installation state before retrying",
-        ),
-        InstallError::Repository(_)
-        | InstallError::BinaryNotRegular(_)
-        | InstallError::BinaryEmpty(_) => fault(
-            FaultClass::Environment,
-            "install::environment-unavailable",
+impl Request {
+    fn fault(self, reason: &str, detail: String) -> Answer {
+        let fault = Fault {
+            class: FaultClass::Environment,
+            reason: reason.to_owned(),
             detail,
-        ),
-        InstallError::Io { .. }
-        | InstallError::Atomic(_)
-        | InstallError::Decode(_)
-        | InstallError::InvalidRecord(_)
-        | InstallError::PathShape(_) => fault(FaultClass::Store, "install::store-invalid", detail),
-        InstallError::Encode(_) | InstallError::Interrupted { .. } => {
-            fault(FaultClass::Protocol, "install::protocol-invalid", detail)
+        };
+        match self {
+            Self::Plan => Answer::Plan(Outcome::Fault(fault)),
+            Self::Apply(_) | Self::Unapply => Answer::Receipt(Outcome::Fault(fault)),
         }
     }
 }
 
-fn refusal(reason: &str, observed: Option<String>, remedy: &str) -> Outcome<()> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: None,
-        expected: None,
-        observed,
-        remedy: remedy.to_owned(),
+fn executable<B>() -> Result<PathBuf, Outcome<B>> {
+    std::env::current_exe().map_err(|error| {
+        Outcome::Fault(Fault {
+            class: FaultClass::Environment,
+            reason: "install::executable-unresolved".to_owned(),
+            detail: error.to_string(),
+        })
     })
 }
 
-fn fault(class: FaultClass, reason: &str, detail: String) -> Outcome<()> {
-    Outcome::Fault(Fault {
-        class,
-        reason: reason.to_owned(),
-        detail,
-    })
+fn result<B>(result: Result<B, InstallError>) -> Outcome<B> {
+    match result {
+        Ok(body) => Outcome::Reply(Reply {
+            position: ReplyPosition::Direct {},
+            body,
+        }),
+        Err(error) => failure(error),
+    }
 }
 
-fn map_outcome<B>(outcome: Outcome<()>) -> Outcome<B> {
-    match outcome {
-        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
-        Outcome::Fault(fault) => Outcome::Fault(fault),
-        Outcome::Reply(_) => unreachable!("error paths cannot carry replies"),
+fn failure<B>(error: InstallError) -> Outcome<B> {
+    let detail = error.to_string();
+    let refusal_reason = install_refusal_reason(&error);
+    match error {
+        InstallError::PathShape(_)
+        | InstallError::ExclusionsNotUtf8
+        | InstallError::DivergentExclusions
+        | InstallError::BinaryNotRegular(_)
+        | InstallError::BinaryEmpty(_)
+        | InstallError::BinaryContextChanged
+        | InstallError::DigestMismatch { .. }
+        | InstallError::LegacyRecord(_)
+        | InstallError::RecordMissing
+        | InstallError::ApplyInProgress
+        | InstallError::UnapplyInProgress
+        | InstallError::Drift { .. } => Outcome::Refusal(Refusal {
+            reason: refusal_reason.to_owned(),
+            witness: Some("install-plan".to_owned()),
+            expected: Some("the exact current coexistence install state".to_owned()),
+            observed: Some(detail),
+            remedy: "inspect the current plan and repair the named state before retrying"
+                .to_owned(),
+        }),
+        InstallError::Repository(_) | InstallError::Io { .. } => Outcome::Fault(Fault {
+            class: FaultClass::Environment,
+            reason: "install::environment-failed".to_owned(),
+            detail,
+        }),
+        InstallError::Encode(_)
+        | InstallError::Decode(_)
+        | InstallError::Atomic(_)
+        | InstallError::InvalidRecord(_)
+        | InstallError::Interrupted { .. } => Outcome::Fault(Fault {
+            class: FaultClass::Store,
+            reason: "install::state-failed".to_owned(),
+            detail,
+        }),
+    }
+}
+
+fn install_refusal_reason(error: &InstallError) -> &'static str {
+    match error {
+        InstallError::DigestMismatch { .. } => "install::digest-moved",
+        InstallError::LegacyRecord(_) => "install::release-owned-state",
+        InstallError::RecordMissing => "install::record-missing",
+        InstallError::ApplyInProgress | InstallError::UnapplyInProgress => {
+            "install::transition-incomplete"
+        }
+        InstallError::Drift { .. } => "install::drift",
+        _ => "install::input-refused",
     }
 }
