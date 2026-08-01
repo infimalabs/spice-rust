@@ -14,7 +14,9 @@ pub mod phase;
 pub mod task;
 pub mod urgency;
 
-pub use apply::{ApplyError, ApplyReceipt, AuthorityTransaction, Preview, PreviewRefusal, apply};
+pub use apply::{
+    ApplyError, ApplyReceipt, AuthorityTransaction, Preview, PreviewRefusal, apply, digest_of,
+};
 pub use claim::{Active, ClaimRefusal};
 pub use graph::{Diagram, View};
 pub use next::{Selection, select};
