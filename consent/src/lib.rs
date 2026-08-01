@@ -17,11 +17,15 @@ pub mod budget;
 pub mod config;
 pub mod pend;
 pub mod policy;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod queue;
 
 pub use budget::{Budgets, Spend};
 pub use config::Config;
 pub use pend::{Held, Pending, Reversibility, Ruling};
 pub use policy::{Answer, Authority, Decision, OPERATOR, POSTURE, Policy, PolicyError, Rule};
+#[cfg(not(target_arch = "wasm32"))]
+pub use queue::{PendingRequest, Queue, QueueError, decision_witnesses};
 
 use wire::body::{ConsentAsked, ConsentDenied, ConsentGranted, ConsentQueueCause, ConsentQueued};
 

@@ -30,6 +30,16 @@ type ClientResult<T> = Result<T, Outcome<CommandAnswer>>;
 pub(crate) enum SelectedCommand<'a> {
     /// The operator requests the current resident's bounded Dark transition.
     Down,
+    /// Read the current resident's durable consent queue.
+    ConsentRead,
+    /// Read the tracked consent policy held by the current resident.
+    ConsentPolicy,
+    /// Terminally answer one request from an exact queue snapshot.
+    ConsentDecide {
+        request: CanonicalUuid,
+        answer: wire::Answer,
+        expected: Vec<Witness>,
+    },
     /// The operator recognizes one exact, already admitted release publication.
     ReleasePublish {
         release: &'a crate::release_command::AdmittedRelease,
@@ -188,6 +198,34 @@ impl MappedCommand {
                 &wire::intent::UpChange {
                     state: wire::ResidentState::Dark,
                 },
+            ),
+            (["consent"], SelectedCommand::ConsentRead) => Self::new(
+                contract,
+                &["consent"],
+                CommandKind::ConsentRead,
+                Vec::new(),
+                &wire::intent::ConsentRead {},
+            ),
+            (["consent", "policy"], SelectedCommand::ConsentPolicy) => Self::new(
+                contract,
+                &["consent", "policy"],
+                CommandKind::ConsentPolicy,
+                Vec::new(),
+                &wire::intent::ConsentPolicy {},
+            ),
+            (
+                ["consent", "allow"] | ["consent", "deny"],
+                SelectedCommand::ConsentDecide {
+                    request,
+                    answer,
+                    expected,
+                },
+            ) => Self::new(
+                contract,
+                contract.path,
+                CommandKind::ConsentDecide,
+                expected,
+                &wire::intent::ConsentDecide { request, answer },
             ),
             (["release", "publish"], SelectedCommand::ReleasePublish { release, state }) => {
                 let mut expected = vec![Witness::Observation {
