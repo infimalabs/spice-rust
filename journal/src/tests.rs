@@ -304,7 +304,7 @@ fn structure_defect_fixture() -> Journal {
             4,
             None,
             FactKind::TaskNoted,
-            json!({"task": "JOURNAL-a1", "note": "fixture note"}),
+            json!({"task": "JOURNAL-a1", "note": "Journal fixture note"}),
         ),
     );
     journal
