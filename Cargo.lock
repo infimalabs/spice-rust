@@ -2118,6 +2118,7 @@ dependencies = [
  "jiff",
  "journal",
  "lane",
+ "libc",
  "listen",
  "notify",
  "proof",

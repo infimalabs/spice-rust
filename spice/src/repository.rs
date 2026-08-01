@@ -82,6 +82,12 @@ impl Repository {
     pub fn journal_path(&self) -> PathBuf {
         self.state_root().join("data").join("spicejournal.sqlite3")
     }
+
+    /// The disposable fold materialization database under common state.
+    #[must_use]
+    pub fn folds_path(&self) -> PathBuf {
+        self.state_root().join("data").join("spicefolds.sqlite3")
+    }
 }
 
 fn gitdir_pointer(marker: &Path) -> Result<PathBuf, ResolveError> {

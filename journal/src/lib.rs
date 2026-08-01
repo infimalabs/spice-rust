@@ -24,9 +24,14 @@ pub use migrate::{Migration, MigrationError, OpenError};
 #[cfg(not(target_arch = "wasm32"))]
 pub use read::{FactSnapshot, SnapshotError};
 #[cfg(not(target_arch = "wasm32"))]
-pub use replay::{Verification, VerifyError, Violation, ViolationClass};
+pub use replay::{
+    ReindexError, ReindexReport, ThreadError, ThreadSnapshot, Verification, VerifyError, Violation,
+    ViolationClass,
+};
 #[cfg(not(target_arch = "wasm32"))]
-pub use restore::{BackupVerifyError, verify_restore_bundle};
+pub use restore::{
+    BackupVerifyError, RestoreCapture, capture_restore_bundle, verify_restore_bundle,
+};
 
 /// Current crossing types used to prepare journal work without depending on
 /// the journal's storage implementation.
@@ -191,6 +196,14 @@ impl JournalReader {
                 .map(Some)
                 .ok_or(OpenError::InvalidCursor { found }),
         }
+    }
+
+    /// Captures one consistent SQLite generation, including committed pager state.
+    pub fn snapshot_bytes(&self) -> Result<Vec<u8>, OpenError> {
+        self.connection
+            .serialize(rusqlite::MAIN_DB)
+            .map(|bytes| bytes.to_vec())
+            .map_err(OpenError::Sqlite)
     }
 }
 

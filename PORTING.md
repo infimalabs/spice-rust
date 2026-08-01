@@ -56,8 +56,8 @@ operator authorizes cutover.
 
 ## Rust contracts
 
-The registry contains 63 command leaves. Eighteen have executable dispatch,
-so current executable coverage is 18/63, or 28.6 percent. Completed domain
+The registry contains 63 command leaves. Twenty-six have executable dispatch,
+so current executable coverage is 26/63, or 41.3 percent. Completed domain
 libraries do not count as landed command surfaces.
 
 ### Landed
@@ -80,6 +80,14 @@ libraries do not count as landed command surfaces.
 - `run`
 - `config`
 - `restore verify`
+- `backup`
+- `restore`
+- `journal`
+- `journal replay`
+- `journal reindex`
+- `journal verify`
+- `fold`
+- `thread`
 
 `doctor`, `version`, and `up` are executable but not yet usable against the
 current worktree state; the configuration and bootstrap tasks above own those
@@ -131,17 +139,6 @@ operational gaps.
 - `trust`
 - `trust grant`
 - `trust revoke`
-
-### `JOURNAL-1kJQlFfS`
-
-- `backup`
-- `restore`
-- `journal`
-- `journal replay`
-- `journal reindex`
-- `journal verify`
-- `fold`
-- `thread`
 
 ### `PUBLISH-1kJQlGb0`
 

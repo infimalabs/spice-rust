@@ -849,6 +849,14 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["down"]
         | ["run"]
         | ["config"]
+        | ["backup"]
+        | ["restore"]
+        | ["journal"]
+        | ["journal", "replay"]
+        | ["journal", "reindex"]
+        | ["journal", "verify"]
+        | ["fold"]
+        | ["thread"]
         | ["restore", "verify"] => Landing::Landed,
         ["install"] => Landing::Gap("LOCAL-1kJQlG6b"),
         ["board"]
@@ -885,14 +893,6 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["trust"]
         | ["trust", "grant"]
         | ["trust", "revoke"] => Landing::Gap("POLICY-1kJQlFB6"),
-        ["backup"]
-        | ["restore"]
-        | ["journal"]
-        | ["journal", "replay"]
-        | ["journal", "reindex"]
-        | ["journal", "verify"]
-        | ["fold"]
-        | ["thread"] => Landing::Gap("JOURNAL-1kJQlFfS"),
         ["canvas"] | ["release", "publish"] => Landing::Gap("PUBLISH-1kJQlGb0"),
         _ => Landing::Unaccounted,
     }

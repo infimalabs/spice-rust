@@ -3,7 +3,7 @@ use std::fmt;
 
 use rusqlite::Connection;
 
-use crate::Journal;
+use crate::{Journal, JournalReader};
 
 /// One immutable, contiguous view of the journal fact stream.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,6 +50,13 @@ impl FactSnapshot {
 
 impl Journal {
     /// Reads a canonical, contiguous fact snapshot without mutating authority.
+    pub fn fact_snapshot(&self) -> Result<FactSnapshot, SnapshotError> {
+        read_snapshot(&self.connection)
+    }
+}
+
+impl JournalReader {
+    /// Reads a canonical, contiguous fact snapshot without writer capability.
     pub fn fact_snapshot(&self) -> Result<FactSnapshot, SnapshotError> {
         read_snapshot(&self.connection)
     }
