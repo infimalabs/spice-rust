@@ -256,7 +256,7 @@ pub(crate) fn rule(matches: &ArgMatches, contract: &Contract, grant: bool) -> Ou
     } else {
         crate::command_client::SelectedCommand::TrustRevoke { digest: &digest }
     };
-    match crate::command_client::execute(state.canvas(), contract, selected) {
+    match crate::command_client::execute(state.canvas(), contract, selected, None) {
         Outcome::Reply(reply) => match reply.body {
             CommandAnswer::Trust(answer) => Outcome::Reply(Reply {
                 position: reply.position,

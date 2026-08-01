@@ -863,11 +863,15 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["thread"]
         | ["canvas"]
         | ["release", "publish"]
+        | ["restore", "verify"]
+        | ["steer"]
+        | ["steer", "cancel"]
+        | ["inbox"]
+        | ["ack"]
         | ["consent"]
         | ["consent", "allow"]
         | ["consent", "deny"]
-        | ["consent", "policy"]
-        | ["restore", "verify"] => Landing::Landed,
+        | ["consent", "policy"] => Landing::Landed,
         ["board"]
         | ["board", "graph"]
         | ["board", "handout"]
@@ -883,15 +887,9 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["task", "depends"]
         | ["doc"]
         | ["doc", "ledger"] => Landing::Gap("BOARD-1kJQlDDt"),
-        ["lane"]
-        | ["lane", "add"]
-        | ["lane", "drain"]
-        | ["lane", "wake"]
-        | ["steer"]
-        | ["steer", "cancel"]
-        | ["inbox"]
-        | ["recall"]
-        | ["ack"] => Landing::Gap("COORDIN-1kJQlDjc"),
+        ["lane"] | ["lane", "add"] | ["lane", "drain"] | ["lane", "wake"] | ["recall"] => {
+            Landing::Gap("COORDIN-1kJQlDjc")
+        }
         ["taste"] | ["taste", "add"] | ["taste", "drop"] => Landing::Gap("POLICY-1kJQlFB6"),
         _ => Landing::Unaccounted,
     }
@@ -961,6 +959,12 @@ fn child_names(contracts: &[Contract], path: &[&str]) -> BTreeSet<&'static str> 
 
 fn contract_at<'a>(contracts: &'a [Contract], path: &[&str]) -> Option<&'a Contract> {
     contracts.iter().find(|contract| contract.path == path)
+}
+
+/// Recover one registered contract by its complete command path.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn contract(path: &[&str]) -> Option<&'static Contract> {
+    contract_at(contracts(), path)
 }
 
 /// Recover the contract selected by the generated parser.

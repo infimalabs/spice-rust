@@ -20,6 +20,8 @@ use wire::{
     TrustState, Witness,
 };
 
+mod steering;
+
 type CommandResult<T> = Result<T, Outcome<()>>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -29,9 +31,16 @@ struct RuntimePaths {
     journal: PathBuf,
     resident: PathBuf,
     canvas: PathBuf,
+    lane_canvas: PathBuf,
+    inbox: PathBuf,
     degraded: PathBuf,
     tape: PathBuf,
     stage: PathBuf,
+}
+
+struct SurfaceConfig {
+    steering: steer::Config,
+    consent: consent::Policy,
 }
 
 impl RuntimePaths {
@@ -52,6 +61,8 @@ impl RuntimePaths {
             journal: state.journal().to_path_buf(),
             resident: state.resident().to_path_buf(),
             canvas: state.canvas().to_path_buf(),
+            lane_canvas: state.runtime().join("canvas-lanes"),
+            inbox: state.runtime().join("inbox"),
             degraded: state.degraded().to_path_buf(),
             tape: state.tape().to_path_buf(),
             stage: repository.worktree_root().join("dist/stage"),
@@ -126,11 +137,13 @@ impl Drop for ResidentLock {
 #[derive(Debug)]
 struct PublishedDiscovery {
     path: PathBuf,
+    lane_root: PathBuf,
 }
 
 impl Drop for PublishedDiscovery {
     fn drop(&mut self) {
         let _ = remove_if_present(&self.path);
+        let _ = remove_tree_if_present(&self.lane_root);
     }
 }
 
@@ -151,7 +164,10 @@ fn up_from(current: &Path) -> Outcome<()> {
         Ok(configuration) => configuration,
         Err(error) => return configuration_refusal(&error),
     };
-    let consent_policy = configuration.root().consent().policy().clone();
+    let surface_config = SurfaceConfig {
+        steering: configuration.root().steer().clone(),
+        consent: configuration.root().consent().policy().clone(),
+    };
     let paths = match RuntimePaths::from_repository(&repository) {
         Ok(paths) => paths,
         Err(outcome) => return outcome,
@@ -170,7 +186,9 @@ fn up_from(current: &Path) -> Outcome<()> {
     if let Err(error) = remove_if_present(&paths.canvas) {
         return environment_fault("canvas::stale-discovery", &error.to_string());
     }
-
+    if let Err(error) = remove_tree_if_present(&paths.lane_canvas) {
+        return environment_fault("canvas::stale-lane-discovery", &error.to_string());
+    }
     let journal = match journal::Journal::open(&paths.journal) {
         Ok(journal) => journal,
         Err(error) => return journal_open_failure(error),
@@ -199,8 +217,8 @@ fn up_from(current: &Path) -> Outcome<()> {
             &repository,
             &paths,
             epoch,
+            &surface_config,
             &mut seats,
-            &consent_policy,
         )),
         Err(error) => Err(environment_fault(
             "resident::runtime-failed",
@@ -298,6 +316,7 @@ fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outcome<()> {
         &paths.canvas,
         contract,
         crate::command_client::SelectedCommand::Down,
+        None,
     );
     let outcome = decode_dark_outcome(outcome);
     if matches!(outcome, Outcome::Reply(_))
@@ -442,8 +461,8 @@ async fn run_surface(
     repository: &Repository,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
+    config: &SurfaceConfig,
     seats: &mut Seats,
-    consent_policy: &consent::Policy,
 ) -> CommandResult<()> {
     let operator = new_uuid();
     let mut capabilities = canvas::axum::Capabilities::default();
@@ -466,12 +485,15 @@ async fn run_surface(
     let discovery = server
         .discovery(operator)
         .map_err(|error| environment_fault("canvas::discovery-invalid", &error.to_string()))?;
+    let published = PublishedDiscovery {
+        path: paths.canvas.clone(),
+        lane_root: paths.lane_canvas.clone(),
+    };
+    steering::publish_lane_discoveries(paths, &discovery, residency.body())?;
+    steering::publish_inboxes(bus, paths, residency.body())?;
     discovery
         .publish(&paths.canvas)
         .map_err(|error| environment_fault("canvas::publish-failed", &error.to_string()))?;
-    let published = PublishedDiscovery {
-        path: paths.canvas.clone(),
-    };
     let (shutdown, stopped) = oneshot::channel();
     let mut server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;
@@ -491,8 +513,8 @@ async fn run_surface(
             repository,
             paths,
             epoch,
+            config,
             seats,
-            consent_policy,
             request.command(),
         );
         let reached_dark = dark && matches!(outcome, Outcome::Reply(_));
@@ -526,8 +548,8 @@ fn dispatch_command(
     repository: &Repository,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
+    config: &SurfaceConfig,
     seats: &mut Seats,
-    consent_policy: &consent::Policy,
     command: &wire::AdmittedCommand,
 ) -> Outcome<CommandAnswer> {
     match (command.kind(), command.body()) {
@@ -537,14 +559,26 @@ fn dispatch_command(
         (CommandKind::ReleasePublish, Intent::ReleasePublish(publish)) => {
             dispatch_release_publish(bus, paths, epoch, command, publish)
         }
+        (CommandKind::SteerInbox, Intent::SteerInbox(inbox)) => {
+            steering::inbox(bus, epoch, command, inbox)
+        }
+        (CommandKind::SteerSend, Intent::SteerSend(send)) => {
+            steering::send(bus, paths, epoch, &config.steering, command, send)
+        }
+        (CommandKind::SteerCancel, Intent::DirectiveRef(cancel)) => {
+            steering::cancel(bus, paths, epoch, command, cancel)
+        }
+        (CommandKind::SteerDispose, Intent::SteerDispose(dispose)) => {
+            steering::dispose(bus, paths, epoch, command, dispose)
+        }
         (CommandKind::ConsentRead, Intent::ConsentRead(_)) => {
-            dispatch_consent_read(bus, consent_policy)
+            dispatch_consent_read(bus, &config.consent)
         }
         (CommandKind::ConsentPolicy, Intent::ConsentPolicy(_)) => {
-            dispatch_consent_policy(bus, consent_policy)
+            dispatch_consent_policy(bus, &config.consent)
         }
         (CommandKind::ConsentDecide, Intent::ConsentDecide(decide)) => {
-            dispatch_consent_decide(bus, epoch, consent_policy, command, decide)
+            dispatch_consent_decide(bus, epoch, &config.consent, command, decide)
         }
         (CommandKind::TrustGrant | CommandKind::TrustRevoke, Intent::TrustRef(reference)) => {
             dispatch_trust_rule(bus, repository, epoch, command, reference)
@@ -1310,6 +1344,14 @@ fn server_outcome(served: Result<Result<(), io::Error>, tokio::task::JoinError>)
 
 fn remove_if_present(path: &Path) -> io::Result<()> {
     match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn remove_tree_if_present(path: &Path) -> io::Result<()> {
+    match fs::remove_dir_all(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),
