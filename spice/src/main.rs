@@ -22,6 +22,8 @@ mod gate_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod lock_command;
 mod proof_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod release_command;
 mod render;
 #[cfg(not(target_arch = "wasm32"))]
 mod resident;
@@ -54,6 +56,7 @@ fn main() {
     match contract.path {
         ["watch"] => run_watch(leaf, form),
         ["retro"] => run_retro(leaf, form),
+        ["install"] => deliver(&install_outcome(leaf), form),
         ["proof"] => deliver(&proof_command::seal(), form),
         ["proof", "replay"] => deliver(&proof_command::replay(), form),
         _ => {}
@@ -75,6 +78,7 @@ fn main() {
             }
         },
         ["version"] => deliver(&version_outcome(), form),
+        ["release", "notes"] => deliver(&release_command::notes(leaf), form),
         ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
         _ => {}
     }
@@ -89,6 +93,17 @@ fn main() {
             form,
         );
     }
+    #[cfg(target_arch = "wasm32")]
+    if contract.path == ["release", "notes"] {
+        deliver_fault(
+            Fault {
+                class: FaultClass::Environment,
+                reason: "release::target-unsupported".to_owned(),
+                detail: "immutable Git object inspection is unavailable on wasm32".to_owned(),
+            },
+            form,
+        );
+    }
     #[cfg(not(target_arch = "wasm32"))]
     let outcome = match contract.path {
         ["up"] => resident::up(),
@@ -98,6 +113,69 @@ fn main() {
     #[cfg(target_arch = "wasm32")]
     let outcome = not_landed(contract);
     deliver(&outcome, form);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn install_outcome(matches: &clap::ArgMatches) -> Outcome<spice::install::Plan> {
+    let working = match std::env::current_dir() {
+        Ok(path) => path,
+        Err(error) => return install_fault("install::working-directory", error.to_string()),
+    };
+    let executable = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(error) => return install_fault("install::executable", error.to_string()),
+    };
+    let home = match bootstrap_environment("HOME") {
+        Some(path) => PathBuf::from(path),
+        None => {
+            return install_refusal(
+                "install::home-missing",
+                "set HOME to the directory that owns user unit templates",
+            );
+        }
+    };
+    let result = if matches.get_flag("unapply") {
+        spice::install::unapply(&working)
+    } else if let Some(digest) = matches.get_one::<String>("apply") {
+        spice::install::apply(&working, &executable, &home, digest)
+    } else {
+        spice::install::preview(&working, &executable, &home)
+    };
+    match result {
+        Ok(plan) => Outcome::Reply(wire::Reply {
+            position: wire::ReplyPosition::Direct {},
+            body: plan,
+        }),
+        Err(spice::install::Error::Refusal(error)) => Outcome::Refusal(error),
+        Err(spice::install::Error::Fault(error)) => Outcome::Fault(error),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn install_outcome(_matches: &clap::ArgMatches) -> Outcome<spice::install::Plan> {
+    install_fault(
+        "install::target-unsupported",
+        "filesystem installation is unavailable on wasm32".to_owned(),
+    )
+}
+
+fn install_fault(reason: &str, detail: String) -> Outcome<spice::install::Plan> {
+    Outcome::Fault(Fault {
+        class: FaultClass::Environment,
+        reason: reason.to_owned(),
+        detail,
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn install_refusal(reason: &str, remedy: &str) -> Outcome<spice::install::Plan> {
+    Outcome::Refusal(Refusal {
+        reason: reason.to_owned(),
+        witness: None,
+        expected: None,
+        observed: None,
+        remedy: remedy.to_owned(),
+    })
 }
 
 fn not_landed(contract: &cli::Contract) -> Outcome<()> {
