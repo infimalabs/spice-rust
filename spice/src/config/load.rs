@@ -416,7 +416,24 @@ pub fn load_coexisting_repository(
     repository: &Repository,
     flags: &[FlagOverride],
 ) -> Result<Resolved, LoadError> {
-    capture_repository_with(repository, flags, true).map(Loaded::into_resolved)
+    capture_coexisting_repository(repository, flags).map(Loaded::into_resolved)
+}
+
+/// Capture exact repository documents while applying the Python scaffold
+/// coexistence rule to the effective configuration.
+///
+/// The returned documents and generation still cover every byte in both
+/// configuration files, including tracked tables omitted from the typed tree.
+///
+/// # Errors
+///
+/// Returns every ordinary acquisition and resolution diagnostic, including
+/// unknown roots other than the two named scaffold tables.
+pub fn capture_coexisting_repository(
+    repository: &Repository,
+    flags: &[FlagOverride],
+) -> Result<Loaded, LoadError> {
+    capture_repository_with(repository, flags, true)
 }
 
 fn capture_repository_with(
