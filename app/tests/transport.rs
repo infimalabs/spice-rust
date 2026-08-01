@@ -10,9 +10,11 @@
 //! locally declared body would have let this suite pass against a kind no
 //! producer mints.
 
-use app::{Admitted, Applied, BrowserState, Session};
+use app::{Admitted, Answer, Applied, BrowserState, Session};
 use serde::{Deserialize, Serialize};
-use wire::{CanonicalUuid, Envelope, Fact, FaultClass, Overflow, Packed, Seq, WireVersion, body};
+use wire::{
+    CanonicalUuid, Derived, Envelope, Fact, FaultClass, Overflow, Packed, Seq, WireVersion, body,
+};
 
 /// Capability this session opens with.
 const CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163c1";
@@ -90,6 +92,27 @@ fn response(version: u32, epoch: &str) -> Vec<u8> {
 /// A position, which every fixture spells above zero.
 fn seq(value: u64) -> Seq {
     Seq::new(value).expect("fixture position is non-zero")
+}
+
+/// A fold-backed answer over `rows`, stamped the way a fold stamps one.
+///
+/// The fold's cursor and the packed horizon are spelled differently on purpose.
+/// They answer different questions — how far this generation applied, and how
+/// far the declared inputs are complete — so a fixture that gave them one value
+/// would let state report either in place of the other and still pass.
+fn fold_backed(rows: Vec<Row>) -> Answer<Row> {
+    Answer::Derived(Derived {
+        fold: "board::backlog"
+            .parse()
+            .expect("fixture fold name is canonical"),
+        r#gen: 17,
+        cursor: seq(48200),
+        packed: Packed {
+            rows,
+            overflow: None,
+            horizon: seq(48213),
+        },
+    })
 }
 
 #[test]
@@ -306,17 +329,17 @@ fn a_gap_advances_without_being_repaired() {
 #[test]
 fn a_later_answer_replaces_the_earlier_one_whole() {
     let mut state = BrowserState::new(uuid(EPOCH));
-    state.replace(Packed {
+    state.replace(Answer::HeadDirect(Packed {
         rows: vec![Row("first"), Row("second")],
         overflow: None,
         horizon: seq(48213),
-    });
+    }));
 
-    state.replace(Packed {
+    state.replace(Answer::HeadDirect(Packed {
         rows: vec![Row("third")],
         overflow: None,
         horizon: seq(48214),
-    });
+    }));
 
     assert_eq!(state.rows(), [Row("third")].as_slice());
     assert_eq!(state.horizon(), Some(seq(48214)));
@@ -325,14 +348,14 @@ fn a_later_answer_replaces_the_earlier_one_whole() {
 #[test]
 fn overflow_is_carried_from_the_answer_rather_than_inferred_from_length() {
     let mut state = BrowserState::new(uuid(EPOCH));
-    state.replace(Packed {
+    state.replace(Answer::HeadDirect(Packed {
         rows: vec![Row("only")],
         overflow: Some(Overflow {
             omitted: 41,
             continuation: seq(48250),
         }),
         horizon: seq(48213),
-    });
+    }));
 
     assert!(state.is_overflowing());
     assert_eq!(
@@ -348,34 +371,106 @@ fn overflow_is_carried_from_the_answer_rather_than_inferred_from_length() {
 #[test]
 fn a_complete_answer_clears_the_overflow_an_earlier_one_declared() {
     let mut state = BrowserState::new(uuid(EPOCH));
-    state.replace(Packed {
+    state.replace(Answer::HeadDirect(Packed {
         rows: vec![Row("only")],
         overflow: Some(Overflow {
             omitted: 41,
             continuation: seq(48250),
         }),
         horizon: seq(48213),
-    });
+    }));
 
-    state.replace(Packed {
+    state.replace(Answer::HeadDirect(Packed {
         rows: vec![Row("only"), Row("rest")],
         overflow: None,
         horizon: seq(48214),
-    });
+    }));
 
     assert!(!state.is_overflowing());
     assert_eq!(state.overflow(), None);
 }
 
 #[test]
+fn an_untouched_state_holds_no_answer_to_report_provenance_from() {
+    let state = BrowserState::<Row>::new(uuid(EPOCH));
+
+    assert!(state.answer().is_none());
+}
+
+#[test]
+fn a_fold_backed_answer_keeps_its_provenance_in_state() {
+    let mut state = BrowserState::new(uuid(EPOCH));
+    state.replace(fold_backed(vec![Row("first")]));
+
+    let answer = state.answer().expect("an answer was received");
+
+    assert_eq!(
+        answer.fold().map(wire::FoldName::as_str),
+        Some("board::backlog")
+    );
+    assert_eq!(answer.generation(), Some(17));
+    assert_eq!(answer.cursor(), Some(seq(48200)));
+    assert!(answer.is_derived());
+}
+
+#[test]
+fn a_head_direct_answer_leaves_state_with_no_provenance_to_report() {
+    let mut state = BrowserState::new(uuid(EPOCH));
+    state.replace(Answer::HeadDirect(Packed {
+        rows: vec![Row("only")],
+        overflow: None,
+        horizon: seq(48213),
+    }));
+
+    let answer = state.answer().expect("an answer was received");
+
+    assert_eq!(answer.fold(), None);
+    assert_eq!(answer.generation(), None);
+    assert_eq!(answer.cursor(), None);
+    assert!(!answer.is_derived());
+}
+
+#[test]
+fn the_streams_cursor_and_the_folds_cursor_are_two_positions_not_one() {
+    let mut state = BrowserState::new(uuid(EPOCH));
+    state.apply(&envelope(48213));
+    state.replace(fold_backed(vec![Row("first")]));
+
+    // The browser has applied 48213 from the stream; the fold behind this
+    // answer had applied 48200 when it produced it. Reporting one in place of
+    // the other would make a lagging fold look as current as the stream.
+    assert_eq!(state.cursor(), Some(seq(48213)));
+    assert_eq!(state.answer().and_then(Answer::cursor), Some(seq(48200)));
+}
+
+#[test]
+fn a_head_direct_answer_replacing_a_fold_backed_one_carries_no_provenance_over() {
+    let mut state = BrowserState::new(uuid(EPOCH));
+    state.replace(fold_backed(vec![Row("first")]));
+
+    state.replace(Answer::HeadDirect(Packed {
+        rows: vec![Row("second")],
+        overflow: None,
+        horizon: seq(48214),
+    }));
+
+    // Replacement is whole, so the fold and generation the earlier answer wore
+    // leave with it. A state that kept them would attribute these rows to a
+    // fold that never ranked them.
+    let answer = state.answer().expect("an answer was received");
+    assert_eq!(answer.fold(), None);
+    assert_eq!(answer.generation(), None);
+}
+
+#[test]
 fn reconnecting_to_a_new_generation_starts_empty() {
     let mut state = BrowserState::new(uuid(EPOCH));
     state.apply(&envelope(48213));
-    state.replace(Packed {
+    state.replace(Answer::HeadDirect(Packed {
         rows: vec![Row("stale")],
         overflow: None,
         horizon: seq(48213),
-    });
+    }));
 
     state.reconnect(uuid(NEXT_EPOCH));
 
@@ -389,11 +484,11 @@ fn reconnecting_to_a_new_generation_starts_empty() {
 fn reconnecting_to_the_same_generation_resumes_where_it_left_off() {
     let mut state = BrowserState::new(uuid(EPOCH));
     state.apply(&envelope(48213));
-    state.replace(Packed {
+    state.replace(Answer::HeadDirect(Packed {
         rows: vec![Row("live")],
         overflow: None,
         horizon: seq(48213),
-    });
+    }));
 
     state.reconnect(uuid(EPOCH));
 

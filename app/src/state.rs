@@ -1,11 +1,11 @@
 //! One in-browser state over received frames.
 //!
 //! The app appends nothing and derives nothing it was not told. This state
-//! remembers the highest position it has applied and the most recent packed
-//! answer; it never merges two answers, never repairs a gap, and never
-//! reports a horizon, overflow, or cursor it did not receive.
+//! remembers the highest position it has applied and the most recent answer;
+//! it never merges two answers, never repairs a gap, and never reports a
+//! horizon, overflow, or cursor it did not receive.
 
-use wire::{Body, CanonicalUuid, Envelope, Fact, Overflow, Packed, Seq};
+use wire::{Body, CanonicalUuid, Derived, Envelope, Fact, FoldName, Overflow, Packed, Seq};
 
 use crate::socket::Admitted;
 
@@ -32,6 +32,74 @@ impl Applied {
     }
 }
 
+/// How a list answer was produced.
+///
+/// The two arms are the two reads the socket makes, and they differ in exactly
+/// one way that matters downstream: whether the answer can say which fold
+/// generation produced it and how far that generation had applied the journal.
+/// A head-direct read cannot, and this enum gives it nowhere to claim
+/// otherwise, so "never fabricate provenance" holds by shape rather than by a
+/// rule a renderer has to remember.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Answer<T> {
+    /// A fold-backed answer, carrying the provenance the fold stamped on it.
+    Derived(Derived<T>),
+    /// A head-direct answer, read straight off the authoritative heads.
+    HeadDirect(Packed<T>),
+}
+
+impl<T> Answer<T> {
+    /// The packed rows, however this answer was produced.
+    ///
+    /// Both arms carry one, because the list frame is the same either way and
+    /// only the provenance around it differs.
+    #[must_use]
+    pub const fn packed(&self) -> &Packed<T> {
+        match self {
+            Self::Derived(derived) => &derived.packed,
+            Self::HeadDirect(packed) => packed,
+        }
+    }
+
+    /// The fold that produced this answer, or `None` for a head-direct read.
+    #[must_use]
+    pub const fn fold(&self) -> Option<&FoldName> {
+        match self {
+            Self::Derived(derived) => Some(&derived.fold),
+            Self::HeadDirect(_) => None,
+        }
+    }
+
+    /// The generation of that fold, or `None` for a head-direct read.
+    #[must_use]
+    pub const fn generation(&self) -> Option<u64> {
+        match self {
+            Self::Derived(derived) => Some(derived.r#gen),
+            Self::HeadDirect(_) => None,
+        }
+    }
+
+    /// How far that generation had applied the journal, or `None` for a
+    /// head-direct read.
+    ///
+    /// This is deliberately not the packed horizon. The horizon says how far
+    /// the declared inputs are complete; this says how far the fold itself had
+    /// gotten. Collapsing the two would let a stale generation read as current.
+    #[must_use]
+    pub const fn cursor(&self) -> Option<Seq> {
+        match self {
+            Self::Derived(derived) => Some(derived.cursor),
+            Self::HeadDirect(_) => None,
+        }
+    }
+
+    /// True when this answer carries fold provenance at all.
+    #[must_use]
+    pub const fn is_derived(&self) -> bool {
+        matches!(self, Self::Derived(_))
+    }
+}
+
 /// Browser state scoped to one resident generation.
 ///
 /// The generation is part of the state because a reconnect against a new epoch
@@ -40,7 +108,7 @@ impl Applied {
 pub struct BrowserState<T> {
     epoch: CanonicalUuid,
     cursor: Option<Seq>,
-    packed: Option<Packed<T>>,
+    answer: Option<Answer<T>>,
 }
 
 impl<T> BrowserState<T> {
@@ -50,7 +118,7 @@ impl<T> BrowserState<T> {
         Self {
             epoch,
             cursor: None,
-            packed: None,
+            answer: None,
         }
     }
 
@@ -60,10 +128,16 @@ impl<T> BrowserState<T> {
         self.epoch
     }
 
-    /// The highest position applied, or `None` before the first frame.
+    /// The highest position applied from the stream, or `None` before the
+    /// first frame.
     ///
     /// Absent is reported as absent. A state that has seen nothing does not
     /// claim position zero.
+    ///
+    /// This is the browser's own progress through the stream, which is not the
+    /// same claim as [`Answer::cursor`]: that one reports how far the fold
+    /// behind an answer had applied. Two subjects walking one journal keep two
+    /// cursors, so they are reached through two receivers and never merged.
     #[must_use]
     pub const fn cursor(&self) -> Option<Seq> {
         self.cursor
@@ -94,32 +168,47 @@ impl<T> BrowserState<T> {
         }
     }
 
-    /// Replace the packed answer with a newly received one.
+    /// Replace the current answer with a newly received one.
     ///
-    /// A packed answer carries its own rank, overflow, and horizon, so a later
-    /// answer replaces the earlier one whole. Merging two answers would
-    /// produce a list no producer ever ranked and a horizon no source ever
-    /// declared.
-    pub fn replace(&mut self, packed: Packed<T>) {
-        self.packed = Some(packed);
+    /// An answer carries its own rank, overflow, and horizon, so a later one
+    /// replaces the earlier whole. Merging two would produce a list no producer
+    /// ever ranked and a horizon no source ever declared.
+    ///
+    /// The parameter is [`Answer`] rather than a bare [`Packed`] so that a
+    /// fold-backed read arrives with its provenance attached instead of being
+    /// flattened on the way in. A state that accepted only the rows would have
+    /// discarded the fold and generation at the door and then had nothing
+    /// honest to render.
+    pub fn replace(&mut self, answer: Answer<T>) {
+        self.answer = Some(answer);
+    }
+
+    /// The current answer, or `None` before one arrives.
+    #[must_use]
+    pub const fn answer(&self) -> Option<&Answer<T>> {
+        self.answer.as_ref()
     }
 
     /// The rows of the current answer, empty before one arrives.
     #[must_use]
     pub fn rows(&self) -> &[T] {
-        self.packed.as_ref().map_or(&[], |packed| &packed.rows)
+        self.answer
+            .as_ref()
+            .map_or(&[], |answer| &answer.packed().rows)
     }
 
     /// What the current answer left out, when it left anything out.
     #[must_use]
     pub fn overflow(&self) -> Option<Overflow> {
-        self.packed.as_ref().and_then(|packed| packed.overflow)
+        self.answer
+            .as_ref()
+            .and_then(|answer| answer.packed().overflow)
     }
 
     /// The completeness boundary the current answer declared.
     #[must_use]
     pub fn horizon(&self) -> Option<Seq> {
-        self.packed.as_ref().map(|packed| packed.horizon)
+        self.answer.as_ref().map(|answer| answer.packed().horizon)
     }
 
     /// True when the current answer omitted ranked rows.
@@ -130,7 +219,7 @@ impl<T> BrowserState<T> {
 
     /// Adopt a generation, discarding state that belonged to another.
     ///
-    /// Reconnecting to the same generation resumes: the cursor and the packed
+    /// Reconnecting to the same generation resumes: the cursor and the current
     /// answer remain valid observations of that authority. Reconnecting to a
     /// new one starts empty, because positions and horizons are only meaningful
     /// within the generation that assigned them.
@@ -138,7 +227,7 @@ impl<T> BrowserState<T> {
         if self.epoch != epoch {
             self.epoch = epoch;
             self.cursor = None;
-            self.packed = None;
+            self.answer = None;
         }
     }
 }
