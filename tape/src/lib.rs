@@ -25,7 +25,7 @@ mod seal;
 mod tee;
 
 pub use read::Locus;
-pub use seal::{Index, Member, Seal};
+pub use seal::{Extent, Index, Member, Seal};
 
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
@@ -71,6 +71,33 @@ impl Tape {
     pub fn open(root: impl AsRef<Path>) -> Result<Self, Error> {
         let requested = root.as_ref();
         create_directory(requested)?;
+        let root = fs::canonicalize(requested)
+            .map_err(|error| Error::io(Operation::OpenTape, requested, error))?;
+
+        Ok(Self { root })
+    }
+
+    /// Open an existing tape without creating or recovering anything.
+    ///
+    /// This is the observer door. A missing directory is an error rather than
+    /// an invitation to create one, so a read-only surface cannot leave an
+    /// empty tape behind merely by looking in the wrong place.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O failure when the path is absent, is not a directory, or
+    /// cannot be resolved.
+    pub fn open_existing(root: impl AsRef<Path>) -> Result<Self, Error> {
+        let requested = root.as_ref();
+        let metadata = fs::symlink_metadata(requested)
+            .map_err(|error| Error::io(Operation::OpenTape, requested, error))?;
+        if !metadata.is_dir() {
+            return Err(Error::io(
+                Operation::OpenTape,
+                requested,
+                io::Error::new(io::ErrorKind::InvalidInput, "tape root is not a directory"),
+            ));
+        }
         let root = fs::canonicalize(requested)
             .map_err(|error| Error::io(Operation::OpenTape, requested, error))?;
 
@@ -292,6 +319,8 @@ pub enum Operation {
     StagePublication,
     /// Reading the index.
     ReadIndex,
+    /// Inspecting the current member extents.
+    InspectExtents,
     /// Synchronizing the tape directory.
     SyncDirectory,
 }
@@ -308,6 +337,7 @@ impl fmt::Display for Operation {
             Self::Compress => "compress member",
             Self::StagePublication => "stage publication",
             Self::ReadIndex => "read index",
+            Self::InspectExtents => "inspect tape member extents",
             Self::SyncDirectory => "synchronize the tape directory",
         })
     }

@@ -48,13 +48,15 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use syn::{Attribute, Fields, Item, Meta, Token, UseTree, Visibility};
+use wire::manifest::ReleaseTarget;
 use wire::{
     Accepted, Actor, Answer, AnyFact, CanonicalUuid, ClaimDisposition, ClaimHead, Command,
     CommandKind, CursorHead, Derived, Digest, Disposition, Envelope, Fact, FactKind, Fault,
     FaultClass, FindingHead, FindingState, FoldName, Hello, Instant, LaneResidency, LeaseHead,
-    Name, Origin, Outcome, Overflow, Packed, Phase, Producer, Refusal, Reply, ReplyPosition,
-    ResidencyHead, ResidentState, Response, Seq, SeqRange, TaskHandle, TaskHead, TrustHead,
-    TrustState, WireVersion, Witness, WitnessClass, WitnessHead, WitnessKind, WorkflowHead, body,
+    Name, Origin, Outcome, Overflow, Packed, Phase, Producer, ProofEvidence, Refusal, Reply,
+    ReplyPosition, ResidencyHead, ResidentState, Response, Seq, SeqRange, TaskHandle, TaskHead,
+    TrustHead, TrustState, WireVersion, Witness, WitnessClass, WitnessHead, WitnessKind,
+    WorkflowHead, body,
 };
 
 include!("identity_law/laws.rs");
