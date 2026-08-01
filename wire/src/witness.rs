@@ -224,8 +224,13 @@ pub enum Witness {
     Claim {
         /// Subject task.
         task: TaskHandle,
-        /// Claim head the command relies on.
-        head: Seq,
+        /// Claim head the command relies on, absent before the first win.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        head: Option<Seq>,
     },
     /// The lease head.
     Lease {

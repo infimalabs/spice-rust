@@ -88,6 +88,30 @@ pub struct TaskHeads {
 }
 
 impl TaskHeads {
+    /// Current task statement head and the position that established it.
+    #[must_use]
+    pub const fn statement(&self) -> &JournalHead<wire::TaskHead> {
+        &self.statement
+    }
+
+    /// Current workflow head and the position that established it.
+    #[must_use]
+    pub const fn workflow(&self) -> &JournalHead<wire::WorkflowHead> {
+        &self.workflow
+    }
+
+    /// Current claim head, absent before a task's first claim.
+    #[must_use]
+    pub const fn claim(&self) -> Option<&JournalHead<wire::ClaimHead>> {
+        self.claim.as_ref()
+    }
+
+    /// Current lease head, absent before possession has minted one.
+    #[must_use]
+    pub const fn lease(&self) -> Option<&JournalHead<wire::LeaseHead>> {
+        self.lease.as_ref()
+    }
+
     /// Consume the storage view and return its typed bodies.
     #[must_use]
     pub fn into_bodies(
@@ -291,7 +315,17 @@ impl JournalRead<'_> {
             .optional()
             .map_err(GuardError::Store)?;
         row.map_or(Ok(None), |(position, bytes)| {
-            decode_head(position, &bytes).map(Some)
+            let head = decode_head(position, &bytes).map_err(|error| {
+                GuardError::Invalid(format!("residency head is invalid: {error}"))
+            })?;
+            if self.cursor.is_none_or(|cursor| head.position > cursor) {
+                return Err(GuardError::Invalid(format!(
+                    "residency head position {} is beyond cursor {:?}",
+                    head.position,
+                    self.cursor.map(wire::Seq::get)
+                )));
+            }
+            Ok(Some(head))
         })
     }
 
@@ -415,6 +449,34 @@ impl Error for GuardError {
             Self::Refused(refusal) => Some(refusal),
             Self::Store(error) => Some(error),
             Self::Invalid(_) => None,
+        }
+    }
+}
+
+/// A durable read failed in the journal or in the typed answer builder.
+#[derive(Debug)]
+pub enum ReadError<E> {
+    Journal(GuardError),
+    Answer(E),
+}
+
+impl<E: fmt::Display> fmt::Display for ReadError<E> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Journal(error) => write!(formatter, "journal read failed: {error}"),
+            Self::Answer(error) => write!(formatter, "journal answer refused: {error}"),
+        }
+    }
+}
+
+impl<E> Error for ReadError<E>
+where
+    E: Error + 'static,
+{
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Journal(error) => Some(error),
+            Self::Answer(error) => Some(error),
         }
     }
 }
@@ -883,6 +945,26 @@ impl fmt::Display for CommitFault {
 impl Error for CommitFault {}
 
 impl Journal {
+    /// Evaluate a typed answer whose own error remains distinct from journal
+    /// faults while both are observed inside one immutable SQLite snapshot.
+    pub fn read_with<T, E, F>(&self, answer: F) -> Result<T, ReadError<E>>
+    where
+        F: for<'a> FnOnce(&JournalRead<'a>) -> Result<T, E>,
+    {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .map_err(GuardError::Store)
+            .map_err(ReadError::Journal)?;
+        let read = JournalRead::scoped(&transaction).map_err(ReadError::Journal)?;
+        let answer = answer(&read).map_err(ReadError::Answer)?;
+        transaction
+            .commit()
+            .map_err(GuardError::Store)
+            .map_err(ReadError::Journal)?;
+        Ok(answer)
+    }
+
     /// Evaluate an owned answer against one immutable SQLite snapshot.
     ///
     /// The cursor query is deliberately the first read in the deferred
@@ -892,14 +974,9 @@ impl Journal {
     where
         F: for<'a> FnOnce(&JournalRead<'a>) -> Result<T, GuardError>,
     {
-        let transaction = self
-            .connection
-            .unchecked_transaction()
-            .map_err(GuardError::Store)?;
-        let read = JournalRead::scoped(&transaction)?;
-        let answer = answer(&read)?;
-        transaction.commit().map_err(GuardError::Store)?;
-        Ok(answer)
+        self.read_with(answer).map_err(|error| match error {
+            ReadError::Journal(error) | ReadError::Answer(error) => error,
+        })
     }
 
     /// Evaluate guards and apply every proposed effect in one immediate SQLite

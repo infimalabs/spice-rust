@@ -2071,6 +2071,7 @@ dependencies = [
  "listen",
  "notify",
  "proof",
+ "rusqlite",
  "serde",
  "sill",
  "steer",
@@ -2576,6 +2577,7 @@ dependencies = [
  "serde_json",
  "syn 3.0.3",
  "thiserror",
+ "toml",
  "uuid",
 ]
 

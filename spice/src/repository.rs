@@ -6,9 +6,10 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// One repository resolved to the Git directory shared by all its worktrees.
+/// One repository resolved to its worktree and shared Git directory.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Repository {
+    worktree: PathBuf,
     common: PathBuf,
 }
 
@@ -33,12 +34,14 @@ impl Repository {
             match fs::metadata(&marker) {
                 Ok(kind) if kind.is_dir() => {
                     return Ok(Self {
+                        worktree: cursor,
                         common: common_directory(directory(&marker, DirectoryKind::Git)?)?,
                     });
                 }
                 Ok(kind) if kind.is_file() => {
                     let git = gitdir_pointer(&marker)?;
                     return Ok(Self {
+                        worktree: cursor,
                         common: common_directory(git)?,
                     });
                 }
@@ -51,6 +54,12 @@ impl Repository {
                 return Err(ResolveError::NoRepository { start });
             }
         }
+    }
+
+    /// Canonical root of the nearest worktree containing the requested start.
+    #[must_use]
+    pub fn worktree_root(&self) -> &Path {
+        &self.worktree
     }
 
     /// Canonical Git directory shared by every linked worktree.
@@ -296,12 +305,23 @@ mod tests {
         fs::create_dir_all(&start).expect("create nested start");
 
         let repository = Repository::discover(&start).expect("resolve nearest repository");
+        let worktree = fs::canonicalize(&inner).expect("canonical worktree root");
         let common = fs::canonicalize(inner.join(".git")).expect("canonical common directory");
 
+        assert_eq!(repository.worktree_root(), worktree);
         assert_eq!(repository.common_dir(), common);
         assert_eq!(
             repository.journal_path(),
             common.join(".spice/data/spicejournal.sqlite3")
+        );
+        assert_eq!(
+            proof::Layout::new(
+                repository.worktree_root(),
+                repository.common_dir(),
+                wire::manifest::ReleaseTarget::Aarch64AppleDarwin,
+            )
+            .payload_path(),
+            worktree.join("dist/stage/targets/aarch64-apple-darwin/payload.json")
         );
     }
 
@@ -325,8 +345,23 @@ mod tests {
             Repository::discover(worktree.join("nested")).expect("resolve linked worktree");
 
         assert_eq!(
+            repository.worktree_root(),
+            fs::canonicalize(&worktree).expect("canonical linked worktree")
+        );
+        assert_eq!(
             repository.common_dir(),
             fs::canonicalize(&common).expect("canonical common directory")
+        );
+        assert_eq!(
+            proof::Layout::new(
+                repository.worktree_root(),
+                repository.common_dir(),
+                wire::manifest::ReleaseTarget::X86_64UnknownLinuxMusl,
+            )
+            .payload_path(),
+            fs::canonicalize(&worktree)
+                .expect("canonical linked worktree")
+                .join("dist/stage/targets/x86_64-unknown-linux-musl/payload.json")
         );
 
         let absolute_git = origin.join("absolute git directory");
@@ -360,7 +395,8 @@ mod tests {
         fs::create_dir_all(&no_repository).expect("create ordinary directory");
         assert!(matches!(
             Repository::discover(&no_repository),
-            Err(ResolveError::NoRepository { start }) if start == fs::canonicalize(&no_repository).expect("canonical start")
+            Err(ResolveError::NoRepository { start })
+                if start == fs::canonicalize(&no_repository).expect("canonical start")
         ));
 
         let malformed = case(&scratch, "malformed gitdir");
@@ -395,7 +431,8 @@ mod tests {
         .expect("write malformed common pointer");
         assert!(matches!(
             Repository::discover(&malformed_common),
-            Err(ResolveError::MalformedCommondir { path }) if path == malformed_common.join(".git/commondir")
+            Err(ResolveError::MalformedCommondir { path })
+                if path == malformed_common.join(".git/commondir")
         ));
 
         let missing_common = case(&scratch, "missing commondir");
@@ -404,7 +441,8 @@ mod tests {
             .expect("write missing common pointer");
         assert!(matches!(
             Repository::discover(&missing_common),
-            Err(ResolveError::MissingCommondir { path }) if path == missing_common.join(".git/absent")
+            Err(ResolveError::MissingCommondir { path })
+                if path == missing_common.join(".git/absent")
         ));
 
         let common_file = case(&scratch, "file commondir");
@@ -413,7 +451,8 @@ mod tests {
         fs::write(common_file.join(".git/commondir"), b"target\n").expect("write common pointer");
         assert!(matches!(
             Repository::discover(&common_file),
-            Err(ResolveError::CommondirNotDirectory { path }) if path == common_file.join(".git/target")
+            Err(ResolveError::CommondirNotDirectory { path })
+                if path == common_file.join(".git/target")
         ));
 
         let absent_start = scratch.join("absent start");
