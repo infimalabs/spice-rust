@@ -850,6 +850,17 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["down"]
         | ["run"]
         | ["config"]
+        | ["trust"]
+        | ["trust", "grant"]
+        | ["trust", "revoke"]
+        | ["backup"]
+        | ["restore"]
+        | ["journal"]
+        | ["journal", "replay"]
+        | ["journal", "reindex"]
+        | ["journal", "verify"]
+        | ["fold"]
+        | ["thread"]
         | ["release", "publish"]
         | ["restore", "verify"] => Landing::Landed,
         ["board"]
@@ -882,18 +893,7 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["consent", "policy"]
         | ["taste"]
         | ["taste", "add"]
-        | ["taste", "drop"]
-        | ["trust"]
-        | ["trust", "grant"]
-        | ["trust", "revoke"] => Landing::Gap("POLICY-1kJQlFB6"),
-        ["backup"]
-        | ["restore"]
-        | ["journal"]
-        | ["journal", "replay"]
-        | ["journal", "reindex"]
-        | ["journal", "verify"]
-        | ["fold"]
-        | ["thread"] => Landing::Gap("JOURNAL-1kJQlFfS"),
+        | ["taste", "drop"] => Landing::Gap("POLICY-1kJQlFB6"),
         ["canvas"] => Landing::Gap("PUBLISH-1kJQlGb0"),
         _ => Landing::Unaccounted,
     }

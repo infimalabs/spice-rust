@@ -297,7 +297,39 @@ impl JournalRead<'_> {
         &self,
         digest: &wire::Digest,
     ) -> Result<Option<JournalHead<wire::TrustHead>>, GuardError> {
-        self.text_head("trust_heads", "digest", digest.as_str())
+        let head = self.text_head::<wire::TrustHead>("trust_heads", "digest", digest.as_str())?;
+        if let Some(head) = &head
+            && head.body.digest != *digest
+        {
+            return Err(GuardError::Invalid(format!(
+                "trust head indexed as {digest} carries body digest {}",
+                head.body.digest
+            )));
+        }
+        Ok(head)
+    }
+
+    /// Every current executable trust head in ascending digest order.
+    pub fn trust_heads(&self) -> Result<Vec<JournalHead<wire::TrustHead>>, GuardError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT digest FROM trust_heads ORDER BY digest")
+            .map_err(GuardError::Store)?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(GuardError::Store)?;
+        let mut heads = Vec::new();
+        for row in rows {
+            let indexed = row.map_err(GuardError::Store)?;
+            let digest = indexed.parse::<wire::Digest>().map_err(|error| {
+                GuardError::Invalid(format!("trust head key {indexed:?} is invalid: {error}"))
+            })?;
+            let head = self.trust_head(&digest)?.ok_or_else(|| {
+                GuardError::Invalid(format!("trust head indexed as {digest} disappeared"))
+            })?;
+            heads.push(head);
+        }
+        Ok(heads)
     }
 
     /// Current finding head, when the identity exists.
@@ -1022,6 +1054,37 @@ impl Journal {
         Ok(Applied {
             first: assigned[0],
             last,
+        })
+    }
+}
+
+impl crate::JournalReader {
+    /// Evaluate a typed answer inside one immutable read-only SQLite snapshot.
+    pub fn read_with<T, E, F>(&self, answer: F) -> Result<T, ReadError<E>>
+    where
+        F: for<'a> FnOnce(&JournalRead<'a>) -> Result<T, E>,
+    {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .map_err(GuardError::Store)
+            .map_err(ReadError::Journal)?;
+        let read = JournalRead::scoped(&transaction).map_err(ReadError::Journal)?;
+        let answer = answer(&read).map_err(ReadError::Answer)?;
+        transaction
+            .commit()
+            .map_err(GuardError::Store)
+            .map_err(ReadError::Journal)?;
+        Ok(answer)
+    }
+
+    /// Evaluate an owned answer against one immutable read-only snapshot.
+    pub fn read<T, F>(&self, answer: F) -> Result<T, GuardError>
+    where
+        F: for<'a> FnOnce(&JournalRead<'a>) -> Result<T, GuardError>,
+    {
+        self.read_with(answer).map_err(|error| match error {
+            ReadError::Journal(error) | ReadError::Answer(error) => error,
         })
     }
 }
