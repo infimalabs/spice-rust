@@ -154,10 +154,12 @@ impl Instant {
     ///
     /// A timestamp built elsewhere in the workspace may carry more resolution
     /// than the wire spells; the surplus is dropped here rather than at render,
-    /// so the stored value is the one the spelling denotes. Flooring is total
-    /// over the whole `Timestamp` range — `MIN` is already whole-millisecond
-    /// and `MAX` floors downward inside it — which `instant_narrowing_is_total_
-    /// over_the_timestamp_range` pins.
+    /// so the stored value is the one the spelling denotes.
+    ///
+    /// Flooring is total over the whole `Timestamp` range: `MIN` is already
+    /// whole-millisecond and `MAX` floors downward inside it, which is what
+    /// lets this return `Self` rather than a `Result`. The identity fixture
+    /// pins both bounds.
     #[must_use]
     pub fn new(inner: jiff::Timestamp) -> Self {
         let floored = inner
