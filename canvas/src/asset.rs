@@ -84,14 +84,22 @@ impl Discovery {
     pub fn publish(&self, path: impl AsRef<Path>) -> Result<(), PublishError> {
         let bytes = wire::encode(self).map_err(|error| PublishError::Encode(error.to_string()))?;
         let destination = atomic::Destination::new(path).map_err(PublishError::Atomic)?;
-        let mut staged = destination.stage().map_err(PublishError::Atomic)?;
-        staged
-            .write_all(&bytes)
-            .map_err(|source| PublishError::Io {
-                path: staged.temporary_path().to_path_buf(),
-                source,
-            })?;
+        let staged = destination.stage().map_err(PublishError::Atomic)?;
+        Self::publish_staged(staged, &bytes, |_| {})
+    }
+
+    /// Secures, fills, and atomically publishes one already-created stage.
+    fn publish_staged(
+        mut staged: atomic::StagedWrite,
+        bytes: &[u8],
+        before_write: impl FnOnce(&Path),
+    ) -> Result<(), PublishError> {
         set_owner_only(staged.temporary_path())?;
+        before_write(staged.temporary_path());
+        staged.write_all(bytes).map_err(|source| PublishError::Io {
+            path: staged.temporary_path().to_path_buf(),
+            source,
+        })?;
         staged.commit().map_err(PublishError::Atomic)
     }
 }
@@ -202,6 +210,50 @@ mod tests {
                 0o600
             );
         }
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_discovery_is_owner_only_before_any_capability_byte_exists() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!(
+            "spice-canvas-private-stage-{}-{}",
+            std::process::id(),
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).expect("fixture directory");
+        let path = root.join("canvas");
+        let discovery = Discovery {
+            endpoint: "http://127.0.0.1:48123".to_owned(),
+            capability: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
+            epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c4"),
+        };
+        let bytes = wire::encode(&discovery).expect("discovery encodes");
+        let destination = atomic::Destination::new(&path).expect("destination resolves");
+        let staged = destination.stage().expect("discovery stages");
+        fs::set_permissions(staged.temporary_path(), fs::Permissions::from_mode(0o666))
+            .expect("fixture starts non-private");
+
+        let mut observed = false;
+        Discovery::publish_staged(staged, &bytes, |temporary| {
+            let metadata = fs::metadata(temporary).expect("staged metadata");
+            assert_eq!(metadata.len(), 0, "capability bytes are not present yet");
+            assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+            observed = true;
+        })
+        .expect("discovery publishes");
+
+        assert!(observed, "the pre-write stage was observed");
+        assert_eq!(
+            fs::metadata(&path)
+                .expect("published metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 }
