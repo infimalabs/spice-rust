@@ -4,6 +4,9 @@
 //! module composes those values and publishes metadata used to route layers,
 //! render help, and report provenance without carrying a second value parser.
 
+use std::collections::BTreeSet;
+
+use serde::de::{Deserializer, Error as _};
 use serde::{Deserialize, Serialize};
 use wire::ConfigSource;
 
@@ -23,6 +26,8 @@ pub use resolve::{
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Root {
+    tasks: TaskMetadata,
+    policy: WorkspacePolicy,
     taste: taste::Config,
     consent: consent::Config,
     gate: gate::Config,
@@ -37,6 +42,18 @@ pub struct Root {
 }
 
 impl Root {
+    /// Shared task scheduler declarations.
+    #[must_use]
+    pub const fn tasks(&self) -> &TaskMetadata {
+        &self.tasks
+    }
+
+    /// Workspace-owned environment-name policy.
+    #[must_use]
+    pub const fn policy(&self) -> &WorkspacePolicy {
+        &self.policy
+    }
+
     /// Active prose tastes.
     #[must_use]
     pub const fn taste(&self) -> &taste::Config {
@@ -102,6 +119,130 @@ impl Root {
     pub const fn proof(&self) -> &proof::Config {
         &self.proof
     }
+}
+
+/// Tracked metadata shared with the task scheduler.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TaskMetadata {
+    stems: Vec<String>,
+    project_min_depth: u64,
+    project_max_depth: u64,
+}
+
+impl TaskMetadata {
+    /// Additional public project stems in tracked declaration order.
+    #[must_use]
+    pub fn stems(&self) -> &[String] {
+        &self.stems
+    }
+
+    /// Fewest dotted segments admitted for a public project.
+    #[must_use]
+    pub const fn project_min_depth(&self) -> u64 {
+        self.project_min_depth
+    }
+
+    /// Most dotted segments admitted for a public project.
+    #[must_use]
+    pub const fn project_max_depth(&self) -> u64 {
+        self.project_max_depth
+    }
+}
+
+impl Default for TaskMetadata {
+    fn default() -> Self {
+        Self {
+            stems: Vec::new(),
+            project_min_depth: default_project_min_depth(),
+            project_max_depth: default_project_max_depth(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TaskMetadataInput {
+    #[serde(default, deserialize_with = "unique_names")]
+    stems: Vec<String>,
+    #[serde(
+        default = "default_project_min_depth",
+        deserialize_with = "positive_depth"
+    )]
+    project_min_depth: u64,
+    #[serde(
+        default = "default_project_max_depth",
+        deserialize_with = "positive_depth"
+    )]
+    project_max_depth: u64,
+}
+
+impl<'de> Deserialize<'de> for TaskMetadata {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let input = TaskMetadataInput::deserialize(deserializer)?;
+        if input.project_min_depth > input.project_max_depth {
+            return Err(D::Error::custom(format!(
+                concat!(
+                    "tasks.project_min_depth must be less than or equal to ",
+                    "tasks.project_max_depth: {} > {}"
+                ),
+                input.project_min_depth, input.project_max_depth,
+            )));
+        }
+        Ok(Self {
+            stems: input.stems,
+            project_min_depth: input.project_min_depth,
+            project_max_depth: input.project_max_depth,
+        })
+    }
+}
+
+/// Tracked workspace environment vocabulary used by Gate and Doctor.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WorkspacePolicy {
+    #[serde(deserialize_with = "unique_names")]
+    env_names: Vec<String>,
+}
+
+impl WorkspacePolicy {
+    /// Environment names declared by the tracked workspace.
+    #[must_use]
+    pub fn env_names(&self) -> &[String] {
+        &self.env_names
+    }
+}
+
+const fn default_project_min_depth() -> u64 {
+    dialect::PROJECT_MIN_DEPTH as u64
+}
+
+const fn default_project_max_depth() -> u64 {
+    dialect::PROJECT_MAX_DEPTH as u64
+}
+
+fn positive_depth<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
+    let depth = u64::deserialize(deserializer)?;
+    if depth == 0 {
+        Err(D::Error::custom("project depth must be positive"))
+    } else {
+        Ok(depth)
+    }
+}
+
+fn unique_names<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<String>, D::Error> {
+    let names = Vec::<String>::deserialize(deserializer)?;
+    let mut seen = BTreeSet::new();
+    for name in &names {
+        if name.is_empty() {
+            return Err(D::Error::custom("configuration names must be nonempty"));
+        }
+        if !seen.insert(name) {
+            return Err(D::Error::custom(format!(
+                "configuration names must be unique; duplicate {name:?}"
+            )));
+        }
+    }
+    Ok(names)
 }
 
 /// Serialized shape of one leaf value.
@@ -387,6 +528,34 @@ macro_rules! registry {
 }
 
 registry! {
+    fixed "tasks.stems" {
+        kind: StringList,
+        builtin: Some(Builtin::Strings(&[])),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "tasks.project_min_depth" {
+        kind: UnsignedInteger,
+        builtin: Some(Builtin::UnsignedInteger(dialect::PROJECT_MIN_DEPTH as u64)),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "tasks.project_max_depth" {
+        kind: UnsignedInteger,
+        builtin: Some(Builtin::UnsignedInteger(dialect::PROJECT_MAX_DEPTH as u64)),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "policy.env_names" {
+        kind: StringList,
+        builtin: Some(Builtin::Strings(&[])),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
     named "taste.<name>.words" {
         kind: StringList,
         builtin: None,

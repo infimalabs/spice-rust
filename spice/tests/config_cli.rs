@@ -98,8 +98,19 @@ fn reads_name_the_coexistence_effective_tree_and_provenance() {
         json["effective"]["taste"]["polling"]["message"],
         "use events"
     );
-    assert!(json["effective"].get("tasks").is_none());
-    assert!(json["effective"].get("policy").is_none());
+    assert_eq!(json["effective"]["tasks"]["stems"], serde_json::json!([]));
+    assert_eq!(
+        json["effective"]["tasks"]["project_min_depth"],
+        dialect::PROJECT_MIN_DEPTH
+    );
+    assert_eq!(
+        json["effective"]["tasks"]["project_max_depth"],
+        dialect::PROJECT_MAX_DEPTH
+    );
+    assert_eq!(
+        json["effective"]["policy"]["env_names"],
+        serde_json::json!([])
+    );
     assert!(!fixture.local().exists());
 
     let selected = reply_body(fixture.invoke(&["config", "lock.busy", "--json"]));

@@ -579,6 +579,9 @@ fn sanitize(
     issues: &mut Vec<Issue>,
     leaves: &mut Vec<ConcretePath>,
 ) -> bool {
+    if coexist && is_scaffold_root(path) {
+        return false;
+    }
     let borrowed = path.borrowed();
     if let Some(entry) = descriptor(&borrowed) {
         if !entry.layers().contains(&source) {
@@ -620,9 +623,6 @@ fn sanitize(
         .iter()
         .any(|entry| entry.template().accepts_prefix(&borrowed))
     {
-        if coexist && is_scaffold_root(path) {
-            return false;
-        }
         issues.push(Issue::at(
             IssueKind::Unknown,
             source,

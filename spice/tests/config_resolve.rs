@@ -67,7 +67,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert_eq!(missing.root(), &spice::config::Root::default());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 20);
+    assert_eq!(missing.provenance().len(), 24);
     assert!(
         missing
             .provenance()
@@ -102,19 +102,22 @@ fn coexistence_ignores_only_the_two_tracked_scaffold_roots() {
     let local = "[lock.worker]\nshards = 2\n";
 
     let strict = resolve(documents(Some(tracked), Some(local)))
-        .expect_err("release-one admission still rejects scaffold roots");
-    assert_eq!(
-        strict
-            .issues()
-            .iter()
-            .filter_map(|issue| issue.path().map(ToString::to_string))
-            .filter(|path| matches!(path.as_str(), "tasks" | "policy"))
-            .collect::<Vec<_>>(),
-        ["policy", "tasks"]
-    );
+        .expect("strict resolution admits typed shared metadata");
+    assert_eq!(strict.root().tasks().stems(), ["rim"]);
+    assert!(strict.root().policy().env_names().is_empty());
 
     let coexisting = resolve(coexisting_documents(Some(tracked), Some(local)))
         .expect("coexistence projects out only predecessor roots");
+    assert!(coexisting.root().tasks().stems().is_empty());
+    assert_eq!(
+        coexisting.root().tasks().project_min_depth(),
+        dialect::PROJECT_MIN_DEPTH as u64
+    );
+    assert_eq!(
+        coexisting.root().tasks().project_max_depth(),
+        dialect::PROJECT_MAX_DEPTH as u64
+    );
+    assert!(coexisting.root().policy().env_names().is_empty());
     assert_eq!(coexisting.root().taste().bag().tastes().len(), 1);
     assert_eq!(coexisting.root().lock().named().len(), 1);
     assert_eq!(
@@ -128,8 +131,8 @@ fn coexistence_ignores_only_the_two_tracked_scaffold_roots() {
 
     for (tracked, local, path) in [
         (Some("[unknown]\nvalue = 1\n"), None, "unknown"),
-        (None, Some("[tasks]\nvalue = 1\n"), "tasks"),
-        (None, Some("[policy]\nvalue = 1\n"), "policy"),
+        (None, Some("[tasks]\nvalue = 1\n"), "tasks.value"),
+        (None, Some("[policy]\nvalue = 1\n"), "policy.value"),
     ] {
         let error = resolve(coexisting_documents(tracked, local))
             .expect_err("coexistence must not widen another source or root");
@@ -212,6 +215,105 @@ fn every_two_layer_precedence_pair_is_deterministic() {
         path_source(&local_and_flag, "lane.vendor"),
         ConfigSource::Flag
     );
+}
+
+#[test]
+fn shared_metadata_is_tracked_only_and_enforces_names_and_depths() {
+    let resolved = resolve(documents(
+        Some(
+            r#"
+[tasks]
+stems = ["app", "board"]
+project_min_depth = 2
+project_max_depth = 3
+
+[policy]
+env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
+"#,
+        ),
+        None,
+    ))
+    .expect("shared tracked metadata resolves");
+
+    assert_eq!(resolved.root().tasks().stems(), ["app", "board"]);
+    assert_eq!(resolved.root().tasks().project_min_depth(), 2);
+    assert_eq!(resolved.root().tasks().project_max_depth(), 3);
+    assert_eq!(
+        resolved.root().policy().env_names(),
+        ["FIXTURE_INBOX", "FIXTURE_PROOF"]
+    );
+    for path in [
+        "tasks.stems",
+        "tasks.project_min_depth",
+        "tasks.project_max_depth",
+        "policy.env_names",
+    ] {
+        assert_eq!(path_source(&resolved, path), ConfigSource::Tracked);
+    }
+
+    let error = resolve(documents(
+        Some(
+            r#"
+[tasks]
+stems = ["", "app", "app"]
+project_min_depth = 4
+project_max_depth = 3
+
+[policy]
+env_names = ["FIXTURE_INBOX", "FIXTURE_INBOX"]
+"#,
+        ),
+        Some(
+            r#"
+[tasks]
+stems = ["local"]
+project_min_depth = 1
+project_max_depth = 2
+
+[policy]
+env_names = ["LOCAL_NAME"]
+"#,
+        ),
+    ))
+    .expect_err("invalid and local shared metadata refuses");
+
+    for (source, kind, path) in [
+        (ConfigSource::Tracked, IssueKind::Malformed, "tasks.stems"),
+        (
+            ConfigSource::Tracked,
+            IssueKind::Malformed,
+            "tasks.project_min_depth",
+        ),
+        (
+            ConfigSource::Tracked,
+            IssueKind::Malformed,
+            "policy.env_names",
+        ),
+        (ConfigSource::Local, IssueKind::Policy, "tasks.stems"),
+        (
+            ConfigSource::Local,
+            IssueKind::Policy,
+            "tasks.project_min_depth",
+        ),
+        (
+            ConfigSource::Local,
+            IssueKind::Policy,
+            "tasks.project_max_depth",
+        ),
+        (ConfigSource::Local, IssueKind::Policy, "policy.env_names"),
+    ] {
+        assert!(
+            error.issues().iter().any(|issue| {
+                issue.source() == source
+                    && issue.kind() == kind
+                    && issue
+                        .path()
+                        .is_some_and(|actual| actual.to_string() == path)
+            }),
+            "missing {source:?} {kind:?} at {path}: {:#?}",
+            error.issues()
+        );
+    }
 }
 
 #[test]
@@ -366,6 +468,14 @@ fn tracked_document_can_address_every_registry_descriptor() {
 [taste.alpha]
 words = ["done*"]
 message = "Done."
+
+[tasks]
+stems = ["app", "board"]
+project_min_depth = 2
+project_max_depth = 3
+
+[policy]
+env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
 
 [consent]
 posture = "deny"
@@ -683,9 +793,9 @@ value = 1
         ("listen.window", ConfigSource::Local, IssueKind::Malformed),
         ("lock.alpha", ConfigSource::Local, IssueKind::Malformed),
         ("lock.beta.mystery", ConfigSource::Local, IssueKind::Unknown),
-        ("policy", ConfigSource::Tracked, IssueKind::Unknown),
+        ("policy.mode", ConfigSource::Tracked, IssueKind::Unknown),
         ("proof.image", ConfigSource::Tracked, IssueKind::Malformed),
-        ("tasks", ConfigSource::Tracked, IssueKind::Unknown),
+        ("tasks.owner", ConfigSource::Tracked, IssueKind::Unknown),
     ] {
         assert!(
             rows.iter()

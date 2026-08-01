@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::Write;
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -10,6 +11,9 @@ use bus::{Bus, CommitOutcome};
 use journal::{FactCause, JournalWrite};
 use notify::{RecursiveMode, Watcher};
 use sill::{Acquisition, LockFile, LockName};
+use tungstenite::client::IntoClientRequest;
+use tungstenite::http::header::ORIGIN;
+use tungstenite::{Message, WebSocket};
 use wire::{
     Actor, ClaimDisposition, ClaimHead, FactKind, Instant, LeaseHead, Outcome, Producer,
     ReplyPosition, TaskHead, WorkflowHead,
@@ -74,6 +78,11 @@ impl Fixture {
 
     fn canvas(&self) -> PathBuf {
         self.runtime.join("canvas")
+    }
+
+    fn discovery(&self) -> canvas::Discovery {
+        let bytes = fs::read(self.canvas()).expect("current discovery reads");
+        wire::decode(&bytes).expect("current discovery decodes")
     }
 }
 
@@ -175,6 +184,97 @@ fn outcome(output: &Output) -> Outcome<()> {
         &output.stderr
     };
     wire::decode(bytes).expect("process speaks one outcome")
+}
+
+fn open_socket(discovery: &canvas::Discovery) -> WebSocket<TcpStream> {
+    let authority = discovery
+        .endpoint
+        .strip_prefix("http://")
+        .expect("fixture endpoint is HTTP");
+    let address: SocketAddr = authority.parse().expect("fixture endpoint address");
+    let stream = TcpStream::connect(address).expect("fixture socket connects");
+    stream
+        .set_read_timeout(Some(READINESS_DEADLINE))
+        .expect("fixture read timeout");
+    stream
+        .set_write_timeout(Some(READINESS_DEADLINE))
+        .expect("fixture write timeout");
+    let mut request = format!("ws://{authority}/socket")
+        .into_client_request()
+        .expect("fixture socket request");
+    request.headers_mut().insert(
+        ORIGIN,
+        discovery.endpoint.parse().expect("fixture socket origin"),
+    );
+    tungstenite::client(request, stream)
+        .expect("fixture WebSocket opens")
+        .0
+}
+
+fn hello(
+    discovery: &canvas::Discovery,
+    capability: wire::CanonicalUuid,
+) -> (WebSocket<TcpStream>, Vec<u8>) {
+    let mut socket = open_socket(discovery);
+    socket
+        .send(Message::Binary(
+            wire::encode(&wire::Hello {
+                wire: wire::WireVersion::CURRENT,
+                capability,
+                epoch: discovery.epoch,
+            })
+            .expect("fixture Hello encodes")
+            .into(),
+        ))
+        .expect("fixture Hello sends");
+    let frame = socket.read().expect("fixture opening reply").into_data();
+    (socket, frame.to_vec())
+}
+
+fn authenticate(
+    discovery: &canvas::Discovery,
+    capability: wire::CanonicalUuid,
+) -> (WebSocket<TcpStream>, wire::Accepted) {
+    let (socket, frame) = hello(discovery, capability);
+    let accepted = wire::decode(&frame).expect("fixture session accepted");
+    (socket, accepted)
+}
+
+fn assert_lane_session(
+    discovery: &canvas::Discovery,
+    lane: wire::CanonicalUuid,
+    capability: wire::CanonicalUuid,
+    request_id: wire::CanonicalUuid,
+) {
+    let (mut socket, accepted) = authenticate(discovery, capability);
+    assert_eq!(accepted.actor, Actor::Lane(lane));
+    let command = wire::Command {
+        v: wire::WireVersion::CURRENT,
+        id: request_id,
+        epoch: discovery.epoch,
+        kind: wire::CommandKind::UpChange,
+        expected: vec![wire::Witness::Transition {
+            from: wire::ResidentState::Seated,
+            to: wire::ResidentState::Dark,
+        }],
+        body: wire::intent::UpChange {
+            state: wire::ResidentState::Dark,
+        },
+    };
+    socket
+        .send(Message::Binary(
+            wire::encode(&command).expect("lane command encodes").into(),
+        ))
+        .expect("lane command sends");
+    let frame = socket.read().expect("lane response arrives").into_data();
+    let response: wire::Response<serde_json::Value> =
+        wire::decode(&frame).expect("lane response decodes");
+    assert_eq!((response.id, response.epoch), (request_id, discovery.epoch));
+    assert!(matches!(
+        response.outcome,
+        Outcome::Refusal(wire::Refusal { ref reason, .. })
+            if reason == "command::authority"
+    ));
 }
 
 fn hold(path: &Path, identity: &str) -> sill::Possession {
@@ -290,6 +390,47 @@ fn seed_active_claim(fixture: &Fixture) {
     });
     committed(&bus, claim);
     bus.shutdown().expect("fixture bus stops");
+}
+
+fn seed_lane(fixture: &Fixture, lane: wire::CanonicalUuid, capability: wire::CanonicalUuid) {
+    let journal = journal::Journal::open(fixture.journal()).expect("lane fixture journal opens");
+    let bus = Bus::start(journal).expect("lane fixture bus starts");
+    let current = bus
+        .residency_head()
+        .expect("lane fixture head reads")
+        .expect("lane fixture head exists");
+    let epoch = current.body().epoch;
+    let mut next = current.body().clone();
+    next.lanes.push(wire::LaneResidency {
+        lane,
+        occupant: None,
+        lineage: Vec::new(),
+        capabilities: vec![capability],
+        disposition: "vacant".to_owned(),
+    });
+    next.lanes.sort_by_key(|row| row.lane);
+    let origin = format!("resident:{epoch}")
+        .parse()
+        .expect("lane fixture origin");
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        origin,
+        instant("2030-04-12T18:47:09.271Z"),
+        Producer::ResidentRecognition,
+    );
+    let seated = write
+        .fact(
+            wire::body::LaneSeated {
+                lane,
+                capability,
+                worktree: fixture.root.display().to_string(),
+            },
+            FactCause::Existing(current.position()),
+        )
+        .expect("lane fixture fact");
+    write.residency_head(seated, move |_| next);
+    committed(&bus, write);
+    bus.shutdown().expect("lane fixture bus stops");
 }
 
 fn committed(bus: &Bus, write: JournalWrite) -> bus::JournalCommit {
@@ -486,6 +627,89 @@ fn shutdown_preserves_an_unfinished_claim_before_releasing_authority() {
         ],
         "shutdown appended no claim disposition transition"
     );
+}
+
+#[test]
+fn replaced_resident_generations_install_durable_lane_capabilities() {
+    let fixture = Fixture::new("lane-capabilities");
+    let mut initial = RunningResident::spawn(&fixture);
+    initial.assert_ready(&fixture);
+    let initial_discovery = fixture.discovery();
+    let down = invoke(&fixture, "down");
+    assert!(
+        down.status.success(),
+        "initial down failed: {:?}",
+        down.stderr
+    );
+    assert!(initial.wait().status.success(), "initial resident failed");
+
+    let lane = uuid("00000000-0000-4000-8000-000000000021");
+    let lane_capability = uuid("00000000-0000-4000-8000-000000000022");
+    seed_lane(&fixture, lane, lane_capability);
+
+    let mut replacement = RunningResident::spawn(&fixture);
+    replacement.assert_ready(&fixture);
+    let replacement_discovery = fixture.discovery();
+    assert_ne!(replacement_discovery.epoch, initial_discovery.epoch);
+    assert_ne!(
+        replacement_discovery.capability,
+        initial_discovery.capability
+    );
+    let (_, frame) = hello(&replacement_discovery, initial_discovery.capability);
+    let refusal: wire::Refusal = wire::decode(&frame).expect("replaced capability refuses");
+    assert_eq!(refusal.reason, "hello::capability-unknown");
+    let (_operator, accepted) =
+        authenticate(&replacement_discovery, replacement_discovery.capability);
+    assert_eq!(accepted.actor, Actor::Operator);
+    assert_lane_session(
+        &replacement_discovery,
+        lane,
+        lane_capability,
+        uuid("00000000-0000-4000-8000-000000000023"),
+    );
+    let down = invoke(&fixture, "down");
+    assert!(
+        down.status.success(),
+        "replacement down failed: {:?}",
+        down.stderr
+    );
+    assert!(
+        replacement.wait().status.success(),
+        "replacement resident failed"
+    );
+
+    let mut reconnected = RunningResident::spawn(&fixture);
+    reconnected.assert_ready(&fixture);
+    let reconnected_discovery = fixture.discovery();
+    let (_, frame) = hello(&reconnected_discovery, replacement_discovery.capability);
+    let refusal: wire::Refusal = wire::decode(&frame).expect("prior capability refuses");
+    assert_eq!(refusal.reason, "hello::capability-unknown");
+    assert_lane_session(
+        &reconnected_discovery,
+        lane,
+        lane_capability,
+        uuid("00000000-0000-4000-8000-000000000024"),
+    );
+    let down = invoke(&fixture, "down");
+    assert!(
+        down.status.success(),
+        "reconnected down failed: {:?}",
+        down.stderr
+    );
+    assert!(
+        reconnected.wait().status.success(),
+        "reconnected resident failed"
+    );
+
+    let journal = journal::Journal::open(fixture.journal()).expect("final journal opens");
+    let head = journal
+        .read(|read| read.residency_head())
+        .expect("final lane head reads")
+        .expect("final lane head exists")
+        .into_body();
+    assert_eq!(head.lanes.len(), 1);
+    assert_eq!(head.lanes[0].lane, lane);
+    assert_eq!(head.lanes[0].capabilities, [lane_capability]);
 }
 
 #[test]

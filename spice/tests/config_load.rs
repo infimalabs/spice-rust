@@ -87,19 +87,15 @@ fn coexisting_loader_reads_rust_local_intent_without_admitting_python_tracked_ta
     let repository = spice::repository::Repository::discover(&root).expect("fixture repository");
 
     let strict = spice::config::load_repository(&repository, &[])
-        .expect_err("strict release loader rejects predecessor roots");
-    assert_eq!(
-        strict
-            .resolution()
-            .expect("strict diagnostics")
-            .issues()
-            .len(),
-        2
-    );
+        .expect("strict loader admits typed Rust metadata");
+    assert_eq!(strict.root().tasks().stems(), ["rim"]);
+    assert!(strict.root().policy().env_names().is_empty());
 
     let before = snapshot(scratch.path());
     let resolved = load_coexisting_repository(&repository, &[])
-        .expect("coexisting loader admits isolated Rust intent");
+        .expect("coexisting loader projects out tracked shared metadata");
+    assert!(resolved.root().tasks().stems().is_empty());
+    assert!(resolved.root().policy().env_names().is_empty());
     assert_eq!(resolved.root().taste().bag().tastes().len(), 1);
     assert_eq!(resolved.root().lock().named().len(), 1);
     assert_eq!(
@@ -323,7 +319,7 @@ fn unreadable_acquisition_and_other_layer_decode_issue_are_both_returned() {
     let root = repository(&scratch, "unreadable");
     let tracked = root.join("spice.toml");
     write(&tracked, b"[listen]\nwindow = \"2m\"\n");
-    write(local_path(&root), b"[tasks]\nbootstrap = true\n");
+    write(local_path(&root), b"[tasks]\nowner = \"local\"\n");
     fs::set_permissions(&tracked, fs::Permissions::from_mode(0o000))
         .expect("make tracked unreadable");
 
@@ -337,7 +333,9 @@ fn unreadable_acquisition_and_other_layer_decode_issue_are_both_returned() {
     let resolution = error.resolution().expect("other layer was still decoded");
     assert!(resolution.issues().iter().any(|issue| {
         issue.source() == ConfigSource::Local
-            && issue.path().is_some_and(|path| path.to_string() == "tasks")
+            && issue
+                .path()
+                .is_some_and(|path| path.to_string() == "tasks.owner")
     }));
 }
 

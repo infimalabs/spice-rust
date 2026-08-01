@@ -165,6 +165,95 @@ fn same_report(text: &Spoken, json: &Spoken) -> DoctorReport<Root> {
     json_reply.body
 }
 
+#[test]
+fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
+    let repository = Scratch::repository("shared-metadata");
+    let tracked = include_bytes!("../../spice.toml");
+    fs::write(repository.path().join("spice.toml"), tracked)
+        .expect("copy exact tracked configuration");
+    let hook = repository.path().join(".git/.spice/hooks/pre-commit");
+    fs::create_dir_all(hook.parent().expect("hook parent")).expect("create hook directory");
+    fs::write(&hook, b"active Python hook sentinel\n").expect("write active hook sentinel");
+    let empty_path = repository.path().join("empty-path");
+    fs::create_dir(&empty_path).expect("create empty executable search path");
+    let before = directory_state(repository.path());
+
+    let text = invoke(repository.path(), &["doctor"], empty_path.as_os_str(), &[]);
+    let json = invoke(
+        repository.path(),
+        &["--json", "doctor"],
+        empty_path.as_os_str(),
+        &[],
+    );
+    let report = same_report(&text, &json);
+
+    assert_eq!(
+        report.configuration.tasks().stems(),
+        [
+            "app",
+            "atomic",
+            "board",
+            "bus",
+            "canvas",
+            "consent",
+            "corpus",
+            "dialect",
+            "dist",
+            "doctrine",
+            "fold",
+            "gate",
+            "journal",
+            "lane",
+            "listen",
+            "proof",
+            "rim",
+            "scheduler",
+            "sill",
+            "spice",
+            "steer",
+            "tape",
+            "taste",
+            "vendor",
+            "wire",
+        ]
+    );
+    assert_eq!(
+        report.configuration.tasks().project_min_depth(),
+        dialect::PROJECT_MIN_DEPTH as u64
+    );
+    assert_eq!(
+        report.configuration.tasks().project_max_depth(),
+        dialect::PROJECT_MAX_DEPTH as u64
+    );
+    assert_eq!(
+        report.configuration.policy().env_names(),
+        SpiceVariable::ALL
+            .iter()
+            .map(|variable| variable.as_str().to_owned())
+            .collect::<Vec<_>>()
+    );
+    for path in [
+        "tasks.stems",
+        "tasks.project_min_depth",
+        "tasks.project_max_depth",
+        "policy.env_names",
+    ] {
+        assert!(
+            report
+                .provenance
+                .iter()
+                .any(|row| { row.path == path && row.source == ConfigSource::Tracked }),
+            "missing tracked provenance for {path}"
+        );
+    }
+    assert_eq!(
+        fs::read(repository.path().join("spice.toml")).unwrap(),
+        tracked
+    );
+    assert_eq!(fs::read(&hook).unwrap(), b"active Python hook sentinel\n");
+    assert_eq!(directory_state(repository.path()), before);
+}
+
 fn assert_locations_configuration_and_provenance(report: &DoctorReport<Root>, repository: &Path) {
     assert_eq!(report.target.os, std::env::consts::OS);
     assert_eq!(report.target.architecture, std::env::consts::ARCH);
