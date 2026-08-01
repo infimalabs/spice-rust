@@ -19,6 +19,7 @@ struct SurfaceConfig {
     consent: consent::Policy,
 }
 
+// Runtime policy and trust identity are projections of this one captured generation.
 struct StartupSurface {
     config: SurfaceConfig,
     trust: crate::trust_command::Surface,

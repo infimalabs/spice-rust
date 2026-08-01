@@ -1,4 +1,5 @@
 //! The resident's single exhaustive command dispatcher.
+//! Every admitted command reaches exactly one domain handler from this table.
 
 use bus::Bus;
 use lane::occupant::Seats;

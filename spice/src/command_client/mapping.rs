@@ -1,4 +1,4 @@
-//! Contract-bound command mapping before transport authentication.
+//! The single contract-bound command mapping before transport authentication.
 
 use wire::TrustState;
 

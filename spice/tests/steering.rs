@@ -1,3 +1,5 @@
+//! Process coverage for the resident's transcript-backed steering path.
+
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;

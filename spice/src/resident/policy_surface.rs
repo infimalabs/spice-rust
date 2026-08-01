@@ -1,4 +1,5 @@
 //! Resident-owned consent decisions and executable-policy rulings.
+//! Trust rulings commit through one generation-guarded path.
 
 use bus::Bus;
 use journal::{FactCause, GuardError, JournalGuard, JournalHead, JournalWrite};

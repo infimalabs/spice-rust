@@ -1,3 +1,5 @@
+//! Runtime and shutdown regressions for the split resident surface.
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant as Monotonic};

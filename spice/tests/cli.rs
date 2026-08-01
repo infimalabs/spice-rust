@@ -15,6 +15,7 @@ use wire::{Outcome, ReplyPosition, Version};
 
 /// The exit a refused request carries, in either form.
 const REFUSAL_EXIT: i32 = 2;
+/// The exit a landed command's typed environment fault carries.
 const FAULT_EXIT: i32 = 1;
 
 const CODEX_PROSE: &[u8] =

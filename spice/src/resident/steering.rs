@@ -1,4 +1,5 @@
 //! Resident-owned steering reads, transitions, and disposable renderings.
+//! Transcript-backed disposition is the sole acknowledgment path.
 
 use std::fs;
 
