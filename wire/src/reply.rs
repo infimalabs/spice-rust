@@ -74,7 +74,7 @@ impl TryFrom<SeqRangeShape> for SeqRange {
 /// field, so a reader never guesses which it received and no caller needs to
 /// fabricate a sequence for a journal-free answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "ReplyPositionShape")]
 pub enum ReplyPosition {
     /// Inclusive range committed by a mutating transaction.
     #[serde(rename = "seq")]
@@ -89,6 +89,41 @@ pub enum ReplyPosition {
     /// sequence-shaped or unknown fields are not alternate spellings.
     #[serde(rename = "direct")]
     Direct {},
+}
+
+/// The three optional keys are decoded before their exclusivity is checked.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReplyPositionShape {
+    #[serde(default, deserialize_with = "crate::optional::present")]
+    seq: Option<SeqRange>,
+    #[serde(default, deserialize_with = "crate::optional::present")]
+    cursor: Option<Seq>,
+    #[serde(default, deserialize_with = "crate::optional::present")]
+    direct: Option<DirectShape>,
+}
+
+/// The only payload admitted beside the `direct` key.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DirectShape {}
+
+/// A reply position that names none or more than one journal relationship.
+#[derive(Debug, thiserror::Error)]
+#[error("reply position must carry exactly one of seq, cursor, or direct")]
+struct ReplyPositionShapeError;
+
+impl TryFrom<ReplyPositionShape> for ReplyPosition {
+    type Error = ReplyPositionShapeError;
+
+    fn try_from(shape: ReplyPositionShape) -> Result<Self, Self::Error> {
+        match (shape.seq, shape.cursor, shape.direct) {
+            (Some(range), None, None) => Ok(Self::Committed(range)),
+            (None, Some(cursor), None) => Ok(Self::Snapshot(cursor)),
+            (None, None, Some(DirectShape {})) => Ok(Self::Direct {}),
+            _ => Err(ReplyPositionShapeError),
+        }
+    }
 }
 
 /// A typed result and its relationship to the journal.
