@@ -255,7 +255,7 @@ impl ExitStatuses {
         self.busy
     }
 
-    /// Status emitted when the caller already owns the requested lock.
+    /// Status emitted when an explicitly selected shard is already held.
     #[must_use]
     pub const fn taken(self) -> ExitCode {
         self.taken

@@ -17,6 +17,8 @@ mod cli;
 mod doctor;
 #[cfg(not(target_arch = "wasm32"))]
 mod gate_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod lock_command;
 mod proof_command;
 mod render;
 #[cfg(not(target_arch = "wasm32"))]
@@ -60,6 +62,13 @@ fn main() {
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
         ["gate", "receipt"] => deliver(&gate_command::receipt(), form),
+        ["lock"] => deliver(&lock_command::report(), form),
+        ["lock", "run"] => match lock_command::run(leaf) {
+            lock_command::RunResult::Child(status) => terminate_child(status),
+            lock_command::RunResult::Rejected { outcome, code } => {
+                deliver_with_code(&outcome, form, code)
+            }
+        },
         ["version"] => deliver(&version_outcome(), form),
         _ => {}
     }
@@ -418,6 +427,23 @@ fn deliver<B: serde::Serialize>(outcome: &Outcome<B>, form: Form) -> ! {
         Ok(rendering) => {
             rendering.speak();
             terminate(outcome);
+        }
+        Err(error) => {
+            let fault: Outcome<()> = Outcome::Fault(render_fault(error));
+            render::render(&fault, Form::Text)
+                .expect("the text rendering of a fault encodes nothing")
+                .speak();
+            terminate(&fault);
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn deliver_with_code<B: serde::Serialize>(outcome: &Outcome<B>, form: Form, code: i32) -> ! {
+    match render::render(outcome, form) {
+        Ok(rendering) => {
+            rendering.speak();
+            terminate_code(code);
         }
         Err(error) => {
             let fault: Outcome<()> = Outcome::Fault(render_fault(error));
