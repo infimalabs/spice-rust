@@ -283,6 +283,7 @@ fn contract_syntax_drives_argument_registration() {
             .unwrap_or_else(|error| panic!("{argv:?} must parse: {error}"));
     }
 
+    // Release one exposes no finite, test-only execution arm for watch.
     for argv in [
         &["spice", "doctor", "garbage"][..],
         &["spice", "watch", "root", "--once"],
