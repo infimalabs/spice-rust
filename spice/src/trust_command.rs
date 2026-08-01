@@ -20,6 +20,7 @@ pub(crate) struct Surface {
     digest: Digest,
     tracked: Document,
     local: Document,
+    generation: spice::config::CaptureGeneration,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -48,12 +49,18 @@ impl Surface {
             digest,
             tracked,
             local,
+            generation: loaded.generation().clone(),
         })
     }
 
     /// Identity of the exact tracked plus local bytes.
     pub(crate) const fn digest(&self) -> &Digest {
         &self.digest
+    }
+
+    /// Reacquire the named paths and require the exact captured generation.
+    pub(crate) fn is_current(&self, repository: &Repository) -> Result<bool, LoadError> {
+        Self::load(repository).map(|current| current == *self)
     }
 
     fn provenance(&self) -> Vec<PolicyProvenance> {
@@ -194,15 +201,15 @@ pub(crate) fn report(contract: &Contract) -> Outcome<TrustReport> {
             "restart the resident to pend the exact current policy surface before ruling",
         );
     };
-    let current = match Surface::load(&repository) {
+    let current = match surface.is_current(&repository) {
         Ok(current) => current,
         Err(error) => return load_failure(&error),
     };
-    if current != surface {
+    if !current {
         return refusal(
             "trust::surface-moved",
             Some(surface.digest().to_string()),
-            Some(current.digest().to_string()),
+            None,
             "retry against the current tracked and local policy documents",
         );
     }
