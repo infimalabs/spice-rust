@@ -34,6 +34,7 @@ pub mod fact;
 pub mod head;
 pub mod hello;
 pub mod ident;
+pub mod manifest;
 pub mod packed;
 pub mod reply;
 pub mod witness;
