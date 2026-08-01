@@ -34,6 +34,12 @@ pub mod fact;
 pub mod head;
 pub mod hello;
 pub mod ident;
+/// Command bodies and answers, reached as `wire::intent::TaskDone` rather than
+/// re-exported flat. There is a one-per-command body set here and a
+/// one-per-fact set beside it, and short nouns like `TaskAdd` name different
+/// things on the two sides. The module qualifier is what keeps the two
+/// vocabularies apart, so flattening it away would forfeit that.
+pub mod intent;
 pub mod manifest;
 pub mod packed;
 pub mod reply;
