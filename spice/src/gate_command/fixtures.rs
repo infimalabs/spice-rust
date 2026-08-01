@@ -60,6 +60,15 @@ write_outcome() {
 
 caught='{"cargo_mutants_version":"27.1.0","total_mutants":1,"missed":0,"caught":1,"timeout":0,"unviable":0,"outcomes":[{"summary":"CaughtMutant"}]}'
 survived='{"cargo_mutants_version":"27.1.0","total_mutants":1,"missed":1,"caught":0,"timeout":0,"unviable":0,"outcomes":[{"summary":"MissedMutant"}]}'
+timed_out='{
+    "cargo_mutants_version":"27.1.0",
+    "total_mutants":1,
+    "missed":0,
+    "caught":0,
+    "timeout":1,
+    "unviable":0,
+    "outcomes":[{"summary":"Timeout"}]
+}'
 
 printf 'mutated\n' >> src/lib.rs
 case "$identity" in
@@ -80,7 +89,8 @@ case "$identity" in
         exit 2
         ;;
     *Timeout*)
-        /bin/sleep 30
+        write_outcome "$timed_out"
+        exit 3
         ;;
     *) exit 70 ;;
 esac
@@ -208,8 +218,13 @@ fn parser_deadlines() -> Deadlines {
 }
 
 fn kill_deadlines() -> Deadlines {
+    // All fixture processes except the explicitly nonterminating parser are
+    // deterministic and immediate. Give scheduler contention the same outer
+    // runtime budget as production; cargo-mutants' own typed timeout artifact
+    // exercises mutant-timeout mapping without forcing every preflight through
+    // an artificially tiny wall-clock deadline.
     Deadlines::new(
-        Duration::from_secs(3),
+        Duration::from_secs(30),
         Duration::from_secs(2),
         Duration::from_secs(2),
     )
@@ -291,13 +306,13 @@ fn assert_timeout_evidence(report: &KillReport) {
     );
     assert!(timeout.attempts().iter().all(|attempt| matches!(
         attempt.process().completion(),
-        ReportCompletion::TimedOut { .. }
+        ReportCompletion::Exited { code: Some(3) }
     )));
     assert!(
         timeout
             .attempts()
             .iter()
-            .all(|attempt| matches!(attempt.outcome(), ReportOutcome::Absent))
+            .all(|attempt| matches!(attempt.outcome(), ReportOutcome::Present { .. }))
     );
 }
 

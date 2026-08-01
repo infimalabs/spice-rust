@@ -116,9 +116,11 @@ fn every_contract_has_an_executable_succession_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 26);
+    assert_eq!(landed, 28);
+    assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
     assert_eq!(landing(&["lock", "run"]), Landing::Landed);
+    assert_eq!(landing(&["release", "publish"]), Landing::Landed);
     assert_eq!(landing(&["restore", "verify"]), Landing::Landed);
     for path in [
         &["backup"][..],
@@ -145,7 +147,6 @@ fn every_contract_has_an_executable_succession_disposition() {
         BTreeSet::from([
             "BOARD-1kJQlDDt",
             "COORDIN-1kJQlDjc",
-            "LOCAL-1kJQlG6b",
             "POLICY-1kJQlFB6",
             "PUBLISH-1kJQlGb0",
         ])
@@ -352,6 +353,58 @@ fn every_registered_leaf_renders_its_exact_usage() {
             contract.path,
         );
     }
+}
+
+#[test]
+fn release_notes_surfaces_name_only_the_canonical_explicit_input() {
+    let contract = contract_at(CONTRACTS, &["release", "notes"])
+        .expect("release notes has one registered contract");
+    assert_eq!(contract.syntax, "release notes INPUT");
+
+    let cli = include_str!("../../../.spice-rust-proposal-living-spec/CLI.md");
+    let rows = cli
+        .lines()
+        .filter(|line| line.contains("spice release notes"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rows,
+        [concat!(
+            "| `spice release notes INPUT` | `offline` | Render deterministic notes from one ",
+            "canonical ordered release input carrying the source, both target payloads, and their ",
+            "proof and gate receipts; no journal open or hidden fact read. |"
+        )],
+    );
+
+    let genesis = include_str!("../../../.spice-rust-proposal-living-spec/GENESIS.md");
+    let notes = genesis
+        .split_once("- Write release notes")
+        .expect("genesis names release-notes work")
+        .1
+        .split_once("## Cut release one")
+        .expect("release-notes work ends before cutover")
+        .0;
+    assert!(notes.contains("One canonical ordered release INPUT"));
+    for legacy in ["Git range", "sealed manifest"] {
+        assert!(
+            !notes.contains(legacy),
+            "release-notes genesis restored legacy {legacy:?} input",
+        );
+        assert!(
+            !rows[0].contains(legacy),
+            "release-notes CLI restored legacy {legacy:?} input",
+        );
+    }
+
+    let scaffold = include_str!("../../../.spice-rust-proposal-living-spec/SCAFFOLD.md");
+    assert!(scaffold.contains("proof replay · release notes INPUT."));
+    assert!(!scaffold.contains("proof replay · release notes."));
+
+    let wasm_dispatch = include_str!("../main.rs");
+    assert!(
+        wasm_dispatch
+            .contains("reading the explicit release notes INPUT file is unavailable on wasm32")
+    );
+    assert!(!wasm_dispatch.contains("immutable Git object inspection"));
 }
 
 #[test]

@@ -2,7 +2,7 @@ use std::fs;
 use std::io::{self, Seek, SeekFrom, Write};
 
 use sill::{Acquisition, LockFile, LockName, Possession};
-use spice::repository::Repository;
+use spice::repository::StatePaths;
 
 /// Exclusive resident-writer boundary held by offline journal maintenance.
 pub(crate) struct JournalLock {
@@ -10,9 +10,9 @@ pub(crate) struct JournalLock {
 }
 
 impl JournalLock {
-    pub(crate) fn acquire(repository: &Repository) -> Result<Self, Error> {
-        let root = repository.state_root();
-        fs::create_dir_all(&root).map_err(Error::Io)?;
+    pub(crate) fn acquire(state: &StatePaths) -> Result<Self, Error> {
+        let root = state.runtime();
+        fs::create_dir_all(root).map_err(Error::Io)?;
         let name = LockName::new("resident").expect("resident is a valid fixed lock name");
         let lock = LockFile::new(name, root.join("resident"));
         match lock.try_acquire().map_err(Error::Io)? {

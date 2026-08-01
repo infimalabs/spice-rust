@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::journal_lock::JournalLock;
 use serde::Serialize;
-use spice::repository::Repository;
+use spice::repository::{Repository, StateError, StatePaths};
 use wire::{
     Digest, Domain, Fault, FaultClass, JournalRestore, Outcome, Refusal, Reply, ReplyPosition,
     RestoreVerification,
@@ -46,7 +46,7 @@ fn restore_inner(bundle: &Path, requested: Option<&String>) -> Result<JournalRes
 }
 
 struct PreparedRestore {
-    repository: Repository,
+    state: StatePaths,
     destination: PathBuf,
     capture: journal::RestoreCapture,
     previous: Option<Digest>,
@@ -80,7 +80,8 @@ fn prepare_restore(bundle: &Path) -> Result<PreparedRestore, Failure> {
             error.to_string(),
         )
     })?;
-    let destination = repository.journal_path();
+    let state = repository.admit_state().map_err(state_failure)?;
+    let destination = state.journal().to_path_buf();
     let capture = journal::capture_restore_bundle(bundle).map_err(bundle_failure)?;
     let previous = current_identity(&destination)?;
     let plan_document = RestorePlanIdentity {
@@ -98,7 +99,7 @@ fn prepare_restore(bundle: &Path) -> Result<PreparedRestore, Failure> {
     })?;
     let plan = Digest::compute(Domain::JournalRestorePlan, &plan_bytes);
     Ok(PreparedRestore {
-        repository,
+        state,
         destination,
         capture,
         previous,
@@ -130,7 +131,7 @@ fn admit_apply(prepared: &PreparedRestore, requested: &str) -> Result<JournalLoc
             "preview the unchanged bundle against the current authority and apply that digest",
         ));
     }
-    let lock = JournalLock::acquire(&prepared.repository).map_err(|error| match error {
+    let lock = JournalLock::acquire(&prepared.state).map_err(|error| match error {
         crate::journal_lock::Error::Contended => refusal(
             "restore::writer-active",
             "the resident writer lock to be unheld",
@@ -377,6 +378,27 @@ fn bundle_failure(error: journal::BackupVerifyError) -> Failure {
             reason: "restore::bundle-invalid".to_owned(),
             detail: invalid.to_string(),
         }),
+    }
+}
+
+fn state_failure(error: StateError) -> Failure {
+    match error {
+        StateError::Filesystem { .. } => fault(
+            FaultClass::Environment,
+            "repository::state-path-unavailable",
+            error.to_string(),
+        ),
+        StateError::Linked { .. }
+        | StateError::NotDirectory { .. }
+        | StateError::NotRegularFile { .. } => refusal(
+            "repository::state-path-refused",
+            "real fixed components beneath the canonical Git-common .spice-rust directory",
+            error.to_string(),
+            format!(
+                "remove or repair the linked or malformed Rust state component at {}",
+                error.path().display()
+            ),
+        ),
     }
 }
 

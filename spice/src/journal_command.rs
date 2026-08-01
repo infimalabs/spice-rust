@@ -8,7 +8,7 @@ use fold::{
     AnswerContent, Cursor, FoldId, Horizon, INVENTORY, Materialization, Reducer, Reduction, Source,
     Store,
 };
-use spice::repository::Repository;
+use spice::repository::{Repository, StateError, StatePaths};
 use wire::manifest::{JOURNAL_BACKUP_VERSION, JournalBackupManifest, JournalBackupMember};
 use wire::{
     Digest, Domain, Fault, FaultClass, FoldReport, FoldState, JournalBackup, JournalReindex,
@@ -79,9 +79,9 @@ pub(crate) fn replay(matches: &clap::ArgMatches) -> Outcome<FoldReport> {
 }
 
 fn backup_inner(output: &Path) -> Result<JournalBackup, Failure> {
-    let repository = repository()?;
-    let _lock = acquire_lock(&repository)?;
-    let reader = open_reader(&repository)?;
+    let state = state()?;
+    let _lock = acquire_lock(&state)?;
+    let reader = open_reader(&state)?;
     reader.verify().map_err(verify_failure)?;
     let authority = reader.snapshot_bytes().map_err(open_failure)?;
     let output_name = output.file_name().ok_or_else(|| {
@@ -139,8 +139,8 @@ fn backup_inner(output: &Path) -> Result<JournalBackup, Failure> {
 }
 
 fn report_inner() -> Result<(ReplyPosition, JournalReport), Failure> {
-    let repository = repository()?;
-    let reader = open_reader(&repository)?;
+    let state = state()?;
+    let reader = open_reader(&state)?;
     let schema = reader.schema_version().map_err(open_failure)?;
     let snapshot = reader.fact_snapshot().map_err(snapshot_failure)?;
     let cursor = snapshot.horizon();
@@ -155,8 +155,8 @@ fn report_inner() -> Result<(ReplyPosition, JournalReport), Failure> {
 }
 
 fn verify_inner() -> Result<(ReplyPosition, JournalVerification), Failure> {
-    let repository = repository()?;
-    let reader = open_reader(&repository)?;
+    let state = state()?;
+    let reader = open_reader(&state)?;
     let schema = reader.schema_version().map_err(open_failure)?;
     let cursor = reader.cursor().map_err(open_failure)?;
     let verified = reader.verify().map_err(verify_failure)?;
@@ -173,9 +173,9 @@ fn verify_inner() -> Result<(ReplyPosition, JournalVerification), Failure> {
 }
 
 fn reindex_inner() -> Result<(ReplyPosition, JournalReindex), Failure> {
-    let repository = repository()?;
-    let _lock = acquire_lock(&repository)?;
-    let mut journal = journal::Journal::open(repository.journal_path()).map_err(open_failure)?;
+    let state = state()?;
+    let _lock = acquire_lock(&state)?;
+    let mut journal = journal::Journal::open(state.journal()).map_err(open_failure)?;
     let rebuilt = journal.reindex().map_err(|error| match error {
         journal::ReindexError::Violations(_) => Failure::refusal(
             "journal::history-invalid",
@@ -198,8 +198,8 @@ fn reindex_inner() -> Result<(ReplyPosition, JournalReindex), Failure> {
 }
 
 fn thread_inner(reference: &str) -> Result<(ReplyPosition, ThreadReport), Failure> {
-    let repository = repository()?;
-    let reader = open_reader(&repository)?;
+    let state = state()?;
+    let reader = open_reader(&state)?;
     let cursor = reader.cursor().map_err(open_failure)?;
     let thread = reader.thread(reference).map_err(|error| match error {
         journal::ThreadError::NotFound { .. } | journal::ThreadError::Ambiguous { .. } => {
@@ -229,11 +229,11 @@ fn thread_inner(reference: &str) -> Result<(ReplyPosition, ThreadReport), Failur
 }
 
 fn folds_inner() -> Result<(ReplyPosition, FoldReport), Failure> {
-    let repository = repository()?;
-    let reader = open_reader(&repository)?;
+    let state = state()?;
+    let reader = open_reader(&state)?;
     let cursor = reader.cursor().map_err(open_failure)?;
-    let path = repository.folds_path();
-    let states = match fs::symlink_metadata(&path) {
+    let path = state.folds();
+    let states = match fs::symlink_metadata(path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => missing_fold_states(),
         Err(error) => {
             return Err(Failure::environment(
@@ -242,7 +242,7 @@ fn folds_inner() -> Result<(ReplyPosition, FoldReport), Failure> {
             ));
         }
         Ok(metadata) if metadata.file_type().is_file() => {
-            let store = Store::open_read_only(&path).map_err(fold_failure)?;
+            let store = Store::open_read_only(path).map_err(fold_failure)?;
             current_fold_states(&store)?
         }
         Ok(_) => {
@@ -258,8 +258,8 @@ fn folds_inner() -> Result<(ReplyPosition, FoldReport), Failure> {
 }
 
 fn replay_inner(selected: Option<&str>) -> Result<(ReplyPosition, FoldReport), Failure> {
-    let repository = repository()?;
-    let reader = open_reader(&repository)?;
+    let state = state()?;
+    let reader = open_reader(&state)?;
     reader.verify().map_err(verify_failure)?;
     let snapshot = reader.fact_snapshot().map_err(snapshot_failure)?;
     let selected = selected
@@ -275,7 +275,7 @@ fn replay_inner(selected: Option<&str>) -> Result<(ReplyPosition, FoldReport), F
         })
         .transpose()?;
     let folds = selected.as_ref().map_or(FoldId::ALL, std::slice::from_ref);
-    let path = repository.folds_path();
+    let path = state.folds();
     let parent = path.parent().expect("folds path has a data parent");
     fs::create_dir_all(parent).map_err(|error| {
         Failure::environment(
@@ -283,7 +283,7 @@ fn replay_inner(selected: Option<&str>) -> Result<(ReplyPosition, FoldReport), F
             format!("{}: {error}", parent.display()),
         )
     })?;
-    let mut store = Store::open(&path).map_err(fold_failure)?;
+    let mut store = Store::open(path).map_err(fold_failure)?;
     for fold in folds {
         store
             .read_or_rebuild_snapshot(&snapshot, &AuthorityReducer { fold: *fold })
@@ -384,20 +384,22 @@ fn fold_state(fold: FoldId, materialization: Option<&Materialization>) -> FoldSt
     }
 }
 
-fn repository() -> Result<Repository, Failure> {
+fn state() -> Result<StatePaths, Failure> {
     let working = std::env::current_dir().map_err(|error| {
         Failure::environment("journal::working-directory-unavailable", error.to_string())
     })?;
-    Repository::discover(&working)
-        .map_err(|error| Failure::environment("journal::repository-unavailable", error.to_string()))
+    let repository = Repository::discover(&working).map_err(|error| {
+        Failure::environment("journal::repository-unavailable", error.to_string())
+    })?;
+    repository.admit_state().map_err(state_failure)
 }
 
-fn open_reader(repository: &Repository) -> Result<journal::JournalReader, Failure> {
-    journal::JournalReader::open(repository.journal_path()).map_err(open_failure)
+fn open_reader(state: &StatePaths) -> Result<journal::JournalReader, Failure> {
+    journal::JournalReader::open(state.journal()).map_err(open_failure)
 }
 
-fn acquire_lock(repository: &Repository) -> Result<JournalLock, Failure> {
-    JournalLock::acquire(repository).map_err(|error| match error {
+fn acquire_lock(state: &StatePaths) -> Result<JournalLock, Failure> {
+    JournalLock::acquire(state).map_err(|error| match error {
         crate::journal_lock::Error::Contended => Failure::refusal(
             "journal::writer-active",
             "the resident writer lock to be unheld",
@@ -408,6 +410,25 @@ fn acquire_lock(repository: &Repository) -> Result<JournalLock, Failure> {
             Failure::environment("journal::lock-unavailable", error.to_string())
         }
     })
+}
+
+fn state_failure(error: StateError) -> Failure {
+    match error {
+        StateError::Filesystem { .. } => {
+            Failure::environment("repository::state-path-unavailable", error.to_string())
+        }
+        StateError::Linked { .. }
+        | StateError::NotDirectory { .. }
+        | StateError::NotRegularFile { .. } => Failure::refusal(
+            "repository::state-path-refused",
+            "real fixed components beneath the canonical Git-common .spice-rust directory",
+            error.to_string(),
+            format!(
+                "remove or repair the linked or malformed Rust state component at {}",
+                error.path().display()
+            ),
+        ),
+    }
 }
 
 fn open_failure(error: journal::OpenError) -> Failure {

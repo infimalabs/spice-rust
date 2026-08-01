@@ -56,13 +56,14 @@ impl Journal {
 }
 
 impl JournalReader {
-    /// Reads a canonical, contiguous fact snapshot without writer capability.
+    /// Reads the canonical authority stream without writer capability,
+    /// creation, or migration.
     pub fn fact_snapshot(&self) -> Result<FactSnapshot, SnapshotError> {
         read_snapshot(&self.connection)
     }
 }
 
-fn read_snapshot(connection: &Connection) -> Result<FactSnapshot, SnapshotError> {
+pub(crate) fn read_snapshot(connection: &Connection) -> Result<FactSnapshot, SnapshotError> {
     let mut statement = connection
         .prepare("SELECT seq, kind, envelope FROM fact_envelopes ORDER BY seq")
         .map_err(SnapshotError::Sqlite)?;

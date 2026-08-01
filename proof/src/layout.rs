@@ -23,11 +23,11 @@ pub struct Layout {
 }
 
 impl Layout {
-    /// Derives one layout from caller-resolved worktree and Rust state roots.
+    /// Derives one layout from caller-resolved worktree and proof roots.
     #[must_use]
     pub fn new(
         worktree_root: impl Into<PathBuf>,
-        state_root: impl Into<PathBuf>,
+        proof_root: impl Into<PathBuf>,
         target: ReleaseTarget,
     ) -> Self {
         let payload = worktree_root
@@ -37,7 +37,7 @@ impl Layout {
             .join("targets")
             .join(target.as_str())
             .join("payload.json");
-        let proof_root = state_root.into().join("proof");
+        let proof_root = proof_root.into();
         Self {
             target,
             payload,
@@ -272,7 +272,7 @@ mod tests {
             ReleaseTarget::Aarch64AppleDarwin,
             ReleaseTarget::X86_64UnknownLinuxMusl,
         ] {
-            let layout = Layout::new(&worktree, &state, target);
+            let layout = Layout::new(&worktree, state.join("proof"), target);
             let payload = payload(target, target.as_str());
 
             assert_eq!(layout.target(), target);
@@ -302,7 +302,7 @@ mod tests {
         let scratch = Scratch::new();
         let layout = Layout::new(
             scratch.join("worktree"),
-            scratch.join("common/.spice-rust"),
+            scratch.join("common/.spice-rust/proof"),
             ReleaseTarget::Aarch64AppleDarwin,
         );
         let payload = payload(ReleaseTarget::X86_64UnknownLinuxMusl, "other target");
@@ -323,7 +323,7 @@ mod tests {
         let common = scratch.join("common");
         let layout = Layout::new(
             &worktree,
-            common.join(".spice-rust"),
+            common.join(".spice-rust/proof"),
             ReleaseTarget::Aarch64AppleDarwin,
         );
         let payload = payload(ReleaseTarget::Aarch64AppleDarwin, "readable");
@@ -349,7 +349,7 @@ mod tests {
         let common = scratch.join("common");
         let layout = Layout::new(
             &worktree,
-            common.join(".spice-rust"),
+            common.join(".spice-rust/proof"),
             ReleaseTarget::Aarch64AppleDarwin,
         );
         let payload = payload(ReleaseTarget::Aarch64AppleDarwin, "missing");
@@ -389,7 +389,7 @@ mod tests {
         let scratch = Scratch::new();
         let layout = Layout::new(
             scratch.join("worktree"),
-            scratch.join("common/.spice-rust"),
+            scratch.join("common/.spice-rust/proof"),
             ReleaseTarget::Aarch64AppleDarwin,
         );
         let payload = payload(ReleaseTarget::Aarch64AppleDarwin, "directory inputs");
@@ -418,7 +418,7 @@ mod tests {
         let scratch = Scratch::new();
         let layout = Layout::new(
             scratch.join("worktree"),
-            scratch.join("common/.spice-rust"),
+            scratch.join("common/.spice-rust/proof"),
             ReleaseTarget::Aarch64AppleDarwin,
         );
         let payload = payload(ReleaseTarget::Aarch64AppleDarwin, "symlink inputs");

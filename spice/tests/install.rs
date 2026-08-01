@@ -1,20 +1,23 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use spice::install::{InstallStatus, apply, plan, unapply};
+use spice::install::{
+    InstallError, InstallPlan, InstallReceipt, InstallStatus, apply, plan, unapply,
+};
 use spice::repository::Repository;
+use wire::{Outcome, ReplyPosition};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 const MAX_COMPACT_RECORD_BYTES: u64 = 64 * 1024;
 
 #[test]
 fn installed_rust_binary_coexists_with_the_python_entrypoint() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("coexistence");
     let repository = Repository::discover(scratch.path()).unwrap();
     let python = scratch.executable(
         "bin/spice",
@@ -53,6 +56,290 @@ fn installed_rust_binary_coexists_with_the_python_entrypoint() {
     );
     assert!(!installed.exists());
     assert_eq!(run(&python, &[]), b"python-spice\n");
+
+    let replanned = plan(&repository, Some(rust)).unwrap();
+    assert_eq!(
+        apply(&repository, Some(rust), &replanned.digest().unwrap())
+            .unwrap()
+            .status(),
+        InstallStatus::Complete
+    );
+    assert_eq!(
+        unapply(&repository).unwrap().status(),
+        InstallStatus::Uninstalled
+    );
+}
+
+#[test]
+fn stable_and_swapped_parent_symlinks_bind_one_physical_destination() {
+    let stable = Scratch::new("stable-symlink");
+    let repository = stable.repository();
+    let target = stable.join("agent-assets");
+    fs::create_dir(&target).unwrap();
+    symlink(&target, stable.join(".agents")).unwrap();
+    let planned = plan(&repository, None).unwrap();
+    apply(&repository, None, &planned.digest().unwrap()).unwrap();
+    assert!(target.join("skills/spice-rust/SKILL.md").is_file());
+    unapply(&repository).unwrap();
+    assert!(!target.join("skills/spice-rust/SKILL.md").exists());
+
+    let swapped = Scratch::new("swapped-symlink");
+    let repository = swapped.repository();
+    let first = swapped.join("agent-assets-a");
+    let second = swapped.join("agent-assets-b");
+    fs::create_dir(&first).unwrap();
+    fs::create_dir(&second).unwrap();
+    symlink(&first, swapped.join(".agents")).unwrap();
+    let stale = plan(&repository, None).unwrap().digest().unwrap();
+    fs::remove_file(swapped.join(".agents")).unwrap();
+    symlink(&second, swapped.join(".agents")).unwrap();
+    let before = swapped.snapshot();
+    let error = apply(&repository, None, &stale).unwrap_err();
+    assert!(matches!(error, InstallError::DigestMismatch { .. }));
+    assert_eq!(swapped.snapshot(), before);
+    assert!(!swapped.record().exists());
+}
+
+#[test]
+fn parent_creation_replacement_and_same_byte_destination_drift_are_inert() {
+    let created = Scratch::new("created-parent");
+    let repository = created.repository();
+    let stale = plan(&repository, None).unwrap().digest().unwrap();
+    fs::create_dir(created.join(".agents")).unwrap();
+    assert_stale_apply_is_inert(&created, &repository, &stale);
+
+    let replaced_parent = Scratch::new("replaced-parent");
+    let repository = replaced_parent.repository();
+    let parent = replaced_parent.join(".agents/skills/spice-rust");
+    fs::create_dir_all(&parent).unwrap();
+    let stale = plan(&repository, None).unwrap().digest().unwrap();
+    fs::rename(&parent, replaced_parent.join(".agents/skills/prior-parent")).unwrap();
+    fs::create_dir(&parent).unwrap();
+    assert_stale_apply_is_inert(&replaced_parent, &repository, &stale);
+
+    let replaced_file = Scratch::new("replaced-file");
+    let repository = replaced_file.repository();
+    let skill = replaced_file.join(".agents/skills/spice-rust/SKILL.md");
+    fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    fs::write(&skill, b"operator skill\n").unwrap();
+    let stale = plan(&repository, None).unwrap().digest().unwrap();
+    let replacement = replaced_file.join("replacement-skill");
+    fs::write(&replacement, fs::read(&skill).unwrap()).unwrap();
+    fs::rename(replacement, skill).unwrap();
+    assert_stale_apply_is_inert(&replaced_file, &repository, &stale);
+}
+
+#[test]
+fn copied_corrupt_and_noncanonical_records_are_inert() {
+    let source = applied("record-source");
+    let copied = Scratch::new("record-copied");
+    fs::create_dir_all(copied.record().parent().unwrap()).unwrap();
+    fs::copy(source.record(), copied.record()).unwrap();
+    assert_bad_record_is_inert(&copied);
+
+    let corrupt = applied("record-corrupt");
+    fs::write(corrupt.record(), b"{not-json").unwrap();
+    assert_bad_record_is_inert(&corrupt);
+
+    let noncanonical = applied("record-noncanonical");
+    let mut bytes = fs::read(noncanonical.record()).unwrap();
+    bytes.push(b'\n');
+    fs::write(noncanonical.record(), bytes).unwrap();
+    assert_bad_record_is_inert(&noncanonical);
+}
+
+#[test]
+fn arbitrary_duplicate_reordered_and_mismatched_records_are_inert() {
+    tamper_record("record-out-root", |record| {
+        record["plan"]["operations"][0]["destination"] = "../outside".into();
+    });
+    tamper_record("record-duplicate", |record| {
+        record["destinations"][1] = record["destinations"][0].clone();
+    });
+    tamper_record("record-reordered", |record| {
+        record["plan"]["operations"]
+            .as_array_mut()
+            .unwrap()
+            .swap(0, 1);
+    });
+    tamper_record("record-plan-mismatch", |record| {
+        record["plan_digest"] = record["plan"]["operations"][0]["generated"]["digest"].clone();
+    });
+    tamper_record("record-reversal", |record| {
+        record["reversals"][0] = record["reversals"][1].clone();
+    });
+    tamper_record("record-old-version", |record| {
+        record["version"] = 1.into();
+    });
+}
+
+#[test]
+fn same_byte_installed_file_and_parent_replacement_refuse_unapply_inertly() {
+    let replaced_file = applied("installed-file-generation");
+    let repository = replaced_file.repository();
+    let entry = replaced_file.join(".spice/rust/hooks/entry.sh");
+    let replacement = replaced_file.join("replacement-entry");
+    fs::write(&replacement, fs::read(&entry).unwrap()).unwrap();
+    fs::set_permissions(&replacement, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::rename(replacement, entry).unwrap();
+    let before = replaced_file.snapshot();
+    assert!(matches!(
+        unapply(&repository),
+        Err(InstallError::Drift { .. })
+    ));
+    assert_eq!(replaced_file.snapshot(), before);
+
+    let replaced_parent = applied("installed-parent-generation");
+    let repository = replaced_parent.repository();
+    let hooks = replaced_parent.join(".spice/rust/hooks");
+    let prior = replaced_parent.join(".spice/rust/prior-hooks");
+    fs::rename(&hooks, &prior).unwrap();
+    fs::create_dir(&hooks).unwrap();
+    fs::hard_link(prior.join("entry.sh"), hooks.join("entry.sh")).unwrap();
+    fs::create_dir(hooks.join("static")).unwrap();
+    fs::hard_link(prior.join("static/stage.sh"), hooks.join("static/stage.sh")).unwrap();
+    let before = replaced_parent.snapshot();
+    assert!(matches!(
+        unapply(&repository),
+        Err(InstallError::ParentChanged(_) | InstallError::Drift { .. })
+    ));
+    assert_eq!(replaced_parent.snapshot(), before);
+}
+
+fn assert_stale_apply_is_inert(scratch: &Scratch, repository: &Repository, stale: &wire::Digest) {
+    let before = scratch.snapshot();
+    let error = apply(repository, None, stale).unwrap_err();
+    assert!(matches!(error, InstallError::DigestMismatch { .. }));
+    assert_eq!(scratch.snapshot(), before);
+    assert!(!scratch.record().exists());
+}
+
+fn applied(label: &str) -> Scratch {
+    let scratch = Scratch::new(label);
+    let repository = scratch.repository();
+    let planned = plan(&repository, None).unwrap();
+    apply(&repository, None, &planned.digest().unwrap()).unwrap();
+    scratch
+}
+
+fn tamper_record(label: &str, edit: impl FnOnce(&mut serde_json::Value)) {
+    let scratch = applied(label);
+    let mut record: serde_json::Value =
+        serde_json::from_slice(&fs::read(scratch.record()).unwrap()).unwrap();
+    edit(&mut record);
+    fs::write(scratch.record(), serde_json::to_vec(&record).unwrap()).unwrap();
+    assert_bad_record_is_inert(&scratch);
+}
+
+fn assert_bad_record_is_inert(scratch: &Scratch) {
+    let repository = scratch.repository();
+    let before = scratch.snapshot();
+    assert!(unapply(&repository).is_err());
+    assert_eq!(scratch.snapshot(), before);
+}
+
+#[test]
+fn cli_preview_apply_and_unapply_are_typed_idempotent_and_python_first() {
+    let scratch = Scratch::new("cli");
+    let python = scratch.executable(
+        "bin/spice",
+        b"#!/usr/bin/env python3\nprint('python-spice')\n",
+    );
+    let hook = scratch.executable(
+        ".spice/hooks/pre-commit",
+        b"#!/bin/sh\nexec spice dev pre-commit \"$@\"\n",
+    );
+    let git_config = scratch.join(".git/config");
+    fs::write(&git_config, b"[core]\n\thooksPath = .spice/hooks\n").unwrap();
+    let python_before = image(&python);
+    let hook_before = image(&hook);
+    let config_before = image(&git_config);
+
+    let invalid = invoke(
+        scratch.path(),
+        &["--json", "install", "--apply=not-a-digest"],
+    );
+    assert_eq!(invalid.status.code(), Some(2));
+    let invalid: Outcome<InstallReceipt> = wire::decode(&invalid.stderr).unwrap();
+    let Outcome::Refusal(refusal) = invalid else {
+        panic!("invalid install digest must refuse");
+    };
+    assert_eq!(refusal.reason, "install::digest-refused");
+    assert!(!scratch.join(".spice/rust").exists());
+
+    let text_plan = invoke(scratch.path(), &["install"]);
+    let json_plan = invoke(scratch.path(), &["--json", "install"]);
+    assert!(text_plan.status.success());
+    assert!(json_plan.status.success());
+    let text_plan: InstallPlan = wire::decode(&text_plan.stdout).unwrap();
+    let json_plan: Outcome<InstallPlan> = wire::decode(&json_plan.stdout).unwrap();
+    let Outcome::Reply(json_plan) = json_plan else {
+        panic!("JSON install preview must reply");
+    };
+    assert_eq!(json_plan.position, ReplyPosition::Direct {});
+    assert_eq!(json_plan.body, text_plan);
+    assert!(!scratch.join(".spice/rust").exists());
+
+    let apply_argument = format!("--apply={}", text_plan.digest().unwrap());
+    let text_apply = invoke(scratch.path(), &["install", &apply_argument]);
+    let json_apply = invoke(scratch.path(), &["--json", "install", &apply_argument]);
+    let text_apply: InstallReceipt = successful_body(text_apply);
+    let json_apply: InstallReceipt = successful_reply(json_apply);
+    assert_eq!(text_apply, json_apply);
+    assert_eq!(text_apply.status(), InstallStatus::Complete);
+
+    let text_unapply: InstallReceipt =
+        successful_body(invoke(scratch.path(), &["install", "--unapply"]));
+    let json_unapply: InstallReceipt =
+        successful_reply(invoke(scratch.path(), &["--json", "install", "--unapply"]));
+    assert_eq!(text_unapply, json_unapply);
+    assert_eq!(text_unapply.status(), InstallStatus::Uninstalled);
+
+    assert_eq!(image(&python), python_before);
+    assert_eq!(image(&hook), hook_before);
+    assert_eq!(image(&git_config), config_before);
+    assert_eq!(run(&python, &[]), b"python-spice\n");
+}
+
+fn invoke(repository: &Path, arguments: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_spice"))
+        .args(arguments)
+        .current_dir(repository)
+        .env_remove(steer::hook::INBOX)
+        .output()
+        .unwrap()
+}
+
+fn successful_body<T: serde::de::DeserializeOwned>(output: Output) -> T {
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    wire::decode(&output.stdout).unwrap()
+}
+
+fn successful_reply<T: serde::de::DeserializeOwned>(output: Output) -> T {
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let outcome: Outcome<T> = wire::decode(&output.stdout).unwrap();
+    let Outcome::Reply(reply) = outcome else {
+        panic!("JSON install command must reply");
+    };
+    assert_eq!(reply.position, ReplyPosition::Direct {});
+    reply.body
+}
+
+fn image(path: &Path) -> (Vec<u8>, u32) {
+    (
+        fs::read(path).unwrap(),
+        fs::metadata(path).unwrap().permissions().mode(),
+    )
 }
 
 fn run(path: &Path, arguments: &[&str]) -> Vec<u8> {
@@ -65,12 +352,12 @@ fn run(path: &Path, arguments: &[&str]) -> Vec<u8> {
 struct Scratch(PathBuf);
 
 impl Scratch {
-    fn new() -> Self {
+    fn new(label: &str) -> Self {
         for _ in 0..100 {
             let sequence = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
             let root = std::env::temp_dir().join(format!(
-                "spice-install-executable-{}-{sequence}",
-                std::process::id()
+                "spice-install-{label}-{}-{sequence}",
+                std::process::id(),
             ));
             match fs::create_dir(&root) {
                 Ok(()) => {
@@ -89,6 +376,20 @@ impl Scratch {
         &self.0
     }
 
+    fn repository(&self) -> Repository {
+        Repository::discover(self.path()).unwrap()
+    }
+
+    fn record(&self) -> PathBuf {
+        self.join(".git/.spice/rust/install.json")
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        let mut entries = Vec::new();
+        snapshot_walk(self.path(), self.path(), &mut entries);
+        Snapshot(entries)
+    }
+
     fn join(&self, relative: impl AsRef<Path>) -> PathBuf {
         self.0.join(relative)
     }
@@ -99,6 +400,41 @@ impl Scratch {
         fs::write(&path, bytes).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
         path
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Snapshot(Vec<(PathBuf, u32, Node)>);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Node {
+    Directory,
+    File(Vec<u8>),
+    Symlink(PathBuf),
+}
+
+fn snapshot_walk(root: &Path, path: &Path, entries: &mut Vec<(PathBuf, u32, Node)>) {
+    let mut children = fs::read_dir(path)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    children.sort();
+    for child in children {
+        let metadata = fs::symlink_metadata(&child).unwrap();
+        let relative = child.strip_prefix(root).unwrap().to_path_buf();
+        let mode = metadata.permissions().mode() & 0o777;
+        if metadata.file_type().is_symlink() {
+            entries.push((
+                relative,
+                mode,
+                Node::Symlink(fs::read_link(&child).unwrap()),
+            ));
+        } else if metadata.is_dir() {
+            entries.push((relative, mode, Node::Directory));
+            snapshot_walk(root, &child, entries);
+        } else {
+            entries.push((relative, mode, Node::File(fs::read(&child).unwrap())));
+        }
     }
 }
 

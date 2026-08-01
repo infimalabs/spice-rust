@@ -16,6 +16,99 @@ pub struct Repository {
     common: PathBuf,
 }
 
+/// Exact repository-common paths admitted for Rust-owned state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StatePaths {
+    runtime: PathBuf,
+    data: PathBuf,
+    journal: PathBuf,
+    folds: PathBuf,
+    locks: PathBuf,
+    proof: PathBuf,
+    resident: PathBuf,
+    canvas: PathBuf,
+    degraded: PathBuf,
+    tape: PathBuf,
+}
+
+impl StatePaths {
+    fn new(runtime: PathBuf) -> Self {
+        let data = runtime.join("data");
+        Self {
+            journal: data.join("spicejournal.sqlite3"),
+            folds: data.join("spicefolds.sqlite3"),
+            locks: runtime.join("locks"),
+            proof: runtime.join("proof"),
+            resident: runtime.join("resident"),
+            canvas: runtime.join("canvas"),
+            degraded: runtime.join("degraded"),
+            tape: runtime.join("tape"),
+            runtime,
+            data,
+        }
+    }
+
+    /// Sole repository-common runtime root.
+    #[must_use]
+    pub fn runtime(&self) -> &Path {
+        &self.runtime
+    }
+
+    /// Parent of the Rust authority database.
+    #[must_use]
+    pub fn data(&self) -> &Path {
+        &self.data
+    }
+
+    /// Sole Rust authority database.
+    #[must_use]
+    pub fn journal(&self) -> &Path {
+        &self.journal
+    }
+
+    /// Disposable fold materialization database.
+    #[must_use]
+    pub fn folds(&self) -> &Path {
+        &self.folds
+    }
+
+    /// Parent of daemonless resource locks.
+    #[must_use]
+    pub fn locks(&self) -> &Path {
+        &self.locks
+    }
+
+    /// Parent of detached proof receipts.
+    #[must_use]
+    pub fn proof(&self) -> &Path {
+        &self.proof
+    }
+
+    /// Resident possession file.
+    #[must_use]
+    pub fn resident(&self) -> &Path {
+        &self.resident
+    }
+
+    /// Owner-only canvas discovery file.
+    #[must_use]
+    pub fn canvas(&self) -> &Path {
+        &self.canvas
+    }
+
+    /// Parent of degraded lane markers.
+    #[must_use]
+    pub fn degraded(&self) -> &Path {
+        &self.degraded
+    }
+
+    /// Parent of lane tapes.
+    #[must_use]
+    pub fn tape(&self) -> &Path {
+        &self.tape
+    }
+}
+
 impl Repository {
     /// Resolves the nearest repository containing `start`.
     ///
@@ -71,22 +164,131 @@ impl Repository {
         &self.common
     }
 
-    /// The sole repository-common state root owned by the Rust construction.
-    #[must_use]
-    pub fn state_root(&self) -> PathBuf {
-        self.common.join(STATE_DIRECTORY)
+    /// Admit every fixed component of the Rust-owned state namespace.
+    ///
+    /// An absent namespace is valid and remains absent. Existing directory
+    /// parents and regular-file leaves are inspected without following links,
+    /// so the returned paths cannot alias Python-owned Git-common state.
+    pub fn admit_state(&self) -> Result<StatePaths, StateError> {
+        let paths = StatePaths::new(self.common.join(STATE_DIRECTORY));
+        for path in [
+            paths.runtime(),
+            paths.data(),
+            paths.locks(),
+            paths.proof(),
+            paths.degraded(),
+            paths.tape(),
+        ] {
+            admit(path, StateShape::Directory)?;
+        }
+        for path in [
+            paths.journal(),
+            paths.folds(),
+            paths.resident(),
+            paths.canvas(),
+        ] {
+            admit(path, StateShape::RegularFile)?;
+        }
+        Ok(paths)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum StateShape {
+    Directory,
+    RegularFile,
+}
+
+fn admit(path: &Path, expected: StateShape) -> Result<(), StateError> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => return Err(StateError::filesystem(path, source)),
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(StateError::Linked {
+            path: path.to_path_buf(),
+        });
+    }
+    match expected {
+        StateShape::Directory if !metadata.is_dir() => Err(StateError::NotDirectory {
+            path: path.to_path_buf(),
+        }),
+        StateShape::RegularFile if !metadata.is_file() => Err(StateError::NotRegularFile {
+            path: path.to_path_buf(),
+        }),
+        StateShape::Directory | StateShape::RegularFile => Ok(()),
+    }
+}
+
+/// Why Rust-owned repository state was not confined to its fixed namespace.
+#[derive(Debug)]
+pub enum StateError {
+    /// An existing state component is a symbolic link.
+    Linked { path: PathBuf },
+    /// An existing state parent is not a directory.
+    NotDirectory { path: PathBuf },
+    /// An existing state leaf is not a regular file.
+    NotRegularFile { path: PathBuf },
+    /// A component could not be inspected without following it.
+    Filesystem { path: PathBuf, source: io::Error },
+}
+
+impl StateError {
+    fn filesystem(path: &Path, source: io::Error) -> Self {
+        Self::Filesystem {
+            path: path.to_path_buf(),
+            source,
+        }
     }
 
-    /// The sole authority database path under repository-common Spice state.
+    /// Exact component whose admission failed.
     #[must_use]
-    pub fn journal_path(&self) -> PathBuf {
-        self.state_root().join("data").join("spicejournal.sqlite3")
+    pub fn path(&self) -> &Path {
+        match self {
+            Self::Linked { path }
+            | Self::NotDirectory { path }
+            | Self::NotRegularFile { path }
+            | Self::Filesystem { path, .. } => path,
+        }
     }
+}
 
-    /// The disposable fold materialization database under common state.
-    #[must_use]
-    pub fn folds_path(&self) -> PathBuf {
-        self.state_root().join("data").join("spicefolds.sqlite3")
+impl fmt::Display for StateError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Linked { path } => {
+                write!(
+                    formatter,
+                    "Rust state component is linked: {}",
+                    path.display()
+                )
+            }
+            Self::NotDirectory { path } => write!(
+                formatter,
+                "Rust state parent is not a directory: {}",
+                path.display()
+            ),
+            Self::NotRegularFile { path } => write!(
+                formatter,
+                "Rust state leaf is not a regular file: {}",
+                path.display()
+            ),
+            Self::Filesystem { path, source } => write!(
+                formatter,
+                "Rust state component could not be inspected at {}: {source}",
+                path.display()
+            ),
+        }
+    }
+}
+
+impl Error for StateError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Filesystem { source, .. } => Some(source),
+            Self::Linked { .. } | Self::NotDirectory { .. } | Self::NotRegularFile { .. } => None,
+        }
     }
 }
 
@@ -322,15 +524,27 @@ mod tests {
 
         assert_eq!(repository.worktree_root(), worktree);
         assert_eq!(repository.common_dir(), common);
-        assert_eq!(repository.state_root(), common.join(".spice-rust"));
+        let state = repository.admit_state().expect("admit absent Rust state");
+        assert_eq!(state.runtime(), common.join(".spice-rust"));
+        assert_eq!(state.data(), common.join(".spice-rust/data"));
         assert_eq!(
-            repository.journal_path(),
+            state.journal(),
             common.join(".spice-rust/data/spicejournal.sqlite3")
         );
         assert_eq!(
+            state.folds(),
+            common.join(".spice-rust/data/spicefolds.sqlite3")
+        );
+        assert_eq!(state.locks(), common.join(".spice-rust/locks"));
+        assert_eq!(state.proof(), common.join(".spice-rust/proof"));
+        assert_eq!(state.resident(), common.join(".spice-rust/resident"));
+        assert_eq!(state.canvas(), common.join(".spice-rust/canvas"));
+        assert_eq!(state.degraded(), common.join(".spice-rust/degraded"));
+        assert_eq!(state.tape(), common.join(".spice-rust/tape"));
+        assert_eq!(
             proof::Layout::new(
                 repository.worktree_root(),
-                repository.state_root(),
+                state.proof(),
                 wire::manifest::ReleaseTarget::Aarch64AppleDarwin,
             )
             .payload_path(),
@@ -365,8 +579,9 @@ mod tests {
             repository.common_dir(),
             fs::canonicalize(&common).expect("canonical common directory")
         );
+        let state = repository.admit_state().expect("admit linked Rust state");
         assert_eq!(
-            repository.state_root(),
+            state.runtime(),
             fs::canonicalize(&common)
                 .expect("canonical shared state root")
                 .join(".spice-rust")
@@ -374,7 +589,7 @@ mod tests {
         assert_eq!(
             proof::Layout::new(
                 repository.worktree_root(),
-                repository.state_root(),
+                state.proof(),
                 wire::manifest::ReleaseTarget::X86_64UnknownLinuxMusl,
             )
             .payload_path(),
@@ -404,6 +619,92 @@ mod tests {
                 .common_dir(),
             fs::canonicalize(&common).expect("canonical absolute common directory")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn state_admission_refuses_every_link_at_its_exact_component() {
+        use std::os::unix::fs::symlink;
+
+        let scratch = Scratch::new();
+        for (label, relative) in [
+            ("runtime", Path::new("")),
+            ("data", Path::new("data")),
+            ("journal", Path::new("data/spicejournal.sqlite3")),
+            ("folds", Path::new("data/spicefolds.sqlite3")),
+            ("locks", Path::new("locks")),
+            ("proof", Path::new("proof")),
+            ("resident", Path::new("resident")),
+            ("canvas", Path::new("canvas")),
+            ("degraded", Path::new("degraded")),
+            ("tape", Path::new("tape")),
+        ] {
+            let (repository, runtime) = state_case(&scratch, &format!("linked-{label}"));
+            let outside = scratch.join(format!("outside-{label}"));
+            fs::create_dir(&outside).expect("create outside link target");
+            let linked = state_component(&runtime, relative);
+            if let Some(parent) = linked.parent() {
+                fs::create_dir_all(parent).expect("create linked component parent");
+            }
+            symlink(&outside, &linked).expect("plant linked state component");
+
+            let error = repository
+                .admit_state()
+                .expect_err("linked state component must refuse");
+            assert!(
+                matches!(&error, StateError::Linked { path } if path == &linked),
+                "{label} refused as {error:?}"
+            );
+            assert_eq!(error.path(), linked);
+        }
+    }
+
+    #[test]
+    fn state_admission_refuses_non_directory_parents_and_non_regular_leaves() {
+        let scratch = Scratch::new();
+        for (label, relative) in [
+            ("runtime", Path::new("")),
+            ("data", Path::new("data")),
+            ("locks", Path::new("locks")),
+            ("proof", Path::new("proof")),
+            ("degraded", Path::new("degraded")),
+            ("tape", Path::new("tape")),
+        ] {
+            let (repository, runtime) = state_case(&scratch, &format!("file-{label}"));
+            let path = state_component(&runtime, relative);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).expect("create malformed state parent");
+            }
+            fs::write(&path, b"not a directory").expect("plant non-directory state parent");
+
+            let error = repository
+                .admit_state()
+                .expect_err("non-directory state parent must refuse");
+            assert!(
+                matches!(&error, StateError::NotDirectory { path: observed } if observed == &path),
+                "{label} refused as {error:?}"
+            );
+        }
+
+        for (label, relative) in [
+            ("journal", Path::new("data/spicejournal.sqlite3")),
+            ("folds", Path::new("data/spicefolds.sqlite3")),
+            ("resident", Path::new("resident")),
+            ("canvas", Path::new("canvas")),
+        ] {
+            let (repository, runtime) = state_case(&scratch, &format!("directory-{label}"));
+            let path = runtime.join(relative);
+            fs::create_dir_all(&path).expect("plant non-regular state leaf");
+
+            let error = repository
+                .admit_state()
+                .expect_err("non-regular state leaf must refuse");
+            let exact_path = matches!(
+                &error,
+                StateError::NotRegularFile { path: observed } if observed == &path
+            );
+            assert!(exact_path, "{label} refused as {error:?}");
+        }
     }
 
     #[test]
@@ -492,6 +793,22 @@ mod tests {
         let path = scratch.join(name);
         fs::create_dir(&path).expect("create refusal case");
         path
+    }
+
+    fn state_case(scratch: &Scratch, name: &str) -> (Repository, PathBuf) {
+        let root = case(scratch, name);
+        let common = root.join(".git");
+        fs::create_dir(&common).expect("create state-case Git directory");
+        let repository = Repository::discover(&root).expect("discover state-case repository");
+        (repository, common.join(STATE_DIRECTORY))
+    }
+
+    fn state_component(runtime: &Path, relative: &Path) -> PathBuf {
+        if relative.as_os_str().is_empty() {
+            runtime.to_path_buf()
+        } else {
+            runtime.join(relative)
+        }
     }
 
     struct Scratch(PathBuf);

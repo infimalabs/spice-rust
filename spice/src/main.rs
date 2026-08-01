@@ -14,11 +14,15 @@ use wire::{Fault, FaultClass, Outcome, Refusal};
 
 mod cli;
 #[cfg(not(target_arch = "wasm32"))]
+mod command_client;
+#[cfg(not(target_arch = "wasm32"))]
 mod config_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod doctor;
 #[cfg(not(target_arch = "wasm32"))]
 mod gate_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod install_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod journal_command;
 #[cfg(not(target_arch = "wasm32"))]
@@ -39,6 +43,46 @@ use render::Form;
 const REPLY_EXIT: i32 = 0;
 const FAULT_EXIT: i32 = 1;
 const REFUSAL_EXIT: i32 = 2;
+
+enum StateFailure {
+    Refusal(Refusal),
+    Fault(Fault),
+}
+
+impl StateFailure {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn outcome<B>(self) -> Outcome<B> {
+        match self {
+            Self::Refusal(refusal) => Outcome::Refusal(refusal),
+            Self::Fault(fault) => Outcome::Fault(fault),
+        }
+    }
+}
+
+fn state_failure(error: &spice::repository::StateError) -> StateFailure {
+    match error {
+        spice::repository::StateError::Filesystem { .. } => StateFailure::Fault(Fault {
+            class: FaultClass::Environment,
+            reason: "repository::state-path-unavailable".to_owned(),
+            detail: error.to_string(),
+        }),
+        spice::repository::StateError::Linked { .. }
+        | spice::repository::StateError::NotDirectory { .. }
+        | spice::repository::StateError::NotRegularFile { .. } => StateFailure::Refusal(Refusal {
+            reason: "repository::state-path-refused".to_owned(),
+            witness: Some("repository-state-root".to_owned()),
+            expected: Some(
+                "real fixed components beneath the canonical Git-common .spice-rust directory"
+                    .to_owned(),
+            ),
+            observed: Some(error.to_string()),
+            remedy: format!(
+                "remove or repair the linked or malformed Rust state component at {}",
+                error.path().display()
+            ),
+        }),
+    }
+}
 
 fn main() {
     let matches = cli::command().get_matches();
@@ -72,6 +116,10 @@ fn main() {
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
         ["gate", "receipt"] => deliver(&gate_command::receipt(), form),
+        ["install"] => match install_command::run(leaf) {
+            install_command::Answer::Plan(outcome) => deliver(&outcome, form),
+            install_command::Answer::Receipt(outcome) => deliver(&outcome, form),
+        },
         ["config"] => deliver(&config_command::run(leaf), form),
         ["lock"] => deliver(&lock_command::report(), form),
         ["lock", "run"] => match lock_command::run(leaf) {
@@ -91,6 +139,10 @@ fn main() {
         ["version"] => deliver(&version_outcome(), form),
         ["release", "notes"] => deliver(&release_command::notes(leaf), form),
         ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
+        ["release", "publish"] => match release_command::run(leaf, contract) {
+            release_command::RunResult::Plan(outcome) => deliver(&outcome, form),
+            release_command::RunResult::Published(outcome) => deliver(&outcome, form),
+        },
         _ => {}
     }
     #[cfg(target_arch = "wasm32")]
@@ -110,7 +162,19 @@ fn main() {
             Fault {
                 class: FaultClass::Environment,
                 reason: "release::target-unsupported".to_owned(),
-                detail: "immutable Git object inspection is unavailable on wasm32".to_owned(),
+                detail: "reading the explicit release notes INPUT file is unavailable on wasm32"
+                    .to_owned(),
+            },
+            form,
+        );
+    }
+    #[cfg(target_arch = "wasm32")]
+    if contract.path == ["install"] {
+        deliver_fault(
+            Fault {
+                class: FaultClass::Environment,
+                reason: "install::target-unsupported".to_owned(),
+                detail: "filesystem installation is unavailable on wasm32".to_owned(),
             },
             form,
         );
@@ -118,7 +182,7 @@ fn main() {
     #[cfg(not(target_arch = "wasm32"))]
     let outcome = match contract.path {
         ["up"] => resident::up(),
-        ["down"] => resident::down(),
+        ["down"] => resident::down(contract),
         _ => not_landed(contract),
     };
     #[cfg(target_arch = "wasm32")]
@@ -260,7 +324,11 @@ fn version_outcome() -> Outcome<wire::Version> {
             });
         }
     };
-    let reader = match journal::JournalReader::open(repository.journal_path()) {
+    let state = match repository.admit_state() {
+        Ok(state) => state,
+        Err(error) => return state_failure(&error).outcome(),
+    };
+    let reader = match journal::JournalReader::open(state.journal()) {
         Ok(reader) => reader,
         Err(error) => return journal_version_failure(error),
     };

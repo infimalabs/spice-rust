@@ -840,6 +840,7 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["gate", "camp"]
         | ["gate", "kill"]
         | ["gate", "receipt"]
+        | ["install"]
         | ["lock"]
         | ["lock", "run"]
         | ["proof"]
@@ -857,8 +858,8 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["journal", "verify"]
         | ["fold"]
         | ["thread"]
+        | ["release", "publish"]
         | ["restore", "verify"] => Landing::Landed,
-        ["install"] => Landing::Gap("LOCAL-1kJQlG6b"),
         ["board"]
         | ["board", "graph"]
         | ["board", "handout"]
@@ -893,7 +894,7 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["trust"]
         | ["trust", "grant"]
         | ["trust", "revoke"] => Landing::Gap("POLICY-1kJQlFB6"),
-        ["canvas"] | ["release", "publish"] => Landing::Gap("PUBLISH-1kJQlGb0"),
+        ["canvas"] => Landing::Gap("PUBLISH-1kJQlGb0"),
         _ => Landing::Unaccounted,
     }
 }
