@@ -386,6 +386,7 @@ fn build_write(request: Request, observed: Observation) -> Result<JournalWrite, 
             Command {
                 v: WireVersion::CURRENT,
                 id: request.command,
+                epoch: request.epoch,
                 kind: CommandKind::ClaimRenew,
                 expected: witnesses(&request, &observed, lane),
                 body: request.intent,

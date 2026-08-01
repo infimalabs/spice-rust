@@ -930,6 +930,9 @@ fn branch(contracts: &[Contract], name: &'static str, path: &[&'static str]) -> 
         command = register_syntax(command, contract).unwrap_or_else(|error| {
             panic!("invalid CLI contract syntax {:?}: {error}", contract.path)
         });
+        if !children.is_empty() {
+            command = command.subcommand_negates_reqs(true);
+        }
     } else {
         command = command
             .subcommand_required(true)

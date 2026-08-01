@@ -12,8 +12,11 @@ use serde::de::{Deserializer, Error as DeError};
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 
-use crate::envelope::WireVersion;
+use crate::envelope::{Actor, WireVersion};
+use crate::hello::Accepted;
 use crate::ident::CanonicalUuid;
+use crate::intent::{CommandAnswer, Intent};
+use crate::reply::{Fault, FaultClass, Outcome, Refusal, Response};
 use crate::witness::{Witness, WitnessKind};
 
 /// Every admitted command discriminant.
@@ -362,12 +365,13 @@ impl Law {
         optional: &[],
         authority: Authority::Connected,
     };
-    /// Exact residency head, current epoch, and the deadline or completion
-    /// predicate admitting the requested edge.
+    /// Current lifecycle edge. The command envelope separately binds the
+    /// resident epoch, so an operator lifecycle request does not fabricate a
+    /// lane-and-occupant residency witness.
     pub const UP: Self = Self {
-        required: &[WitnessKind::Residency, WitnessKind::Transition],
+        required: &[WitnessKind::Transition],
         optional: &[],
-        authority: Authority::Connected,
+        authority: Authority::Operator,
     };
 }
 
@@ -555,12 +559,103 @@ pub struct Command<B> {
     pub v: WireVersion,
     /// Client-minted canonical identity for this request.
     pub id: CanonicalUuid,
+    /// Resident generation this request addresses.
+    pub epoch: CanonicalUuid,
     /// Closed command discriminant.
     pub kind: CommandKind,
     /// Named predicates over only the subjects this command relies on.
     pub expected: Vec<Witness>,
     /// Kind-specific intent.
     pub body: B,
+}
+
+/// One command admitted by the resident's authenticated socket door.
+///
+/// The caller never sends an actor. Admission derives it from the accepted
+/// capability, verifies the request's generation and registry law, and
+/// decodes the body selected by the closed command discriminant before this
+/// value can exist.
+///
+/// identity-law: non-crossing - authenticated process-only admission state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdmittedCommand {
+    id: CanonicalUuid,
+    epoch: CanonicalUuid,
+    actor: Actor,
+    kind: CommandKind,
+    expected: Vec<Witness>,
+    body: Intent,
+}
+
+impl AdmittedCommand {
+    /// Client-minted identity bound to this request and its response.
+    #[must_use]
+    pub const fn id(&self) -> CanonicalUuid {
+        self.id
+    }
+
+    /// Resident generation that admitted this request.
+    #[must_use]
+    pub const fn epoch(&self) -> CanonicalUuid {
+        self.epoch
+    }
+
+    /// Principal derived from the capability that opened the session.
+    #[must_use]
+    pub const fn actor(&self) -> &Actor {
+        &self.actor
+    }
+
+    /// Closed command discriminant selecting this body's law and answer.
+    #[must_use]
+    pub const fn kind(&self) -> CommandKind {
+        self.kind
+    }
+
+    /// Exact predicates admitted with this request.
+    #[must_use]
+    pub fn expected(&self) -> &[Witness] {
+        &self.expected
+    }
+
+    /// Kind-selected, fully decoded caller intent.
+    #[must_use]
+    pub const fn body(&self) -> &Intent {
+        &self.body
+    }
+
+    /// Bind one terminal command outcome to this request and generation.
+    #[must_use]
+    pub fn response(&self, outcome: Outcome<CommandAnswer>) -> Response<CommandAnswer> {
+        Response {
+            v: WireVersion::CURRENT,
+            id: self.id,
+            epoch: self.epoch,
+            outcome,
+        }
+    }
+}
+
+/// Why a syntactically decoded command did not reach business logic.
+///
+/// identity-law: non-crossing - converted into its typed crossing outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandRejection {
+    /// The caller can retry after changing the request or capability.
+    Refusal(Refusal),
+    /// The request addressed an invalid generation or carried an invalid body.
+    Fault(Fault),
+}
+
+impl CommandRejection {
+    /// Convert this rejection into the wire outcome returned for the request.
+    #[must_use]
+    pub fn outcome(self) -> Outcome<CommandAnswer> {
+        match self {
+            Self::Refusal(refusal) => Outcome::Refusal(refusal),
+            Self::Fault(fault) => Outcome::Fault(fault),
+        }
+    }
 }
 
 /// The expected predicates in a settled order, so two lists can be compared
@@ -598,6 +693,7 @@ impl<B: PartialEq> PartialEq for Command<B> {
     fn eq(&self, other: &Self) -> bool {
         self.v == other.v
             && self.id == other.id
+            && self.epoch == other.epoch
             && self.kind == other.kind
             && self.body == other.body
             && ranked(&self.expected) == ranked(&other.expected)
@@ -640,6 +736,97 @@ impl<B> Command<B> {
             }
         }
         Ok(())
+    }
+}
+
+impl Command<serde_json::Value> {
+    /// Admit a crossing command under one authenticated socket acceptance.
+    ///
+    /// Wire and epoch checks run before command law and body admission. The
+    /// actor comes only from `accepted`; no caller-authored principal exists
+    /// in [`Command`]. A successful result therefore carries a current
+    /// generation, an authorized principal, exact admitted witnesses, and the
+    /// body shape selected by its kind.
+    ///
+    /// # Errors
+    ///
+    /// Returns a refusal for stale wire versions, insufficient authority, or
+    /// witness-law violations. Returns a protocol fault for a stale resident
+    /// epoch or a malformed kind-selected body.
+    pub fn admit(self, accepted: &Accepted) -> Result<AdmittedCommand, CommandRejection> {
+        if !self.v.is_current() {
+            return Err(CommandRejection::Refusal(Refusal {
+                reason: "command::wire-mismatch".to_owned(),
+                witness: None,
+                expected: Some(WireVersion::CURRENT.to_string()),
+                observed: Some(self.v.to_string()),
+                remedy: "reconnect with a client built from this resident's wire crate".to_owned(),
+            }));
+        }
+        if self.epoch != accepted.epoch {
+            return Err(CommandRejection::Fault(Fault {
+                class: FaultClass::Protocol,
+                reason: "command::epoch-mismatch".to_owned(),
+                detail: format!(
+                    "request addressed epoch {}; authenticated session is {}",
+                    self.epoch, accepted.epoch
+                ),
+            }));
+        }
+        let law = self.kind.law();
+        let authorized = match law.authority {
+            Authority::Connected => matches!(accepted.actor, Actor::Operator | Actor::Lane(_)),
+            Authority::Operator => matches!(accepted.actor, Actor::Operator),
+        };
+        if !authorized {
+            let expected = match law.authority {
+                Authority::Connected => "operator or lane",
+                Authority::Operator => "operator",
+            };
+            return Err(CommandRejection::Refusal(Refusal {
+                reason: "command::authority".to_owned(),
+                witness: Some("principal".to_owned()),
+                expected: Some(expected.to_owned()),
+                observed: Some(accepted.actor.to_string()),
+                remedy: "reconnect with a capability authorized for this command".to_owned(),
+            }));
+        }
+        if let Err(error) = self.witnessed() {
+            return Err(CommandRejection::Refusal(Refusal {
+                reason: "command::witness-law".to_owned(),
+                witness: Some(error.to_string()),
+                expected: Some(format!("{:?}", law.required)),
+                observed: Some(format!(
+                    "{:?}",
+                    self.expected.iter().map(Witness::kind).collect::<Vec<_>>()
+                )),
+                remedy:
+                    "refresh current heads and submit exactly the predicates this command names"
+                        .to_owned(),
+            }));
+        }
+        let encoded = serde_json::to_vec(&self.body).map_err(|error| {
+            CommandRejection::Fault(Fault {
+                class: FaultClass::Protocol,
+                reason: "command::body-unencodable".to_owned(),
+                detail: error.to_string(),
+            })
+        })?;
+        let body = self.kind.binding().body.decode(&encoded).map_err(|error| {
+            CommandRejection::Fault(Fault {
+                class: FaultClass::Protocol,
+                reason: "command::body-undecodable".to_owned(),
+                detail: error.to_string(),
+            })
+        })?;
+        Ok(AdmittedCommand {
+            id: self.id,
+            epoch: self.epoch,
+            actor: accepted.actor.clone(),
+            kind: self.kind,
+            expected: self.expected,
+            body,
+        })
     }
 }
 

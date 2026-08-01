@@ -1,6 +1,7 @@
 use wire::manifest::{
     BuildPins, InventoryEntry, PROOF_RECEIPT_VERSION, ProofEnvironment, ProofReceipt,
-    ProofStanding, ReleaseTarget, TargetPayload,
+    ProofStanding, RELEASE_MANIFEST_VERSION, ReleaseManifest, ReleaseManifestTarget, ReleaseTarget,
+    TargetPayload,
 };
 use wire::{Digest, Domain};
 
@@ -165,6 +166,69 @@ fn detached_proof_receipts_round_trip_in_the_current_shape() {
         .is_err(),
         "the retired string-valued environment must not remain as an alternate schema"
     );
+}
+
+#[test]
+fn release_manifests_round_trip_and_refuse_unknown_fields_at_every_level() {
+    let darwin = receipt(ReleaseTarget::Aarch64AppleDarwin, "darwin-proof");
+    let linux = receipt(ReleaseTarget::X86_64UnknownLinuxMusl, "linux-proof");
+    let manifest = ReleaseManifest {
+        version: RELEASE_MANIFEST_VERSION,
+        source: digest("source"),
+        targets: [darwin, linux]
+            .into_iter()
+            .map(|receipt| {
+                let receipt_digest = Digest::compute(
+                    Domain::ProofReceiptV2,
+                    &wire::encode(&receipt).expect("receipt encodes"),
+                );
+                ReleaseManifestTarget {
+                    target: receipt.target,
+                    payload: receipt.payload,
+                    receipt: receipt_digest,
+                    battery: receipt.battery,
+                    replay: receipt.replay,
+                    environment: receipt.environment,
+                    standing: receipt.standing,
+                }
+            })
+            .collect(),
+    };
+    let encoded = wire::encode(&manifest).expect("release manifest encodes");
+    assert_eq!(
+        wire::decode::<ReleaseManifest>(&encoded).expect("release manifest decodes"),
+        manifest
+    );
+    let original: serde_json::Value =
+        serde_json::from_slice(&encoded).expect("release manifest is JSON");
+
+    for path in [Vec::new(), vec!["targets", "0"]] {
+        let mut changed = original.clone();
+        let mut object = &mut changed;
+        for &segment in &path {
+            object = if let Ok(index) = segment.parse::<usize>() {
+                &mut object.as_array_mut().expect("fixture segment is an array")[index]
+            } else {
+                object
+                    .as_object_mut()
+                    .expect("fixture segment is an object")
+                    .get_mut(segment)
+                    .expect("fixture segment exists")
+            };
+        }
+        object
+            .as_object_mut()
+            .expect("fixture target is an object")
+            .insert("unknown".to_owned(), serde_json::Value::Bool(true));
+
+        assert!(
+            wire::decode::<ReleaseManifest>(
+                &serde_json::to_vec(&changed).expect("changed manifest is JSON")
+            )
+            .is_err(),
+            "unknown field at {path:?} must refuse"
+        );
+    }
 }
 
 #[test]

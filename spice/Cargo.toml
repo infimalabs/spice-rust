@@ -21,6 +21,7 @@ lane = { path = "../lane" }
 listen = { path = "../listen" }
 proof = { path = "../proof" }
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 serde_path_to_error = "0.1.20"
 sill = { path = "../sill" }
 steer = { path = "../steer" }
@@ -39,7 +40,6 @@ uuid = { version = "1.24.0", features = ["v4"] }
 
 [dev-dependencies]
 rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
-serde_json = "1.0.151"
 
 [lints]
 workspace = true
