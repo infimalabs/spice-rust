@@ -1,0 +1,366 @@
+use std::error::Error;
+use std::fmt;
+
+/// One durable UTC deadline carried by an authority head.
+pub type Deadline = journal::crossing::Instant;
+
+/// Process-local identity of one armed wait.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct TimerId(u64);
+
+impl TimerId {
+    /// Stable identity within one timer worker's lifetime.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+/// Closed timer actions the resident can turn into guarded facts.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum TimerKind {
+    ClaimLapse,
+    ClaimRenew,
+    SteerLapse,
+    LaneHold,
+    LaneResume,
+    TaskWake,
+}
+
+/// One explicit event emitted when an armed monotonic wait completes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TimerEvent {
+    id: TimerId,
+    owner: String,
+    kind: TimerKind,
+    deadline: Deadline,
+}
+
+impl TimerEvent {
+    #[must_use]
+    pub const fn id(&self) -> TimerId {
+        self.id
+    }
+
+    #[must_use]
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> TimerKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub const fn deadline(&self) -> Deadline {
+        self.deadline
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    use std::collections::BTreeMap;
+    use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
+    use std::thread::{self, JoinHandle};
+    use std::time::{Duration, Instant};
+
+    use super::{Deadline, TimerError, TimerEvent, TimerId, TimerKind};
+
+    const REQUEST_CAPACITY: usize = 64;
+
+    /// Blocking receiver for actual deadline completion events.
+    #[derive(Debug)]
+    pub struct TimerEvents {
+        receiver: Receiver<TimerEvent>,
+    }
+
+    impl TimerEvents {
+        /// Block until the next armed deadline completes or the worker ends.
+        pub fn recv(&self) -> Result<TimerEvent, mpsc::RecvError> {
+            self.receiver.recv()
+        }
+
+        /// Block for at most `timeout` for one actual deadline completion.
+        pub fn recv_timeout(&self, timeout: Duration) -> Result<TimerEvent, RecvTimeoutError> {
+            self.receiver.recv_timeout(timeout)
+        }
+    }
+
+    /// Owner of one blocking timer thread.
+    #[derive(Debug)]
+    pub struct TimerWorker {
+        requests: SyncSender<Request>,
+        worker: Option<JoinHandle<()>>,
+    }
+
+    impl TimerWorker {
+        /// Start a worker that blocks on either control input or its nearest
+        /// monotonic deadline.
+        pub fn start() -> Result<(Self, TimerEvents), TimerError> {
+            let (requests, receiver) = mpsc::sync_channel(REQUEST_CAPACITY);
+            let (events, event_receiver) = mpsc::channel();
+            let worker = thread::Builder::new()
+                .name("spice-bus-timers".to_owned())
+                .spawn(move || run(receiver, events))
+                .map_err(TimerError::Start)?;
+            Ok((
+                Self {
+                    requests,
+                    worker: Some(worker),
+                },
+                TimerEvents {
+                    receiver: event_receiver,
+                },
+            ))
+        }
+
+        /// Arm one action. `after` is computed once from the durable deadline
+        /// and current wall reading; the actual wait then runs monotonically.
+        pub fn arm(
+            &self,
+            owner: impl Into<String>,
+            kind: TimerKind,
+            deadline: Deadline,
+            after: Duration,
+        ) -> Result<TimerId, TimerError> {
+            let owner = owner.into();
+            if owner.trim().is_empty() {
+                return Err(TimerError::EmptyOwner);
+            }
+            let due = Instant::now().checked_add(after).ok_or(TimerError::Range)?;
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::Arm {
+                    owner,
+                    kind,
+                    deadline,
+                    due,
+                    answer,
+                })
+                .map_err(|_| TimerError::Closed)?;
+            receiver.recv().map_err(|_| TimerError::Closed)?
+        }
+
+        /// Arm the expiry carried by a durable lease head as a claim-lapse
+        /// event.
+        pub fn arm_lease(
+            &self,
+            owner: impl Into<String>,
+            lease: &journal::crossing::LeaseHead,
+            after: Duration,
+        ) -> Result<TimerId, TimerError> {
+            self.arm(owner, TimerKind::ClaimLapse, lease.expiry, after)
+        }
+
+        /// Cancel an armed wait before it emits an event.
+        pub fn cancel(&self, id: TimerId) -> Result<bool, TimerError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::Cancel { id, answer })
+                .map_err(|_| TimerError::Closed)?;
+            receiver.recv().map_err(|_| TimerError::Closed)
+        }
+
+        /// Cancel every remaining wait and join the blocking worker.
+        pub fn shutdown(mut self) -> Result<usize, TimerError> {
+            self.stop()
+        }
+
+        fn stop(&mut self) -> Result<usize, TimerError> {
+            let Some(worker) = self.worker.take() else {
+                return Ok(0);
+            };
+            let (answer, receiver) = mpsc::sync_channel(1);
+            let sent = self.requests.send(Request::Shutdown { answer }).is_ok();
+            let canceled = sent.then(|| receiver.recv().ok()).flatten();
+            worker.join().map_err(|_| TimerError::Panicked)?;
+            canceled.ok_or(TimerError::Closed)
+        }
+    }
+
+    impl Drop for TimerWorker {
+        fn drop(&mut self) {
+            let _ = self.stop();
+        }
+    }
+
+    enum Request {
+        Arm {
+            owner: String,
+            kind: TimerKind,
+            deadline: Deadline,
+            due: Instant,
+            answer: SyncSender<Result<TimerId, TimerError>>,
+        },
+        Cancel {
+            id: TimerId,
+            answer: SyncSender<bool>,
+        },
+        Shutdown {
+            answer: SyncSender<usize>,
+        },
+    }
+
+    struct Armed {
+        owner: String,
+        kind: TimerKind,
+        deadline: Deadline,
+    }
+
+    struct Schedule {
+        next: u64,
+        entries: BTreeMap<(Instant, TimerId), Armed>,
+        identities: BTreeMap<TimerId, Instant>,
+    }
+
+    impl Schedule {
+        fn new() -> Self {
+            Self {
+                next: 0,
+                entries: BTreeMap::new(),
+                identities: BTreeMap::new(),
+            }
+        }
+
+        fn arm(
+            &mut self,
+            owner: String,
+            kind: TimerKind,
+            deadline: Deadline,
+            due: Instant,
+        ) -> Result<TimerId, TimerError> {
+            self.next = self.next.checked_add(1).ok_or(TimerError::Exhausted)?;
+            let id = TimerId(self.next);
+            self.entries.insert(
+                (due, id),
+                Armed {
+                    owner,
+                    kind,
+                    deadline,
+                },
+            );
+            self.identities.insert(id, due);
+            Ok(id)
+        }
+
+        fn cancel(&mut self, id: TimerId) -> bool {
+            let Some(due) = self.identities.remove(&id) else {
+                return false;
+            };
+            self.entries.remove(&(due, id)).is_some()
+        }
+
+        fn wait(&self) -> Option<Duration> {
+            self.entries
+                .first_key_value()
+                .map(|((due, _), _)| due.saturating_duration_since(Instant::now()))
+        }
+
+        fn emit_due(&mut self, events: &mpsc::Sender<TimerEvent>) {
+            let now = Instant::now();
+            let keys = self
+                .entries
+                .range(..=(now, TimerId(u64::MAX)))
+                .map(|(key, _)| *key)
+                .collect::<Vec<_>>();
+            for (due, id) in keys {
+                self.identities.remove(&id);
+                if let Some(armed) = self.entries.remove(&(due, id)) {
+                    let _ = events.send(TimerEvent {
+                        id,
+                        owner: armed.owner,
+                        kind: armed.kind,
+                        deadline: armed.deadline,
+                    });
+                }
+            }
+        }
+
+        fn clear(&mut self) -> usize {
+            self.identities.clear();
+            let canceled = self.entries.len();
+            self.entries.clear();
+            canceled
+        }
+    }
+
+    fn run(requests: Receiver<Request>, events: mpsc::Sender<TimerEvent>) {
+        let mut schedule = Schedule::new();
+        loop {
+            let request = match schedule.wait() {
+                Some(wait) => match requests.recv_timeout(wait) {
+                    Ok(request) => Some(request),
+                    Err(RecvTimeoutError::Timeout) => None,
+                    Err(RecvTimeoutError::Disconnected) => break,
+                },
+                None => match requests.recv() {
+                    Ok(request) => Some(request),
+                    Err(_) => break,
+                },
+            };
+
+            match request {
+                Some(Request::Arm {
+                    owner,
+                    kind,
+                    deadline,
+                    due,
+                    answer,
+                }) => {
+                    let _ = answer.send(schedule.arm(owner, kind, deadline, due));
+                }
+                Some(Request::Cancel { id, answer }) => {
+                    let _ = answer.send(schedule.cancel(id));
+                }
+                Some(Request::Shutdown { answer }) => {
+                    let _ = answer.send(schedule.clear());
+                    break;
+                }
+                None => schedule.emit_due(&events),
+            }
+        }
+    }
+
+    pub use TimerEvents as Events;
+    pub use TimerWorker as Worker;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use native::{Events as TimerEvents, Worker as TimerWorker};
+
+/// A timer request could not be armed or delivered.
+#[derive(Debug)]
+pub enum TimerError {
+    EmptyOwner,
+    Exhausted,
+    Range,
+    Closed,
+    Panicked,
+    #[cfg(not(target_arch = "wasm32"))]
+    Start(std::io::Error),
+}
+
+impl fmt::Display for TimerError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyOwner => formatter.write_str("timer owner must not be empty"),
+            Self::Exhausted => formatter.write_str("timer identity range exhausted"),
+            Self::Range => formatter.write_str("timer delay exceeds the monotonic clock range"),
+            Self::Closed => formatter.write_str("timer worker is closed"),
+            Self::Panicked => formatter.write_str("timer worker panicked"),
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Start(error) => write!(formatter, "timer worker did not start: {error}"),
+        }
+    }
+}
+
+impl Error for TimerError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Start(error) => Some(error),
+            _ => None,
+        }
+    }
+}
