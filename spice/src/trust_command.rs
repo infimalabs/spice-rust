@@ -2,7 +2,7 @@
 
 use clap::ArgMatches;
 use serde::Serialize;
-use spice::config::LoadError;
+use spice::config::{LoadError, Loaded};
 use spice::repository::Repository;
 use wire::intent::{CommandAnswer, TrustAnswer};
 use wire::{
@@ -34,6 +34,11 @@ impl Surface {
     /// Acquire, parse, and digest the exact tracked and local policy documents.
     pub(crate) fn load(repository: &Repository) -> Result<Self, LoadError> {
         let loaded = spice::config::capture_repository(repository, &[])?;
+        Ok(Self::from_loaded(&loaded))
+    }
+
+    /// Bind trust identity to one already admitted configuration capture.
+    pub(crate) fn from_loaded(loaded: &Loaded) -> Self {
         let tracked = Document {
             source: ConfigSource::Tracked,
             location: loaded.locations().tracked().display().to_string(),
@@ -45,12 +50,12 @@ impl Surface {
             text: loaded.local().map(ToOwned::to_owned),
         };
         let digest = surface_digest(tracked.text.as_deref(), local.text.as_deref());
-        Ok(Self {
+        Self {
             digest,
             tracked,
             local,
             generation: loaded.generation().clone(),
-        })
+        }
     }
 
     /// Identity of the exact tracked plus local bytes.

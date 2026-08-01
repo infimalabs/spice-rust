@@ -88,6 +88,70 @@ mod tests {
     }
 
     #[test]
+    fn startup_runtime_policy_and_trust_share_one_capture_generation() {
+        const FIRST: &str = concat!(
+            "[steer]\nexpiry = \"12h\"\nresend = [\"2m\"]\n",
+            "[consent]\nposture = \"deny\"\n",
+        );
+        const SECOND: &str = concat!(
+            "[steer]\nexpiry = \"48h\"\nresend = [\"10m\"]\n",
+            "[consent]\nposture = \"allow\"\n",
+        );
+        let (root, paths) = resident_fixture("startup-single-capture");
+        let tracked = root.join("spice.toml");
+        fs::write(&tracked, FIRST).expect("write first startup policy");
+        let repository = Repository::discover(&root).expect("fixture repository resolves");
+
+        let first = load_startup_surface_with(&repository, || {
+            replace_policy(&tracked, SECOND)
+        })
+        .expect("captured startup surface remains admitted");
+        assert_eq!(first.config.steering.expiry().to_string(), "12h");
+        assert_eq!(first.config.consent.posture(), consent::Answer::Deny);
+        let named_current =
+            crate::trust_command::Surface::load(&repository).expect("replacement surface loads");
+        assert_ne!(first.trust, named_current);
+
+        let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
+        let bus = Bus::start(journal).expect("fixture bus starts");
+        let before = bus.fact_snapshot().expect("empty authority reads");
+        let refused = commit_startup(&bus, &repository, &first.trust, test_uuid(9), None)
+            .expect_err("moved single capture must refuse startup");
+        assert!(matches!(
+            refused,
+            Outcome::Refusal(ref refusal) if refusal.reason == "trust::surface-moved"
+        ));
+        assert_eq!(
+            bus.fact_snapshot().expect("refused authority reads"),
+            before,
+            "stale startup capture changed journal authority"
+        );
+
+        let second = load_startup_surface(&repository).expect("replacement startup surface loads");
+        assert_eq!(second.config.steering.expiry().to_string(), "48h");
+        assert_eq!(second.config.consent.posture(), consent::Answer::Allow);
+        assert_eq!(second.trust, named_current);
+        commit_startup(&bus, &repository, &second.trust, test_uuid(10), None)
+            .expect("retry seats replacement capture");
+        let after_retry = bus.fact_snapshot().expect("retried authority reads");
+        assert_eq!(
+            trust_pend_digests(&after_retry),
+            [second.trust.digest().clone()]
+        );
+        assert_eq!(
+            after_retry
+                .facts()
+                .iter()
+                .filter(|fact| fact.fact.kind() == wire::FactKind::UpSeated)
+                .count(),
+            1
+        );
+        bus.verify().expect("retried startup authority verifies");
+        bus.shutdown().expect("fixture bus stops");
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
     fn policy_movement_after_pend_refuses_seating_and_retry_pends_the_new_digest() {
         let (root, paths) = resident_fixture("trust-pend-generation");
         let tracked = root.join("spice.toml");
