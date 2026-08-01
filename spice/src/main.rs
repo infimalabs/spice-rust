@@ -18,6 +18,8 @@ mod doctor;
 #[cfg(not(target_arch = "wasm32"))]
 mod gate_command;
 mod proof_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod release_command;
 mod render;
 #[cfg(not(target_arch = "wasm32"))]
 mod resident;
@@ -63,6 +65,7 @@ fn main() {
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
         ["gate", "receipt"] => deliver(&gate_command::receipt(), form),
         ["version"] => deliver(&version_outcome(), form),
+        ["release", "notes"] => deliver(&release_command::notes(leaf), form),
         ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
         _ => {}
     }
@@ -73,6 +76,17 @@ fn main() {
                 class: FaultClass::Environment,
                 reason: "gate::target-unsupported".to_owned(),
                 detail: "immutable Git tree selection is unavailable on wasm32".to_owned(),
+            },
+            form,
+        );
+    }
+    #[cfg(target_arch = "wasm32")]
+    if contract.path == ["release", "notes"] {
+        deliver_fault(
+            Fault {
+                class: FaultClass::Environment,
+                reason: "release::target-unsupported".to_owned(),
+                detail: "immutable Git object inspection is unavailable on wasm32".to_owned(),
             },
             form,
         );
