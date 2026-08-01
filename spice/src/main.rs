@@ -27,6 +27,8 @@ mod proof_command;
 mod render;
 #[cfg(not(target_arch = "wasm32"))]
 mod resident;
+#[cfg(not(target_arch = "wasm32"))]
+mod restore_command;
 
 use render::Form;
 
@@ -79,6 +81,7 @@ fn main() {
         ["install"] => deliver(&install_command::run(leaf), form),
         ["config"] => deliver_config(&config_command::run(leaf), form),
         ["lock"] => deliver(&lock_command::status(), form),
+        ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
         ["version"] => deliver(&version_outcome(), form),
         _ => {}
     }

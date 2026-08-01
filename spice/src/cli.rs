@@ -840,6 +840,9 @@ fn branch(contracts: &[Contract], name: &'static str, path: &[&'static str]) -> 
     let contract = contract_at(contracts, path);
     let children = child_names(contracts, path);
     let mut command = Command::new(name).disable_help_subcommand(true);
+    if !children.is_empty() {
+        command = command.subcommand_negates_reqs(true);
+    }
 
     if let Some(contract) = contract {
         command = command.override_usage(format!("spice {}", contract.syntax));

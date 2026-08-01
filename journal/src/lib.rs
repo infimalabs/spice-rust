@@ -4,6 +4,8 @@
 pub const SCHEMA_VERSION: u32 = 1;
 
 #[cfg(not(target_arch = "wasm32"))]
+pub mod bundle;
+#[cfg(not(target_arch = "wasm32"))]
 mod guard;
 #[cfg(not(target_arch = "wasm32"))]
 mod migrate;

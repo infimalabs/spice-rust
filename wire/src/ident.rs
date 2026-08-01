@@ -77,6 +77,10 @@ pub enum Domain {
     InstallPlan,
     /// The durable record needed to reverse one applied installation.
     InstallRecord,
+    /// One exact file enumerated by a restore bundle manifest.
+    RestoreBundleFile,
+    /// The canonical manifest identifying one restore bundle.
+    RestoreBundleManifest,
     /// The payload manifest of one release target.
     DistTargetPayload,
     /// The bytes of one staged artifact.
@@ -129,6 +133,8 @@ impl Domain {
             Self::InstallArtifact => "spice.install.artifact.v1",
             Self::InstallPlan => "spice.install.plan.v1",
             Self::InstallRecord => "spice.install.record.v1",
+            Self::RestoreBundleFile => "spice.restore.bundle-file.v1",
+            Self::RestoreBundleManifest => "spice.restore.bundle-manifest.v1",
             Self::DistTargetPayload => "spice.dist.target-payload.v1",
             Self::DistArtifact => "spice.dist.artifact.v1",
             Self::DistPins => "spice.dist.pins.v1",
