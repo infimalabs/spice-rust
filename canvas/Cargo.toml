@@ -12,10 +12,12 @@ bus = { path = "../bus" }
 fold = { path = "../fold" }
 journal = { path = "../journal" }
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 wire = { path = "../wire" }
 
 [dev-dependencies]
 toml = "1.1.4"
+tungstenite = "0.29.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "ws"] }
