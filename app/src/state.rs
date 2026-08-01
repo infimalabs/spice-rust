@@ -2,13 +2,16 @@
 //!
 //! The app appends nothing and derives nothing it was not told. This state
 //! remembers the highest position it has applied, the causal headers it has
-//! received, and the most recent packed answer. It never merges two answers,
-//! repairs a gap, or reports a horizon, overflow, cursor, or causal link it
-//! did not receive.
+//! received, and the most recent answer wearing whatever provenance it arrived
+//! with. It never merges two answers, repairs a gap, or reports a horizon,
+//! overflow, cursor, fold, or causal link it did not receive.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use wire::{Body, CanonicalUuid, Envelope, Fact, Origin, Outcome, Overflow, Packed, Response, Seq};
+use wire::{
+    Body, CanonicalUuid, Derived, Envelope, Fact, FoldName, Origin, Outcome, Overflow, Packed,
+    Response, Seq,
+};
 
 use crate::socket::Admitted;
 
@@ -98,6 +101,112 @@ impl ChainWalk {
     }
 }
 
+/// How a list answer was produced.
+///
+/// The two arms are the two reads the socket makes, and they differ in exactly
+/// one way that matters downstream: whether the answer can say which fold
+/// generation produced it and how far that generation had applied the journal.
+/// A head-direct read cannot, and this enum gives it nowhere to claim
+/// otherwise, so "never invent that provenance" holds by shape rather than by a
+/// rule a renderer has to remember.
+///
+/// The arm is chosen by the wire shape the reply carried rather than by a
+/// caller's argument. `From` is implemented for [`Packed`] and [`Derived`] and
+/// for nothing else, so a head-direct read has no expression that produces
+/// [`Answer::Derived`].
+///
+/// A wire shape crosses the door and becomes an answer on the way in:
+///
+/// ```no_run
+/// let id: wire::CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163c1".parse().unwrap();
+/// let session = app::Session::open(id, id);
+/// let admitted: app::Admitted<wire::Response<wire::Packed<String>>> =
+///     session.admit_frame(b"").unwrap();
+/// ```
+///
+/// An `Answer` cannot make that crossing as itself, because it is not a wire
+/// shape and holds no `Deserialize`. Deriving one would let a hand-written
+/// frame name the `Derived` arm directly and mint the provenance this enum
+/// exists to keep a head-direct read from claiming:
+///
+/// ```compile_fail
+/// let id: wire::CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163c1".parse().unwrap();
+/// let session = app::Session::open(id, id);
+/// let admitted: app::Admitted<wire::Response<app::Answer<String>>> =
+///     session.admit_frame(b"").unwrap();
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Answer<T> {
+    /// A fold-backed answer, carrying the provenance the fold stamped on it.
+    Derived(Derived<T>),
+    /// A head-direct answer, read straight off the authoritative heads.
+    HeadDirect(Packed<T>),
+}
+
+impl<T> From<Derived<T>> for Answer<T> {
+    fn from(derived: Derived<T>) -> Self {
+        Self::Derived(derived)
+    }
+}
+
+impl<T> From<Packed<T>> for Answer<T> {
+    fn from(packed: Packed<T>) -> Self {
+        Self::HeadDirect(packed)
+    }
+}
+
+impl<T> Answer<T> {
+    /// The packed rows, however this answer was produced.
+    ///
+    /// Both arms carry one, because the list frame is the same either way and
+    /// only the provenance around it differs.
+    #[must_use]
+    pub const fn packed(&self) -> &Packed<T> {
+        match self {
+            Self::Derived(derived) => &derived.packed,
+            Self::HeadDirect(packed) => packed,
+        }
+    }
+
+    /// The fold that produced this answer, or `None` for a head-direct read.
+    #[must_use]
+    pub const fn fold(&self) -> Option<&FoldName> {
+        match self {
+            Self::Derived(derived) => Some(&derived.fold),
+            Self::HeadDirect(_) => None,
+        }
+    }
+
+    /// The generation of that fold, or `None` for a head-direct read.
+    #[must_use]
+    pub const fn generation(&self) -> Option<u64> {
+        match self {
+            Self::Derived(derived) => Some(derived.r#gen),
+            Self::HeadDirect(_) => None,
+        }
+    }
+
+    /// How far that generation had applied the journal, or `None` for a
+    /// head-direct read.
+    ///
+    /// This is deliberately not the packed horizon. The horizon names the
+    /// source completeness boundary; this says how far the fold itself had
+    /// gotten. Collapsing the two would let a stale generation read as current.
+    #[must_use]
+    pub const fn cursor(&self) -> Option<Seq> {
+        match self {
+            Self::Derived(derived) => Some(derived.cursor),
+            Self::HeadDirect(_) => None,
+        }
+    }
+
+    /// True when this answer carries fold provenance at all.
+    #[must_use]
+    pub const fn is_derived(&self) -> bool {
+        matches!(self, Self::Derived(_))
+    }
+}
+
 /// Browser state scoped to one resident generation.
 ///
 /// The generation is part of the state because a reconnect against a new epoch
@@ -106,7 +215,7 @@ impl ChainWalk {
 pub struct BrowserState<T> {
     epoch: CanonicalUuid,
     cursor: Option<Seq>,
-    packed: Option<Packed<T>>,
+    answer: Option<Answer<T>>,
     causal: BTreeMap<Seq, CausalLink>,
 }
 
@@ -117,7 +226,7 @@ impl<T> BrowserState<T> {
         Self {
             epoch,
             cursor: None,
-            packed: None,
+            answer: None,
             causal: BTreeMap::new(),
         }
     }
@@ -210,22 +319,29 @@ impl<T> BrowserState<T> {
         }
     }
 
-    /// Replace the packed answer with an admitted reply.
+    /// Replace the current answer with an admitted reply.
     ///
-    /// A packed answer carries its own rank, overflow, and horizon, so a later
-    /// answer replaces the earlier one whole. Merging two answers would
-    /// produce a list no producer ever ranked and a horizon no source ever
-    /// declared.
+    /// An answer carries its own rank, overflow, and horizon, so a later one
+    /// replaces the earlier one whole. Merging two answers would produce a list
+    /// no producer ever ranked and a horizon no source ever declared.
     ///
     /// The response must carry the socket door's [`Admitted`] receipt. A bare
-    /// [`Packed`] value has no path into state, so rows, overflow, and horizon
-    /// cannot be populated by bytes that bypassed [`crate::Session`]. A
-    /// refusal, fault, or answer from another state generation changes
-    /// nothing and remains available to the caller through `admitted`.
+    /// value has no path into state, so rows, overflow, horizon, and fold
+    /// provenance cannot be populated by bytes that bypassed
+    /// [`crate::Session`]. A refusal, fault, or answer from another state
+    /// generation changes nothing and remains available to the caller through
+    /// `admitted`.
+    ///
+    /// The reply body is whichever wire shape the read returned, and the
+    /// [`Answer`] arm follows from it rather than from an argument. A
+    /// [`Derived`] reply keeps the fold, generation, and cursor it arrived
+    /// with; a [`Packed`] reply has nowhere to put them and so claims none.
+    /// Flattening both to rows here is what would have forced every pane above
+    /// to either invent provenance or drop it silently.
     #[must_use]
-    pub fn replace(&mut self, admitted: &Admitted<Response<Packed<T>>>) -> bool
+    pub fn replace<B>(&mut self, admitted: &Admitted<Response<B>>) -> bool
     where
-        T: Clone,
+        B: Clone + Into<Answer<T>>,
     {
         let response = admitted.get();
         let Outcome::Reply(reply) = &response.outcome else {
@@ -234,26 +350,36 @@ impl<T> BrowserState<T> {
         if response.epoch != self.epoch {
             return false;
         }
-        self.packed = Some(reply.body.clone());
+        self.answer = Some(reply.body.clone().into());
         true
+    }
+
+    /// The current answer, or `None` before one arrives.
+    #[must_use]
+    pub const fn answer(&self) -> Option<&Answer<T>> {
+        self.answer.as_ref()
     }
 
     /// The rows of the current answer, empty before one arrives.
     #[must_use]
     pub fn rows(&self) -> &[T] {
-        self.packed.as_ref().map_or(&[], |packed| &packed.rows)
+        self.answer
+            .as_ref()
+            .map_or(&[], |answer| &answer.packed().rows)
     }
 
     /// What the current answer left out, when it left anything out.
     #[must_use]
     pub fn overflow(&self) -> Option<Overflow> {
-        self.packed.as_ref().and_then(|packed| packed.overflow)
+        self.answer
+            .as_ref()
+            .and_then(|answer| answer.packed().overflow)
     }
 
     /// The completeness boundary the current answer declared.
     #[must_use]
     pub fn horizon(&self) -> Option<Seq> {
-        self.packed.as_ref().map(|packed| packed.horizon)
+        self.answer.as_ref().map(|answer| answer.packed().horizon)
     }
 
     /// True when the current answer omitted ranked rows.
@@ -265,14 +391,14 @@ impl<T> BrowserState<T> {
     /// Adopt a generation, discarding state that belonged to another.
     ///
     /// Reconnecting to the same generation resumes: the cursor, causal headers,
-    /// and packed answer remain valid observations of that authority.
+    /// and current answer remain valid observations of that authority.
     /// Reconnecting to a new one starts empty, because positions and horizons
     /// are only meaningful within the generation that assigned them.
     pub fn reconnect(&mut self, epoch: CanonicalUuid) {
         if self.epoch != epoch {
             self.epoch = epoch;
             self.cursor = None;
-            self.packed = None;
+            self.answer = None;
             self.causal.clear();
         }
     }
