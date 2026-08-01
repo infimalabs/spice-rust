@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::{
+    fs,
     io::{self, Write},
     process::ExitStatus,
     sync::mpsc,
@@ -45,6 +46,10 @@ fn main() {
         _ => {}
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    if contract.path == ["version"] {
+        deliver(&version_outcome(), form);
+    }
     #[cfg(not(target_arch = "wasm32"))]
     let outcome = match contract.path {
         ["up"] => resident::up(),
@@ -89,6 +94,95 @@ fn run_retro(matches: &clap::ArgMatches, form: Form) -> ! {
     match listen::retro(".", selector) {
         Ok(outcome) => deliver_stream_once(&outcome, form),
         Err(error) => deliver_fault(surface_fault(error), form),
+    }
+}
+
+/// Builds the daemonless identity report from the executable and repository
+/// this process is actually running against.
+#[cfg(not(target_arch = "wasm32"))]
+fn version_outcome() -> Outcome<wire::Version> {
+    let start = match std::env::current_dir() {
+        Ok(path) => path,
+        Err(error) => {
+            return Outcome::Fault(Fault {
+                class: FaultClass::Environment,
+                reason: "version::working-directory-unavailable".to_owned(),
+                detail: error.to_string(),
+            });
+        }
+    };
+    let executable = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            return Outcome::Fault(Fault {
+                class: FaultClass::Environment,
+                reason: "version::binary-unresolved".to_owned(),
+                detail: error.to_string(),
+            });
+        }
+    };
+    let binary = match fs::read(&executable) {
+        Ok(bytes) => wire::Digest::compute(wire::Domain::DistArtifact, &bytes),
+        Err(error) => {
+            return Outcome::Fault(Fault {
+                class: FaultClass::Environment,
+                reason: "version::binary-unreadable".to_owned(),
+                detail: format!("{}: {error}", executable.display()),
+            });
+        }
+    };
+    let repository = match spice::repository::Repository::discover(&start) {
+        Ok(repository) => repository,
+        Err(error) => {
+            return Outcome::Fault(Fault {
+                class: FaultClass::Environment,
+                reason: "version::repository-unresolved".to_owned(),
+                detail: error.to_string(),
+            });
+        }
+    };
+    let reader = match journal::JournalReader::open(repository.journal_path()) {
+        Ok(reader) => reader,
+        Err(error) => return journal_version_failure(error),
+    };
+    let journal = match reader.schema_version() {
+        Ok(version) => version,
+        Err(error) => return journal_version_failure(error),
+    };
+
+    Outcome::Reply(wire::Reply {
+        position: wire::ReplyPosition::Direct {},
+        body: wire::Version {
+            binary,
+            wire: wire::WireVersion::CURRENT,
+            journal,
+            app: canvas::EMBEDDED_APP.digest(),
+        },
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn journal_version_failure(error: journal::OpenError) -> Outcome<wire::Version> {
+    match error {
+        journal::OpenError::Migration(migration) => Outcome::Refusal(Refusal {
+            reason: "journal::schema-refused".to_owned(),
+            witness: None,
+            expected: Some(format!(
+                "finalized journal schema {}",
+                journal::SCHEMA_VERSION
+            )),
+            observed: Some(migration.to_string()),
+            remedy: concat!(
+                "finish or replace the unfinalized or incompatible authority ",
+                "before asking for version"
+            )
+            .to_owned(),
+        }),
+        error => Outcome::Fault(Fault {
+            class: FaultClass::Store,
+            reason: "version::journal-unreadable".to_owned(),
+            detail: error.to_string(),
+        }),
     }
 }
 
@@ -240,7 +334,8 @@ fn render_fault(error: String) -> Fault {
 }
 
 fn deliver_fault(fault: Fault, form: Form) -> ! {
-    deliver(&Outcome::Fault(fault), form)
+    let outcome: Outcome<()> = Outcome::Fault(fault);
+    deliver(&outcome, form)
 }
 
 fn terminate_stream() -> ! {
@@ -267,7 +362,7 @@ fn terminate_child(status: ExitStatus) -> ! {
 /// rather than anything the caller did, so it becomes a fault with its own
 /// exit code. That fault is rendered as text, which is total, so this reaches
 /// an exit in one step and never asks the encoder a second time.
-fn deliver(outcome: &Outcome<()>, form: Form) -> ! {
+fn deliver<B: serde::Serialize>(outcome: &Outcome<B>, form: Form) -> ! {
     match render::render(outcome, form) {
         Ok(rendering) => {
             rendering.speak();

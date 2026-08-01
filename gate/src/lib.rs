@@ -12,19 +12,33 @@
 //! otherwise.
 
 pub mod camp;
+pub mod input;
 pub mod jurisdiction;
+pub mod kill;
 pub mod measure;
 pub mod message;
 pub mod names;
 pub mod ratchet;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod tree;
 pub mod verdict;
 
 pub use camp::{
     BoundRelation, Camp, CampError, CampFinding, CampReport, CampStanding, DistributionReport,
     LocusDistance, SharedBound,
 };
+pub use input::{
+    BASELINE_PATH, BASELINE_VERSION, Baseline, BaselineError, Contract, ContractError, FieldError,
+    Floor, FloorDeclaration, FloorKind, GateSet, LONG_LINE_LIMIT, POLICY_PATH, PolicyError,
+    ToolError, ToolIdentity,
+};
 pub use jurisdiction::{
     Admission, Entry, Ignore, IgnoreError, Jurisdiction, Rule, Shape, WalkError,
+};
+pub use kill::{
+    AttemptEvidence, AttemptKind, Kill, KillBounds, KillError, KillRun, MutantDisposition,
+    MutantEvidence, MutationBattery, MutationInventory, MutationMovement, MutationTool,
+    OutcomeEvidence, ProcessCompletion, ProcessEvidence, RateError, StreamEvidence, SurvivorRate,
 };
 pub use measure::{
     Bounds, MeasureError, Measurement, Metric, MetricError, Parser, Policy, measurement_digest,
@@ -33,4 +47,6 @@ pub use measure::{
 pub use message::{CommitMessageError, OriginTrailer, OriginTrailerError, validate_commit_message};
 pub use names::{RETIRED_NAMES, RetiredMatch, RetiredName, retired_matches};
 pub use ratchet::{Finding, Movement, Ratchet, RatchetError};
+#[cfg(not(target_arch = "wasm32"))]
+pub use tree::{SelectedTree, Selector, TreeError};
 pub use verdict::{PublishError, Run, RunError, Standing, Verdict};

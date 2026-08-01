@@ -6,7 +6,7 @@ use std::io::Write as _;
 use std::path::Path;
 
 use wire::manifest::{ProofReceipt, ProofStanding, ReleaseTarget, TargetPayload};
-use wire::{Digest, Domain};
+use wire::{Digest, Domain, ProofEvidence};
 
 use crate::container::is_digest_pinned;
 use crate::replay::{Battery, ReplayVerdict};
@@ -48,6 +48,18 @@ impl VerifiedEvidence {
     #[must_use]
     pub const fn replay_digest(&self) -> &Digest {
         &self.replay
+    }
+}
+
+impl From<VerifiedEvidence> for ProofEvidence {
+    fn from(verified: VerifiedEvidence) -> Self {
+        Self {
+            target: verified.target,
+            payload: verified.payload,
+            receipt: verified.receipt,
+            battery: verified.battery,
+            replay: verified.replay,
+        }
     }
 }
 
@@ -358,7 +370,7 @@ mod tests {
 
     use super::{EvidenceError, publish, verify};
     use crate::replay::{Battery, ReplayVerdict};
-    use wire::{Digest, Domain};
+    use wire::{Digest, Domain, ProofEvidence};
 
     #[test]
     fn current_payload_replay_and_receipt_verify_as_one_identity_chain() {
@@ -373,9 +385,16 @@ mod tests {
 
         let verified = verify(&payload_bytes, &receipt_bytes, &replay).expect("evidence verifies");
 
+        let result: ProofEvidence = verified.clone().into();
+
         assert_eq!(verified.target(), ReleaseTarget::X86_64UnknownLinuxMusl);
         assert_eq!(verified.battery_digest(), replay.battery_digest());
         assert_eq!(verified.replay_digest(), replay.replay_digest());
+        assert_eq!(result.target, verified.target());
+        assert_eq!(result.payload, *verified.payload_digest());
+        assert_eq!(result.receipt, *verified.receipt_digest());
+        assert_eq!(result.battery, *verified.battery_digest());
+        assert_eq!(result.replay, *verified.replay_digest());
     }
 
     #[test]
