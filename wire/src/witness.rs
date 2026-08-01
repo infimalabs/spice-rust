@@ -459,6 +459,38 @@ pub enum WitnessKind {
     Transition,
 }
 
+impl WitnessKind {
+    /// Every predicate class, in the order [`Witness`] declares them.
+    ///
+    /// The set is closed, so a caller sweeping it sweeps the whole of what a
+    /// command can be asked to re-prove rather than a list it restated.
+    pub const ALL: &[Self] = &[
+        Self::Task,
+        Self::Workflow,
+        Self::Claim,
+        Self::Lease,
+        Self::Residency,
+        Self::Absence,
+        Self::Existence,
+        Self::Edge,
+        Self::Deferral,
+        Self::Eligibility,
+        Self::Assignment,
+        Self::Preview,
+        Self::Barrier,
+        Self::Directive,
+        Self::Lineage,
+        Self::Consent,
+        Self::Rule,
+        Self::Budget,
+        Self::Trust,
+        Self::Taste,
+        Self::Observation,
+        Self::Sealed,
+        Self::Transition,
+    ];
+}
+
 impl Witness {
     /// The predicate class this witness proves.
     #[must_use]

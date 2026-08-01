@@ -4,10 +4,15 @@
 //! because the socket carries bytes and the app's only honest input is bytes.
 //! A test that built a DTO in memory would prove the app agrees with itself;
 //! these prove it agrees with the wire.
+//!
+//! The streamed fixtures name [`wire::body::TaskPhased`] rather than a shape
+//! declared here, so the fact they carry is one the vocabulary registers. A
+//! locally declared body would have let this suite pass against a kind no
+//! producer mints.
 
 use app::{Admitted, Applied, BrowserState, Session};
 use serde::{Deserialize, Serialize};
-use wire::{CanonicalUuid, Envelope, FaultClass, Overflow, Packed, Seq, WireVersion};
+use wire::{CanonicalUuid, Envelope, FaultClass, Overflow, Packed, Seq, WireVersion, body};
 
 /// Capability this session opens with.
 const CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163c1";
@@ -26,13 +31,6 @@ fn uuid(text: &str) -> CanonicalUuid {
 /// A session opened against [`CAPABILITY`] and [`EPOCH`].
 fn session() -> Session {
     Session::open(uuid(CAPABILITY), uuid(EPOCH))
-}
-
-/// The body of a `task::phased` fact, as one kind's registered DTO.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct Phased {
-    task: String,
-    phase: String,
 }
 
 /// The body of the reply fixture.
@@ -66,7 +64,7 @@ fn envelope_bytes(version: u32, seq: u64) -> Vec<u8> {
 }
 
 /// One streamed fact at `seq`, admitted the way state must receive it.
-fn envelope(seq: u64) -> Admitted<Envelope<Phased>> {
+fn envelope(seq: u64) -> Admitted<Envelope<body::TaskPhased>> {
     session()
         .admit_envelope(&envelope_bytes(1, seq))
         .expect("fixture envelope is admitted")
@@ -151,19 +149,19 @@ fn a_current_frame_for_this_generation_is_admitted() {
 #[test]
 fn a_current_streamed_fact_is_admitted() {
     let admitted = session()
-        .admit_envelope::<Phased>(&envelope_bytes(1, 48213))
+        .admit_envelope::<body::TaskPhased>(&envelope_bytes(1, 48213))
         .expect("a current envelope is admitted");
     let frame = admitted.get();
 
     assert_eq!(frame.v, WireVersion::CURRENT);
     assert_eq!(frame.seq, seq(48213));
-    assert_eq!(frame.fact.body.phase, "verify");
+    assert_eq!(frame.fact.body.phase.as_str(), "verify");
 }
 
 #[test]
 fn a_streamed_fact_at_another_wire_version_faults_and_never_reaches_state() {
     let fault = session()
-        .admit_envelope::<Phased>(&envelope_bytes(99, 48213))
+        .admit_envelope::<body::TaskPhased>(&envelope_bytes(99, 48213))
         .expect_err("a foreign version faults");
 
     assert_eq!(fault.class, FaultClass::Protocol);
@@ -179,7 +177,7 @@ fn a_streamed_fact_at_another_wire_version_faults_and_never_reaches_state() {
 #[test]
 fn a_streamed_fact_that_is_not_a_frame_faults_with_the_shared_reason() {
     let fault = session()
-        .admit_envelope::<Phased>(b"{\"v\": 1, \"seq\":")
+        .admit_envelope::<body::TaskPhased>(b"{\"v\": 1, \"seq\":")
         .expect_err("truncated bytes fault");
 
     assert_eq!(fault.class, FaultClass::Protocol);
@@ -194,7 +192,7 @@ fn both_doors_name_the_same_reason_for_the_same_failure() {
         .admit_frame::<Status>(&response(99, EPOCH))
         .expect_err("a foreign version faults");
     let envelope_fault = session
-        .admit_envelope::<Phased>(&envelope_bytes(99, 48213))
+        .admit_envelope::<body::TaskPhased>(&envelope_bytes(99, 48213))
         .expect_err("a foreign version faults");
 
     assert_eq!(response_fault.reason, envelope_fault.reason);

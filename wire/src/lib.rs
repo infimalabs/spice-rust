@@ -28,6 +28,7 @@
 //! branch. Exhaustive matching is the strongest enforcement a closed vocabulary
 //! can have, and these sets are declared closed precisely so they can have it.
 
+pub mod body;
 pub mod command;
 pub mod envelope;
 pub mod fact;
@@ -47,7 +48,7 @@ pub mod witness;
 
 pub use command::{Command, CommandKind, CommandKindError, Law, LawError};
 pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVersion};
-pub use fact::{Fact, FactKind};
+pub use fact::{Body, Fact, FactKind, Producer};
 pub use head::{
     ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency, LeaseHead,
     ResidencyHead, ResidentState, TaskHead, TrustHead, TrustState, WitnessClass, WitnessHead,

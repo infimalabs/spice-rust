@@ -26,6 +26,7 @@ wire/                           the crossing types
     ├── ident.rs                the one admitted uuid and instant spelling
     ├── envelope.rs             version, seq, at, actor, origin, cause, and kind
     ├── fact.rs                 the closed fact vocabulary
+    ├── body.rs                 one body DTO per fact kind
     ├── hello.rs                wire, capability, and epoch opening
     ├── command.rs              kind, expected witnesses, and canonical bytes
     ├── reply.rs                Reply, Refusal, and Fault

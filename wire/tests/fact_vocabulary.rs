@@ -11,8 +11,14 @@
 //!
 //! The source holds the other side. The spellings are read out of
 //! `wire/src/fact.rs` rather than restated here, so a kind cannot be added,
-//! renamed, or left without a `serde` rename without this suite saying which
-//! one. Restating the list would only pin a copy against a copy.
+//! renamed, or left unspelled without this suite saying which one. Restating
+//! the list would only pin a copy against a copy.
+//!
+//! What is read is the `vocabulary!` table, because that table is where a kind
+//! is declared: one row names the variant, its spelling, and the producer class
+//! that mints it, and the enum, the spellings, and the body registry are all
+//! expanded from it. Reading the expansion instead would read this crate\'s own
+//! output back to itself.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -91,47 +97,42 @@ struct Declared {
     spelling: Option<String>,
 }
 
-/// Read the `FactKind` variants and their spellings out of the source.
+/// Read the declared kinds and their spellings out of the vocabulary table.
 ///
-/// Reading the enum rather than restating it is what lets an added, renamed, or
-/// unspelled variant fail here by name.
+/// Reading the table rather than restating it is what lets an added, renamed,
+/// or unspelled variant fail here by name. A row is `Variant = "spelling" by
+/// Producer;`; the spelling stays optional here so a row that stops carrying
+/// one is reported rather than skipped.
 fn declared_kinds() -> Vec<Declared> {
     let source = fs::read_to_string(fact_source()).expect("wire/src/fact.rs is readable");
     let open = source
-        .find("pub enum FactKind {")
-        .expect("fact.rs declares FactKind");
+        .find("vocabulary! {")
+        .expect("fact.rs declares the vocabulary table");
     let body = &source[open..];
-    let close = body.find("\n}").expect("the FactKind body closes");
+    let close = body.find("\n}").expect("the vocabulary table closes");
     let body = &body[..close];
 
     let mut declared = Vec::new();
-    let mut pending: Option<String> = None;
     for line in body.lines() {
         let line = line.trim();
-        if let Some(rest) = line.strip_prefix("#[serde(rename = \"") {
-            let spelling = rest
-                .split('"')
-                .next()
-                .expect("a rename attribute closes its string");
-            pending = Some(spelling.to_owned());
+        if !line.starts_with(char::is_uppercase) {
             continue;
         }
-        if line.starts_with("//") || line.starts_with('#') || line.is_empty() {
-            continue;
-        }
-        if let Some(variant) = line.strip_suffix(',')
-            && variant.starts_with(char::is_uppercase)
-        {
-            declared.push(Declared {
-                variant: variant.to_owned(),
-                spelling: pending.take(),
-            });
-        }
+        let (variant, rest) = line.split_once(' ').unwrap_or((line, ""));
+        let spelling = rest
+            .split_once('"')
+            .and_then(|(_, quoted)| quoted.split_once('"'))
+            .map(|(spelling, _)| spelling.to_owned());
+        declared.push(Declared {
+            variant: variant.to_owned(),
+            spelling,
+        });
     }
 
     assert!(
         declared.len() > 1,
-        "no FactKind variants parsed from wire/src/fact.rs; the parser has drifted from the source",
+        "no kinds parsed from the vocabulary table in wire/src/fact.rs; the \
+         parser has drifted from the source",
     );
     declared
 }
