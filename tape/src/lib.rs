@@ -199,18 +199,11 @@ fn create_private(path: &Path) -> io::Result<File> {
     OpenOptions::new().write(true).create_new(true).open(path)
 }
 
-/// Open a member's plaintext for appending, reporting whether it was created.
-///
-/// Creation is asked for rather than inferred, because the answer decides
-/// whether the tape directory still owes a synchronization. Testing the path
-/// first would answer a question about a moment that has already passed; the
-/// exclusive open answers about the open that actually happened.
-fn open_member(path: &Path) -> io::Result<(File, bool)> {
+/// Open a member's plaintext for appending, creating it privately if absent.
+fn open_member(path: &Path) -> io::Result<File> {
     match create_private_append(path) {
-        Ok(file) => Ok((file, true)),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            open_private_append(path).map(|file| (file, false))
-        }
+        Ok(file) => Ok(file),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => open_private_append(path),
         Err(error) => Err(error),
     }
 }
@@ -484,31 +477,6 @@ mod tests {
         let root = std::env::temp_dir().join(format!("spice-tape-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         root
-    }
-
-    /// The directory sync is owed exactly when the member did not exist, so
-    /// what decides it is whether the exclusive create succeeded. Inferring it
-    /// from a prior existence test would answer about a different moment.
-    #[test]
-    fn only_the_append_that_creates_a_member_owes_the_directory_a_sync() {
-        let root = scratch("created");
-        let tape = Tape::open(&root).expect("tape opens");
-        let path = tape.plain_path(1);
-
-        let (file, created) = open_member(&path).expect("the member is created");
-        drop(file);
-        assert!(
-            created,
-            "the open that created the member reported otherwise"
-        );
-
-        for _ in 0..2 {
-            let (file, created) = open_member(&path).expect("the member reopens");
-            drop(file);
-            assert!(!created, "reopening an existing member reported a creation");
-        }
-
-        let _ = fs::remove_dir_all(&root);
     }
 
     /// A tee that cannot commit the member's name has not captured anything a
