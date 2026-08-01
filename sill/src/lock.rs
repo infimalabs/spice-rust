@@ -65,6 +65,20 @@ impl LockFile {
         try_acquire(self)
     }
 
+    /// Observe whether the kernel would grant this existing lock now.
+    ///
+    /// Missing lock files are available. This operation never creates a file;
+    /// an existing file is opened without following symlinks and held only for
+    /// the duration of the nonblocking kernel probe.
+    ///
+    /// # Errors
+    ///
+    /// Returns an operating-system refusal opening or probing an existing
+    /// target.
+    pub fn availability(&self) -> io::Result<Availability> {
+        availability(self)
+    }
+
     /// Block until the kernel grants exclusive possession.
     ///
     /// # Errors
@@ -79,6 +93,13 @@ impl LockFile {
 pub enum Acquisition {
     Acquired(Possession),
     Contended,
+}
+
+/// One point-in-time observation of a configured lock file.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Availability {
+    Available,
+    Held,
 }
 
 #[derive(Debug)]
@@ -123,9 +144,60 @@ fn acquire_with(lock: &LockFile, operation: std::os::raw::c_int) -> io::Result<P
         .mode(0o600)
         .custom_flags(platform::O_CLOEXEC)
         .open(&lock.path)?;
-    let descriptor = file.as_raw_fd();
+    ensure_cloexec(&file)?;
 
-    let flags = unsafe { platform::fcntl(descriptor, platform::F_GETFD) };
+    let result = unsafe { platform::flock(file.as_raw_fd(), operation) };
+    if result == 0 {
+        return Ok(Possession {
+            lock: lock.clone(),
+            file,
+        });
+    }
+    Err(io::Error::last_os_error())
+}
+
+#[cfg(unix)]
+fn availability(lock: &LockFile) -> io::Result<Availability> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let file = match OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(platform::O_CLOEXEC | platform::O_NOFOLLOW)
+        .open(&lock.path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(Availability::Available);
+        }
+        Err(error) => return Err(error),
+    };
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "lock target is not a regular file",
+        ));
+    }
+    ensure_cloexec(&file)?;
+    let result =
+        unsafe { platform::flock(file.as_raw_fd(), platform::LOCK_EX | platform::LOCK_NB) };
+    if result == 0 {
+        return Ok(Availability::Available);
+    }
+    let error = io::Error::last_os_error();
+    if error.kind() == io::ErrorKind::WouldBlock {
+        Ok(Availability::Held)
+    } else {
+        Err(error)
+    }
+}
+
+#[cfg(unix)]
+fn ensure_cloexec(file: &File) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+
+    let flags = unsafe { platform::fcntl(file.as_raw_fd(), platform::F_GETFD) };
     if flags == -1 {
         return Err(io::Error::last_os_error());
     }
@@ -134,15 +206,7 @@ fn acquire_with(lock: &LockFile, operation: std::os::raw::c_int) -> io::Result<P
             "lock descriptor was opened without CLOEXEC",
         ));
     }
-
-    let result = unsafe { platform::flock(descriptor, operation) };
-    if result == 0 {
-        return Ok(Possession {
-            lock: lock.clone(),
-            file,
-        });
-    }
-    Err(io::Error::last_os_error())
+    Ok(())
 }
 
 #[cfg(not(unix))]
@@ -158,6 +222,14 @@ fn acquire(_lock: &LockFile) -> io::Result<Possession> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "flock possession requires a Unix target",
+    ))
+}
+
+#[cfg(not(unix))]
+fn availability(_lock: &LockFile) -> io::Result<Availability> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "flock observation requires a Unix target",
     ))
 }
 
@@ -189,6 +261,10 @@ mod platform {
     pub const O_CLOEXEC: c_int = 0x01_00_00_00;
     #[cfg(target_os = "linux")]
     pub const O_CLOEXEC: c_int = 0x8_00_00;
+    #[cfg(target_os = "macos")]
+    pub const O_NOFOLLOW: c_int = 0x100;
+    #[cfg(target_os = "linux")]
+    pub const O_NOFOLLOW: c_int = 0x2_00_00;
 
     unsafe extern "C" {
         pub fn fcntl(descriptor: c_int, command: c_int, ...) -> c_int;

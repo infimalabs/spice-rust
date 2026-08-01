@@ -28,8 +28,8 @@ fact.
 
 ## Rust contracts
 
-The registry contains 63 command leaves. Fourteen have executable dispatch,
-so current executable coverage is 14/63, or 22.2 percent. Completed domain
+The registry contains 63 command leaves. Sixteen have executable dispatch,
+so current executable coverage is 16/63, or 25.4 percent. Completed domain
 libraries do not count as landed command surfaces.
 
 ### Landed
@@ -42,6 +42,8 @@ libraries do not count as landed command surfaces.
 - `gate camp`
 - `gate kill`
 - `gate receipt`
+- `lock`
+- `lock run`
 - `proof`
 - `proof replay`
 - `up`
@@ -56,8 +58,6 @@ operational gaps.
 ### `LOCAL-1kJQlG6b`
 
 - `install`
-- `lock`
-- `lock run`
 - `restore verify`
 - `release notes`
 

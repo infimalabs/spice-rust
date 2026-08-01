@@ -142,12 +142,34 @@ fn every_contract_has_an_executable_succession_disposition() {
     let (rust_ledger, _) = include_str!("../../../PORTING.md")
         .split_once("## Installed Python paths")
         .expect("the ledger separates Rust and Python inventories");
+    let landed_ledger = rust_ledger
+        .split_once("### Landed")
+        .expect("the ledger names its landed section")
+        .1
+        .split_once("### `")
+        .expect("the landed section ends before task-owned gaps")
+        .0;
     for contract in contracts() {
         let path = format!("`{}`", contract.path.join(" "));
         assert!(
             rust_ledger.contains(&path),
             "Rust succession ledger omitted {path}"
         );
+        let inventory_entry = format!("- {path}");
+        assert_eq!(
+            rust_ledger
+                .lines()
+                .filter(|line| *line == inventory_entry)
+                .count(),
+            1,
+            "Rust succession ledger repeated {path}",
+        );
+        if landing(contract.path) == Landing::Landed {
+            assert!(
+                landed_ledger.lines().any(|line| line == inventory_entry),
+                "landed command sits outside the ledger's Landed section: {path}",
+            );
+        }
     }
     for task in owning_tasks {
         assert!(
