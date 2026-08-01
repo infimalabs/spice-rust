@@ -3,6 +3,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn doctor_declarations_are_exact_views_of_both_current_tool_profiles() {
+        let current = GateSet::current().expect("compiled gate set");
+        assert_eq!(
+            declared_tools()
+                .expect("policy declarations")
+                .iter()
+                .map(|declaration| (declaration.name(), declaration.program()))
+                .collect::<Vec<_>>(),
+            current
+                .tools
+                .iter()
+                .map(|declaration| (declaration.name.as_str(), Path::new(&declaration.program)))
+                .collect::<Vec<_>>()
+        );
+
+        let mutation = declared_mutation_tools().expect("mutation declarations");
+        assert_eq!(
+            mutation
+                .iter()
+                .map(|declaration| (declaration.name(), declaration.program()))
+                .collect::<Vec<_>>(),
+            [
+                ("cargo", current.kill.tool.cargo_program()),
+                ("cargo-mutants", current.kill.tool.mutants_program()),
+            ]
+        );
+        assert!(
+            declared_tools()
+                .expect("policy declarations")
+                .into_iter()
+                .chain(mutation)
+                .all(|declaration| declaration.program().is_absolute())
+        );
+    }
+
+    #[test]
     fn missing_and_non_operational_compiled_tools_are_named_before_execution() {
         let root = workspace_root();
         let bounds = current_bounds().expect("compiled bounds are valid");

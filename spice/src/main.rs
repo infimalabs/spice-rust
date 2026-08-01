@@ -14,6 +14,8 @@ use wire::{Fault, FaultClass, Outcome, Refusal};
 
 mod cli;
 #[cfg(not(target_arch = "wasm32"))]
+mod doctor;
+#[cfg(not(target_arch = "wasm32"))]
 mod gate_command;
 mod render;
 #[cfg(not(target_arch = "wasm32"))]
@@ -50,10 +52,12 @@ fn main() {
 
     #[cfg(not(target_arch = "wasm32"))]
     match contract.path {
+        ["doctor"] => deliver(&doctor_outcome(), form),
         ["gate"] => deliver(&gate_command::run(leaf), form),
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
         ["gate", "receipt"] => deliver(&gate_command::receipt(), form),
+        ["version"] => deliver(&version_outcome(), form),
         _ => {}
     }
     #[cfg(target_arch = "wasm32")]
@@ -66,11 +70,6 @@ fn main() {
             },
             form,
         );
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    if contract.path == ["version"] {
-        deliver(&version_outcome(), form);
     }
     #[cfg(not(target_arch = "wasm32"))]
     let outcome = match contract.path {
@@ -94,6 +93,34 @@ fn not_landed(contract: &cli::Contract) -> Outcome<()> {
             contract.battery
         ),
     })
+}
+
+/// Acquire Doctor's ambient inputs at the binary rim, retaining presence but
+/// never the values of Spice-owned variables.
+#[cfg(not(target_arch = "wasm32"))]
+fn doctor_outcome() -> Outcome<wire::DoctorReport<spice::config::Root>> {
+    let working = match std::env::current_dir() {
+        Ok(path) => path,
+        Err(error) => {
+            return Outcome::Fault(Fault {
+                class: FaultClass::Environment,
+                reason: "doctor::working-directory-unavailable".to_owned(),
+                detail: error.to_string(),
+            });
+        }
+    };
+    let environment: Vec<_> = wire::SpiceVariable::ALL
+        .iter()
+        .map(|variable| {
+            (
+                *variable,
+                bootstrap_environment(variable.as_str()).is_some(),
+            )
+        })
+        .collect();
+    let search_path = bootstrap_environment("PATH");
+
+    doctor::inspect(&working, &environment, search_path.as_deref())
 }
 
 fn run_retro(matches: &clap::ArgMatches, form: Form) -> ! {

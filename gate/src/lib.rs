@@ -32,9 +32,10 @@ pub use camp::{
 };
 pub use config::{Config, WalkConfig};
 pub use input::{
-    BASELINE_PATH, BASELINE_VERSION, Baseline, BaselineError, Contract, ContractError, FieldError,
-    Floor, FloorDeclaration, FloorKind, GateSet, GateSetError, KillProfile, LONG_LINE_LIMIT,
-    POLICY_PATH, PolicyError, ToolError, ToolIdentity,
+    BASELINE_PATH, BASELINE_VERSION, Baseline, BaselineError, Contract, ContractError,
+    ExecutableDeclaration, FieldError, Floor, FloorDeclaration, FloorKind, GateSet, GateSetError,
+    KillProfile, LONG_LINE_LIMIT, POLICY_PATH, PolicyError, ToolError, ToolIdentity,
+    declared_mutation_tools, declared_tools,
 };
 pub use jurisdiction::{
     Admission, Entry, Ignore, IgnoreError, Jurisdiction, Rule, Shape, WalkError,

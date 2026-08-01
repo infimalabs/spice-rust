@@ -33,8 +33,8 @@ mod fixtures;
 /// Exact build-tool identity already carried by the distribution pin set.
 pub const PINNED_CARGO_MUTANTS: &str = "cargo-mutants 27.1.0";
 
-pub(crate) const SEED_ENVIRONMENT: &str = "SPICE_MUTATION_SEED"; // env-policy: allow
-pub(crate) const ATTEMPT_ENVIRONMENT: &str = "SPICE_MUTATION_ATTEMPT"; // env-policy: allow
+pub(crate) const SEED_ENVIRONMENT: &str = wire::SpiceVariable::MutationSeed.as_str();
+pub(crate) const ATTEMPT_ENVIRONMENT: &str = wire::SpiceVariable::MutationAttempt.as_str();
 const CARGO_ENVIRONMENT: &str = "CARGO";
 const OUTPUT_DIRECTORY: &str = ".spice-gate-mutants";
 const VERSION_ARGUMENTS: [&str; 1] = ["--version"];
