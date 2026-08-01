@@ -459,7 +459,6 @@ name = "dist"
 version = "0.0.0"
 dependencies = [
  "atomic",
- "gix",
  "serde_json",
  "sill",
  "thiserror",
