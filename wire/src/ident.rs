@@ -69,6 +69,10 @@ pub enum IdentError {
 pub enum Domain {
     /// The exact authored bytes of one board document.
     BoardDocument,
+    /// Stable task identity derived from one canonical authored node.
+    BoardTaskIdentity,
+    /// The task and workflow heads read by one board document preview.
+    BoardBarrier,
     /// One complete machine-local configuration document.
     ConfigLocal,
     /// One complete observed machine-local configuration mutation plan.
@@ -141,6 +145,8 @@ impl Domain {
     pub const fn tag(self) -> &'static str {
         match self {
             Self::BoardDocument => "spice.board.document.v1",
+            Self::BoardTaskIdentity => "spice.board.task-identity.v1",
+            Self::BoardBarrier => "spice.board.barrier.v1",
             Self::ConfigLocal => "spice.config.local.v1",
             Self::ConfigPlan => "spice.config.plan.v1",
             Self::JournalBackupManifest => "spice.journal.backup-manifest.v1",

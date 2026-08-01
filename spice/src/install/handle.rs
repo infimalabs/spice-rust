@@ -2,17 +2,39 @@ use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+#[cfg(debug_assertions)]
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::path::validate_relative;
 use super::{DIRECTORY_MODE, FileImage, Generation, InstallError, ObservedFile, ParentObservation};
 
+#[cfg(all(unix, any(target_vendor = "apple", target_os = "linux")))]
+use rustix::fs::RenameFlags;
 #[cfg(unix)]
 use rustix::fs::{self as unix_fs, AtFlags, Mode, OFlags};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(debug_assertions)]
+static MUTATION_RENDEZVOUS: OnceLock<Option<MutationRendezvous>> = OnceLock::new();
+
+#[cfg(debug_assertions)]
+#[derive(Debug)]
+struct MutationRendezvous {
+    control: PathBuf,
+    action: OsString,
+    path: PathBuf,
+}
+
+#[cfg(unix)]
+struct OpenedParents {
+    directories: Vec<File>,
+    ready: bool,
+    preexisting_introduced: bool,
+}
 
 /// One destination whose parent is held open from its admitted root.
 pub(super) struct AdmittedPath {
@@ -23,6 +45,7 @@ pub(super) struct AdmittedPath {
     directories: Vec<File>,
     ready: bool,
     introduced: usize,
+    preexisting_introduced: bool,
 }
 
 impl AdmittedPath {
@@ -78,83 +101,37 @@ impl AdmittedPath {
         })?;
         let components = path_components(&expected_parent)?;
         let anchor_components = path_components(Path::new(&observation.ancestor))?.len();
-        let mut directories = vec![root_fd];
-        let mut ready = true;
-        for (index, component) in components.iter().enumerate() {
-            match open_directory(
-                directories.last().expect("the root directory is open"),
-                component,
-            ) {
-                Ok(directory) => directories.push(directory),
-                Err(source)
-                    if source.kind() == io::ErrorKind::NotFound && index >= anchor_components =>
-                {
-                    if !create_missing {
-                        ready = false;
-                        break;
-                    }
-                    create_directory(
-                        directories.last().expect("the directory parent is open"),
-                        component,
-                        &canonical_root.join(components_path(&components[..=index])),
-                    )?;
-                    directories.push(
-                        open_directory(
-                            directories.last().expect("the directory parent is open"),
-                            component,
-                        )
-                        .map_err(|source| {
-                            InstallError::io(
-                                "open newly created install directory",
-                                canonical_root.join(components_path(&components[..=index])),
-                                source,
-                            )
-                        })?,
-                    );
-                }
-                Err(source) => {
-                    return Err(InstallError::io(
-                        "open admitted install directory",
-                        canonical_root.join(components_path(&components[..=index])),
-                        source,
-                    ));
-                }
-            }
-            if index + 1 == anchor_components {
-                let metadata = directories
-                    .last()
-                    .expect("the admitted anchor is open")
-                    .metadata()
-                    .map_err(|source| {
-                        InstallError::io(
-                            "inspect admitted install directory",
-                            canonical_root.join(components_path(&components[..=index])),
-                            source,
-                        )
-                    })?;
-                if !metadata.is_dir() || !observation.generation.matches(&metadata) {
-                    return Err(InstallError::ParentChanged(
-                        canonical_root.join(components_path(&components[..=index])),
-                    ));
-                }
-            }
+        let first_introduced = components.len().checked_sub(introduced).ok_or_else(|| {
+            InstallError::InvalidRecord(
+                "introduced install parents exceed the bound parent depth".to_owned(),
+            )
+        })?;
+        if create_missing && first_introduced < anchor_components {
+            return Err(InstallError::InvalidRecord(
+                "introduced install parents overlap the admitted ancestor".to_owned(),
+            ));
         }
+        let opened = open_parent_chain(
+            &canonical_root,
+            root_fd,
+            &components,
+            observation,
+            create_missing,
+            anchor_components,
+            first_introduced,
+        )?;
         if anchor_components == 0 {
-            let metadata = directories[0].metadata().map_err(|source| {
-                InstallError::io("inspect admitted install root", &canonical_root, source)
-            })?;
-            if !observation.generation.matches(&metadata) {
-                return Err(InstallError::ParentChanged(canonical_root));
-            }
+            require_directory_generation(&opened.directories[0], &canonical_root, observation)?;
         }
         Ok(Self {
             canonical_root,
             display: root.join(destination_path),
             file_name,
             components,
-            directories,
-            ready,
+            directories: opened.directories,
+            ready: opened.ready,
             introduced,
+            preexisting_introduced: opened.preexisting_introduced,
         })
     }
 
@@ -225,7 +202,19 @@ impl AdmittedPath {
         image: &FileImage,
         expected: Option<Generation>,
     ) -> Result<Generation, InstallError> {
+        self.publish_with(image, expected, || mutation_pause("publish", &self.display))
+    }
+
+    fn publish_with(
+        &self,
+        image: &FileImage,
+        expected: Option<Generation>,
+        before_mutation: impl FnOnce() -> Result<(), InstallError>,
+    ) -> Result<Generation, InstallError> {
         if !self.ready {
+            return Err(InstallError::ParentChanged(self.display.clone()));
+        }
+        if expected.is_none() && self.preexisting_introduced {
             return Err(InstallError::ParentChanged(self.display.clone()));
         }
         self.require_generation(expected)?;
@@ -254,16 +243,71 @@ impl AdmittedPath {
                 staged.sync_all().map_err(|source| {
                     InstallError::io("synchronize admitted staged file", &self.display, source)
                 })?;
+                let staged_generation =
+                    Generation::observe(&staged.metadata().map_err(|source| {
+                        InstallError::io("inspect admitted staged file", &self.display, source)
+                    })?);
                 self.verify_named_parent()?;
                 self.require_generation(expected)?;
-                unix_fs::renameat(self.parent(), &temporary, self.parent(), &self.file_name)
-                    .map_err(|source| {
-                        InstallError::io(
-                            "publish admitted install file",
+                before_mutation()?;
+                match expected {
+                    Some(expected) => changed_on_name_race(
+                        exchange(
+                            self.parent(),
+                            &temporary,
+                            self.parent(),
+                            &self.file_name,
                             &self.display,
-                            source.into(),
-                        )
-                    })?;
+                        ),
+                        &self.display,
+                    )
+                    .and_then(|()| {
+                        let admitted = self.verify_named_parent().and_then(|()| {
+                            self.require_named_generation(&self.file_name, staged_generation)?;
+                            self.require_named_generation(&temporary, expected)
+                        });
+                        if let Err(error) = admitted {
+                            exchange(
+                                self.parent(),
+                                &temporary,
+                                self.parent(),
+                                &self.file_name,
+                                &self.display,
+                            )?;
+                            return Err(error);
+                        }
+                        Ok(())
+                    })?,
+                    None => changed_on_name_race(
+                        rename_noreplace(
+                            self.parent(),
+                            &temporary,
+                            self.parent(),
+                            &self.file_name,
+                            &self.display,
+                        ),
+                        &self.display,
+                    )
+                    .and_then(|()| {
+                        let admitted = self.verify_named_parent().and_then(|()| {
+                            self.require_named_generation(&self.file_name, staged_generation)
+                        });
+                        if let Err(error) = admitted {
+                            rename_noreplace(
+                                self.parent(),
+                                &self.file_name,
+                                self.parent(),
+                                &temporary,
+                                &self.display,
+                            )?;
+                            return Err(error);
+                        }
+                        Ok(())
+                    })?,
+                }
+                if expected.is_some() {
+                    remove_name(self.parent(), &temporary, AtFlags::empty(), &self.display)?;
+                }
                 self.parent().sync_all().map_err(|source| {
                     InstallError::io(
                         "synchronize admitted destination parent",
@@ -271,9 +315,7 @@ impl AdmittedPath {
                         source,
                     )
                 })?;
-                self.observe()?
-                    .map(|observed| observed.generation)
-                    .ok_or_else(|| InstallError::ParentChanged(self.display.clone()))
+                Ok(staged_generation)
             })();
             if result.is_err() {
                 let _ = unix_fs::unlinkat(self.parent(), &temporary, AtFlags::empty());
@@ -285,15 +327,44 @@ impl AdmittedPath {
     }
 
     pub(super) fn remove(&self, expected: Generation) -> Result<(), InstallError> {
+        self.remove_with(expected, || mutation_pause("remove", &self.display))
+    }
+
+    fn remove_with(
+        &self,
+        expected: Generation,
+        before_mutation: impl FnOnce() -> Result<(), InstallError>,
+    ) -> Result<(), InstallError> {
         self.require_generation(Some(expected))?;
         self.verify_named_parent()?;
         #[cfg(unix)]
         {
-            unix_fs::unlinkat(self.parent(), &self.file_name, AtFlags::empty()).map_err(
-                |source| {
-                    InstallError::io("remove admitted install file", &self.display, source.into())
-                },
+            let temporary = temporary_name();
+            before_mutation()?;
+            changed_on_name_race(
+                rename_noreplace(
+                    self.parent(),
+                    &self.file_name,
+                    self.parent(),
+                    &temporary,
+                    &self.display,
+                ),
+                &self.display,
             )?;
+            let admitted = self
+                .verify_named_parent()
+                .and_then(|()| self.require_named_generation(&temporary, expected));
+            if let Err(error) = admitted {
+                rename_noreplace(
+                    self.parent(),
+                    &temporary,
+                    self.parent(),
+                    &self.file_name,
+                    &self.display,
+                )?;
+                return Err(error);
+            }
+            remove_name(self.parent(), &temporary, AtFlags::empty(), &self.display)?;
             self.parent().sync_all().map_err(|source| {
                 InstallError::io(
                     "synchronize admitted destination parent",
@@ -324,23 +395,7 @@ impl AdmittedPath {
                     .nth(self.components.len() - index - 1)
                     .expect("an introduced directory is below the root")
                     .to_path_buf();
-                match unix_fs::unlinkat(
-                    &self.directories[index],
-                    &self.components[index],
-                    AtFlags::REMOVEDIR,
-                ) {
-                    Ok(()) => self.directories[index].sync_all().map_err(|source| {
-                        InstallError::io("synchronize introduced directory parent", &path, source)
-                    })?,
-                    Err(rustix::io::Errno::NOENT | rustix::io::Errno::NOTEMPTY) => {}
-                    Err(source) => {
-                        return Err(InstallError::io(
-                            "remove introduced directory",
-                            path,
-                            source.into(),
-                        ));
-                    }
-                }
+                self.cleanup_directory(index, &path)?;
             }
             Ok(())
         }
@@ -358,7 +413,84 @@ impl AdmittedPath {
     }
 
     #[cfg(unix)]
+    fn require_named_generation(
+        &self,
+        name: &OsString,
+        expected: Generation,
+    ) -> Result<(), InstallError> {
+        let observed = generation_at(self.parent(), name, &self.display)?;
+        if observed == Some(expected) {
+            Ok(())
+        } else {
+            Err(InstallError::ParentChanged(self.display.clone()))
+        }
+    }
+
+    #[cfg(unix)]
+    fn cleanup_directory(&self, index: usize, path: &Path) -> Result<(), InstallError> {
+        self.cleanup_directory_with(index, path, || mutation_pause("cleanup", path))
+    }
+
+    #[cfg(unix)]
+    fn cleanup_directory_with(
+        &self,
+        index: usize,
+        path: &Path,
+        before_mutation: impl FnOnce() -> Result<(), InstallError>,
+    ) -> Result<(), InstallError> {
+        let parent = &self.directories[index];
+        let component = &self.components[index];
+        let expected =
+            Generation::observe(&self.directories[index + 1].metadata().map_err(|source| {
+                InstallError::io("inspect introduced directory", path, source)
+            })?);
+        let temporary = temporary_name();
+        before_mutation()?;
+        match rename_noreplace(parent, component, parent, &temporary, path) {
+            Err(InstallError::Io { source, .. }) if source.kind() == io::ErrorKind::NotFound => {
+                self.verify_named_prefix(index)?;
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+            Ok(()) => {}
+        }
+        let admitted = self.verify_named_prefix(index).and_then(|()| {
+            let observed = generation_at(parent, &temporary, path)?;
+            if observed == Some(expected) {
+                Ok(())
+            } else {
+                Err(InstallError::ParentChanged(path.to_path_buf()))
+            }
+        });
+        if let Err(error) = admitted {
+            rename_noreplace(parent, &temporary, parent, component, path)?;
+            return Err(error);
+        }
+        match unix_fs::unlinkat(parent, &temporary, AtFlags::REMOVEDIR) {
+            Ok(()) => parent.sync_all().map_err(|source| {
+                InstallError::io("synchronize introduced directory parent", path, source)
+            }),
+            Err(rustix::io::Errno::NOTEMPTY) => {
+                rename_noreplace(parent, &temporary, parent, component, path)
+            }
+            Err(source) => {
+                rename_noreplace(parent, &temporary, parent, component, path)?;
+                Err(InstallError::io(
+                    "remove introduced directory",
+                    path,
+                    source.into(),
+                ))
+            }
+        }
+    }
+
+    #[cfg(unix)]
     fn verify_named_parent(&self) -> Result<(), InstallError> {
+        self.verify_named_prefix(self.components.len())
+    }
+
+    #[cfg(unix)]
+    fn verify_named_prefix(&self, component_count: usize) -> Result<(), InstallError> {
         let root = unix_fs::open(
             &self.canonical_root,
             OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
@@ -384,7 +516,7 @@ impl AdmittedPath {
             return Err(InstallError::ParentChanged(self.canonical_root.clone()));
         }
         let mut current = root;
-        for (index, component) in self.components.iter().enumerate() {
+        for (index, component) in self.components.iter().take(component_count).enumerate() {
             let reopened = open_directory(&current, component)
                 .map_err(|_| InstallError::ParentChanged(self.display.clone()))?;
             let reopened_generation =
@@ -441,6 +573,83 @@ fn components_path(components: &[OsString]) -> PathBuf {
 }
 
 #[cfg(unix)]
+fn open_parent_chain(
+    canonical_root: &Path,
+    root: File,
+    components: &[OsString],
+    observation: &ParentObservation,
+    create_missing: bool,
+    anchor_components: usize,
+    first_introduced: usize,
+) -> Result<OpenedParents, InstallError> {
+    let mut directories = vec![root];
+    let mut ready = true;
+    let mut preexisting_introduced = false;
+    for (index, component) in components.iter().enumerate() {
+        let display = canonical_root.join(components_path(&components[..=index]));
+        let parent = directories.last().expect("the root directory is open");
+        match open_directory(parent, component) {
+            Ok(directory) => {
+                if create_missing && index >= first_introduced {
+                    preexisting_introduced = true;
+                }
+                directories.push(directory);
+            }
+            Err(source)
+                if source.kind() == io::ErrorKind::NotFound && index >= anchor_components =>
+            {
+                if !create_missing || preexisting_introduced {
+                    ready = false;
+                    break;
+                }
+                if index < first_introduced {
+                    return Err(InstallError::ParentChanged(display));
+                }
+                let directory = create_directory(parent, component, &display, || {
+                    mutation_pause("create", &display)
+                })?;
+                directories.push(directory);
+            }
+            Err(source) => {
+                return Err(InstallError::io(
+                    "open admitted install directory",
+                    display,
+                    source,
+                ));
+            }
+        }
+        if index + 1 == anchor_components {
+            require_directory_generation(
+                directories.last().expect("the admitted anchor is open"),
+                &display,
+                observation,
+            )?;
+        }
+    }
+    Ok(OpenedParents {
+        directories,
+        ready,
+        preexisting_introduced,
+    })
+}
+
+#[cfg(unix)]
+fn require_directory_generation(
+    directory: &File,
+    display: &Path,
+    observation: &ParentObservation,
+) -> Result<(), InstallError> {
+    let metadata = directory.metadata().map_err(|source| {
+        InstallError::io("inspect admitted install directory", display, source)
+    })?;
+    if metadata.is_dir() && observation.generation.matches(&metadata) {
+        Ok(())
+    } else {
+        Err(InstallError::ParentChanged(display.to_path_buf()))
+    }
+}
+
+#[cfg(unix)]
 fn open_directory(parent: &File, name: &OsString) -> io::Result<File> {
     unix_fs::openat(
         parent,
@@ -453,7 +662,12 @@ fn open_directory(parent: &File, name: &OsString) -> io::Result<File> {
 }
 
 #[cfg(unix)]
-fn create_directory(parent: &File, name: &OsString, display: &Path) -> Result<(), InstallError> {
+fn create_directory(
+    parent: &File,
+    name: &OsString,
+    display: &Path,
+    before_open: impl FnOnce() -> Result<(), InstallError>,
+) -> Result<File, InstallError> {
     unix_fs::mkdirat(parent, name, Mode::from_raw_mode(DIRECTORY_MODE as _)).map_err(|source| {
         if source == rustix::io::Errno::EXIST {
             InstallError::ParentChanged(display.to_path_buf())
@@ -461,9 +675,202 @@ fn create_directory(parent: &File, name: &OsString, display: &Path) -> Result<()
             InstallError::io("create admitted install directory", display, source.into())
         }
     })?;
+    let created = generation_at(parent, name, display)?
+        .ok_or_else(|| InstallError::ParentChanged(display.to_path_buf()))?;
+    before_open()?;
+    let directory = open_directory(parent, name)
+        .map_err(|source| InstallError::io("open newly created install directory", display, source))
+        .or_else(|error| changed_on_name_race(Err(error), display))?;
+    let opened = Generation::observe(&directory.metadata().map_err(|source| {
+        InstallError::io("inspect newly created install directory", display, source)
+    })?);
+    if opened != created {
+        return Err(InstallError::ParentChanged(display.to_path_buf()));
+    }
     parent.sync_all().map_err(|source| {
         InstallError::io("synchronize admitted directory parent", display, source)
+    })?;
+    Ok(directory)
+}
+
+#[cfg(unix)]
+fn generation_at(
+    parent: &File,
+    name: &OsString,
+    display: &Path,
+) -> Result<Option<Generation>, InstallError> {
+    match unix_fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(stat) => {
+            #[cfg(target_vendor = "apple")]
+            let device = stat.st_dev as u64;
+            #[cfg(not(target_vendor = "apple"))]
+            let device = stat.st_dev;
+            Ok(Some(Generation {
+                device,
+                inode: stat.st_ino,
+            }))
+        }
+        Err(rustix::io::Errno::NOENT) => Ok(None),
+        Err(source) => Err(InstallError::io(
+            "inspect admitted install name",
+            display,
+            source.into(),
+        )),
+    }
+}
+
+#[cfg(unix)]
+fn changed_on_name_race<T>(
+    result: Result<T, InstallError>,
+    display: &Path,
+) -> Result<T, InstallError> {
+    match result {
+        Err(InstallError::Io { source, .. })
+            if matches!(
+                source.kind(),
+                io::ErrorKind::AlreadyExists | io::ErrorKind::NotFound
+            ) =>
+        {
+            Err(InstallError::ParentChanged(display.to_path_buf()))
+        }
+        other => other,
+    }
+}
+
+#[cfg(unix)]
+fn remove_name(
+    parent: &File,
+    name: &OsString,
+    flags: AtFlags,
+    display: &Path,
+) -> Result<(), InstallError> {
+    unix_fs::unlinkat(parent, name, flags)
+        .map_err(|source| InstallError::io("remove admitted install name", display, source.into()))
+}
+
+#[cfg(all(unix, any(target_vendor = "apple", target_os = "linux")))]
+fn rename_noreplace(
+    old_parent: &File,
+    old_name: &OsString,
+    new_parent: &File,
+    new_name: &OsString,
+    display: &Path,
+) -> Result<(), InstallError> {
+    unix_fs::renameat_with(
+        old_parent,
+        old_name,
+        new_parent,
+        new_name,
+        RenameFlags::NOREPLACE,
+    )
+    .map_err(|source| {
+        InstallError::io(
+            "atomically move admitted install name",
+            display,
+            source.into(),
+        )
     })
+}
+
+#[cfg(all(unix, not(any(target_vendor = "apple", target_os = "linux"))))]
+fn rename_noreplace(
+    _old_parent: &File,
+    _old_name: &OsString,
+    _new_parent: &File,
+    _new_name: &OsString,
+    display: &Path,
+) -> Result<(), InstallError> {
+    Err(InstallError::InvalidRecord(format!(
+        "atomic install rename is unavailable for {}",
+        display.display()
+    )))
+}
+
+#[cfg(all(unix, any(target_vendor = "apple", target_os = "linux")))]
+fn exchange(
+    old_parent: &File,
+    old_name: &OsString,
+    new_parent: &File,
+    new_name: &OsString,
+    display: &Path,
+) -> Result<(), InstallError> {
+    unix_fs::renameat_with(
+        old_parent,
+        old_name,
+        new_parent,
+        new_name,
+        RenameFlags::EXCHANGE,
+    )
+    .map_err(|source| {
+        InstallError::io(
+            "atomically exchange admitted install names",
+            display,
+            source.into(),
+        )
+    })
+}
+
+#[cfg(all(unix, not(any(target_vendor = "apple", target_os = "linux"))))]
+fn exchange(
+    _old_parent: &File,
+    _old_name: &OsString,
+    _new_parent: &File,
+    _new_name: &OsString,
+    display: &Path,
+) -> Result<(), InstallError> {
+    Err(InstallError::InvalidRecord(format!(
+        "atomic install exchange is unavailable for {}",
+        display.display()
+    )))
+}
+
+#[cfg(debug_assertions)]
+fn mutation_pause(action: &str, display: &Path) -> Result<(), InstallError> {
+    let Some(rendezvous) = MUTATION_RENDEZVOUS.get().and_then(Option::as_ref) else {
+        return Ok(());
+    };
+    if rendezvous.action != action || rendezvous.path != display {
+        return Ok(());
+    }
+    fs::write(rendezvous.control.join("ready"), action).map_err(|source| {
+        InstallError::io("signal install mutation rendezvous", display, source)
+    })?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !rendezvous.control.join("continue").exists() {
+        if std::time::Instant::now() >= deadline {
+            return Err(InstallError::io(
+                "wait for install mutation rendezvous",
+                display,
+                io::Error::new(io::ErrorKind::TimedOut, "test rendezvous timed out"),
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    Ok(())
+}
+
+#[cfg(not(debug_assertions))]
+fn mutation_pause(_action: &str, _display: &Path) -> Result<(), InstallError> {
+    Ok(())
+}
+
+#[cfg(debug_assertions)]
+pub(super) fn configure_mutation_rendezvous(
+    control: Option<OsString>,
+    action: Option<OsString>,
+    path: Option<OsString>,
+) {
+    let rendezvous = match (control, action, path) {
+        (Some(control), Some(action), Some(path)) => Some(MutationRendezvous {
+            control: PathBuf::from(control),
+            action,
+            path: PathBuf::from(path),
+        }),
+        _ => None,
+    };
+    MUTATION_RENDEZVOUS
+        .set(rendezvous)
+        .expect("install mutation rendezvous is configured once at startup");
 }
 
 fn temporary_name() -> OsString {
@@ -481,7 +888,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn renamed_parent_after_admission_refuses_before_publication() {
+    fn renamed_parent_at_publication_is_restored_on_refusal() {
         let root = std::env::temp_dir().join(format!(
             "spice-admitted-path-{}-{}",
             std::process::id(),
@@ -502,10 +909,16 @@ mod tests {
         let admitted = AdmittedPath::open(&root, "target/file", &parent, false, 0).unwrap();
         let expected = admitted.observe().unwrap().unwrap().generation;
 
-        fs::rename(&target, &parked).unwrap();
-        symlink(&outside, &target).unwrap();
         let error = admitted
-            .publish(&FileImage::new(0o644, b"after".to_vec()), Some(expected))
+            .publish_with(
+                &FileImage::new(0o644, b"after".to_vec()),
+                Some(expected),
+                || {
+                    fs::rename(&target, &parked).unwrap();
+                    symlink(&outside, &target).unwrap();
+                    Ok(())
+                },
+            )
             .unwrap_err();
 
         assert!(matches!(error, InstallError::ParentChanged(_)));
@@ -513,5 +926,183 @@ mod tests {
         assert!(fs::read_dir(&outside).unwrap().next().is_none());
         drop(admitted);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn replaced_destination_at_publication_is_restored_on_refusal() {
+        let root = test_root("publish-replacement");
+        let target = root.join("target");
+        let destination = target.join("file");
+        let parked = target.join("parked");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(&destination, b"before").unwrap();
+        let admitted = admitted_file(&root, &target, "target/file");
+        let expected = admitted.observe().unwrap().unwrap().generation;
+
+        let error = admitted
+            .publish_with(
+                &FileImage::new(0o644, b"after".to_vec()),
+                Some(expected),
+                || {
+                    fs::rename(&destination, &parked).unwrap();
+                    fs::write(&destination, b"racer").unwrap();
+                    Ok(())
+                },
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, InstallError::ParentChanged(_)));
+        assert_eq!(fs::read(&destination).unwrap(), b"racer");
+        assert_eq!(fs::read(&parked).unwrap(), b"before");
+        drop(admitted);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn appeared_destination_at_publication_is_unchanged_on_refusal() {
+        let root = test_root("publish-appearance");
+        let target = root.join("target");
+        let destination = target.join("file");
+        fs::create_dir_all(&target).unwrap();
+        let admitted = admitted_file(&root, &target, "target/file");
+
+        let error = admitted
+            .publish_with(&FileImage::new(0o644, b"after".to_vec()), None, || {
+                fs::write(&destination, b"racer").unwrap();
+                Ok(())
+            })
+            .unwrap_err();
+
+        assert!(matches!(error, InstallError::ParentChanged(_)));
+        assert_eq!(fs::read(&destination).unwrap(), b"racer");
+        drop(admitted);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn replaced_destination_at_removal_is_restored_on_refusal() {
+        let root = test_root("remove-replacement");
+        let target = root.join("target");
+        let destination = target.join("file");
+        let parked = target.join("parked");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(&destination, b"before").unwrap();
+        let admitted = admitted_file(&root, &target, "target/file");
+        let expected = admitted.observe().unwrap().unwrap().generation;
+
+        let error = admitted
+            .remove_with(expected, || {
+                fs::rename(&destination, &parked).unwrap();
+                fs::write(&destination, b"racer").unwrap();
+                Ok(())
+            })
+            .unwrap_err();
+
+        assert!(matches!(error, InstallError::ParentChanged(_)));
+        assert_eq!(fs::read(&destination).unwrap(), b"racer");
+        assert_eq!(fs::read(&parked).unwrap(), b"before");
+        drop(admitted);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn replaced_new_directory_is_refused_by_descriptor_identity() {
+        let root = test_root("create-replacement");
+        fs::create_dir_all(&root).unwrap();
+        let parent = unix_fs::open(
+            &root,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::empty(),
+        )
+        .map(File::from)
+        .unwrap();
+        let name = OsString::from("created");
+        let created = root.join(&name);
+        let parked = root.join("parked");
+
+        let error = create_directory(&parent, &name, &created, || {
+            fs::rename(&created, &parked).unwrap();
+            fs::create_dir(&created).unwrap();
+            fs::write(created.join("racer"), b"outside").unwrap();
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert!(matches!(error, InstallError::ParentChanged(_)));
+        assert!(parked.is_dir());
+        assert_eq!(fs::read(created.join("racer")).unwrap(), b"outside");
+        drop(parent);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn planned_missing_directory_that_appears_before_open_is_refused() {
+        let root = test_root("missing-appearance");
+        fs::create_dir_all(&root).unwrap();
+        let parent = ParentObservation {
+            ancestor: String::new(),
+            generation: Generation::observe(&fs::metadata(&root).unwrap()),
+            missing: "created/nested".to_owned(),
+        };
+        let created = root.join("created");
+        fs::create_dir(&created).unwrap();
+        fs::write(created.join("racer"), b"outside").unwrap();
+
+        let admitted = AdmittedPath::open(&root, "created/nested/file", &parent, true, 2).unwrap();
+        let error = admitted
+            .publish(&FileImage::new(0o644, b"after".to_vec()), None)
+            .unwrap_err();
+
+        assert!(matches!(error, InstallError::ParentChanged(_)));
+        assert_eq!(fs::read(created.join("racer")).unwrap(), b"outside");
+        assert!(!created.join("nested").exists());
+        drop(admitted);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn replaced_introduced_directory_at_cleanup_is_restored_on_refusal() {
+        let root = test_root("cleanup-replacement");
+        fs::create_dir_all(&root).unwrap();
+        let parent = ParentObservation {
+            ancestor: String::new(),
+            generation: Generation::observe(&fs::metadata(&root).unwrap()),
+            missing: "created".to_owned(),
+        };
+        let created = root.join("created");
+        let parked = root.join("parked");
+        let admitted = AdmittedPath::open(&root, "created/file", &parent, true, 1).unwrap();
+
+        let error = admitted
+            .cleanup_directory_with(0, &created, || {
+                fs::rename(&created, &parked).unwrap();
+                fs::create_dir(&created).unwrap();
+                fs::write(created.join("racer"), b"outside").unwrap();
+                Ok(())
+            })
+            .unwrap_err();
+
+        assert!(matches!(error, InstallError::ParentChanged(_)));
+        assert!(fs::read_dir(&parked).unwrap().next().is_none());
+        assert_eq!(fs::read(created.join("racer")).unwrap(), b"outside");
+        drop(admitted);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn admitted_file(root: &Path, target: &Path, destination: &str) -> AdmittedPath {
+        let parent = ParentObservation {
+            ancestor: "target".to_owned(),
+            generation: Generation::observe(&fs::metadata(target).unwrap()),
+            missing: String::new(),
+        };
+        AdmittedPath::open(root, destination, &parent, false, 0).unwrap()
+    }
+
+    fn test_root(case: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "spice-admitted-path-{case}-{}-{}",
+            std::process::id(),
+            TEMPORARY_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+        ))
     }
 }

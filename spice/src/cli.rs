@@ -434,7 +434,7 @@ const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "review"],
-        "task review HANDLE",
+        "task review HANDLE [--finding TEXT] [--note TEXT]",
         Lane,
         Command,
         [TaskReviewed],
@@ -882,12 +882,16 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["thread"]
         | ["canvas"]
         | ["release", "publish"]
+        | ["restore", "verify"]
+        | ["steer"]
+        | ["steer", "cancel"]
+        | ["inbox"]
+        | ["ack"]
         | ["consent"]
         | ["consent", "allow"]
         | ["consent", "deny"]
         | ["consent", "policy"]
-        | ["restore", "verify"] => Landing::Landed,
-        ["board"]
+        | ["board"]
         | ["board", "graph"]
         | ["board", "handout"]
         | ["task", "next"]
@@ -901,16 +905,10 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["task", "oops"]
         | ["task", "depends"]
         | ["doc"]
-        | ["doc", "ledger"] => Landing::Gap("BOARD-1kJQlDDt"),
-        ["lane"]
-        | ["lane", "add"]
-        | ["lane", "drain"]
-        | ["lane", "wake"]
-        | ["steer"]
-        | ["steer", "cancel"]
-        | ["inbox"]
-        | ["recall"]
-        | ["ack"] => Landing::Gap("COORDIN-1kJQlDjc"),
+        | ["doc", "ledger"] => Landing::Landed,
+        ["lane"] | ["lane", "add"] | ["lane", "drain"] | ["lane", "wake"] | ["recall"] => {
+            Landing::Gap("COORDIN-1kJQlDjc")
+        }
         ["taste"] | ["taste", "add"] | ["taste", "drop"] => Landing::Gap("POLICY-1kJQlFB6"),
         _ => Landing::Unaccounted,
     }
@@ -980,6 +978,12 @@ fn child_names(contracts: &[Contract], path: &[&str]) -> BTreeSet<&'static str> 
 
 fn contract_at<'a>(contracts: &'a [Contract], path: &[&str]) -> Option<&'a Contract> {
     contracts.iter().find(|contract| contract.path == path)
+}
+
+/// Recover one registered contract for an internal typed client preflight.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn contract(path: &[&str]) -> Option<&'static Contract> {
+    contract_at(contracts(), path)
 }
 
 /// Recover the contract selected by the generated parser.

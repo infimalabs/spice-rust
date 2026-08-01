@@ -353,12 +353,34 @@ mod tests {
     fn report_environment_rows_are_the_tracked_workspace_vocabulary() {
         let tracked: WorkspacePolicy = toml::from_str(include_str!("../../spice.toml"))
             .expect("tracked workspace policy decodes");
+        let test_only: Vec<_> = tracked
+            .policy
+            .env_names
+            .iter()
+            .filter(|name| name.starts_with("SPICE_INSTALL_TEST_"))
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            test_only,
+            [
+                "SPICE_INSTALL_TEST_PAUSE_ACTION",
+                "SPICE_INSTALL_TEST_PAUSE_CONTROL",
+                "SPICE_INSTALL_TEST_PAUSE_PATH",
+            ]
+        );
+        let tracked: Vec<_> = tracked
+            .policy
+            .env_names
+            .iter()
+            .filter(|name| !name.starts_with("SPICE_INSTALL_TEST_"))
+            .map(String::as_str)
+            .collect();
         let declared: Vec<_> = SpiceVariable::ALL
             .iter()
             .map(|variable| variable.as_str())
             .collect();
 
-        assert_eq!(tracked.policy.env_names, declared);
+        assert_eq!(tracked, declared);
     }
 
     #[test]

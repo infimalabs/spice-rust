@@ -23,6 +23,110 @@ use crate::head::{ResidentState, TrustState};
 use crate::ident::{CanonicalUuid, Digest, Instant};
 use crate::witness::{Answer, Disposition, Name, Phase, TaskHandle};
 
+/// Read the validated current board, optionally restricted to one family.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoardRead {
+    /// Upper-case task family to retain, when the caller names one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub family: Option<String>,
+}
+
+/// Render one deterministic graph from the validated current board.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoardGraph {
+    /// Closed board graph view name.
+    pub view: String,
+    /// Historical barrier requested by the caller, when present.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub at: Option<String>,
+}
+
+/// Compose one deterministic handout from the validated current board.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoardHandout {
+    /// Declared output spelling selected by the caller.
+    pub output: String,
+    /// Historical barrier requested by the caller, when present.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub at: Option<String>,
+}
+
+/// Emit the canonical authored-document ledger for one task.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocLedger {
+    /// Task whose current statement becomes canonical Markdown.
+    pub task: TaskHandle,
+}
+
+/// One authoritative head body together with the fact that established it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Positioned<T> {
+    /// Fact position stored beside the current head.
+    pub position: crate::Seq,
+    /// Typed current head body.
+    pub body: T,
+}
+
+/// One complete current task-head bundle in a board read answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoardTask {
+    pub statement: Positioned<crate::TaskHead>,
+    pub workflow: Positioned<crate::WorkflowHead>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub claim: Option<Positioned<crate::ClaimHead>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub lease: Option<Positioned<crate::LeaseHead>>,
+}
+
+/// Validated current board heads returned from one snapshot barrier.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoardAnswer {
+    /// Journal schema that owns the returned heads.
+    pub schema: u32,
+    /// Greatest durable fact position covered by every returned head.
+    pub cursor: crate::Seq,
+    /// Principal derived from the capability that requested this snapshot.
+    pub principal: Actor,
+    /// Complete current task-head bundles in ascending handle order.
+    pub tasks: Vec<BoardTask>,
+    /// Current resident and lane head used by possession witnesses.
+    pub residency: Positioned<crate::ResidencyHead>,
+}
+
+/// One deterministic resident-rendered document.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TextAnswer {
+    pub text: String,
+}
+
 /// Add one task as direct intent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -198,6 +302,8 @@ pub struct ClaimCarry {
 pub struct DocApply {
     /// Digest of the normalized preview being committed.
     pub preview: Digest,
+    /// Canonical task-document bytes whose digest was previewed.
+    pub document: String,
 }
 
 /// Append one durable directive to a lane.
@@ -208,6 +314,19 @@ pub struct SteerSend {
     pub lane: CanonicalUuid,
     /// The intent being sent.
     pub message: String,
+}
+
+/// Read pending direction visible to the authenticated principal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SteerInbox {
+    /// Lane selected by an operator, or the authenticated lane when absent.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub lane: Option<CanonicalUuid>,
 }
 
 /// Name one directive and nothing else.
@@ -358,8 +477,58 @@ pub struct DocAnswer {
 pub struct DirectiveAnswer {
     /// Directive the answer concerns.
     pub directive: CanonicalUuid,
+    /// Human-sized key quoted by inbox and acknowledgment prose.
+    pub key: String,
     /// Its disposition after the transaction.
     pub disposition: Disposition,
+}
+
+/// One pending directive returned by an inbox read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingDirective {
+    /// Durable directive identity.
+    pub directive: CanonicalUuid,
+    /// Human-sized acknowledgment key.
+    pub key: String,
+    /// Direction text.
+    pub text: String,
+    /// Control channel attached to the direction, when present.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub control: Option<String>,
+    /// Instant at which the directive lapses.
+    pub expires: Instant,
+}
+
+/// Pending direction for one lane at a resident snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaneInbox {
+    /// Lane this row describes.
+    pub lane: CanonicalUuid,
+    /// Occupant currently seated in the lane, when any.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub occupant: Option<CanonicalUuid>,
+    /// Pending directives in journal order.
+    pub pending: Vec<PendingDirective>,
+}
+
+/// Snapshot-positioned steering inbox answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InboxAnswer {
+    /// Resident generation that produced the answer.
+    pub epoch: CanonicalUuid,
+    /// Visible lanes in canonical lane order.
+    pub lanes: Vec<LaneInbox>,
 }
 
 /// The answer a consent decision returns.
@@ -508,6 +677,14 @@ pub struct RecognitionAnswer {
 /// Which intent DTO a command kind's body decodes into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BodyShape {
+    /// [`BoardRead`]
+    BoardRead,
+    /// [`BoardGraph`]
+    BoardGraph,
+    /// [`BoardHandout`]
+    BoardHandout,
+    /// [`DocLedger`]
+    DocLedger,
     /// [`TaskAdd`]
     TaskAdd,
     /// [`TaskEdit`]
@@ -536,6 +713,8 @@ pub enum BodyShape {
     DocApply,
     /// [`SteerSend`]
     SteerSend,
+    /// [`SteerInbox`]
+    SteerInbox,
     /// [`DirectiveRef`]
     DirectiveRef,
     /// [`SteerDispose`]
@@ -565,6 +744,10 @@ pub enum BodyShape {
 /// Which answer DTO a command kind's reply carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AnswerShape {
+    /// [`BoardAnswer`]
+    Board,
+    /// [`TextAnswer`]
+    Text,
     /// [`TaskAnswer`]
     Task,
     /// [`ClaimAnswer`]
@@ -573,6 +756,8 @@ pub enum AnswerShape {
     Doc,
     /// [`DirectiveAnswer`]
     Directive,
+    /// [`InboxAnswer`]
+    Inbox,
     /// [`ConsentAnswer`]
     Consent,
     /// [`ConsentQueueAnswer`]
@@ -593,6 +778,10 @@ pub enum AnswerShape {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum CommandAnswer {
+    /// [`AnswerShape::Board`]
+    Board(Box<BoardAnswer>),
+    /// [`AnswerShape::Text`]
+    Text(TextAnswer),
     /// [`AnswerShape::Task`]
     Task(TaskAnswer),
     /// [`AnswerShape::Claim`]
@@ -601,6 +790,8 @@ pub enum CommandAnswer {
     Doc(DocAnswer),
     /// [`AnswerShape::Directive`]
     Directive(DirectiveAnswer),
+    /// [`AnswerShape::Inbox`]
+    Inbox(InboxAnswer),
     /// [`AnswerShape::Consent`]
     Consent(ConsentAnswer),
     /// [`AnswerShape::ConsentQueue`]
@@ -622,10 +813,13 @@ impl CommandAnswer {
     #[must_use]
     pub const fn shape(&self) -> AnswerShape {
         match self {
+            Self::Board(_) => AnswerShape::Board,
+            Self::Text(_) => AnswerShape::Text,
             Self::Task(_) => AnswerShape::Task,
             Self::Claim(_) => AnswerShape::Claim,
             Self::Doc(_) => AnswerShape::Doc,
             Self::Directive(_) => AnswerShape::Directive,
+            Self::Inbox(_) => AnswerShape::Inbox,
             Self::Consent(_) => AnswerShape::Consent,
             Self::ConsentQueue(_) => AnswerShape::ConsentQueue,
             Self::ConsentPolicy(_) => AnswerShape::ConsentPolicy,
@@ -647,10 +841,13 @@ impl AnswerShape {
     /// decode failure rather than a silently truncated value.
     pub fn decode(self, bytes: &[u8]) -> Result<CommandAnswer, serde_json::Error> {
         Ok(match self {
+            Self::Board => CommandAnswer::Board(Box::new(crate::decode(bytes)?)),
+            Self::Text => CommandAnswer::Text(crate::decode(bytes)?),
             Self::Task => CommandAnswer::Task(crate::decode(bytes)?),
             Self::Claim => CommandAnswer::Claim(crate::decode(bytes)?),
             Self::Doc => CommandAnswer::Doc(crate::decode(bytes)?),
             Self::Directive => CommandAnswer::Directive(crate::decode(bytes)?),
+            Self::Inbox => CommandAnswer::Inbox(crate::decode(bytes)?),
             Self::Consent => CommandAnswer::Consent(crate::decode(bytes)?),
             Self::ConsentQueue => CommandAnswer::ConsentQueue(crate::decode(bytes)?),
             Self::ConsentPolicy => CommandAnswer::ConsentPolicy(crate::decode(bytes)?),
@@ -692,6 +889,10 @@ impl CommandKind {
         use BodyShape as B;
 
         match self {
+            Self::BoardRead => Binding::of(B::BoardRead, A::Board),
+            Self::BoardGraph => Binding::of(B::BoardGraph, A::Text),
+            Self::BoardHandout => Binding::of(B::BoardHandout, A::Text),
+            Self::DocLedger => Binding::of(B::DocLedger, A::Text),
             Self::TaskAdd => Binding::of(B::TaskAdd, A::Task),
             Self::TaskEdit => Binding::of(B::TaskEdit, A::Task),
             Self::TaskNote => Binding::of(B::TaskNote, A::Task),
@@ -709,6 +910,7 @@ impl CommandKind {
             }
             Self::DocApply => Binding::of(B::DocApply, A::Doc),
             Self::SteerSend => Binding::of(B::SteerSend, A::Directive),
+            Self::SteerInbox => Binding::of(B::SteerInbox, A::Inbox),
             Self::SteerResend | Self::SteerCancel => Binding::of(B::DirectiveRef, A::Directive),
             Self::SteerDispose => Binding::of(B::SteerDispose, A::Directive),
             Self::ConsentDecide => Binding::of(B::ConsentDecide, A::Consent),
@@ -737,6 +939,14 @@ impl CommandKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum Intent {
+    /// [`BodyShape::BoardRead`]
+    BoardRead(BoardRead),
+    /// [`BodyShape::BoardGraph`]
+    BoardGraph(BoardGraph),
+    /// [`BodyShape::BoardHandout`]
+    BoardHandout(BoardHandout),
+    /// [`BodyShape::DocLedger`]
+    DocLedger(DocLedger),
     /// [`BodyShape::TaskAdd`]
     TaskAdd(TaskAdd),
     /// [`BodyShape::TaskEdit`]
@@ -765,6 +975,8 @@ pub enum Intent {
     DocApply(DocApply),
     /// [`BodyShape::SteerSend`]
     SteerSend(SteerSend),
+    /// [`BodyShape::SteerInbox`]
+    SteerInbox(SteerInbox),
     /// [`BodyShape::DirectiveRef`]
     DirectiveRef(DirectiveRef),
     /// [`BodyShape::SteerDispose`]
@@ -796,6 +1008,10 @@ impl Intent {
     #[must_use]
     pub const fn shape(&self) -> BodyShape {
         match self {
+            Self::BoardRead(_) => BodyShape::BoardRead,
+            Self::BoardGraph(_) => BodyShape::BoardGraph,
+            Self::BoardHandout(_) => BodyShape::BoardHandout,
+            Self::DocLedger(_) => BodyShape::DocLedger,
             Self::TaskAdd(_) => BodyShape::TaskAdd,
             Self::TaskEdit(_) => BodyShape::TaskEdit,
             Self::TaskNote(_) => BodyShape::TaskNote,
@@ -810,6 +1026,7 @@ impl Intent {
             Self::ClaimCarry(_) => BodyShape::ClaimCarry,
             Self::DocApply(_) => BodyShape::DocApply,
             Self::SteerSend(_) => BodyShape::SteerSend,
+            Self::SteerInbox(_) => BodyShape::SteerInbox,
             Self::DirectiveRef(_) => BodyShape::DirectiveRef,
             Self::SteerDispose(_) => BodyShape::SteerDispose,
             Self::ConsentDecide(_) => BodyShape::ConsentDecide,
@@ -835,7 +1052,42 @@ impl BodyShape {
     /// refuse unknown fields, so a body spelled for the wrong kind is a
     /// decode failure rather than a silently truncated value.
     pub fn decode(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
+        if self.is_board_body() {
+            self.decode_board_body(bytes)
+        } else {
+            self.decode_runtime_body(bytes)
+        }
+    }
+
+    const fn is_board_body(self) -> bool {
+        matches!(
+            self,
+            Self::BoardRead
+                | Self::BoardGraph
+                | Self::BoardHandout
+                | Self::DocLedger
+                | Self::TaskAdd
+                | Self::TaskEdit
+                | Self::TaskNote
+                | Self::TaskDefer
+                | Self::TaskRef
+                | Self::TaskDepends
+                | Self::TaskPhase
+                | Self::TaskDone
+                | Self::TaskReview
+                | Self::TaskAssign
+                | Self::ClaimWin
+                | Self::ClaimCarry
+                | Self::DocApply
+        )
+    }
+
+    fn decode_board_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
         Ok(match self {
+            Self::BoardRead => Intent::BoardRead(crate::decode(bytes)?),
+            Self::BoardGraph => Intent::BoardGraph(crate::decode(bytes)?),
+            Self::BoardHandout => Intent::BoardHandout(crate::decode(bytes)?),
+            Self::DocLedger => Intent::DocLedger(crate::decode(bytes)?),
             Self::TaskAdd => Intent::TaskAdd(crate::decode(bytes)?),
             Self::TaskEdit => Intent::TaskEdit(crate::decode(bytes)?),
             Self::TaskNote => Intent::TaskNote(crate::decode(bytes)?),
@@ -849,7 +1101,14 @@ impl BodyShape {
             Self::ClaimWin => Intent::ClaimWin(crate::decode(bytes)?),
             Self::ClaimCarry => Intent::ClaimCarry(crate::decode(bytes)?),
             Self::DocApply => Intent::DocApply(crate::decode(bytes)?),
+            _ => unreachable!("board body partition is closed"),
+        })
+    }
+
+    fn decode_runtime_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
+        Ok(match self {
             Self::SteerSend => Intent::SteerSend(crate::decode(bytes)?),
+            Self::SteerInbox => Intent::SteerInbox(crate::decode(bytes)?),
             Self::DirectiveRef => Intent::DirectiveRef(crate::decode(bytes)?),
             Self::SteerDispose => Intent::SteerDispose(crate::decode(bytes)?),
             Self::ConsentDecide => Intent::ConsentDecide(crate::decode(bytes)?),
@@ -862,6 +1121,7 @@ impl BodyShape {
             Self::Recognize => Intent::Recognize(crate::decode(bytes)?),
             Self::ReleasePublish => Intent::ReleasePublish(crate::decode(bytes)?),
             Self::UpChange => Intent::UpChange(crate::decode(bytes)?),
+            _ => unreachable!("runtime body partition is closed"),
         })
     }
 }

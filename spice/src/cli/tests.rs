@@ -117,12 +117,16 @@ fn every_contract_has_an_executable_succession_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 36);
+    assert_eq!(landed, 55);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
     assert_eq!(landing(&["lock", "run"]), Landing::Landed);
     assert_eq!(landing(&["release", "publish"]), Landing::Landed);
     assert_eq!(landing(&["restore", "verify"]), Landing::Landed);
+    assert_eq!(landing(&["steer"]), Landing::Landed);
+    assert_eq!(landing(&["steer", "cancel"]), Landing::Landed);
+    assert_eq!(landing(&["inbox"]), Landing::Landed);
+    assert_eq!(landing(&["ack"]), Landing::Landed);
     assert_eq!(landing(&["consent"]), Landing::Landed);
     assert_eq!(landing(&["consent", "allow"]), Landing::Landed);
     assert_eq!(landing(&["consent", "deny"]), Landing::Landed);
@@ -153,7 +157,7 @@ fn every_contract_has_an_executable_succession_disposition() {
         .collect::<BTreeSet<_>>();
     assert_eq!(
         owning_tasks,
-        BTreeSet::from(["BOARD-1kJQlDDt", "COORDIN-1kJQlDjc", "POLICY-1kJQlFB6",])
+        BTreeSet::from(["COORDIN-1kJQlDjc", "POLICY-1kJQlFB6"])
     );
 
     let (rust_ledger, _) = include_str!("../../../PORTING.md")
@@ -196,6 +200,241 @@ fn every_contract_has_an_executable_succession_disposition() {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+enum PythonTaskDisposition {
+    Landed(&'static [&'static str]),
+    Later(&'static str),
+}
+
+#[test]
+fn every_python_task_control_has_one_tested_current_disposition() {
+    use PythonTaskDisposition::{Landed, Later};
+
+    let mappings = [
+        ("task", Landed(&["board"])),
+        ("task add", Landed(&["task", "add"])),
+        ("task artifact", Later("Task-addressed sidecar artifacts")),
+        (
+            "task artifact add",
+            Later("Task-addressed sidecar artifacts"),
+        ),
+        (
+            "task artifact list",
+            Later("Task-addressed sidecar artifacts"),
+        ),
+        (
+            "task artifact prune",
+            Later("Task-addressed sidecar artifacts"),
+        ),
+        (
+            "task artifact show",
+            Later("Task-addressed sidecar artifacts"),
+        ),
+        (
+            "task capture",
+            Later("Task-boundary Git publication and capture"),
+        ),
+        ("task claim", Landed(&["task", "next"])),
+        ("task delete", Landed(&["doc"])),
+        ("task depends", Landed(&["task", "depends"])),
+        ("task doctor", Landed(&["board"])),
+        ("task done", Landed(&["task", "done"])),
+        ("task graph", Landed(&["board", "graph"])),
+        ("task handout", Landed(&["board", "handout"])),
+        ("task ingest", Landed(&["doc"])),
+        ("task ledger", Landed(&["doc", "ledger"])),
+        ("task list", Landed(&["board"])),
+        ("task modify", Landed(&["doc"])),
+        ("task next", Landed(&["task", "next"])),
+        ("task note", Landed(&["task", "note"])),
+        ("task oops", Landed(&["task", "oops"])),
+        ("task reclaim", Later("Manual claim renewal")),
+        ("task review", Landed(&["task", "review"])),
+        ("task reword", Landed(&["doc"])),
+        ("task show", Landed(&["board"])),
+        ("task sizing", Landed(&["board", "graph"])),
+        ("task stale", Landed(&["board"])),
+        ("task status", Landed(&["board"])),
+        ("task unclaim", Landed(&["task", "free"])),
+        ("task wake", Landed(&["task", "wake"])),
+    ];
+
+    let task_plane = include_str!("../../../PORTING.md")
+        .split_once("### Task plane")
+        .expect("the audit names the Python task plane")
+        .1
+        .split_once("Mounted repository commands")
+        .expect("the task plane has a finite boundary")
+        .0;
+    let audited = task_plane
+        .lines()
+        .filter_map(|line| line.strip_prefix("- `"))
+        .filter_map(|line| line.split_once('`').map(|(path, _)| path))
+        .collect::<BTreeSet<_>>();
+    let later = include_str!("../../../LATER.md");
+    let mapped = mappings
+        .iter()
+        .map(|(path, _)| *path)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(mapped, audited, "the executable fixture and audit drifted");
+    assert_eq!(
+        mapped.len(),
+        mappings.len(),
+        "a Python control was repeated"
+    );
+
+    for (python, disposition) in mappings {
+        match disposition {
+            Landed(path) => {
+                assert!(
+                    contracts().iter().any(|contract| contract.path == path),
+                    "Python `{python}` maps to an unknown Rust leaf: {path:?}",
+                );
+                assert_eq!(
+                    landing(path),
+                    Landing::Landed,
+                    "Python `{python}` maps to an unlanded Rust leaf: {path:?}",
+                );
+            }
+            Later(boundary) => assert!(
+                later.lines().any(|line| {
+                    line.strip_prefix("| ")
+                        .and_then(|line| line.split_once(" |"))
+                        .is_some_and(|(surface, _)| surface == boundary)
+                }),
+                "Python `{python}` names an absent LATER.md boundary: {boundary}",
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum LocalRelationship {
+    Replacement,
+    Addition,
+    Divergence,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LocalSuccession {
+    python: Option<&'static str>,
+    rust: &'static [&'static str],
+    invocation: &'static str,
+    relationship: LocalRelationship,
+    rationale: &'static str,
+}
+
+const LOCAL_SUCCESSION: &[LocalSuccession] = &[
+    LocalSuccession {
+        python: Some("init"),
+        rust: &["install"],
+        invocation: "install [--apply=<digest>]",
+        relationship: LocalRelationship::Divergence,
+        rationale: concat!(
+            "Rust installs only its namespaced local assets; resident startup and ",
+            "ambient authority remain separate",
+        ),
+    },
+    LocalSuccession {
+        python: Some("deinit"),
+        rust: &["install"],
+        invocation: "install --unapply",
+        relationship: LocalRelationship::Divergence,
+        rationale: concat!(
+            "Rust reverses only the exact namespaced install receipt and does not ",
+            "withdraw Python authority",
+        ),
+    },
+    LocalSuccession {
+        python: Some("lock status"),
+        rust: &["lock"],
+        invocation: "lock",
+        relationship: LocalRelationship::Replacement,
+        rationale: concat!(
+            "the daemonless Rust report replaces Python lock status over ",
+            "Rust-owned lock state",
+        ),
+    },
+    LocalSuccession {
+        python: Some("lock run"),
+        rust: &["lock", "run"],
+        invocation: "lock run NAME -- CMD...",
+        relationship: LocalRelationship::Replacement,
+        rationale: concat!(
+            "the daemonless Rust child runner preserves lock refusal, exit, and ",
+            "signal contracts",
+        ),
+    },
+    LocalSuccession {
+        python: None,
+        rust: &["restore", "verify"],
+        invocation: "restore verify INPUT",
+        relationship: LocalRelationship::Addition,
+        rationale: "strict offline archive verification is an intentional native-only addition",
+    },
+    LocalSuccession {
+        python: None,
+        rust: &["release", "notes"],
+        invocation: "release notes INPUT",
+        relationship: LocalRelationship::Addition,
+        rationale: "strict offline release-note rendering is an intentional native-only addition",
+    },
+];
+
+#[test]
+fn daemonless_local_succession_is_closed_and_explicit() {
+    let python = LOCAL_SUCCESSION
+        .iter()
+        .filter_map(|row| row.python)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        python,
+        BTreeSet::from(["deinit", "init", "lock run", "lock status"]),
+    );
+
+    let rust = LOCAL_SUCCESSION
+        .iter()
+        .map(|row| row.rust.join(" "))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        rust,
+        BTreeSet::from([
+            "install".to_owned(),
+            "lock".to_owned(),
+            "lock run".to_owned(),
+            "release notes".to_owned(),
+            "restore verify".to_owned(),
+        ]),
+    );
+    assert_eq!(
+        LOCAL_SUCCESSION
+            .iter()
+            .map(|row| row.relationship)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            LocalRelationship::Replacement,
+            LocalRelationship::Addition,
+            LocalRelationship::Divergence,
+        ]),
+    );
+
+    for row in LOCAL_SUCCESSION {
+        assert!(!row.invocation.trim().is_empty());
+        assert!(!row.rationale.trim().is_empty());
+        assert!(
+            contract_at(contracts(), row.rust).is_some(),
+            "local mapping names an unknown Rust leaf: {:?}",
+            row.rust,
+        );
+        assert_eq!(
+            landing(row.rust),
+            Landing::Landed,
+            "local mapping names an unlanded Rust leaf: {:?}",
+            row.rust,
+        );
+    }
+}
+
 #[test]
 fn closure_check_names_both_directions_of_drift() {
     let parser_with_orphan = command().subcommand(Command::new("orphan"));
@@ -224,6 +463,34 @@ fn closure_check_names_both_directions_of_drift() {
     assert_eq!(
         missing_command.contracts_without_commands,
         BTreeSet::from(["missing".to_owned()])
+    );
+}
+
+#[test]
+fn review_finding_and_note_are_declared_on_the_only_review_leaf() {
+    let matches = command()
+        .try_get_matches_from([
+            "spice",
+            "task",
+            "review",
+            "BOARD-review01",
+            "--finding",
+            "missing negative-path evidence",
+            "--note",
+            "add a refusal fixture",
+        ])
+        .expect("declared review operands parse");
+    let contract = selected_contract(&matches).expect("review selects a contract");
+    let leaf = selected_matches(&matches);
+
+    assert_eq!(contract.path, ["task", "review"]);
+    assert_eq!(
+        leaf.get_one::<String>("finding").map(String::as_str),
+        Some("missing negative-path evidence")
+    );
+    assert_eq!(
+        leaf.get_one::<String>("note").map(String::as_str),
+        Some("add a refusal fixture")
     );
 }
 

@@ -17,6 +17,10 @@ use wire::intent::{AnswerShape, BodyShape, CommandAnswer, Intent};
 /// Every command body, spelled as WIRE spells it, paired with the kind whose
 /// binding must decode it.
 const BODIES: &[(CommandKind, &str)] = &[
+    (CommandKind::BoardRead, r#"{}"#),
+    (CommandKind::BoardGraph, r#"{ "view": "dependencies" }"#),
+    (CommandKind::BoardHandout, r#"{ "output": "-" }"#),
+    (CommandKind::DocLedger, r#"{ "task": "SPICE-aBcD" }"#),
     (
         CommandKind::TaskAdd,
         r#"{
@@ -75,15 +79,19 @@ const BODIES: &[(CommandKind, &str)] = &[
     (CommandKind::ClaimLapse, r#"{ "task": "SPICE-aBcD" }"#),
     (
         CommandKind::DocApply,
-        r#"{ "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }"#,
+        r##"{
+  "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "document": "# Task\n"
+}"##,
     ),
     (
         CommandKind::SteerSend,
-        r#"{
+        r##"{
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "message": "drain the queue"
-}"#,
+}"##,
     ),
+    (CommandKind::SteerInbox, r#"{}"#),
     (
         CommandKind::SteerResend,
         r#"{ "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4" }"#,
@@ -165,6 +173,24 @@ const BODIES: &[(CommandKind, &str)] = &[
 /// One successful reply body for every declared answer shape.
 const ANSWERS: &[(AnswerShape, &str)] = &[
     (
+        AnswerShape::Board,
+        r#"{
+  "schema": 1,
+  "cursor": 1,
+  "principal": "operator",
+  "tasks": [],
+  "residency": {
+    "position": 1,
+    "body": {
+      "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+      "state": "seated",
+      "lanes": []
+    }
+  }
+}"#,
+    ),
+    (AnswerShape::Text, r#"{ "text": "graph dependencies\n" }"#),
+    (
         AnswerShape::Task,
         r#"{ "task": "SPICE-aBcD", "status": "done" }"#,
     ),
@@ -183,7 +209,24 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
         AnswerShape::Directive,
         r#"{
   "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+  "key": "1kJJP87B",
   "disposition": "acked"
+}"#,
+    ),
+    (
+        AnswerShape::Inbox,
+        r#"{
+  "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+  "lanes": [{
+    "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+    "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c5",
+    "pending": [{
+      "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+      "key": "1kJJP87B",
+      "text": "drain the queue",
+      "expires": "2026-08-01T07:07:19.000Z"
+    }]
+  }]
 }"#,
     ),
     (
@@ -355,6 +398,10 @@ fn a_kind_binds_one_body_and_one_answer() {
 
 /// Shapes a body may take, listed so an unreachable one is caught.
 const ALL_BODIES: &[BodyShape] = &[
+    BodyShape::BoardRead,
+    BodyShape::BoardGraph,
+    BodyShape::BoardHandout,
+    BodyShape::DocLedger,
     BodyShape::TaskAdd,
     BodyShape::TaskEdit,
     BodyShape::TaskNote,
@@ -369,6 +416,7 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::ClaimCarry,
     BodyShape::DocApply,
     BodyShape::SteerSend,
+    BodyShape::SteerInbox,
     BodyShape::DirectiveRef,
     BodyShape::SteerDispose,
     BodyShape::ConsentDecide,
@@ -385,10 +433,13 @@ const ALL_BODIES: &[BodyShape] = &[
 
 /// Shapes an answer may take, listed for the same reason.
 const ALL_ANSWERS: &[AnswerShape] = &[
+    AnswerShape::Board,
+    AnswerShape::Text,
     AnswerShape::Task,
     AnswerShape::Claim,
     AnswerShape::Doc,
     AnswerShape::Directive,
+    AnswerShape::Inbox,
     AnswerShape::Consent,
     AnswerShape::ConsentQueue,
     AnswerShape::ConsentPolicy,

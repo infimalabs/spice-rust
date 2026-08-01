@@ -59,6 +59,54 @@ fn command_client_process_renders_one_success_across_reconnects() {
 }
 
 #[test]
+fn authenticated_board_snapshot_survives_a_resident_restart() {
+    let fixture = Fixture::new("board-restart");
+    let mut first = RunningResident::spawn(&fixture);
+    first.assert_ready(&fixture);
+
+    let initial = invoke_args(&fixture, &["board"], true);
+    assert!(
+        initial.status.success(),
+        "board failed: {:?}",
+        initial.stderr
+    );
+    let Outcome::Reply(initial) = value_outcome(&initial) else {
+        panic!("board must return one typed reply");
+    };
+    assert!(matches!(initial.position, ReplyPosition::Snapshot(_)));
+
+    assert!(invoke(&fixture, "down").status.success());
+    assert!(first.wait().status.success());
+    let mut restarted = RunningResident::spawn(&fixture);
+    restarted.assert_ready(&fixture);
+    let after_restart = invoke_args(&fixture, &["board"], true);
+    assert!(
+        after_restart.status.success(),
+        "restarted board failed: {:?}",
+        after_restart.stderr
+    );
+    let Outcome::Reply(after_restart) = value_outcome(&after_restart) else {
+        panic!("restarted board must return one typed reply");
+    };
+    assert!(matches!(after_restart.position, ReplyPosition::Snapshot(_)));
+    assert_eq!(after_restart.body["schema"], initial.body["schema"]);
+    assert_eq!(after_restart.body["principal"], initial.body["principal"]);
+    assert_eq!(after_restart.body["tasks"], initial.body["tasks"]);
+    assert_ne!(
+        after_restart.body["residency"]["body"]["epoch"],
+        initial.body["residency"]["body"]["epoch"],
+        "restart must publish a new resident generation"
+    );
+    assert!(
+        after_restart.body["cursor"].as_u64() > initial.body["cursor"].as_u64(),
+        "restart authority must advance while the empty board remains stable"
+    );
+
+    assert!(invoke(&fixture, "down").status.success());
+    assert!(restarted.wait().status.success());
+}
+
+#[test]
 fn command_client_process_fences_replay_loss_and_capability_echo() {
     let fixture = Fixture::new("client-fencing");
     let capability = uuid("00000000-0000-4000-8000-000000000031").to_string();
@@ -286,187 +334,6 @@ fn unfinalized_rust_schema_refuses_startup_with_its_exact_state() {
     );
 }
 
-#[test]
-fn operator_trust_process_binds_policy_bytes_across_reconnect_and_restart() {
-    let fixture = Fixture::new("trust-lifecycle");
-    let (first, first_digest) = start_trust_lifecycle(&fixture);
-
-    let restarted = grant_and_restart_trust(&fixture, first, &first_digest);
-
-    let (changed, changed_digest) =
-        change_trust_policy(&fixture, restarted, &first_digest);
-
-    assert_noncurrent_trust_refusals(&fixture, &first_digest);
-
-    finish_trust_lifecycle(&fixture, changed, &changed_digest);
-}
-
-fn start_trust_lifecycle(fixture: &Fixture) -> (RunningResident, String) {
-    fs::write(
-        fixture.root.join("spice.toml"),
-        "# tracked executable policy v1\n",
-    )
-    .expect("tracked policy writes");
-    let local = fixture.root.join(".git/.spice/config.toml");
-    fs::create_dir_all(local.parent().expect("local policy parent"))
-        .expect("local policy directory");
-    fs::write(&local, "# local executable policy v1\n").expect("local policy writes");
-
-    let mut resident = RunningResident::spawn(fixture);
-    resident.assert_ready(fixture);
-    let pends = trust_pended(fixture);
-    assert_eq!(pends.len(), 1, "startup pends exactly once");
-    assert_eq!(pends[0].surface, "configuration");
-    assert_eq!(pends[0].previous, None);
-
-    let report = invoke_args(fixture, &["trust"], false);
-    assert!(report.status.success(), "text trust failed: {:?}", report.stderr);
-    assert!(report.stderr.is_empty());
-    let body: serde_json::Value =
-        serde_json::from_slice(&report.stdout).expect("text trust body is canonical JSON");
-    assert_eq!(body["standing"], "pended");
-    assert_eq!(body["provenance"].as_array().map(Vec::len), Some(2));
-    assert_eq!(body["provenance"][0]["source"], "tracked");
-    assert_eq!(body["provenance"][1]["source"], "local");
-    assert_eq!(body["provenance"][0]["present"], true);
-    assert_eq!(body["provenance"][1]["present"], true);
-    let digest = body["digest"]
-        .as_str()
-        .expect("trust report names its current digest")
-        .to_owned();
-    assert_eq!(digest, pends[0].digest.as_str());
-    (resident, digest)
-}
-
-fn grant_and_restart_trust(
-    fixture: &Fixture,
-    resident: RunningResident,
-    digest: &str,
-) -> RunningResident {
-    let granted = invoke_args(fixture, &["trust", "grant", digest], true);
-    assert!(granted.status.success(), "JSON grant failed: {:?}", granted.stderr);
-    let Outcome::Reply(reply) = value_outcome(&granted) else {
-        panic!("grant must return one typed reply");
-    };
-    assert!(matches!(reply.position, ReplyPosition::Committed(_)));
-    assert_eq!(reply.body["digest"], digest);
-    assert_eq!(reply.body["standing"], "granted");
-
-    let before = journal_cursor(fixture);
-    let duplicate = invoke_args(fixture, &["trust", "grant", digest], false);
-    assert_eq!(duplicate.status.code(), Some(REFUSAL_EXIT));
-    assert_eq!(duplicate.stderr, concat!(
-        "spice: trust::standing-moved; re-read the current trust report ",
-        "before issuing another ruling\n"
-    ).as_bytes());
-    assert_eq!(journal_cursor(fixture), before);
-
-    let report = invoke_args(fixture, &["trust"], true);
-    let Outcome::Reply(report) = value_outcome(&report) else {
-        panic!("JSON trust must return one typed reply");
-    };
-    assert!(matches!(report.position, ReplyPosition::Snapshot(_)));
-    assert_eq!(report.body["standing"], "granted");
-
-    assert!(invoke(fixture, "down").status.success());
-    assert!(resident.wait().status.success());
-    let pends = trust_pended(fixture);
-    let mut restarted = RunningResident::spawn(fixture);
-    restarted.assert_ready(fixture);
-    let report = invoke_args(fixture, &["trust"], true);
-    let Outcome::Reply(report) = value_outcome(&report) else {
-        panic!("restarted trust must return one typed reply");
-    };
-    assert_eq!(report.body["digest"], digest);
-    assert_eq!(report.body["standing"], "granted");
-    assert_eq!(trust_pended(fixture), pends, "restart duplicated a pend");
-    restarted
-}
-
-fn change_trust_policy(
-    fixture: &Fixture,
-    resident: RunningResident,
-    previous: &str,
-) -> (RunningResident, String) {
-    assert!(invoke(fixture, "down").status.success());
-    assert!(resident.wait().status.success());
-    fs::write(
-        fixture.root.join("spice.toml"),
-        "# tracked executable policy v2\n",
-    )
-    .expect("tracked policy changes");
-    let mut changed = RunningResident::spawn(fixture);
-    changed.assert_ready(fixture);
-    let pends = trust_pended(fixture);
-    assert_eq!(pends.len(), 2, "changed bytes append one new pend");
-    assert_eq!(
-        pends[1].previous.as_ref().map(wire::Digest::as_str),
-        Some(previous)
-    );
-    let report = invoke_args(fixture, &["trust"], true);
-    let Outcome::Reply(report) = value_outcome(&report) else {
-        panic!("changed trust must return one typed reply");
-    };
-    assert_eq!(report.body["standing"], "pended");
-    let digest = report.body["digest"]
-        .as_str()
-        .expect("changed report names current digest")
-        .to_owned();
-    assert_ne!(digest, previous);
-    (changed, digest)
-}
-
-fn assert_noncurrent_trust_refusals(fixture: &Fixture, stale: &str) {
-    let unknown =
-        wire::Digest::compute(wire::Domain::ConfigExecutableSurface, b"unknown").to_string();
-    let cross = wire::Digest::compute(wire::Domain::DistArtifact, b"cross-domain").to_string();
-    for (label, digest) in [
-        ("stale", stale),
-        ("unknown", unknown.as_str()),
-        ("cross-domain", cross.as_str()),
-    ] {
-        let before = journal_cursor(fixture);
-        let refused = invoke_args(fixture, &["trust", "grant", digest], true);
-        assert_eq!(refused.status.code(), Some(REFUSAL_EXIT), "{label}");
-        let Outcome::Refusal(refusal) = value_outcome(&refused) else {
-            panic!("{label} digest must return a typed refusal");
-        };
-        assert_eq!(refusal.reason, "trust::digest-not-current");
-        assert_eq!(journal_cursor(fixture), before, "{label} changed authority");
-    }
-}
-
-fn finish_trust_lifecycle(fixture: &Fixture, resident: RunningResident, digest: &str) {
-    let granted = invoke_args(fixture, &["trust", "grant", digest], false);
-    assert!(granted.status.success(), "text grant failed: {:?}", granted.stderr);
-    let body: serde_json::Value =
-        serde_json::from_slice(&granted.stdout).expect("text grant body is JSON");
-    assert_eq!(body["standing"], "granted");
-
-    let revoked = invoke_args(fixture, &["trust", "revoke", digest], true);
-    assert!(revoked.status.success(), "JSON revoke failed: {:?}", revoked.stderr);
-    let Outcome::Reply(reply) = value_outcome(&revoked) else {
-        panic!("revoke must return one typed reply");
-    };
-    assert_eq!(reply.body["standing"], "revoked");
-
-    let before = journal_cursor(fixture);
-    let duplicate = invoke_args(fixture, &["trust", "revoke", digest], true);
-    assert_eq!(duplicate.status.code(), Some(REFUSAL_EXIT));
-    let Outcome::Refusal(refusal) = value_outcome(&duplicate) else {
-        panic!("duplicate revoke must return one typed refusal");
-    };
-    assert_eq!(refusal.reason, "trust::standing-moved");
-    assert_eq!(journal_cursor(fixture), before);
-
-    assert!(invoke(fixture, "down").status.success());
-    assert!(resident.wait().status.success());
-    journal::JournalReader::open(fixture.journal())
-        .expect("final authority opens")
-        .verify()
-        .expect("final trust authority verifies");
-}
-
 #[cfg(unix)]
 #[test]
 fn resident_startup_refuses_linked_policy_components_without_trust_effects() {
@@ -511,13 +378,216 @@ fn resident_startup_refuses_linked_policy_components_without_trust_effects() {
             .expect("refused authority opens")
             .fact_snapshot()
             .expect("refused authority reads");
-        assert!(
-            snapshot.facts().iter().all(|fact| !matches!(
-                fact.fact.kind(),
-                FactKind::TrustPended | FactKind::UpSeated
-            ))
-        );
+        assert!(snapshot.facts().iter().all(|fact| !matches!(
+            fact.fact.kind(),
+            FactKind::TrustPended | FactKind::UpSeated
+        )));
     }
+}
+
+#[test]
+fn operator_trust_process_binds_policy_bytes_across_reconnect_and_restart() {
+    let fixture = trust_fixture();
+    let mut first = RunningResident::spawn(&fixture);
+    first.assert_ready(&fixture);
+    let first_digest = assert_initial_trust_pending(&fixture);
+    grant_current_trust(&fixture, &first_digest);
+    let restarted = restart_with_same_trust(&fixture, first, &first_digest);
+    let (changed, changed_digest) = start_changed_trust(&fixture, restarted, &first_digest);
+    assert_noncurrent_trust_refusals(&fixture, &first_digest);
+    grant_and_revoke_changed_trust(&fixture, &changed_digest);
+    assert!(invoke(&fixture, "down").status.success());
+    assert!(changed.wait().status.success());
+    journal::JournalReader::open(fixture.journal())
+        .expect("final authority opens")
+        .verify()
+        .expect("final trust authority verifies");
+}
+
+fn trust_fixture() -> Fixture {
+    let fixture = Fixture::new("trust-lifecycle");
+    fs::write(
+        fixture.root.join("spice.toml"),
+        "# tracked executable policy v1\n",
+    )
+    .expect("tracked policy writes");
+    let local = fixture.root.join(".git/.spice/config.toml");
+    fs::create_dir_all(local.parent().expect("local policy parent"))
+        .expect("local policy directory");
+    fs::write(&local, "# local executable policy v1\n").expect("local policy writes");
+    fixture
+}
+
+fn assert_initial_trust_pending(fixture: &Fixture) -> String {
+    let pends = trust_pended(fixture);
+    assert_eq!(pends.len(), 1, "startup pends exactly once");
+    assert_eq!(pends[0].surface, "configuration");
+    assert_eq!(pends[0].previous, None);
+    let report = invoke_args(fixture, &["trust"], false);
+    assert!(
+        report.status.success(),
+        "text trust failed: {:?}",
+        report.stderr
+    );
+    assert!(report.stderr.is_empty());
+    let body: serde_json::Value =
+        serde_json::from_slice(&report.stdout).expect("text trust body is canonical JSON");
+    assert_eq!(body["standing"], "pended");
+    assert_eq!(body["provenance"].as_array().map(Vec::len), Some(2));
+    assert_eq!(body["provenance"][0]["source"], "tracked");
+    assert_eq!(body["provenance"][1]["source"], "local");
+    assert_eq!(body["provenance"][0]["present"], true);
+    assert_eq!(body["provenance"][1]["present"], true);
+    let digest = body["digest"]
+        .as_str()
+        .expect("trust report names its current digest")
+        .to_owned();
+    assert_eq!(digest, pends[0].digest.as_str());
+    digest
+}
+
+fn grant_current_trust(fixture: &Fixture, digest: &str) {
+    let granted = invoke_args(fixture, &["trust", "grant", digest], true);
+    assert!(
+        granted.status.success(),
+        "JSON grant failed: {:?}",
+        granted.stderr
+    );
+    let Outcome::Reply(reply) = value_outcome(&granted) else {
+        panic!("grant must return one typed reply");
+    };
+    assert!(matches!(reply.position, ReplyPosition::Committed(_)));
+    assert_eq!(reply.body["digest"], digest);
+    assert_eq!(reply.body["standing"], "granted");
+    let before = journal_cursor(fixture);
+    let duplicate = invoke_args(fixture, &["trust", "grant", digest], false);
+    assert_eq!(duplicate.status.code(), Some(REFUSAL_EXIT));
+    assert_eq!(
+        duplicate.stderr,
+        concat!(
+            "spice: trust::standing-moved; re-read the current trust report ",
+            "before issuing another ruling\n"
+        )
+        .as_bytes()
+    );
+    assert_eq!(journal_cursor(fixture), before);
+    let report = invoke_args(fixture, &["trust"], true);
+    let Outcome::Reply(reply) = value_outcome(&report) else {
+        panic!("JSON trust must return one typed reply");
+    };
+    assert!(matches!(reply.position, ReplyPosition::Snapshot(_)));
+    assert_eq!(reply.body["standing"], "granted");
+}
+
+fn restart_with_same_trust(
+    fixture: &Fixture,
+    resident: RunningResident,
+    digest: &str,
+) -> RunningResident {
+    assert!(invoke(fixture, "down").status.success());
+    assert!(resident.wait().status.success());
+    let pends_before = trust_pended(fixture);
+    let mut restarted = RunningResident::spawn(fixture);
+    restarted.assert_ready(fixture);
+    let report = invoke_args(fixture, &["trust"], true);
+    let Outcome::Reply(reply) = value_outcome(&report) else {
+        panic!("restarted trust must return one typed reply");
+    };
+    assert_eq!(reply.body["digest"], digest);
+    assert_eq!(reply.body["standing"], "granted");
+    assert_eq!(
+        trust_pended(fixture),
+        pends_before,
+        "restart cannot duplicate an existing digest pend"
+    );
+    restarted
+}
+
+fn start_changed_trust(
+    fixture: &Fixture,
+    resident: RunningResident,
+    previous: &str,
+) -> (RunningResident, String) {
+    assert!(invoke(fixture, "down").status.success());
+    assert!(resident.wait().status.success());
+    fs::write(
+        fixture.root.join("spice.toml"),
+        "# tracked executable policy v2\n",
+    )
+    .expect("tracked policy changes");
+    let mut changed = RunningResident::spawn(fixture);
+    changed.assert_ready(fixture);
+    let pends = trust_pended(fixture);
+    assert_eq!(pends.len(), 2, "changed bytes append one new pend");
+    assert_eq!(
+        pends[1].previous.as_ref().map(wire::Digest::as_str),
+        Some(previous)
+    );
+    let report = invoke_args(fixture, &["trust"], true);
+    let Outcome::Reply(reply) = value_outcome(&report) else {
+        panic!("changed trust must return one typed reply");
+    };
+    assert_eq!(reply.body["standing"], "pended");
+    let digest = reply.body["digest"]
+        .as_str()
+        .expect("changed report names current digest")
+        .to_owned();
+    assert_ne!(digest, previous);
+    (changed, digest)
+}
+
+fn assert_noncurrent_trust_refusals(fixture: &Fixture, stale: &str) {
+    let unknown =
+        wire::Digest::compute(wire::Domain::ConfigExecutableSurface, b"unknown").to_string();
+    let cross = wire::Digest::compute(wire::Domain::DistArtifact, b"cross-domain").to_string();
+    for (label, digest) in [
+        ("stale", stale),
+        ("unknown", unknown.as_str()),
+        ("cross-domain", cross.as_str()),
+    ] {
+        let before = journal_cursor(fixture);
+        let refused = invoke_args(fixture, &["trust", "grant", digest], true);
+        assert_eq!(
+            refused.status.code(),
+            Some(REFUSAL_EXIT),
+            "{label} digest did not refuse"
+        );
+        let Outcome::Refusal(refusal) = value_outcome(&refused) else {
+            panic!("{label} digest must return a typed refusal");
+        };
+        assert_eq!(refusal.reason, "trust::digest-not-current");
+        assert_eq!(journal_cursor(fixture), before, "{label} changed authority");
+    }
+}
+
+fn grant_and_revoke_changed_trust(fixture: &Fixture, digest: &str) {
+    let grant = invoke_args(fixture, &["trust", "grant", digest], false);
+    assert!(
+        grant.status.success(),
+        "text grant failed: {:?}",
+        grant.stderr
+    );
+    let grant_body: serde_json::Value =
+        serde_json::from_slice(&grant.stdout).expect("text grant body is JSON");
+    assert_eq!(grant_body["standing"], "granted");
+    let revoked = invoke_args(fixture, &["trust", "revoke", digest], true);
+    assert!(
+        revoked.status.success(),
+        "JSON revoke failed: {:?}",
+        revoked.stderr
+    );
+    let Outcome::Reply(reply) = value_outcome(&revoked) else {
+        panic!("revoke must return one typed reply");
+    };
+    assert_eq!(reply.body["standing"], "revoked");
+    let before = journal_cursor(fixture);
+    let duplicate = invoke_args(fixture, &["trust", "revoke", digest], true);
+    assert_eq!(duplicate.status.code(), Some(REFUSAL_EXIT));
+    let Outcome::Refusal(refusal) = value_outcome(&duplicate) else {
+        panic!("duplicate revoke must return one typed refusal");
+    };
+    assert_eq!(refusal.reason, "trust::standing-moved");
+    assert_eq!(journal_cursor(fixture), before);
 }
 
 #[test]
