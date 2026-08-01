@@ -411,7 +411,8 @@ pub enum InstallStatus {
 }
 
 /// Current strict installation receipt.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct InstallReceipt {
     plan: InstallPlan,
     digest: Digest,

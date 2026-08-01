@@ -16,20 +16,48 @@ fact.
 - `core.hooksPath` is `.spice/hooks`. Its `pre-commit`, `commit-msg`, and
   `reference-transaction` entries still invoke `spice dev ...`.
 - Rust is invoked explicitly with `cargo run --locked -q -p spice -- ...`.
-- The tracked `spice.toml` is shared during construction. Rust Doctor currently
-  refuses its `[tasks]` and `[policy]` roots; `INTEGRA-1kJQlCHl` owns that gap.
-- Rust `version` currently opens the Python authority path as though it were a
-  Rust journal and faults. `COEXIST-1kJQlCm5` owns isolated Rust startup and
-  state initialization.
+- The tracked `spice.toml` and Git-common `.spice/config.toml` are admitted
+  configuration inputs for Rust Doctor. Doctor inspects them without opening
+  authority or launching declared tools.
+- Rust authority and runtime files live only under the Git-common
+  `.spice-rust` directory. The installed Python command continues to own its
+  Git-common `.spice` authority.
 - `HOOKS-1kJQnmG8` owns the eventual native hook transition. No active hook or
   ambient command path changes before explicit operator cutover.
 - Cutover starts a clean Rust authority as required by DOCTRINE.md. It does not
   open, import, migrate, or mutate Python authority bytes.
 
+## Rust coexistence bootstrap
+
+The sole repository-local Rust invocation during construction is Cargo with
+the workspace package selected explicitly. From any directory in the target
+worktree, run:
+
+```console
+cargo run --locked -q -p spice -- doctor
+cargo run --locked -q -p spice -- up
+cargo run --locked -q -p spice -- version
+cargo run --locked -q -p spice -- down
+```
+
+`up` remains in the foreground until `down` completes, so the last two commands
+run from another terminal in the same repository. `up` creates or admits the
+Rust journal at `<git-common>/.spice-rust/data/spicejournal.sqlite3`; linked
+worktrees resolve the same Git-common root. `version` reads that finalized Rust
+journal, and `down` reads the discovery published at
+`<git-common>/.spice-rust/canvas`.
+
+The same root owns resident locks, lane tape, degraded-state evidence, command
+locks, and proof receipts. Rust startup does not inspect Python databases below
+`<git-common>/.spice`. An unfinalized or incompatible `.spice-rust` journal
+returns the typed `journal::schema-refused` outcome naming its state. The
+ambient `spice` command and `.spice/hooks` remain Python-owned until the
+operator authorizes cutover.
+
 ## Rust contracts
 
-The registry contains 63 command leaves. Eighteen have executable dispatch,
-so current executable coverage is 18/63, or 28.6 percent. Completed domain
+The registry contains 63 command leaves. Twenty have executable dispatch,
+so current executable coverage is 20/63, or 31.7 percent. Completed domain
 libraries do not count as landed command surfaces.
 
 ### Landed
@@ -42,24 +70,30 @@ libraries do not count as landed command surfaces.
 - `gate camp`
 - `gate kill`
 - `gate receipt`
+- `install`
 - `lock`
 - `lock run`
 - `proof`
 - `proof replay`
 - `release notes`
+- `release publish`
 - `up`
 - `down`
 - `run`
 - `config`
 - `restore verify`
 
+The local command group retains the Python-first ownership boundary described
+above: plain `install` is a side-effect-free plan, and only an exact
+`--apply=<digest>` crosses its fixed authored mutation plan. Rust binaries,
+hook stages, and install records remain namespaced below `.spice/rust`; the
+plan does not replace the ambient command or active `core.hooksPath`.
+
 `doctor`, `version`, and `up` are executable but not yet usable against the
 current worktree state; the configuration and bootstrap tasks above own those
-operational gaps.
-
-### `LOCAL-1kJQlG6b`
-
-- `install`
+operational gaps. `release publish` admits its sealed stage against the Rust
+journal and resident discovery under `<git-common>/.spice-rust`; it does not
+read the Python authority under `<git-common>/.spice`.
 
 ### `BOARD-1kJQlDDt`
 
@@ -118,7 +152,6 @@ operational gaps.
 ### `PUBLISH-1kJQlGb0`
 
 - `canvas`
-- `release publish`
 
 `spice/src/cli.rs::landing` carries the same classification. Its closure test
 fails for any registered Rust leaf without a disposition. A leaf classified

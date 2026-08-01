@@ -6,7 +6,7 @@
 //! a paraphrase of them.
 
 use serde::{Deserialize, Serialize};
-use wire::manifest::ReleaseTarget;
+use wire::manifest::{ReleaseNotesInput, ReleaseTarget};
 use wire::{
     Actor, CanonicalUuid, Command, Envelope, Fact, FactKind, Fault, FaultClass, Hello, Instant,
     Origin, Outcome, Overflow, Packed, ProofEvidence, Refusal, Rejected, ReleaseNotes, Reply,
@@ -128,14 +128,24 @@ const DIRECT_PROOF_RESULT: &str = concat!(
 );
 
 const RELEASE_NOTES: &str = concat!(
-    r#"{"manifest":"1111111111111111111111111111111111111111111111111111111111111111","#,
-    r#""build":"2222222222222222222222222222222222222222222222222222222222222222","#,
-    r#""range":{"from":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","to":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","commits":1},"#,
-    r#""schema":{"from":1,"to":2},"targets":[{"target":"aarch64-apple-darwin","#,
-    r#""payload":"3333333333333333333333333333333333333333333333333333333333333333","#,
-    r#""receipt":"4444444444444444444444444444444444444444444444444444444444444444"}],"#,
-    r#""operator_actions":["Rotate a token"],"fixed_refusals":["Reject stale seals"],"#,
-    r#""changes":[{"commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","subject":"Ship notes"}]}"#,
+    r#"{"version":1,"identity":"8888888888888888888888888888888888888888888888888888888888888888","#,
+    r#""source":"1111111111111111111111111111111111111111111111111111111111111111","#,
+    r#""targets":[{"target":"aarch64-apple-darwin","#,
+    r#""payload":"2222222222222222222222222222222222222222222222222222222222222222","#,
+    r#""proof_receipt":"3333333333333333333333333333333333333333333333333333333333333333","#,
+    r#""gate_receipt":"4444444444444444444444444444444444444444444444444444444444444444"}]}"#,
+);
+
+const RELEASE_NOTES_INPUT: &str = concat!(
+    r#"{"version":1,"source":"1111111111111111111111111111111111111111111111111111111111111111","#,
+    r#""targets":[{"target":"aarch64-apple-darwin","#,
+    r#""payload":"2222222222222222222222222222222222222222222222222222222222222222","#,
+    r#""proof":{"target":"aarch64-apple-darwin","#,
+    r#""payload":"2222222222222222222222222222222222222222222222222222222222222222","#,
+    r#""receipt":"3333333333333333333333333333333333333333333333333333333333333333"},"#,
+    r#""gate":{"target":"aarch64-apple-darwin","#,
+    r#""source":"1111111111111111111111111111111111111111111111111111111111111111","#,
+    r#""receipt":"4444444444444444444444444444444444444444444444444444444444444444"}}]}"#,
 );
 
 #[test]
@@ -246,23 +256,19 @@ fn proof_evidence_is_the_exact_stable_five_identity_document() {
 #[test]
 fn release_notes_round_trip_and_refuse_unknown_fields_at_every_level() {
     let notes: ReleaseNotes = round_trip(RELEASE_NOTES);
-    assert_eq!(notes.range.commits, 1);
-    assert_eq!(notes.schema.from, 1);
-    assert_eq!(notes.schema.to, 2);
+    assert_eq!(notes.version, 1);
+    assert_eq!(notes.identity.as_str(), "8".repeat(64));
+    assert_eq!(notes.source.as_str(), "1".repeat(64));
     assert_eq!(notes.targets[0].target, ReleaseTarget::Aarch64AppleDarwin);
-    assert_eq!(notes.operator_actions, ["Rotate a token"]);
-    assert_eq!(notes.fixed_refusals, ["Reject stale seals"]);
-    assert_eq!(notes.changes[0].subject, "Ship notes");
+    assert_eq!(notes.targets[0].proof_receipt.as_str(), "3".repeat(64));
+    assert_eq!(notes.targets[0].gate_receipt.as_str(), "4".repeat(64));
 
     let document: serde_json::Value = serde_json::from_str(RELEASE_NOTES).expect("fixture is JSON");
-    for path in ["root", "range", "schema", "target", "change"] {
+    for path in ["root", "target"] {
         let mut extra = document.clone();
         let object = match path {
             "root" => extra.as_object_mut().expect("notes object"),
-            "range" => extra["range"].as_object_mut().expect("range object"),
-            "schema" => extra["schema"].as_object_mut().expect("schema object"),
             "target" => extra["targets"][0].as_object_mut().expect("target object"),
-            "change" => extra["changes"][0].as_object_mut().expect("change object"),
             _ => unreachable!(),
         };
         object.insert("unknown".to_owned(), serde_json::json!(true));
@@ -270,6 +276,40 @@ fn release_notes_round_trip_and_refuse_unknown_fields_at_every_level() {
             wire::decode::<ReleaseNotes>(&wire::encode(&extra).expect("extra shape encodes"))
                 .is_err(),
             "unknown field at {path} was admitted"
+        );
+    }
+}
+
+#[test]
+fn release_note_input_round_trips_and_refuses_unknown_fields_at_every_level() {
+    let input: ReleaseNotesInput = round_trip(RELEASE_NOTES_INPUT);
+    assert_eq!(input.version, 1);
+    assert_eq!(input.source.as_str(), "1".repeat(64));
+    assert_eq!(input.targets[0].proof.receipt.as_str(), "3".repeat(64));
+    assert_eq!(input.targets[0].gate.receipt.as_str(), "4".repeat(64));
+
+    let document: serde_json::Value =
+        serde_json::from_str(RELEASE_NOTES_INPUT).expect("fixture is JSON");
+    for path in ["root", "target", "proof", "gate"] {
+        let mut extra = document.clone();
+        let object = match path {
+            "root" => extra.as_object_mut().expect("input object"),
+            "target" => extra["targets"][0].as_object_mut().expect("target object"),
+            "proof" => extra["targets"][0]["proof"]
+                .as_object_mut()
+                .expect("proof object"),
+            "gate" => extra["targets"][0]["gate"]
+                .as_object_mut()
+                .expect("gate object"),
+            _ => unreachable!(),
+        };
+        object.insert("unknown".to_owned(), serde_json::json!(true));
+        assert!(
+            wire::decode::<ReleaseNotesInput>(
+                &wire::encode(&extra).expect("extra input shape encodes")
+            )
+            .is_err(),
+            "unknown input field at {path} was admitted"
         );
     }
 }

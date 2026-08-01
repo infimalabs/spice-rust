@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use bus::{Bus, CommitOutcome, JournalCommit};
-use journal::{FactCause, JournalWrite};
+use journal::{FactCause, GuardError, JournalGuard, JournalWrite};
 use lane::occupant::Seats;
 use sill::{Acquisition, LockFile, LockName, Possession};
 use spice::repository::{Repository, ResolveError};
@@ -13,7 +13,7 @@ use tokio::sync::oneshot;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::header::ORIGIN;
 use tungstenite::{Message, WebSocket};
-use wire::intent::{CommandAnswer, Intent, StateAnswer};
+use wire::intent::{CommandAnswer, Intent, RecognitionAnswer, ReleasePublish, StateAnswer};
 use wire::{
     Actor, CanonicalUuid, Command, CommandKind, Fault, FaultClass, Instant, Outcome, Producer,
     Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState, Response, Seq, SeqRange, Witness,
@@ -32,12 +32,13 @@ struct RuntimePaths {
     canvas: PathBuf,
     degraded: PathBuf,
     tape: PathBuf,
+    stage: PathBuf,
 }
 
 impl RuntimePaths {
     fn discover(start: &Path) -> Result<Self, ResolveError> {
         let repository = Repository::discover(start)?;
-        let runtime = repository.common_dir().join(".spice");
+        let runtime = repository.state_root();
         let data = runtime.join("data");
         Ok(Self {
             journal: repository.journal_path(),
@@ -45,6 +46,7 @@ impl RuntimePaths {
             canvas: runtime.join("canvas"),
             degraded: runtime.join("degraded"),
             tape: runtime.join("tape"),
+            stage: repository.worktree_root().join("dist/stage"),
             runtime,
             data,
         })
@@ -152,7 +154,7 @@ fn up_from(current: &Path) -> Outcome<()> {
 
     let journal = match journal::Journal::open(&paths.journal) {
         Ok(journal) => journal,
-        Err(error) => return store_fault("journal::open-failed", &error.to_string()),
+        Err(error) => return journal_open_failure(error),
     };
     let migration = journal.migration();
     let epoch = new_uuid();
@@ -188,6 +190,23 @@ fn up_from(current: &Path) -> Outcome<()> {
     answer
 }
 
+fn journal_open_failure(error: journal::OpenError) -> Outcome<()> {
+    match error {
+        journal::OpenError::Migration(migration) => Outcome::Refusal(Refusal {
+            reason: "journal::schema-refused".to_owned(),
+            witness: None,
+            expected: Some(format!("Rust journal schema {}", journal::SCHEMA_VERSION,)),
+            observed: Some(migration.to_string()),
+            remedy: concat!(
+                "finish or replace the unfinalized or incompatible Rust authority ",
+                "before starting the resident"
+            )
+            .to_owned(),
+        }),
+        error => store_fault("journal::open-failed", &error.to_string()),
+    }
+}
+
 fn settle_surface(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -221,7 +240,7 @@ fn down_from(current: &Path) -> Outcome<()> {
         Ok(paths) => paths,
         Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
     };
-    let discovery = match read_discovery(&paths.canvas) {
+    let discovery = match read_operator_discovery(&paths.canvas) {
         Ok(discovery) => discovery,
         Err(outcome) => return outcome,
     };
@@ -386,6 +405,9 @@ fn dispatch_command(
         (CommandKind::UpChange, Intent::UpChange(change)) => {
             dispatch_up_change(bus, paths, epoch, seats, command, change)
         }
+        (CommandKind::ReleasePublish, Intent::ReleasePublish(publish)) => {
+            dispatch_release_publish(bus, paths, epoch, command, publish)
+        }
         _ => Outcome::Refusal(Refusal {
             reason: "command::handler-not-landed".to_owned(),
             witness: None,
@@ -394,6 +416,212 @@ fn dispatch_command(
             remedy: "land the registered resident handler before exposing this CLI leaf".to_owned(),
         }),
     }
+}
+
+fn dispatch_release_publish(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    command: &wire::AdmittedCommand,
+    publish: &ReleasePublish,
+) -> Outcome<CommandAnswer> {
+    let prepared = match prepare_release_publish(bus, paths, command, publish) {
+        Ok(prepared) => prepared,
+        Err(outcome) => return outcome,
+    };
+    if let crate::release_command::PublicationState::Published { fact } = prepared.state {
+        return release_recognition(publish.key.clone(), fact, fact, false);
+    }
+    let crate::release_command::PublicationState::Fresh { proof } = prepared.state else {
+        unreachable!("published state returned above")
+    };
+    let origin = prepared
+        .snapshot
+        .facts()
+        .iter()
+        .find(|fact| fact.seq == proof)
+        .map(|fact| fact.origin.clone())
+        .expect("observed proof position belongs to the same canonical snapshot");
+    let proposal = match propose_release_publish(
+        paths,
+        command,
+        publish,
+        prepared.release,
+        prepared.state,
+        proof,
+        origin,
+        epoch,
+    ) {
+        Ok(proposal) => proposal,
+        Err(outcome) => return outcome,
+    };
+    match commit(bus, proposal) {
+        Ok(committed) => release_recognition(
+            publish.key.clone(),
+            seq(committed.first()),
+            seq(committed.last()),
+            true,
+        ),
+        Err(outcome) => typed_outcome(outcome),
+    }
+}
+
+struct PreparedReleasePublish {
+    release: crate::release_command::AdmittedRelease,
+    snapshot: journal::FactSnapshot,
+    state: crate::release_command::PublicationState,
+}
+
+fn prepare_release_publish(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    command: &wire::AdmittedCommand,
+    publish: &ReleasePublish,
+) -> Result<PreparedReleasePublish, Outcome<CommandAnswer>> {
+    let release = crate::release_command::admit_stage(&paths.stage)
+        .map_err(|error| release_refusal("release::manifest-refused", &error.to_string()))?;
+    if publish.key != *release.key() || publish.manifest != *release.manifest() {
+        return Err(Outcome::Refusal(Refusal {
+            reason: "release::plan-moved".to_owned(),
+            witness: Some("publication-plan".to_owned()),
+            expected: Some(format!("{}:{}", release.key(), release.manifest())),
+            observed: Some(format!("{}:{}", publish.key, publish.manifest)),
+            remedy: "preview the current sealed manifest and apply its exact key".to_owned(),
+        }));
+    }
+    let snapshot = bus
+        .fact_snapshot()
+        .map_err(|error| typed_store_fault("release::journal-unreadable", &error.to_string()))?;
+    let state = crate::release_command::observe(&snapshot, &release)
+        .map_err(|error| release_refusal("release::evidence-refused", &error.to_string()))?;
+    if !release_witnesses_match(command.expected(), &release, state) {
+        return Err(Outcome::Refusal(Refusal {
+            reason: "release::witness-moved".to_owned(),
+            witness: Some("observation-and-seals".to_owned()),
+            expected: Some(format!(
+                "one {} observation at {} and both detached receipts",
+                release.key(),
+                state.observation()
+            )),
+            observed: Some(format!("{:?}", command.expected())),
+            remedy: "re-read the current release plan and retry its exact witnesses".to_owned(),
+        }));
+    }
+    Ok(PreparedReleasePublish {
+        release,
+        snapshot,
+        state,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn propose_release_publish(
+    paths: &RuntimePaths,
+    command: &wire::AdmittedCommand,
+    publish: &ReleasePublish,
+    release: crate::release_command::AdmittedRelease,
+    state: crate::release_command::PublicationState,
+    proof: Seq,
+    origin: wire::Origin,
+    epoch: CanonicalUuid,
+) -> Result<JournalWrite, Outcome<CommandAnswer>> {
+    let mut proposal = write_at_origin(
+        command.actor().clone(),
+        origin,
+        Producer::ResidentRecognition,
+    )
+    .map_err(typed_outcome)?;
+    let guarded_release = release.clone();
+    let guarded_stage = paths.stage.clone();
+    proposal.guard(JournalGuard::new(move |read| {
+        let current = crate::release_command::admit_stage(&guarded_stage)
+            .map_err(|_| GuardError::refused("release::manifest-moved"))?;
+        if current != guarded_release {
+            return Err(GuardError::refused("release::manifest-moved"));
+        }
+        let snapshot = read
+            .fact_snapshot()
+            .map_err(|error| GuardError::Invalid(error.to_string()))?;
+        let current = crate::release_command::observe(&snapshot, &current)
+            .map_err(|error| GuardError::Invalid(error.to_string()))?;
+        if current != state {
+            return Err(GuardError::refused("release::observation-moved"));
+        }
+        Ok(())
+    }));
+    proposal
+        .fact(release.fact(), FactCause::Existing(proof))
+        .map_err(|error| typed_store_fault("release::fact-invalid", &error.to_string()))?;
+    let answer = RecognitionAnswer {
+        key: publish.key.clone(),
+        fresh: true,
+    };
+    proposal
+        .command_result(
+            Command {
+                v: wire::WireVersion::CURRENT,
+                id: command.id(),
+                epoch: command.epoch(),
+                kind: CommandKind::ReleasePublish,
+                expected: command.expected().to_vec(),
+                body: publish.clone(),
+            },
+            epoch,
+            answer,
+        )
+        .map_err(|error| typed_store_fault("release::receipt-invalid", &error.to_string()))?;
+    Ok(proposal)
+}
+
+fn release_recognition(
+    key: wire::Digest,
+    first: Seq,
+    last: Seq,
+    fresh: bool,
+) -> Outcome<CommandAnswer> {
+    Outcome::Reply(Reply {
+        position: ReplyPosition::Committed(SeqRange { first, last }),
+        body: CommandAnswer::Recognition(RecognitionAnswer { key, fresh }),
+    })
+}
+
+fn release_witnesses_match(
+    witnesses: &[Witness],
+    release: &crate::release_command::AdmittedRelease,
+    state: crate::release_command::PublicationState,
+) -> bool {
+    let observations = witnesses
+        .iter()
+        .filter_map(|witness| match witness {
+            Witness::Observation { key, head } => Some((key, *head)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let mut sealed = witnesses
+        .iter()
+        .filter_map(|witness| match witness {
+            Witness::Sealed { proof, manifest } if manifest == release.manifest() => Some(proof),
+            Witness::Sealed { .. } => None,
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let mut receipts = release.receipts().collect::<Vec<_>>();
+    sealed.sort_unstable();
+    receipts.sort_unstable();
+    witnesses.len() == 3
+        && observations == [(release.key(), state.observation())]
+        && sealed == receipts
+}
+
+fn release_refusal(reason: &str, observed: &str) -> Outcome<CommandAnswer> {
+    Outcome::Refusal(Refusal {
+        reason: reason.to_owned(),
+        witness: Some("sealed-release".to_owned()),
+        expected: Some("one current complete two-target proof and manifest chain".to_owned()),
+        observed: Some(observed.to_owned()),
+        remedy: "restore and recognize the exact current sealed release before publishing"
+            .to_owned(),
+    })
 }
 
 fn dispatch_up_change(
@@ -487,6 +715,14 @@ fn write(actor: Actor, epoch: CanonicalUuid, producer: Producer) -> CommandResul
     let origin = format!("resident:{epoch}")
         .parse::<wire::Origin>()
         .map_err(|error| store_fault("resident::origin-invalid", &error.to_string()))?;
+    write_at_origin(actor, origin, producer)
+}
+
+fn write_at_origin(
+    actor: Actor,
+    origin: wire::Origin,
+    producer: Producer,
+) -> CommandResult<JournalWrite> {
     let at = Instant::new(jiff::Timestamp::now())
         .map_err(|error| environment_fault("resident::clock-invalid", &error.to_string()))?;
     Ok(JournalWrite::new(actor, origin, at, producer))
@@ -509,7 +745,7 @@ fn commit(bus: &Bus, write: JournalWrite) -> CommandResult<JournalCommit> {
     }
 }
 
-fn read_discovery(path: &Path) -> CommandResult<canvas::Discovery> {
+pub(crate) fn read_operator_discovery(path: &Path) -> CommandResult<canvas::Discovery> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -530,109 +766,222 @@ fn read_discovery(path: &Path) -> CommandResult<canvas::Discovery> {
 }
 
 fn request_dark(discovery: &canvas::Discovery) -> Outcome<()> {
+    let mut connection = match connect_operator(discovery) {
+        Ok(connection) => connection,
+        Err(outcome) => return outcome,
+    };
+    match connection.request(
+        CommandKind::UpChange,
+        vec![Witness::Transition {
+            from: ResidentState::Seated,
+            to: ResidentState::Dark,
+        }],
+        wire::intent::UpChange {
+            state: ResidentState::Dark,
+        },
+    ) {
+        Outcome::Reply(reply) => match reply.body {
+            CommandAnswer::State(StateAnswer {
+                to: ResidentState::Dark,
+                ..
+            }) => Outcome::Reply(Reply {
+                position: reply.position,
+                body: (),
+            }),
+            answer => protocol_fault(
+                "down::answer-shape",
+                &format!("expected a state answer ending in dark, received {answer:?}"),
+            ),
+        },
+        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => Outcome::Fault(fault),
+    }
+}
+
+pub(crate) fn request_release(
+    mut connection: OperatorConnection,
+    release: &crate::release_command::AdmittedRelease,
+    state: crate::release_command::PublicationState,
+) -> Outcome<RecognitionAnswer> {
+    let mut expected = vec![Witness::Observation {
+        key: release.key().clone(),
+        head: state.observation(),
+    }];
+    expected.extend(release.receipts().map(|proof| Witness::Sealed {
+        proof: proof.clone(),
+        manifest: release.manifest().clone(),
+    }));
+    match connection.request(
+        CommandKind::ReleasePublish,
+        expected,
+        ReleasePublish {
+            key: release.key().clone(),
+            manifest: release.manifest().clone(),
+        },
+    ) {
+        Outcome::Reply(reply) => match reply.body {
+            CommandAnswer::Recognition(answer) => Outcome::Reply(Reply {
+                position: reply.position,
+                body: answer,
+            }),
+            answer => fault(
+                FaultClass::Protocol,
+                "release::answer-shape",
+                &format!("expected a recognition answer, received {answer:?}"),
+            ),
+        },
+        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => Outcome::Fault(fault),
+    }
+}
+
+pub(crate) struct OperatorConnection {
+    socket: WebSocket<TcpStream>,
+    epoch: CanonicalUuid,
+}
+
+pub(crate) fn connect_operator(
+    discovery: &canvas::Discovery,
+) -> Result<OperatorConnection, Outcome<()>> {
     let Some(authority) = discovery.endpoint.strip_prefix("http://") else {
-        return protocol_fault(
+        return Err(protocol_fault(
             "canvas::endpoint-invalid",
             "canvas endpoint is not an HTTP loopback origin",
-        );
+        ));
     };
     let address = match authority.parse::<SocketAddr>() {
         Ok(address) if address.ip().is_loopback() => address,
         Ok(address) => {
-            return protocol_fault(
+            return Err(protocol_fault(
                 "canvas::endpoint-not-loopback",
                 &format!("canvas endpoint names {address}"),
-            );
+            ));
         }
-        Err(error) => return protocol_fault("canvas::endpoint-invalid", &error.to_string()),
+        Err(error) => {
+            return Err(protocol_fault(
+                "canvas::endpoint-invalid",
+                &error.to_string(),
+            ));
+        }
     };
     let stream = match TcpStream::connect_timeout(&address, SOCKET_TIMEOUT) {
         Ok(stream) => stream,
-        Err(error) => return environment_fault("canvas::connect-failed", &error.to_string()),
+        Err(error) => {
+            return Err(environment_fault(
+                "canvas::connect-failed",
+                &error.to_string(),
+            ));
+        }
     };
     if let Err(error) = stream.set_read_timeout(Some(SOCKET_TIMEOUT)) {
-        return environment_fault("canvas::timeout-failed", &error.to_string());
+        return Err(environment_fault(
+            "canvas::timeout-failed",
+            &error.to_string(),
+        ));
     }
     if let Err(error) = stream.set_write_timeout(Some(SOCKET_TIMEOUT)) {
-        return environment_fault("canvas::timeout-failed", &error.to_string());
+        return Err(environment_fault(
+            "canvas::timeout-failed",
+            &error.to_string(),
+        ));
     }
     let mut request = match format!("ws://{authority}/socket").into_client_request() {
         Ok(request) => request,
-        Err(error) => return protocol_fault("canvas::request-invalid", &error.to_string()),
+        Err(error) => {
+            return Err(protocol_fault(
+                "canvas::request-invalid",
+                &error.to_string(),
+            ));
+        }
     };
     let origin = match discovery.endpoint.parse::<tungstenite::http::HeaderValue>() {
         Ok(origin) => origin,
-        Err(error) => return protocol_fault("canvas::origin-invalid", &error.to_string()),
+        Err(error) => {
+            return Err(protocol_fault("canvas::origin-invalid", &error.to_string()));
+        }
     };
     request.headers_mut().insert(ORIGIN, origin);
     let (mut socket, _) = match tungstenite::client(request, stream) {
         Ok(opened) => opened,
-        Err(error) => return environment_fault("canvas::opening-failed", &error.to_string()),
+        Err(error) => {
+            return Err(environment_fault(
+                "canvas::opening-failed",
+                &error.to_string(),
+            ));
+        }
     };
     let hello = wire::Hello {
         wire: wire::WireVersion::CURRENT,
         capability: discovery.capability,
         epoch: discovery.epoch,
     };
-    if let Err(outcome) = send(&mut socket, &hello) {
-        return outcome;
-    }
-    let opening = match receive(&mut socket) {
-        Ok(opening) => opening,
-        Err(outcome) => return outcome,
-    };
+    send(&mut socket, &hello)?;
+    let opening = receive(&mut socket)?;
     match wire::decode::<wire::Accepted>(&opening) {
         Ok(accepted)
             if accepted.wire.is_current()
                 && accepted.epoch == discovery.epoch
                 && matches!(accepted.actor, Actor::Operator) => {}
         Ok(accepted) => {
-            return protocol_fault(
+            return Err(protocol_fault(
                 "hello::acceptance-invalid",
                 &format!(
                     "resident accepted as {:?} in {}",
                     accepted.actor, accepted.epoch
                 ),
-            );
+            ));
         }
         Err(_) => {
             if let Ok(refusal) = wire::decode::<Refusal>(&opening) {
-                return Outcome::Refusal(refusal);
+                return Err(Outcome::Refusal(refusal));
             }
             if let Ok(fault) = wire::decode::<Fault>(&opening) {
-                return Outcome::Fault(fault);
+                return Err(Outcome::Fault(fault));
             }
-            return protocol_fault(
+            return Err(protocol_fault(
                 "hello::answer-undecodable",
                 "resident returned neither an acceptance, refusal, nor fault",
-            );
+            ));
         }
     }
-
-    let id = new_uuid();
-    let command = Command {
-        v: wire::WireVersion::CURRENT,
-        id,
+    Ok(OperatorConnection {
+        socket,
         epoch: discovery.epoch,
-        kind: CommandKind::UpChange,
-        expected: vec![Witness::Transition {
-            from: ResidentState::Seated,
-            to: ResidentState::Dark,
-        }],
-        body: wire::intent::UpChange {
-            state: ResidentState::Dark,
-        },
-    };
-    if let Err(outcome) = send(&mut socket, &command) {
-        return outcome;
-    }
-    match receive(&mut socket) {
-        Ok(answer) => decode_dark_response(&answer, id, discovery.epoch),
-        Err(outcome) => outcome,
+    })
+}
+
+impl OperatorConnection {
+    fn request<B: serde::Serialize>(
+        &mut self,
+        kind: CommandKind,
+        expected: Vec<Witness>,
+        body: B,
+    ) -> Outcome<CommandAnswer> {
+        let id = new_uuid();
+        let command = Command {
+            v: wire::WireVersion::CURRENT,
+            id,
+            epoch: self.epoch,
+            kind,
+            expected,
+            body,
+        };
+        if let Err(outcome) = send(&mut self.socket, &command) {
+            return typed_outcome(outcome);
+        }
+        match receive(&mut self.socket) {
+            Ok(answer) => decode_command_response(&answer, id, self.epoch, kind),
+            Err(outcome) => typed_outcome(outcome),
+        }
     }
 }
 
-fn decode_dark_response(bytes: &[u8], id: CanonicalUuid, epoch: CanonicalUuid) -> Outcome<()> {
+fn decode_command_response(
+    bytes: &[u8],
+    id: CanonicalUuid,
+    epoch: CanonicalUuid,
+    kind: CommandKind,
+) -> Outcome<CommandAnswer> {
     let response = match wire::decode::<Response<serde_json::Value>>(bytes) {
         Ok(response) => response,
         Err(error) => {
@@ -642,12 +991,12 @@ fn decode_dark_response(bytes: &[u8], id: CanonicalUuid, epoch: CanonicalUuid) -
             if let Ok(refusal) = wire::decode::<Refusal>(bytes) {
                 return Outcome::Refusal(refusal);
             }
-            return protocol_fault("down::answer-undecodable", &error.to_string());
+            return typed_protocol_fault("command::answer-undecodable", &error.to_string());
         }
     };
     if !response.v.is_current() || response.id != id || response.epoch != epoch {
-        return protocol_fault(
-            "down::answer-mismatch",
+        return typed_protocol_fault(
+            "command::answer-mismatch",
             &format!(
                 "expected id {id} at epoch {epoch}; received id {} at epoch {} on wire {}",
                 response.id, response.epoch, response.v
@@ -659,28 +1008,19 @@ fn decode_dark_response(bytes: &[u8], id: CanonicalUuid, epoch: CanonicalUuid) -
             let encoded = match serde_json::to_vec(&reply.body) {
                 Ok(encoded) => encoded,
                 Err(error) => {
-                    return protocol_fault("down::answer-unencodable", &error.to_string());
+                    return typed_protocol_fault("command::answer-unencodable", &error.to_string());
                 }
             };
-            let answer = match CommandKind::UpChange.binding().answer.decode(&encoded) {
+            let answer = match kind.binding().answer.decode(&encoded) {
                 Ok(answer) => answer,
                 Err(error) => {
-                    return protocol_fault("down::answer-undecodable", &error.to_string());
+                    return typed_protocol_fault("command::answer-undecodable", &error.to_string());
                 }
             };
-            match answer {
-                CommandAnswer::State(StateAnswer {
-                    to: ResidentState::Dark,
-                    ..
-                }) => Outcome::Reply(Reply {
-                    position: reply.position,
-                    body: (),
-                }),
-                answer => protocol_fault(
-                    "down::answer-shape",
-                    &format!("expected a state answer ending in dark, received {answer:?}"),
-                ),
-            }
+            Outcome::Reply(Reply {
+                position: reply.position,
+                body: answer,
+            })
         }
         Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
         Outcome::Fault(fault) => Outcome::Fault(fault),
@@ -764,6 +1104,14 @@ fn typed_store_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
     fault(FaultClass::Store, reason, detail)
 }
 
+fn typed_outcome(outcome: Outcome<()>) -> Outcome<CommandAnswer> {
+    match outcome {
+        Outcome::Reply(_) => unreachable!("unit command failures never carry replies"),
+        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => Outcome::Fault(fault),
+    }
+}
+
 fn environment_fault(reason: &str, detail: &str) -> Outcome<()> {
     fault(FaultClass::Environment, reason, detail)
 }
@@ -809,10 +1157,10 @@ mod tests {
         let paths = RuntimePaths::discover(&nested).expect("paths resolve");
         let common = fs::canonicalize(root.join(".git")).expect("canonical common directory");
 
-        assert_eq!(paths.runtime, common.join(".spice"));
+        assert_eq!(paths.runtime, common.join(".spice-rust"));
         assert_eq!(
             paths.journal,
-            common.join(".spice/data/spicejournal.sqlite3")
+            common.join(".spice-rust/data/spicejournal.sqlite3")
         );
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
@@ -835,7 +1183,7 @@ mod tests {
         let paths = RuntimePaths::discover(&worktree).expect("paths resolve");
         let common = fs::canonicalize(&common).expect("canonical common directory");
 
-        assert_eq!(paths.runtime, common.join(".spice"));
+        assert_eq!(paths.runtime, common.join(".spice-rust"));
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 

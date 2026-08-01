@@ -73,20 +73,22 @@ const fn position(domain: Domain) -> usize {
         Domain::DistInventory => 8,
         Domain::DistSourceCommit => 9,
         Domain::DistReleaseManifest => 10,
-        Domain::ProofBattery => 11,
-        Domain::ProofReplayV2 => 12,
-        Domain::ProofReceiptV2 => 13,
-        Domain::ProofNativeRunner => 14,
-        Domain::GateFile => 15,
-        Domain::GateTree => 16,
-        Domain::GateSet => 17,
-        Domain::GatePolicy => 18,
-        Domain::GateBounds => 19,
-        Domain::GateBaseline => 20,
-        Domain::GateTool => 21,
-        Domain::GateInventory => 22,
-        Domain::GateMeasurement => 23,
-        Domain::GateReceipt => 24,
+        Domain::DistReleaseNotes => 11,
+        Domain::DistReleasePlan => 12,
+        Domain::ProofBattery => 13,
+        Domain::ProofReplayV2 => 14,
+        Domain::ProofReceiptV2 => 15,
+        Domain::ProofNativeRunner => 16,
+        Domain::GateFile => 17,
+        Domain::GateTree => 18,
+        Domain::GateSet => 19,
+        Domain::GatePolicy => 20,
+        Domain::GateBounds => 21,
+        Domain::GateBaseline => 22,
+        Domain::GateTool => 23,
+        Domain::GateInventory => 24,
+        Domain::GateMeasurement => 25,
+        Domain::GateReceipt => 26,
     }
 }
 
@@ -102,7 +104,7 @@ fn the_sweep_names_every_domain_exactly_once() {
 }
 
 /// Every domain, so a new class cannot be added without being swept here.
-const DOMAINS: [Domain; 25] = [
+const DOMAINS: [Domain; 27] = [
     Domain::BoardDocument,
     Domain::JournalBackupManifest,
     Domain::JournalBackupMember,
@@ -114,6 +116,8 @@ const DOMAINS: [Domain; 25] = [
     Domain::DistInventory,
     Domain::DistSourceCommit,
     Domain::DistReleaseManifest,
+    Domain::DistReleaseNotes,
+    Domain::DistReleasePlan,
     Domain::ProofBattery,
     Domain::ProofReplayV2,
     Domain::ProofReceiptV2,
@@ -190,6 +194,8 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
             "spice.dist.inventory.v1",
             "spice.dist.source-commit.v1",
             "spice.dist.release-manifest.v1",
+            "spice.dist.release-notes.v1",
+            "spice.dist.release-plan.v1",
             "spice.proof.battery.v1",
             "spice.proof.replay.v2",
             "spice.proof.receipt.v2",
