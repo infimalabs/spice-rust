@@ -629,6 +629,10 @@ mod tests {
         assert_eq!(directory.entries(), entries);
     }
 
+    // Kept local because these are atomic unit tests. Sharing gate's integration-test
+    // helper needs a workspace member and an atomic dev-dependency. The gate lattice
+    // test filters Cargo.lock to workspace members, so that edge would change its
+    // deliberate `("atomic", &[])` row.
     struct TestDirectory(PathBuf);
 
     impl TestDirectory {

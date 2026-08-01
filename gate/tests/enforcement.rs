@@ -5,8 +5,6 @@
 //! parser prints, and neither of those can be proven by a hand-built value.
 
 use std::fs;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use gate::jurisdiction::{Admission, Shape};
@@ -18,6 +16,10 @@ use gate::{
 };
 use sill::Deadlines;
 use wire::{Digest, Domain};
+
+mod support;
+
+use support::Tree;
 
 /// A line counter written entirely in shell builtins.
 ///
@@ -56,40 +58,6 @@ const MUTATE_LIVE_AFTER_COUNT: &str = "root=$1; shift; count=0; for file in \"$@
 const RESTORE_LIVE_AFTER_COUNT: &str = "root=$1; shift; count=0; for file in \"$@\"; do \
      while IFS= read -r line || [ -n \"$line\" ]; do count=$((count + 1)); done < \"$file\"; \
      done; printf 'one\\ntwo\\n' > \"$root/src/lib.rs\"; printf '%s\\n' \"$count\"";
-
-/// A foreign repository that removes itself when the fixture ends.
-struct Tree {
-    root: PathBuf,
-}
-
-impl Tree {
-    fn new(label: &str) -> Self {
-        static NEXT: AtomicU32 = AtomicU32::new(0);
-        let unique = NEXT.fetch_add(1, Ordering::Relaxed);
-        let root =
-            std::env::temp_dir().join(format!("gate-{label}-{}-{unique}", std::process::id()));
-        fs::create_dir_all(&root).expect("create a fixture repository");
-        Self { root }
-    }
-
-    fn write(&self, relative: &str, contents: &str) {
-        let path = self.root.join(relative);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).expect("create a fixture directory");
-        }
-        fs::write(&path, contents).expect("write a fixture file");
-    }
-
-    fn path(&self, relative: &str) -> PathBuf {
-        self.root.join(relative)
-    }
-}
-
-impl Drop for Tree {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
 
 fn bounds() -> Bounds {
     bounds_with(64 * 1024, Duration::from_secs(5))

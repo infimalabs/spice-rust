@@ -20,13 +20,15 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use gate::retired_matches;
 use syn::punctuated::Punctuated;
 use syn::{Meta, Token};
+
+mod support;
+
+use support::{Tree, create_scratch_root};
 
 /// Attributes that publish a spelling rather than describe one.
 const NAMING_ATTRIBUTES: &[&str] = &["serde", "clap", "command", "arg"];
@@ -56,13 +58,13 @@ fn workspace_rust_uses_only_current_public_vocabulary() {
 /// from being found and turn this red.
 #[test]
 fn the_walk_descends_to_a_planted_violation_and_names_where_it_sat() {
-    let tree = ScratchTree::new("walk");
+    let tree = Tree::new("walk");
     tree.write("surface.rs", "pub struct Lineage;\n");
     tree.write("nested/deep/planted.rs", "pub struct Team;\n");
     tree.write("target/generated.rs", "pub struct Team;\n");
     tree.write(".vendored/carried.rs", "pub struct Team;\n");
 
-    let violations = scan_tree(tree.path());
+    let violations = scan_tree(&tree.root);
     let planted = Path::new("nested").join("deep").join("planted.rs");
 
     assert_eq!(
@@ -89,9 +91,9 @@ fn the_walk_descends_to_a_planted_violation_and_names_where_it_sat() {
 /// to the walk above as if the fixture had planted it.
 #[test]
 fn scratch_setup_creates_its_root_rather_than_adopting_one_that_exists() {
-    let owner = ScratchTree::new("owner");
-    let taken = owner.path().join("taken");
-    let free = owner.path().join("free");
+    let owner = Tree::new("owner");
+    let taken = owner.path("taken");
+    let free = owner.path("free");
     fs::create_dir(&taken).expect("plant a stale root");
     fs::write(taken.join("left-behind.rs"), "pub struct Team;\n").expect("plant a stale source");
 
@@ -413,103 +415,6 @@ fn scan_attributes(scan: &mut Scan, attributes: &[syn::Attribute]) {
                 scan.coined(&text.value());
             }
         }
-    }
-}
-
-/// Names tried before a scratch root is declared unobtainable.
-const CREATE_ATTEMPTS: usize = 128;
-
-/// The first of `candidates` this call creates, never one it merely found.
-///
-/// The names carry a process id, and process ids are reused, so a name already
-/// taken is a tree some earlier run left behind rather than a coincidence.
-/// Adopting one would let the walk read sources this fixture never wrote and
-/// make the violations it asserts on depend on what the last run happened to
-/// leave, so a taken name is skipped and the next is tried.
-fn create_scratch_root(candidates: impl Iterator<Item = PathBuf>) -> PathBuf {
-    for root in candidates.take(CREATE_ATTEMPTS) {
-        match fs::create_dir(&root) {
-            Ok(()) => return root,
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(error) => panic!("create a scratch root at {}: {error}", root.display()),
-        }
-    }
-    panic!("no scratch root was free within {CREATE_ATTEMPTS} attempts");
-}
-
-/// A source tree the fixture plants, owns, and proves it removed.
-///
-/// The walk is driven over this rather than over the real workspace because the
-/// sweep above runs in the same binary: a violation planted in the checkout
-/// would be found by both, so the fixture would fail its neighbour.
-///
-/// Ownership runs end to end: [`create_scratch_root`] hands over a root this
-/// fixture made, and [`ScratchTree::remove`] proves that root is gone again.
-struct ScratchTree {
-    root: PathBuf,
-    removed: bool,
-}
-
-impl ScratchTree {
-    fn new(label: &str) -> Self {
-        static NEXT: AtomicU32 = AtomicU32::new(0);
-        let directory = std::env::temp_dir();
-        let process = std::process::id();
-        let root = create_scratch_root(std::iter::repeat_with(|| {
-            let unique = NEXT.fetch_add(1, Ordering::Relaxed);
-            directory.join(format!("gate-retired-{label}-{process}-{unique}"))
-        }));
-        Self {
-            root,
-            removed: false,
-        }
-    }
-
-    fn write(&self, relative: &str, contents: &str) {
-        let path = self.root.join(relative);
-        let parent = path.parent().expect("a scratch source sits in a directory");
-        fs::create_dir_all(parent).expect("create a scratch directory");
-        fs::write(&path, contents).expect("write a scratch source");
-    }
-
-    fn path(&self) -> &Path {
-        &self.root
-    }
-
-    /// Remove the planted tree and prove it is gone.
-    ///
-    /// Teardown is a claim the test states rather than a side effect it hopes
-    /// for. A removal that failed quietly would leave a retired name sitting in
-    /// the temporary directory while this run stayed green, and the next run
-    /// under the same process id would find it there.
-    fn remove(mut self) {
-        fs::remove_dir_all(&self.root).unwrap_or_else(|error| {
-            panic!(
-                "remove the planted tree at {}: {error}",
-                self.root.display()
-            )
-        });
-        assert!(
-            !self.root.exists(),
-            "the planted tree outlived its removal at {}",
-            self.root.display()
-        );
-        self.removed = true;
-    }
-}
-
-impl Drop for ScratchTree {
-    /// Best effort for the path that never reached [`ScratchTree::remove`].
-    ///
-    /// A test that panics unwinds through here, and a panic raised while
-    /// panicking aborts the process and buries the failure being reported. So
-    /// this path removes what it can and says nothing; the loud teardown is the
-    /// one the test states for itself.
-    fn drop(&mut self) {
-        if self.removed {
-            return;
-        }
-        let _ = fs::remove_dir_all(&self.root);
     }
 }
 
