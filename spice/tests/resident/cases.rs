@@ -1,4 +1,7 @@
 //! Resident process cases sharing the integration fixture.
+//!
+//! Keeping cases below the fixture root makes the process boundary reusable
+//! without letting one integration-test source exceed the repository limit.
 
 use super::*;
 

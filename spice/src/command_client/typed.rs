@@ -1,4 +1,7 @@
 //! Already-typed board and task family command mapping.
+//!
+//! This seam keeps family mapping growth out of the transport client while
+//! preserving its one authenticated request path.
 
 use spice::repository::Repository;
 

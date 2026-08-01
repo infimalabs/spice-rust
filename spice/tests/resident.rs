@@ -819,5 +819,6 @@ fn instant(value: &str) -> Instant {
     value.parse().expect("canonical fixture instant")
 }
 
+/// Process cases share the transport and lifecycle fixtures defined above.
 #[path = "resident/cases.rs"]
 mod cases;
