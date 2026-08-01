@@ -18,17 +18,20 @@ pub mod packed;
 pub mod reply;
 pub mod witness;
 
-pub use command::{Command, CommandKind, CommandKindError};
+pub use command::{Command, CommandKind, CommandKindError, Law, LawError};
 pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVersion};
 pub use fact::{Fact, FactKind};
 pub use hello::{Hello, Rejected};
-pub use ident::{CanonicalUuid, IdentError, Instant};
+pub use ident::{CanonicalUuid, Digest, IdentError, Instant};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
     Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, Response, SeqRange, SeqRangeError,
     exit,
 };
-pub use witness::{Phase, PhaseError, TaskHandle, TaskHandleError, Witness};
+pub use witness::{
+    Answer, Disposition, Name, NameError, Phase, PhaseError, Standing, TaskHandle, TaskHandleError,
+    Up, Witness, WitnessKind,
+};
 
 /// Decode wire bytes into a DTO.
 ///
