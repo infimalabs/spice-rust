@@ -3,8 +3,11 @@
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
+use std::fmt::Write as _;
 use std::fs;
 use std::io;
+#[cfg(unix)]
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -17,7 +20,8 @@ const WORKSPACE_MOUNT: &str = "/workspace";
 const CARGO_HOME: &str = "/cargo-home";
 const CARGO_TARGET: &str = "/cargo-target";
 const SHA256_HEX_LENGTH: usize = 64;
-const ATTESTATION_PREFIX: &str = "spice-proof-attestation-v1:";
+const ATTESTATION_PREFIX: &str = "spice-proof-attestation-v2:";
+const CHALLENGE_BYTES: usize = 32;
 const PREFLIGHT_SCRIPT: &str = r#"
 refuse() {
     printf 'spice-proof-preflight-refused:%s\n' "$1" >&2
@@ -55,12 +59,13 @@ for interface in /sys/class/net/*; do
 done
 
 dialect=$1
-shift
-printf 'spice-proof-attestation-v1:%s\n' "$dialect" >&2
+challenge=$2
+shift 2
+printf 'spice-proof-attestation-v2:%s:%s\n' "$dialect" "$challenge" >&2
 exec "$@"
 "#;
 
-/// OCI runtime contract whose network-isolation spelling is known here.
+/// One observed OCI runtime interface.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OciRuntime {
     kind: RuntimeKind,
@@ -68,25 +73,14 @@ pub struct OciRuntime {
 }
 
 impl OciRuntime {
-    /// Admit one Docker executable.
+    /// Admit one executable whose bounded identity response names Docker or Podman.
     ///
     /// # Errors
     ///
-    /// Refuses non-absolute, missing, non-regular, or non-executable paths.
-    pub fn docker(binary: impl AsRef<Path>) -> Result<Self, ContainerError> {
-        Self::new(RuntimeKind::Docker, binary.as_ref())
-    }
-
-    /// Admit one Podman executable.
-    ///
-    /// # Errors
-    ///
-    /// Refuses non-absolute, missing, non-regular, or non-executable paths.
-    pub fn podman(binary: impl AsRef<Path>) -> Result<Self, ContainerError> {
-        Self::new(RuntimeKind::Podman, binary.as_ref())
-    }
-
-    fn new(kind: RuntimeKind, binary: &Path) -> Result<Self, ContainerError> {
+    /// Refuses non-absolute, missing, non-regular, or non-executable paths and
+    /// any failed, incomplete, ambiguous, or unrecognized identity exchange.
+    pub fn attest(binary: impl AsRef<Path>, limits: Limits) -> Result<Self, ContainerError> {
+        let binary = binary.as_ref();
         if !binary.is_absolute() {
             return Err(ContainerError::RuntimeNotAbsolute(binary.to_path_buf()));
         }
@@ -104,6 +98,7 @@ impl OciRuntime {
         if !is_executable(&metadata) {
             return Err(ContainerError::RuntimeNotExecutable(binary));
         }
+        let kind = observe_runtime_kind(&binary, limits)?;
         Ok(Self { kind, binary })
     }
 
@@ -112,17 +107,10 @@ impl OciRuntime {
     pub fn binary(&self) -> &Path {
         &self.binary
     }
-
-    /// Runtime dialect whose isolation flags are emitted.
-    #[must_use]
-    pub const fn kind(&self) -> RuntimeKind {
-        self.kind
-    }
 }
 
-/// OCI command dialects with the sealed flags proof relies on.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RuntimeKind {
+enum RuntimeKind {
     Docker,
     Podman,
 }
@@ -134,6 +122,48 @@ impl RuntimeKind {
             Self::Podman => "podman",
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Attestation {
+    challenge: String,
+}
+
+impl Attestation {
+    fn fresh() -> Result<Self, ContainerError> {
+        let mut bytes = [0_u8; CHALLENGE_BYTES];
+        fill_attestation_challenge(&mut bytes)
+            .map_err(ContainerError::CreateAttestationChallenge)?;
+        let mut challenge = String::with_capacity(CHALLENGE_BYTES * 2);
+        for byte in bytes {
+            write!(&mut challenge, "{byte:02x}").expect("writing to a String cannot fail");
+        }
+        Ok(Self { challenge })
+    }
+
+    fn marker(&self, kind: RuntimeKind) -> String {
+        format!("{ATTESTATION_PREFIX}{}:{}\n", kind.as_str(), self.challenge)
+    }
+
+    #[cfg(test)]
+    fn fixture(challenge: &str) -> Self {
+        Self {
+            challenge: challenge.to_owned(),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn fill_attestation_challenge(bytes: &mut [u8]) -> io::Result<()> {
+    fs::File::open("/dev/urandom")?.read_exact(bytes)
+}
+
+#[cfg(not(unix))]
+fn fill_attestation_challenge(_bytes: &mut [u8]) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "sealed OCI runtime attestation requires Unix randomness",
+    ))
 }
 
 /// Explicit process bounds for every battery member.
@@ -163,6 +193,90 @@ impl Limits {
             grace,
             output_limit,
         })
+    }
+}
+
+fn observe_runtime_kind(binary: &Path, limits: Limits) -> Result<RuntimeKind, ContainerError> {
+    let spec = Spec {
+        argv: Argv::new(binary.as_os_str().to_owned(), [OsString::from("--version")])
+            .map_err(ContainerError::RuntimeProbeSpec)?,
+        cwd: binary
+            .parent()
+            .expect("a canonical absolute executable has a parent")
+            .to_owned(),
+        environment: Environment::empty(),
+        group: ProcessGroup::New,
+        deadlines: limits.deadlines,
+        wait: WaitPolicy::new(
+            "sealed OCI runtime identity probe",
+            Cancellation::Never,
+            RestartDisposition::Never,
+        )
+        .map_err(ContainerError::RuntimeProbeSpec)?,
+        output: Output::new(
+            StdinPolicy::Null,
+            StreamPolicy::Capture {
+                limit: limits.output_limit,
+            },
+            StreamPolicy::Capture {
+                limit: limits.output_limit,
+            },
+        ),
+        redaction: Redaction::None,
+        grace: limits.grace,
+    };
+    let running = sill::spawn(spec).map_err(ContainerError::SpawnRuntimeProbe)?;
+    let outcome = running.wait().map_err(ContainerError::WaitRuntimeProbe)?;
+    let completion = format!("{:?}", outcome.completion());
+    let stdout = outcome.stdout().map(Captured::from).ok_or_else(|| {
+        ContainerError::RuntimeDialectNotAttested {
+            observed: format!("completion={completion}, stdout capture missing"),
+        }
+    })?;
+    let stderr = outcome.stderr().map(Captured::from).ok_or_else(|| {
+        ContainerError::RuntimeDialectNotAttested {
+            observed: format!("completion={completion}, stderr capture missing"),
+        }
+    })?;
+    let observed = format!(
+        "completion={completion}, stdout={:?}, stderr={:?}",
+        String::from_utf8_lossy(&stdout.bytes),
+        String::from_utf8_lossy(&stderr.bytes)
+    );
+    if !matches!(outcome.completion(), Completion::Exited(status) if status.success())
+        || stdout.truncated
+        || stderr.truncated
+        || !stdout.complete
+        || !stderr.complete
+        || !stderr.bytes.is_empty()
+    {
+        return Err(ContainerError::RuntimeDialectNotAttested { observed });
+    }
+
+    parse_runtime_kind(&stdout.bytes).ok_or(ContainerError::RuntimeDialectNotAttested { observed })
+}
+
+fn parse_runtime_kind(bytes: &[u8]) -> Option<RuntimeKind> {
+    let version = std::str::from_utf8(bytes).ok()?;
+    let version = version
+        .strip_suffix("\r\n")
+        .or_else(|| version.strip_suffix('\n'))
+        .unwrap_or(version);
+    if version.contains(['\r', '\n']) {
+        return None;
+    }
+    if version
+        .strip_prefix("Docker version ")
+        .is_some_and(|remainder| !remainder.is_empty())
+    {
+        Some(RuntimeKind::Docker)
+    } else if version
+        .strip_prefix("podman version ")
+        .is_some_and(|remainder| !remainder.is_empty())
+    {
+        Some(RuntimeKind::Podman)
+    } else {
+        None
     }
 }
 
@@ -226,12 +340,12 @@ impl Container {
         &self.image
     }
 
-    /// Build the exact process contract for one command inside the sealed environment.
-    ///
-    /// # Errors
-    ///
-    /// Refuses an empty program, a NUL-bearing argument, or an invalid sill contract.
-    pub fn spec(&self, program: &str, arguments: &[String]) -> Result<Spec, ContainerError> {
+    fn spec(
+        &self,
+        program: &str,
+        arguments: &[String],
+        attestation: &Attestation,
+    ) -> Result<Spec, ContainerError> {
         validate_command(program, arguments)?;
         let mount = format!(
             "type=bind,source={},destination={WORKSPACE_MOUNT},readonly",
@@ -264,6 +378,7 @@ impl Container {
             PREFLIGHT_SCRIPT.to_owned(),
             "spice-proof-attestation".to_owned(),
             self.runtime.kind.as_str().to_owned(),
+            attestation.challenge.clone(),
             program.to_owned(),
         ];
         runtime_arguments.extend(arguments.iter().cloned());
@@ -303,8 +418,9 @@ impl Container {
         program: &str,
         arguments: &[String],
     ) -> Result<Execution, ContainerError> {
-        let running =
-            sill::spawn(self.spec(program, arguments)?).map_err(ContainerError::SpawnRuntime)?;
+        let attestation = Attestation::fresh()?;
+        let running = sill::spawn(self.spec(program, arguments, &attestation)?)
+            .map_err(ContainerError::SpawnRuntime)?;
         let outcome = running.wait().map_err(ContainerError::Wait)?;
         let completion = match outcome.completion() {
             Completion::Exited(status) => ExecutionCompletion::Exited {
@@ -326,7 +442,7 @@ impl Container {
             .stderr()
             .map(Captured::from)
             .ok_or(ContainerError::MissingCapture("stderr"))?;
-        self.verify_attestation(&mut stderr)?;
+        self.verify_attestation(&mut stderr, &attestation)?;
         Ok(Execution {
             completion,
             stdout,
@@ -334,8 +450,12 @@ impl Container {
         })
     }
 
-    fn verify_attestation(&self, stderr: &mut Captured) -> Result<(), ContainerError> {
-        let expected = format!("{ATTESTATION_PREFIX}{}\n", self.runtime.kind.as_str());
+    fn verify_attestation(
+        &self,
+        stderr: &mut Captured,
+        attestation: &Attestation,
+    ) -> Result<(), ContainerError> {
+        let expected = attestation.marker(self.runtime.kind);
         if !stderr.bytes.starts_with(expected.as_bytes()) {
             return Err(ContainerError::RuntimeNotAttested {
                 expected,
@@ -385,6 +505,10 @@ pub enum ContainerError {
     InspectRuntime { path: PathBuf, source: io::Error },
     RuntimeNotRegular(PathBuf),
     RuntimeNotExecutable(PathBuf),
+    RuntimeProbeSpec(SpecError),
+    SpawnRuntimeProbe(io::Error),
+    WaitRuntimeProbe(WaitError),
+    RuntimeDialectNotAttested { observed: String },
     ImageNotDigestPinned(String),
     InspectWorkspace { path: PathBuf, source: io::Error },
     WorkspaceNotDirectory(PathBuf),
@@ -392,6 +516,7 @@ pub enum ContainerError {
     ZeroOutputLimit,
     EmptyProgram,
     NulInCommand,
+    CreateAttestationChallenge(io::Error),
     Spec(SpecError),
     SpawnRuntime(io::Error),
     Wait(WaitError),
@@ -430,6 +555,28 @@ impl fmt::Display for ContainerError {
                     path.display()
                 )
             }
+            Self::RuntimeProbeSpec(source) => {
+                write!(
+                    formatter,
+                    "invalid sealed OCI runtime identity probe: {source}"
+                )
+            }
+            Self::SpawnRuntimeProbe(source) => {
+                write!(
+                    formatter,
+                    "cannot start sealed OCI runtime identity probe: {source}"
+                )
+            }
+            Self::WaitRuntimeProbe(source) => {
+                write!(
+                    formatter,
+                    "sealed OCI runtime identity probe failed: {source}"
+                )
+            }
+            Self::RuntimeDialectNotAttested { observed } => write!(
+                formatter,
+                "proof runtime did not attest a Docker or Podman interface: {observed}"
+            ),
             Self::ImageNotDigestPinned(image) => write!(
                 formatter,
                 "proof image must be an exact sha256 digest reference, not a tag: {image:?}"
@@ -456,6 +603,12 @@ impl fmt::Display for ContainerError {
             }
             Self::EmptyProgram => formatter.write_str("proof battery program must not be empty"),
             Self::NulInCommand => formatter.write_str("proof battery command must not contain NUL"),
+            Self::CreateAttestationChallenge(source) => {
+                write!(
+                    formatter,
+                    "cannot create sealed runtime challenge: {source}"
+                )
+            }
             Self::Spec(source) => write!(formatter, "invalid sealed process contract: {source}"),
             Self::SpawnRuntime(source) => {
                 write!(formatter, "cannot start sealed runtime: {source}")
@@ -478,12 +631,15 @@ impl Error for ContainerError {
         match self {
             Self::InspectRuntime { source, .. }
             | Self::InspectWorkspace { source, .. }
+            | Self::CreateAttestationChallenge(source)
+            | Self::SpawnRuntimeProbe(source)
             | Self::SpawnRuntime(source) => Some(source),
-            Self::Spec(source) => Some(source),
-            Self::Wait(source) => Some(source),
+            Self::RuntimeProbeSpec(source) | Self::Spec(source) => Some(source),
+            Self::WaitRuntimeProbe(source) | Self::Wait(source) => Some(source),
             Self::RuntimeNotAbsolute(_)
             | Self::RuntimeNotRegular(_)
             | Self::RuntimeNotExecutable(_)
+            | Self::RuntimeDialectNotAttested { .. }
             | Self::ImageNotDigestPinned(_)
             | Self::WorkspaceNotDirectory(_)
             | Self::UnrepresentableWorkspace(_)
@@ -542,14 +698,42 @@ mod tests {
 
     use sill::{Deadlines, StdinPolicy, StreamPolicy};
 
-    use super::{Container, ContainerError, Limits, OciRuntime};
+    use super::{Attestation, Container, ContainerError, Limits, OciRuntime, RuntimeKind};
+
+    const SILENT_RUNTIME: &str = r#"#!/bin/sh
+if [ "$1" = --version ]; then
+    printf 'Docker version 1.0.0, build fixture\n'
+    exit 0
+fi
+exit 0
+"#;
+    const FIXED_MARKER_RUNTIME: &str = r#"#!/bin/sh
+if [ "$1" = --version ]; then
+    printf 'Docker version 1.0.0, build fixture\n'
+    exit 0
+fi
+printf 'spice-proof-attestation-v2:docker:fixed-challenge\n' >&2
+exit 0
+"#;
+    const PODMAN_RUNTIME: &str = r#"#!/bin/sh
+if [ "$1" = --version ]; then
+    printf 'podman version 1.0.0\n'
+    exit 0
+fi
+exit 0
+"#;
 
     #[test]
     fn every_spec_disables_network_and_mounts_fresh_empty_caches() {
         let fixture = Fixture::new();
         let container = fixture.container();
+        let attestation = Attestation::fixture("fixture-challenge");
         let spec = container
-            .spec("cargo", &["test".to_owned(), "--locked".to_owned()])
+            .spec(
+                "cargo",
+                &["test".to_owned(), "--locked".to_owned()],
+                &attestation,
+            )
             .expect("sealed command");
         let arguments = spec
             .argv
@@ -594,6 +778,7 @@ mod tests {
                 super::PREFLIGHT_SCRIPT.to_owned(),
                 "spice-proof-attestation".to_owned(),
                 "docker".to_owned(),
+                "fixture-challenge".to_owned(),
                 "cargo".to_owned(),
                 "test".to_owned(),
                 "--locked".to_owned(),
@@ -611,7 +796,7 @@ mod tests {
     fn an_unpinned_image_refuses_instead_of_falling_back_to_a_tag() {
         let fixture = Fixture::new();
         let error = Container::new(
-            OciRuntime::docker(&fixture.runtime).expect("fixture runtime"),
+            OciRuntime::attest(&fixture.runtime, limits()).expect("fixture runtime"),
             "registry.example/proof:latest",
             &fixture.workspace,
             limits(),
@@ -637,17 +822,52 @@ mod tests {
     }
 
     #[test]
+    fn a_replayed_public_marker_cannot_produce_a_replay_verdict() {
+        let fixture = Fixture::with_runtime(FIXED_MARKER_RUNTIME);
+        let error = crate::replay::replay(&fixture.container())
+            .expect_err("a fixed marker cannot answer a fresh challenge");
+
+        assert_eq!(error.check(), crate::replay::CheckKind::Gate);
+        assert!(
+            error
+                .evidence()
+                .contains("did not prove its OCI isolation contract"),
+            "the refusal did not name the stale attestation: {error:?}",
+        );
+    }
+
+    #[test]
+    fn runtime_dialect_is_observed_from_the_executable() {
+        let docker = Fixture::new();
+        let podman = Fixture::with_runtime(PODMAN_RUNTIME);
+
+        assert_eq!(
+            OciRuntime::attest(&docker.runtime, limits())
+                .expect("observed Docker")
+                .kind,
+            RuntimeKind::Docker
+        );
+        assert_eq!(
+            OciRuntime::attest(&podman.runtime, limits())
+                .expect("observed Podman")
+                .kind,
+            RuntimeKind::Podman
+        );
+    }
+
+    #[test]
     fn attestation_is_required_once_and_removed_from_command_evidence() {
         let fixture = Fixture::new();
         let container = fixture.container();
+        let attestation = Attestation::fixture("fresh-challenge");
         let mut stderr = super::Captured {
-            bytes: b"spice-proof-attestation-v1:docker\ncompiler evidence".to_vec(),
+            bytes: b"spice-proof-attestation-v2:docker:fresh-challenge\ncompiler evidence".to_vec(),
             truncated: false,
             complete: true,
         };
 
         container
-            .verify_attestation(&mut stderr)
+            .verify_attestation(&mut stderr, &attestation)
             .expect("the declared dialect attests");
 
         assert_eq!(stderr.bytes, b"compiler evidence");
@@ -657,15 +877,34 @@ mod tests {
     fn attestation_must_name_the_declared_runtime_dialect() {
         let fixture = Fixture::new();
         let container = fixture.container();
+        let attestation = Attestation::fixture("fresh-challenge");
         let mut stderr = super::Captured {
-            bytes: b"spice-proof-attestation-v1:podman\n".to_vec(),
+            bytes: b"spice-proof-attestation-v2:podman:fresh-challenge\n".to_vec(),
             truncated: false,
             complete: true,
         };
 
         let error = container
-            .verify_attestation(&mut stderr)
+            .verify_attestation(&mut stderr, &attestation)
             .expect_err("a Podman attestation cannot answer for Docker");
+
+        assert!(matches!(error, ContainerError::RuntimeNotAttested { .. }));
+    }
+
+    #[test]
+    fn attestation_must_answer_the_current_execution_challenge() {
+        let fixture = Fixture::new();
+        let container = fixture.container();
+        let attestation = Attestation::fixture("fresh-challenge");
+        let mut stderr = super::Captured {
+            bytes: b"spice-proof-attestation-v2:docker:stale-challenge\n".to_vec(),
+            truncated: false,
+            complete: true,
+        };
+
+        let error = container
+            .verify_attestation(&mut stderr, &attestation)
+            .expect_err("a marker from another execution cannot be replayed");
 
         assert!(matches!(error, ContainerError::RuntimeNotAttested { .. }));
     }
@@ -691,6 +930,10 @@ mod tests {
 
     impl Fixture {
         fn new() -> Self {
+            Self::with_runtime(SILENT_RUNTIME)
+        }
+
+        fn with_runtime(script: &str) -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
             let root = std::env::temp_dir().join(format!(
                 "spice-proof-container-{}-{}",
@@ -700,7 +943,7 @@ mod tests {
             let workspace = root.join("workspace");
             let runtime = root.join("docker");
             fs::create_dir_all(&workspace).expect("fixture workspace");
-            fs::write(&runtime, "#!/bin/sh\nexit 0\n").expect("fixture runtime");
+            fs::write(&runtime, script).expect("fixture runtime");
             make_executable(&runtime);
             Self {
                 root,
@@ -710,11 +953,12 @@ mod tests {
         }
 
         fn container(&self) -> Container {
+            let limits = limits();
             Container::new(
-                OciRuntime::docker(&self.runtime).expect("fixture runtime"),
+                OciRuntime::attest(&self.runtime, limits).expect("fixture runtime"),
                 format!("registry.example/proof@sha256:{}", "4".repeat(64)),
                 &self.workspace,
-                limits(),
+                limits,
             )
             .expect("sealed fixture")
         }

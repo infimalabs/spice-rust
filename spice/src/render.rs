@@ -143,13 +143,13 @@ fn text(outcome: &Outcome<()>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, Seq};
+    use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
     use super::{Form, Stream, render};
 
     fn reply() -> Outcome<()> {
         Outcome::Reply(Reply {
-            position: ReplyPosition::Snapshot(Seq::new(7).expect("non-zero position")),
+            position: ReplyPosition::Direct {},
             body: (),
         })
     }
@@ -187,6 +187,29 @@ mod tests {
 
             assert_eq!(decoded, outcome);
         }
+    }
+
+    #[test]
+    fn a_direct_reply_has_the_same_typed_position_in_both_renderings() {
+        let outcome = reply();
+
+        let text = render(&outcome, Form::Text).expect("direct reply renders as text");
+        assert_eq!(text.stream, Stream::Out);
+        assert!(
+            text.document.is_empty(),
+            "the unit body has no prose format"
+        );
+
+        let json = render(&outcome, Form::Json).expect("direct reply renders as json");
+        let decoded: Outcome<()> =
+            wire::decode(&json.document).expect("json rendering decodes as its typed outcome");
+        assert_eq!(decoded, outcome);
+        assert!(
+            String::from_utf8(json.document)
+                .expect("wire JSON is utf8")
+                .contains("\"direct\":{}"),
+            "the JSON rendering states that the journal position is directly absent",
+        );
     }
 
     /// The form selects bytes and never a stream.

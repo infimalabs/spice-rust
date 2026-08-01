@@ -2,7 +2,11 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 #[cfg(not(target_arch = "wasm32"))]
-use std::sync::mpsc;
+use std::{
+    io::{self, Write},
+    process::ExitStatus,
+    sync::mpsc,
+};
 
 use listen::{RetroSelector, StreamOutcome, SurfaceError, Watch};
 use wire::{Fault, FaultClass, Outcome, Refusal};
@@ -18,6 +22,13 @@ const REFUSAL_EXIT: i32 = 2;
 
 fn main() {
     let matches = cli::command().get_matches();
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if let Some(command) = cli::run_command(&matches) {
+            run(command);
+        }
+    }
+
     let contract = cli::selected_contract(&matches)
         .expect("the generated parser returns only registered command leaves");
     let form = if cli::json_selected(&matches) {
@@ -66,6 +77,33 @@ fn run_retro(matches: &clap::ArgMatches, form: Form) -> ! {
     match listen::retro(".", selector) {
         Ok(outcome) => deliver_stream_once(&outcome, form),
         Err(error) => deliver_fault(surface_fault(error), form),
+    }
+}
+
+/// Emits any pending direction and hands the caller's command through.
+#[cfg(not(target_arch = "wasm32"))]
+fn run(command: Vec<OsString>) -> ! {
+    let (program, arguments) = command
+        .split_first()
+        .expect("clap requires the run command operand");
+
+    if let Some(rendering) = bootstrap_environment(steer::hook::INBOX) {
+        let mut stderr = io::stderr().lock();
+        let _ = steer::run::emit(Path::new(&rendering), &mut stderr);
+    }
+
+    match steer::run::hand(program, arguments) {
+        Ok(status) => terminate_child(status),
+        Err(error) => {
+            let mut stderr = io::stderr().lock();
+            let _ = writeln!(stderr, "spice run: {error}");
+            let code = match error.kind() {
+                io::ErrorKind::NotFound => 127,
+                io::ErrorKind::PermissionDenied => 126,
+                _ => FAULT_EXIT,
+            };
+            terminate_code(code);
+        }
     }
 }
 
@@ -193,12 +231,22 @@ fn deliver_fault(fault: Fault, form: Form) -> ! {
     deliver(&Outcome::Fault(fault), form)
 }
 
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the binary rim alone maps a successful stream to its process exit"
-)]
 fn terminate_stream() -> ! {
-    std::process::exit(REPLY_EXIT);
+    terminate_code(REPLY_EXIT);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn terminate_child(status: ExitStatus) -> ! {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+
+        if let Some(signal) = status.signal() {
+            terminate_code(128 + signal);
+        }
+    }
+
+    terminate_code(status.code().unwrap_or(FAULT_EXIT));
 }
 
 /// Renders one outcome in the selected form and exits on it.
@@ -235,12 +283,16 @@ pub fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
 
 /// Terminate the process after the command result has returned to the binary
 /// rim.
+pub fn terminate<B>(outcome: &Outcome<B>) -> ! {
+    terminate_code(exit_status(outcome));
+}
+
 #[expect(
     clippy::disallowed_methods,
-    reason = "the binary rim alone maps typed outcomes to process exits"
+    reason = "the binary rim alone terminates the process"
 )]
-pub fn terminate<B>(outcome: &Outcome<B>) -> ! {
-    std::process::exit(exit_status(outcome));
+fn terminate_code(code: i32) -> ! {
+    std::process::exit(code);
 }
 
 const fn exit_status<B>(outcome: &Outcome<B>) -> i32 {
@@ -253,14 +305,14 @@ const fn exit_status<B>(outcome: &Outcome<B>) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, Seq};
+    use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
     use super::render::{self, Stream};
     use super::{FAULT_EXIT, REFUSAL_EXIT, REPLY_EXIT, exit_status};
 
     fn reply() -> Outcome<()> {
         Outcome::Reply(Reply {
-            position: ReplyPosition::Snapshot(Seq::new(1).expect("non-zero position")),
+            position: ReplyPosition::Direct {},
             body: (),
         })
     }

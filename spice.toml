@@ -74,3 +74,27 @@ project_max_depth = 3
 # geometry back: the hooks directory it sources its static stage from, the
 # rendered direction it writes to stderr, and the lane a shell is bound to.
 env_names = ["SPICE_HOOKS", "SPICE_INBOX", "SPICE_LANE", "SPICE_PROOF"]
+
+[taste.polling]
+words = ["delay*", "poll*", "sleep*", "slept"]
+message = "Respond to the real event, signal, or completion notification through a blocking call, watcher, or callback, or restructure the flow so nothing remains to await."
+
+[taste.fallbacks]
+words = ["fall back", "fall backs", "fallback*", "falls back"]
+message = "Keep one deterministic path and let violated assumptions refuse immediately. Add a default or resolver order only when the contract names it."
+
+[taste.compatibility]
+words = ["compatib*"]
+message = "Keep one tested, visible current path. Migrate retained data forward once or refuse naming its owning release; never accumulate release-specific execution arms."
+
+[taste.shims]
+words = ["shim", "shimmed", "shimming", "shims"]
+message = "Replace the old shape outright, delete it, and route every caller to the current interface."
+
+[taste.aliases]
+words = ["alias*"]
+message = "Rename in place, update every reference in one change, and leave exactly one name."
+
+[taste.legacy]
+words = ["legac*"]
+message = "Treat old implementations as evidence, never as executable arms. Migrate retained data forward once or refuse naming its owning release."
