@@ -1,4 +1,7 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use rusqlite::{Connection, params};
 use serde_json::json;
@@ -11,6 +14,8 @@ use wire::{
 };
 
 use crate::{Journal, MigrationError, OpenError, SCHEMA_VERSION, ViolationClass};
+
+static NEXT_SCHEMA_PROBE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn empty_database_reaches_the_same_finalized_baseline_once() {
@@ -135,6 +140,89 @@ fn malformed_schema_identity_is_refused_by_name() {
             .to_string()
             .contains("row names version 1, but SQLite user_version names 0")
     );
+}
+
+#[test]
+fn schema_probe_reads_finalized_identity_without_changing_the_store() {
+    let scratch = SchemaScratch::new();
+    let path = scratch.path().join("authority.db");
+    drop(Journal::open(&path).expect("create finalized authority"));
+    let before = directory_bytes(scratch.path());
+
+    assert_eq!(
+        Journal::inspect_schema(&path).expect("inspect finalized authority"),
+        SCHEMA_VERSION
+    );
+    assert_eq!(directory_bytes(scratch.path()), before);
+}
+
+#[test]
+fn schema_probe_refuses_unfinalized_and_forward_state_without_changing_the_store() {
+    for (name, version, state, from, to, digest, expected) in [
+        (
+            "prepared",
+            1,
+            "prepared",
+            Some(0),
+            Some(1),
+            Some("plan:baseline"),
+            MigrationError::Unfinalized {
+                from: Some(0),
+                to: Some(1),
+            },
+        ),
+        (
+            "forward",
+            2,
+            "finalized",
+            None,
+            None,
+            None,
+            MigrationError::ForwardSchema {
+                found: 2,
+                current: SCHEMA_VERSION,
+            },
+        ),
+    ] {
+        let scratch = SchemaScratch::new();
+        let path = scratch.path().join(format!("{name}.db"));
+        drop(schema_file_fixture(&path, version, state, from, to, digest));
+        let before = directory_bytes(scratch.path());
+
+        let error = Journal::inspect_schema(&path).expect_err("schema state refuses");
+        assert!(
+            matches!(error, OpenError::Migration(ref found) if *found == expected),
+            "unexpected schema refusal: {error}"
+        );
+        assert_eq!(directory_bytes(scratch.path()), before);
+    }
+}
+
+#[test]
+fn schema_probe_distinguishes_absence_from_sqlite_corruption_and_creates_nothing() {
+    let scratch = SchemaScratch::new();
+    let missing = scratch.path().join("missing.db");
+
+    let error = Journal::inspect_schema(&missing).expect_err("missing authority refuses");
+    assert!(matches!(error, OpenError::Open { ref path, .. } if path == &missing));
+    assert!(directory_bytes(scratch.path()).is_empty());
+
+    let empty = scratch.path().join("empty.db");
+    drop(Connection::open(&empty).expect("create empty SQLite fixture"));
+    let before = directory_bytes(scratch.path());
+    let error = Journal::inspect_schema(&empty).expect_err("missing schema identity refuses");
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::MissingSchema)
+    ));
+    assert_eq!(directory_bytes(scratch.path()), before);
+
+    let malformed = scratch.path().join("malformed.db");
+    fs::write(&malformed, b"not a SQLite authority").expect("write malformed fixture");
+    let before = directory_bytes(scratch.path());
+    let error = Journal::inspect_schema(&malformed).expect_err("malformed SQLite refuses");
+    assert!(matches!(error, OpenError::Sqlite(_)));
+    assert_eq!(directory_bytes(scratch.path()), before);
 }
 
 #[test]
@@ -690,6 +778,67 @@ fn schema_fixture(
         .pragma_update(None, "user_version", version)
         .expect("set fixture version");
     connection
+}
+
+fn schema_file_fixture(
+    path: &Path,
+    version: u32,
+    state: &str,
+    from: Option<u32>,
+    to: Option<u32>,
+    digest: Option<&str>,
+) -> Connection {
+    let connection = Connection::open(path).expect("open schema file fixture");
+    connection.execute_batch(
+        "CREATE TABLE journal_schema(singleton INTEGER PRIMARY KEY, version INTEGER NOT NULL, state TEXT NOT NULL, from_version INTEGER, to_version INTEGER, plan_digest TEXT);",
+    ).expect("create schema file fixture");
+    connection.execute(
+        "INSERT INTO journal_schema(singleton, version, state, from_version, to_version, plan_digest) VALUES (1, ?1, ?2, ?3, ?4, ?5)",
+        params![version, state, from, to, digest],
+    ).expect("insert schema file fixture");
+    connection
+        .pragma_update(None, "user_version", version)
+        .expect("set fixture version");
+    connection
+}
+
+fn directory_bytes(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    fs::read_dir(root)
+        .expect("read schema scratch")
+        .map(|entry| {
+            let path = entry.expect("read schema scratch entry").path();
+            let relative = path
+                .strip_prefix(root)
+                .expect("entry stays below scratch")
+                .to_path_buf();
+            let bytes = fs::read(&path).expect("read schema scratch file");
+            (relative, bytes)
+        })
+        .collect()
+}
+
+struct SchemaScratch(PathBuf);
+
+impl SchemaScratch {
+    fn new() -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "spice-journal-schema-probe-{}-{}",
+            std::process::id(),
+            NEXT_SCHEMA_PROBE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&path).expect("create schema scratch");
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for SchemaScratch {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.0).expect("remove schema scratch");
+    }
 }
 
 fn authority_tables(journal: &Journal) -> BTreeSet<String> {
