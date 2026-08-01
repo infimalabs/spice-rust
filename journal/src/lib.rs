@@ -4,8 +4,6 @@
 pub const SCHEMA_VERSION: u32 = 1;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub mod bundle;
-#[cfg(not(target_arch = "wasm32"))]
 mod guard;
 #[cfg(not(target_arch = "wasm32"))]
 mod migrate;
@@ -13,6 +11,8 @@ mod migrate;
 mod read;
 #[cfg(not(target_arch = "wasm32"))]
 mod replay;
+#[cfg(not(target_arch = "wasm32"))]
+mod restore;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use guard::{
@@ -25,6 +25,8 @@ pub use migrate::{Migration, MigrationError, OpenError};
 pub use read::{FactSnapshot, SnapshotError};
 #[cfg(not(target_arch = "wasm32"))]
 pub use replay::{Verification, VerifyError, Violation, ViolationClass};
+#[cfg(not(target_arch = "wasm32"))]
+pub use restore::{BackupVerifyError, verify_restore_bundle};
 
 /// Current crossing types used to prepare journal work without depending on
 /// the journal's storage implementation.
@@ -129,6 +131,24 @@ impl JournalReader {
                 path: path.to_path_buf(),
                 source,
             })?;
+        Self::from_connection(connection)
+    }
+
+    /// Admits one exact captured SQLite generation without reopening its path.
+    pub(crate) fn from_serialized(bytes: &[u8]) -> Result<Self, OpenError> {
+        let mut connection = Connection::open_in_memory().map_err(OpenError::Sqlite)?;
+        connection
+            .deserialize_read_exact(
+                rusqlite::MAIN_DB,
+                std::io::Cursor::new(bytes),
+                bytes.len(),
+                true,
+            )
+            .map_err(OpenError::Sqlite)?;
+        Self::from_connection(connection)
+    }
+
+    fn from_connection(connection: Connection) -> Result<Self, OpenError> {
         connection
             .pragma_update(None, "query_only", true)
             .map_err(OpenError::Sqlite)?;

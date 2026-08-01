@@ -7,15 +7,48 @@ use serde::de::{Deserializer, Error as _};
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 
-use crate::Digest;
+use crate::{Digest, WireVersion};
 
 const OCI_SHA256_HEX_LEN: usize = 64;
+
+/// The sole current journal backup bundle schema.
+pub const JOURNAL_BACKUP_VERSION: u16 = 1;
+
+/// One regular file authenticated by a journal backup manifest.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct JournalBackupMember {
+    /// Canonical slash-separated path relative to the bundle root.
+    pub path: String,
+    /// POSIX permission bits, masked to `0o7777`.
+    pub mode: u32,
+    /// Exact byte length of the member.
+    pub bytes: u64,
+    /// Domain-separated identity of the member bytes.
+    pub digest: Digest,
+}
+
+/// Complete immutable inventory for one journal backup bundle.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct JournalBackupManifest {
+    /// Current bundle schema.
+    pub version: u16,
+    /// Current crossing schema required to interpret the authority.
+    pub wire: WireVersion,
+    /// Finalized journal schema carried by the authority member.
+    pub journal_schema: u32,
+    /// Member path containing the SQLite authority.
+    pub authority: String,
+    /// Every regular file other than this manifest, ordered by path.
+    pub members: Vec<JournalBackupMember>,
+}
 
 /// The sole current detached proof receipt schema.
 pub const PROOF_RECEIPT_VERSION: u16 = 2;
 /// The sole current target payload schema.
 pub const TARGET_PAYLOAD_VERSION: u16 = 1;
-/// The sole current sealed release manifest schema.
+/// The sole current multi-target release manifest schema.
 pub const RELEASE_MANIFEST_VERSION: u16 = 1;
 
 /// An OCI image identity that is pinned by one canonical SHA-256 digest.
@@ -202,9 +235,6 @@ pub enum ReleaseTarget {
 }
 
 impl ReleaseTarget {
-    /// Every supported release tuple in canonical manifest order.
-    pub const ALL: [Self; 2] = [Self::Aarch64AppleDarwin, Self::X86_64UnknownLinuxMusl];
-
     /// The canonical Rust target-triple spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -248,6 +278,7 @@ pub struct InventoryEntry {
 pub struct TargetPayload {
     pub version: u16,
     pub target: ReleaseTarget,
+    /// Domain-separated identity of the immutable Git commit built.
     pub source: Digest,
     pub app: Digest,
     pub embedded_app: Digest,
@@ -288,26 +319,34 @@ pub struct ProofReceipt {
     pub standing: ProofStanding,
 }
 
-/// One release target payload bound to its detached clean proof receipt.
+/// One proof-admitted target in the complete release manifest.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct SealedTarget {
+pub struct ReleaseManifestTarget {
+    /// Release tuple carried by both the payload and receipt.
     pub target: ReleaseTarget,
-    pub payload: TargetPayload,
-    pub payload_digest: Digest,
-    pub receipt: ProofReceipt,
-    pub receipt_digest: Digest,
+    /// Canonical receipt-free target-payload identity.
+    pub payload: Digest,
+    /// Canonical detached proof-receipt identity.
+    pub receipt: Digest,
+    /// Current generated proof battery identity.
+    pub battery: Digest,
+    /// Complete replay-result identity.
+    pub replay: Digest,
+    /// Exact sealed environment that executed the replay.
+    pub environment: ProofEnvironment,
+    /// Explicit clean standing verified before this entry was constructed.
+    pub standing: ProofStanding,
 }
 
-/// The canonical post-proof release object consumed by publication and notes.
+/// The canonical complete release assembled from both supported targets.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleaseManifest {
+    /// Current release-manifest schema.
     pub version: u16,
-    pub release: String,
-    pub git_from: String,
-    pub git_to: String,
-    pub previous_journal_schema: u32,
-    pub journal_schema: u32,
-    pub targets: Vec<SealedTarget>,
+    /// One exact source identity shared by every target payload.
+    pub source: Digest,
+    /// Both supported targets in [`ReleaseTarget`] declaration order.
+    pub targets: Vec<ReleaseManifestTarget>,
 }

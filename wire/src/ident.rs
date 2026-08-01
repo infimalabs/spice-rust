@@ -71,25 +71,29 @@ pub enum Domain {
     BoardDocument,
     /// One complete machine-local configuration document.
     ConfigLocal,
-    /// One file installed by a repository-local installation plan.
-    InstallArtifact,
-    /// The complete ordered repository installation plan.
-    InstallPlan,
-    /// The durable record needed to reverse one applied installation.
-    InstallRecord,
-    /// One exact file enumerated by a restore bundle manifest.
-    RestoreBundleFile,
-    /// The canonical manifest identifying one restore bundle.
-    RestoreBundleManifest,
+    /// The canonical inventory document for one journal backup bundle.
+    JournalBackupManifest,
+    /// The exact bytes of one member in a journal backup bundle.
+    JournalBackupMember,
     /// The payload manifest of one release target.
     DistTargetPayload,
     /// The bytes of one staged artifact.
     DistArtifact,
+    /// The repository identity used to qualify installation artifacts.
+    InstallRepository,
+    /// The bytes of one file selected by an installation plan.
+    InstallArtifact,
+    /// The complete observed installation plan.
+    InstallPlan,
+    /// The durable record needed to reverse one applied installation.
+    InstallRecord,
     /// The build pin set a staging run resolved.
     DistPins,
     /// The inventory of what a staging run published.
     DistInventory,
-    /// The canonical two-target release manifest with detached receipts.
+    /// The immutable Git commit selected as one release build source.
+    DistSourceCommit,
+    /// The complete two-target release manifest admitted after proof.
     DistReleaseManifest,
     /// The ordered command inventory one sealed proof replay consumes.
     ProofBattery,
@@ -132,15 +136,17 @@ impl Domain {
         match self {
             Self::BoardDocument => "spice.board.document.v1",
             Self::ConfigLocal => "spice.config.local.v1",
+            Self::JournalBackupManifest => "spice.journal.backup-manifest.v1",
+            Self::JournalBackupMember => "spice.journal.backup-member.v1",
+            Self::DistTargetPayload => "spice.dist.target-payload.v1",
+            Self::DistArtifact => "spice.dist.artifact.v1",
+            Self::InstallRepository => "spice.install.repository.v1",
             Self::InstallArtifact => "spice.install.artifact.v1",
             Self::InstallPlan => "spice.install.plan.v1",
             Self::InstallRecord => "spice.install.record.v1",
-            Self::RestoreBundleFile => "spice.restore.bundle-file.v1",
-            Self::RestoreBundleManifest => "spice.restore.bundle-manifest.v1",
-            Self::DistTargetPayload => "spice.dist.target-payload.v1",
-            Self::DistArtifact => "spice.dist.artifact.v1",
             Self::DistPins => "spice.dist.pins.v1",
             Self::DistInventory => "spice.dist.inventory.v1",
+            Self::DistSourceCommit => "spice.dist.source-commit.v1",
             Self::DistReleaseManifest => "spice.dist.release-manifest.v1",
             Self::ProofBattery => "spice.proof.battery.v1",
             Self::ProofReplayV2 => "spice.proof.replay.v2",

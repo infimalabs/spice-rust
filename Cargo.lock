@@ -267,8 +267,10 @@ dependencies = [
  "fold",
  "journal",
  "serde",
+ "serde_json",
  "tokio",
  "toml",
+ "tungstenite",
  "wire",
 ]
 
@@ -457,6 +459,7 @@ name = "dist"
 version = "0.0.0"
 dependencies = [
  "atomic",
+ "gix",
  "serde",
  "serde_json",
  "sill",
@@ -1538,6 +1541,7 @@ name = "journal"
 version = "0.0.0"
 dependencies = [
  "atomic",
+ "libc",
  "rusqlite",
  "serde",
  "serde_json",

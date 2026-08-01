@@ -14,7 +14,9 @@ impl LockName {
         let name = name.into();
         if name.is_empty()
             || matches!(name.as_str(), "." | "..")
-            || name.bytes().any(|byte| matches!(byte, b'/' | b'\0'))
+            || name
+                .chars()
+                .any(|character| character == '/' || character == '\\' || character == '\0')
         {
             return Err(LockNameError);
         }
@@ -221,7 +223,15 @@ pub(crate) mod tests {
 
     #[test]
     fn lock_names_cannot_escape_the_fixed_topology() {
-        for name in ["", ".", "..", "../outside", "with/slash", "nul\0byte"] {
+        for name in [
+            "",
+            ".",
+            "..",
+            "../outside",
+            "with/slash",
+            "with\\backslash",
+            "nul\0byte",
+        ] {
             assert!(LockName::new(name).is_err(), "{name:?} must be refused");
         }
         for name in ["worker", "a.b", "two-words", "UPPER", "9"] {

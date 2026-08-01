@@ -360,6 +360,7 @@ fn build_write(request: FreeRequest, observed: Observation) -> Result<JournalWri
             Command {
                 v: WireVersion::CURRENT,
                 id: request.command,
+                epoch: request.epoch,
                 kind: CommandKind::ClaimFree,
                 expected: witnesses(&request, &observed),
                 body: request.intent,

@@ -28,6 +28,7 @@ struct DoneBody {
 const COMMAND: &str = r#"{
   "v": 1,
   "id": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+  "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
   "kind": "task::done",
   "expected": [
     { "kind": "task", "task": "SPICE-aBcD", "head": 48168 },

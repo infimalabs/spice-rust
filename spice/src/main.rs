@@ -55,16 +55,6 @@ fn main() {
         Form::Text
     };
     let leaf = cli::selected_matches(&matches);
-    #[cfg(not(target_arch = "wasm32"))]
-    if contract.path == ["lock", "run"] {
-        match lock_command::run(leaf) {
-            lock_command::RunOutcome::Child(status) => terminate_child(status),
-            lock_command::RunOutcome::Outcome(outcome) => deliver(&outcome, form),
-            lock_command::RunOutcome::Contended { outcome, code } => {
-                deliver_with_code(&outcome, form, code)
-            }
-        }
-    }
     match contract.path {
         ["watch"] => run_watch(leaf, form),
         ["retro"] => run_retro(leaf, form),
@@ -83,9 +73,16 @@ fn main() {
         ["install"] => deliver(&install_command::run(leaf), form),
         ["config"] => deliver_config(&config_command::run(leaf), form),
         ["lock"] => deliver(&lock_command::status(), form),
-        ["release", "notes"] => deliver_release(&release_command::notes(), form),
-        ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
+        ["lock", "run"] => match lock_command::run(leaf) {
+            lock_command::RunOutcome::Child(status) => terminate_child(status),
+            lock_command::RunOutcome::Outcome(outcome) => deliver(&outcome, form),
+            lock_command::RunOutcome::Contended { outcome, code } => {
+                deliver_with_code(&outcome, form, code)
+            }
+        },
         ["version"] => deliver(&version_outcome(), form),
+        ["release", "notes"] => deliver(&release_command::notes(leaf), form),
+        ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
         _ => {}
     }
     #[cfg(target_arch = "wasm32")]
@@ -95,6 +92,17 @@ fn main() {
                 class: FaultClass::Environment,
                 reason: "gate::target-unsupported".to_owned(),
                 detail: "immutable Git tree selection is unavailable on wasm32".to_owned(),
+            },
+            form,
+        );
+    }
+    #[cfg(target_arch = "wasm32")]
+    if contract.path == ["release", "notes"] {
+        deliver_fault(
+            Fault {
+                class: FaultClass::Environment,
+                reason: "release::target-unsupported".to_owned(),
+                detail: "immutable Git object inspection is unavailable on wasm32".to_owned(),
             },
             form,
         );
@@ -111,14 +119,40 @@ fn main() {
 }
 
 fn not_landed(contract: &cli::Contract) -> Outcome<()> {
+    let task = match cli::landing(contract.path) {
+        cli::Landing::Gap(task) => task,
+        cli::Landing::Landed => {
+            return Outcome::Fault(Fault {
+                class: FaultClass::Protocol,
+                reason: "release::dispatch-gap".to_owned(),
+                detail: format!(
+                    concat!(
+                        "registered landed command reached the terminal ",
+                        "release branch: {}"
+                    ),
+                    contract.path.join(" ")
+                ),
+            });
+        }
+        cli::Landing::Unaccounted => {
+            return Outcome::Fault(Fault {
+                class: FaultClass::Protocol,
+                reason: "release::succession-unaccounted".to_owned(),
+                detail: format!(
+                    "registered command has no succession disposition: {}",
+                    contract.path.join(" ")
+                ),
+            });
+        }
+    };
     Outcome::Refusal(Refusal {
         reason: "release::not-landed".to_owned(),
         witness: None,
         expected: None,
         observed: Some(contract.path.join(" ")),
         remedy: format!(
-            "finish the {} battery before Rust release one admits this leaf",
-            contract.battery
+            "complete {task} ({}) before Rust release one admits this leaf",
+            contract.battery,
         ),
     })
 }
@@ -454,6 +488,41 @@ fn deliver<B: serde::Serialize>(outcome: &Outcome<B>, form: Form) -> ! {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn deliver_with_code<B: serde::Serialize>(outcome: &Outcome<B>, form: Form, code: i32) -> ! {
+    match render::render(outcome, form) {
+        Ok(rendering) => {
+            rendering.speak();
+            terminate_code(code);
+        }
+        Err(error) => {
+            let fault: Outcome<()> = Outcome::Fault(render_fault(error));
+            render::render(&fault, Form::Text)
+                .expect("the text rendering of a fault encodes nothing")
+                .speak();
+            terminate(&fault);
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn deliver_config(outcome: &Outcome<config_command::ConfigReport>, form: Form) -> ! {
+    if form == Form::Text
+        && let Outcome::Reply(reply) = outcome
+    {
+        match reply.body.text() {
+            Ok(document) => {
+                let mut stdout = io::stdout().lock();
+                let _ = stdout.write_all(&document);
+                let _ = stdout.flush();
+                terminate_code(REPLY_EXIT);
+            }
+            Err(error) => deliver_fault(render_fault(error.to_string()), Form::Text),
+        }
+    }
+    deliver(outcome, form)
+}
+
 /// Acquire one ambient bootstrap value before typed configuration crosses
 /// into the library graph.
 #[expect(
@@ -496,48 +565,6 @@ pub fn terminate<B>(outcome: &Outcome<B>) -> ! {
 )]
 fn terminate_code(code: i32) -> ! {
     std::process::exit(code);
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn deliver_with_code<B: serde::Serialize>(outcome: &Outcome<B>, form: Form, code: i32) -> ! {
-    match render::render(outcome, form) {
-        Ok(rendering) => {
-            rendering.speak();
-            terminate_code(code);
-        }
-        Err(error) => deliver_fault(render_fault(error), Form::Text),
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn deliver_config(outcome: &Outcome<config_command::ConfigReport>, form: Form) -> ! {
-    if form == Form::Text
-        && let Outcome::Reply(reply) = outcome
-    {
-        match reply.body.text() {
-            Ok(document) => {
-                let mut stdout = io::stdout().lock();
-                let _ = stdout.write_all(&document);
-                let _ = stdout.flush();
-                terminate_code(REPLY_EXIT);
-            }
-            Err(error) => deliver_fault(render_fault(error.to_string()), Form::Text),
-        }
-    }
-    deliver(outcome, form)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn deliver_release(outcome: &Outcome<dist::ReleaseNotes>, form: Form) -> ! {
-    if form == Form::Text
-        && let Outcome::Reply(reply) = outcome
-    {
-        let mut stdout = io::stdout().lock();
-        let _ = stdout.write_all(reply.body.markdown().as_bytes());
-        let _ = stdout.flush();
-        terminate_code(REPLY_EXIT);
-    }
-    deliver(outcome, form)
 }
 
 const fn exit_status<B>(outcome: &Outcome<B>) -> i32 {

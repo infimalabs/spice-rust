@@ -102,6 +102,63 @@ fn generated_tree_and_contract_rows_are_bijective() {
 }
 
 #[test]
+fn every_contract_has_an_executable_succession_disposition() {
+    assert_eq!(contracts().len(), 63);
+
+    let unaccounted = contracts()
+        .iter()
+        .filter(|contract| landing(contract.path) == Landing::Unaccounted)
+        .map(|contract| contract.path.join(" "))
+        .collect::<Vec<_>>();
+    assert_eq!(unaccounted, Vec::<String>::new());
+
+    let landed = contracts()
+        .iter()
+        .filter(|contract| landing(contract.path) == Landing::Landed)
+        .count();
+    assert_eq!(landed, 19);
+    assert_eq!(landing(&["install"]), Landing::Landed);
+    assert_eq!(landing(&["lock"]), Landing::Landed);
+    assert_eq!(landing(&["lock", "run"]), Landing::Landed);
+    assert_eq!(landing(&["restore", "verify"]), Landing::Landed);
+
+    let owning_tasks = contracts()
+        .iter()
+        .filter_map(|contract| match landing(contract.path) {
+            Landing::Gap(task) => Some(task),
+            Landing::Landed | Landing::Unaccounted => None,
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        owning_tasks,
+        BTreeSet::from([
+            "BOARD-1kJQlDDt",
+            "COORDIN-1kJQlDjc",
+            "JOURNAL-1kJQlFfS",
+            "POLICY-1kJQlFB6",
+            "PUBLISH-1kJQlGb0",
+        ])
+    );
+
+    let (rust_ledger, _) = include_str!("../../../PORTING.md")
+        .split_once("## Installed Python paths")
+        .expect("the ledger separates Rust and Python inventories");
+    for contract in contracts() {
+        let path = format!("`{}`", contract.path.join(" "));
+        assert!(
+            rust_ledger.contains(&path),
+            "Rust succession ledger omitted {path}"
+        );
+    }
+    for task in owning_tasks {
+        assert!(
+            rust_ledger.contains(&format!("`{task}`")),
+            "Rust succession ledger omitted task {task}"
+        );
+    }
+}
+
+#[test]
 fn closure_check_names_both_directions_of_drift() {
     let parser_with_orphan = command().subcommand(Command::new("orphan"));
     let missing_contract = closure_gaps(&parser_with_orphan, CONTRACTS);

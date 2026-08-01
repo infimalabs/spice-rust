@@ -124,6 +124,18 @@ pub(crate) struct Contract {
     pub(crate) battery: &'static str,
 }
 
+/// Whether one registered leaf has executable Rust dispatch today.
+///
+/// A gap names the public task that owns it. `Unaccounted` exists so a newly
+/// registered leaf fails the succession check instead of quietly joining the
+/// terminal release refusal.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Landing {
+    Landed,
+    Gap(&'static str),
+    Unaccounted,
+}
+
 macro_rules! row {
     (
         [$($path:literal),+], $syntax:literal, $principal:ident, $journal:ident,
@@ -306,7 +318,7 @@ const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["release", "notes"],
-        "release notes",
+        "release notes RANGE MANIFEST",
         Local,
         None,
         [],
@@ -812,6 +824,80 @@ pub(crate) const fn contracts() -> &'static [Contract] {
     CONTRACTS
 }
 
+/// Classify executable succession independently from parser registration.
+///
+/// This second closed table is intentional: adding a command contract does
+/// not make its implementation real. The closure test requires every current
+/// leaf to appear here, while the binary terminal branch uses the same
+/// classification to distinguish tracked work from a dispatch defect.
+pub(crate) fn landing(path: &[&str]) -> Landing {
+    match path {
+        ["watch"]
+        | ["retro"]
+        | ["doctor"]
+        | ["version"]
+        | ["gate"]
+        | ["gate", "camp"]
+        | ["gate", "kill"]
+        | ["gate", "receipt"]
+        | ["install"]
+        | ["lock"]
+        | ["lock", "run"]
+        | ["proof"]
+        | ["proof", "replay"]
+        | ["release", "notes"]
+        | ["up"]
+        | ["down"]
+        | ["run"]
+        | ["config"]
+        | ["restore", "verify"] => Landing::Landed,
+        ["board"]
+        | ["board", "graph"]
+        | ["board", "handout"]
+        | ["task", "next"]
+        | ["task", "add"]
+        | ["task", "done"]
+        | ["task", "review"]
+        | ["task", "note"]
+        | ["task", "defer"]
+        | ["task", "wake"]
+        | ["task", "free"]
+        | ["task", "oops"]
+        | ["task", "depends"]
+        | ["doc"]
+        | ["doc", "ledger"] => Landing::Gap("BOARD-1kJQlDDt"),
+        ["lane"]
+        | ["lane", "add"]
+        | ["lane", "drain"]
+        | ["lane", "wake"]
+        | ["steer"]
+        | ["steer", "cancel"]
+        | ["inbox"]
+        | ["recall"]
+        | ["ack"] => Landing::Gap("COORDIN-1kJQlDjc"),
+        ["consent"]
+        | ["consent", "allow"]
+        | ["consent", "deny"]
+        | ["consent", "policy"]
+        | ["taste"]
+        | ["taste", "add"]
+        | ["taste", "drop"]
+        | ["trust"]
+        | ["trust", "grant"]
+        | ["trust", "revoke"] => Landing::Gap("POLICY-1kJQlFB6"),
+        ["backup"]
+        | ["restore"]
+        | ["journal"]
+        | ["journal", "replay"]
+        | ["journal", "reindex"]
+        | ["journal", "verify"]
+        | ["fold"]
+        | ["thread"] => Landing::Gap("JOURNAL-1kJQlFfS"),
+        ["canvas"] | ["release", "publish"] => Landing::Gap("PUBLISH-1kJQlGb0"),
+        _ => Landing::Unaccounted,
+    }
+}
+
 /// Build the one parser and help tree from [`CONTRACTS`].
 pub(crate) fn command() -> Command {
     command_from(contracts())
@@ -849,6 +935,9 @@ fn branch(contracts: &[Contract], name: &'static str, path: &[&'static str]) -> 
         command = register_syntax(command, contract).unwrap_or_else(|error| {
             panic!("invalid CLI contract syntax {:?}: {error}", contract.path)
         });
+        if !children.is_empty() {
+            command = command.subcommand_negates_reqs(true);
+        }
     } else {
         command = command
             .subcommand_required(true)
