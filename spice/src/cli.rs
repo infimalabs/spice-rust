@@ -847,7 +847,8 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["up"]
         | ["down"]
         | ["run"]
-        | ["config"] => Landing::Landed,
+        | ["config"]
+        | ["release", "publish"] => Landing::Landed,
         ["install"] | ["restore", "verify"] | ["release", "notes"] => {
             Landing::Gap("LOCAL-1kJQlG6b")
         }
@@ -893,7 +894,7 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["journal", "verify"]
         | ["fold"]
         | ["thread"] => Landing::Gap("JOURNAL-1kJQlFfS"),
-        ["canvas"] | ["release", "publish"] => Landing::Gap("PUBLISH-1kJQlGb0"),
+        ["canvas"] => Landing::Gap("PUBLISH-1kJQlGb0"),
         _ => Landing::Unaccounted,
     }
 }

@@ -637,6 +637,7 @@ fn the_grant_pane_presents_exactly_the_commands_wire_gives_operator_authority() 
             CommandKind::ConsentDecide,
             CommandKind::TrustGrant,
             CommandKind::TrustRevoke,
+            CommandKind::ReleasePublish,
             CommandKind::UpChange,
         ])
     );
@@ -659,8 +660,8 @@ fn every_command_states_an_authority_and_most_need_no_operator() {
         }
     }
 
-    assert_eq!(operator, 5);
-    assert_eq!(connected, 28);
+    assert_eq!(operator, 6);
+    assert_eq!(connected, 27);
     assert_eq!(
         CommandKind::ALL.len(),
         33,

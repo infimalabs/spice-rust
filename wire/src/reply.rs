@@ -198,6 +198,20 @@ pub struct ProofEvidence {
     pub replay: Digest,
 }
 
+/// One operator-previewed publication of a complete sealed release.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleasePlan {
+    /// Digest the apply command must re-present.
+    pub key: Digest,
+    /// Canonical identity of the sealed two-target manifest.
+    pub manifest: Digest,
+    /// Source identity shared by both target payloads.
+    pub source: Digest,
+    /// Exact target payload and detached-receipt identities to publish.
+    pub targets: Vec<crate::body::PublishedTarget>,
+}
+
 /// An answer about an event that did not occur.
 ///
 /// A refusal is never a fact. It causes no journal or head mutation; the bus

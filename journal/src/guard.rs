@@ -65,6 +65,11 @@ impl<'a> JournalRead<'a> {
         let cursor = visible_cursor(connection)?;
         Ok(Self { connection, cursor })
     }
+
+    /// Read the canonical stream inside this guard's immutable transaction.
+    pub fn fact_snapshot(&self) -> Result<crate::FactSnapshot, crate::SnapshotError> {
+        crate::read::read_snapshot(self.connection)
+    }
 }
 
 /// One authoritative head body and the fact position that established it.
