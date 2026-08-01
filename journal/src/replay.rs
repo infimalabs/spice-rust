@@ -222,16 +222,13 @@ struct FactRow {
 
 fn verify_fact_row(row: &FactRow, violations: &mut Vec<Violation>) {
     let subject = row.seq.to_string();
-    let envelope = match decode_canonical::<wire::Envelope<serde_json::Value>>(&row.envelope) {
+    let envelope = match decode_canonical::<wire::Envelope<wire::AnyFact>>(&row.envelope) {
         Ok(envelope) => envelope,
         Err(detail) => {
             violations.push(Violation::new(ViolationClass::Envelope, subject, detail));
             return;
         }
     };
-    let kind = serde_json::from_slice::<serde_json::Value>(&row.envelope)
-        .ok()
-        .and_then(|value| value["fact"]["kind"].as_str().map(str::to_owned));
     let cause = row.cause.and_then(|cause| u64::try_from(cause).ok());
     let agreed = envelope.seq.get() == u64::try_from(row.seq).unwrap_or_default()
         && i64::from(envelope.v.0) == row.version
@@ -239,7 +236,7 @@ fn verify_fact_row(row: &FactRow, violations: &mut Vec<Violation>) {
         && envelope.actor.to_string() == row.actor
         && envelope.origin.as_str() == row.origin
         && envelope.cause.map(wire::Seq::get) == cause
-        && kind.as_deref() == Some(row.kind.as_str());
+        && envelope.fact.kind().as_str() == row.kind;
     if !envelope.v.is_current() || !agreed {
         violations.push(Violation::new(
             ViolationClass::Envelope,
@@ -401,7 +398,7 @@ fn verify_heads(
         connection,
         "lease_heads",
         violations,
-        |_key, _seq, _head| Ok(()),
+        |_key, _seq, head| lease_agrees(head),
     )?;
     count += verify_keyed_heads::<wire::WitnessHead>(
         connection,
@@ -483,6 +480,29 @@ where
         }
     }
     Ok(count)
+}
+
+/// A lease's four instants are one ordered life, and that order is the
+/// agreement this row owes.
+///
+/// Every other head table proves agreement against its key: a task head names
+/// its own handle, a witness head names its own fact. A lease head carries
+/// neither, so checking it against the row would only compare the row to
+/// itself. What it does carry is the order its own fields declare: possession
+/// begins, is renewed, expires at the instant the latest renewal bought, and is
+/// never renewed past the maximum. A lease outside that order is not one this
+/// build could have written, whichever column it sits under.
+fn lease_agrees(head: &wire::LeaseHead) -> Result<(), String> {
+    if head.renewal < head.start {
+        return Err("lease renewal precedes the start of possession".to_owned());
+    }
+    if head.expiry < head.renewal {
+        return Err("lease expiry precedes its most recent renewal".to_owned());
+    }
+    if head.maximum < head.expiry {
+        return Err("lease expiry passes the maximum renewal may not extend beyond".to_owned());
+    }
+    Ok(())
 }
 
 fn head_key(table: &str) -> &'static str {

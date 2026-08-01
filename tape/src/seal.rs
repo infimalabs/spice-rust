@@ -97,11 +97,25 @@ impl Index {
 
     /// Parse an index, refusing anything that is not the current form.
     ///
+    /// This admits exactly what [`Index::render`] emits. The index is the map
+    /// from a locus to the bytes it names, so a reading that is not the one
+    /// writing produced is a reading of something else: every spelling this
+    /// accepts is a spelling some writer could have meant, and only one writer
+    /// exists. Anything else is refused by the line it appeared on rather than
+    /// repaired, because tape cannot know which of two meanings was intended.
+    ///
     /// # Errors
     ///
     /// Returns a refusal naming the first line that is not current.
     pub fn parse(text: &str) -> Result<Self, Error> {
-        let mut lines = text.lines();
+        // Every rendered line is terminated, so text that stops without a
+        // newline is truncated rather than current. `str::lines` yields the
+        // same segments either way and would admit the truncation silently.
+        let Some(body) = text.strip_suffix('\n') else {
+            return Err(malformed(text.lines().next_back().unwrap_or("")));
+        };
+
+        let mut lines = body.split('\n');
         match lines.next() {
             Some(FORMAT) => {}
             Some(other) => return Err(malformed(other)),
@@ -111,9 +125,13 @@ impl Index {
         let mut members: Vec<Member> = Vec::new();
         for line in lines {
             let member = parse_member(line)?;
-            if let Some(last) = members.last()
-                && member.member <= last.member
-            {
+
+            // Members are sealed one after another starting at one, so the
+            // index is a contiguous run and its position states its number.
+            // A gap would name a member whose bytes no locus can reach, and a
+            // repeat or a descent would give one number two lengths.
+            let expected = members.len() as u64 + 1;
+            if member.member != expected {
                 return Err(malformed(line));
             }
             members.push(member);
@@ -130,7 +148,7 @@ fn parse_member(line: &str) -> Result<Member, Error> {
         .ok_or_else(|| malformed(line))?;
     let (number, length) = rest.split_once(' ').ok_or_else(|| malformed(line))?;
 
-    if number.len() != DIGITS || !is_digits(number) || !is_digits(length) {
+    if number.len() != DIGITS || !is_digits(number) || !is_length(length) {
         return Err(malformed(line));
     }
     let member = number.parse().map_err(|_| malformed(line))?;
@@ -142,6 +160,17 @@ fn parse_member(line: &str) -> Result<Member, Error> {
 /// True when every byte is an ASCII digit and there is at least one.
 fn is_digits(text: &str) -> bool {
     !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// True when the text is the one spelling [`Index::render`] gives a length.
+///
+/// Lengths are rendered plainly, so a leading zero is a second spelling of a
+/// number that already has one, and two spellings of one index would give the
+/// same tape two byte-stable forms. Zero is refused outright rather than as a
+/// spelling: [`Tape::seal`] reports an empty member as [`Seal::Empty`] and
+/// seals nothing, so a sealed member of no bytes never existed to be named.
+fn is_length(text: &str) -> bool {
+    is_digits(text) && !text.starts_with('0')
 }
 
 /// A refusal naming the line that is not the current index form.

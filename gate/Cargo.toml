@@ -11,5 +11,8 @@ atomic = { path = "../atomic" }
 sill = { path = "../sill" }
 wire = { path = "../wire" }
 
+[dev-dependencies]
+syn = { version = "3.0.3", features = ["full", "visit"] }
+
 [lints]
 workspace = true

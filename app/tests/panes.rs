@@ -21,7 +21,7 @@ use app::{
 use serde::{Deserialize, Serialize};
 use wire::{
     CanonicalUuid, Command, CommandKind, Digest, FaultClass, Outcome, Overflow, Packed, Response,
-    Seq, Standing, TaskHandle, Witness,
+    Seq, TaskHandle, TrustState, Witness,
 };
 
 /// Capability this session opens with.
@@ -111,7 +111,7 @@ fn existence() -> Vec<Witness> {
 fn trust() -> Vec<Witness> {
     vec![Witness::Trust {
         digest: "a".repeat(64).parse::<Digest>().expect("fixture digest"),
-        standing: Standing::Pended,
+        standing: TrustState::Pended,
     }]
 }
 

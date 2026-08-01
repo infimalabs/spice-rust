@@ -137,6 +137,21 @@ impl Tape {
         }
     }
 
+    /// Synchronize the tape directory itself.
+    ///
+    /// Synchronizing a file commits its bytes; it does not commit the name the
+    /// bytes answer to. A member created and written but whose directory entry
+    /// is still only in the page cache is a member that a power loss can leave
+    /// absent while every byte of it survives, which would strand a locus that
+    /// tape had already promised.
+    fn sync_directory(&self) -> Result<(), Error> {
+        let directory = File::open(&self.root)
+            .map_err(|error| Error::io(Operation::SyncDirectory, &self.root, error))?;
+        directory
+            .sync_all()
+            .map_err(|error| Error::io(Operation::SyncDirectory, &self.root, error))
+    }
+
     /// Publish bytes into this tape's directory at owner-only mode.
     ///
     /// The bytes are staged here and then handed to [`atomic`] for
@@ -182,6 +197,33 @@ fn create_private(path: &Path) -> io::Result<File> {
 #[cfg(not(unix))]
 fn create_private(path: &Path) -> io::Result<File> {
     OpenOptions::new().write(true).create_new(true).open(path)
+}
+
+/// Open a member's plaintext for appending, creating it privately if absent.
+fn open_member(path: &Path) -> io::Result<File> {
+    match create_private_append(path) {
+        Ok(file) => Ok(file),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => open_private_append(path),
+        Err(error) => Err(error),
+    }
+}
+
+/// Create a member's plaintext for appending, failing if it exists.
+#[cfg(unix)]
+fn create_private_append(path: &Path) -> io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    OpenOptions::new()
+        .append(true)
+        .create_new(true)
+        .mode(PRIVATE)
+        .open(path)
+}
+
+/// Create a member's plaintext for appending, without Unix permission bits.
+#[cfg(not(unix))]
+fn create_private_append(path: &Path) -> io::Result<File> {
+    OpenOptions::new().append(true).create_new(true).open(path)
 }
 
 /// Open a member's plaintext for appending, creating it privately.
@@ -250,6 +292,8 @@ pub enum Operation {
     StagePublication,
     /// Reading the index.
     ReadIndex,
+    /// Synchronizing the tape directory.
+    SyncDirectory,
 }
 
 impl fmt::Display for Operation {
@@ -264,6 +308,7 @@ impl fmt::Display for Operation {
             Self::Compress => "compress member",
             Self::StagePublication => "stage publication",
             Self::ReadIndex => "read index",
+            Self::SyncDirectory => "synchronize the tape directory",
         })
     }
 }
@@ -425,6 +470,40 @@ mod tests {
             .expect("the lock is released with its possession");
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Scratch root for one unit fixture, distinct per test and per process.
+    fn scratch(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("spice-tape-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        root
+    }
+
+    /// A tee that cannot commit the member's name has not captured anything a
+    /// locus could promise, so the failure is returned rather than assumed.
+    #[test]
+    fn a_directory_synchronization_failure_is_surfaced() {
+        let root = scratch("unsyncable");
+        let tape = Tape::open(&root).expect("tape opens");
+        tape.tee(b"captured").expect("the first append is captured");
+        tape.sync_directory()
+            .expect("an intact directory synchronizes");
+
+        fs::remove_dir_all(&root).expect("the directory is removed underneath the tape");
+
+        let error = tape
+            .sync_directory()
+            .expect_err("a directory that cannot be opened is not a success");
+        assert!(
+            matches!(
+                error,
+                Error::Io {
+                    operation: Operation::SyncDirectory,
+                    ..
+                }
+            ),
+            "got {error}",
+        );
     }
 
     #[test]

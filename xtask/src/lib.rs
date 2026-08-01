@@ -1,0 +1,215 @@
+//! Repository-local development commands.
+
+use std::fmt;
+use std::io::{self, Write};
+use std::process::Command;
+
+const VERIFY_STEPS: [Step; 3] = [
+    Step::new(
+        "cargo fmt --all -- --check",
+        &["fmt", "--all", "--", "--check"],
+    ),
+    Step::new(
+        "cargo clippy --locked --workspace --all-targets -- -D warnings",
+        &[
+            "clippy",
+            "--locked",
+            "--workspace",
+            "--all-targets",
+            "--",
+            "-D",
+            "warnings",
+        ],
+    ),
+    Step::new(
+        "cargo test --locked --workspace --all-targets",
+        &["test", "--locked", "--workspace", "--all-targets"],
+    ),
+];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Step {
+    label: &'static str,
+    arguments: &'static [&'static str],
+}
+
+impl Step {
+    const fn new(label: &'static str, arguments: &'static [&'static str]) -> Self {
+        Self { label, arguments }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Status {
+    success: bool,
+    code: Option<i32>,
+}
+
+trait Runner {
+    fn run(&mut self, step: Step) -> io::Result<Status>;
+}
+
+struct SystemRunner;
+
+impl Runner for SystemRunner {
+    fn run(&mut self, step: Step) -> io::Result<Status> {
+        let status = Command::new("cargo").args(step.arguments).status()?;
+        Ok(Status {
+            success: status.success(),
+            code: status.code(),
+        })
+    }
+}
+
+/// Run the complete repository verification battery in its canonical order.
+///
+/// # Errors
+///
+/// Returns the first output, launch, or command failure and does not start any
+/// subsequent command.
+pub fn verify(output: &mut impl Write) -> Result<(), VerifyError> {
+    verify_with(&mut SystemRunner, output)
+}
+
+fn verify_with<R: Runner>(runner: &mut R, output: &mut impl Write) -> Result<(), VerifyError> {
+    for step in VERIFY_STEPS {
+        writeln!(output, "[verify] {}", step.label).map_err(VerifyError::Output)?;
+        let status = runner.run(step).map_err(|source| VerifyError::Launch {
+            label: step.label,
+            source,
+        })?;
+        if !status.success {
+            return Err(VerifyError::Exit {
+                label: step.label,
+                code: status.code,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// A bounded verifier failure that identifies the first incomplete step.
+#[derive(Debug)]
+pub enum VerifyError {
+    Output(io::Error),
+    Launch {
+        label: &'static str,
+        source: io::Error,
+    },
+    Exit {
+        label: &'static str,
+        code: Option<i32>,
+    },
+}
+
+impl fmt::Display for VerifyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Output(source) => write!(formatter, "[verify] output failed: {source}"),
+            Self::Launch { label, source } => {
+                write!(formatter, "[verify] failed to launch: {label} ({source})")
+            }
+            Self::Exit {
+                label,
+                code: Some(code),
+            } => write!(formatter, "[verify] failed: {label} (exit {code})"),
+            Self::Exit { label, code: None } => {
+                write!(formatter, "[verify] failed: {label} (terminated by signal)")
+            }
+        }
+    }
+}
+
+impl std::error::Error for VerifyError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Output(source) | Self::Launch { source, .. } => Some(source),
+            Self::Exit { .. } => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::VecDeque;
+
+    use super::*;
+
+    enum Outcome {
+        Success,
+        Exit(i32),
+        Launch,
+    }
+
+    struct FakeRunner {
+        outcomes: VecDeque<Outcome>,
+        calls: Vec<&'static str>,
+    }
+
+    impl Runner for FakeRunner {
+        fn run(&mut self, step: Step) -> io::Result<Status> {
+            self.calls.push(step.label);
+            match self.outcomes.pop_front().expect("fixture has an outcome") {
+                Outcome::Success => Ok(Status {
+                    success: true,
+                    code: Some(0),
+                }),
+                Outcome::Exit(code) => Ok(Status {
+                    success: false,
+                    code: Some(code),
+                }),
+                Outcome::Launch => Err(io::Error::other("fixture launch refusal")),
+            }
+        }
+    }
+
+    #[test]
+    fn success_runs_every_step_in_order_and_prints_exact_labels() {
+        let mut runner = runner([Outcome::Success, Outcome::Success, Outcome::Success]);
+        let mut output = Vec::new();
+
+        verify_with(&mut runner, &mut output).expect("verification succeeds");
+
+        assert_eq!(runner.calls, labels());
+        assert_eq!(
+            String::from_utf8(output).expect("labels are UTF-8"),
+            labels()
+                .into_iter()
+                .map(|label| format!("[verify] {label}\n"))
+                .collect::<String>()
+        );
+    }
+
+    #[test]
+    fn command_failure_stops_before_the_next_step() {
+        let mut runner = runner([Outcome::Success, Outcome::Exit(9), Outcome::Success]);
+        let mut output = Vec::new();
+
+        let error = verify_with(&mut runner, &mut output).expect_err("clippy failure surfaces");
+
+        assert!(matches!(error, VerifyError::Exit { code: Some(9), .. }));
+        assert_eq!(runner.calls, labels()[..2]);
+    }
+
+    #[test]
+    fn launch_failure_stops_before_the_next_step() {
+        let mut runner = runner([Outcome::Launch, Outcome::Success, Outcome::Success]);
+        let mut output = Vec::new();
+
+        let error = verify_with(&mut runner, &mut output).expect_err("launch refusal surfaces");
+
+        assert!(matches!(error, VerifyError::Launch { .. }));
+        assert_eq!(runner.calls, labels()[..1]);
+    }
+
+    fn runner(outcomes: impl IntoIterator<Item = Outcome>) -> FakeRunner {
+        FakeRunner {
+            outcomes: outcomes.into_iter().collect(),
+            calls: Vec::new(),
+        }
+    }
+
+    fn labels() -> Vec<&'static str> {
+        VERIFY_STEPS.iter().map(|step| step.label).collect()
+    }
+}

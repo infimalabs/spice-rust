@@ -18,8 +18,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::command::CommandKind;
 use crate::envelope::Actor;
+use crate::head::{ResidentState, TrustState};
 use crate::ident::{CanonicalUuid, Digest, Instant};
-use crate::witness::{Answer, Disposition, Name, Phase, Standing, TaskHandle, Up};
+use crate::witness::{Answer, Disposition, Name, Phase, TaskHandle};
 
 /// Add one task as direct intent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -242,7 +243,7 @@ pub struct LaneState {
     /// Lane whose state moves.
     pub lane: CanonicalUuid,
     /// State it moves to.
-    pub state: Up,
+    pub state: ResidentState,
 }
 
 /// Record a taste verdict at its evidence locus.
@@ -283,7 +284,7 @@ pub struct ReleasePublish {
 #[serde(deny_unknown_fields)]
 pub struct UpChange {
     /// State the resident is asked to reach.
-    pub state: Up,
+    pub state: ResidentState,
 }
 
 /// The answer a task command returns.
@@ -343,7 +344,7 @@ pub struct TrustAnswer {
     /// Digest whose standing moved.
     pub digest: Digest,
     /// Its standing after the transaction.
-    pub standing: Standing,
+    pub standing: TrustState,
 }
 
 /// The answer a lane or resident state change returns.
@@ -351,9 +352,9 @@ pub struct TrustAnswer {
 #[serde(deny_unknown_fields)]
 pub struct StateAnswer {
     /// State held before the transaction.
-    pub from: Up,
+    pub from: ResidentState,
     /// State held after it.
-    pub to: Up,
+    pub to: ResidentState,
 }
 
 /// The answer a taste verdict returns.
@@ -450,6 +451,71 @@ pub enum AnswerShape {
     Taste,
     /// [`RecognitionAnswer`]
     Recognition,
+}
+
+/// One decoded successful reply body, tagged by the shape its command selected.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum CommandAnswer {
+    /// [`AnswerShape::Task`]
+    Task(TaskAnswer),
+    /// [`AnswerShape::Claim`]
+    Claim(ClaimAnswer),
+    /// [`AnswerShape::Doc`]
+    Doc(DocAnswer),
+    /// [`AnswerShape::Directive`]
+    Directive(DirectiveAnswer),
+    /// [`AnswerShape::Consent`]
+    Consent(ConsentAnswer),
+    /// [`AnswerShape::Trust`]
+    Trust(TrustAnswer),
+    /// [`AnswerShape::State`]
+    State(StateAnswer),
+    /// [`AnswerShape::Taste`]
+    Taste(TasteAnswer),
+    /// [`AnswerShape::Recognition`]
+    Recognition(RecognitionAnswer),
+}
+
+impl CommandAnswer {
+    /// The shape this decoded answer carries.
+    #[must_use]
+    pub const fn shape(&self) -> AnswerShape {
+        match self {
+            Self::Task(_) => AnswerShape::Task,
+            Self::Claim(_) => AnswerShape::Claim,
+            Self::Doc(_) => AnswerShape::Doc,
+            Self::Directive(_) => AnswerShape::Directive,
+            Self::Consent(_) => AnswerShape::Consent,
+            Self::Trust(_) => AnswerShape::Trust,
+            Self::State(_) => AnswerShape::State,
+            Self::Taste(_) => AnswerShape::Taste,
+            Self::Recognition(_) => AnswerShape::Recognition,
+        }
+    }
+}
+
+impl AnswerShape {
+    /// Decode a successful reply body into the answer this shape names.
+    ///
+    /// # Errors
+    ///
+    /// Returns the decoder error when the bytes are not that shape. Answers
+    /// refuse unknown fields, so a body spelled for the wrong command is a
+    /// decode failure rather than a silently truncated value.
+    pub fn decode(self, bytes: &[u8]) -> Result<CommandAnswer, serde_json::Error> {
+        Ok(match self {
+            Self::Task => CommandAnswer::Task(crate::decode(bytes)?),
+            Self::Claim => CommandAnswer::Claim(crate::decode(bytes)?),
+            Self::Doc => CommandAnswer::Doc(crate::decode(bytes)?),
+            Self::Directive => CommandAnswer::Directive(crate::decode(bytes)?),
+            Self::Consent => CommandAnswer::Consent(crate::decode(bytes)?),
+            Self::Trust => CommandAnswer::Trust(crate::decode(bytes)?),
+            Self::State => CommandAnswer::State(crate::decode(bytes)?),
+            Self::Taste => CommandAnswer::Taste(crate::decode(bytes)?),
+            Self::Recognition => CommandAnswer::Recognition(crate::decode(bytes)?),
+        })
+    }
 }
 
 /// The body and answer a command kind selects.

@@ -13,8 +13,8 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use wire::{
-    Answer, Command, CommandKind, Digest, Disposition, LawError, Name, Standing, TaskHandle, Up,
-    Witness, WitnessKind,
+    Answer, Command, CommandKind, Digest, Disposition, LawError, Name, ResidentState, TaskHandle,
+    TrustState, Witness, WitnessKind,
 };
 
 /// Body of the `task::done` command printed in WIRE.md.
@@ -321,7 +321,7 @@ fn sample_witnesses() -> Vec<Witness> {
         },
         Witness::Trust {
             digest: digest('c'),
-            standing: Standing::Pended,
+            standing: TrustState::Pended,
         },
         Witness::Taste {
             name: name("polling"),
@@ -336,8 +336,8 @@ fn sample_witnesses() -> Vec<Witness> {
             manifest: digest('0'),
         },
         Witness::Transition {
-            from: Up::Seated,
-            to: Up::Quiescing,
+            from: ResidentState::Seated,
+            to: ResidentState::Quiescing,
         },
     ]
 }

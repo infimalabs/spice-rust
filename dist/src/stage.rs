@@ -5,8 +5,8 @@ use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 
 use atomic::Destination;
-use wire::Digest;
 use wire::manifest::{BuildPins, InventoryEntry, ReleaseTarget, TargetPayload};
+use wire::{Digest, Domain};
 
 use crate::pins::{PinError, RequiredPins};
 
@@ -134,7 +134,7 @@ impl Pipeline {
         let artifacts = build_artifacts(target, builder)?;
         let payload = make_payload(target, source, self.pins.get(), &artifacts)?;
         let payload_bytes = wire::encode(&payload)?;
-        let payload_digest = digest("spice.dist.target-payload.v1", &payload_bytes);
+        let payload_digest = Digest::compute(Domain::TargetPayload, &payload_bytes);
         publish_artifacts(publisher, &artifacts)?;
         let payload_path = PathBuf::from(format!("targets/{target}/payload.json"));
         publisher
@@ -211,7 +211,7 @@ fn build_artifacts<B: Builder>(
 }
 
 fn artifact(path: &'static str, mode: u32, bytes: Vec<u8>) -> Artifact {
-    let digest = digest("spice.dist.artifact.v1", &bytes);
+    let digest = Digest::compute(Domain::Artifact, &bytes);
     Artifact {
         path,
         mode,
@@ -228,8 +228,8 @@ fn make_payload(
 ) -> Result<TargetPayload, serde_json::Error> {
     let mut inventory = artifacts.iter().map(inventory_entry).collect::<Vec<_>>();
     inventory.sort_by(|left, right| left.path.cmp(&right.path));
-    let pins_digest = digest("spice.dist.pins.v1", &wire::encode(pins)?);
-    let inventory_digest = digest("spice.dist.inventory.v1", &wire::encode(&inventory)?);
+    let pins_digest = Digest::compute(Domain::Pins, &wire::encode(pins)?);
+    let inventory_digest = Digest::compute(Domain::Inventory, &wire::encode(&inventory)?);
     Ok(TargetPayload {
         version: PAYLOAD_VERSION,
         target,
@@ -270,19 +270,6 @@ fn publish_artifacts<P: Publisher>(
 
 fn object_path(artifact: &Artifact) -> PathBuf {
     PathBuf::from(format!("objects/{}-{:04o}", artifact.digest, artifact.mode))
-}
-
-fn digest(domain: &str, bytes: &[u8]) -> Digest {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(domain.as_bytes());
-    hasher.update(&[0]);
-    hasher.update(bytes);
-    hasher
-        .finalize()
-        .to_hex()
-        .as_str()
-        .parse()
-        .expect("BLAKE3 renders the digest spelling wire admits")
 }
 
 fn validate_relative(path: &Path) -> Result<(), PublishError> {

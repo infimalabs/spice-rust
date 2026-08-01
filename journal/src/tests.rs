@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use rusqlite::{Connection, params};
 use serde_json::json;
 use wire::{
-    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind, Envelope, Fact,
+    Actor, AnyFact, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind, Envelope,
     FactKind, FindingHead, FindingState, Instant, LaneResidency, LeaseHead, Origin, Outcome, Phase,
     Reply, ReplyPosition, ResidencyHead, ResidentState, Response, Seq, SeqRange, TaskHandle,
     TaskHead, TrustHead, TrustState, WireVersion, Witness, WitnessClass, WitnessHead, WorkflowHead,
@@ -59,6 +59,84 @@ fn prepared_and_forward_schema_states_are_refused_by_name() {
 }
 
 #[test]
+fn unknown_states_and_occupied_databases_are_refused_by_name() {
+    // These two refusals exist for databases this build did not write, so the
+    // baseline table's own CHECK constraints cannot stand in for them: a
+    // foreign file reaches `finalized_version` carrying whatever it likes.
+    let unknown = schema_fixture(1, "migrating", None, None, None);
+    let error = Journal::from_connection(unknown).expect_err("unknown state refuses open");
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::UnknownState { .. })
+    ));
+    assert!(error.to_string().contains("\"migrating\" is unknown"));
+
+    let occupied = Connection::open_in_memory().expect("open occupied fixture");
+    occupied
+        .execute_batch("CREATE TABLE somebody_elses_table(id INTEGER PRIMARY KEY) STRICT;")
+        .expect("occupy the fixture database");
+    let error =
+        Journal::from_connection(occupied).expect_err("an occupied database refuses baselining");
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::UnversionedAuthority { object_count: 1 })
+    ));
+    assert!(error.to_string().contains("empty authority"));
+}
+
+#[test]
+fn malformed_schema_identity_is_refused_by_name() {
+    let duplicate = schema_fixture(1, "finalized", None, None, None);
+    duplicate
+        .execute(
+            "INSERT INTO journal_schema(singleton, version, state) VALUES (2, 1, 'finalized')",
+            [],
+        )
+        .expect("insert duplicate schema row");
+    let error = Journal::from_connection(duplicate).expect_err("two schema rows refuse open");
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::SchemaRowCount { count: 2 })
+    ));
+    assert!(error.to_string().contains("exactly one row, found 2"));
+
+    let missing = schema_fixture(1, "finalized", None, None, None);
+    missing
+        .execute("UPDATE journal_schema SET singleton = 2", [])
+        .expect("move schema row away from singleton one");
+    let error = Journal::from_connection(missing).expect_err("missing singleton refuses open");
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::MissingSingleton)
+    ));
+    assert!(error.to_string().contains("singleton row 1 is missing"));
+
+    let unknown = schema_fixture(0, "finalized", None, None, None);
+    let error = Journal::from_connection(unknown).expect_err("unknown version refuses open");
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::UnknownVersion { found: 0 })
+    ));
+    assert!(error.to_string().contains("schema 0 has no migration path"));
+
+    let disagreement = schema_fixture(1, "finalized", None, None, None);
+    disagreement
+        .pragma_update(None, "user_version", 0)
+        .expect("make pragma disagree with schema row");
+    let error =
+        Journal::from_connection(disagreement).expect_err("version disagreement refuses open");
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::VersionDisagreement { row: 1, pragma: 0 })
+    ));
+    assert!(
+        error
+            .to_string()
+            .contains("row names version 1, but SQLite user_version names 0")
+    );
+}
+
+#[test]
 fn coherent_authority_verifies_every_required_plane() {
     let journal = authority_fixture();
 
@@ -89,6 +167,91 @@ fn cursor_storage_refuses_backward_movement() {
 
 #[test]
 fn verify_names_envelope_head_receipt_cursor_and_thread_defects() {
+    let classes = refused_classes(&content_defect_fixture());
+    assert!(classes.contains(&ViolationClass::Envelope));
+    assert!(classes.contains(&ViolationClass::Head));
+    assert!(classes.contains(&ViolationClass::Receipt));
+    assert!(classes.contains(&ViolationClass::Cursor));
+    assert!(classes.contains(&ViolationClass::Thread));
+}
+
+#[test]
+fn verify_names_schema_and_sequence_defects() {
+    let violations = refused_violations(&structure_defect_fixture());
+    let sequence = violations
+        .iter()
+        .find(|violation| violation.class == ViolationClass::Sequence)
+        .expect("sequence plane names the history gap");
+    assert_eq!(sequence.subject, "4");
+    assert!(sequence.detail.contains("expected contiguous seq 3"));
+
+    let schema = violations
+        .iter()
+        .find(|violation| violation.class == ViolationClass::Schema)
+        .expect("schema plane names the unresolved foreign key");
+    assert!(schema.subject.contains("thread_index"));
+    assert!(schema.detail.contains("fact_envelopes"));
+}
+
+#[test]
+fn every_violation_plane_has_a_fixture_that_produces_it() {
+    // `ViolationClass` declares itself closed, and a closed set earns nothing
+    // unless something enforces it. `plane_fixture` matches it exhaustively
+    // from outside `replay`, so a new plane fails the build here until it is
+    // named. This assertion then proves each plane is actually reached, which
+    // is what stops a plane from being declared and never verified.
+    let mut observed = refused_classes(&content_defect_fixture());
+    observed.extend(refused_classes(&structure_defect_fixture()));
+
+    for class in [
+        ViolationClass::Schema,
+        ViolationClass::Envelope,
+        ViolationClass::Sequence,
+        ViolationClass::Thread,
+        ViolationClass::Head,
+        ViolationClass::Receipt,
+        ViolationClass::Cursor,
+    ] {
+        assert!(
+            observed.contains(&class),
+            "no fixture produces the {class:?} plane; {} is where it belongs",
+            plane_fixture(class),
+        );
+    }
+}
+
+/// The fixture that is supposed to produce each violation plane.
+///
+/// This is a match rather than a list so that adding a plane fails the build
+/// naming the variant nobody assigned a fixture to.
+fn plane_fixture(class: ViolationClass) -> &'static str {
+    match class {
+        ViolationClass::Envelope
+        | ViolationClass::Thread
+        | ViolationClass::Head
+        | ViolationClass::Receipt
+        | ViolationClass::Cursor => "content_defect_fixture",
+        ViolationClass::Schema | ViolationClass::Sequence => "structure_defect_fixture",
+    }
+}
+
+fn refused_classes(journal: &Journal) -> BTreeSet<ViolationClass> {
+    refused_violations(journal)
+        .into_iter()
+        .map(|violation| violation.class)
+        .collect()
+}
+
+fn refused_violations(journal: &Journal) -> Vec<crate::Violation> {
+    journal
+        .verify()
+        .expect_err("a corrupt authority must fail verification")
+        .violations()
+        .to_vec()
+}
+
+/// An authority whose rows decode but disagree with what they are stored under.
+fn content_defect_fixture() -> Journal {
     let journal = authority_fixture();
     journal
         .connection
@@ -124,27 +287,109 @@ fn verify_names_envelope_head_receipt_cursor_and_thread_defects() {
             "DROP TRIGGER cursor_head_monotone; UPDATE cursor_head SET seq = 1, wake = 1;",
         )
         .expect("corrupt cursor fixture");
+    journal
+}
 
-    let error = journal
-        .verify()
-        .expect_err("corrupt authority must fail verification");
-    let classes = error
-        .violations()
-        .iter()
-        .map(|violation| violation.class)
-        .collect::<BTreeSet<_>>();
-    assert!(classes.contains(&ViolationClass::Envelope));
-    assert!(classes.contains(&ViolationClass::Head));
-    assert!(classes.contains(&ViolationClass::Receipt));
-    assert!(classes.contains(&ViolationClass::Cursor));
-    assert!(classes.contains(&ViolationClass::Thread));
+/// An authority whose history has a hole and whose index points at nothing.
+///
+/// Both defects are invisible to the content checks: every stored row here
+/// decodes and agrees with its own columns. What is wrong is the shape of the
+/// history around them, which is the only thing the sequence and schema planes
+/// look at.
+fn structure_defect_fixture() -> Journal {
+    let journal = authority_fixture();
+    insert_fact(
+        &journal,
+        fact(
+            4,
+            None,
+            FactKind::TaskNoted,
+            json!({"task": "JOURNAL-a1", "note": "Journal fixture note"}),
+        ),
+    );
+    journal
+        .connection
+        .execute_batch(
+            "INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES (4, 'task:JOURNAL-a1', NULL, 4, 0);
+             UPDATE cursor_head SET seq = 4 WHERE singleton = 1;
+             PRAGMA foreign_keys = OFF;
+             INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES (9, 'task:JOURNAL-a1', NULL, 9, 0);
+             PRAGMA foreign_keys = ON;",
+        )
+        .expect("open a hole at seq 3 and orphan a thread row");
+    journal
+}
+
+#[test]
+fn lease_heads_must_carry_an_ordered_life() {
+    // One way to put a lease's instants out of order. The lease row is the one
+    // head with no key to disagree with, so before this its body could say
+    // anything at all and still verify.
+    type Disorder = fn(&mut LeaseHead);
+
+    let cases: [(Disorder, &str); 3] = [
+        (
+            |lease| lease.renewal = earlier(),
+            "renewal precedes the start of possession",
+        ),
+        (
+            |lease| lease.expiry = earlier(),
+            "expiry precedes its most recent renewal",
+        ),
+        (
+            |lease| lease.maximum = earlier(),
+            "expiry passes the maximum renewal may not extend beyond",
+        ),
+    ];
+
+    for (disorder, expected) in cases {
+        let journal = authority_fixture();
+        let mut lease = lease_head();
+        disorder(&mut lease);
+        journal
+            .connection
+            .execute(
+                "UPDATE lease_heads SET body = ?1 WHERE handle = 'JOURNAL-a1'",
+                params![wire::encode(&lease).expect("encode disordered lease")],
+            )
+            .expect("corrupt lease fixture");
+
+        let error = journal
+            .verify()
+            .expect_err("a disordered lease must fail verification");
+        let details = error
+            .violations()
+            .iter()
+            .filter(|violation| violation.class == ViolationClass::Head)
+            .map(|violation| violation.detail.clone())
+            .collect::<Vec<_>>();
+        assert!(
+            details.iter().any(|detail| detail.contains(expected)),
+            "no head violation named {expected:?}, found {details:?}",
+        );
+    }
 }
 
 fn authority_fixture() -> Journal {
     let journal = Journal::in_memory().expect("create authority fixture");
     insert_fact(
         &journal,
-        fact(1, None, FactKind::TaskAdded, json!({"task": "JOURNAL-a1"})),
+        fact(
+            1,
+            None,
+            FactKind::TaskAdded,
+            json!({
+                "task": "JOURNAL-a1",
+                "uuid": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+                "title": "Journal fixture",
+                "project": "task.journal",
+                "tags": [],
+                "depends": [],
+                "flow": ["todo", "review"],
+                "phase": "todo",
+                "revision": 1
+            }),
+        ),
     );
     insert_fact(
         &journal,
@@ -174,10 +419,9 @@ fn authority_fixture() -> Journal {
     journal
 }
 
-fn insert_fact(journal: &Journal, envelope: Envelope<serde_json::Value>) {
+fn insert_fact(journal: &Journal, envelope: Envelope<AnyFact>) {
     let bytes = wire::encode(&envelope).expect("encode fact fixture");
-    let value: serde_json::Value = serde_json::from_slice(&bytes).expect("fact fixture is JSON");
-    let kind = value["fact"]["kind"].as_str().expect("fact kind");
+    let kind = envelope.fact.kind().as_str();
     let seq = i64::try_from(envelope.seq.get()).expect("fixture seq fits SQLite");
     let cause = envelope
         .cause
@@ -200,7 +444,14 @@ fn fact(
     cause: Option<u64>,
     kind: FactKind,
     body: serde_json::Value,
-) -> Envelope<serde_json::Value> {
+) -> Envelope<AnyFact> {
+    let mut fields = body.as_object().cloned().expect("a fact body is an object");
+    fields.insert(
+        "kind".to_owned(),
+        serde_json::to_value(kind).expect("a fact kind encodes"),
+    );
+    let bytes = serde_json::to_vec(&fields).expect("fact fields encode");
+    let fact = wire::decode(&bytes).expect("fact fields match the registered body");
     Envelope {
         v: WireVersion::CURRENT,
         seq: Seq::new(seq).expect("nonzero fixture seq"),
@@ -208,7 +459,7 @@ fn fact(
         actor: Actor::Spice,
         origin: "task:JOURNAL-a1".parse::<Origin>().expect("fixture origin"),
         cause: cause.map(|cause| Seq::new(cause).expect("nonzero fixture cause")),
-        fact: Fact::new(kind, body),
+        fact,
     }
 }
 
@@ -466,6 +717,11 @@ fn uuid(text: &str) -> CanonicalUuid {
 
 fn instant() -> Instant {
     "2030-04-12T18:44:09.271Z".parse().expect("fixture instant")
+}
+
+/// One millisecond before [`instant`], the finest step the spelling admits.
+fn earlier() -> Instant {
+    "2030-04-12T18:44:09.270Z".parse().expect("earlier instant")
 }
 
 fn phase(text: &str) -> Phase {
