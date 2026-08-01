@@ -13,7 +13,10 @@ use std::fmt::Write as _;
 use serde::{Deserialize, Serialize};
 
 use crate::measure::Measurement;
+use crate::report::{ReportDecodeError, ReportVersionEvidence};
 
+/// The one camping report schema this build emits and admits.
+pub const CAMP_REPORT_VERSION: u64 = 1;
 const MINIMUM_POPULATION: usize = 4;
 const MINIMUM_CLUSTER: u128 = 3;
 const NEAR_DENOMINATOR: u128 = 20;
@@ -212,6 +215,7 @@ impl Camp {
             CampStanding::Camped
         };
         Ok(CampReport {
+            version: CAMP_REPORT_VERSION,
             standing,
             distributions,
             findings,
@@ -242,6 +246,7 @@ impl fmt::Display for CampStanding {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CampReport {
+    version: u64,
     /// Standing over every declared distribution.
     pub standing: CampStanding,
     /// Every evaluated distribution, including clean ones.
@@ -251,11 +256,16 @@ pub struct CampReport {
 }
 
 impl CampReport {
+    /// Current camping report schema.
+    #[must_use]
+    pub const fn version(&self) -> u64 {
+        self.version
+    }
+
     /// Canonical text representation.
     #[must_use]
     pub fn render(&self) -> String {
-        let mut rendered = String::new();
-        let _ = writeln!(rendered, "camp {}", self.standing);
+        let mut rendered = format!("camp-report {}\nstanding {}\n", self.version, self.standing);
         for distribution in &self.distributions {
             let _ = writeln!(
                 rendered,
@@ -292,6 +302,122 @@ impl CampReport {
     pub fn encode(&self) -> Result<Vec<u8>, serde_json::Error> {
         wire::encode(self)
     }
+
+    /// Decode only the current, canonical, internally coherent report.
+    ///
+    /// # Errors
+    ///
+    /// Returns malformed fields, a named foreign version, a second JSON
+    /// spelling, or the camping evidence that disagreed.
+    pub fn decode(bytes: &[u8]) -> Result<Self, ReportDecodeError> {
+        let version: ReportVersionEvidence =
+            wire::decode(bytes).map_err(ReportDecodeError::Json)?;
+        if version.version != CAMP_REPORT_VERSION {
+            return Err(ReportDecodeError::unsupported(
+                "camp report",
+                version.version,
+                CAMP_REPORT_VERSION,
+            ));
+        }
+        let report: Self = wire::decode(bytes).map_err(ReportDecodeError::Json)?;
+        report.validate()?;
+        let canonical = report.encode().map_err(ReportDecodeError::Json)?;
+        if canonical != bytes {
+            return Err(ReportDecodeError::NonCanonical { canonical });
+        }
+        Ok(report)
+    }
+
+    fn validate(&self) -> Result<(), ReportDecodeError> {
+        if self
+            .distributions
+            .windows(2)
+            .any(|pair| pair[0].bound >= pair[1].bound)
+            || self
+                .findings
+                .windows(2)
+                .any(|pair| pair[0].bound >= pair[1].bound)
+        {
+            return Err(camp_inconsistent(
+                "distribution and finding names must be sorted and unique",
+            ));
+        }
+        for distribution in &self.distributions {
+            if !stable_name(&distribution.bound)
+                || distribution.limit == 0
+                || distribution.population < MINIMUM_POPULATION as u64
+                || distribution.near > distribution.population
+            {
+                return Err(camp_inconsistent(
+                    "a distribution has an invalid name, limit, population, or near count",
+                ));
+            }
+            let camped = u128::from(distribution.near) >= MINIMUM_CLUSTER
+                && u128::from(distribution.near) * CLUSTER_DENOMINATOR
+                    >= u128::from(distribution.population) * CLUSTER_NUMERATOR;
+            let standing = if camped {
+                CampStanding::Camped
+            } else {
+                CampStanding::Clean
+            };
+            if distribution.standing != standing {
+                return Err(camp_inconsistent(
+                    "distribution standing disagrees with its exact cluster counts",
+                ));
+            }
+        }
+        let camped: Vec<&DistributionReport> = self
+            .distributions
+            .iter()
+            .filter(|distribution| distribution.standing == CampStanding::Camped)
+            .collect();
+        let standing = if camped.is_empty() {
+            CampStanding::Clean
+        } else {
+            CampStanding::Camped
+        };
+        if self.standing != standing || camped.len() != self.findings.len() {
+            return Err(camp_inconsistent(
+                "overall standing or finding count disagrees with distributions",
+            ));
+        }
+        for (distribution, finding) in camped.into_iter().zip(&self.findings) {
+            if !stable_name(&finding.bound)
+                || finding.bound != distribution.bound
+                || finding.limit != distribution.limit
+                || finding.population != distribution.population
+                || u64::try_from(finding.loci.len()).ok() != Some(distribution.near)
+            {
+                return Err(camp_inconsistent(
+                    "a finding disagrees with its camped distribution",
+                ));
+            }
+            if finding
+                .loci
+                .windows(2)
+                .any(|pair| pair[0].locus >= pair[1].locus)
+            {
+                return Err(camp_inconsistent("finding loci must be sorted and unique"));
+            }
+            for locus in &finding.loci {
+                if !stable_name(&locus.locus) {
+                    return Err(camp_inconsistent("a locus has an unstable name"));
+                }
+                let expected =
+                    LocusDistance::new(locus.locus.clone(), locus.measured, distribution.limit);
+                if locus != &expected || !locus.is_near() {
+                    return Err(camp_inconsistent(
+                        "a locus does not carry the exact near-bound distance",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn camp_inconsistent(evidence: &str) -> ReportDecodeError {
+    ReportDecodeError::inconsistent("camp report", evidence)
 }
 
 /// Summary of one evaluated shared-bound distribution.
@@ -498,6 +624,8 @@ fn stable_name(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use wire::{Outcome, Reply, ReplyPosition};
+
     use super::*;
     use crate::Ratchet;
 
@@ -555,7 +683,11 @@ mod tests {
         assert_eq!(report.distributions[0].standing, CampStanding::Clean);
         assert_eq!(report.distributions[0].near, 2);
         assert!(report.findings.is_empty());
-        assert!(report.render().starts_with("camp clean\n"));
+        assert!(
+            report
+                .render()
+                .starts_with("camp-report 1\nstanding clean\n")
+        );
     }
 
     #[test]
@@ -677,16 +809,108 @@ mod tests {
             ]))
             .expect("complete audit");
         let encoded = report.encode().expect("encode report");
-        let decoded: CampReport = wire::decode(&encoded).expect("decode report");
+        let decoded = CampReport::decode(&encoded).expect("decode report");
         assert_eq!(decoded, report);
+        let outcome = Outcome::Reply(Reply {
+            position: ReplyPosition::Direct {},
+            body: report.clone(),
+        });
+        assert_eq!(
+            wire::encode(&outcome).expect("encode direct camp body"),
+            wire::encode(&outcome).expect("encode direct camp body again")
+        );
 
         let unknown =
             String::from_utf8(encoded)
                 .expect("JSON text")
                 .replacen("{", "{\"unknown\":true,", 1);
-        let refused = wire::decode::<CampReport>(unknown.as_bytes())
-            .expect_err("unknown report fields must refuse");
+        let refused =
+            CampReport::decode(unknown.as_bytes()).expect_err("unknown report fields must refuse");
         assert!(refused.to_string().contains("unknown field"));
+
+        let nested_unknown = String::from_utf8(report.encode().expect("encode nested unknown"))
+            .expect("report JSON")
+            .replacen("\"limit\":100", "\"limit\":100,\"unknown\":true", 1);
+        let refused = CampReport::decode(nested_unknown.as_bytes())
+            .expect_err("unknown distribution fields must refuse");
+        assert!(refused.to_string().contains("unknown field"));
+
+        let mut alternate = vec![b' '];
+        alternate.extend_from_slice(&report.encode().expect("encode report again"));
+        let refused = CampReport::decode(&alternate).expect_err("second spelling refuses");
+        assert!(refused.canonical().is_some());
+
+        let foreign = String::from_utf8(report.encode().expect("encode report for version"))
+            .expect("report JSON")
+            .replacen("\"version\":1", "\"version\":77", 1);
+        let refused = CampReport::decode(foreign.as_bytes()).expect_err("foreign version refuses");
+        assert_eq!(refused.unsupported_version(), Some(77));
+    }
+
+    #[test]
+    fn every_camp_report_field_moves_its_canonical_document() {
+        let report = camp([bound("shared", 100, ["a", "b", "c", "d"])])
+            .audit(&measurements([
+                ("a", 95),
+                ("b", 100),
+                ("c", 105),
+                ("d", 106),
+            ]))
+            .expect("complete audit");
+        let encoded = report.encode().expect("encode original report");
+        let assert_moved = |changed: CampReport, field: &str| {
+            assert_ne!(
+                changed.encode().expect("encode changed report"),
+                encoded,
+                "camp report field {field} is not retained"
+            );
+        };
+
+        let mut changed = report.clone();
+        changed.version += 1;
+        assert_moved(changed, "version");
+        let mut changed = report.clone();
+        changed.standing = CampStanding::Clean;
+        assert_moved(changed, "standing");
+        let mut changed = report.clone();
+        changed.distributions[0].bound.push('!');
+        assert_moved(changed, "distribution.bound");
+        let mut changed = report.clone();
+        changed.distributions[0].limit += 1;
+        assert_moved(changed, "distribution.limit");
+        let mut changed = report.clone();
+        changed.distributions[0].population += 1;
+        assert_moved(changed, "distribution.population");
+        let mut changed = report.clone();
+        changed.distributions[0].near -= 1;
+        assert_moved(changed, "distribution.near");
+        let mut changed = report.clone();
+        changed.distributions[0].standing = CampStanding::Clean;
+        assert_moved(changed, "distribution.standing");
+        let mut changed = report.clone();
+        changed.findings[0].bound.push('!');
+        assert_moved(changed, "finding.bound");
+        let mut changed = report.clone();
+        changed.findings[0].limit += 1;
+        assert_moved(changed, "finding.limit");
+        let mut changed = report.clone();
+        changed.findings[0].population += 1;
+        assert_moved(changed, "finding.population");
+        let mut changed = report.clone();
+        changed.findings[0].loci[0].locus.push('!');
+        assert_moved(changed, "locus.locus");
+        let mut changed = report.clone();
+        changed.findings[0].loci[0].measured += 1;
+        assert_moved(changed, "locus.measured");
+        let mut changed = report.clone();
+        changed.findings[0].loci[0].relation = BoundRelation::Above;
+        assert_moved(changed, "locus.relation");
+        let mut changed = report.clone();
+        changed.findings[0].loci[0].delta += 1;
+        assert_moved(changed, "locus.delta");
+        let mut changed = report;
+        changed.findings[0].loci[0].denominator += 1;
+        assert_moved(changed, "locus.denominator");
     }
 
     #[test]

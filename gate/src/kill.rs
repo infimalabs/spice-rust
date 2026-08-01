@@ -22,8 +22,9 @@ use crate::jurisdiction::{Ignore, Jurisdiction};
 
 mod support;
 
+pub(crate) use support::decode_attempt;
 pub use support::{KillError, RateError};
-use support::{classify, decode_attempt, movement, process_evidence};
+use support::{classify, movement, process_evidence};
 
 #[cfg(all(test, unix))]
 mod fixtures;
@@ -295,6 +296,24 @@ impl MutationInventory {
     #[must_use]
     pub fn mutants(&self) -> &[String] {
         &self.mutants
+    }
+
+    /// Attempts required for every inventoried mutant.
+    #[must_use]
+    pub const fn attempts(&self) -> usize {
+        self.attempts
+    }
+
+    /// Seed repeated into every mutation attempt.
+    #[must_use]
+    pub const fn seed(&self) -> u64 {
+        self.seed
+    }
+
+    /// Integer timeout supplied to the pinned mutation tool.
+    #[must_use]
+    pub const fn timeout_seconds(&self) -> u64 {
+        self.timeout_seconds
     }
 
     /// Canonical text binding the tool and every argument-bearing input.

@@ -25,7 +25,7 @@ pub(super) fn process_evidence(outcome: &WaitOutcome) -> ProcessEvidence {
     }
 }
 
-pub(super) fn decode_attempt(process: &ProcessEvidence, outcome: &OutcomeEvidence) -> AttemptKind {
+pub(crate) fn decode_attempt(process: &ProcessEvidence, outcome: &OutcomeEvidence) -> AttemptKind {
     match &process.completion {
         ProcessCompletion::TimedOut(_) | ProcessCompletion::Cancelled(_) => AttemptKind::TimedOut,
         ProcessCompletion::LaunchError(_) | ProcessCompletion::SpecError(_) => {
