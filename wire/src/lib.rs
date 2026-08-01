@@ -1,0 +1,1 @@
+//! Wire DTO crate skeleton.

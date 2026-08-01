@@ -1,0 +1,1 @@
+//! Browser app crate skeleton.

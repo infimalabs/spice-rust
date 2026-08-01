@@ -1,0 +1,1 @@
+//! Journal authority crate skeleton.

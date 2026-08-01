@@ -1,0 +1,1 @@
+//! Taste judging crate skeleton.

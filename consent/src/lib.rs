@@ -1,0 +1,1 @@
+//! Consent policy crate skeleton.

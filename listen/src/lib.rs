@@ -1,0 +1,1 @@
+//! Vendor listening crate skeleton.
