@@ -1,5 +1,4 @@
-//! Durable board command tests, including lane lifecycle task persistence.
-
+/// Durable board command tests, including lane lifecycle task persistence.
 #[cfg(test)]
 mod tests {
     use std::fs;
