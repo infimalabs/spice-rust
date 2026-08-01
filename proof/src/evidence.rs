@@ -5,13 +5,13 @@ use std::fmt;
 use std::io::Write as _;
 use std::path::Path;
 
-use wire::manifest::{ProofReceipt, ProofStanding, ReleaseTarget};
+use wire::manifest::{
+    PROOF_RECEIPT_VERSION, ProofEnvironment, ProofReceipt, ProofStanding, ReleaseTarget,
+};
 use wire::{Digest, Domain, ProofEvidence};
 
 use crate::payload::AdmittedPayload;
 use crate::replay::{Battery, ReplayVerdict};
-
-const RECEIPT_VERSION: u16 = 1;
 
 /// Evidence whose payload, replay, and receipt agree in every bound identity.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -82,7 +82,7 @@ pub fn verify(
     if canonical_receipt != receipt_bytes {
         return Err(EvidenceError::NonCanonicalReceipt);
     }
-    if receipt.version != RECEIPT_VERSION {
+    if receipt.version != PROOF_RECEIPT_VERSION {
         return Err(EvidenceError::ReceiptVersion(receipt.version));
     }
 
@@ -94,16 +94,29 @@ pub fn verify(
             receipt: receipt.target,
         });
     }
+    if replay.target() != payload.target {
+        return Err(EvidenceError::ReplayTarget {
+            payload: payload.target,
+            replay: replay.target(),
+        });
+    }
     if receipt.payload != *payload_digest {
         return Err(EvidenceError::PayloadDigest);
     }
-    if receipt.environment != payload.pins.proof_container
-        || receipt.environment != replay.environment()
-    {
+    let target_environment_matches = match (&receipt.environment, payload.target) {
+        (ProofEnvironment::Oci { image }, ReleaseTarget::X86_64UnknownLinuxMusl) => {
+            image.as_str() == payload.pins.proof_container
+        }
+        (ProofEnvironment::Native { .. }, ReleaseTarget::Aarch64AppleDarwin) => true,
+        (ProofEnvironment::Native { .. }, ReleaseTarget::X86_64UnknownLinuxMusl)
+        | (ProofEnvironment::Oci { .. }, ReleaseTarget::Aarch64AppleDarwin) => false,
+    };
+    if !target_environment_matches || receipt.environment != *replay.environment() {
         return Err(EvidenceError::Environment {
-            payload: payload.pins.proof_container.clone(),
+            target: payload.target,
+            payload_pin: payload.pins.proof_container.clone(),
             receipt: receipt.environment,
-            replay: replay.environment().to_owned(),
+            replay: replay.environment().clone(),
         });
     }
     if receipt.battery != *replay.battery_digest()
@@ -121,7 +134,7 @@ pub fn verify(
         return Err(EvidenceError::Refused);
     }
 
-    let receipt_digest = Digest::compute(Domain::ProofReceipt, &canonical_receipt);
+    let receipt_digest = Digest::compute(Domain::ProofReceiptV2, &canonical_receipt);
     Ok(VerifiedEvidence {
         target: payload.target,
         payload: payload_digest.clone(),
@@ -145,7 +158,7 @@ pub fn publish(receipt: &ProofReceipt, destination: &Path) -> Result<Digest, Evi
         .map_err(EvidencePublishError::Publish)?
         .publish(|staged| staged.write_all(&bytes))
         .map_err(EvidencePublishError::Publish)?;
-    Ok(Digest::compute(Domain::ProofReceipt, &bytes))
+    Ok(Digest::compute(Domain::ProofReceiptV2, &bytes))
 }
 
 /// Why payload, replay, and receipt did not form one proof.
@@ -159,11 +172,16 @@ pub enum EvidenceError {
         payload: ReleaseTarget,
         receipt: ReleaseTarget,
     },
+    ReplayTarget {
+        payload: ReleaseTarget,
+        replay: ReleaseTarget,
+    },
     PayloadDigest,
     Environment {
-        payload: String,
-        receipt: String,
-        replay: String,
+        target: ReleaseTarget,
+        payload_pin: String,
+        receipt: ProofEnvironment,
+        replay: ProofEnvironment,
     },
     BatteryDigest,
     ReplayDigest,
@@ -188,16 +206,25 @@ impl fmt::Display for EvidenceError {
                 formatter,
                 "proof target {receipt} does not match payload target {payload}"
             ),
+            Self::ReplayTarget { payload, replay } => write!(
+                formatter,
+                "proof replay target {replay} does not match payload target {payload}"
+            ),
             Self::PayloadDigest => {
                 formatter.write_str("proof receipt does not bind the supplied target payload")
             }
             Self::Environment {
-                payload,
+                target,
+                payload_pin,
                 receipt,
                 replay,
             } => write!(
                 formatter,
-                "proof environment disagrees: payload={payload:?} receipt={receipt:?} replay={replay:?}"
+                concat!(
+                    "proof environment disagrees for {}: ",
+                    "payload pin={:?} receipt={:?} replay={:?}"
+                ),
+                target, payload_pin, receipt, replay
             ),
             Self::BatteryDigest => {
                 formatter.write_str("proof receipt does not bind the replay battery")
@@ -249,7 +276,9 @@ mod tests {
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use wire::manifest::{BuildPins, InventoryEntry, ReleaseTarget, TargetPayload};
+    use wire::manifest::{
+        BuildPins, InventoryEntry, ProofEnvironment, ReleaseTarget, TargetPayload,
+    };
 
     use super::{EvidenceError, publish, verify};
     use crate::payload::{AdmittedPayload, admit};
@@ -262,10 +291,12 @@ mod tests {
         let payload_bytes = wire::encode(&payload).expect("payload encodes");
         let admitted = admit(&payload_bytes).expect("payload admits before replay");
         let replay = clean_replay(&payload);
-        let receipt = replay.receipt(
-            &payload,
-            Digest::compute(Domain::DistTargetPayload, &payload_bytes),
-        );
+        let receipt = replay
+            .receipt(
+                &payload,
+                Digest::compute(Domain::DistTargetPayload, &payload_bytes),
+            )
+            .expect("matching replay and payload targets");
         let receipt_bytes = wire::encode(&receipt).expect("receipt encodes");
         let verified = verify(&admitted, &receipt_bytes, &replay).expect("evidence verifies");
 
@@ -287,10 +318,12 @@ mod tests {
         let payload_bytes = wire::encode(&payload).expect("payload encodes");
         let admitted = admit(&payload_bytes).expect("payload admits before replay");
         let replay = clean_replay(&payload);
-        let receipt = replay.receipt(
-            &payload,
-            Digest::compute(Domain::DistTargetPayload, b"another payload"),
-        );
+        let receipt = replay
+            .receipt(
+                &payload,
+                Digest::compute(Domain::DistTargetPayload, b"another payload"),
+            )
+            .expect("matching replay and payload targets");
         assert_eq!(
             verify(
                 &admitted,
@@ -307,11 +340,22 @@ mod tests {
         let payload_bytes = wire::encode(&payload).expect("payload encodes");
         let admitted = admit(&payload_bytes).expect("payload admits before replay");
         let replay = clean_replay(&payload);
-        let receipt = replay.receipt(
-            &payload,
-            Digest::compute(Domain::DistTargetPayload, &payload_bytes),
-        );
+        let receipt = replay
+            .receipt(
+                &payload,
+                Digest::compute(Domain::DistTargetPayload, &payload_bytes),
+            )
+            .expect("matching replay and payload targets");
         let other = |domain| Digest::compute(domain, b"other evidence");
+
+        let mut stale_version = receipt.clone();
+        stale_version.version = 1;
+        assert_refuses(
+            &admitted,
+            &stale_version,
+            &replay,
+            EvidenceError::ReceiptVersion(1),
+        );
 
         let mut wrong_target = receipt.clone();
         wrong_target.target = ReleaseTarget::Aarch64AppleDarwin;
@@ -335,7 +379,7 @@ mod tests {
         );
 
         let mut wrong_replay = receipt.clone();
-        wrong_replay.replay = other(Domain::ProofReplay);
+        wrong_replay.replay = other(Domain::ProofReplayV2);
         assert_refuses(
             &admitted,
             &wrong_replay,
@@ -344,12 +388,80 @@ mod tests {
         );
 
         let mut wrong_environment = receipt;
-        wrong_environment.environment = format!("registry.example/other@sha256:{}", "5".repeat(64));
+        wrong_environment.environment =
+            ProofEnvironment::oci(format!("registry.example/other@sha256:{}", "5".repeat(64)))
+                .expect("fixture image is pinned");
         assert!(matches!(
             verify(
                 &admitted,
                 &wire::encode(&wrong_environment).expect("receipt encodes"),
                 &replay,
+            ),
+            Err(EvidenceError::Environment { .. })
+        ));
+    }
+
+    #[test]
+    fn each_release_target_accepts_only_its_attested_environment_variant() {
+        let native = ProofEnvironment::native(Digest::compute(
+            Domain::ProofNativeRunner,
+            b"approved runner bytes",
+        ));
+        let darwin_payload = payload_for(ReleaseTarget::Aarch64AppleDarwin);
+        let darwin_bytes = wire::encode(&darwin_payload).expect("Darwin payload encodes");
+        let darwin_admitted = admit(&darwin_bytes).expect("Darwin payload admits");
+        let darwin_replay = clean_replay_in(&darwin_payload, native.clone());
+        let darwin_receipt = darwin_replay
+            .receipt(
+                &darwin_payload,
+                Digest::compute(Domain::DistTargetPayload, &darwin_bytes),
+            )
+            .expect("matching Darwin target");
+        assert!(
+            verify(
+                &darwin_admitted,
+                &wire::encode(&darwin_receipt).expect("Darwin receipt encodes"),
+                &darwin_replay,
+            )
+            .is_ok(),
+            "Darwin accepts a digest-identified native runner"
+        );
+
+        let darwin_oci = clean_replay_in(
+            &darwin_payload,
+            ProofEnvironment::oci(&darwin_payload.pins.proof_container)
+                .expect("fixture image is pinned"),
+        );
+        let darwin_oci_receipt = darwin_oci
+            .receipt(
+                &darwin_payload,
+                Digest::compute(Domain::DistTargetPayload, &darwin_bytes),
+            )
+            .expect("matching Darwin target");
+        assert!(matches!(
+            verify(
+                &darwin_admitted,
+                &wire::encode(&darwin_oci_receipt).expect("receipt encodes"),
+                &darwin_oci,
+            ),
+            Err(EvidenceError::Environment { .. })
+        ));
+
+        let musl_payload = payload();
+        let musl_bytes = wire::encode(&musl_payload).expect("musl payload encodes");
+        let musl_admitted = admit(&musl_bytes).expect("musl payload admits");
+        let musl_native = clean_replay_in(&musl_payload, native);
+        let musl_native_receipt = musl_native
+            .receipt(
+                &musl_payload,
+                Digest::compute(Domain::DistTargetPayload, &musl_bytes),
+            )
+            .expect("matching musl target");
+        assert!(matches!(
+            verify(
+                &musl_admitted,
+                &wire::encode(&musl_native_receipt).expect("receipt encodes"),
+                &musl_native,
             ),
             Err(EvidenceError::Environment { .. })
         ));
@@ -368,10 +480,12 @@ mod tests {
         let payload_bytes = wire::encode(&payload).expect("payload encodes");
         let admitted = admit(&payload_bytes).expect("payload admits before replay");
         let replay = clean_replay(&payload);
-        let receipt = replay.receipt(
-            &payload,
-            Digest::compute(Domain::DistTargetPayload, &payload_bytes),
-        );
+        let receipt = replay
+            .receipt(
+                &payload,
+                Digest::compute(Domain::DistTargetPayload, &payload_bytes),
+            )
+            .expect("matching replay and payload targets");
         let receipt_bytes = wire::encode(&receipt).expect("receipt encodes");
         let _verified =
             verify(&admitted, &receipt_bytes, &replay).expect("evidence verifies before publish");
@@ -380,7 +494,7 @@ mod tests {
         let digest = publish(&receipt, &destination).expect("receipt publishes");
         let published = fs::read(&destination).expect("published receipt");
 
-        assert_eq!(digest, Digest::compute(Domain::ProofReceipt, &published));
+        assert_eq!(digest, Digest::compute(Domain::ProofReceiptV2, &published));
         assert_eq!(
             wire::decode::<wire::manifest::ProofReceipt>(&published)
                 .expect("published receipt decodes"),
@@ -390,6 +504,10 @@ mod tests {
     }
 
     fn payload() -> TargetPayload {
+        payload_for(ReleaseTarget::X86_64UnknownLinuxMusl)
+    }
+
+    fn payload_for(target: ReleaseTarget) -> TargetPayload {
         let environment = format!("registry.example/proof@sha256:{}", "4".repeat(64));
         let pins = BuildPins {
             rust: "rustc 1.97.1".to_owned(),
@@ -423,7 +541,7 @@ mod tests {
         ];
         TargetPayload {
             version: 1,
-            target: ReleaseTarget::X86_64UnknownLinuxMusl,
+            target,
             source: Digest::compute(Domain::DistArtifact, b"source"),
             app,
             embedded_app: embedded,
@@ -442,11 +560,16 @@ mod tests {
     }
 
     fn clean_replay(payload: &TargetPayload) -> ReplayVerdict {
-        let battery = Battery::current();
-        ReplayVerdict::fixture_clean(
-            payload.pins.proof_container.clone(),
-            battery.digest().clone(),
+        clean_replay_in(
+            payload,
+            ProofEnvironment::oci(&payload.pins.proof_container)
+                .expect("fixture image is digest-pinned"),
         )
+    }
+
+    fn clean_replay_in(payload: &TargetPayload, environment: ProofEnvironment) -> ReplayVerdict {
+        let battery = Battery::current();
+        ReplayVerdict::fixture_clean(payload.target, environment, battery.digest().clone())
     }
 
     fn assert_refuses(

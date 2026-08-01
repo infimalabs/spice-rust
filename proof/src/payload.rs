@@ -4,10 +4,8 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-use wire::manifest::{InventoryEntry, TargetPayload};
+use wire::manifest::{InventoryEntry, ProofImage, TargetPayload};
 use wire::{Digest, Domain};
-
-use crate::container::is_digest_pinned;
 
 const PAYLOAD_VERSION: u16 = 1;
 const ARTIFACTS: [Artifact; 3] = [
@@ -70,7 +68,7 @@ pub fn admit(bytes: &[u8]) -> Result<AdmittedPayload, PayloadError> {
     if payload.version != PAYLOAD_VERSION {
         return Err(PayloadError::Version(payload.version));
     }
-    if !is_digest_pinned(&payload.pins.proof_container) {
+    if !ProofImage::admits(&payload.pins.proof_container) {
         return Err(PayloadError::UnpinnedEnvironment(
             payload.pins.proof_container.clone(),
         ));
