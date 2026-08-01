@@ -85,6 +85,8 @@ pub enum Domain {
     DistPins,
     /// The inventory of what a staging run published.
     DistInventory,
+    /// The immutable Git commit selected as one release build source.
+    DistSourceCommit,
     /// The complete two-target release manifest admitted after proof.
     DistReleaseManifest,
     /// The ordered command inventory one sealed proof replay consumes.
@@ -135,6 +137,7 @@ impl Domain {
             Self::InstallPlan => "spice.install.coexistence-plan.v1",
             Self::DistPins => "spice.dist.pins.v1",
             Self::DistInventory => "spice.dist.inventory.v1",
+            Self::DistSourceCommit => "spice.dist.source-commit.v1",
             Self::DistReleaseManifest => "spice.dist.release-manifest.v1",
             Self::ProofBattery => "spice.proof.battery.v1",
             Self::ProofReplayV2 => "spice.proof.replay.v2",

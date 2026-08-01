@@ -32,7 +32,10 @@ pub(crate) fn report() -> Outcome<LockReport> {
     };
     Outcome::Reply(Reply {
         position: ReplyPosition::Direct {},
-        body: invocation.topology.report(),
+        body: match invocation.topology.report() {
+            Ok(report) => report,
+            Err(error) => return Failure::surface(error).outcome(),
+        },
     })
 }
 
@@ -258,13 +261,13 @@ impl Failure {
                 error.to_string(),
                 "select a name and shard from the topology reported by `spice lock`",
             ),
-            error @ (LockSurfaceError::Prepare { .. } | LockSurfaceError::Acquire { .. }) => {
-                Self::fault(
-                    FaultClass::Store,
-                    "lock::state-unavailable",
-                    error.to_string(),
-                )
-            }
+            error @ (LockSurfaceError::Prepare { .. }
+            | LockSurfaceError::Acquire { .. }
+            | LockSurfaceError::Inspect { .. }) => Self::fault(
+                FaultClass::Store,
+                "lock::state-unavailable",
+                error.to_string(),
+            ),
         }
     }
 

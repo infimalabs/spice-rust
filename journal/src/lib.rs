@@ -131,6 +131,24 @@ impl JournalReader {
                 path: path.to_path_buf(),
                 source,
             })?;
+        Self::from_connection(connection)
+    }
+
+    /// Admits one exact captured SQLite generation without reopening its path.
+    pub(crate) fn from_serialized(bytes: &[u8]) -> Result<Self, OpenError> {
+        let mut connection = Connection::open_in_memory().map_err(OpenError::Sqlite)?;
+        connection
+            .deserialize_read_exact(
+                rusqlite::MAIN_DB,
+                std::io::Cursor::new(bytes),
+                bytes.len(),
+                true,
+            )
+            .map_err(OpenError::Sqlite)?;
+        Self::from_connection(connection)
+    }
+
+    fn from_connection(connection: Connection) -> Result<Self, OpenError> {
         connection
             .pragma_update(None, "query_only", true)
             .map_err(OpenError::Sqlite)?;

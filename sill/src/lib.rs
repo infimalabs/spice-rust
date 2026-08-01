@@ -10,13 +10,13 @@ mod spec;
 mod surface;
 
 pub use config::{ConfigError, ExitCode, ExitStatuses, LockConfig, ShardCount};
-pub use lock::{Acquisition, LockFile, LockName, LockNameError, Possession};
+pub use lock::{Acquisition, Availability, LockFile, LockName, LockNameError, Possession};
 pub use spawn::{CapturedOutput, Completion, Running, WaitError, WaitOutcome, WaitStep, spawn};
 pub use spec::{
     Argv, Cancellation, CancellationToken, Deadlines, Environment, Output, ProcessGroup, Redaction,
     RestartDisposition, Spec, SpecError, StdinPolicy, StreamPolicy, WaitPolicy,
 };
 pub use surface::{
-    Contention, HeldShard, LockAttempt, LockExitReport, LockPoolReport, LockReport,
-    LockSurfaceError, LockTopology,
+    Contention, HeldShard, LockAttempt, LockAvailability, LockExitReport, LockPoolReport,
+    LockReport, LockShardReport, LockSurfaceError, LockTopology,
 };
