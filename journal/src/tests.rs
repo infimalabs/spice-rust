@@ -301,7 +301,22 @@ fn authority_fixture() -> Journal {
     let journal = Journal::in_memory().expect("create authority fixture");
     insert_fact(
         &journal,
-        fact(1, None, FactKind::TaskAdded, json!({"task": "JOURNAL-a1"})),
+        fact(
+            1,
+            None,
+            FactKind::TaskAdded,
+            json!({
+                "task": "JOURNAL-a1",
+                "uuid": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+                "title": "Journal fixture",
+                "project": "task.journal",
+                "tags": [],
+                "depends": [],
+                "flow": ["todo", "review"],
+                "phase": "todo",
+                "revision": 1
+            }),
+        ),
     );
     insert_fact(
         &journal,
@@ -333,7 +348,7 @@ fn authority_fixture() -> Journal {
 
 fn insert_fact(journal: &Journal, envelope: Envelope<AnyFact>) {
     let bytes = wire::encode(&envelope).expect("encode fact fixture");
-    let kind = envelope.fact.kind.as_str();
+    let kind = envelope.fact.kind().as_str();
     let seq = i64::try_from(envelope.seq.get()).expect("fixture seq fits SQLite");
     let cause = envelope
         .cause
@@ -357,6 +372,13 @@ fn fact(
     kind: FactKind,
     body: serde_json::Value,
 ) -> Envelope<AnyFact> {
+    let mut fields = body.as_object().cloned().expect("a fact body is an object");
+    fields.insert(
+        "kind".to_owned(),
+        serde_json::to_value(kind).expect("a fact kind encodes"),
+    );
+    let bytes = serde_json::to_vec(&fields).expect("fact fields encode");
+    let fact = wire::decode(&bytes).expect("fact fields match the registered body");
     Envelope {
         v: WireVersion::CURRENT,
         seq: Seq::new(seq).expect("nonzero fixture seq"),
@@ -364,10 +386,7 @@ fn fact(
         actor: Actor::Spice,
         origin: "task:JOURNAL-a1".parse::<Origin>().expect("fixture origin"),
         cause: cause.map(|cause| Seq::new(cause).expect("nonzero fixture cause")),
-        fact: AnyFact {
-            kind,
-            body: body.as_object().cloned().expect("a fact body is an object"),
-        },
+        fact,
     }
 }
 

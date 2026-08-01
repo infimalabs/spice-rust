@@ -11,7 +11,7 @@
 
 use std::collections::BTreeSet;
 
-use wire::{Fact, FactKind, Producer, body};
+use wire::{AnyFact, Fact, FactKind, Producer, body};
 
 /// Decode, re-encode, and assert the JSON value is unchanged.
 fn round_trip<T>(document: &str) -> T
@@ -80,7 +80,7 @@ const RELEASE_PUBLISHED: &str = r#"{
 fn the_command_door_body_matches_the_specified_fields() {
     let fact: Fact<body::DocApplied> = round_trip(DOC_APPLIED);
 
-    assert_eq!(fact.kind, FactKind::DocApplied);
+    assert_eq!(fact.kind(), FactKind::DocApplied);
     assert_eq!(fact.producer(), Producer::CommandDoor);
     assert_eq!(fact.body.operations, 7);
     assert_eq!(fact.body.barrier.get(), 48213);
@@ -90,7 +90,7 @@ fn the_command_door_body_matches_the_specified_fields() {
 fn the_bus_timer_body_matches_the_specified_fields() {
     let fact: Fact<body::ClaimRenewed> = round_trip(CLAIM_RENEWED);
 
-    assert_eq!(fact.kind, FactKind::ClaimRenewed);
+    assert_eq!(fact.kind(), FactKind::ClaimRenewed);
     assert_eq!(fact.producer(), Producer::BusTimer);
     assert_eq!(fact.body.task.as_str(), "SPICE-aBcD");
     assert!(
@@ -103,7 +103,7 @@ fn the_bus_timer_body_matches_the_specified_fields() {
 fn the_ack_scanner_body_matches_the_specified_fields() {
     let fact: Fact<body::SteerAcked> = round_trip(STEER_ACKED);
 
-    assert_eq!(fact.kind, FactKind::SteerAcked);
+    assert_eq!(fact.kind(), FactKind::SteerAcked);
     assert_eq!(fact.producer(), Producer::AckScanner);
     assert_eq!(fact.body.key, "1kJJP87B");
     assert_eq!(fact.body.locus, "turn:48213#0");
@@ -113,7 +113,7 @@ fn the_ack_scanner_body_matches_the_specified_fields() {
 fn the_resident_recognition_body_matches_the_specified_fields() {
     let fact: Fact<body::GateFound> = round_trip(GATE_FOUND);
 
-    assert_eq!(fact.kind, FactKind::GateFound);
+    assert_eq!(fact.kind(), FactKind::GateFound);
     assert_eq!(fact.producer(), Producer::ResidentRecognition);
     assert_eq!(fact.body.severity, body::Severity::High);
     assert_eq!(fact.body.identity, "wire::untyped-body");
@@ -123,7 +123,7 @@ fn the_resident_recognition_body_matches_the_specified_fields() {
 fn the_judge_body_matches_the_specified_fields() {
     let fact: Fact<body::TasteConfirmed> = round_trip(TASTE_CONFIRMED);
 
-    assert_eq!(fact.kind, FactKind::TasteConfirmed);
+    assert_eq!(fact.kind(), FactKind::TasteConfirmed);
     assert_eq!(fact.producer(), Producer::Judge);
     assert_eq!(fact.body.taste, "polling");
 }
@@ -132,7 +132,7 @@ fn the_judge_body_matches_the_specified_fields() {
 fn a_nested_body_keeps_its_specified_entry_fields() {
     let fact: Fact<body::ReleasePublished> = round_trip(RELEASE_PUBLISHED);
 
-    assert_eq!(fact.kind, FactKind::ReleasePublished);
+    assert_eq!(fact.kind(), FactKind::ReleasePublished);
     let [target] = fact.body.targets.as_slice() else {
         panic!("the fixture publishes exactly one target");
     };
@@ -164,12 +164,36 @@ fn an_unspelled_kind_is_not_a_fact() {
 }
 
 #[test]
+fn an_opaque_read_still_validates_the_registered_body() {
+    let missing = r#"{"kind":"taste::confirmed","taste":"polling"}"#;
+    let extra = r#"{
+      "kind": "taste::confirmed",
+      "taste": "polling",
+      "locus": "turn:48213#3",
+      "guess": true
+    }"#;
+
+    assert!(
+        wire::decode::<AnyFact>(missing.as_bytes()).is_err(),
+        "an opaque reader must reject a known kind with an incomplete registered body"
+    );
+    assert!(
+        wire::decode::<AnyFact>(extra.as_bytes()).is_err(),
+        "an opaque reader must reject fields outside the registered body"
+    );
+    assert!(
+        wire::decode::<Fact<body::TasteConfirmed>>(extra.as_bytes()).is_err(),
+        "a typed reader must reject the same fields outside its registered body"
+    );
+}
+
+#[test]
 fn a_body_pairs_only_with_its_own_kind() {
     let fact = Fact::new(body::TaskWoken {
         task: "SPICE-aBcD".parse().expect("handle"),
     });
 
-    assert_eq!(fact.kind, FactKind::TaskWoken);
+    assert_eq!(fact.kind(), FactKind::TaskWoken);
     assert_eq!(fact.producer(), Producer::CommandDoor);
 }
 

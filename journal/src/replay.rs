@@ -236,7 +236,7 @@ fn verify_fact_row(row: &FactRow, violations: &mut Vec<Violation>) {
         && envelope.actor.to_string() == row.actor
         && envelope.origin.as_str() == row.origin
         && envelope.cause.map(wire::Seq::get) == cause
-        && envelope.fact.kind.as_str() == row.kind;
+        && envelope.fact.kind().as_str() == row.kind;
     if !envelope.v.is_current() || !agreed {
         violations.push(Violation::new(
             ViolationClass::Envelope,

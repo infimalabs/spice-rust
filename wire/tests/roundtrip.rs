@@ -122,7 +122,7 @@ fn envelope_matches_the_specified_document() {
         "task:SPICE-aBcD".parse::<Origin>().expect("origin")
     );
     assert_eq!(envelope.cause, Some(seq(48190)));
-    assert_eq!(envelope.fact.kind, FactKind::TaskPhased);
+    assert_eq!(envelope.fact.kind(), FactKind::TaskPhased);
     assert_eq!(envelope.fact.body.phase.as_str(), "verify");
     assert!(!envelope.is_root());
 }
