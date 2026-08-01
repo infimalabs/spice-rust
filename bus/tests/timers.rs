@@ -5,47 +5,49 @@ use bus::timer::{TimerKind, TimerWorker};
 use journal::crossing::{CanonicalUuid, LeaseHead};
 
 #[test]
-fn blocking_worker_emits_deadlines_in_order_and_skips_cancellation() {
+fn blocking_worker_orders_reverse_armed_deadlines_and_skips_cancellation() {
     let (worker, events) = TimerWorker::start().expect("timer worker starts");
-    let first = worker
-        .arm(
-            "first",
-            TimerKind::TaskWake,
-            instant("2030-04-12T18:44:10.000Z"),
-            Duration::from_millis(20),
-        )
-        .expect("first timer arms");
-    let lease = lease_head();
-    let lease_id = worker
-        .arm_lease("BUS-a1", &lease, Duration::from_millis(80))
-        .expect("lease timer arms");
-    let canceled = worker
-        .arm(
-            "canceled",
-            TimerKind::SteerLapse,
-            instant("2030-04-12T18:44:12.000Z"),
-            Duration::from_millis(150),
-        )
-        .expect("cancelable timer arms");
-    assert!(worker.cancel(canceled).expect("timer cancellation answers"));
     let late = worker
         .arm(
             "late",
             TimerKind::LaneResume,
             instant("2030-04-12T18:44:13.000Z"),
-            Duration::from_millis(200),
+            Duration::from_millis(250),
         )
-        .expect("late timer arms");
+        .expect("late timer arms first");
+    let lease = lease_head();
+    let lease_id = worker
+        .arm_lease("BUS-a1", &lease, Duration::from_millis(150))
+        .expect("lease timer arms");
+    let first = worker
+        .arm(
+            "first",
+            TimerKind::TaskWake,
+            instant("2030-04-12T18:44:10.000Z"),
+            Duration::from_millis(50),
+        )
+        .expect("earliest timer arms last");
+    let canceled = worker
+        .arm(
+            "canceled",
+            TimerKind::SteerLapse,
+            instant("2030-04-12T18:44:12.000Z"),
+            Duration::from_secs(60),
+        )
+        .expect("cancelable timer arms");
+    assert!(worker.cancel(canceled).expect("timer cancellation answers"));
+    assert!(late.get() < lease_id.get());
+    assert!(lease_id.get() < first.get());
 
     let first_event = events
-        .recv_timeout(Duration::from_secs(1))
+        .recv_timeout(Duration::from_secs(2))
         .expect("first actual deadline");
     assert_eq!(first_event.id(), first);
     assert_eq!(first_event.owner(), "first");
     assert_eq!(first_event.kind(), TimerKind::TaskWake);
 
     let lease_event = events
-        .recv_timeout(Duration::from_secs(1))
+        .recv_timeout(Duration::from_secs(2))
         .expect("lease actual deadline");
     assert_eq!(lease_event.id(), lease_id);
     assert_eq!(lease_event.owner(), "BUS-a1");
@@ -53,7 +55,7 @@ fn blocking_worker_emits_deadlines_in_order_and_skips_cancellation() {
     assert_eq!(lease_event.deadline(), lease.expiry);
 
     let late_event = events
-        .recv_timeout(Duration::from_secs(1))
+        .recv_timeout(Duration::from_secs(2))
         .expect("late actual deadline");
     assert_eq!(late_event.id(), late);
     assert_eq!(late_event.owner(), "late");
