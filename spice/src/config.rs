@@ -197,6 +197,18 @@ enum TemplateShape {
     Indexed,
 }
 
+/// One unambiguous segment of a concrete configuration leaf path.
+///
+/// Keys remain whole even when a domain admits punctuation in a dynamic name;
+/// indexes are separate from keys rather than encoded into display text.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PathSegment<'a> {
+    /// One table or field key.
+    Key(&'a str),
+    /// One ordered row index.
+    Index(usize),
+}
+
 /// One fixed or dynamic leaf path template.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PathTemplate {
@@ -234,12 +246,29 @@ impl PathTemplate {
 
     /// Whether this template covers one concrete leaf path.
     #[must_use]
-    pub fn matches(self, path: &str) -> bool {
-        match self.shape {
-            TemplateShape::Fixed => path == self.rendered,
-            TemplateShape::Named => named_matches(self.rendered, path),
-            TemplateShape::Indexed => indexed_matches(self.rendered, path),
+    pub fn matches(self, path: &[PathSegment<'_>]) -> bool {
+        let mut at = 0;
+        for segment in self.rendered.split('.') {
+            if segment == "<name>" {
+                if !matches!(path.get(at), Some(PathSegment::Key(_))) {
+                    return false;
+                }
+                at += 1;
+            } else if let Some(key) = segment.strip_suffix("[]") {
+                if path.get(at) != Some(&PathSegment::Key(key))
+                    || !matches!(path.get(at + 1), Some(PathSegment::Index(_)))
+                {
+                    return false;
+                }
+                at += 2;
+            } else {
+                if path.get(at) != Some(&PathSegment::Key(segment)) {
+                    return false;
+                }
+                at += 1;
+            }
         }
+        at == path.len()
     }
 
     /// Whether the template contains a named or indexed row.
@@ -247,34 +276,6 @@ impl PathTemplate {
     pub const fn is_dynamic(self) -> bool {
         !matches!(self.shape, TemplateShape::Fixed)
     }
-}
-
-fn named_matches(template: &str, path: &str) -> bool {
-    let Some((prefix, suffix)) = template.split_once("<name>") else {
-        return false;
-    };
-    let Some(name) = path
-        .strip_prefix(prefix)
-        .and_then(|remainder| remainder.strip_suffix(suffix))
-    else {
-        return false;
-    };
-    !name.is_empty() && !name.contains(['.', '[', ']'])
-}
-
-fn indexed_matches(template: &str, path: &str) -> bool {
-    let Some((prefix, suffix)) = template.split_once("[]") else {
-        return false;
-    };
-    let Some(index) = path
-        .strip_prefix(prefix)
-        .and_then(|remainder| remainder.strip_suffix(suffix))
-        .and_then(|middle| middle.strip_prefix('['))
-        .and_then(|middle| middle.strip_suffix(']'))
-    else {
-        return false;
-    };
-    !index.is_empty() && index.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 /// Metadata and routing policy for one leaf template.
@@ -546,7 +547,7 @@ pub const fn descriptors() -> &'static [Descriptor] {
 
 /// Find the sole descriptor covering a concrete leaf path.
 #[must_use]
-pub fn descriptor(path: &str) -> Option<&'static Descriptor> {
+pub fn descriptor(path: &[PathSegment<'_>]) -> Option<&'static Descriptor> {
     DESCRIPTORS
         .iter()
         .find(|descriptor| descriptor.template.matches(path))
