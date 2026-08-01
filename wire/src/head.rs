@@ -100,7 +100,7 @@ pub struct LeaseHead {
 /// Closed classes of authoritative command predicates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum WitnessKind {
+pub enum WitnessClass {
     /// Allocation or reviewer assignment.
     Assignment,
     /// Review authorship or verdict state.
@@ -124,7 +124,7 @@ pub struct WitnessHead {
     /// Stable predicate name.
     pub name: String,
     /// Predicate class from WIRE's closed authority list.
-    pub kind: WitnessKind,
+    pub kind: WitnessClass,
     /// Canonical predicate statement.
     pub predicate: String,
     /// Fact that established the current predicate.

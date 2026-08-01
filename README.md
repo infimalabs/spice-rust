@@ -21,14 +21,12 @@ another agent, with:
 ./scripts/verify.sh
 ```
 
-The `gate` integration tests are executable closure checks over the workspace
-and its documents of record.
-
-Lattice conformance compares every local path dependency with the acyclic
-crate graph compiled into `gate/tests/dependency_lattice.rs`. That test's
-`EXPECTED` table is the source of truth: it fails when a workspace member is
-added without an entry or when a manifest adds, removes, reverses, or cycles a
-local dependency edge.
+The `gate` integration tests enforce repository contracts from stable product
+inputs. Lattice conformance compares every local path dependency in
+`Cargo.lock` with the acyclic graph compiled into
+`gate/tests/dependency_lattice.rs`. That test's `EXPECTED` table is the source
+of truth: it fails when a workspace member is added without an entry or when a
+manifest adds, removes, reverses, or cycles a local dependency edge.
 
 Doctrine conformance holds [DOCTRINE.md](DOCTRINE.md) to its compiled section,
 kernel, and decision-record contract. It requires every invariant to be stated
