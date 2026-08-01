@@ -65,11 +65,15 @@ fn the_specified_command_satisfies_its_own_registry_row() {
 fn every_command_names_the_witnesses_it_requires() {
     for kind in CommandKind::ALL {
         let law = kind.law();
+        let scanner_disposition = matches!(kind, CommandKind::SteerDispose);
         assert_eq!(
             law.required.is_empty(),
-            kind.is_read(),
-            "only read requests may carry a witness-free registry row",
+            kind.is_read() || scanner_disposition,
+            "only reads and scanner dispositions may omit a required witness",
         );
+        if scanner_disposition {
+            assert_eq!(law.optional, &[WitnessKind::Directive]);
+        }
         for optional in law.optional {
             assert!(
                 !law.required.contains(optional),

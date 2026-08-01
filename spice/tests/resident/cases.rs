@@ -1,3 +1,10 @@
+//! Resident process cases sharing the integration fixture.
+//!
+//! Keeping cases below the fixture root makes the process boundary reusable
+//! without letting one integration-test source exceed the repository limit.
+
+use super::*;
+
 #[test]
 fn resident_lock_precedes_journal_open_and_names_the_holder() {
     let fixture = Fixture::new("lock-first");
@@ -378,10 +385,12 @@ fn resident_startup_refuses_linked_policy_components_without_trust_effects() {
             .expect("refused authority opens")
             .fact_snapshot()
             .expect("refused authority reads");
-        assert!(snapshot.facts().iter().all(|fact| !matches!(
-            fact.fact.kind(),
-            FactKind::TrustPended | FactKind::UpSeated
-        )));
+        assert!(
+            snapshot.facts().iter().all(|fact| !matches!(
+                fact.fact.kind(),
+                FactKind::TrustPended | FactKind::UpSeated
+            ))
+        );
     }
 }
 

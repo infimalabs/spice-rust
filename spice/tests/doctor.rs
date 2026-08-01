@@ -225,19 +225,12 @@ fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
         report.configuration.tasks().project_max_depth(),
         dialect::PROJECT_MAX_DEPTH as u64
     );
-    let mut configured_environment = SpiceVariable::ALL
-        .iter()
-        .map(|variable| variable.as_str().to_owned())
-        .collect::<Vec<_>>();
-    configured_environment.extend([
-        spice::install::TEST_PAUSE_ACTION.to_owned(),
-        spice::install::TEST_PAUSE_CONTROL.to_owned(),
-        spice::install::TEST_PAUSE_PATH.to_owned(),
-    ]);
-    configured_environment.sort();
     assert_eq!(
         report.configuration.policy().env_names(),
-        configured_environment
+        SpiceVariable::ALL
+            .iter()
+            .map(|variable| variable.as_str().to_owned())
+            .collect::<Vec<_>>()
     );
     for path in [
         "tasks.stems",
