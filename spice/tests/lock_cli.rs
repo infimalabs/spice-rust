@@ -1,5 +1,6 @@
 #![cfg(unix)]
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -9,7 +10,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use sill::{LockAvailability, LockReport};
+use sill::{Acquisition, LockAvailability, LockFile, LockName, LockReport, Possession};
 use wire::{Outcome, ReplyPosition};
 
 const BUSY_EXIT: i32 = 71;
@@ -369,6 +370,139 @@ fn refused_selection_and_configuration_never_materialize_state() {
         Outcome::Refusal(refusal) if refusal.reason == "lock::configuration-refused"
     ));
     assert!(!repository.lock_root().exists());
+}
+
+#[test]
+fn final_and_intermediate_symlinks_never_escape_the_configured_topology() {
+    use std::os::unix::fs::symlink;
+
+    let final_link = Scratch::repository("final-symlink");
+    let final_external = final_link.path().join("external-final");
+    fs::write(&final_external, b"external final lock").expect("external lock writes");
+    let final_hold = hold_external(&final_external, "external-final");
+    let final_pool = final_link.lock_root().join("single");
+    fs::create_dir_all(&final_pool).expect("final-link pool creates");
+    symlink(&final_external, final_pool.join("0")).expect("final shard symlink creates");
+    assert_symlink_refusal(&final_link, "single", &final_hold);
+
+    let intermediate = Scratch::repository("intermediate-symlink");
+    let external_pool = intermediate.path().join("external-pool");
+    fs::create_dir(&external_pool).expect("external pool creates");
+    let external_shard = external_pool.join("0");
+    fs::write(&external_shard, b"external intermediate lock").expect("external shard writes");
+    let intermediate_hold = hold_external(&external_shard, "external-intermediate");
+    fs::create_dir_all(intermediate.lock_root()).expect("lock root creates");
+    symlink(&external_pool, intermediate.lock_root().join("pool"))
+        .expect("intermediate pool symlink creates");
+    assert_symlink_refusal(&intermediate, "pool", &intermediate_hold);
+}
+
+fn hold_external(path: &Path, name: &str) -> Possession {
+    let lock = LockFile::new(
+        LockName::new(name.to_owned()).expect("external lock name is valid"),
+        path,
+    );
+    match lock.try_acquire().expect("external lock is observable") {
+        Acquisition::Acquired(possession) => possession,
+        Acquisition::Contended => panic!("fresh external lock was contended"),
+    }
+}
+
+fn assert_symlink_refusal(repository: &Scratch, name: &str, external: &Possession) {
+    let child_marker = repository.path().join("child-launched");
+    let child_marker = child_marker.to_str().expect("fixture path is UTF-8");
+    let before = tree(repository.path());
+
+    assert_state_fault(&invoke(repository.path(), &["--json", "lock"]));
+    assert_state_fault(&invoke(
+        repository.path(),
+        &[
+            "--json",
+            "lock",
+            "run",
+            name,
+            "--shard",
+            "0",
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf launched > \"$1\"",
+            "lock-child",
+            child_marker,
+        ],
+    ));
+
+    assert!(
+        !Path::new(child_marker).exists(),
+        "a refused symlink path launched its child"
+    );
+    assert_eq!(tree(repository.path()), before, "a refusal changed state");
+    let contender = external
+        .lock()
+        .try_acquire()
+        .expect("external lock remains observable");
+    assert!(matches!(contender, Acquisition::Contended));
+}
+
+fn assert_state_fault(spoken: &Spoken) {
+    assert_eq!(spoken.status.code(), Some(1));
+    assert!(spoken.out.is_empty());
+    let outcome: Outcome<()> = wire::decode(&spoken.err).expect("state fault is typed JSON");
+    assert!(matches!(
+        outcome,
+        Outcome::Fault(fault) if fault.reason == "lock::state-unavailable"
+    ));
+}
+
+fn tree(root: &Path) -> BTreeMap<String, (u32, String, Vec<u8>)> {
+    let mut state = BTreeMap::new();
+    walk_tree(root, root, &mut state);
+    state
+}
+
+fn walk_tree(root: &Path, directory: &Path, state: &mut BTreeMap<String, (u32, String, Vec<u8>)>) {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut entries = fs::read_dir(directory)
+        .expect("snapshot directory reads")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("snapshot entries read");
+    entries.sort_by_key(fs::DirEntry::file_name);
+    for entry in entries {
+        let path = entry.path();
+        let relative = path
+            .strip_prefix(root)
+            .expect("snapshot path is rooted")
+            .to_string_lossy()
+            .into_owned();
+        let metadata = fs::symlink_metadata(&path).expect("snapshot metadata reads");
+        let mode = metadata.permissions().mode() & 0o7777;
+        if metadata.is_dir() {
+            state.insert(relative, (mode, "directory".to_owned(), Vec::new()));
+            walk_tree(root, &path, state);
+        } else if metadata.is_file() {
+            state.insert(
+                relative,
+                (mode, "file".to_owned(), fs::read(path).expect("file reads")),
+            );
+        } else if metadata.file_type().is_symlink() {
+            state.insert(
+                relative,
+                (
+                    mode,
+                    "symlink".to_owned(),
+                    fs::read_link(path)
+                        .expect("symlink reads")
+                        .as_os_str()
+                        .as_bytes()
+                        .to_vec(),
+                ),
+            );
+        } else {
+            panic!("snapshot encountered an unsupported file type at {relative}");
+        }
+    }
 }
 
 fn assert_refusal(spoken: &Spoken, code: i32, reason: &str) {
