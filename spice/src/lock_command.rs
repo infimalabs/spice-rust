@@ -211,8 +211,14 @@ impl Invocation {
         })?;
         let resolved =
             spice::config::load_repository(&repository, &[]).map_err(Failure::configuration)?;
-        let root = repository.state_root().join("locks");
-        let topology = LockTopology::new(root, resolved.root().lock());
+        let state =
+            repository
+                .admit_state()
+                .map_err(|error| match crate::state_failure(&error) {
+                    crate::StateFailure::Refusal(refusal) => Failure::Refusal(refusal),
+                    crate::StateFailure::Fault(fault) => Failure::Fault(fault),
+                })?;
+        let topology = LockTopology::new(state.locks(), resolved.root().lock());
         Ok(Self { working, topology })
     }
 }
