@@ -147,6 +147,9 @@ pub enum OpenError {
     },
     Sqlite(rusqlite::Error),
     Migration(MigrationError),
+    InvalidCursor {
+        found: i64,
+    },
 }
 
 impl fmt::Display for OpenError {
@@ -161,6 +164,12 @@ impl fmt::Display for OpenError {
             }
             Self::Sqlite(error) => write!(formatter, "journal SQLite operation failed: {error}"),
             Self::Migration(error) => error.fmt(formatter),
+            Self::InvalidCursor { found } => {
+                write!(
+                    formatter,
+                    "journal cursor must be a positive position, found {found}"
+                )
+            }
         }
     }
 }
@@ -171,6 +180,7 @@ impl Error for OpenError {
             Self::Open { source, .. } => Some(source),
             Self::Sqlite(error) => Some(error),
             Self::Migration(error) => Some(error),
+            Self::InvalidCursor { .. } => None,
         }
     }
 }

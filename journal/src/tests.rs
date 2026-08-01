@@ -13,9 +13,9 @@ use wire::{
     WorkflowHead,
 };
 
-use crate::{Journal, MigrationError, OpenError, SCHEMA_VERSION, ViolationClass};
+use crate::{Journal, JournalReader, MigrationError, OpenError, SCHEMA_VERSION, ViolationClass};
 
-static NEXT_SCHEMA_PROBE: AtomicU64 = AtomicU64::new(0);
+static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn empty_database_reaches_the_same_finalized_baseline_once() {
@@ -143,8 +143,120 @@ fn malformed_schema_identity_is_refused_by_name() {
 }
 
 #[test]
+fn read_only_handle_reports_schema_and_cursor_without_mutation() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("journal.sqlite3");
+    drop(authority_file_fixture(&path));
+    let before = FileState::read(&path);
+
+    let reader = JournalReader::open(&path).expect("finalized authority opens read-only");
+
+    assert_eq!(
+        reader.schema_version().expect("read schema version"),
+        SCHEMA_VERSION
+    );
+    assert_eq!(reader.cursor().expect("read cursor"), Seq::new(2));
+    let query_only: bool = reader
+        .connection
+        .query_row("PRAGMA query_only", [], |row| row.get(0))
+        .expect("query-only posture");
+    assert!(query_only);
+    let write = reader
+        .connection
+        .execute("UPDATE cursor_head SET wake = seq WHERE singleton = 1", [])
+        .expect_err("SQLite rejects a write through the reader");
+    assert_eq!(
+        write.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::ReadOnly)
+    );
+    drop(reader);
+
+    assert_eq!(FileState::read(&path), before);
+
+    let empty = scratch.path().join("empty.sqlite3");
+    drop(Journal::open(&empty).expect("create empty finalized authority"));
+    let before = FileState::read(&empty);
+
+    let reader = JournalReader::open(&empty).expect("empty finalized authority opens read-only");
+
+    assert_eq!(reader.cursor().expect("read empty cursor"), None);
+    drop(reader);
+    assert_eq!(FileState::read(&empty), before);
+}
+
+#[test]
+fn read_only_admission_refuses_schema_states_without_mutation() {
+    let scratch = Scratch::new();
+    let cases = [
+        (
+            "prepared.sqlite3",
+            1,
+            "prepared",
+            Some(0),
+            Some(1),
+            Some("plan:baseline"),
+            "prepared and unfinalized",
+        ),
+        (
+            "newer.sqlite3",
+            2,
+            "finalized",
+            None,
+            None,
+            None,
+            "newer than this build",
+        ),
+        (
+            "older.sqlite3",
+            0,
+            "finalized",
+            None,
+            None,
+            None,
+            "has no migration path",
+        ),
+    ];
+
+    for (name, version, state, from, to, digest, expected) in cases {
+        let path = scratch.path().join(name);
+        drop(schema_file_fixture(&path, version, state, from, to, digest));
+        let before = FileState::read(&path);
+
+        let error = JournalReader::open(&path).expect_err("schema state refuses read-only open");
+
+        assert!(
+            error.to_string().contains(expected),
+            "{name} did not name {expected:?}: {error}",
+        );
+        assert_eq!(FileState::read(&path), before, "{name} changed on refusal");
+    }
+}
+
+#[test]
+fn read_only_admission_never_creates_or_repairs_an_authority() {
+    let scratch = Scratch::new();
+    let absent = scratch.path().join("absent.sqlite3");
+    let entries_before = directory_entries(scratch.path());
+
+    let error = JournalReader::open(&absent).expect_err("absent authority refuses open");
+
+    assert!(matches!(error, OpenError::Open { ref path, .. } if path == &absent));
+    assert!(!absent.exists());
+    assert_eq!(directory_entries(scratch.path()), entries_before);
+
+    let malformed = scratch.path().join("malformed.sqlite3");
+    fs::write(&malformed, b"not a SQLite authority").expect("write malformed fixture");
+    let before = FileState::read(&malformed);
+
+    let error = JournalReader::open(&malformed).expect_err("malformed authority refuses open");
+
+    assert!(matches!(error, OpenError::Sqlite(_)));
+    assert_eq!(FileState::read(&malformed), before);
+}
+
+#[test]
 fn schema_probe_reads_finalized_identity_without_changing_the_store() {
-    let scratch = SchemaScratch::new();
+    let scratch = Scratch::new();
     let path = scratch.path().join("authority.db");
     drop(Journal::open(&path).expect("create finalized authority"));
     let before = directory_bytes(scratch.path());
@@ -184,7 +296,7 @@ fn schema_probe_refuses_unfinalized_and_forward_state_without_changing_the_store
             },
         ),
     ] {
-        let scratch = SchemaScratch::new();
+        let scratch = Scratch::new();
         let path = scratch.path().join(format!("{name}.db"));
         drop(schema_file_fixture(&path, version, state, from, to, digest));
         let before = directory_bytes(scratch.path());
@@ -200,7 +312,7 @@ fn schema_probe_refuses_unfinalized_and_forward_state_without_changing_the_store
 
 #[test]
 fn schema_probe_distinguishes_absence_from_sqlite_corruption_and_creates_nothing() {
-    let scratch = SchemaScratch::new();
+    let scratch = Scratch::new();
     let missing = scratch.path().join("missing.db");
 
     let error = Journal::inspect_schema(&missing).expect_err("missing authority refuses");
@@ -637,7 +749,14 @@ fn lease_heads_must_carry_an_ordered_life() {
 }
 
 fn authority_fixture() -> Journal {
-    let journal = Journal::in_memory().expect("create authority fixture");
+    populate_authority(Journal::in_memory().expect("create authority fixture"))
+}
+
+fn authority_file_fixture(path: &Path) -> Journal {
+    populate_authority(Journal::open(path).expect("create file authority fixture"))
+}
+
+fn populate_authority(journal: Journal) -> Journal {
     insert_fact(
         &journal,
         fact(
@@ -983,28 +1102,69 @@ fn directory_bytes(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
         .collect()
 }
 
-struct SchemaScratch(PathBuf);
+#[derive(Debug, PartialEq, Eq)]
+struct FileState {
+    bytes: Vec<u8>,
+    length: u64,
+    modified: std::time::SystemTime,
+}
 
-impl SchemaScratch {
-    fn new() -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "spice-journal-schema-probe-{}-{}",
-            std::process::id(),
-            NEXT_SCHEMA_PROBE.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&path).expect("create schema scratch");
-        Self(path)
-    }
-
-    fn path(&self) -> &Path {
-        &self.0
+impl FileState {
+    fn read(path: &Path) -> Self {
+        let metadata = fs::metadata(path).expect("read fixture metadata");
+        Self {
+            bytes: fs::read(path).expect("read fixture bytes"),
+            length: metadata.len(),
+            modified: metadata.modified().expect("read modification instant"),
+        }
     }
 }
 
-impl Drop for SchemaScratch {
-    fn drop(&mut self) {
-        fs::remove_dir_all(&self.0).expect("remove schema scratch");
+struct Scratch {
+    path: PathBuf,
+}
+
+impl Scratch {
+    fn new() -> Self {
+        for _ in 0..1024 {
+            let candidate = std::env::temp_dir().join(format!(
+                "spice-journal-readonly-{}-{}",
+                std::process::id(),
+                NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed),
+            ));
+            match fs::create_dir(&candidate) {
+                Ok(()) => return Self { path: candidate },
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("create scratch {}: {error}", candidate.display()),
+            }
+        }
+        panic!("could not create a distinct read-only journal scratch directory");
     }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.path).expect("remove read-only journal scratch directory");
+    }
+}
+
+fn directory_entries(path: &Path) -> Vec<String> {
+    let mut entries = fs::read_dir(path)
+        .expect("read scratch directory")
+        .map(|entry| {
+            entry
+                .expect("read scratch entry")
+                .file_name()
+                .into_string()
+                .expect("scratch entry is UTF-8")
+        })
+        .collect::<Vec<_>>();
+    entries.sort();
+    entries
 }
 
 fn authority_tables(journal: &Journal) -> BTreeSet<String> {
