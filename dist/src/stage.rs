@@ -134,7 +134,7 @@ impl Pipeline {
         let artifacts = build_artifacts(target, builder)?;
         let payload = make_payload(target, source, self.pins.get(), &artifacts)?;
         let payload_bytes = wire::encode(&payload)?;
-        let payload_digest = Digest::compute(Domain::TargetPayload, &payload_bytes);
+        let payload_digest = Digest::compute(Domain::DistTargetPayload, &payload_bytes);
         publish_artifacts(publisher, &artifacts)?;
         let payload_path = PathBuf::from(format!("targets/{target}/payload.json"));
         publisher
@@ -211,7 +211,7 @@ fn build_artifacts<B: Builder>(
 }
 
 fn artifact(path: &'static str, mode: u32, bytes: Vec<u8>) -> Artifact {
-    let digest = Digest::compute(Domain::Artifact, &bytes);
+    let digest = Digest::compute(Domain::DistArtifact, &bytes);
     Artifact {
         path,
         mode,
@@ -228,8 +228,8 @@ fn make_payload(
 ) -> Result<TargetPayload, serde_json::Error> {
     let mut inventory = artifacts.iter().map(inventory_entry).collect::<Vec<_>>();
     inventory.sort_by(|left, right| left.path.cmp(&right.path));
-    let pins_digest = Digest::compute(Domain::Pins, &wire::encode(pins)?);
-    let inventory_digest = Digest::compute(Domain::Inventory, &wire::encode(&inventory)?);
+    let pins_digest = Digest::compute(Domain::DistPins, &wire::encode(pins)?);
+    let inventory_digest = Digest::compute(Domain::DistInventory, &wire::encode(&inventory)?);
     Ok(TargetPayload {
         version: PAYLOAD_VERSION,
         target,

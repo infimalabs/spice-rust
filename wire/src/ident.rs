@@ -62,16 +62,22 @@ pub enum IdentError {
 /// here rather than spelled at each call site: a new class is a new variant in
 /// this file, which is what stops two leaves from minting the same class under
 /// two spellings and calling the results the same identity.
+///
+/// Every variant leads with the plane its tag places it in. Two planes both
+/// want a word like `inventory`, and whichever arrives first would otherwise
+/// take the bare noun and leave the second to qualify itself, so the same kind
+/// of thing reads as two different kinds. Leading with the plane costs the
+/// first arrival nothing and means no later one has to be spelled around it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Domain {
     /// The payload manifest of one release target.
-    TargetPayload,
+    DistTargetPayload,
     /// The bytes of one staged artifact.
-    Artifact,
+    DistArtifact,
     /// The build pin set a staging run resolved.
-    Pins,
+    DistPins,
     /// The inventory of what a staging run published.
-    Inventory,
+    DistInventory,
     /// The bytes of one file inside a gate's jurisdiction.
     GateFile,
     /// The admitted file set of one gate jurisdiction, by content.
@@ -93,10 +99,10 @@ impl Domain {
     #[must_use]
     pub const fn tag(self) -> &'static str {
         match self {
-            Self::TargetPayload => "spice.dist.target-payload.v1",
-            Self::Artifact => "spice.dist.artifact.v1",
-            Self::Pins => "spice.dist.pins.v1",
-            Self::Inventory => "spice.dist.inventory.v1",
+            Self::DistTargetPayload => "spice.dist.target-payload.v1",
+            Self::DistArtifact => "spice.dist.artifact.v1",
+            Self::DistPins => "spice.dist.pins.v1",
+            Self::DistInventory => "spice.dist.inventory.v1",
             Self::GateFile => "spice.gate.file.v1",
             Self::GateTree => "spice.gate.tree.v1",
             Self::GatePolicy => "spice.gate.policy.v1",
