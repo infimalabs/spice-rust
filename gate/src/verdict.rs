@@ -97,10 +97,22 @@ impl Run {
     ) -> Result<Self, RunError> {
         let jurisdiction = Jurisdiction::walk(root, policy.ignore()).map_err(RunError::Walk)?;
         let inventory = jurisdiction.inventory_digest();
-        let tree = jurisdiction.tree_digest().map_err(RunError::Walk)?;
-        let measurements = policy
-            .measure(&jurisdiction, bounds)
-            .map_err(RunError::Measure)?;
+        let snapshot = jurisdiction.snapshot().map_err(RunError::Walk)?;
+        let tree = snapshot.tree();
+        let mut measurements = Vec::with_capacity(policy.metrics().len());
+        for metric in policy.metrics() {
+            let measurement = metric.measure(snapshot.jurisdiction(), bounds);
+            if let Some(changed) = snapshot.verify().map_err(RunError::Walk)? {
+                return Err(RunError::SnapshotChanged {
+                    metric: metric.name().to_owned(),
+                    measured: measurement.as_ref().ok().map(Measurement::value),
+                    path: changed.path,
+                    tree: changed.tree,
+                    observed_tree: changed.observed_tree,
+                });
+            }
+            measurements.push(measurement.map_err(RunError::Measure)?);
+        }
 
         let observed = Jurisdiction::walk(root, policy.ignore()).map_err(RunError::Walk)?;
         let observed_inventory = observed.inventory_digest();
@@ -188,6 +200,19 @@ pub enum RunError {
         /// Admitted contents observed after measurement.
         observed_tree: Digest,
     },
+    /// A parser changed the private jurisdiction snapshot it was measuring.
+    SnapshotChanged {
+        /// The metric whose parser changed the snapshot.
+        metric: String,
+        /// The number it printed, when it produced one trustworthy count.
+        measured: Option<u64>,
+        /// The first snapshot path whose kernel state moved.
+        path: String,
+        /// Admitted contents captured before any parser ran.
+        tree: Digest,
+        /// Admitted contents after the parser, when they remained readable.
+        observed_tree: Option<Digest>,
+    },
 }
 
 impl fmt::Display for RunError {
@@ -205,6 +230,17 @@ impl fmt::Display for RunError {
                 "jurisdiction changed during measurement: inventory {inventory} became \
                  {observed_inventory}; tree {tree} became {observed_tree}"
             ),
+            Self::SnapshotChanged {
+                metric,
+                measured,
+                path,
+                tree,
+                observed_tree,
+            } => write!(
+                formatter,
+                "{metric} parser changed snapshot path {path} after measuring {measured:?}: \
+                 tree {tree} became {observed_tree:?}"
+            ),
         }
     }
 }
@@ -214,7 +250,7 @@ impl std::error::Error for RunError {
         match self {
             Self::Walk(source) => Some(source),
             Self::Measure(source) => Some(source),
-            Self::JurisdictionChanged { .. } => None,
+            Self::JurisdictionChanged { .. } | Self::SnapshotChanged { .. } => None,
         }
     }
 }

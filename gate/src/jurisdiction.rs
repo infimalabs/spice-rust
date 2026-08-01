@@ -13,6 +13,12 @@ use std::fmt::Write as _;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+#[cfg(target_family = "unix")]
+use std::os::unix::fs::MetadataExt as _;
+#[cfg(not(target_family = "unix"))]
+use std::time::SystemTime;
 
 use wire::{Digest, Domain};
 
@@ -312,6 +318,51 @@ pub struct Jurisdiction {
     entries: Vec<Entry>,
 }
 
+/// One private materialization of the admitted bytes a run measures.
+pub(crate) struct Snapshot {
+    root: SnapshotRoot,
+    jurisdiction: Jurisdiction,
+    tree: Digest,
+    seals: Vec<Seal>,
+}
+
+pub(crate) struct SnapshotChange {
+    pub(crate) path: String,
+    pub(crate) tree: Digest,
+    pub(crate) observed_tree: Option<Digest>,
+}
+
+struct SnapshotRoot {
+    path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Seal {
+    path: String,
+    shape: Shape,
+    fingerprint: Fingerprint,
+}
+
+#[cfg(target_family = "unix")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Fingerprint {
+    device: u64,
+    inode: u64,
+    mode: u32,
+    links: u64,
+    length: u64,
+    modified: (i64, i64),
+    changed: (i64, i64),
+}
+
+#[cfg(not(target_family = "unix"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Fingerprint {
+    length: u64,
+    readonly: bool,
+    modified: Option<SystemTime>,
+}
+
 impl Jurisdiction {
     /// Walk a foreign repository under one ignore policy.
     ///
@@ -419,6 +470,178 @@ impl Jurisdiction {
         }
         Ok(Digest::compute(Domain::GateTree, listing.as_bytes()))
     }
+
+    pub(crate) fn snapshot(&self) -> Result<Snapshot, WalkError> {
+        Snapshot::capture(self)
+    }
+}
+
+impl Snapshot {
+    fn capture(source: &Jurisdiction) -> Result<Self, WalkError> {
+        let root = SnapshotRoot::create()?;
+        for entry in source.measurable() {
+            let original = source.root.join(entry.path());
+            let captured = root.path.join(entry.path());
+            if let Some(parent) = captured.parent() {
+                fs::create_dir_all(parent).map_err(|source| {
+                    WalkError::io("creating a snapshot directory", parent, source)
+                })?;
+            }
+            let bytes = fs::read(&original)
+                .map_err(|source| WalkError::io("capturing an admitted file", &original, source))?;
+            let permissions = fs::metadata(&original)
+                .map_err(|source| WalkError::io("inspecting an admitted file", &original, source))?
+                .permissions();
+            fs::write(&captured, bytes)
+                .map_err(|source| WalkError::io("writing a snapshot file", &captured, source))?;
+            fs::set_permissions(&captured, permissions).map_err(|source| {
+                WalkError::io("preserving snapshot permissions", &captured, source)
+            })?;
+        }
+
+        let jurisdiction = Jurisdiction {
+            root: root.path.clone(),
+            entries: source.entries.clone(),
+        };
+        let tree = jurisdiction.tree_digest()?;
+        let seals = seal_tree(&root.path)?;
+        Ok(Self {
+            root,
+            jurisdiction,
+            tree,
+            seals,
+        })
+    }
+
+    pub(crate) const fn jurisdiction(&self) -> &Jurisdiction {
+        &self.jurisdiction
+    }
+
+    pub(crate) fn tree(&self) -> Digest {
+        self.tree.clone()
+    }
+
+    pub(crate) fn verify(&self) -> Result<Option<SnapshotChange>, WalkError> {
+        let observed_seals = seal_tree(&self.root.path)?;
+        if observed_seals != self.seals {
+            return Ok(Some(SnapshotChange {
+                path: first_changed_path(&self.seals, &observed_seals),
+                tree: self.tree.clone(),
+                observed_tree: self.jurisdiction.tree_digest().ok(),
+            }));
+        }
+
+        let observed_tree = self.jurisdiction.tree_digest()?;
+        Ok((observed_tree != self.tree).then_some(SnapshotChange {
+            path: "admitted contents".to_owned(),
+            tree: self.tree.clone(),
+            observed_tree: Some(observed_tree),
+        }))
+    }
+}
+
+impl SnapshotRoot {
+    fn create() -> Result<Self, WalkError> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let temporary = std::env::temp_dir();
+        for _ in 0..128 {
+            let nonce = NEXT.fetch_add(1, Ordering::Relaxed);
+            let path = temporary.join(format!(
+                "spice-gate-snapshot-{}-{nonce}",
+                std::process::id()
+            ));
+            match fs::create_dir(&path) {
+                Ok(()) => return Ok(Self { path }),
+                Err(source) if source.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(source) => {
+                    return Err(WalkError::io(
+                        "creating a jurisdiction snapshot",
+                        &path,
+                        source,
+                    ));
+                }
+            }
+        }
+        Err(WalkError::io(
+            "creating a jurisdiction snapshot",
+            &temporary,
+            io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "snapshot name attempts exhausted",
+            ),
+        ))
+    }
+}
+
+impl Drop for SnapshotRoot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+fn seal_tree(root: &Path) -> Result<Vec<Seal>, WalkError> {
+    let mut seals = vec![seal(root, ".", Shape::Directory)?];
+    let mut directories = vec![String::new()];
+    while let Some(relative) = directories.pop() {
+        for (name, shape) in read_children(root, &relative)? {
+            let path = if relative.is_empty() {
+                name
+            } else {
+                format!("{relative}/{name}")
+            };
+            seals.push(seal(&root.join(&path), &path, shape)?);
+            if matches!(shape, Shape::Directory) {
+                directories.push(path);
+            }
+        }
+    }
+    seals.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(seals)
+}
+
+fn seal(path: &Path, relative: &str, shape: Shape) -> Result<Seal, WalkError> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|source| WalkError::io("sealing a snapshot path", path, source))?;
+    Ok(Seal {
+        path: relative.to_owned(),
+        shape,
+        fingerprint: fingerprint(&metadata),
+    })
+}
+
+#[cfg(target_family = "unix")]
+fn fingerprint(metadata: &fs::Metadata) -> Fingerprint {
+    Fingerprint {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        mode: metadata.mode(),
+        links: metadata.nlink(),
+        length: metadata.len(),
+        modified: (metadata.mtime(), metadata.mtime_nsec()),
+        changed: (metadata.ctime(), metadata.ctime_nsec()),
+    }
+}
+
+#[cfg(not(target_family = "unix"))]
+fn fingerprint(metadata: &fs::Metadata) -> Fingerprint {
+    Fingerprint {
+        length: metadata.len(),
+        readonly: metadata.permissions().readonly(),
+        modified: metadata.modified().ok(),
+    }
+}
+
+fn first_changed_path(before: &[Seal], after: &[Seal]) -> String {
+    for index in 0..before.len().max(after.len()) {
+        match (before.get(index), after.get(index)) {
+            (Some(left), Some(right)) if left == right => {}
+            (Some(left), Some(right)) => return left.path.clone().min(right.path.clone()),
+            (Some(left), None) => return left.path.clone(),
+            (None, Some(right)) => return right.path.clone(),
+            (None, None) => break,
+        }
+    }
+    "snapshot".to_owned()
 }
 
 /// Read one directory's children, sorted, refusing names an inventory cannot
