@@ -117,7 +117,7 @@ fn every_contract_has_an_executable_succession_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 60);
+    assert_eq!(landed, 63);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
     assert_eq!(landing(&["lock", "run"]), Landing::Landed);
@@ -139,6 +139,9 @@ fn every_contract_has_an_executable_succession_disposition() {
     assert_eq!(landing(&["trust"]), Landing::Landed);
     assert_eq!(landing(&["trust", "grant"]), Landing::Landed);
     assert_eq!(landing(&["trust", "revoke"]), Landing::Landed);
+    assert_eq!(landing(&["taste"]), Landing::Landed);
+    assert_eq!(landing(&["taste", "add"]), Landing::Landed);
+    assert_eq!(landing(&["taste", "drop"]), Landing::Landed);
     for path in [
         &["backup"][..],
         &["restore"][..],
@@ -153,25 +156,13 @@ fn every_contract_has_an_executable_succession_disposition() {
         assert_eq!(landing(path), Landing::Landed, "{path:?}");
     }
 
-    let owning_tasks = contracts()
-        .iter()
-        .filter_map(|contract| match landing(contract.path) {
-            Landing::Gap(task) => Some(task),
-            Landing::Landed | Landing::Unaccounted => None,
-        })
-        .collect::<BTreeSet<_>>();
-    assert_eq!(owning_tasks, BTreeSet::from(["POLICY-1kJQlFB6"]));
-
     let (rust_ledger, _) = include_str!("../../../PORTING.md")
         .split_once("## Installed Python paths")
         .expect("the ledger separates Rust and Python inventories");
     let landed_ledger = rust_ledger
         .split_once("### Landed")
         .expect("the ledger names its landed section")
-        .1
-        .split_once("### `")
-        .expect("the landed section ends before task-owned gaps")
-        .0;
+        .1;
     for contract in contracts() {
         let path = format!("`{}`", contract.path.join(" "));
         assert!(
@@ -193,12 +184,6 @@ fn every_contract_has_an_executable_succession_disposition() {
                 "landed command sits outside the ledger's Landed section: {path}",
             );
         }
-    }
-    for task in owning_tasks {
-        assert!(
-            rust_ledger.contains(&format!("`{task}`")),
-            "Rust succession ledger omitted task {task}"
-        );
     }
 }
 

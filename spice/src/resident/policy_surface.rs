@@ -85,6 +85,20 @@ pub(super) fn trust_rule(
     command: &wire::AdmittedCommand,
     reference: &TrustRef,
 ) -> Outcome<CommandAnswer> {
+    trust_rule_with(bus, repository, epoch, command, reference, || {})
+}
+
+pub(super) fn trust_rule_with<F>(
+    bus: &Bus,
+    repository: &Repository,
+    epoch: CanonicalUuid,
+    command: &wire::AdmittedCommand,
+    reference: &TrustRef,
+    before_commit: F,
+) -> Outcome<CommandAnswer>
+where
+    F: FnOnce(),
+{
     let admission = match admit_trust(bus, repository, epoch, command, reference) {
         Ok(admission) => admission,
         Err(outcome) => return outcome,
@@ -122,6 +136,8 @@ pub(super) fn trust_rule(
     if let Err(error) = trust_receipt(&mut proposal, command, reference, epoch, &answer) {
         return typed_store_fault("trust::receipt-invalid", &error.to_string());
     }
+    // Commit evaluates the surface-generation guard after this deterministic race seam.
+    before_commit();
     committed_answer(bus, proposal, CommandAnswer::Trust(answer))
 }
 
@@ -322,11 +338,7 @@ fn trust_guard(
     epoch: CanonicalUuid,
 ) -> JournalGuard {
     JournalGuard::new(move |read| {
-        let current = crate::trust_command::Surface::load(&repository)
-            .map_err(|_| GuardError::refused("trust::surface-moved"))?;
-        if current != surface {
-            return Err(GuardError::refused("trust::surface-moved"));
-        }
+        super::require_current_surface(&repository, &surface)?;
         let current = read
             .trust_head(&digest)?
             .ok_or_else(|| GuardError::refused("trust::digest-unknown"))?;

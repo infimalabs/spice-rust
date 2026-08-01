@@ -59,8 +59,8 @@ operator authorizes cutover.
 
 ## Rust contracts
 
-The registry contains 63 command leaves. Sixty have executable dispatch, so
-current executable coverage is 60/63, or 95.2 percent. Completed domain
+The registry contains 63 command leaves. All 63 have executable dispatch, so
+current executable coverage is 63/63, or 100 percent. Completed domain
 libraries do not count as landed command surfaces.
 
 ### Landed
@@ -98,6 +98,9 @@ libraries do not count as landed command surfaces.
 - `consent allow`
 - `consent deny`
 - `consent policy`
+- `taste`
+- `taste add`
+- `taste drop`
 - `trust`
 - `trust grant`
 - `trust revoke`
@@ -140,12 +143,6 @@ current worktree state; the configuration and bootstrap tasks above own those
 operational gaps. `release publish` admits its sealed stage against the Rust
 journal and resident discovery under `<git-common>/.spice-rust`; it does not
 read the Python authority under `<git-common>/.spice`.
-
-### `POLICY-1kJQlFB6`
-
-- `taste`
-- `taste add`
-- `taste drop`
 
 `spice/src/cli.rs::landing` carries the same classification. Its closure test
 fails for any registered Rust leaf without a disposition. A leaf classified

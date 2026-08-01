@@ -19,6 +19,16 @@ struct SurfaceConfig {
     consent: consent::Policy,
 }
 
+fn require_current_surface(
+    repository: &Repository,
+    surface: &crate::trust_command::Surface,
+) -> Result<(), GuardError> {
+    match surface.is_current(repository) {
+        Ok(true) => Ok(()),
+        Ok(false) | Err(_) => Err(GuardError::refused("trust::surface-moved")),
+    }
+}
+
 impl RuntimePaths {
     #[cfg(test)]
     fn discover(start: &Path) -> CommandResult<Self> {
@@ -339,6 +349,20 @@ fn commit_startup(
     epoch: CanonicalUuid,
     migration: Option<journal::Migration>,
 ) -> CommandResult<StartupCommit> {
+    commit_startup_with(bus, repository, surface, epoch, migration, || {})
+}
+
+fn commit_startup_with<F>(
+    bus: &Bus,
+    repository: &Repository,
+    surface: &crate::trust_command::Surface,
+    epoch: CanonicalUuid,
+    migration: Option<journal::Migration>,
+    before_seating: F,
+) -> CommandResult<StartupCommit>
+where
+    F: FnOnce(),
+{
     let lanes = bus
         .residency_head()
         .map_err(|error| store_fault("resident::head-unreadable", &error.to_string()))?
@@ -375,11 +399,7 @@ fn commit_startup(
         let guarded_repository = repository.clone();
         let guarded_surface = surface.clone();
         pending.guard(JournalGuard::new(move |read| {
-            let current = crate::trust_command::Surface::load(&guarded_repository)
-                .map_err(|_| GuardError::refused("trust::surface-moved"))?;
-            if current != guarded_surface {
-                return Err(GuardError::refused("trust::surface-moved"));
-            }
+            require_current_surface(&guarded_repository, &guarded_surface)?;
             if read.trust_head(guarded_surface.digest())?.is_some() {
                 return Err(GuardError::refused("trust::digest-already-pended"));
             }
@@ -405,7 +425,13 @@ fn commit_startup(
         cause = FactCause::Existing(seq(committed.last()));
     }
 
+    before_seating();
     let mut write = write(Actor::Spice, epoch, Producer::CommandDoor)?;
+    let guarded_repository = repository.clone();
+    let guarded_surface = surface.clone();
+    write.guard(JournalGuard::new(move |_| {
+        require_current_surface(&guarded_repository, &guarded_surface)
+    }));
     let seated = write
         .fact(wire::body::UpSeated { epoch }, cause)
         .map_err(|error| store_fault("journal::write-invalid", &error.to_string()))?;

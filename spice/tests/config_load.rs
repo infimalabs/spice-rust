@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use spice::config::{
-    AcquisitionKind, FlagOverride, FlagValue, PathSegment, Resolved, descriptor, descriptors, load,
-    load_coexisting_repository,
+    AcquisitionKind, FlagOverride, FlagValue, PathSegment, Resolved, capture_repository,
+    descriptor, descriptors, load, load_coexisting_repository,
 };
 use wire::{ConfigSource, Name};
 
@@ -291,6 +291,75 @@ fn symlink_and_directory_documents_are_both_typed_without_following() {
         fs::read(target).expect("target remains"),
         b"[listen]\nwindow = \"2m\"\n"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn linked_root_and_intermediate_parent_refuse_without_following() {
+    use std::os::unix::fs::symlink;
+
+    let scratch = Scratch::new();
+    let root = repository(&scratch, "linked capture root");
+    let admitted = spice::repository::Repository::discover(&root).expect("admit repository");
+    let admitted_root = admitted.worktree_root().to_path_buf();
+    let replacement = repository(&scratch, "replacement root");
+    write(
+        replacement.join("spice.toml"),
+        b"[listen]\nwindow = \"9m\"\n",
+    );
+    let displaced = scratch.join("displaced root");
+    fs::rename(&root, &displaced).expect("displace admitted root");
+    symlink(&replacement, &root).expect("replace admitted root with link");
+
+    let error = capture_repository(&admitted, &[]).expect_err("linked root must refuse");
+    assert!(error.acquisition().iter().any(|issue| {
+        issue.source() == ConfigSource::Tracked
+            && issue.kind() == AcquisitionKind::Symlink
+            && issue.path() == admitted_root
+    }));
+    assert_eq!(
+        fs::read(replacement.join("spice.toml")).expect("linked target remains readable"),
+        b"[listen]\nwindow = \"9m\"\n"
+    );
+
+    fs::remove_file(&root).expect("remove root link");
+    fs::rename(&displaced, &root).expect("restore admitted root");
+    let local_parent = root.join(".git/.spice");
+    let admitted_local_parent = admitted.common_dir().join(".spice");
+    let outside = scratch.join("outside local policy");
+    fs::create_dir(&outside).expect("create outside local directory");
+    write(outside.join("config.toml"), b"[listen]\nwindow = \"8m\"\n");
+    symlink(&outside, &local_parent).expect("link local intermediate parent");
+
+    let error = capture_repository(&admitted, &[]).expect_err("linked parent must refuse");
+    assert!(error.acquisition().iter().any(|issue| {
+        issue.source() == ConfigSource::Local
+            && issue.kind() == AcquisitionKind::Symlink
+            && issue.path() == admitted_local_parent
+    }));
+    assert_eq!(
+        fs::read(outside.join("config.toml")).expect("outside policy remains readable"),
+        b"[listen]\nwindow = \"8m\"\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn equal_policy_bytes_from_another_file_are_another_capture_generation() {
+    let scratch = Scratch::new();
+    let root = repository(&scratch, "same bytes new generation");
+    let tracked = root.join("spice.toml");
+    let bytes = b"[listen]\nwindow = \"2m\"\n";
+    write(&tracked, bytes);
+    let repository = spice::repository::Repository::discover(&root).expect("admit repository");
+    let first = capture_repository(&repository, &[]).expect("capture first generation");
+
+    fs::rename(&tracked, root.join("old-spice.toml")).expect("displace first generation");
+    fs::write(&tracked, bytes).expect("publish equal replacement bytes");
+    let second = capture_repository(&repository, &[]).expect("capture second generation");
+
+    assert_eq!(first.tracked(), second.tracked());
+    assert_ne!(first.generation(), second.generation());
 }
 
 #[cfg(unix)]

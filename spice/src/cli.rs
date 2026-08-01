@@ -132,7 +132,6 @@ pub(crate) struct Contract {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Landing {
     Landed,
-    Gap(&'static str),
     Unaccounted,
 }
 
@@ -910,8 +909,10 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["task", "oops"]
         | ["task", "depends"]
         | ["doc"]
-        | ["doc", "ledger"] => Landing::Landed,
-        ["taste"] | ["taste", "add"] | ["taste", "drop"] => Landing::Gap("POLICY-1kJQlFB6"),
+        | ["doc", "ledger"]
+        | ["taste"]
+        | ["taste", "add"]
+        | ["taste", "drop"] => Landing::Landed,
         _ => Landing::Unaccounted,
     }
 }

@@ -31,3 +31,7 @@ include!("resident/release.rs");
 #[cfg(test)]
 #[path = "resident/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "resident/trust_generation.rs"]
+mod trust_generation;
