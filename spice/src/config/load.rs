@@ -295,6 +295,33 @@ pub fn capture_repository(
     repository: &Repository,
     flags: &[FlagOverride],
 ) -> Result<Loaded, LoadError> {
+    capture_repository_with(repository, flags, false)
+}
+
+/// Load configuration while the Python scaffold still owns tracked task and
+/// gate-policy tables in the same `spice.toml`.
+///
+/// This mode ignores exactly the tracked root tables `tasks` and `policy`.
+/// Their bytes never enter the Rust typed tree, local configuration remains
+/// strict, and every other unknown path still refuses. Release-one admission
+/// stays available through [`load_repository`] without this interregnum rule.
+///
+/// # Errors
+///
+/// Returns every ordinary acquisition and resolution diagnostic, including
+/// unknown roots other than the two named scaffold tables.
+pub fn load_coexisting_repository(
+    repository: &Repository,
+    flags: &[FlagOverride],
+) -> Result<Resolved, LoadError> {
+    capture_repository_with(repository, flags, true).map(Loaded::into_resolved)
+}
+
+fn capture_repository_with(
+    repository: &Repository,
+    flags: &[FlagOverride],
+    coexist: bool,
+) -> Result<Loaded, LoadError> {
     let locations = locations(repository);
     let tracked_path = locations.tracked();
     let local_path = locations.local();
@@ -304,15 +331,18 @@ pub fn capture_repository(
     let local = acquire(ConfigSource::Local, local_path, &mut acquisition);
     let tracked_location = tracked_path.display().to_string();
     let local_location = local_path.display().to_string();
-    let resolved = resolve(Inputs::new(
-        tracked
-            .as_deref()
-            .map(|text| Document::new(&tracked_location, text)),
-        local
-            .as_deref()
-            .map(|text| Document::new(&local_location, text)),
-        flags,
-    ));
+    let tracked_document = tracked
+        .as_deref()
+        .map(|text| Document::new(&tracked_location, text));
+    let local_document = local
+        .as_deref()
+        .map(|text| Document::new(&local_location, text));
+    let inputs = if coexist {
+        Inputs::coexisting(tracked_document, local_document, flags)
+    } else {
+        Inputs::new(tracked_document, local_document, flags)
+    };
+    let resolved = resolve(inputs);
 
     match (acquisition.is_empty(), resolved) {
         (true, Ok(resolved)) => Ok(Loaded {

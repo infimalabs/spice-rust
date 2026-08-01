@@ -697,6 +697,82 @@ fn cover_refusal_frames(covered: &mut BTreeSet<String>) {
 
 /// The frames a caller reads back after a command lands.
 fn cover_reply_frames(covered: &mut BTreeSet<String>) {
+    cover_journal_reply_frames(covered);
+    cover_restore_reply_frames(covered);
+    cover_fold_reply_frames(covered);
+    cover_transport_reply_frames(covered);
+}
+
+fn cover_journal_reply_frames(covered: &mut BTreeSet<String>) {
+    law(
+        covered,
+        "JournalReport",
+        &[
+            JournalReport {
+                schema: 1,
+                cursor: None,
+                facts: 0,
+            },
+            JournalReport {
+                schema: 1,
+                cursor: Some(seq(19)),
+                facts: 19,
+            },
+        ],
+    );
+}
+
+fn cover_restore_reply_frames(covered: &mut BTreeSet<String>) {
+    law(
+        covered,
+        "JournalRestore",
+        &[
+            JournalRestore {
+                plan: digest("1"),
+                destination: "/repo/.git/.spice-rust/data/spicejournal.sqlite3".to_owned(),
+                previous: None,
+                verification: restore_verification("2", 0),
+                applied: false,
+            },
+            JournalRestore {
+                plan: digest("3"),
+                destination: "/repo/.git/.spice-rust/data/spicejournal.sqlite3".to_owned(),
+                previous: Some(digest("4")),
+                verification: restore_verification("5", 19),
+                applied: true,
+            },
+        ],
+    );
+}
+
+fn cover_fold_reply_frames(covered: &mut BTreeSet<String>) {
+    law(
+        covered,
+        "FoldState",
+        &[
+            FoldState {
+                fold: "canvas::flow".to_owned(),
+                generation: None,
+                reducer_version: None,
+                cursor: None,
+                horizon: None,
+                recovery: "spice journal replay canvas::flow".to_owned(),
+                payload: None,
+            },
+            FoldState {
+                fold: "release::history".to_owned(),
+                generation: Some(2),
+                reducer_version: Some(1),
+                cursor: Some(seq(19)),
+                horizon: Some(seq(19)),
+                recovery: "spice journal replay release::history".to_owned(),
+                payload: Some(serde_json::json!({"facts": []})),
+            },
+        ],
+    );
+}
+
+fn cover_transport_reply_frames(covered: &mut BTreeSet<String>) {
     law(
         covered,
         "ProofEvidence",
@@ -789,4 +865,18 @@ fn cover_reply_frames(covered: &mut BTreeSet<String>) {
             },
         ],
     );
+}
+
+fn restore_verification(nibble: &str, facts: u64) -> RestoreVerification {
+    RestoreVerification {
+        bundle: digest(nibble),
+        wire: WireVersion::CURRENT,
+        journal_schema: 1,
+        authority: digest(nibble),
+        members: 1,
+        facts,
+        receipts: 0,
+        heads: 0,
+        threads: facts,
+    }
 }

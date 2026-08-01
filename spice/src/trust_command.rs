@@ -126,7 +126,11 @@ pub(crate) fn report(contract: &Contract) -> Outcome<TrustReport> {
         Ok(repository) => repository,
         Err(outcome) => return outcome,
     };
-    let epoch = match crate::command_client::authenticate(&repository, contract) {
+    let state = match repository.admit_state() {
+        Ok(state) => state,
+        Err(error) => return crate::state_failure(&error).outcome(),
+    };
+    let epoch = match crate::command_client::authenticate(state.canvas(), contract) {
         Ok(epoch) => epoch,
         Err(outcome) => return retag(outcome),
     };
@@ -134,7 +138,7 @@ pub(crate) fn report(contract: &Contract) -> Outcome<TrustReport> {
         Ok(surface) => surface,
         Err(error) => return load_failure(&error),
     };
-    let reader = match journal::JournalReader::open(repository.journal_path()) {
+    let reader = match journal::JournalReader::open(state.journal()) {
         Ok(reader) => reader,
         Err(error) => {
             return fault(
@@ -243,12 +247,16 @@ pub(crate) fn rule(matches: &ArgMatches, contract: &Contract, grant: bool) -> Ou
         Ok(repository) => repository,
         Err(outcome) => return outcome,
     };
+    let state = match repository.admit_state() {
+        Ok(state) => state,
+        Err(error) => return crate::state_failure(&error).outcome(),
+    };
     let selected = if grant {
         crate::command_client::SelectedCommand::TrustGrant { digest: &digest }
     } else {
         crate::command_client::SelectedCommand::TrustRevoke { digest: &digest }
     };
-    match crate::command_client::execute(&repository, contract, selected) {
+    match crate::command_client::execute(state.canvas(), contract, selected) {
         Outcome::Reply(reply) => match reply.body {
             CommandAnswer::Trust(answer) => Outcome::Reply(Reply {
                 position: reply.position,

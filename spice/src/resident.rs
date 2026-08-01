@@ -9,8 +9,6 @@ use journal::{FactCause, GuardError, JournalGuard, JournalWrite};
 use lane::occupant::Seats;
 use sill::{Acquisition, LockFile, LockName, Possession};
 use spice::repository::Repository;
-#[cfg(test)]
-use spice::repository::ResolveError;
 use tokio::sync::oneshot;
 use wire::intent::{
     CommandAnswer, Intent, RecognitionAnswer, ReleasePublish, StateAnswer, TrustAnswer, TrustRef,
@@ -37,24 +35,26 @@ struct RuntimePaths {
 
 impl RuntimePaths {
     #[cfg(test)]
-    fn discover(start: &Path) -> Result<Self, ResolveError> {
-        let repository = Repository::discover(start)?;
-        Ok(Self::from_repository(&repository))
+    fn discover(start: &Path) -> CommandResult<Self> {
+        let repository = Repository::discover(start)
+            .map_err(|error| environment_fault("resident::git-unavailable", &error.to_string()))?;
+        Self::from_repository(&repository)
     }
 
-    fn from_repository(repository: &Repository) -> Self {
-        let runtime = repository.state_root();
-        let data = runtime.join("data");
-        Self {
-            journal: repository.journal_path(),
-            resident: runtime.join("resident"),
-            canvas: runtime.join("canvas"),
-            degraded: runtime.join("degraded"),
-            tape: runtime.join("tape"),
+    fn from_repository(repository: &Repository) -> CommandResult<Self> {
+        let state = repository
+            .admit_state()
+            .map_err(|error| crate::state_failure(&error).outcome())?;
+        Ok(Self {
+            runtime: state.runtime().to_path_buf(),
+            data: state.data().to_path_buf(),
+            journal: state.journal().to_path_buf(),
+            resident: state.resident().to_path_buf(),
+            canvas: state.canvas().to_path_buf(),
+            degraded: state.degraded().to_path_buf(),
+            tape: state.tape().to_path_buf(),
             stage: repository.worktree_root().join("dist/stage"),
-            runtime,
-            data,
-        }
+        })
     }
 }
 
@@ -146,7 +146,10 @@ fn up_from(current: &Path) -> Outcome<()> {
         Ok(repository) => repository,
         Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
     };
-    let paths = RuntimePaths::from_repository(&repository);
+    let paths = match RuntimePaths::from_repository(&repository) {
+        Ok(paths) => paths,
+        Err(outcome) => return outcome,
+    };
     let trust_surface = match crate::trust_command::Surface::load(&repository) {
         Ok(surface) => surface,
         Err(error) => return crate::trust_command::load_failure(&error),
@@ -250,9 +253,12 @@ fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outcome<()> {
         Ok(repository) => repository,
         Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
     };
-    let paths = RuntimePaths::from_repository(&repository);
+    let paths = match RuntimePaths::from_repository(&repository) {
+        Ok(paths) => paths,
+        Err(outcome) => return outcome,
+    };
     let outcome = crate::command_client::execute(
-        &repository,
+        &paths.canvas,
         contract,
         crate::command_client::SelectedCommand::Down,
     );

@@ -103,7 +103,7 @@ pub(crate) fn run(matches: &ArgMatches, contract: &crate::cli::Contract) -> RunR
         }));
     }
     let outcome = crate::command_client::execute(
-        &prepared.repository,
+        &prepared.canvas,
         contract,
         crate::command_client::SelectedCommand::ReleasePublish {
             release: &prepared.release,
@@ -116,7 +116,7 @@ pub(crate) fn run(matches: &ArgMatches, contract: &crate::cli::Contract) -> RunR
 struct Prepared {
     release: AdmittedRelease,
     state: PublicationState,
-    repository: spice::repository::Repository,
+    canvas: PathBuf,
 }
 
 fn prepare() -> Result<Prepared, Box<Outcome<ReleasePlan>>> {
@@ -134,7 +134,10 @@ fn prepare() -> Result<Prepared, Box<Outcome<ReleasePlan>>> {
     })?;
     let release = admit_stage(&repository.worktree_root().join("dist/stage"))
         .map_err(|error| Box::new(refusal::<ReleasePlan>("release::manifest-refused", &error)))?;
-    let reader = journal::JournalReader::open(repository.journal_path()).map_err(|error| {
+    let state_paths = repository
+        .admit_state()
+        .map_err(|error| Box::new(crate::state_failure(&error).outcome()))?;
+    let reader = journal::JournalReader::open(state_paths.journal()).map_err(|error| {
         Box::new(environment::<ReleasePlan>(
             "release::journal-unavailable",
             &error.to_string(),
@@ -151,7 +154,7 @@ fn prepare() -> Result<Prepared, Box<Outcome<ReleasePlan>>> {
     Ok(Prepared {
         release,
         state,
-        repository,
+        canvas: state_paths.canvas().to_path_buf(),
     })
 }
 

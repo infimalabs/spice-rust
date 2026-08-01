@@ -853,6 +853,14 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["trust"]
         | ["trust", "grant"]
         | ["trust", "revoke"]
+        | ["backup"]
+        | ["restore"]
+        | ["journal"]
+        | ["journal", "replay"]
+        | ["journal", "reindex"]
+        | ["journal", "verify"]
+        | ["fold"]
+        | ["thread"]
         | ["release", "publish"]
         | ["restore", "verify"] => Landing::Landed,
         ["board"]
@@ -886,14 +894,6 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["taste"]
         | ["taste", "add"]
         | ["taste", "drop"] => Landing::Gap("POLICY-1kJQlFB6"),
-        ["backup"]
-        | ["restore"]
-        | ["journal"]
-        | ["journal", "replay"]
-        | ["journal", "reindex"]
-        | ["journal", "verify"]
-        | ["fold"]
-        | ["thread"] => Landing::Gap("JOURNAL-1kJQlFfS"),
         ["canvas"] => Landing::Gap("PUBLISH-1kJQlGb0"),
         _ => Landing::Unaccounted,
     }
@@ -927,6 +927,9 @@ fn branch(contracts: &[Contract], name: &'static str, path: &[&'static str]) -> 
     let contract = contract_at(contracts, path);
     let children = child_names(contracts, path);
     let mut command = Command::new(name).disable_help_subcommand(true);
+    if !children.is_empty() {
+        command = command.subcommand_negates_reqs(true);
+    }
 
     if let Some(contract) = contract {
         command = command.override_usage(format!("spice {}", contract.syntax));

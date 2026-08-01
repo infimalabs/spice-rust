@@ -24,6 +24,10 @@ mod gate_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod install_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod journal_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod journal_lock;
+#[cfg(not(target_arch = "wasm32"))]
 mod lock_command;
 mod proof_command;
 #[cfg(not(target_arch = "wasm32"))]
@@ -41,6 +45,46 @@ use render::Form;
 const REPLY_EXIT: i32 = 0;
 const FAULT_EXIT: i32 = 1;
 const REFUSAL_EXIT: i32 = 2;
+
+enum StateFailure {
+    Refusal(Refusal),
+    Fault(Fault),
+}
+
+impl StateFailure {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn outcome<B>(self) -> Outcome<B> {
+        match self {
+            Self::Refusal(refusal) => Outcome::Refusal(refusal),
+            Self::Fault(fault) => Outcome::Fault(fault),
+        }
+    }
+}
+
+fn state_failure(error: &spice::repository::StateError) -> StateFailure {
+    match error {
+        spice::repository::StateError::Filesystem { .. } => StateFailure::Fault(Fault {
+            class: FaultClass::Environment,
+            reason: "repository::state-path-unavailable".to_owned(),
+            detail: error.to_string(),
+        }),
+        spice::repository::StateError::Linked { .. }
+        | spice::repository::StateError::NotDirectory { .. }
+        | spice::repository::StateError::NotRegularFile { .. } => StateFailure::Refusal(Refusal {
+            reason: "repository::state-path-refused".to_owned(),
+            witness: Some("repository-state-root".to_owned()),
+            expected: Some(
+                "real fixed components beneath the canonical Git-common .spice-rust directory"
+                    .to_owned(),
+            ),
+            observed: Some(error.to_string()),
+            remedy: format!(
+                "remove or repair the linked or malformed Rust state component at {}",
+                error.path().display()
+            ),
+        }),
+    }
+}
 
 fn main() {
     let matches = cli::command().get_matches();
@@ -78,7 +122,7 @@ fn main() {
             install_command::Answer::Plan(outcome) => deliver(&outcome, form),
             install_command::Answer::Receipt(outcome) => deliver(&outcome, form),
         },
-        ["config"] => deliver(&config_command::run(leaf), form),
+        ["config"] => deliver_config(&config_command::run(leaf), form),
         ["lock"] => deliver(&lock_command::report(), form),
         ["lock", "run"] => match lock_command::run(leaf) {
             lock_command::RunResult::Child(status) => terminate_child(status),
@@ -86,6 +130,14 @@ fn main() {
                 deliver_with_code(&outcome, form, code)
             }
         },
+        ["backup"] => deliver(&journal_command::backup(leaf), form),
+        ["restore"] => deliver(&restore_command::restore(leaf), form),
+        ["journal"] => deliver(&journal_command::report(), form),
+        ["journal", "replay"] => deliver(&journal_command::replay(leaf), form),
+        ["journal", "reindex"] => deliver(&journal_command::reindex(), form),
+        ["journal", "verify"] => deliver(&journal_command::verify(), form),
+        ["fold"] => deliver(&journal_command::folds(), form),
+        ["thread"] => deliver(&journal_command::thread(leaf), form),
         ["version"] => deliver(&version_outcome(), form),
         ["release", "notes"] => deliver(&release_command::notes(leaf), form),
         ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
@@ -277,7 +329,11 @@ fn version_outcome() -> Outcome<wire::Version> {
             });
         }
     };
-    let reader = match journal::JournalReader::open(repository.journal_path()) {
+    let state = match repository.admit_state() {
+        Ok(state) => state,
+        Err(error) => return state_failure(&error).outcome(),
+    };
+    let reader = match journal::JournalReader::open(state.journal()) {
         Ok(reader) => reader,
         Err(error) => return journal_version_failure(error),
     };
@@ -530,6 +586,24 @@ fn deliver_with_code<B: serde::Serialize>(outcome: &Outcome<B>, form: Form, code
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn deliver_config(outcome: &Outcome<config_command::ConfigReport>, form: Form) -> ! {
+    if form == Form::Text
+        && let Outcome::Reply(reply) = outcome
+    {
+        match reply.body.text() {
+            Ok(document) => {
+                let mut stdout = io::stdout().lock();
+                let _ = stdout.write_all(&document);
+                let _ = stdout.flush();
+                terminate_code(REPLY_EXIT);
+            }
+            Err(error) => deliver_fault(render_fault(error.to_string()), Form::Text),
+        }
+    }
+    deliver(outcome, form)
+}
+
 /// Acquire one ambient bootstrap value before typed configuration crosses
 /// into the library graph.
 #[expect(
@@ -538,6 +612,17 @@ fn deliver_with_code<B: serde::Serialize>(outcome: &Outcome<B>, form: Form, code
 )]
 pub fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
     std::env::var_os(name)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn working_directory() -> Result<PathBuf, Outcome<()>> {
+    std::env::current_dir().map_err(|error| {
+        Outcome::Fault(Fault {
+            class: FaultClass::Environment,
+            reason: "environment::working-directory-unavailable".to_owned(),
+            detail: error.to_string(),
+        })
+    })
 }
 
 /// Terminate the process after the command result has returned to the binary
