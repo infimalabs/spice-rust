@@ -115,6 +115,41 @@ fn scratch_setup_creates_its_root_rather_than_adopting_one_that_exists() {
     owner.remove();
 }
 
+/// Unwinding keeps the failure that caused it and still retires owned scratch.
+///
+/// The explicit teardown path above can state its own failure, but a second
+/// panic from teardown would abort while the test is already unwinding. This
+/// pins the quiet [`Drop`] path instead: the planted panic must remain the one
+/// observed, and the root live at that instant must nonetheless be gone.
+#[test]
+fn scratch_drop_removes_its_root_without_replacing_the_original_panic() {
+    const ORIGINAL_PANIC: &str = "planted panic before scratch teardown";
+
+    let tree = ScratchTree::new("unwind");
+    let root = tree.path().to_path_buf();
+
+    let panic = std::panic::catch_unwind(|| {
+        let live_tree = tree;
+        assert!(
+            live_tree.path().exists(),
+            "the scratch root was not live before the planted panic"
+        );
+        std::panic::panic_any(ORIGINAL_PANIC);
+    })
+    .expect_err("the planted panic was not observed after unwinding");
+
+    assert_eq!(
+        panic.downcast_ref::<&str>().copied(),
+        Some(ORIGINAL_PANIC),
+        "scratch teardown replaced the original panic"
+    );
+    assert!(
+        !root.exists(),
+        "the owned scratch root survived panic unwinding at {}",
+        root.display()
+    );
+}
+
 /// Every violation in one tree, each located relative to that tree's root.
 fn scan_tree(root: &Path) -> Vec<String> {
     let mut sources = Vec::new();
