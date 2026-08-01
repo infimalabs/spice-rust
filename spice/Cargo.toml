@@ -21,10 +21,12 @@ lane = { path = "../lane" }
 listen = { path = "../listen" }
 proof = { path = "../proof" }
 serde = { version = "1.0.229", features = ["derive"] }
+serde_path_to_error = "0.1.20"
 sill = { path = "../sill" }
 steer = { path = "../steer" }
 tape = { path = "../tape" }
 taste = { path = "../taste" }
+toml = { version = "1.1.4", features = ["preserve_order"] }
 vendor = { path = "../vendor" }
 wire = { path = "../wire" }
 
@@ -37,8 +39,6 @@ uuid = { version = "1.24.0", features = ["v4"] }
 
 [dev-dependencies]
 rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
-serde_path_to_error = "0.1.20"
-toml = "1.1.4"
 
 [lints]
 workspace = true
