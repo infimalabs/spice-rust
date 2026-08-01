@@ -222,7 +222,7 @@ dependency graph, policy checks, and copied artifact can be proved together.
 
 ## The tastes as repo truth
 
-The standing preferences that judge work live in `TASTES.md`.
+The standing preferences that judge work live in [`TASTES.md`](TASTES.md).
 That file owns their blunt wording, near-universal word-glob bags, seed set,
 evidence aging, and commit-governed curation. Runtime facts record confirmed
 and cleared findings; they do not redefine membership or create a second
@@ -242,11 +242,11 @@ as one path. The flip is a named genesis leaf with current evidence; before it,
 Python governs and Rust measures. After it, the Rust gate enforces one current
 law. No interval admits both as executable authority.
 
-Throughout the interregnum the corpus itself is the living record of intent.
-Tasks are minted from the program incrementally as work becomes current, and
-an amendment is a deliberate edit landing in FRAME first with the references
-following in the same change — never silent drift in a leaf, a reference, or
-an acceptance line.
+Throughout the interregnum these port-owned records and the board are the
+living record of intent. Tasks are minted incrementally as work becomes
+current, and an amendment is a deliberate edit to the owning record with its
+references and executable checks following in the same change — never silent
+drift in a leaf, a reference, or an acceptance line.
 
 ## Handle re-mint at cutover
 
