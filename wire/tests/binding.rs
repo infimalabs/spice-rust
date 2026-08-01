@@ -21,7 +21,7 @@ const BODIES: &[(CommandKind, &str)] = &[
         CommandKind::TaskAdd,
         r#"{
   "title": "Bind every command kind to its body and reply DTO",
-  "project": "task.wire",
+  "project": "wire",
   "acceptance": ["every kind names one body and one reply"],
   "depends": ["SPICE-aBcD"]
 }"#,

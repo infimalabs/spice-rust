@@ -13,7 +13,7 @@ fn document(classification: &Classification) -> &dialect::Document {
 fn canonical_output_is_current_and_carries_caller_identity() {
     let source = "# Cut release\n\n- Build backend\n  Acceptance: binary is reproducible\n  Priority: high\n- Build frontend\n  After: build-backend\n  Flow: todo, verify, review\n  Tags: web, release\n";
     let context = ClassificationContext {
-        project: Some("task.release".to_owned()),
+        project: Some("dist".to_owned()),
         origin: Some("ack:1kExample".to_owned()),
     };
     let first = classify_with_context(source, context.clone());
@@ -21,7 +21,7 @@ fn canonical_output_is_current_and_carries_caller_identity() {
     let second = classify_with_context(&canonical, context);
     assert!(matches!(second, Classification::Current(_)));
     let graph = document(&second);
-    assert_eq!(graph.project.as_deref(), Some("task.release"));
+    assert_eq!(graph.project.as_deref(), Some("dist"));
     assert_eq!(graph.origin.as_deref(), Some("ack:1kExample"));
     assert_eq!(graph.nodes[graph.root].slug, "cut-release");
     assert!(graph.edges.iter().any(|edge| {
@@ -113,6 +113,37 @@ fn invalid_context_is_a_named_refusal() {
         codes,
         vec![RefusalCode::InvalidProject, RefusalCode::InvalidOrigin]
     );
+}
+
+#[test]
+fn project_context_uses_the_scheduler_segment_contract() {
+    for project in ["wire", "wire.identity", "wire.identity_law.fixture2"] {
+        let classification = classify_with_context(
+            "# Goal\n",
+            ClassificationContext {
+                project: Some(project.to_owned()),
+                origin: None,
+            },
+        );
+        assert!(classification.document().is_some(), "{project}");
+    }
+
+    for project in ["wire-name", "Wire", "wire.identity.law.extra"] {
+        let classification = classify_with_context(
+            "# Goal\n",
+            ClassificationContext {
+                project: Some(project.to_owned()),
+                origin: None,
+            },
+        );
+        assert!(
+            classification
+                .refusals()
+                .iter()
+                .any(|refusal| { refusal.code == RefusalCode::InvalidProject }),
+            "{project}"
+        );
+    }
 }
 
 #[test]

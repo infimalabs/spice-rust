@@ -11,7 +11,7 @@ const TASK: &str = r#"{
   "handle": "WIRE-aBcD",
   "uuid": "018f82d4-6f59-7d06-92e3-bce913116301",
   "title": "Bind authority heads",
-  "project": "task.wire",
+  "project": "wire",
   "tags": ["genesis", "wire"],
   "dependencies": ["WIRE-ZyX9"],
   "provenance": "task:WIRE-ZyX9",
@@ -68,7 +68,7 @@ const FINDING: &str = r#"{
   "identity": "gate:file-shape:wire/src/head.rs",
   "severity": "error",
   "locus": "wire/src/head.rs:1",
-  "owner": "task.wire",
+  "owner": "wire",
   "receipt": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
   "state": "open"
 }"#;

@@ -7,62 +7,51 @@
 # Rust workspace, and `cargo xtask verify` already owns its verification.
 
 [tasks]
-# The public project stems work may route to, beyond the base `task` and
-# `serve` stems the packaged defaults supply.
+# Public scheduler stems beyond the packaged `task` and `serve` defaults.
+# Product work routes directly by ownership so the allocator can retain domain
+# locality instead of collapsing every crate under one `task` bucket.
 #
-# The predecessor repository declared seven stems: session, mail, hooks,
-# studies, cli, lifecycle, and tests. Each was adjudicated against current
-# Rust-port work rather than transliterated, because a stem is public
-# vocabulary: once declared it names handles, and a stem naming a removed
-# surface mints work for something deliberately dropped.
+# The dependency lattice owns the workspace inventory. Every product member is
+# present below except `xtask`: it is the verification launcher for `gate`, not
+# a second verification domain. `doctrine` owns settled repository law;
+# `scheduler` owns the task-plane topology; `rim` owns the cross-crate command,
+# exit, and environment edge; and `corpus` owns fixture bodies replayed across
+# multiple crates.
 #
-# Retained, respelled into the current lexicon:
-#
-#   cli   -> rim     The clap, exit, and env edge is the one surface every
-#                    leaf reaches through and no single crate owns; the
-#                    generated agent skill derives from that same clap tree.
-#                    `rim` is the current word for that edge, and it is a role
-#                    the binary crate plays rather than a workspace member, so
-#                    it names work the crate axis cannot.
-#
-#   tests -> corpus  Recorded fixture sets replayed as law -- dialect
-#                    refusals, vendor streams, and the proof battery -- span
-#                    three crates and are governed as one body of evidence.
-#                    `corpus` is the current word for that; plain `tests`
-#                    names an activity every crate performs locally.
-#
-# Dropped, with the reason each is not current Rust-port work:
-#
-#   session    Session forensics was removed as a command family in the clean
-#              break. The word survives only as an attribution lens beside
-#              actor and lineage; the surviving forensic surfaces are watch,
-#              retro, recall, and thread, which their own crates own.
-#
-#   mail       The word does not exist in this port. Durable outbound
-#              direction is `steer`, and its crate already owns directives,
-#              the inbox, and acknowledgment scanning.
-#
-#   hooks      `hook` remains current but is never written bare: a path
-#              qualifies it as a gate hook or a steer hook. Both qualifiers
-#              are crates, so the work routes under them and a bare stem would
-#              reintroduce the unqualified spelling the lexicon refuses.
-#
-#   studies    Retired outright in favor of `gate` -- enforcement is one
-#              organ, not a curriculum. Declaring it would seed the very
-#              deny-list the gate generates.
-#
-#   lifecycle  A compound whose tail was shed; the current word is `life`, and
-#              the three lane lives are Steer, Drive, and Drain. Lane and
-#              resident transitions are owned by the lane crate and the
-#              `up::*` facts, so this is crate work.
-#
-# Crate names are deliberately absent. Work on a workspace member already
-# routes as `task.<crate>` on the live board, and carving a second spelling
-# for the same sense is exactly what the lexicon's one-sense law forbids.
-stems = ["rim", "corpus"]
+# One sense keeps one name. Work formerly described as `release`, `studies`,
+# `mail`, `lifecycle`, or `hooks` routes to its current owner (`dist`, `gate`,
+# `steer`, or `lane`). `cli` and `tests` remain `rim` and `corpus`. Generic
+# activity/history labels such as `docs`, `config`, `toolchain`, and `spec` do
+# not become scheduler domains; they route to the organ whose contract moves.
+stems = [
+    "app",
+    "atomic",
+    "board",
+    "bus",
+    "canvas",
+    "consent",
+    "corpus",
+    "dialect",
+    "dist",
+    "doctrine",
+    "fold",
+    "gate",
+    "journal",
+    "lane",
+    "listen",
+    "proof",
+    "rim",
+    "scheduler",
+    "sill",
+    "spice",
+    "steer",
+    "tape",
+    "taste",
+    "vendor",
+    "wire",
+]
 
-# Pinned rather than inherited, because the stem inventory above was chosen
-# against these bounds: every stem takes exactly one child segment, with a
-# third available when a child needs to subdivide.
-project_min_depth = 2
+# A stem itself is a complete ownership assignment. Two deeper levels remain
+# available when a domain needs stable sub-routing.
+project_min_depth = 1
 project_max_depth = 3

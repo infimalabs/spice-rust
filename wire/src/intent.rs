@@ -28,7 +28,7 @@ use crate::witness::{Answer, Disposition, Name, Phase, TaskHandle};
 pub struct TaskAdd {
     /// One-line statement of the work.
     pub title: String,
-    /// Dotted public project, or absent for private work.
+    /// One-to-three-segment public project, or absent for private work.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
