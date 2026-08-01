@@ -36,7 +36,7 @@ use wire::{
     FindingState, FoldName, Hello, Instant, LaneResidency, LeaseHead, Name, Origin, Outcome,
     Overflow, Packed, Phase, Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState, Response,
     Seq, SeqRange, Standing, TaskHandle, TaskHead, TrustHead, TrustState, Up, WireVersion, Witness,
-    WitnessClass, WitnessHead, WorkflowHead,
+    WitnessClass, WitnessHead, WitnessKind, WorkflowHead,
 };
 
 /// Names `wire` re-exports that never cross as values, each with its reason.
@@ -733,14 +733,23 @@ fn cover_witness_values(covered: &mut BTreeSet<String>) {
             },
         ],
     );
-    law(
+    // These five derive Ord and Hash, so they owe the same rank-and-spelling
+    // agreement the newtypes owe. `Law` stores `WitnessKind` in static slices
+    // and asks `contains`, and every one of them can key a map or sort a
+    // rendered column, so the weaker helper would leave that unchecked.
+    spelling_law(
         covered,
         "Disposition",
         &[Disposition::Live, Disposition::Declined],
     );
-    law(covered, "Answer", &[Answer::Asked, Answer::Denied]);
-    law(covered, "Standing", &[Standing::Pended, Standing::Revoked]);
-    law(covered, "Up", &[Up::Seated, Up::Dark]);
+    spelling_law(covered, "Answer", &[Answer::Asked, Answer::Denied]);
+    spelling_law(covered, "Standing", &[Standing::Pended, Standing::Revoked]);
+    spelling_law(covered, "Up", &[Up::Seated, Up::Dark]);
+    spelling_law(
+        covered,
+        "WitnessKind",
+        &[WitnessKind::Task, WitnessKind::Transition],
+    );
 }
 
 /// The paged frames, sampled with and without an overflow tail.
