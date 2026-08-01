@@ -296,14 +296,21 @@ Its retained questions are answered by landed `watch` and `retro`, plus
 - `task`: namespace; Rust uses `board`, `task`, and `doc`;
   `BOARD-1kJQlDDt`.
 - `task add`: Rust `task add`; `BOARD-1kJQlDDt`.
-- `task artifact`: task evidence successor; `BOARD-1kJQlDDt`.
-- `task artifact add`: task evidence successor; `BOARD-1kJQlDDt`.
-- `task artifact list`: task evidence successor; `BOARD-1kJQlDDt`.
-- `task artifact prune`: no second authority or retention store;
-  `BOARD-1kJQlDDt` must prove the path or record its release boundary.
-- `task artifact show`: task evidence successor; `BOARD-1kJQlDDt`.
-- `task capture`: automatic `commit::landed` recognition plus `task add`;
-  `BOARD-1kJQlDDt`.
+- `task artifact`: the task-addressed sidecar family is removed by the
+  LATER.md drop ledger. Rust evidence is a task document or `task note`
+  carrying a repository path, tape locus, or digest.
+- `task artifact add`: removed with the sidecar family. Rust `task note`
+  commits the evidence reference as a `task::noted` fact under the task
+  origin; payload bytes do not enter a second store.
+- `task artifact list`: removed with the sidecar family. Rust `journal`
+  exposes the immutable task-origin facts and their stable sequence loci.
+- `task artifact prune`: removed with the sidecar family. Journal evidence is
+  immutable, and release one has no second retention authority or prune plan.
+- `task artifact show`: removed with the sidecar family. Rust `journal` emits
+  the cited envelope and `thread` follows its stable sequence locus.
+- `task capture`: implicit Git capture and publication are removed by the
+  LATER.md drop ledger. Rust `task note` or `task done --validation` records
+  the repository commit; `task add` mints any newly discovered work.
 - `task claim`: allocator-owned `task next`; direct row choice does not cross.
 - `task delete`: `doc` task editing; settled correction remains trigger-bound
   in LATER.md; `BOARD-1kJQlDDt`.
@@ -319,7 +326,8 @@ Its retained questions are answered by landed `watch` and `retro`, plus
 - `task next`: Rust `task next`; `BOARD-1kJQlDDt`.
 - `task note`: Rust `task note`; `BOARD-1kJQlDDt`.
 - `task oops`: Rust `task oops`; `BOARD-1kJQlDDt`.
-- `task reclaim`: resident claim renewal has no manual command.
+- `task reclaim`: manual renewal is removed by the LATER.md drop ledger; the
+  resident alone may use the board's typed renew and lapse transitions.
 - `task review`: Rust `task review`; `BOARD-1kJQlDDt`.
 - `task reword`: active statement correction uses `doc`; settled correction is
   trigger-bound in LATER.md; `BOARD-1kJQlDDt`.
