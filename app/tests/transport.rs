@@ -456,6 +456,26 @@ fn a_received_stale_frame_can_complete_a_previously_dangling_walk() {
 }
 
 #[test]
+fn a_received_stale_frame_below_a_full_window_leaves_the_walk_dangling() {
+    let window = u64::try_from(app::CAUSAL_HEADERS).expect("the window fits a position");
+    let root = 1;
+    let last = root + window;
+    let mut state = browser_state::<Row>();
+    for position in (root + 1)..=last {
+        state.apply(&causal_envelope(position, Some(position - 1)));
+    }
+    assert_eq!(state.walk(seq(last)).end(), ChainEnd::Dangling(seq(root)));
+
+    assert_eq!(state.apply(&causal_envelope(root, None)), Applied::Stale);
+
+    let still_dangling = state.walk(seq(last));
+    assert_eq!(still_dangling.end(), ChainEnd::Dangling(seq(root)));
+    assert_eq!(still_dangling.links().len(), app::CAUSAL_HEADERS);
+    assert!(state.walk(seq(root)).links().is_empty());
+    assert_eq!(state.cursor(), Some(seq(last)));
+}
+
+#[test]
 fn retention_stops_at_the_stated_window_and_dangles_where_it_evicted() {
     let window = u64::try_from(app::CAUSAL_HEADERS).expect("the window fits a position");
     let root = 1;
