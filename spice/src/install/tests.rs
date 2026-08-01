@@ -93,7 +93,9 @@ fn apply_is_idempotent_preserves_python_and_unapply_is_exact() {
     assert_eq!(fs::read(scratch.exclude()).unwrap(), before_exclude);
     assert_eq!(fs::read(&python).unwrap(), before_python);
     for operation in planned.operations() {
-        let observed = observe(&operation.destination(&repository)).unwrap();
+        let observed = observe(&operation.destination(&repository))
+            .unwrap()
+            .map(|observed| observed.image);
         assert_eq!(observed, operation.previous().cloned());
     }
     assert!(record_path(&repository).is_file());
@@ -165,7 +167,7 @@ fn apply_resumes_a_write_interrupted_before_progress_publication() {
 
     let error = apply_with_interruption(&repository, None, &digest, Some(1)).unwrap_err();
     assert!(matches!(error, InstallError::Interrupted { operation: 1 }));
-    let interrupted = read_record(&repository).unwrap().unwrap();
+    let interrupted = read_record(&repository).unwrap().unwrap().record;
     assert_eq!(interrupted.status, InstallStatus::Applying);
     assert_eq!(interrupted.completed, 1);
     assert_eq!(plan(&repository, None).unwrap().digest().unwrap(), digest);
@@ -188,7 +190,7 @@ fn unapply_resumes_a_write_interrupted_before_progress_publication() {
 
     let error = unapply_with_interruption(&repository, Some(3)).unwrap_err();
     assert!(matches!(error, InstallError::Interrupted { operation: 3 }));
-    let interrupted = read_record(&repository).unwrap().unwrap();
+    let interrupted = read_record(&repository).unwrap().unwrap().record;
     assert_eq!(interrupted.status, InstallStatus::Unapplying);
     assert_eq!(interrupted.completed, 1);
     assert_eq!(
@@ -199,7 +201,10 @@ fn unapply_resumes_a_write_interrupted_before_progress_publication() {
     let completed = unapply(&repository).unwrap();
     assert_eq!(completed.status(), InstallStatus::Uninstalled);
     assert!(planned.operations().iter().all(|operation| {
-        observe(&operation.destination(&repository)).unwrap() == operation.previous().cloned()
+        observe(&operation.destination(&repository))
+            .unwrap()
+            .map(|observed| observed.image)
+            == operation.previous().cloned()
     }));
 }
 
@@ -217,7 +222,7 @@ fn operator_drift_refuses_unapply_before_any_reversal() {
         error,
         InstallError::Drift { path, .. } if path == ENTRY_PATH
     ));
-    let record = read_record(&repository).unwrap().unwrap();
+    let record = read_record(&repository).unwrap().unwrap().record;
     assert_eq!(record.status, InstallStatus::Complete);
     for (index, operation) in planned.operations().iter().enumerate() {
         if operation.path() != ENTRY_PATH {
@@ -287,7 +292,7 @@ fn record_digest_tampering_refuses_before_unapply_mutation() {
     let planned = plan(&repository, None).unwrap();
     apply(&repository, None, &planned.digest().unwrap()).unwrap();
     let generated = images(&repository, &planned);
-    let mut record = read_record(&repository).unwrap().unwrap();
+    let mut record = read_record(&repository).unwrap().unwrap().record;
     record.plan_digest = Digest::compute(Domain::InstallPlan, b"tampered");
     fs::write(record_path(&repository), wire::encode(&record).unwrap()).unwrap();
 
@@ -298,7 +303,7 @@ fn record_digest_tampering_refuses_before_unapply_mutation() {
 
 #[cfg(unix)]
 #[test]
-fn planning_refuses_symlinked_install_parents() {
+fn planning_binds_internal_symlinked_install_parents_and_refuses_escape() {
     use std::os::unix::fs::symlink;
 
     let scratch = Scratch::new("symlink");
@@ -307,15 +312,39 @@ fn planning_refuses_symlinked_install_parents() {
     fs::create_dir(&outside).unwrap();
     symlink(&outside, scratch.join(".agents")).unwrap();
 
+    let planned = plan(&repository, None).unwrap();
+    let skill = planned
+        .operations()
+        .iter()
+        .find(|operation| operation.asset() == Asset::Skill)
+        .unwrap();
+    assert_eq!(skill.destination, "outside/skills/spice-rust/SKILL.md");
+    apply(&repository, None, &planned.digest().unwrap()).unwrap();
+    assert!(outside.join("skills/spice-rust/SKILL.md").is_file());
+    unapply(&repository).unwrap();
+
+    let escaped = Scratch::new("symlink-escape");
+    let repository = escaped.repository();
+    let external = escaped.0.with_extension("external");
+    fs::create_dir(&external).unwrap();
+    let canonical_external = fs::canonicalize(&external).unwrap();
+    symlink(&external, escaped.join(".agents")).unwrap();
     let error = plan(&repository, None).unwrap_err();
     assert!(matches!(
         error,
-        InstallError::PathShape(path) if path == repository.worktree_root().join(".agents")
+        InstallError::PathOutsideRoot(path) if path == canonical_external
     ));
-    assert!(fs::read_dir(&outside).unwrap().next().is_none());
+    assert!(
+        plan(&repository, None)
+            .unwrap_err()
+            .to_string()
+            .contains("canonical permitted root")
+    );
+    assert!(fs::read_dir(&external).unwrap().next().is_none());
+    fs::remove_dir(external).unwrap();
 }
 
-fn images(repository: &Repository, plan: &InstallPlan) -> Vec<Option<FileImage>> {
+fn images(repository: &Repository, plan: &InstallPlan) -> Vec<Option<ObservedFile>> {
     plan.operations()
         .iter()
         .map(|operation| observe(&operation.destination(repository)).unwrap())

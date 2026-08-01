@@ -1,8 +1,12 @@
 use std::error::Error;
+use std::ffi::OsStr;
 use std::fmt;
-use std::fs::{self, File, Metadata, OpenOptions};
+use std::fs::{File, Metadata};
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
+
+#[cfg(unix)]
+use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags};
 
 use wire::manifest::{JOURNAL_BACKUP_VERSION, JournalBackupManifest};
 use wire::{Digest, Domain, RestoreVerification, WireVersion};
@@ -20,9 +24,10 @@ const MANIFEST: &str = "manifest.json";
 pub fn verify_restore_bundle(
     root: impl AsRef<Path>,
 ) -> Result<RestoreVerification, BackupVerifyError> {
-    verify_restore_bundle_after_capture(root.as_ref(), |_| {})
+    verify_restore_bundle_with_hooks(root.as_ref(), |_| {}, |_| {})
 }
 
+#[cfg(test)]
 fn verify_restore_bundle_after_capture<F>(
     root: &Path,
     after_capture: F,
@@ -30,11 +35,34 @@ fn verify_restore_bundle_after_capture<F>(
 where
     F: FnOnce(&Path),
 {
-    admit_root(root)?;
-    let (manifest, manifest_bytes) = read_manifest(root)?;
+    verify_restore_bundle_with_hooks(root, |_| {}, after_capture)
+}
+
+#[cfg(test)]
+fn verify_restore_bundle_after_inventory<F>(
+    root: &Path,
+    after_inventory: F,
+) -> Result<RestoreVerification, BackupVerifyError>
+where
+    F: FnOnce(&Path),
+{
+    verify_restore_bundle_with_hooks(root, after_inventory, |_| {})
+}
+
+fn verify_restore_bundle_with_hooks<I, C>(
+    root: &Path,
+    after_inventory: I,
+    after_capture: C,
+) -> Result<RestoreVerification, BackupVerifyError>
+where
+    I: FnOnce(&Path),
+    C: FnOnce(&Path),
+{
+    let bundle = BundleAuthority::open(root)?;
+    let (manifest, manifest_bytes) = read_manifest(&bundle)?;
     admit_manifest_versions(&manifest)?;
     let authority = admitted_member_path(&manifest.authority)?;
-    let authority_capture = authenticate_members(root, &manifest, &authority)?;
+    let authority_capture = authenticate_members(&bundle, &manifest, &authority, after_inventory)?;
     after_capture(&root.join(&authority));
     let verified = verify_authority(&authority_capture.bytes, manifest.journal_schema)?;
 
@@ -51,20 +79,85 @@ where
     })
 }
 
-fn admit_root(root: &Path) -> Result<(), BackupVerifyError> {
-    if metadata(root)?.file_type().is_dir() {
-        Ok(())
-    } else {
+struct BundleAuthority {
+    root: PathBuf,
+    #[cfg(unix)]
+    directory: File,
+}
+
+impl BundleAuthority {
+    #[cfg(unix)]
+    fn open(root: &Path) -> Result<Self, BackupVerifyError> {
+        let flags = OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY | OFlags::NOFOLLOW;
+        let directory = rustix::fs::open(root, flags, Mode::empty())
+            .map(File::from)
+            .map_err(|source| confined_error(root, source.into()))?;
+        Ok(Self {
+            root: root.to_path_buf(),
+            directory,
+        })
+    }
+
+    #[cfg(not(unix))]
+    fn open(root: &Path) -> Result<Self, BackupVerifyError> {
         Err(BackupVerifyError::Invalid {
             subject: root.to_path_buf(),
-            detail: "backup bundle root is not a real directory".to_owned(),
+            detail: "directory-authority restore verification requires a Unix target".to_owned(),
+        })
+    }
+
+    #[cfg(unix)]
+    fn root_directory(&self) -> Result<File, BackupVerifyError> {
+        self.directory
+            .try_clone()
+            .map_err(|source| BackupVerifyError::Io {
+                path: self.root.clone(),
+                source,
+            })
+    }
+
+    #[cfg(unix)]
+    fn open_regular(&self, relative: &Path) -> Result<File, BackupVerifyError> {
+        let name = relative
+            .file_name()
+            .ok_or_else(|| BackupVerifyError::Invalid {
+                subject: self.root.join(relative),
+                detail: "backup member path has no file name".to_owned(),
+            })?;
+        let mut directory = self.root_directory()?;
+        let mut traversed = PathBuf::new();
+        if let Some(parent) = relative.parent() {
+            for component in parent.components() {
+                let Component::Normal(component) = component else {
+                    return Err(BackupVerifyError::Invalid {
+                        subject: self.root.join(relative),
+                        detail: "backup member path left its captured directory authority"
+                            .to_owned(),
+                    });
+                };
+                traversed.push(component);
+                directory = open_directory_at(&directory, component)
+                    .map_err(|source| confined_error(&self.root.join(&traversed), source))?;
+            }
+        }
+        open_file_at(&directory, name)
+            .map_err(|source| confined_error(&self.root.join(relative), source))
+    }
+
+    #[cfg(not(unix))]
+    fn open_regular(&self, relative: &Path) -> Result<File, BackupVerifyError> {
+        Err(BackupVerifyError::Invalid {
+            subject: self.root.join(relative),
+            detail: "directory-authority restore verification requires a Unix target".to_owned(),
         })
     }
 }
 
-fn read_manifest(root: &Path) -> Result<(JournalBackupManifest, Vec<u8>), BackupVerifyError> {
-    let path = root.join(MANIFEST);
-    let bytes = capture_regular_file(&path)?.bytes;
+fn read_manifest(
+    bundle: &BundleAuthority,
+) -> Result<(JournalBackupManifest, Vec<u8>), BackupVerifyError> {
+    let path = bundle.root.join(MANIFEST);
+    let bytes = capture_regular_file(bundle, Path::new(MANIFEST))?.bytes;
     let manifest = wire::decode::<JournalBackupManifest>(&bytes).map_err(|error| {
         BackupVerifyError::Invalid {
             subject: path.clone(),
@@ -111,20 +204,25 @@ fn admit_manifest_versions(manifest: &JournalBackupManifest) -> Result<(), Backu
     }
 }
 
-fn authenticate_members(
-    root: &Path,
+fn authenticate_members<F>(
+    bundle: &BundleAuthority,
     manifest: &JournalBackupManifest,
     authority: &Path,
-) -> Result<CapturedMember, BackupVerifyError> {
-    admit_inventory(root, manifest)?;
+    after_inventory: F,
+) -> Result<CapturedMember, BackupVerifyError>
+where
+    F: FnOnce(&Path),
+{
+    admit_inventory(bundle, manifest)?;
+    after_inventory(&bundle.root);
     let mut previous: Option<&str> = None;
     let mut authority_capture = None;
     for member in &manifest.members {
         let relative = admitted_member_path(&member.path)?;
-        admit_member_order(root, previous, &member.path)?;
+        admit_member_order(&bundle.root, previous, &member.path)?;
         previous = Some(&member.path);
         let observed =
-            authenticate_member(root, &relative, member.mode, member.bytes, &member.digest)?;
+            authenticate_member(bundle, &relative, member.mode, member.bytes, &member.digest)?;
         if relative == authority {
             authority_capture = Some(observed);
         }
@@ -137,8 +235,11 @@ fn authenticate_members(
     })
 }
 
-fn admit_inventory(root: &Path, manifest: &JournalBackupManifest) -> Result<(), BackupVerifyError> {
-    let inventory = bundle_inventory(root)?;
+fn admit_inventory(
+    bundle: &BundleAuthority,
+    manifest: &JournalBackupManifest,
+) -> Result<(), BackupVerifyError> {
+    let inventory = bundle_inventory(bundle)?;
     let declared = manifest
         .members
         .iter()
@@ -171,20 +272,20 @@ fn admit_member_order(
 }
 
 fn authenticate_member(
-    root: &Path,
+    bundle: &BundleAuthority,
     relative: &Path,
     declared_mode: u32,
     declared_len: u64,
     declared_digest: &Digest,
 ) -> Result<CapturedMember, BackupVerifyError> {
-    let path = root.join(relative);
+    let path = bundle.root.join(relative);
     if declared_mode & !0o7777 != 0 {
         return Err(BackupVerifyError::Invalid {
-            subject: root.join(MANIFEST),
+            subject: bundle.root.join(MANIFEST),
             detail: format!("member mode {declared_mode:#o} is outside the POSIX 0o7777 mask"),
         });
     }
-    let captured = capture_regular_file(&path)?;
+    let captured = capture_regular_file(bundle, relative)?;
     if declared_mode != captured.mode {
         return Err(BackupVerifyError::Invalid {
             subject: path,
@@ -299,59 +400,113 @@ impl FileIdentity {
     }
 }
 
-fn capture_regular_file(path: &Path) -> Result<CapturedFile, BackupVerifyError> {
-    let before = metadata(path)?;
-    require_regular(path, &before)?;
+fn capture_regular_file(
+    bundle: &BundleAuthority,
+    relative: &Path,
+) -> Result<CapturedFile, BackupVerifyError> {
+    let path = bundle.root.join(relative);
+    let before_file = bundle.open_regular(relative)?;
+    let before = before_file
+        .metadata()
+        .map_err(|source| BackupVerifyError::Io {
+            path: path.clone(),
+            source,
+        })?;
+    require_regular(&path, &before)?;
     let expected = FileIdentity::from_metadata(&before);
-    let mut file = open_capture(path)?;
+    drop(before_file);
+    let mut file = bundle.open_regular(relative)?;
     let opened = file.metadata().map_err(|source| BackupVerifyError::Io {
-        path: path.to_path_buf(),
+        path: path.clone(),
         source,
     })?;
-    require_regular(path, &opened)?;
+    require_regular(&path, &opened)?;
     if FileIdentity::from_metadata(&opened) != expected {
-        return changed_during_capture(path);
+        return changed_during_capture(&path);
     }
 
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
         .map_err(|source| BackupVerifyError::Io {
-            path: path.to_path_buf(),
+            path: path.clone(),
             source,
         })?;
 
     let after_handle = file.metadata().map_err(|source| BackupVerifyError::Io {
-        path: path.to_path_buf(),
+        path: path.clone(),
         source,
     })?;
-    let after_path = metadata(path)?;
-    require_regular(path, &after_handle)?;
-    require_regular(path, &after_path)?;
+    let after_file = bundle.open_regular(relative)?;
+    let after_path = after_file
+        .metadata()
+        .map_err(|source| BackupVerifyError::Io {
+            path: path.clone(),
+            source,
+        })?;
+    require_regular(&path, &after_handle)?;
+    require_regular(&path, &after_path)?;
     if FileIdentity::from_metadata(&after_handle) != expected
         || FileIdentity::from_metadata(&after_path) != expected
         || u64::try_from(bytes.len()).ok() != Some(expected.len)
     {
-        return changed_during_capture(path);
+        return changed_during_capture(&path);
     }
 
     Ok(CapturedFile {
-        mode: posix_mode(path, &after_handle)?,
+        mode: posix_mode(&path, &after_handle)?,
         bytes,
     })
 }
 
-fn open_capture(path: &Path) -> Result<File, BackupVerifyError> {
-    #[cfg(unix)]
-    use std::os::unix::fs::OpenOptionsExt;
+#[cfg(unix)]
+fn open_directory_at(parent: &File, component: &OsStr) -> io::Result<File> {
+    let flags = OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY | OFlags::NOFOLLOW;
+    rustix::fs::openat(parent, component, flags, Mode::empty())
+        .map(File::from)
+        .map_err(Into::into)
+}
 
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    options.custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    options.open(path).map_err(|source| BackupVerifyError::Io {
-        path: path.to_path_buf(),
-        source,
+#[cfg(unix)]
+fn open_file_at(parent: &File, component: &OsStr) -> io::Result<File> {
+    let flags = OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK;
+    rustix::fs::openat(parent, component, flags, Mode::empty())
+        .map(File::from)
+        .map_err(Into::into)
+}
+
+fn confined_error(path: &Path, source: io::Error) -> BackupVerifyError {
+    if source.kind() == io::ErrorKind::NotFound {
+        BackupVerifyError::Missing {
+            path: path.to_path_buf(),
+        }
+    } else if is_unconfined(&source) {
+        BackupVerifyError::Invalid {
+            subject: path.to_path_buf(),
+            detail: concat!(
+                "backup path contains a symlink or non-directory component outside ",
+                "its captured directory authority"
+            )
+            .to_owned(),
+        }
+    } else {
+        BackupVerifyError::Io {
+            path: path.to_path_buf(),
+            source,
+        }
+    }
+}
+
+#[cfg(unix)]
+fn is_unconfined(error: &io::Error) -> bool {
+    error.raw_os_error().is_some_and(|code| {
+        code == rustix::io::Errno::LOOP.raw_os_error()
+            || code == rustix::io::Errno::NOTDIR.raw_os_error()
     })
+}
+
+#[cfg(not(unix))]
+fn is_unconfined(_error: &io::Error) -> bool {
+    false
 }
 
 fn require_regular(path: &Path, metadata: &Metadata) -> Result<(), BackupVerifyError> {
@@ -387,21 +542,6 @@ fn posix_mode(path: &Path, _metadata: &Metadata) -> Result<u32, BackupVerifyErro
     })
 }
 
-fn metadata(path: &Path) -> Result<Metadata, BackupVerifyError> {
-    fs::symlink_metadata(path).map_err(|source| {
-        if source.kind() == io::ErrorKind::NotFound {
-            BackupVerifyError::Missing {
-                path: path.to_path_buf(),
-            }
-        } else {
-            BackupVerifyError::Io {
-                path: path.to_path_buf(),
-                source,
-            }
-        }
-    })
-}
-
 fn admitted_member_path(text: &str) -> Result<PathBuf, BackupVerifyError> {
     let path = Path::new(text);
     let canonical = !text.is_empty()
@@ -425,60 +565,87 @@ fn admitted_member_path(text: &str) -> Result<PathBuf, BackupVerifyError> {
     }
 }
 
-fn bundle_inventory(root: &Path) -> Result<Vec<String>, BackupVerifyError> {
+#[cfg(unix)]
+fn bundle_inventory(bundle: &BundleAuthority) -> Result<Vec<String>, BackupVerifyError> {
     let mut inventory = Vec::new();
-    walk(root, Path::new(""), &mut inventory)?;
+    walk(
+        bundle,
+        bundle.root_directory()?,
+        Path::new(""),
+        &mut inventory,
+    )?;
     inventory.sort();
     Ok(inventory)
 }
 
+#[cfg(not(unix))]
+fn bundle_inventory(bundle: &BundleAuthority) -> Result<Vec<String>, BackupVerifyError> {
+    Err(BackupVerifyError::Invalid {
+        subject: bundle.root.clone(),
+        detail: "directory-authority restore verification requires a Unix target".to_owned(),
+    })
+}
+
+#[cfg(unix)]
 fn walk(
-    root: &Path,
+    bundle: &BundleAuthority,
+    directory: File,
     relative: &Path,
     inventory: &mut Vec<String>,
 ) -> Result<(), BackupVerifyError> {
-    let directory = root.join(relative);
-    let mut entries = fs::read_dir(&directory)
-        .map_err(|source| BackupVerifyError::Io {
-            path: directory.clone(),
-            source,
-        })?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|source| BackupVerifyError::Io {
-            path: directory,
-            source,
+    let display = bundle.root.join(relative);
+    let mut entries = Dir::read_from(&directory).map_err(|source| BackupVerifyError::Io {
+        path: display.clone(),
+        source: source.into(),
+    })?;
+    let mut names = Vec::new();
+    for entry in &mut entries {
+        let entry = entry.map_err(|source| BackupVerifyError::Io {
+            path: display.clone(),
+            source: source.into(),
         })?;
-    entries.sort_by_key(fs::DirEntry::file_name);
-    for entry in entries {
-        let name = entry
-            .file_name()
-            .into_string()
-            .map_err(|_| BackupVerifyError::Invalid {
-                subject: entry.path(),
-                detail: "backup member name is not UTF-8".to_owned(),
-            })?;
-        let child = relative.join(name);
-        let kind = metadata(&root.join(&child))?.file_type();
-        if kind.is_dir() {
-            walk(root, &child, inventory)?;
-        } else if kind.is_file() {
-            let spelling = child
-                .components()
-                .map(|component| component.as_os_str().to_str())
-                .collect::<Option<Vec<_>>>()
-                .map(|parts| parts.join("/"))
-                .ok_or_else(|| BackupVerifyError::Invalid {
-                    subject: root.join(&child),
-                    detail: "backup member path is not UTF-8".to_owned(),
-                })?;
-            if spelling != MANIFEST {
-                inventory.push(spelling);
+        let bytes = entry.file_name().to_bytes();
+        if bytes == b"." || bytes == b".." {
+            continue;
+        }
+        let name = std::str::from_utf8(bytes).map_err(|_| BackupVerifyError::Invalid {
+            subject: display.clone(),
+            detail: "backup member name is not UTF-8".to_owned(),
+        })?;
+        names.push(name.to_owned());
+    }
+    names.sort();
+    for name in names {
+        let child = relative.join(&name);
+        let path = bundle.root.join(&child);
+        let stat = rustix::fs::statat(&directory, OsStr::new(&name), AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(|source| confined_error(&path, source.into()))?;
+        match FileType::from_raw_mode(stat.st_mode) {
+            FileType::Directory => {
+                let child_directory = open_directory_at(&directory, OsStr::new(&name))
+                    .map_err(|source| confined_error(&path, source))?;
+                walk(bundle, child_directory, &child, inventory)?;
             }
-        } else {
-            return Err(BackupVerifyError::Invalid {
-                subject: root.join(&child),
-                detail: "backup inventory contains a symlink or special file".to_owned(),
-            });
+            FileType::RegularFile => {
+                let spelling = child
+                    .components()
+                    .map(|component| component.as_os_str().to_str())
+                    .collect::<Option<Vec<_>>>()
+                    .map(|parts| parts.join("/"))
+                    .ok_or_else(|| BackupVerifyError::Invalid {
+                        subject: path,
+                        detail: "backup member path is not UTF-8".to_owned(),
+                    })?;
+                if spelling != MANIFEST {
+                    inventory.push(spelling);
+                }
+            }
+            _ => {
+                return Err(BackupVerifyError::Invalid {
+                    subject: path,
+                    detail: "backup inventory contains a symlink or special file".to_owned(),
+                });
+            }
         }
     }
     Ok(())
@@ -592,7 +759,10 @@ mod tests {
     use wire::manifest::{JOURNAL_BACKUP_VERSION, JournalBackupManifest, JournalBackupMember};
     use wire::{Digest, Domain, WireVersion};
 
-    use super::verify_restore_bundle_after_capture;
+    use super::{
+        BackupVerifyError, verify_restore_bundle_after_capture,
+        verify_restore_bundle_after_inventory,
+    };
 
     static NEXT_BUNDLE: AtomicU64 = AtomicU64::new(0);
 
@@ -618,6 +788,67 @@ mod tests {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.0).expect("bundle fixture removes");
         }
+    }
+
+    #[test]
+    fn intermediate_symlink_substitution_cannot_escape_the_captured_bundle() {
+        use std::os::unix::fs::symlink;
+
+        let bundle = Bundle::new();
+        let outside = Bundle::new();
+        let authority = bundle.path().join("spicejournal.sqlite3");
+        drop(crate::Journal::open(&authority).expect("authority initializes"));
+        fs::create_dir(bundle.path().join("tape")).expect("tape directory creates");
+        let member_bytes = b"exact external member bytes";
+        fs::write(bundle.path().join("tape/lane-a"), member_bytes).expect("bundle member writes");
+        fs::write(outside.path().join("lane-a"), member_bytes).expect("external member writes");
+
+        let mut members = ["spicejournal.sqlite3", "tape/lane-a"]
+            .into_iter()
+            .map(|relative| {
+                let path = bundle.path().join(relative);
+                let bytes = fs::read(&path).expect("manifest member reads");
+                JournalBackupMember {
+                    path: relative.to_owned(),
+                    mode: fs::metadata(path)
+                        .expect("manifest member metadata reads")
+                        .permissions()
+                        .mode()
+                        & 0o7777,
+                    bytes: u64::try_from(bytes.len()).expect("member length crosses"),
+                    digest: Digest::compute(Domain::JournalBackupMember, &bytes),
+                }
+            })
+            .collect::<Vec<_>>();
+        members.sort_by(|left, right| left.path.cmp(&right.path));
+        let manifest = JournalBackupManifest {
+            version: JOURNAL_BACKUP_VERSION,
+            wire: WireVersion::CURRENT,
+            journal_schema: crate::SCHEMA_VERSION,
+            authority: "spicejournal.sqlite3".to_owned(),
+            members,
+        };
+        fs::write(
+            bundle.path().join("manifest.json"),
+            wire::encode(&manifest).expect("manifest encodes"),
+        )
+        .expect("manifest writes");
+
+        let held = bundle.path().join("captured-tape");
+        let result = verify_restore_bundle_after_inventory(bundle.path(), |root| {
+            fs::rename(root.join("tape"), &held).expect("inventory directory displaces");
+            symlink(outside.path(), root.join("tape")).expect("external directory substitutes");
+        });
+
+        assert!(matches!(
+            result,
+            Err(BackupVerifyError::Invalid { detail, .. })
+                if detail.contains("captured directory authority")
+        ));
+        assert_eq!(
+            fs::read(outside.path().join("lane-a")).expect("external member reads"),
+            member_bytes
+        );
     }
 
     #[test]

@@ -65,7 +65,7 @@ Every leaf in this band is `daemonless`; additional labels are explicit.
 | `spice gate receipt` | `toolful` | Render the receipt that pins tree, gate-set digest, and policy digest. |
 | `spice proof` | `offline`, `toolful` | Prove the target manifest in the sealed container with vendored crates, an empty cache, and network disabled. |
 | `spice proof replay` | `offline`, `toolful` | Replay the sealed battery and re-derive its evidence against the manifest without authority mutation. |
-| `spice release notes` | `offline` | Render curated notes from the Git range and the sealed release manifest with its detached receipts; no journal open, no hidden fact read. |
+| `spice release notes INPUT` | `offline` | Render deterministic notes from one canonical ordered release input carrying the source, both target payloads, and their proof and gate receipts; no journal open or hidden fact read. |
 
 ## Resident
 

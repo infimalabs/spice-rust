@@ -1,7 +1,7 @@
 use std::fs;
 use std::io::{self, Seek, SeekFrom, Write};
-use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
+#[cfg(test)]
 use std::time::Duration;
 
 use bus::{Bus, CommitOutcome, JournalCommit};
@@ -10,16 +10,11 @@ use lane::occupant::Seats;
 use sill::{Acquisition, LockFile, LockName, Possession};
 use spice::repository::Repository;
 use tokio::sync::oneshot;
-use tungstenite::client::IntoClientRequest;
-use tungstenite::http::header::ORIGIN;
-use tungstenite::{Message, WebSocket};
 use wire::intent::{CommandAnswer, Intent, RecognitionAnswer, ReleasePublish, StateAnswer};
 use wire::{
     Actor, CanonicalUuid, Command, CommandKind, Fault, FaultClass, Instant, Outcome, Producer,
-    Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState, Response, Seq, SeqRange, Witness,
+    Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState, Seq, SeqRange, Witness,
 };
-
-const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 
 type CommandResult<T> = Result<T, Outcome<()>>;
 
@@ -39,6 +34,10 @@ impl RuntimePaths {
     fn discover(start: &Path) -> CommandResult<Self> {
         let repository = Repository::discover(start)
             .map_err(|error| environment_fault("resident::git-unavailable", &error.to_string()))?;
+        Self::from_repository(&repository)
+    }
+
+    fn from_repository(repository: &Repository) -> CommandResult<Self> {
         let state = repository
             .admit_state()
             .map_err(|error| crate::state_failure(&error).outcome())?;
@@ -229,24 +228,29 @@ fn settle_surface(
     }
 }
 
-pub(crate) fn down() -> Outcome<()> {
+pub(crate) fn down(contract: &crate::cli::Contract) -> Outcome<()> {
     let current = match std::env::current_dir() {
         Ok(current) => current,
         Err(error) => return environment_fault("resident::cwd-unavailable", &error.to_string()),
     };
-    down_from(&current)
+    down_from(&current, contract)
 }
 
-fn down_from(current: &Path) -> Outcome<()> {
-    let paths = match RuntimePaths::discover(current) {
+fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outcome<()> {
+    let repository = match Repository::discover(current) {
+        Ok(repository) => repository,
+        Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
+    };
+    let paths = match RuntimePaths::from_repository(&repository) {
         Ok(paths) => paths,
         Err(outcome) => return outcome,
     };
-    let discovery = match read_operator_discovery(&paths.canvas) {
-        Ok(discovery) => discovery,
-        Err(outcome) => return outcome,
-    };
-    let outcome = request_dark(&discovery);
+    let outcome = crate::command_client::execute(
+        &paths.canvas,
+        contract,
+        crate::command_client::SelectedCommand::Down,
+    );
+    let outcome = decode_dark_outcome(outcome);
     if matches!(outcome, Outcome::Reply(_))
         && let Err(release) = wait_for_release(&paths)
     {
@@ -747,41 +751,8 @@ fn commit(bus: &Bus, write: JournalWrite) -> CommandResult<JournalCommit> {
     }
 }
 
-pub(crate) fn read_operator_discovery(path: &Path) -> CommandResult<canvas::Discovery> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let metadata = fs::metadata(path).map_err(|error| {
-            environment_fault("canvas::discovery-unavailable", &error.to_string())
-        })?;
-        if metadata.permissions().mode() & 0o077 != 0 {
-            return Err(environment_fault(
-                "canvas::discovery-insecure",
-                "canvas discovery is readable or writable by group or other",
-            ));
-        }
-    }
-    let bytes = fs::read(path)
-        .map_err(|error| environment_fault("canvas::discovery-unavailable", &error.to_string()))?;
-    wire::decode(&bytes)
-        .map_err(|error| protocol_fault("canvas::discovery-undecodable", &error.to_string()))
-}
-
-fn request_dark(discovery: &canvas::Discovery) -> Outcome<()> {
-    let mut connection = match connect_operator(discovery) {
-        Ok(connection) => connection,
-        Err(outcome) => return outcome,
-    };
-    match connection.request(
-        CommandKind::UpChange,
-        vec![Witness::Transition {
-            from: ResidentState::Seated,
-            to: ResidentState::Dark,
-        }],
-        wire::intent::UpChange {
-            state: ResidentState::Dark,
-        },
-    ) {
+fn decode_dark_outcome(outcome: Outcome<CommandAnswer>) -> Outcome<()> {
+    match outcome {
         Outcome::Reply(reply) => match reply.body {
             CommandAnswer::State(StateAnswer {
                 to: ResidentState::Dark,
@@ -797,262 +768,6 @@ fn request_dark(discovery: &canvas::Discovery) -> Outcome<()> {
         },
         Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
         Outcome::Fault(fault) => Outcome::Fault(fault),
-    }
-}
-
-pub(crate) fn request_release(
-    mut connection: OperatorConnection,
-    release: &crate::release_command::AdmittedRelease,
-    state: crate::release_command::PublicationState,
-) -> Outcome<RecognitionAnswer> {
-    let mut expected = vec![Witness::Observation {
-        key: release.key().clone(),
-        head: state.observation(),
-    }];
-    expected.extend(release.receipts().map(|proof| Witness::Sealed {
-        proof: proof.clone(),
-        manifest: release.manifest().clone(),
-    }));
-    match connection.request(
-        CommandKind::ReleasePublish,
-        expected,
-        ReleasePublish {
-            key: release.key().clone(),
-            manifest: release.manifest().clone(),
-        },
-    ) {
-        Outcome::Reply(reply) => match reply.body {
-            CommandAnswer::Recognition(answer) => Outcome::Reply(Reply {
-                position: reply.position,
-                body: answer,
-            }),
-            answer => fault(
-                FaultClass::Protocol,
-                "release::answer-shape",
-                &format!("expected a recognition answer, received {answer:?}"),
-            ),
-        },
-        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
-        Outcome::Fault(fault) => Outcome::Fault(fault),
-    }
-}
-
-pub(crate) struct OperatorConnection {
-    socket: WebSocket<TcpStream>,
-    epoch: CanonicalUuid,
-}
-
-pub(crate) fn connect_operator(
-    discovery: &canvas::Discovery,
-) -> Result<OperatorConnection, Outcome<()>> {
-    let Some(authority) = discovery.endpoint.strip_prefix("http://") else {
-        return Err(protocol_fault(
-            "canvas::endpoint-invalid",
-            "canvas endpoint is not an HTTP loopback origin",
-        ));
-    };
-    let address = match authority.parse::<SocketAddr>() {
-        Ok(address) if address.ip().is_loopback() => address,
-        Ok(address) => {
-            return Err(protocol_fault(
-                "canvas::endpoint-not-loopback",
-                &format!("canvas endpoint names {address}"),
-            ));
-        }
-        Err(error) => {
-            return Err(protocol_fault(
-                "canvas::endpoint-invalid",
-                &error.to_string(),
-            ));
-        }
-    };
-    let stream = match TcpStream::connect_timeout(&address, SOCKET_TIMEOUT) {
-        Ok(stream) => stream,
-        Err(error) => {
-            return Err(environment_fault(
-                "canvas::connect-failed",
-                &error.to_string(),
-            ));
-        }
-    };
-    if let Err(error) = stream.set_read_timeout(Some(SOCKET_TIMEOUT)) {
-        return Err(environment_fault(
-            "canvas::timeout-failed",
-            &error.to_string(),
-        ));
-    }
-    if let Err(error) = stream.set_write_timeout(Some(SOCKET_TIMEOUT)) {
-        return Err(environment_fault(
-            "canvas::timeout-failed",
-            &error.to_string(),
-        ));
-    }
-    let mut request = match format!("ws://{authority}/socket").into_client_request() {
-        Ok(request) => request,
-        Err(error) => {
-            return Err(protocol_fault(
-                "canvas::request-invalid",
-                &error.to_string(),
-            ));
-        }
-    };
-    let origin = match discovery.endpoint.parse::<tungstenite::http::HeaderValue>() {
-        Ok(origin) => origin,
-        Err(error) => {
-            return Err(protocol_fault("canvas::origin-invalid", &error.to_string()));
-        }
-    };
-    request.headers_mut().insert(ORIGIN, origin);
-    let (mut socket, _) = match tungstenite::client(request, stream) {
-        Ok(opened) => opened,
-        Err(error) => {
-            return Err(environment_fault(
-                "canvas::opening-failed",
-                &error.to_string(),
-            ));
-        }
-    };
-    let hello = wire::Hello {
-        wire: wire::WireVersion::CURRENT,
-        capability: discovery.capability,
-        epoch: discovery.epoch,
-    };
-    send(&mut socket, &hello)?;
-    let opening = receive(&mut socket)?;
-    match wire::decode::<wire::Accepted>(&opening) {
-        Ok(accepted)
-            if accepted.wire.is_current()
-                && accepted.epoch == discovery.epoch
-                && matches!(accepted.actor, Actor::Operator) => {}
-        Ok(accepted) => {
-            return Err(protocol_fault(
-                "hello::acceptance-invalid",
-                &format!(
-                    "resident accepted as {:?} in {}",
-                    accepted.actor, accepted.epoch
-                ),
-            ));
-        }
-        Err(_) => {
-            if let Ok(refusal) = wire::decode::<Refusal>(&opening) {
-                return Err(Outcome::Refusal(refusal));
-            }
-            if let Ok(fault) = wire::decode::<Fault>(&opening) {
-                return Err(Outcome::Fault(fault));
-            }
-            return Err(protocol_fault(
-                "hello::answer-undecodable",
-                "resident returned neither an acceptance, refusal, nor fault",
-            ));
-        }
-    }
-    Ok(OperatorConnection {
-        socket,
-        epoch: discovery.epoch,
-    })
-}
-
-impl OperatorConnection {
-    fn request<B: serde::Serialize>(
-        &mut self,
-        kind: CommandKind,
-        expected: Vec<Witness>,
-        body: B,
-    ) -> Outcome<CommandAnswer> {
-        let id = new_uuid();
-        let command = Command {
-            v: wire::WireVersion::CURRENT,
-            id,
-            epoch: self.epoch,
-            kind,
-            expected,
-            body,
-        };
-        if let Err(outcome) = send(&mut self.socket, &command) {
-            return typed_outcome(outcome);
-        }
-        match receive(&mut self.socket) {
-            Ok(answer) => decode_command_response(&answer, id, self.epoch, kind),
-            Err(outcome) => typed_outcome(outcome),
-        }
-    }
-}
-
-fn decode_command_response(
-    bytes: &[u8],
-    id: CanonicalUuid,
-    epoch: CanonicalUuid,
-    kind: CommandKind,
-) -> Outcome<CommandAnswer> {
-    let response = match wire::decode::<Response<serde_json::Value>>(bytes) {
-        Ok(response) => response,
-        Err(error) => {
-            if let Ok(fault) = wire::decode::<Fault>(bytes) {
-                return Outcome::Fault(fault);
-            }
-            if let Ok(refusal) = wire::decode::<Refusal>(bytes) {
-                return Outcome::Refusal(refusal);
-            }
-            return typed_protocol_fault("command::answer-undecodable", &error.to_string());
-        }
-    };
-    if !response.v.is_current() || response.id != id || response.epoch != epoch {
-        return typed_protocol_fault(
-            "command::answer-mismatch",
-            &format!(
-                "expected id {id} at epoch {epoch}; received id {} at epoch {} on wire {}",
-                response.id, response.epoch, response.v
-            ),
-        );
-    }
-    match response.outcome {
-        Outcome::Reply(reply) => {
-            let encoded = match serde_json::to_vec(&reply.body) {
-                Ok(encoded) => encoded,
-                Err(error) => {
-                    return typed_protocol_fault("command::answer-unencodable", &error.to_string());
-                }
-            };
-            let answer = match kind.binding().answer.decode(&encoded) {
-                Ok(answer) => answer,
-                Err(error) => {
-                    return typed_protocol_fault("command::answer-undecodable", &error.to_string());
-                }
-            };
-            Outcome::Reply(Reply {
-                position: reply.position,
-                body: answer,
-            })
-        }
-        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
-        Outcome::Fault(fault) => Outcome::Fault(fault),
-    }
-}
-
-fn send<T: serde::Serialize>(socket: &mut WebSocket<TcpStream>, value: &T) -> CommandResult<()> {
-    let bytes = wire::encode(value)
-        .map_err(|error| protocol_fault("canvas::request-unencodable", &error.to_string()))?;
-    socket
-        .send(Message::Binary(bytes.into()))
-        .map_err(|error| environment_fault("canvas::send-failed", &error.to_string()))
-}
-
-fn receive(socket: &mut WebSocket<TcpStream>) -> CommandResult<Vec<u8>> {
-    loop {
-        match socket
-            .read()
-            .map_err(|error| environment_fault("canvas::receive-failed", &error.to_string()))?
-        {
-            Message::Binary(bytes) => return Ok(bytes.to_vec()),
-            Message::Text(text) => return Ok(text.as_bytes().to_vec()),
-            Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
-            Message::Close(_) => {
-                return Err(protocol_fault(
-                    "canvas::closed-without-answer",
-                    "resident closed the socket before answering",
-                ));
-            }
-        }
     }
 }
 

@@ -14,6 +14,8 @@ use wire::{Fault, FaultClass, Outcome, Refusal};
 
 mod cli;
 #[cfg(not(target_arch = "wasm32"))]
+mod command_client;
+#[cfg(not(target_arch = "wasm32"))]
 mod config_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod doctor;
@@ -125,7 +127,7 @@ fn main() {
         ["version"] => deliver(&version_outcome(), form),
         ["release", "notes"] => deliver(&release_command::notes(leaf), form),
         ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
-        ["release", "publish"] => match release_command::run(leaf) {
+        ["release", "publish"] => match release_command::run(leaf, contract) {
             release_command::RunResult::Plan(outcome) => deliver(&outcome, form),
             release_command::RunResult::Published(outcome) => deliver(&outcome, form),
         },
@@ -148,7 +150,8 @@ fn main() {
             Fault {
                 class: FaultClass::Environment,
                 reason: "release::target-unsupported".to_owned(),
-                detail: "immutable Git object inspection is unavailable on wasm32".to_owned(),
+                detail: "reading the explicit release notes INPUT file is unavailable on wasm32"
+                    .to_owned(),
             },
             form,
         );
@@ -167,7 +170,7 @@ fn main() {
     #[cfg(not(target_arch = "wasm32"))]
     let outcome = match contract.path {
         ["up"] => resident::up(),
-        ["down"] => resident::down(),
+        ["down"] => resident::down(contract),
         _ => not_landed(contract),
     };
     #[cfg(target_arch = "wasm32")]
