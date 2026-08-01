@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt;
+use std::path::PathBuf;
 
 use sill::{Completion, SpecError, WaitOutcome};
 use wire::Digest;
@@ -104,6 +105,10 @@ pub(super) fn movement(
 pub enum RateError {
     /// Mutation tool executable was empty.
     EmptyProgram,
+    /// A process could otherwise be selected through ambient PATH lookup.
+    NonAbsoluteProgram { program: PathBuf },
+    /// Mutation tool version identity was empty or could forge a line.
+    InvalidToolIdentity { identity: String },
     /// Caller tried to supply an environment key the gate owns.
     ReservedEnvironment { key: String },
     /// No target was selected.
@@ -130,6 +135,14 @@ impl fmt::Display for RateError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyProgram => formatter.write_str("mutation tool program is empty"),
+            Self::NonAbsoluteProgram { program } => write!(
+                formatter,
+                "mutation tool program {} is not absolute",
+                program.display()
+            ),
+            Self::InvalidToolIdentity { identity } => {
+                write!(formatter, "invalid mutation tool identity {identity:?}")
+            }
             Self::ReservedEnvironment { key } => {
                 write!(formatter, "mutation environment key {key:?} is gate-owned")
             }
@@ -173,10 +186,7 @@ pub enum KillError {
     /// The pinned tool could not produce complete successful version evidence.
     ToolUnavailable(Box<ProcessEvidence>),
     /// Tool version did not equal the distribution pin.
-    ToolDrift {
-        expected: &'static str,
-        observed: String,
-    },
+    ToolDrift { expected: String, observed: String },
     /// Inventory command was unavailable, failed, or incomplete.
     InventoryUnavailable(Box<ProcessEvidence>),
     /// Inventory JSON could not be decoded.

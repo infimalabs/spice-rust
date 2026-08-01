@@ -11,7 +11,7 @@ mod tests {
     const FAKE_TOOL: &str = r#"#!/bin/sh
 printf '%s\n' "$*" >> "$FAKE_LOG"
 
-if [ "$1" = "mutants" ] && [ "$2" = "--version" ]; then
+if [ "$1" = "--version" ]; then
     if [ -f "$FAKE_BAD_VERSION" ]; then
         printf 'cargo-mutants 0.0.0\n'
     else
@@ -211,7 +211,9 @@ esac
             ),
         ])
         .expect("fixture environment");
-        let tool = MutationTool::new(tool.path("cargo"), environment).expect("pinned tool");
+        let program = tool.path("cargo");
+        let tool = MutationTool::new(&program, &program, PINNED_CARGO_MUTANTS, environment)
+            .expect("pinned tool");
         let battery =
             MutationBattery::new(targets.iter().copied(), attempts, 41).expect("fixture battery");
         let bounds = KillBounds::new(
@@ -236,18 +238,15 @@ esac
     fn expected_inventory() -> &'static str {
         concat!(
             "tool cargo-mutants 27.1.0\n",
-            "version-argument mutants\n",
             "version-argument --version\n",
             "baseline-argument test\n",
             "baseline-argument --locked\n",
             "baseline-argument --workspace\n",
             "baseline-argument --all-targets\n",
-            "inventory-argument mutants\n",
             "inventory-argument --no-config\n",
             "inventory-argument --no-shuffle\n",
             "inventory-argument --list\n",
             "inventory-argument --json\n",
-            "attempt-argument mutants\n",
             "attempt-argument --no-config\n",
             "attempt-argument --no-shuffle\n",
             "attempt-argument --jobs=1\n",
@@ -566,8 +565,13 @@ esac
 
         let unavailable_root = Fixture::new("unavailable");
         let environment = Environment::empty();
-        let tool = MutationTool::new(unavailable_root.path("absent-cargo"), environment)
-            .expect("tool declaration");
+        let tool = MutationTool::new(
+            "/bin/true",
+            unavailable_root.path("absent-cargo-mutants"),
+            PINNED_CARGO_MUTANTS,
+            environment,
+        )
+        .expect("tool declaration");
         let battery = MutationBattery::new(["src/lib.rs"], 1, 1).expect("battery");
         let bounds = KillBounds::new(
             "unavailable-fixture",
@@ -615,6 +619,35 @@ esac
         assert!(matches!(
             MutationBattery::new(["src/lib.rs", "src/lib.rs"], 1, 0),
             Err(RateError::DuplicateTarget { .. })
+        ));
+        assert!(matches!(
+            MutationTool::new(
+                "cargo",
+                "/absolute/cargo-mutants",
+                PINNED_CARGO_MUTANTS,
+                Environment::empty()
+            ),
+            Err(RateError::NonAbsoluteProgram { .. })
+        ));
+        assert!(matches!(
+            MutationTool::new(
+                "/absolute/cargo",
+                "/absolute/cargo-mutants",
+                "foreign\nidentity",
+                Environment::empty()
+            ),
+            Err(RateError::InvalidToolIdentity { .. })
+        ));
+        let reserved =
+            Environment::new([("CARGO", "/alternate/cargo")]).expect("one environment entry");
+        assert!(matches!(
+            MutationTool::new(
+                "/absolute/cargo",
+                "/absolute/cargo-mutants",
+                PINNED_CARGO_MUTANTS,
+                reserved
+            ),
+            Err(RateError::ReservedEnvironment { ref key }) if key == "CARGO"
         ));
     }
 
