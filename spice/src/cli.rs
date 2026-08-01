@@ -2,7 +2,13 @@
 
 use std::collections::BTreeSet;
 
-use clap::{Arg, ArgAction, ArgMatches, Command, builder::PossibleValuesParser};
+#[cfg(not(target_arch = "wasm32"))]
+use std::ffi::OsString;
+
+use clap::{
+    Arg, ArgAction, ArgMatches, Command,
+    builder::{OsStringValueParser, PossibleValuesParser},
+};
 use wire::FactKind;
 
 /// The renderer flag, spelled once so its registration and its reader cannot
@@ -939,7 +945,10 @@ fn positional(syntax: &'static str, required: bool, trailing: bool) -> Result<Ar
         argument = argument.num_args(1..);
     }
     if trailing {
-        argument = argument.last(true).allow_hyphen_values(true);
+        argument = argument
+            .last(true)
+            .allow_hyphen_values(true)
+            .value_parser(OsStringValueParser::new());
     }
     Ok(argument)
 }
@@ -999,6 +1008,15 @@ pub(crate) fn selected_contract(matches: &ArgMatches) -> Option<&'static Contrac
         cursor = child;
     }
     contract_at(CONTRACTS, &path)
+}
+
+/// Recover the command passed through the root `run` leaf.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn run_command(matches: &ArgMatches) -> Option<Vec<OsString>> {
+    matches
+        .subcommand_matches("run")?
+        .get_many::<OsString>("CMD")
+        .map(|values| values.cloned().collect())
 }
 
 /// Whether the caller asked for the JSON rendering.
