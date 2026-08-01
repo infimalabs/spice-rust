@@ -27,14 +27,13 @@ use path::{relative_parents, validate_relative};
 const PLAN_VERSION: u16 = 1;
 const RECORD_VERSION: u16 = 1;
 const LEGACY_RECORD_PATH: &str = ".spice/install";
-const RECORD_PATH: &str = ".spice/rust/install.json";
+const RECORD_PATH: &str = "install.json";
 const RECORD_MODE: u32 = 0o600;
 const DIRECTORY_MODE: u32 = 0o700;
 const DATA_MODE: u32 = 0o644;
 const EXECUTABLE_MODE: u32 = 0o755;
 
 const EXCLUDE_PATH: &str = "info/exclude";
-const CONFIG_PATH: &str = ".spice/config.toml";
 const ENTRY_PATH: &str = ".spice/rust/hooks/entry.sh";
 const STATIC_PATH: &str = ".spice/rust/hooks/static/stage.sh";
 const SKILL_PATH: &str = ".agents/skills/spice-rust/SKILL.md";
@@ -48,10 +47,6 @@ const EXCLUDE_BLOCK: &str = concat!(
     "/.agents/skills/spice-rust/\n",
     "# END spice-rust coexistence\n",
 );
-const STARTER_CONFIG: &str = concat!(
-    "# Machine-local configuration for the explicit Rust Spice command.\n",
-    "# Tracked release-one policy remains repository-authored.\n",
-);
 const SKILL: &str = include_str!("install/skill.md");
 
 /// One Rust-owned asset in canonical installation order.
@@ -59,7 +54,6 @@ const SKILL: &str = include_str!("install/skill.md");
 #[serde(rename_all = "kebab-case")]
 pub enum Asset {
     Exclusions,
-    Configuration,
     HookEntry,
     HookStatic,
     Skill,
@@ -263,7 +257,6 @@ impl InstallPlan {
         }
         let expected = [
             Asset::Exclusions,
-            Asset::Configuration,
             Asset::HookEntry,
             Asset::HookStatic,
             Asset::Skill,
@@ -450,21 +443,6 @@ fn build_plan(
         EXCLUDE_PATH,
         exclude_previous,
         GeneratedImage::new(exclude_mode, &exclude_bytes),
-    )?);
-
-    let config_previous = observe(&repository.common_dir().join(CONFIG_PATH))?;
-    let config_generated = config_previous.as_ref().map_or_else(
-        || GeneratedImage::new(DATA_MODE, STARTER_CONFIG.as_bytes()),
-        FileImage::generated,
-    );
-    operations.push(operation(
-        repository,
-        &mut virtual_directories,
-        Asset::Configuration,
-        Location::CommonGit,
-        CONFIG_PATH,
-        config_previous,
-        config_generated,
     )?);
 
     for (asset, path, bytes, mode) in [
@@ -762,6 +740,19 @@ fn verify_progress(repository: &Repository, record: &InstallRecord) -> Result<()
 
 fn read_record(repository: &Repository) -> Result<Option<InstallRecord>, InstallError> {
     refuse_legacy_record(repository)?;
+    let state_root = repository.state_root();
+    match fs::symlink_metadata(&state_root) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => return Err(InstallError::PathShape(state_root)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(InstallError::io(
+                "inspect install record directory",
+                state_root,
+                source,
+            ));
+        }
+    }
     let path = record_path(repository);
     let metadata = match fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
@@ -800,12 +791,11 @@ fn write_record(repository: &Repository, record: &InstallRecord) -> Result<(), I
 }
 
 fn record_path(repository: &Repository) -> PathBuf {
-    repository.common_dir().join(RECORD_PATH)
+    repository.state_root().join(RECORD_PATH)
 }
 
 fn ensure_private_record_parent(common: &Path) -> Result<(), InstallError> {
-    ensure_directory(common, ".spice")?;
-    ensure_directory(common, ".spice/rust")?;
+    ensure_directory(common, crate::repository::STATE_DIRECTORY)?;
     Ok(())
 }
 
@@ -815,7 +805,7 @@ fn validate_operation(
 ) -> Result<(), InstallError> {
     let (location, path, fixed_mode) = asset_contract(operation.asset);
     let expected_mode = match operation.asset {
-        Asset::Exclusions | Asset::Configuration => operation
+        Asset::Exclusions => operation
             .previous
             .as_ref()
             .map_or(DATA_MODE, FileImage::mode),
@@ -848,17 +838,6 @@ fn validate_operation(
             if operation.generated != expected {
                 return Err(InstallError::InvalidRecord(
                     "exclusion operation is not the exact managed block edit".to_owned(),
-                ));
-            }
-        }
-        Asset::Configuration => {
-            let expected = operation.previous.as_ref().map_or_else(
-                || GeneratedImage::new(DATA_MODE, STARTER_CONFIG.as_bytes()),
-                FileImage::generated,
-            );
-            if operation.generated != expected {
-                return Err(InstallError::InvalidRecord(
-                    "configuration operation does not preserve or create the starter".to_owned(),
                 ));
             }
         }
@@ -928,7 +907,6 @@ fn validate_operation(
 fn asset_contract(asset: Asset) -> (Location, &'static str, u32) {
     match asset {
         Asset::Exclusions => (Location::CommonGit, EXCLUDE_PATH, DATA_MODE),
-        Asset::Configuration => (Location::CommonGit, CONFIG_PATH, DATA_MODE),
         Asset::HookEntry => (Location::Worktree, ENTRY_PATH, EXECUTABLE_MODE),
         Asset::HookStatic => (Location::Worktree, STATIC_PATH, EXECUTABLE_MODE),
         Asset::Skill => (Location::Worktree, SKILL_PATH, DATA_MODE),

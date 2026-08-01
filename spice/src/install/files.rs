@@ -6,8 +6,8 @@ use crate::repository::Repository;
 
 use super::path::validate_relative;
 use super::{
-    Asset, DIRECTORY_MODE, FileImage, InstallError, Operation, RECORD_MODE, SKILL, STARTER_CONFIG,
-    exclusions, read_binary,
+    Asset, DIRECTORY_MODE, FileImage, InstallError, Operation, RECORD_MODE, SKILL, exclusions,
+    read_binary,
 };
 
 pub(super) fn publish_operation(
@@ -27,10 +27,6 @@ pub(super) fn materialize_generated(
 ) -> Result<FileImage, InstallError> {
     let bytes = match operation.asset {
         Asset::Exclusions => exclusions(operation.previous.as_ref().map(FileImage::bytes))?,
-        Asset::Configuration => operation.previous.as_ref().map_or_else(
-            || STARTER_CONFIG.as_bytes().to_vec(),
-            |previous| previous.bytes.clone(),
-        ),
         Asset::HookEntry => steer::hook::STAGES[0].bytes().as_bytes().to_vec(),
         Asset::HookStatic => steer::hook::STAGES[1].bytes().as_bytes().to_vec(),
         Asset::Skill => SKILL.as_bytes().to_vec(),
