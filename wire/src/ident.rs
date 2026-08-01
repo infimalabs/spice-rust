@@ -101,6 +101,8 @@ pub enum Domain {
     GateInventory,
     /// The quantities one gate run measured.
     GateMeasurement,
+    /// The complete current identity and ordered outcome of one gate run.
+    GateReceipt,
 }
 
 impl Domain {
@@ -129,6 +131,7 @@ impl Domain {
             Self::GateTool => "spice.gate.tool.v1",
             Self::GateInventory => "spice.gate.inventory.v1",
             Self::GateMeasurement => "spice.gate.measurement.v1",
+            Self::GateReceipt => "spice.gate.receipt.v1",
         }
     }
 }

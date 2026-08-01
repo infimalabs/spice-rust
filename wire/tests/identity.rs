@@ -79,6 +79,7 @@ const fn position(domain: Domain) -> usize {
         Domain::GateTool => 14,
         Domain::GateInventory => 15,
         Domain::GateMeasurement => 16,
+        Domain::GateReceipt => 17,
     }
 }
 
@@ -94,7 +95,7 @@ fn the_sweep_names_every_domain_exactly_once() {
 }
 
 /// Every domain, so a new class cannot be added without being swept here.
-const DOMAINS: [Domain; 17] = [
+const DOMAINS: [Domain; 18] = [
     Domain::BoardDocument,
     Domain::DistTargetPayload,
     Domain::DistArtifact,
@@ -112,6 +113,7 @@ const DOMAINS: [Domain; 17] = [
     Domain::GateTool,
     Domain::GateInventory,
     Domain::GateMeasurement,
+    Domain::GateReceipt,
 ];
 
 #[test]
@@ -180,6 +182,7 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
             "spice.gate.tool.v1",
             "spice.gate.inventory.v1",
             "spice.gate.measurement.v1",
+            "spice.gate.receipt.v1",
         ],
         "a domain tag changed; that re-points digests already published under it"
     );
