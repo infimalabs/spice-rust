@@ -615,7 +615,7 @@ impl RepositoryScratch {
             ));
             match fs::create_dir(&path) {
                 Ok(()) => {
-                    fs::create_dir_all(path.join(".git/.spice/data"))
+                    fs::create_dir_all(path.join(".git/.spice-rust/data"))
                         .expect("create repository-common Spice state");
                     return Self { path };
                 }
@@ -631,7 +631,7 @@ impl RepositoryScratch {
     }
 
     fn journal_path(&self) -> PathBuf {
-        self.path.join(".git/.spice/data/spicejournal.sqlite3")
+        self.path.join(".git/.spice-rust/data/spicejournal.sqlite3")
     }
 }
 

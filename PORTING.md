@@ -16,15 +16,43 @@ fact.
 - `core.hooksPath` is `.spice/hooks`. Its `pre-commit`, `commit-msg`, and
   `reference-transaction` entries still invoke `spice dev ...`.
 - Rust is invoked explicitly with `cargo run --locked -q -p spice -- ...`.
-- The tracked `spice.toml` is shared during construction. Rust Doctor currently
-  refuses its `[tasks]` and `[policy]` roots; `INTEGRA-1kJQlCHl` owns that gap.
-- Rust `version` currently opens the Python authority path as though it were a
-  Rust journal and faults. `COEXIST-1kJQlCm5` owns isolated Rust startup and
-  state initialization.
+- The tracked `spice.toml` and Git-common `.spice/config.toml` are admitted
+  configuration inputs for Rust Doctor. Doctor inspects them without opening
+  authority or launching declared tools.
+- Rust authority and runtime files live only under the Git-common
+  `.spice-rust` directory. The installed Python command continues to own its
+  Git-common `.spice` authority.
 - `HOOKS-1kJQnmG8` owns the eventual native hook transition. No active hook or
   ambient command path changes before explicit operator cutover.
 - Cutover starts a clean Rust authority as required by DOCTRINE.md. It does not
   open, import, migrate, or mutate Python authority bytes.
+
+## Rust coexistence bootstrap
+
+The sole repository-local Rust invocation during construction is Cargo with
+the workspace package selected explicitly. From any directory in the target
+worktree, run:
+
+```console
+cargo run --locked -q -p spice -- doctor
+cargo run --locked -q -p spice -- up
+cargo run --locked -q -p spice -- version
+cargo run --locked -q -p spice -- down
+```
+
+`up` remains in the foreground until `down` completes, so the last two commands
+run from another terminal in the same repository. `up` creates or admits the
+Rust journal at `<git-common>/.spice-rust/data/spicejournal.sqlite3`; linked
+worktrees resolve the same Git-common root. `version` reads that finalized Rust
+journal, and `down` reads the discovery published at
+`<git-common>/.spice-rust/canvas`.
+
+The same root owns resident locks, lane tape, degraded-state evidence, command
+locks, and proof receipts. Rust startup does not inspect Python databases below
+`<git-common>/.spice`. An unfinalized or incompatible `.spice-rust` journal
+returns the typed `journal::schema-refused` outcome naming its state. The
+ambient `spice` command and `.spice/hooks` remain Python-owned until the
+operator authorizes cutover.
 
 ## Rust contracts
 
