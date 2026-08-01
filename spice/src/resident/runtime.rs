@@ -52,7 +52,7 @@ fn require_current_surface(
     repository: &Repository,
     surface: &crate::trust_command::Surface,
 ) -> Result<(), GuardError> {
-    match surface.is_current(repository) {
+    match surface.is_current_coexisting(repository) {
         Ok(true) => Ok(()),
         Ok(false) | Err(_) => Err(GuardError::refused("trust::surface-moved")),
     }

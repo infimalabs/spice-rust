@@ -15,10 +15,12 @@ static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 #[test]
 fn startup_runtime_policy_and_trust_share_one_capture_generation() {
     const FIRST: &str = concat!(
+        "[tasks]\npython_scaffold = true\n",
         "[steer]\nexpiry = \"12h\"\nresend = [\"2m\"]\n",
         "[consent]\nposture = \"deny\"\n",
     );
     const SECOND: &str = concat!(
+        "[tasks]\npython_scaffold = false\n",
         "[steer]\nexpiry = \"48h\"\nresend = [\"10m\"]\n",
         "[consent]\nposture = \"allow\"\n",
     );
@@ -32,8 +34,8 @@ fn startup_runtime_policy_and_trust_share_one_capture_generation() {
     assert_eq!(first.config.steering.expiry().to_string(), "12h");
     assert_eq!(first.config.consent.posture(), consent::Answer::Deny);
     let named_current =
-        crate::trust_command::Surface::load(&repository).expect("replacement surface loads");
-    assert_ne!(first.trust, named_current);
+        super::load_startup_surface(&repository).expect("replacement startup surface loads");
+    assert_ne!(first.trust, named_current.trust);
 
     let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
     let bus = Bus::start(journal).expect("fixture bus starts");
@@ -53,7 +55,7 @@ fn startup_runtime_policy_and_trust_share_one_capture_generation() {
     let second = super::load_startup_surface(&repository).expect("replacement surface loads");
     assert_eq!(second.config.steering.expiry().to_string(), "48h");
     assert_eq!(second.config.consent.posture(), consent::Answer::Allow);
-    assert_eq!(second.trust, named_current);
+    assert_eq!(second.trust, named_current.trust);
     commit_startup(&bus, &repository, &second.trust, test_uuid(10), None)
         .expect("retry seats replacement capture");
     let after_retry = bus.fact_snapshot().expect("retried authority reads");

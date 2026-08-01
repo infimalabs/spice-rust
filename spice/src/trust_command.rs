@@ -68,6 +68,12 @@ impl Surface {
         Self::load(repository).map(|current| current == *self)
     }
 
+    /// Reacquire through the tracked Python scaffold coexistence policy.
+    pub(crate) fn is_current_coexisting(&self, repository: &Repository) -> Result<bool, LoadError> {
+        let loaded = spice::config::capture_coexisting_repository(repository, &[])?;
+        Ok(Self::from_loaded(&loaded) == *self)
+    }
+
     fn provenance(&self) -> Vec<PolicyProvenance> {
         [&self.tracked, &self.local]
             .into_iter()
