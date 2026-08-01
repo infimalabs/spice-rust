@@ -40,12 +40,24 @@ pub mod crossing {
 use std::path::Path;
 
 #[cfg(not(target_arch = "wasm32"))]
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 
 /// One open handle to the authority database.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub struct Journal {
+    connection: Connection,
+}
+
+/// A capability-distinct, read-only view of finalized authority.
+///
+/// Opening this handle never creates, migrates, or repairs a database. SQLite
+/// admits the file read-only, and `query_only` independently refuses writes on
+/// the connection, so callers that only need schema and cursor identity cannot
+/// accidentally cross the resident's sole-writer boundary.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+pub struct JournalReader {
     connection: Connection,
 }
 
@@ -72,6 +84,63 @@ impl Journal {
             .map_err(OpenError::Sqlite)?;
         migrate::baseline(&mut connection)?;
         Ok(Self { connection })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl JournalReader {
+    /// Opens an existing, finalized authority without mutating it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the SQLite open failure when the file is absent or unreadable,
+    /// or the existing schema-admission refusal when migration is unfinished
+    /// or belongs to another release.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, OpenError> {
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(OpenError::Sqlite)?;
+        connection
+            .pragma_update(None, "query_only", true)
+            .map_err(OpenError::Sqlite)?;
+        connection
+            .pragma_update(None, "trusted_schema", false)
+            .map_err(OpenError::Sqlite)?;
+        migrate::finalized_version(&connection)?;
+        Ok(Self { connection })
+    }
+
+    /// Returns the one finalized schema version this handle admitted.
+    ///
+    /// # Errors
+    ///
+    /// Returns a schema-admission failure if the authority changes into an
+    /// unfinalized or unsupported state while the handle is open.
+    pub fn schema_version(&self) -> Result<u32, OpenError> {
+        migrate::finalized_version(&self.connection)
+    }
+
+    /// Returns the authority's current cursor, absent before its first fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns the SQLite read failure or names an invalid stored cursor.
+    pub fn cursor(&self) -> Result<Option<wire::Seq>, OpenError> {
+        let value = self
+            .connection
+            .query_row(
+                "SELECT seq FROM cursor_head WHERE singleton = 1",
+                [],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .map_err(OpenError::Sqlite)?;
+        match value {
+            None => Ok(None),
+            Some(found) => u64::try_from(found)
+                .ok()
+                .and_then(wire::Seq::new)
+                .map(Some)
+                .ok_or(OpenError::InvalidCursor { found }),
+        }
     }
 }
 
