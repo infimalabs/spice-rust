@@ -17,6 +17,7 @@ mod cli;
 mod doctor;
 #[cfg(not(target_arch = "wasm32"))]
 mod gate_command;
+mod proof_command;
 mod render;
 #[cfg(not(target_arch = "wasm32"))]
 mod resident;
@@ -47,6 +48,8 @@ fn main() {
     match contract.path {
         ["watch"] => run_watch(leaf, form),
         ["retro"] => run_retro(leaf, form),
+        ["proof"] => deliver(&proof_command::seal(), form),
+        ["proof", "replay"] => deliver(&proof_command::replay(), form),
         _ => {}
     }
 
