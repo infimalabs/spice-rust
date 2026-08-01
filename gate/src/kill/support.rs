@@ -247,14 +247,10 @@ impl fmt::Display for KillError {
             } => write!(
                 formatter,
                 concat!(
-                    "caller tree changed during mutation run: ",
-                    "inventory {inventory} -> {observed_inventory}, ",
-                    "tree {tree} -> {observed_tree}"
+                    "caller tree changed during mutation run: inventory {} -> ",
+                    "{}, tree {} -> {}"
                 ),
-                inventory = inventory,
-                observed_inventory = observed_inventory,
-                tree = tree,
-                observed_tree = observed_tree,
+                inventory, observed_inventory, tree, observed_tree
             ),
         }
     }

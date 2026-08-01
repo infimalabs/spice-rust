@@ -1,8 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use gate::{
-    BASELINE_PATH, BaselineError, Contract, ContractError, LONG_LINE_LIMIT, PolicyError, Run,
-    Standing,
+    BASELINE_PATH, BaselineError, Contract, ContractError, LONG_LINE_LIMIT, PolicyError, Standing,
 };
 
 const TRACKED_POLICY: &str = include_str!("../../spice.toml");
@@ -51,14 +50,10 @@ fn tracked_inputs_load_one_operational_current_contract() {
          reap-ms 1000\ncancellation never\nrestart never\ngrace-ms 250\ncapture 65536\n"
     );
 
-    let run = Run::adjudicate(
-        contract.policy(),
-        &root,
-        contract.ratchet(),
-        contract.bounds(),
-    )
-    .expect("an operational contract reaches a complete verdict");
-    assert_eq!(run.verdict().standing, Standing::Clean);
+    let run = contract
+        .adjudicate(&root)
+        .expect("an operational contract reaches a complete verdict");
+    assert_eq!(run.receipt().standing(), Standing::Clean);
     assert_eq!(run.measurements().len(), 1);
     assert!(
         run.measurements()[0].value()

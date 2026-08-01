@@ -409,14 +409,32 @@ fn allocation_is_deterministic_and_has_one_eligibility_path() {
         Entry::new(assigned_head, assigned_workflow, None, None).expect("valid assigned heads");
 
     let active = claimed_entry("BOARD-x7", "todo");
+    let mut deferred_workflow = workflow("todo");
+    deferred_workflow.deferral = Some(instant("2026-08-01T07:00:00.000Z"));
+    let mut deferred_head = statement("BOARD-w6");
+    deferred_head.tags.push("priority:critical".to_owned());
+    let deferred =
+        Entry::new(deferred_head, deferred_workflow, None, None).expect("valid deferred heads");
+
+    let mut completed_workflow = workflow("todo");
+    completed_workflow.status = "completed".to_owned();
+    completed_workflow.completion = Some(instant("2026-08-01T06:30:00.000Z"));
+    let mut completed_head = statement("BOARD-v5");
+    completed_head.tags.push("priority:critical".to_owned());
+    let completed =
+        Entry::new(completed_head, completed_workflow, None, None).expect("valid completed heads");
     let ordered = [
         blocked.clone(),
         second.clone(),
         assigned.clone(),
         first.clone(),
         active.clone(),
+        deferred.clone(),
+        completed.clone(),
     ];
-    let reversed = [active, first, assigned, second, blocked];
+    let reversed = [
+        completed, deferred, active, first, assigned, second, blocked,
+    ];
 
     let selected = select(&ordered, &Actor::Spice).expect("eligible task");
     let selected_again = select(&reversed, &Actor::Spice).expect("eligible task");

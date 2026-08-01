@@ -167,6 +167,30 @@ fn an_optional_witness_is_admitted_without_being_required() {
 }
 
 #[test]
+fn a_claim_witness_distinguishes_no_head_from_a_null_or_present_head() {
+    let absent = r#"{"kind":"claim","task":"SPICE-aBcD"}"#;
+    let witness = wire::decode::<Witness>(absent.as_bytes()).expect("absent claim head decodes");
+    assert!(matches!(witness, Witness::Claim { head: None, .. }));
+    assert_eq!(
+        wire::encode(&witness).expect("absent claim witness encodes"),
+        absent.as_bytes()
+    );
+
+    let null = r#"{"kind":"claim","task":"SPICE-aBcD","head":null}"#;
+    assert!(
+        wire::decode::<Witness>(null.as_bytes()).is_err(),
+        "null must not alias an absent claim head"
+    );
+
+    let present = done()
+        .expected
+        .into_iter()
+        .find(|witness| matches!(witness, Witness::Claim { .. }))
+        .expect("specified command carries a claim witness");
+    assert!(matches!(present, Witness::Claim { head: Some(_), .. }));
+}
+
+#[test]
 fn witness_order_does_not_change_canonical_bytes() {
     let forward = done();
     let mut reversed = forward.clone();
@@ -266,7 +290,7 @@ fn sample_witnesses() -> Vec<Witness> {
         },
         Witness::Claim {
             task: task.clone(),
-            head: seq(3),
+            head: Some(seq(3)),
         },
         Witness::Lease {
             task: task.clone(),

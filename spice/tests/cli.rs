@@ -598,7 +598,7 @@ impl RepositoryScratch {
             .execute(
                 concat!(
                     "INSERT INTO journal_schema(singleton, version, state, ",
-                    "from_version, to_version) VALUES (1, ?1, ?2, ?3, ?4)",
+                    "from_version, to_version) VALUES (1, ?1, ?2, ?3, ?4)"
                 ),
                 params![version, state, from, to],
             )

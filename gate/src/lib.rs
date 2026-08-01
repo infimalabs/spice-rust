@@ -1,9 +1,10 @@
 //! Hermetic repository enforcement.
 //!
 //! The gate reads a foreign repository and nothing else. It holds no journal
-//! and asks none: a verdict is a function of the tree, the policy, and the
-//! committed ratchet, so the same three inputs produce the same receipt on any
-//! machine and at any hour.
+//! and asks none: a receipt is a function of the selected tree and one current
+//! [`Contract`], including the exact compiled set, bounds, baseline, and probed
+//! tool identities. The same complete identities produce the same receipt on
+//! any machine and at any hour.
 //!
 //! [`jurisdiction::Malady`] and [`ratchet::Malady`] are two closed sets under
 //! one noun, and they stay module-qualified rather than being flattened here.
@@ -49,4 +50,7 @@ pub use names::{RETIRED_NAMES, RetiredMatch, RetiredName, retired_matches};
 pub use ratchet::{Finding, Movement, Ratchet, RatchetError};
 #[cfg(not(target_arch = "wasm32"))]
 pub use tree::{SelectedTree, Selector, TreeError};
-pub use verdict::{PublishError, Run, RunError, Standing, Verdict};
+pub use verdict::{
+    CurrentRun, GATE_RECEIPT_VERSION, PublishError, ReceiptDecodeError, ReceiptTool, Run, RunError,
+    Standing, Verdict,
+};
