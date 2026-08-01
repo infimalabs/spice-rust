@@ -6,22 +6,21 @@
 //! test that built a `Principal` directly would be proving the app agrees with
 //! itself about authority it is not allowed to assert.
 //!
-//! The classification `app` compiles is a restatement of prose carried by
-//! `wire`'s law rows, so one test here reads those rows instead of the table.
-//! An oracle derived from the artifact under test can only notice that the
-//! table is missing an entry, never that the table and the rows disagree.
+//! `app` no longer holds a classification to restate: each command's authority
+//! is a field on its `wire` law row, and the panes read it there. So the tests
+//! below assert the behaviour that field buys, and the one set written out by
+//! hand is the expected operator set, which is written out precisely because an
+//! oracle derived the way the pane derives would agree with any classification.
 
 use std::collections::BTreeSet;
-use std::fs;
-use std::path::{Path, PathBuf};
 
 use app::{
     Admitted, BrowserState, Declined, GrantPane, Principal, ReadPane, Session, SteerPane, settled,
 };
 use serde::{Deserialize, Serialize};
 use wire::{
-    Accepted, CanonicalUuid, Command, CommandKind, Derived, Digest, FaultClass, FoldName, Outcome,
-    Overflow, Packed, Response, Seq, TaskHandle, TrustState, Witness,
+    Accepted, Answer, Authority, CanonicalUuid, Command, CommandKind, Derived, Digest, FaultClass,
+    FoldName, Name, Outcome, Overflow, Packed, Response, Seq, TaskHandle, TrustState, Witness,
 };
 
 /// Capability the operator session opens with.
@@ -123,6 +122,19 @@ fn existence() -> Vec<Witness> {
     vec![Witness::Existence {
         task: "SPICE-aBcD".parse::<TaskHandle>().expect("fixture handle"),
     }]
+}
+
+/// The two witnesses `consent::decide` requires.
+fn consent_witnesses() -> Vec<Witness> {
+    vec![
+        Witness::Consent {
+            request: uuid(OTHER_COMMAND),
+            answer: Answer::Asked,
+        },
+        Witness::Rule {
+            name: "review".parse::<Name>().expect("fixture rule name"),
+        },
+    ]
 }
 
 /// The one witness `trust::grant` requires.
@@ -594,71 +606,115 @@ fn no_lane_surface_renders_the_capability_its_session_presented() {
 }
 
 #[test]
-fn panes_restate_the_wire_law_rows() {
-    let named = operator_commands_named_by_wire();
-    let classified = GrantPane::decisions().collect::<BTreeSet<_>>();
+fn the_grant_pane_presents_exactly_the_commands_wire_gives_operator_authority() {
+    let classified = CommandKind::ALL
+        .iter()
+        .copied()
+        .filter(|kind| kind.law().authority == Authority::Operator)
+        .collect::<BTreeSet<_>>();
 
-    // A scan that matched nothing would agree with an empty table and prove
-    // nothing about either.
-    assert!(
-        !named.is_empty(),
-        "no wire law row was found to state an operator-capability requirement; \
-         the scan in this test has stopped reading what it claims to read"
-    );
+    // The expected set is written out rather than derived, because a test that
+    // computed it the way the pane does would agree with any classification,
+    // including an empty one.
     assert_eq!(
-        named, classified,
-        "app's operator classification and wire's law rows disagree; one of them \
-         moved. wire states the requirement in prose on the law row, and \
-         `requires_operator` in app/src/pane.rs restates it -- reconcile them \
-         rather than editing this test"
+        classified,
+        BTreeSet::from([
+            CommandKind::SteerCancel,
+            CommandKind::ConsentDecide,
+            CommandKind::TrustGrant,
+            CommandKind::TrustRevoke,
+        ])
+    );
+    assert_eq!(GrantPane::decisions().collect::<BTreeSet<_>>(), classified);
+}
+
+#[test]
+fn every_command_states_an_authority_and_most_need_no_operator() {
+    let mut operator = 0;
+    let mut connected = 0;
+
+    // The match is exhaustive over `Authority`, so a third capability cannot
+    // enter the vocabulary without this count being confronted with it. Summing
+    // the two arms back to `ALL.len()` would prove nothing instead: every kind
+    // lands in exactly one arm, so that total holds under any classification.
+    for kind in CommandKind::ALL {
+        match kind.law().authority {
+            Authority::Operator => operator += 1,
+            Authority::Connected => connected += 1,
+        }
+    }
+
+    assert_eq!(operator, 4);
+    assert_eq!(connected, 29);
+    assert_eq!(
+        CommandKind::ALL.len(),
+        33,
+        "a command joined or left the registry; the counts above are the claim \
+         to re-make, not the number to bump"
     );
 }
 
-/// The commands `wire`'s own law rows say need the operator capability.
-///
-/// A law row carries that requirement in prose rather than in its witness
-/// list, because the capability is carried by the connection and not proved by
-/// a predicate. Each such sentence names its commands by the verb that ends
-/// their wire spelling, so `steer::cancel` appears as "cancel".
-///
-/// This reads prose and is deliberately literal about it. A reworded row is
-/// exactly the moment to re-check that the classification app compiles still
-/// says what the row says.
-fn operator_commands_named_by_wire() -> BTreeSet<CommandKind> {
-    let source = fs::read_to_string(workspace_root().join("wire/src/command.rs"))
-        .expect("the wire command registry must be readable");
-    let prose = source
-        .lines()
-        .filter_map(|line| line.trim_start().strip_prefix("///"))
-        .map(str::trim)
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    let mut named = BTreeSet::new();
-    for sentence in prose
-        .split('.')
-        .filter(|sentence| sentence.to_lowercase().contains("operator capability"))
-    {
-        let words = sentence
-            .split(|character: char| !character.is_alphanumeric())
-            .filter(|word| !word.is_empty())
-            .map(str::to_lowercase)
-            .collect::<BTreeSet<_>>();
-        named.extend(CommandKind::ALL.iter().copied().filter(|kind| {
-            kind.as_str()
-                .rsplit("::")
-                .next()
-                .is_some_and(|verb| words.contains(verb))
-        }));
+#[test]
+fn commands_sharing_witnesses_do_not_share_an_authority() {
+    // These pairs witness identically and answer to different capabilities,
+    // which is why each holds its own registry row. A single row per move
+    // would have to state one authority for both and would be wrong for one.
+    for (unrestricted, restricted) in [
+        (CommandKind::SteerDispose, CommandKind::SteerCancel),
+        (CommandKind::TrustPend, CommandKind::TrustGrant),
+        (CommandKind::TrustPend, CommandKind::TrustRevoke),
+    ] {
+        assert_eq!(
+            unrestricted.law().required,
+            restricted.law().required,
+            "{} and {} were split for authority, not for witnesses",
+            unrestricted.as_str(),
+            restricted.as_str()
+        );
+        assert_eq!(unrestricted.law().authority, Authority::Connected);
+        assert_eq!(restricted.law().authority, Authority::Operator);
     }
-    named
 }
 
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("app must be a direct workspace member")
-        .to_path_buf()
+#[test]
+fn a_lane_is_refused_the_consent_decision_an_operator_is_offered() {
+    let lane = lane();
+    let operator = operator();
+
+    // WIRE.md's consent row names predicates and no capability; the registry
+    // row states the capability, and this is the behaviour that statement buys.
+    assert!(!SteerPane::over(&lane).offers(CommandKind::ConsentDecide));
+    assert!(SteerPane::over(&operator).offers(CommandKind::ConsentDecide));
+    assert!(GrantPane::over(&lane).is_none());
+    assert!(GrantPane::over(&operator).is_some());
+
+    let declined = SteerPane::over(&lane)
+        .command(
+            uuid(COMMAND),
+            CommandKind::ConsentDecide,
+            consent_witnesses(),
+            note(),
+        )
+        .expect_err("a lane holds no consent decision");
+
+    // The decline names the command and the principal, so the refusal is
+    // legible without re-deriving either from the call site.
+    let Declined::Authority { kind, actor } = declined else {
+        panic!("a lane is declined for authority rather than for witnesses: {declined}");
+    };
+    assert_eq!(kind, CommandKind::ConsentDecide);
+    assert_eq!(actor.to_string(), format!("lane:{LANE}"));
+
+    // The refusal is about the capability rather than the witnesses: the same
+    // witnesses satisfy the same row when the operator submits them.
+    SteerPane::over(&operator)
+        .command(
+            uuid(COMMAND),
+            CommandKind::ConsentDecide,
+            consent_witnesses(),
+            note(),
+        )
+        .expect("an operator decides consent");
 }
 
 /// One fold-backed reply admitted through the same response door.

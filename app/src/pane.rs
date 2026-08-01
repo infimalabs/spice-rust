@@ -20,8 +20,8 @@ use std::error::Error;
 use std::fmt;
 
 use wire::{
-    Accepted, Actor, CanonicalUuid, Command, CommandKind, Fault, FaultClass, FoldName, LawError,
-    Outcome, Overflow, Response, Seq, WireVersion, Witness,
+    Accepted, Actor, Authority, CanonicalUuid, Command, CommandKind, Fault, FaultClass, FoldName,
+    LawError, Outcome, Overflow, Response, Seq, WireVersion, Witness,
 };
 
 use crate::socket::{Admitted, SessionScope};
@@ -92,55 +92,6 @@ impl Principal {
     #[must_use]
     pub const fn is_operator(&self) -> bool {
         matches!(self.actor, Actor::Operator)
-    }
-}
-
-/// True when this command's wire law row additionally requires the operator
-/// capability.
-///
-/// A wire law row carries that requirement in prose rather than in its witness
-/// list, because the capability is carried by the connection and not proved by
-/// a predicate. This table restates those rows and decides nothing on its own;
-/// `panes_restate_the_wire_law_rows` reads the rows and fails when the two
-/// disagree in either direction.
-///
-/// The match is exhaustive, so a command added to the registry must state its
-/// class here rather than defaulting into the lane-visible set.
-const fn requires_operator(kind: CommandKind) -> bool {
-    match kind {
-        CommandKind::SteerCancel
-        | CommandKind::ConsentDecide
-        | CommandKind::TrustGrant
-        | CommandKind::TrustRevoke => true,
-        CommandKind::TaskAdd
-        | CommandKind::TaskEdit
-        | CommandKind::TaskNote
-        | CommandKind::TaskDefer
-        | CommandKind::TaskWake
-        | CommandKind::TaskDepends
-        | CommandKind::TaskPhase
-        | CommandKind::TaskDone
-        | CommandKind::TaskReview
-        | CommandKind::TaskAssign
-        | CommandKind::ClaimWin
-        | CommandKind::ClaimCarry
-        | CommandKind::ClaimRenew
-        | CommandKind::ClaimFree
-        | CommandKind::ClaimLapse
-        | CommandKind::DocApply
-        | CommandKind::SteerSend
-        | CommandKind::SteerResend
-        | CommandKind::SteerDispose
-        | CommandKind::TrustPend
-        | CommandKind::LaneSeat
-        | CommandKind::LaneState
-        | CommandKind::TasteRecord
-        | CommandKind::CanaryRecognize
-        | CommandKind::VendorRecognize
-        | CommandKind::CommitRecognize
-        | CommandKind::ProofRecognize
-        | CommandKind::ReleasePublish
-        | CommandKind::UpChange => false,
     }
 }
 
@@ -304,9 +255,16 @@ impl<'a> SteerPane<'a> {
     /// Hiding a control this principal cannot exercise removes a misleading
     /// affordance. It does not remove the command: only the resident decides
     /// that, and it decides the same way whether or not a control was drawn.
+    ///
+    /// The requirement is read from the command's registry row rather than
+    /// restated here, so this pane cannot come to disagree with the law the
+    /// resident will apply.
     #[must_use]
     pub const fn offers(&self, kind: CommandKind) -> bool {
-        !requires_operator(kind) || self.principal.is_operator()
+        match kind.law().authority {
+            Authority::Connected => true,
+            Authority::Operator => self.principal.is_operator(),
+        }
     }
 
     /// Build one command at the version this build speaks.
@@ -385,11 +343,15 @@ impl<'a> GrantPane<'a> {
     }
 
     /// The decisions this pane presents, in registry order.
+    ///
+    /// The set is derived from the registry, so a command whose row is given
+    /// operator authority appears here in the same edit rather than in a later
+    /// one that remembers to add it.
     pub fn decisions() -> impl Iterator<Item = CommandKind> {
         CommandKind::ALL
             .iter()
             .copied()
-            .filter(|kind| requires_operator(*kind))
+            .filter(|kind| kind.law().authority == Authority::Operator)
     }
 }
 
