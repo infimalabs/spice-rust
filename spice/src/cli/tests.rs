@@ -203,37 +203,37 @@ fn every_contract_has_an_executable_succession_disposition() {
 #[derive(Clone, Copy, Debug)]
 enum PythonTaskDisposition {
     Landed(&'static [&'static str]),
-    Intentional(&'static str),
+    Later(&'static str),
 }
 
 #[test]
 fn every_python_task_control_has_one_tested_current_disposition() {
-    use PythonTaskDisposition::{Intentional, Landed};
+    use PythonTaskDisposition::{Landed, Later};
 
     let mappings = [
         ("task", Landed(&["board"])),
         ("task add", Landed(&["task", "add"])),
-        (
-            "task artifact",
-            Intentional("task evidence remains journal facts, not a second authority"),
-        ),
+        ("task artifact", Later("Task-addressed sidecar artifacts")),
         (
             "task artifact add",
-            Intentional("task evidence remains journal facts, not a second authority"),
+            Later("Task-addressed sidecar artifacts"),
         ),
         (
             "task artifact list",
-            Intentional("task evidence remains journal facts, not a second authority"),
+            Later("Task-addressed sidecar artifacts"),
         ),
         (
             "task artifact prune",
-            Intentional("release one has no second retention authority"),
+            Later("Task-addressed sidecar artifacts"),
         ),
         (
             "task artifact show",
-            Intentional("task evidence remains journal facts, not a second authority"),
+            Later("Task-addressed sidecar artifacts"),
         ),
-        ("task capture", Landed(&["task", "add"])),
+        (
+            "task capture",
+            Later("Task-boundary Git publication and capture"),
+        ),
         ("task claim", Landed(&["task", "next"])),
         ("task delete", Landed(&["doc"])),
         ("task depends", Landed(&["task", "depends"])),
@@ -248,10 +248,7 @@ fn every_python_task_control_has_one_tested_current_disposition() {
         ("task next", Landed(&["task", "next"])),
         ("task note", Landed(&["task", "note"])),
         ("task oops", Landed(&["task", "oops"])),
-        (
-            "task reclaim",
-            Intentional("resident claim renewal is automatic and has no manual control"),
-        ),
+        ("task reclaim", Later("Manual claim renewal")),
         ("task review", Landed(&["task", "review"])),
         ("task reword", Landed(&["doc"])),
         ("task show", Landed(&["board"])),
@@ -274,6 +271,7 @@ fn every_python_task_control_has_one_tested_current_disposition() {
         .filter_map(|line| line.strip_prefix("- `"))
         .filter_map(|line| line.split_once('`').map(|(path, _)| path))
         .collect::<BTreeSet<_>>();
+    let later = include_str!("../../../LATER.md");
     let mapped = mappings
         .iter()
         .map(|(path, _)| *path)
@@ -298,11 +296,142 @@ fn every_python_task_control_has_one_tested_current_disposition() {
                     "Python `{python}` maps to an unlanded Rust leaf: {path:?}",
                 );
             }
-            Intentional(boundary) => assert!(
-                !boundary.trim().is_empty(),
-                "Python `{python}` has an unnamed release boundary",
+            Later(boundary) => assert!(
+                later.lines().any(|line| {
+                    line.strip_prefix("| ")
+                        .and_then(|line| line.split_once(" |"))
+                        .is_some_and(|(surface, _)| surface == boundary)
+                }),
+                "Python `{python}` names an absent LATER.md boundary: {boundary}",
             ),
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum LocalRelationship {
+    Replacement,
+    Addition,
+    Divergence,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LocalSuccession {
+    python: Option<&'static str>,
+    rust: &'static [&'static str],
+    invocation: &'static str,
+    relationship: LocalRelationship,
+    rationale: &'static str,
+}
+
+const LOCAL_SUCCESSION: &[LocalSuccession] = &[
+    LocalSuccession {
+        python: Some("init"),
+        rust: &["install"],
+        invocation: "install [--apply=<digest>]",
+        relationship: LocalRelationship::Divergence,
+        rationale: concat!(
+            "Rust installs only its namespaced local assets; resident startup and ",
+            "ambient authority remain separate",
+        ),
+    },
+    LocalSuccession {
+        python: Some("deinit"),
+        rust: &["install"],
+        invocation: "install --unapply",
+        relationship: LocalRelationship::Divergence,
+        rationale: concat!(
+            "Rust reverses only the exact namespaced install receipt and does not ",
+            "withdraw Python authority",
+        ),
+    },
+    LocalSuccession {
+        python: Some("lock status"),
+        rust: &["lock"],
+        invocation: "lock",
+        relationship: LocalRelationship::Replacement,
+        rationale: concat!(
+            "the daemonless Rust report replaces Python lock status over ",
+            "Rust-owned lock state",
+        ),
+    },
+    LocalSuccession {
+        python: Some("lock run"),
+        rust: &["lock", "run"],
+        invocation: "lock run NAME -- CMD...",
+        relationship: LocalRelationship::Replacement,
+        rationale: concat!(
+            "the daemonless Rust child runner preserves lock refusal, exit, and ",
+            "signal contracts",
+        ),
+    },
+    LocalSuccession {
+        python: None,
+        rust: &["restore", "verify"],
+        invocation: "restore verify INPUT",
+        relationship: LocalRelationship::Addition,
+        rationale: "strict offline archive verification is an intentional native-only addition",
+    },
+    LocalSuccession {
+        python: None,
+        rust: &["release", "notes"],
+        invocation: "release notes INPUT",
+        relationship: LocalRelationship::Addition,
+        rationale: "strict offline release-note rendering is an intentional native-only addition",
+    },
+];
+
+#[test]
+fn daemonless_local_succession_is_closed_and_explicit() {
+    let python = LOCAL_SUCCESSION
+        .iter()
+        .filter_map(|row| row.python)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        python,
+        BTreeSet::from(["deinit", "init", "lock run", "lock status"]),
+    );
+
+    let rust = LOCAL_SUCCESSION
+        .iter()
+        .map(|row| row.rust.join(" "))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        rust,
+        BTreeSet::from([
+            "install".to_owned(),
+            "lock".to_owned(),
+            "lock run".to_owned(),
+            "release notes".to_owned(),
+            "restore verify".to_owned(),
+        ]),
+    );
+    assert_eq!(
+        LOCAL_SUCCESSION
+            .iter()
+            .map(|row| row.relationship)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            LocalRelationship::Replacement,
+            LocalRelationship::Addition,
+            LocalRelationship::Divergence,
+        ]),
+    );
+
+    for row in LOCAL_SUCCESSION {
+        assert!(!row.invocation.trim().is_empty());
+        assert!(!row.rationale.trim().is_empty());
+        assert!(
+            contract_at(contracts(), row.rust).is_some(),
+            "local mapping names an unknown Rust leaf: {:?}",
+            row.rust,
+        );
+        assert_eq!(
+            landing(row.rust),
+            Landing::Landed,
+            "local mapping names an unlanded Rust leaf: {:?}",
+            row.rust,
+        );
     }
 }
 

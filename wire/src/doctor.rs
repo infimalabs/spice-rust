@@ -16,13 +16,13 @@ pub enum SpiceVariable {
     /// Rendered lane direction.
     #[serde(rename = "SPICE_INBOX")] // env-policy: allow
     Inbox,
-    /// Install process-test action rendezvous.
+    /// Debug install mutation-rendezvous action.
     #[serde(rename = "SPICE_INSTALL_TEST_PAUSE_ACTION")] // env-policy: allow
     InstallTestPauseAction,
-    /// Install process-test control rendezvous.
+    /// Debug install mutation-rendezvous control directory.
     #[serde(rename = "SPICE_INSTALL_TEST_PAUSE_CONTROL")] // env-policy: allow
     InstallTestPauseControl,
-    /// Install process-test path rendezvous.
+    /// Debug install mutation-rendezvous destination path.
     #[serde(rename = "SPICE_INSTALL_TEST_PAUSE_PATH")] // env-policy: allow
     InstallTestPausePath,
     /// Lane bound to an intercepted shell.
