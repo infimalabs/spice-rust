@@ -840,6 +840,7 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["gate", "camp"]
         | ["gate", "kill"]
         | ["gate", "receipt"]
+        | ["install"]
         | ["lock"]
         | ["lock", "run"]
         | ["proof"]
@@ -850,7 +851,6 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["run"]
         | ["config"]
         | ["restore", "verify"] => Landing::Landed,
-        ["install"] => Landing::Gap("LOCAL-1kJQlG6b"),
         ["board"]
         | ["board", "graph"]
         | ["board", "handout"]

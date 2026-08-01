@@ -56,8 +56,8 @@ operator authorizes cutover.
 
 ## Rust contracts
 
-The registry contains 63 command leaves. Eighteen have executable dispatch,
-so current executable coverage is 18/63, or 28.6 percent. Completed domain
+The registry contains 63 command leaves. Nineteen have executable dispatch,
+so current executable coverage is 19/63, or 30.2 percent. Completed domain
 libraries do not count as landed command surfaces.
 
 ### Landed
@@ -70,6 +70,7 @@ libraries do not count as landed command surfaces.
 - `gate camp`
 - `gate kill`
 - `gate receipt`
+- `install`
 - `lock`
 - `lock run`
 - `proof`
@@ -81,13 +82,11 @@ libraries do not count as landed command surfaces.
 - `config`
 - `restore verify`
 
-`doctor`, `version`, and `up` are executable but not yet usable against the
-current worktree state; the configuration and bootstrap tasks above own those
-operational gaps.
-
-### `LOCAL-1kJQlG6b`
-
-- `install`
+The local command group retains the Python-first ownership boundary described
+above: plain `install` is a side-effect-free plan, and only an exact
+`--apply=<digest>` crosses its fixed authored mutation plan. Rust binaries,
+hook stages, and install records remain namespaced below `.spice/rust`; the
+plan does not replace the ambient command or active `core.hooksPath`.
 
 ### `BOARD-1kJQlDDt`
 
