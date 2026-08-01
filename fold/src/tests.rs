@@ -273,7 +273,7 @@ impl Reducer for KindReducer {
         let rows = facts
             .facts()
             .iter()
-            .map(|fact| json!({"kind": fact.fact.kind.as_str(), "seq": fact.seq.get()}))
+            .map(|fact| json!({"kind": fact.fact.kind().as_str(), "seq": fact.seq.get()}))
             .collect::<Vec<_>>();
         Ok(Reduction::complete(facts, json!({"rows": rows})))
     }
@@ -290,16 +290,21 @@ fn snapshot(count: u64) -> journal::FactSnapshot {
             actor: wire::Actor::Spice,
             origin: "task:FOLD-a1".parse().expect("fixture origin"),
             cause: (position > 1).then(|| seq(position - 1)),
-            fact: wire::AnyFact {
-                kind: wire::FactKind::TaskNoted,
-                body: serde_json::Map::from_iter([(
-                    "task".to_owned(),
-                    serde_json::Value::String("FOLD-a1".to_owned()),
-                )]),
-            },
+            fact: any_fact(),
         })
         .collect();
     journal::FactSnapshot::from_facts(facts).expect("fixture snapshot")
+}
+
+/// One opaque fact, built the only way a consumer can build one.
+///
+/// `AnyFact` keeps its fields private so that a decoded body is always one the
+/// kind's registered DTO admitted. A fixture cannot assemble the pair directly
+/// without asserting a validation that never ran, so it decodes like everyone
+/// else.
+fn any_fact() -> wire::AnyFact {
+    wire::decode(br#"{"kind":"task::noted","task":"FOLD-a1","note":"fixture"}"#)
+        .expect("fixture fact decodes")
 }
 
 fn seq(value: u64) -> wire::Seq {
