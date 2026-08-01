@@ -75,6 +75,12 @@ pub enum Domain {
     DistPins,
     /// The inventory of what a staging run published.
     DistInventory,
+    /// The ordered command inventory one sealed proof replay consumes.
+    ProofBattery,
+    /// The complete typed result of one sealed proof replay.
+    ProofReplay,
+    /// The detached receipt binding a replay to one target payload.
+    ProofReceipt,
     /// The bytes of one file inside a gate's jurisdiction.
     GateFile,
     /// The admitted file set of one gate jurisdiction, by content.
@@ -100,6 +106,9 @@ impl Domain {
             Self::DistArtifact => "spice.dist.artifact.v1",
             Self::DistPins => "spice.dist.pins.v1",
             Self::DistInventory => "spice.dist.inventory.v1",
+            Self::ProofBattery => "spice.proof.battery.v1",
+            Self::ProofReplay => "spice.proof.replay.v1",
+            Self::ProofReceipt => "spice.proof.receipt.v1",
             Self::GateFile => "spice.gate.file.v1",
             Self::GateTree => "spice.gate.tree.v1",
             Self::GatePolicy => "spice.gate.policy.v1",

@@ -68,3 +68,33 @@ pub struct TargetPayload {
     pub inventory: Vec<InventoryEntry>,
     pub inventory_digest: Digest,
 }
+
+/// Whether the complete sealed proof battery passed.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProofStanding {
+    /// Every declared battery member completed and its evidence was whole.
+    Clean,
+    /// At least one battery member failed, timed out, or produced incomplete evidence.
+    Refused,
+}
+
+/// Detached evidence binding one sealed replay to one receipt-free target payload.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProofReceipt {
+    /// Current detached-receipt schema.
+    pub version: u16,
+    /// Release tuple the payload and replay both cover.
+    pub target: ReleaseTarget,
+    /// Canonical identity of the receipt-free target payload.
+    pub payload: Digest,
+    /// Canonical identity of the ordered battery command inventory.
+    pub battery: Digest,
+    /// Canonical identity of the complete typed replay result.
+    pub replay: Digest,
+    /// Digest-pinned container or native runner identity that executed the replay.
+    pub environment: String,
+    /// One standing for the complete battery.
+    pub standing: ProofStanding,
+}

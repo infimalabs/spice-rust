@@ -18,8 +18,12 @@ Run the same verification outside a commit, and before handing work to
 another agent, with:
 
 ```sh
-cargo xtask verify
+./scripts/verify.sh
 ```
+
+The script changes to the repository root and then executes
+`cargo xtask verify`; it is a location-independent wrapper over that one
+verifier, not a second suite.
 
 The `gate` integration tests enforce repository contracts from stable product
 inputs. Lattice conformance compares every local path dependency in
