@@ -84,7 +84,9 @@ libraries do not count as landed command surfaces.
 
 `doctor`, `version`, and `up` are executable but not yet usable against the
 current worktree state; the configuration and bootstrap tasks above own those
-operational gaps.
+operational gaps. `release publish` admits its sealed stage against the Rust
+journal and resident discovery under `<git-common>/.spice-rust`; it does not
+read the Python authority under `<git-common>/.spice`.
 
 ### `LOCAL-1kJQlG6b`
 
