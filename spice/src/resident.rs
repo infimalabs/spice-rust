@@ -5,8 +5,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use bus::{Bus, CommitOutcome, JournalCommit};
-use journal::{FactCause, JournalGuard, JournalWrite};
+use journal::{FactCause, JournalWrite};
+use lane::occupant::Seats;
 use sill::{Acquisition, LockFile, LockName, Possession};
+use spice::repository::{Repository, ResolveError};
 use tokio::sync::oneshot;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::header::ORIGIN;
@@ -16,7 +18,6 @@ use wire::{
     ReplyPosition, ResidencyHead, ResidentState, Seq, SeqRange,
 };
 
-const JOURNAL_FILE: &str = "spicejournal.sqlite3";
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 
 type CommandResult<T> = Result<T, Outcome<()>>;
@@ -28,74 +29,24 @@ struct RuntimePaths {
     journal: PathBuf,
     resident: PathBuf,
     canvas: PathBuf,
+    degraded: PathBuf,
+    tape: PathBuf,
 }
 
 impl RuntimePaths {
-    fn discover(start: &Path) -> io::Result<Self> {
-        let mut common = None;
-        for directory in start.ancestors() {
-            if let Some(found) = git_common_dir(directory) {
-                common = Some(found?);
-                break;
-            }
-        }
-        let common = common
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no .git marker found"))?;
-        let runtime = common.join(".spice");
+    fn discover(start: &Path) -> Result<Self, ResolveError> {
+        let repository = Repository::discover(start)?;
+        let runtime = repository.common_dir().join(".spice");
         let data = runtime.join("data");
         Ok(Self {
-            journal: data.join(JOURNAL_FILE),
+            journal: repository.journal_path(),
             resident: runtime.join("resident"),
             canvas: runtime.join("canvas"),
+            degraded: runtime.join("degraded"),
+            tape: runtime.join("tape"),
             runtime,
             data,
         })
-    }
-}
-
-fn git_common_dir(directory: &Path) -> Option<io::Result<PathBuf>> {
-    let marker = directory.join(".git");
-    let metadata = match fs::metadata(&marker) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
-        Err(error) => return Some(Err(error)),
-    };
-    if metadata.is_dir() {
-        return Some(Ok(marker));
-    }
-    Some((|| {
-        let marker_text = fs::read_to_string(&marker)?;
-        let git_dir = marker_text
-            .trim()
-            .strip_prefix("gitdir:")
-            .map(str::trim)
-            .filter(|path| !path.is_empty())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid .git file"))?;
-        let git_dir = resolve(directory, Path::new(git_dir));
-        let common_marker = git_dir.join("commondir");
-        match fs::read_to_string(&common_marker) {
-            Ok(common) => {
-                let common = common.trim();
-                if common.is_empty() {
-                    Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "empty git commondir",
-                    ))
-                } else {
-                    Ok(resolve(&git_dir, Path::new(common)))
-                }
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(git_dir),
-            Err(error) => Err(error),
-        }
-    })())
-}
-
-fn resolve(base: &Path, path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        base.join(path)
     }
 }
 
@@ -216,22 +167,43 @@ fn up_from(current: &Path) -> Outcome<()> {
         Err(outcome) => return outcome,
     };
 
-    let runtime = match tokio::runtime::Builder::new_current_thread()
+    let mut seats = Seats::new();
+    let surface = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
     {
-        Ok(runtime) => runtime,
-        Err(error) => return environment_fault("resident::runtime-failed", &error.to_string()),
+        Ok(runtime) => runtime.block_on(run_surface(&bus, &paths, epoch, &mut seats)),
+        Err(error) => Err(environment_fault(
+            "resident::runtime-failed",
+            &error.to_string(),
+        )),
     };
-    let surface = runtime.block_on(run_surface(&bus, &paths, epoch, startup.last));
+    let answer = settle_surface(&bus, &paths, epoch, startup, &mut seats, surface);
     let shutdown = bus.shutdown();
     drop(resident_lock);
     if let Err(error) = shutdown {
         return store_fault("bus::shutdown-failed", &error.to_string());
     }
+    answer
+}
+
+fn settle_surface(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    startup: StartupCommit,
+    seats: &mut Seats,
+    surface: CommandResult<()>,
+) -> Outcome<()> {
     match surface {
         Ok(()) => committed_reply(startup.first, startup.last),
-        Err(outcome) => outcome,
+        Err(original) => match drive_shutdown(bus, paths, epoch, seats) {
+            Outcome::Reply(_) => original,
+            compensation => store_fault(
+                "resident::compensation-failed",
+                &format!("startup failed as {original:?}; compensation failed as {compensation:?}"),
+            ),
+        },
     }
 }
 
@@ -252,7 +224,29 @@ fn down_from(current: &Path) -> Outcome<()> {
         Ok(discovery) => discovery,
         Err(outcome) => return outcome,
     };
-    request_dark(&discovery)
+    let outcome = request_dark(&discovery);
+    if matches!(outcome, Outcome::Reply(_))
+        && let Err(release) = wait_for_release(&paths)
+    {
+        return release;
+    }
+    outcome
+}
+
+fn wait_for_release(paths: &RuntimePaths) -> CommandResult<()> {
+    let name = LockName::new("resident").expect("resident is a non-empty lock name");
+    let lock = LockFile::new(name, &paths.resident);
+    let possession = lock
+        .acquire()
+        .map_err(|error| environment_fault("resident::release-failed", &error.to_string()))?;
+    if paths.canvas.exists() {
+        return Err(environment_fault(
+            "canvas::release-incomplete",
+            "resident lock was released while discovery remained published",
+        ));
+    }
+    drop(possession);
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -305,7 +299,7 @@ async fn run_surface(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
-    seated: u64,
+    seats: &mut Seats,
 ) -> CommandResult<()> {
     let operator = new_uuid();
     let mut capabilities = canvas::axum::Capabilities::default();
@@ -328,9 +322,6 @@ async fn run_surface(
     let mut server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;
     }));
-    let mut descent = lane::drain::Descent::new();
-    let mut previous = seated;
-
     loop {
         let request = tokio::select! {
             request = control.recv() => request.ok_or_else(|| {
@@ -340,8 +331,8 @@ async fn run_surface(
                 return Err(server_outcome(served));
             }
         };
-        let outcome = drive_shutdown(bus, epoch, &mut descent, &mut previous);
-        let dark = matches!(outcome, Outcome::Reply(_)) && descent.dark();
+        let outcome = drive_shutdown(bus, paths, epoch, seats);
+        let dark = matches!(outcome, Outcome::Reply(_));
         let _ = request.respond(outcome);
         if dark {
             drop(published);
@@ -354,93 +345,11 @@ async fn run_surface(
     }
 }
 
-fn drive_shutdown(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    descent: &mut lane::drain::Descent,
-    previous: &mut u64,
-) -> Outcome<()> {
-    let mut first = None;
-    while let Some(next) = descent.next() {
-        if matches!(next, ResidentState::Dark)
-            && let Err(error) = bus.verify()
-        {
-            return store_fault("resident::verification-failed", &error.to_string());
-        }
-        let committed = match commit_transition(bus, epoch, descent.at(), next, *previous) {
-            Ok(committed) => committed,
-            Err(outcome) => return outcome,
-        };
-        if let Err(error) = descent.step(next) {
-            return store_fault("resident::ladder-invalid", &error.to_string());
-        }
-        first.get_or_insert(committed.first());
-        *previous = committed.last();
-    }
-    committed_reply(first.unwrap_or(*previous), *previous)
-}
+mod shutdown;
 
-fn commit_transition(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    from: ResidentState,
-    to: ResidentState,
-    previous: u64,
-) -> CommandResult<JournalCommit> {
-    let mut write = write(Actor::Operator, epoch, Producer::CommandDoor)?;
-    write.guard(JournalGuard::new(move |read| {
-        let Some(head) = read.residency_head()? else {
-            return Err(journal::GuardError::refused("resident::head-missing"));
-        };
-        if head.body().epoch != epoch {
-            return Err(journal::GuardError::refused("resident::epoch-moved"));
-        }
-        if head.body().state != from {
-            return Err(journal::GuardError::refused("resident::state-moved"));
-        }
-        Ok(())
-    }));
-    let cause = FactCause::Existing(seq(previous));
-    let fact = match to {
-        ResidentState::Quiescing => write.fact(wire::body::UpQuiescing { epoch }, cause),
-        ResidentState::Draining => write.fact(
-            wire::body::UpDraining {
-                epoch,
-                occupants: 0,
-            },
-            cause,
-        ),
-        ResidentState::Terminating => write.fact(
-            wire::body::UpTerminating {
-                epoch,
-                occupants: 0,
-            },
-            cause,
-        ),
-        ResidentState::Killing => write.fact(
-            wire::body::UpKilling {
-                epoch,
-                occupants: 0,
-            },
-            cause,
-        ),
-        ResidentState::Verifying => write.fact(wire::body::UpVerifying { epoch }, cause),
-        ResidentState::Dark => write.fact(wire::body::UpDark { epoch }, cause),
-        ResidentState::Seated => {
-            return Err(store_fault(
-                "resident::ladder-invalid",
-                "shutdown attempted to seat a second generation",
-            ));
-        }
-    }
-    .map_err(|error| store_fault("journal::write-invalid", &error.to_string()))?;
-    write.residency_head(fact, move |_| ResidencyHead {
-        epoch,
-        state: to,
-        lanes: Vec::new(),
-    });
-    commit(bus, write)
-}
+#[cfg(test)]
+use shutdown::current_residency;
+use shutdown::drive_shutdown;
 
 fn write(actor: Actor, epoch: CanonicalUuid, producer: Producer) -> CommandResult<JournalWrite> {
     let origin = format!("resident:{epoch}")
@@ -666,7 +575,14 @@ fn fault(class: FaultClass, reason: &str, detail: &str) -> Outcome<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Instant as Monotonic;
+
+    use sill::{
+        Argv, Cancellation, Deadlines, Environment, Output, ProcessGroup, Redaction,
+        RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
+    };
 
     use super::*;
 
@@ -688,11 +604,12 @@ mod tests {
         fs::create_dir_all(&nested).expect("nested directory");
 
         let paths = RuntimePaths::discover(&nested).expect("paths resolve");
+        let common = fs::canonicalize(root.join(".git")).expect("canonical common directory");
 
-        assert_eq!(paths.runtime, root.join(".git/.spice"));
+        assert_eq!(paths.runtime, common.join(".spice"));
         assert_eq!(
             paths.journal,
-            root.join(".git/.spice/data").join(JOURNAL_FILE)
+            common.join(".spice/data/spicejournal.sqlite3")
         );
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
@@ -713,8 +630,239 @@ mod tests {
         fs::write(git_dir.join("commondir"), "../..\n").expect("common marker");
 
         let paths = RuntimePaths::discover(&worktree).expect("paths resolve");
+        let common = fs::canonicalize(&common).expect("canonical common directory");
 
-        assert_eq!(paths.runtime, git_dir.join("../..").join(".spice"));
+        assert_eq!(paths.runtime, common.join(".spice"));
         fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn cooperative_and_forced_groups_drive_observed_counts_and_residue() {
+        let (root, paths) = resident_fixture("groups");
+        let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
+        let bus = Bus::start(journal).expect("fixture bus starts");
+        let epoch = test_uuid(1);
+        commit_startup(&bus, epoch, None).expect("resident seats");
+        let mut seats = Seats::new();
+
+        let drained_lane = test_uuid(2);
+        let drained_occupant = test_uuid(3);
+        seats
+            .seat(
+                drained_lane,
+                drained_occupant,
+                process_spec("sleep 0.05", Duration::from_secs(5)),
+            )
+            .expect("cooperative group starts");
+        seed_lane(&bus, epoch, drained_lane, drained_occupant);
+
+        let killed_lane = test_uuid(4);
+        let killed_occupant = test_uuid(5);
+        seats
+            .seat(
+                killed_lane,
+                killed_occupant,
+                process_spec(
+                    "trap '' TERM; while :; do sleep 1; done",
+                    Duration::from_millis(100),
+                ),
+            )
+            .expect("non-cooperative group starts");
+        seed_lane(&bus, epoch, killed_lane, killed_occupant);
+
+        fs::create_dir_all(&paths.degraded).expect("degraded directory");
+        fs::write(
+            paths.degraded.join(drained_lane.to_string()),
+            "offline run\n",
+        )
+        .expect("degraded marker");
+        fs::create_dir_all(&paths.tape).expect("tape directory");
+        let tape_lane = test_uuid(6);
+        fs::write(paths.tape.join(tape_lane.to_string()), "not a tape")
+            .expect("malformed tape residue");
+        let sealed_lane = test_uuid(8);
+        let tape =
+            tape::Tape::open(paths.tape.join(sealed_lane.to_string())).expect("live tape opens");
+        let locus = tape
+            .tee(b"resident shutdown evidence")
+            .expect("tape captures");
+
+        let shutdown_started = Monotonic::now();
+        assert!(matches!(
+            drive_shutdown(&bus, &paths, epoch, &mut seats),
+            Outcome::Reply(_)
+        ));
+        assert!(
+            shutdown_started.elapsed() < Duration::from_secs(2),
+            "one group's unused runtime extended another group's drain bound"
+        );
+        assert!(seats.is_empty());
+        bus.verify().expect("Dark authority verifies");
+        let snapshot = bus.fact_snapshot().expect("facts read through bus");
+        assert_eq!(
+            fact_u64(&snapshot, wire::FactKind::UpDraining, "occupants"),
+            2
+        );
+        assert_eq!(
+            fact_u64(&snapshot, wire::FactKind::UpTerminating, "occupants"),
+            1
+        );
+        assert_eq!(
+            fact_u64(&snapshot, wire::FactKind::UpKilling, "occupants"),
+            1
+        );
+        assert!(
+            snapshot
+                .facts()
+                .iter()
+                .any(|fact| fact.fact.kind() == wire::FactKind::LaneDrained)
+        );
+        assert!(
+            snapshot
+                .facts()
+                .iter()
+                .any(|fact| fact.fact.kind() == wire::FactKind::LaneExited)
+        );
+        let degraded = snapshot
+            .facts()
+            .iter()
+            .filter(|fact| fact.fact.kind() == wire::FactKind::LaneDegraded)
+            .count();
+        assert_eq!(degraded, 2, "disk residue was not named once per lane");
+        let head = bus
+            .residency_head()
+            .expect("head read")
+            .expect("head exists")
+            .into_body();
+        assert_eq!(head.state, ResidentState::Dark);
+        assert_eq!(head.lanes.len(), 2);
+        assert!(head.lanes.iter().all(|lane| lane.occupant.is_none()));
+        assert!(!paths.degraded.join(drained_lane.to_string()).exists());
+        assert_eq!(
+            tape.read(locus).expect("sealed tape remains readable"),
+            b"resident shutdown evidence"
+        );
+        assert!(matches!(
+            tape.seal().expect("tape was sealed"),
+            tape::Seal::Empty
+        ));
+        bus.shutdown().expect("fixture bus stops");
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn a_post_seated_surface_failure_compensates_to_verified_dark() {
+        let (root, paths) = resident_fixture("compensation");
+        let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
+        let bus = Bus::start(journal).expect("fixture bus starts");
+        let epoch = test_uuid(7);
+        let startup = commit_startup(&bus, epoch, None).expect("resident seats");
+        let original = environment_fault("canvas::fixture-failed", "after UpSeated");
+
+        let settled = settle_surface(
+            &bus,
+            &paths,
+            epoch,
+            startup,
+            &mut Seats::new(),
+            Err(original),
+        );
+
+        let Outcome::Fault(fault) = settled else {
+            panic!("the original startup failure must remain visible");
+        };
+        assert_eq!(fault.reason, "canvas::fixture-failed");
+        let head = bus
+            .residency_head()
+            .expect("head read")
+            .expect("head exists")
+            .into_body();
+        assert_eq!(head.state, ResidentState::Dark);
+        assert!(head.lanes.is_empty());
+        bus.verify().expect("compensated authority verifies");
+        bus.shutdown().expect("fixture bus stops");
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    fn resident_fixture(name: &str) -> (PathBuf, RuntimePaths) {
+        let root = fixture(name);
+        fs::create_dir_all(root.join(".git")).expect("git directory");
+        let paths = RuntimePaths::discover(&root).expect("runtime paths resolve");
+        fs::create_dir_all(&paths.data).expect("data directory");
+        (root, paths)
+    }
+
+    fn process_spec(command: &str, runtime: Duration) -> Spec {
+        Spec {
+            argv: Argv::new("/bin/sh", ["-c", command]).expect("fixture argv"),
+            cwd: PathBuf::from("/"),
+            environment: Environment::new([("PATH", "/usr/bin:/bin")])
+                .expect("fixture environment"),
+            group: ProcessGroup::New,
+            deadlines: Deadlines::new(runtime, Duration::from_secs(1), Duration::from_secs(1))
+                .expect("fixture deadlines"),
+            wait: WaitPolicy::new(
+                "resident fixture",
+                Cancellation::Never,
+                RestartDisposition::Never,
+            )
+            .expect("fixture wait policy"),
+            output: Output::new(StdinPolicy::Null, StreamPolicy::Null, StreamPolicy::Null),
+            redaction: Redaction::None,
+            grace: Duration::from_millis(100),
+        }
+    }
+
+    fn seed_lane(bus: &Bus, epoch: CanonicalUuid, lane: CanonicalUuid, occupant: CanonicalUuid) {
+        let current = current_residency(bus, epoch).expect("current residency");
+        let mut head = current.body().clone();
+        head.lanes.push(wire::LaneResidency {
+            lane,
+            occupant: Some(occupant),
+            lineage: vec![occupant],
+            capabilities: vec![test_uuid(9)],
+            disposition: "occupied".to_owned(),
+        });
+        head.lanes.sort_by_key(|lane| lane.lane);
+        let mut write = write(Actor::Spice, epoch, Producer::ResidentRecognition)
+            .expect("fixture write starts");
+        let seated = write
+            .fact(
+                wire::body::LaneSeated {
+                    lane,
+                    capability: test_uuid(9),
+                    worktree: "/fixture".to_owned(),
+                },
+                FactCause::Existing(current.position()),
+            )
+            .expect("lane seats");
+        let started = write
+            .fact(
+                wire::body::LaneStarted {
+                    lane,
+                    occupant,
+                    epoch,
+                },
+                FactCause::Pending(seated),
+            )
+            .expect("occupant starts");
+        write.residency_head(started, move |_| head);
+        commit(bus, write).expect("fixture lane commits");
+    }
+
+    fn fact_u64(snapshot: &journal::FactSnapshot, kind: wire::FactKind, field: &str) -> u64 {
+        snapshot
+            .facts()
+            .iter()
+            .find(|fact| fact.fact.kind() == kind)
+            .and_then(|fact| fact.fact.body().get(field))
+            .and_then(|value| value.as_u64())
+            .expect("fact carries numeric fixture field")
+    }
+
+    fn test_uuid(last: u8) -> CanonicalUuid {
+        format!("018f82d4-6f59-7d06-92e3-bce9131163{last:02}")
+            .parse()
+            .expect("fixture UUID")
     }
 }

@@ -59,6 +59,15 @@ impl LockFile {
     pub fn try_acquire(&self) -> io::Result<Acquisition> {
         try_acquire(self)
     }
+
+    /// Block until the kernel grants exclusive possession.
+    ///
+    /// # Errors
+    ///
+    /// Returns an operating-system refusal opening or possessing the target.
+    pub fn acquire(&self) -> io::Result<Possession> {
+        acquire(self)
+    }
 }
 
 #[derive(Debug)]
@@ -85,6 +94,20 @@ impl Possession {
 
 #[cfg(unix)]
 fn try_acquire(lock: &LockFile) -> io::Result<Acquisition> {
+    match acquire_with(lock, platform::LOCK_EX | platform::LOCK_NB) {
+        Ok(possession) => Ok(Acquisition::Acquired(possession)),
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(Acquisition::Contended),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(unix)]
+fn acquire(lock: &LockFile) -> io::Result<Possession> {
+    acquire_with(lock, platform::LOCK_EX)
+}
+
+#[cfg(unix)]
+fn acquire_with(lock: &LockFile, operation: std::os::raw::c_int) -> io::Result<Possession> {
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::OpenOptionsExt;
 
@@ -107,24 +130,26 @@ fn try_acquire(lock: &LockFile) -> io::Result<Acquisition> {
         ));
     }
 
-    let result = unsafe { platform::flock(descriptor, platform::LOCK_EX | platform::LOCK_NB) };
+    let result = unsafe { platform::flock(descriptor, operation) };
     if result == 0 {
-        return Ok(Acquisition::Acquired(Possession {
+        return Ok(Possession {
             lock: lock.clone(),
             file,
-        }));
+        });
     }
-
-    let error = io::Error::last_os_error();
-    if error.kind() == io::ErrorKind::WouldBlock {
-        Ok(Acquisition::Contended)
-    } else {
-        Err(error)
-    }
+    Err(io::Error::last_os_error())
 }
 
 #[cfg(not(unix))]
 fn try_acquire(_lock: &LockFile) -> io::Result<Acquisition> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "flock possession requires a Unix target",
+    ))
+}
+
+#[cfg(not(unix))]
+fn acquire(_lock: &LockFile) -> io::Result<Possession> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "flock possession requires a Unix target",

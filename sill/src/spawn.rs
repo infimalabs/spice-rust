@@ -63,6 +63,15 @@ pub struct WaitOutcome {
     stderr: Option<CapturedOutput>,
 }
 
+/// One bounded passive observation of a running child.
+#[derive(Debug)]
+pub enum WaitStep {
+    /// The process exited within the observation bound and was reaped.
+    Exited(WaitOutcome),
+    /// The bound elapsed while the process remained live.
+    Running(Box<Running>),
+}
+
 impl WaitOutcome {
     pub fn completion(&self) -> &Completion {
         &self.completion
@@ -329,6 +338,38 @@ impl Running {
         &self.spec
     }
 
+    pub fn runtime_remaining(&self) -> Duration {
+        self.spec
+            .deadlines
+            .runtime()
+            .saturating_sub(self.started.elapsed())
+    }
+
+    pub fn wait_for(mut self, duration: Duration) -> Result<WaitStep, WaitError> {
+        let started = Instant::now();
+        loop {
+            self.drain_outputs()?;
+            if let Some(status) = self.take_child_exit()? {
+                return self
+                    .finish(Completion::Exited(status))
+                    .map(WaitStep::Exited);
+            }
+            let elapsed = started.elapsed();
+            if elapsed >= duration {
+                return Ok(WaitStep::Running(Box::new(self)));
+            }
+            self.block_for(duration.saturating_sub(elapsed))?;
+        }
+    }
+
+    pub fn signal_terminate(&self) -> Result<(), WaitError> {
+        self.signal(platform::SIGTERM)
+    }
+
+    pub fn signal_kill(&self) -> Result<(), WaitError> {
+        self.signal(platform::SIGKILL)
+    }
+
     pub fn wait(mut self) -> Result<WaitOutcome, WaitError> {
         let cancellation_wake = self
             .cancellation_wake
@@ -542,6 +583,36 @@ impl Running {
 
     pub fn spec(&self) -> &Spec {
         &self.spec
+    }
+
+    pub fn runtime_remaining(&self) -> Duration {
+        self.spec.deadlines.runtime()
+    }
+
+    pub fn wait_for(self, _duration: Duration) -> Result<WaitStep, WaitError> {
+        Err(WaitError::Io {
+            owner: self.spec.wait.owner().to_owned(),
+            operation: "waiting for a process on an unsupported target",
+            source: io::Error::new(
+                io::ErrorKind::Unsupported,
+                "process waiting requires a native release target",
+            ),
+        })
+    }
+
+    pub fn signal_terminate(&self) -> Result<(), WaitError> {
+        Err(WaitError::Io {
+            owner: self.spec.wait.owner().to_owned(),
+            operation: "signalling a process on an unsupported target",
+            source: io::Error::new(
+                io::ErrorKind::Unsupported,
+                "process signalling requires a native release target",
+            ),
+        })
+    }
+
+    pub fn signal_kill(&self) -> Result<(), WaitError> {
+        self.signal_terminate()
     }
 
     pub fn wait(self) -> Result<WaitOutcome, WaitError> {
