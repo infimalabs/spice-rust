@@ -21,19 +21,18 @@ another agent, with:
 ./scripts/verify.sh
 ```
 
-The `gate` integration tests are the two closure gates FRAME J74 names as
-checks rather than prose, and both hold the workspace to the documents of
-record.
+The `gate` integration tests are executable closure checks over the workspace
+and its documents of record.
 
 Lattice conformance compares every local path dependency with the acyclic
-crate lattice documented in `.spice-rust-proposal-living-spec/TREE.md`. It
-fails when a workspace member is added without a lattice entry or when a
-manifest adds, removes, reverses, or cycles a local dependency edge.
+crate graph compiled into `gate/tests/dependency_lattice.rs`. That test's
+`EXPECTED` table is the source of truth: it fails when a workspace member is
+added without an entry or when a manifest adds, removes, reverses, or cycles a
+local dependency edge.
 
-Corpus conformance holds `.spice-rust-proposal-living-spec/DOCTRINE.md` to the
-population map in `SCAFFOLD.md`: every slot filled in order, every kernel
-invariant stated rather than merely named, each of the five wave-zero decision
-records carrying its rationale and the deletions that make it a decision, no
-unsettled language, and every corpus link resolving on disk. Doctrine that
-lives only in prose drifts unobserved; these assertions are what keep it from
-doing so quietly.
+Doctrine conformance holds [DOCTRINE.md](DOCTRINE.md) to its compiled section,
+kernel, and decision-record contract. It requires every invariant to be stated
+rather than merely named, every decision to carry rationale and explicit
+deletions, settled language throughout, and every relative record link to
+resolve on disk. [TASTES.md](TASTES.md) and [LATER.md](LATER.md) are the
+companion records that govern curated preferences and deferred surfaces.

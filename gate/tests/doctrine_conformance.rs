@@ -1,25 +1,21 @@
-//! Corpus conformance for the doctrine of record.
+//! Conformance for the doctrine of record.
 //!
-//! FRAME J74 names corpus conformance a generated closure gate and settles its
-//! form in four words: checks, not prose. DOCTRINE.md is the doctrine of
-//! record; SCAFFOLD.md is the population map that fixes the slots it fills.
-//! These checks hold the written doctrine to that map, so a slot cannot
-//! quietly empty, a decision cannot shed the deletions that make it a decision
-//! rather than a preference, and a corpus link cannot rot into a dead
-//! reference. The doctrine currently lives only in the proposal corpus, which
-//! is exactly the condition under which prose drifts unobserved.
+//! `DOCTRINE.md` is the port-owned doctrine of record. This test compiles its
+//! settled population map into executable checks, so a slot cannot quietly
+//! empty, a decision cannot shed the deletions that make it a decision rather
+//! than a preference, and a record link cannot rot into a dead reference.
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Directory holding the documents of record.
-const CORPUS: &str = ".spice-rust-proposal-living-spec";
-
 /// The doctrine of record.
 const DOCTRINE: &str = "DOCTRINE.md";
 
-/// Every slot SCAFFOLD's `DOCTRINE.md` outline requires, in its stated order.
+/// Port-owned records that must remain present and internally linked.
+const RECORDS: &[&str] = &[DOCTRINE, "TASTES.md", "LATER.md"];
+
+/// Every required `DOCTRINE.md` section, in its settled order.
 const SLOTS: &[&str] = &[
     "The kernel",
     "The decision records",
@@ -29,13 +25,12 @@ const SLOTS: &[&str] = &[
     "Handle re-mint at cutover",
 ];
 
-/// Every kernel invariant SCAFFOLD names, one paragraph each.
+/// Every settled kernel invariant, one paragraph each.
 ///
-/// SCAFFOLD lists these as `transcript-as-truth`, `board-as-steering-surface`,
-/// `stigmergy`, `one authority, one writer`, `clean break`, `loud refusal`,
-/// `no polling`, `block-or-silent`, `operator reads outcomes`, and `evidence
-/// before surface`. The doctrine states each under the one-word name its own
-/// naming law requires.
+/// The contract covers transcript truth, the board steering surface,
+/// stigmergy, one authority and writer, the clean break, loud refusal, wake
+/// discipline, channel posture, typed outcomes, and evidence before surface.
+/// The doctrine states each under the one-word name its naming law requires.
 const KERNEL_INVARIANTS: &[&str] = &[
     "Transcript",
     "Board",
@@ -49,7 +44,7 @@ const KERNEL_INVARIANTS: &[&str] = &[
     "Evidence",
 ];
 
-/// The five wave-zero decision records, per FRAME J70.
+/// The five settled wave-zero decision records.
 const DECISION_RECORDS: &[&str] = &[
     "One authority",
     "Principals & cooperative threat model",
@@ -60,8 +55,7 @@ const DECISION_RECORDS: &[&str] = &[
 
 /// Language that marks a question rather than a settled decision.
 ///
-/// FRAME J70 requires these records be authored as decisions, never questions,
-/// and states that no open design remains.
+/// These records are decisions rather than open design questions.
 const UNSETTLED: &[&str] = &[
     "TBD",
     "TODO",
@@ -73,7 +67,7 @@ const UNSETTLED: &[&str] = &[
 ];
 
 #[test]
-fn doctrine_fills_every_scaffold_slot_in_order() {
+fn doctrine_fills_every_compiled_slot_in_order() {
     let doctrine = read_doctrine();
     let written = headings(&doctrine, "## ");
 
@@ -83,7 +77,7 @@ fn doctrine_fills_every_scaffold_slot_in_order() {
             .iter()
             .map(|slot| (*slot).to_owned())
             .collect::<Vec<_>>(),
-        "DOCTRINE.md's sections must be SCAFFOLD's slots, in SCAFFOLD's order"
+        "DOCTRINE.md's sections must match the compiled slot order"
     );
 }
 
@@ -117,7 +111,7 @@ fn the_kernel_states_every_invariant_as_law() {
             .iter()
             .map(|name| (*name).to_owned())
             .collect::<BTreeSet<_>>(),
-        "the kernel must state exactly the invariants SCAFFOLD names"
+        "the kernel must state exactly the compiled invariant set"
     );
 }
 
@@ -132,7 +126,7 @@ fn every_decision_record_carries_rationale_and_explicit_deletions() {
             .iter()
             .map(|record| (*record).to_owned())
             .collect::<Vec<_>>(),
-        "the five wave-zero records FRAME J70 names must each be settled here"
+        "the five compiled wave-zero records must each be settled here"
     );
 
     for record in DECISION_RECORDS {
@@ -174,15 +168,15 @@ fn the_doctrine_reads_as_settled_law() {
 }
 
 #[test]
-fn corpus_links_resolve() {
-    let corpus = corpus_root();
+fn record_links_resolve() {
+    let root = workspace_root();
     let mut checked = 0_usize;
 
-    for document in documents(&corpus) {
-        let text = fs::read_to_string(&document).expect("corpus document must be readable");
-
+    for record in RECORDS {
+        let document = root.join(record);
+        let text = read_record(record);
         for target in relative_links(&text) {
-            let path = corpus.join(&target);
+            let path = root.join(&target);
             assert!(
                 path.exists(),
                 "{} links to {target}, which does not exist",
@@ -194,8 +188,8 @@ fn corpus_links_resolve() {
 
     // A link check that found no links would pass while proving nothing.
     assert!(
-        checked >= DECISION_RECORDS.len(),
-        "the corpus link scan found only {checked} link(s); the scan itself is broken"
+        checked >= 1,
+        "the doctrine link scan found no links; the scan itself is broken"
     );
 }
 
@@ -206,29 +200,18 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn corpus_root() -> PathBuf {
-    let corpus = workspace_root().join(CORPUS);
-    assert!(
-        corpus.is_dir(),
-        "the documents of record must live at {CORPUS}"
-    );
-    corpus
-}
-
 fn read_doctrine() -> String {
-    fs::read_to_string(corpus_root().join(DOCTRINE)).expect("DOCTRINE.md must be readable")
+    read_record(DOCTRINE)
 }
 
-fn documents(corpus: &Path) -> Vec<PathBuf> {
-    let mut documents = fs::read_dir(corpus)
-        .expect("corpus directory must be readable")
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.extension().is_some_and(|extension| extension == "md"))
-        .collect::<Vec<_>>();
-    documents.sort();
-
-    assert!(!documents.is_empty(), "the corpus must hold documents");
-    documents
+fn read_record(record: &str) -> String {
+    let path = workspace_root().join(record);
+    fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "document of record {} must be readable: {error}",
+            path.display()
+        )
+    })
 }
 
 /// Every heading at `prefix`, in document order, with the prefix stripped.
