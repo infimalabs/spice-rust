@@ -462,12 +462,7 @@ fn entries(heads: &[TaskHeads]) -> Result<Vec<Entry>, ObservationError> {
         .iter()
         .cloned()
         .map(|heads| {
-            if heads.claim().is_some() != heads.lease().is_some() {
-                return Err(ObservationError::Fault(GuardError::Invalid(format!(
-                    "allocator task {} has only one of claim and lease heads",
-                    heads.statement().body().handle
-                ))));
-            }
+            admit_possession(&heads)?;
             let (statement, workflow, claim, lease) = heads.into_bodies();
             let handle = statement.handle.clone();
             Entry::new(statement, workflow, claim, lease).map_err(|source| {
@@ -477,6 +472,33 @@ fn entries(heads: &[TaskHeads]) -> Result<Vec<Entry>, ObservationError> {
             })
         })
         .collect()
+}
+
+fn admit_possession(heads: &TaskHeads) -> Result<(), GuardError> {
+    let task = &heads.statement().body().handle;
+    let (Some(claim), Some(lease)) = (heads.claim(), heads.lease()) else {
+        if heads.claim().is_some() || heads.lease().is_some() {
+            return Err(GuardError::Invalid(format!(
+                "allocator task {task} has only one of claim and lease heads"
+            )));
+        }
+        return Ok(());
+    };
+    if claim.body().epoch != lease.body().epoch {
+        return Err(GuardError::Invalid(format!(
+            "allocator task {task} claim and lease epochs disagree"
+        )));
+    }
+    let lease = lease.body();
+    if !(lease.start <= lease.renewal
+        && lease.renewal <= lease.expiry
+        && lease.expiry <= lease.maximum)
+    {
+        return Err(GuardError::Invalid(format!(
+            "allocator task {task} lease life is incoherent"
+        )));
+    }
+    Ok(())
 }
 
 fn witnesses(request: &Request, selected: &TaskHeads) -> Vec<Witness> {
