@@ -1033,6 +1033,8 @@ dependencies = [
  "lane",
  "listen",
  "proof",
+ "rusqlite",
+ "serde",
  "sill",
  "steer",
  "tape",

@@ -20,12 +20,16 @@ journal = { path = "../journal" }
 lane = { path = "../lane" }
 listen = { path = "../listen" }
 proof = { path = "../proof" }
+serde = "1.0.229"
 sill = { path = "../sill" }
 steer = { path = "../steer" }
 tape = { path = "../tape" }
 taste = { path = "../taste" }
 vendor = { path = "../vendor" }
 wire = { path = "../wire" }
+
+[dev-dependencies]
+rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
 
 [lints]
 workspace = true

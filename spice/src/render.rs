@@ -20,6 +20,7 @@
 
 use std::io::{self, Write};
 
+use serde::Serialize;
 use wire::Outcome;
 
 /// Which rendering of an outcome the caller asked for.
@@ -66,20 +67,20 @@ impl Rendering {
 
 /// Renders one outcome in the requested form.
 ///
-/// The body is `()` because no leaf lands one yet. Rendering a body generic
-/// over `Serialize` today would oblige this binary to name serde itself for a
-/// type that is always the unit, so the generality arrives with the first body
-/// that needs it.
+/// Text replies are the stable machine document of the body alone; JSON
+/// replies retain the complete typed outcome. Refusals and faults keep their
+/// one-sentence text form. Both forms therefore carry the same value without
+/// inventing prose fields for a successful body.
 ///
 /// # Errors
 ///
-/// Returns the encoder's report when [`Form::Json`] cannot represent the
-/// outcome. It is returned as text because that is the shape the rim carries
-/// it in: the detail of a fault. [`Form::Text`] never fails, so a caller that
-/// meets this error can always render the resulting fault.
-pub fn render(outcome: &Outcome<()>, form: Form) -> Result<Rendering, String> {
+/// Returns the encoder's report when the selected form cannot represent the
+/// outcome or its reply body. It is returned as text because that is the shape
+/// the rim carries it in: the detail of a fault. Rendering that fault as text
+/// performs no fallible body encoding.
+pub fn render<B: Serialize>(outcome: &Outcome<B>, form: Form) -> Result<Rendering, String> {
     let document = match form {
-        Form::Text => text(outcome).map_or_else(Vec::new, |sentence| line(sentence.into_bytes())),
+        Form::Text => text(outcome)?,
         Form::Json => line(wire::encode(outcome).map_err(|error| error.to_string())?),
     };
     Ok(Rendering {
@@ -94,7 +95,7 @@ pub fn render(outcome: &Outcome<()>, form: Form) -> Result<Rendering, String> {
 /// is the other. They are stated apart because they answer different questions,
 /// and held together by the law that a caller branching on either one is told
 /// the same thing.
-pub const fn stream(outcome: &Outcome<()>) -> Stream {
+pub const fn stream<B>(outcome: &Outcome<B>) -> Stream {
     match outcome {
         Outcome::Reply(_) => Stream::Out,
         Outcome::Refusal(_) | Outcome::Fault(_) => Stream::Err,
@@ -107,19 +108,20 @@ fn line(mut document: Vec<u8>) -> Vec<u8> {
     document
 }
 
-/// The one sentence an outcome renders to, when it has one.
+/// The one document an outcome renders to in text form.
 ///
 /// A refusal and a fault are each one sentence naming what happened and what
 /// to do about it. A reply has no envelope sentence: what a successful command
-/// prints is its body, and bodies land with the leaves that produce them.
-/// Rendering a success's envelope as prose would invent a format no contract
-/// fixes, so this says nothing rather than something provisional.
-fn text(outcome: &Outcome<()>) -> Option<String> {
-    match outcome {
-        Outcome::Reply(_) => None,
-        Outcome::Refusal(refusal) => Some(format!("spice: {}; {}", refusal.reason, refusal.remedy)),
-        Outcome::Fault(fault) => Some(format!("spice: {}; {}", fault.reason, fault.detail)),
-    }
+/// prints is the body's stable wire document.
+fn text<B: Serialize>(outcome: &Outcome<B>) -> Result<Vec<u8>, String> {
+    let document = match outcome {
+        Outcome::Reply(reply) => wire::encode(&reply.body).map_err(|error| error.to_string())?,
+        Outcome::Refusal(refusal) => {
+            format!("spice: {}; {}", refusal.reason, refusal.remedy).into_bytes()
+        }
+        Outcome::Fault(fault) => format!("spice: {}; {}", fault.reason, fault.detail).into_bytes(),
+    };
+    Ok(line(document))
 }
 
 #[cfg(test)]
@@ -176,10 +178,7 @@ mod tests {
 
         let text = render(&outcome, Form::Text).expect("direct reply renders as text");
         assert_eq!(text.stream, Stream::Out);
-        assert!(
-            text.document.is_empty(),
-            "the unit body has no prose format"
-        );
+        assert_eq!(text.document, b"null\n", "text carries the body only");
 
         let json = render(&outcome, Form::Json).expect("direct reply renders as json");
         let decoded: Outcome<()> =
@@ -225,10 +224,6 @@ mod tests {
         for outcome in [reply(), refusal(), fault()] {
             for form in [Form::Text, Form::Json] {
                 let rendered = render(&outcome, form).expect("outcome renders");
-                if rendered.document.is_empty() {
-                    continue;
-                }
-
                 assert_eq!(
                     rendered.document.last(),
                     Some(&b'\n'),
@@ -265,15 +260,14 @@ mod tests {
         );
     }
 
-    /// A success has no envelope sentence, so text says nothing rather than
-    /// something provisional.
+    /// A success has no envelope sentence; text carries only its stable body.
     #[test]
     fn a_successful_outcome_has_no_envelope_sentence() {
-        assert!(
+        assert_eq!(
             render(&reply(), Form::Text)
                 .expect("reply renders")
-                .document
-                .is_empty()
+                .document,
+            b"null\n",
         );
     }
 }

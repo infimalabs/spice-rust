@@ -28,6 +28,7 @@ pub(crate) enum Principal {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum JournalAccess {
     None,
+    Inspect,
     Read,
     Command,
     Recovery,
@@ -48,7 +49,7 @@ pub(crate) enum ReplyPositionLaw {
 impl JournalAccess {
     const fn reply_position(self) -> ReplyPositionLaw {
         match self {
-            Self::None => ReplyPositionLaw::Direct,
+            Self::None | Self::Inspect => ReplyPositionLaw::Direct,
             Self::Read => ReplyPositionLaw::Snapshot,
             Self::Command | Self::Recovery | Self::Resident => ReplyPositionLaw::Committed,
         }
@@ -168,7 +169,7 @@ pub(crate) const CONTRACTS: &[Contract] = &[
         ["version"],
         "version",
         Local,
-        Read,
+        Inspect,
         [],
         [Daemonless, Offline],
         Reply,
@@ -1138,10 +1139,12 @@ mod tests {
                 );
             }
             match (contract.journal, contract.reply_position) {
-                (JournalAccess::None, ReplyPositionLaw::Direct) => assert!(
-                    contract.guards.contains(&Guard::Daemonless),
-                    "a direct reply must belong to a daemonless leaf: {contract:?}",
-                ),
+                (JournalAccess::None | JournalAccess::Inspect, ReplyPositionLaw::Direct) => {
+                    assert!(
+                        contract.guards.contains(&Guard::Daemonless),
+                        "a direct reply must belong to a daemonless leaf: {contract:?}",
+                    )
+                }
                 (JournalAccess::Read, ReplyPositionLaw::Snapshot)
                 | (
                     JournalAccess::Command | JournalAccess::Recovery | JournalAccess::Resident,
