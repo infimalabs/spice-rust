@@ -395,7 +395,8 @@ mod tests {
         fs::create_dir_all(&no_repository).expect("create ordinary directory");
         assert!(matches!(
             Repository::discover(&no_repository),
-            Err(ResolveError::NoRepository { start }) if start == fs::canonicalize(&no_repository).expect("canonical start")
+            Err(ResolveError::NoRepository { start })
+                if start == fs::canonicalize(&no_repository).expect("canonical start")
         ));
 
         let malformed = case(&scratch, "malformed gitdir");
@@ -430,7 +431,8 @@ mod tests {
         .expect("write malformed common pointer");
         assert!(matches!(
             Repository::discover(&malformed_common),
-            Err(ResolveError::MalformedCommondir { path }) if path == malformed_common.join(".git/commondir")
+            Err(ResolveError::MalformedCommondir { path })
+                if path == malformed_common.join(".git/commondir")
         ));
 
         let missing_common = case(&scratch, "missing commondir");
@@ -439,7 +441,8 @@ mod tests {
             .expect("write missing common pointer");
         assert!(matches!(
             Repository::discover(&missing_common),
-            Err(ResolveError::MissingCommondir { path }) if path == missing_common.join(".git/absent")
+            Err(ResolveError::MissingCommondir { path })
+                if path == missing_common.join(".git/absent")
         ));
 
         let common_file = case(&scratch, "file commondir");
@@ -448,7 +451,8 @@ mod tests {
         fs::write(common_file.join(".git/commondir"), b"target\n").expect("write common pointer");
         assert!(matches!(
             Repository::discover(&common_file),
-            Err(ResolveError::CommondirNotDirectory { path }) if path == common_file.join(".git/target")
+            Err(ResolveError::CommondirNotDirectory { path })
+                if path == common_file.join(".git/target")
         ));
 
         let absent_start = scratch.join("absent start");
