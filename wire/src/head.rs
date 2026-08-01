@@ -97,7 +97,10 @@ pub struct LeaseHead {
     pub epoch: CanonicalUuid,
 }
 
-/// Closed classes of authoritative command predicates.
+/// Closed classes of authoritative witness heads.
+///
+/// This classifies stored predicate heads. Command preconditions use the
+/// broader [`crate::witness::WitnessKind`] vocabulary instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WitnessClass {
