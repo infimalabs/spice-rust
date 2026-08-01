@@ -80,6 +80,53 @@ impl MutationTool {
         &self.environment
     }
 
+    pub(crate) fn render(&self, into: &mut String) {
+        use std::fmt::Write as _;
+
+        let _ = writeln!(into, "kill cargo-program {}", self.cargo_program.display());
+        let _ = writeln!(
+            into,
+            "kill mutants-program {}",
+            self.mutants_program.display()
+        );
+        let _ = writeln!(into, "kill identity {}", self.identity);
+        let _ = writeln!(into, "kill environment clear");
+        let _ = writeln!(
+            into,
+            "kill environment {CARGO_ENVIRONMENT} {}",
+            self.cargo_program.display()
+        );
+        for (name, value) in self.environment.entries() {
+            let _ = writeln!(
+                into,
+                "kill environment {} {}",
+                name.to_string_lossy(),
+                value.to_string_lossy()
+            );
+        }
+        let _ = writeln!(into, "kill environment {SEED_ENVIRONMENT} compiled-seed");
+        let _ = writeln!(
+            into,
+            "kill environment {ATTEMPT_ENVIRONMENT} one-based-attempt"
+        );
+    }
+
+    fn identify(&self) -> Result<MutationToolIdentity, KillError> {
+        let declaration = {
+            let mut rendered = String::new();
+            self.render(&mut rendered);
+            Digest::compute(Domain::GateTool, rendered.as_bytes())
+        };
+        let cargo = executable_digest("cargo", &self.cargo_program)?;
+        let mutants = executable_digest("cargo-mutants", &self.mutants_program)?;
+        Ok(MutationToolIdentity::from_parts(
+            self.identity.clone(),
+            declaration,
+            cargo,
+            mutants,
+        ))
+    }
+
     fn environment(&self, seed: u64, attempt: Option<usize>) -> Result<Environment, SpecError> {
         let mut entries = self.environment.entries().to_vec();
         entries.push((
@@ -98,6 +145,100 @@ impl MutationTool {
         }
         Environment::new(entries)
     }
+}
+
+/// Content-bound identity of the exact mutation executables and declaration.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MutationToolIdentity {
+    expected: String,
+    declaration: Digest,
+    cargo: Digest,
+    mutants: Digest,
+    identity: Digest,
+}
+
+impl MutationToolIdentity {
+    pub(crate) fn from_parts(
+        expected: String,
+        declaration: Digest,
+        cargo: Digest,
+        mutants: Digest,
+    ) -> Self {
+        let identity = operational_identity(&expected, &declaration, &cargo, &mutants);
+        Self {
+            expected,
+            declaration,
+            cargo,
+            mutants,
+            identity,
+        }
+    }
+
+    /// Semantic version line required from cargo-mutants.
+    #[must_use]
+    pub fn expected(&self) -> &str {
+        &self.expected
+    }
+
+    /// Identity of the complete executable and environment declaration.
+    #[must_use]
+    pub const fn declaration(&self) -> &Digest {
+        &self.declaration
+    }
+
+    /// Content identity of the direct Cargo executable.
+    #[must_use]
+    pub const fn cargo(&self) -> &Digest {
+        &self.cargo
+    }
+
+    /// Content identity of the direct cargo-mutants executable.
+    #[must_use]
+    pub const fn mutants(&self) -> &Digest {
+        &self.mutants
+    }
+
+    /// Composite identity recomputed from every preceding field.
+    #[must_use]
+    pub const fn identity(&self) -> &Digest {
+        &self.identity
+    }
+
+    pub(crate) fn coherent(&self) -> bool {
+        self.identity
+            == operational_identity(
+                &self.expected,
+                &self.declaration,
+                &self.cargo,
+                &self.mutants,
+            )
+    }
+}
+
+fn executable_digest(role: &'static str, program: &Path) -> Result<Digest, KillError> {
+    let bytes = fs::read(program).map_err(|source| KillError::ToolRead {
+        role,
+        program: program.to_path_buf(),
+        source,
+    })?;
+    Ok(Digest::compute(Domain::GateTool, &bytes))
+}
+
+fn operational_identity(
+    expected: &str,
+    declaration: &Digest,
+    cargo: &Digest,
+    mutants: &Digest,
+) -> Digest {
+    use std::fmt::Write as _;
+
+    let mut rendered = String::from("mutation-tool-identity 1\n");
+    let _ = writeln!(rendered, "expected {expected}");
+    let _ = writeln!(rendered, "declaration {declaration}");
+    let _ = writeln!(rendered, "cargo {cargo}");
+    let _ = writeln!(rendered, "cargo-mutants {mutants}");
+    Digest::compute(Domain::GateTool, rendered.as_bytes())
 }
 
 /// Stable target selection, retry count, and seed for one mutation battery.

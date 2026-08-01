@@ -218,36 +218,7 @@ impl KillDeclaration {
     }
 
     fn render(&self, into: &mut String) {
-        let _ = writeln!(
-            into,
-            "kill cargo-program {}",
-            self.tool.cargo_program().display()
-        );
-        let _ = writeln!(
-            into,
-            "kill mutants-program {}",
-            self.tool.mutants_program().display()
-        );
-        let _ = writeln!(into, "kill identity {}", self.tool.identity());
-        let _ = writeln!(into, "kill environment clear");
-        let _ = writeln!(
-            into,
-            "kill environment CARGO {}",
-            self.tool.cargo_program().display()
-        );
-        for (name, value) in self.tool.base_environment().entries() {
-            let _ = writeln!(
-                into,
-                "kill environment {} {}",
-                name.to_string_lossy(),
-                value.to_string_lossy()
-            );
-        }
-        let _ = writeln!(into, "kill environment {SEED_ENVIRONMENT} compiled-seed");
-        let _ = writeln!(
-            into,
-            "kill environment {ATTEMPT_ENVIRONMENT} one-based-attempt"
-        );
+        self.tool.render(into);
         let _ = writeln!(into, "kill attempts {}", self.battery.attempts());
         let _ = writeln!(into, "kill seed {}", self.battery.seed());
         for target in self.battery.targets() {

@@ -3,7 +3,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use serde_json::json;
-    use wire::{Outcome, Reply, ReplyPosition};
+    use wire::{Digest, Domain, Outcome, Reply, ReplyPosition};
 
     use super::*;
     use crate::Contract;
@@ -289,8 +289,37 @@ mod tests {
         changed.version += 1;
         assert_kill_moved(report, changed, "version");
         let mut changed = report.clone();
-        changed.inventory.tool.push('!');
-        assert_kill_moved(report, changed, "inventory.tool");
+        changed.inventory.tool = MutationToolIdentity::from_parts(
+            "cargo-mutants 27.1.0 changed".to_owned(),
+            changed.inventory.tool.declaration().clone(),
+            changed.inventory.tool.cargo().clone(),
+            changed.inventory.tool.mutants().clone(),
+        );
+        assert_kill_moved(report, changed, "inventory.tool.expected");
+        let mut changed = report.clone();
+        changed.inventory.tool = MutationToolIdentity::from_parts(
+            PINNED_CARGO_MUTANTS.to_owned(),
+            tool_digest("changed-declaration"),
+            changed.inventory.tool.cargo().clone(),
+            changed.inventory.tool.mutants().clone(),
+        );
+        assert_kill_moved(report, changed, "inventory.tool.declaration");
+        let mut changed = report.clone();
+        changed.inventory.tool = MutationToolIdentity::from_parts(
+            PINNED_CARGO_MUTANTS.to_owned(),
+            changed.inventory.tool.declaration().clone(),
+            tool_digest("changed-cargo"),
+            changed.inventory.tool.mutants().clone(),
+        );
+        assert_kill_moved(report, changed, "inventory.tool.cargo");
+        let mut changed = report.clone();
+        changed.inventory.tool = MutationToolIdentity::from_parts(
+            PINNED_CARGO_MUTANTS.to_owned(),
+            changed.inventory.tool.declaration().clone(),
+            changed.inventory.tool.cargo().clone(),
+            tool_digest("changed-mutants"),
+        );
+        assert_kill_moved(report, changed, "inventory.tool.mutants");
         let mut changed = report.clone();
         changed.inventory.targets[0].push('!');
         assert_kill_moved(report, changed, "inventory.targets");
@@ -486,6 +515,12 @@ mod tests {
             KillReport::decode(&json_bytes(&foreign)).expect_err("foreign kill report refuses");
         assert_eq!(refused.unsupported_version(), Some(77));
 
+        let mut former = value.clone();
+        former["version"] = json!(1);
+        let refused = KillReport::decode(&json_bytes(&former))
+            .expect_err("the identity-free report schema is not current");
+        assert_eq!(refused.unsupported_version(), Some(1));
+
         let mut unknown = value.clone();
         unknown
             .as_object_mut()
@@ -533,6 +568,15 @@ mod tests {
 
     fn assert_kill_nested_unknowns_refuse(value: &serde_json::Value) {
         for (field, nested_unknown) in [
+            (
+                "tool identity",
+                mutate(value, |value| {
+                    value["inventory"]["tool"]
+                        .as_object_mut()
+                        .expect("tool identity object")
+                        .insert("unknown".to_owned(), json!(true));
+                }),
+            ),
             (
                 "stream",
                 mutate(value, |value| {
@@ -582,6 +626,13 @@ mod tests {
 
     fn assert_kill_inconsistencies_refuse(value: &serde_json::Value) {
         for (field, changed) in [
+            (
+                "tool identity",
+                mutate(value, |value| {
+                    value["inventory"]["tool"]["identity"] =
+                        json!(tool_digest("forged-composite").as_str());
+                }),
+            ),
             (
                 "inventory",
                 mutate(value, |value| value["inventory"]["attempts"] = json!(2)),
@@ -668,7 +719,7 @@ mod tests {
         KillReport {
             version: KILL_REPORT_VERSION,
             inventory: ReportMutationInventory {
-                tool: PINNED_CARGO_MUTANTS.to_owned(),
+                tool: sample_tool_identity(),
                 targets: vec!["src/lib.rs".to_owned()],
                 mutants: vec!["Killed".to_owned(), "Survived".to_owned()],
                 attempts: 1,
@@ -707,7 +758,7 @@ mod tests {
         KillReport {
             version: KILL_REPORT_VERSION,
             inventory: ReportMutationInventory {
-                tool: PINNED_CARGO_MUTANTS.to_owned(),
+                tool: sample_tool_identity(),
                 targets: vec!["src/lib.rs".to_owned()],
                 mutants: vec!["Odd".to_owned()],
                 attempts: 1,
@@ -753,6 +804,19 @@ mod tests {
                 | ReportAttemptKind::Undecodable => ReportMutantDisposition::Unconfirmed,
             },
         }
+    }
+
+    fn sample_tool_identity() -> MutationToolIdentity {
+        MutationToolIdentity::from_parts(
+            PINNED_CARGO_MUTANTS.to_owned(),
+            tool_digest("declaration"),
+            tool_digest("cargo"),
+            tool_digest("cargo-mutants"),
+        )
+    }
+
+    fn tool_digest(label: &str) -> Digest {
+        Digest::compute(Domain::GateTool, label.as_bytes())
     }
 
     fn green_process(code: i32) -> ReportProcess {

@@ -9,8 +9,9 @@ use std::fmt;
 use std::fmt::Write as _;
 
 use crate::kill::{
-    AttemptEvidence, AttemptKind, KillRun, MutantDisposition, MutationMovement, OutcomeEvidence,
-    PINNED_CARGO_MUTANTS, ProcessCompletion, ProcessEvidence, StreamEvidence, SurvivorRate,
+    AttemptEvidence, AttemptKind, KillRun, MutantDisposition, MutationMovement,
+    MutationToolIdentity, OutcomeEvidence, PINNED_CARGO_MUTANTS, ProcessCompletion,
+    ProcessEvidence, StreamEvidence, SurvivorRate,
 };
 use crate::measure::{Measurement, measurement_digest};
 use crate::ratchet::{Finding, Movement};
@@ -20,7 +21,7 @@ use serde::{Deserialize, Serialize};
 /// The one ordinary gate report schema this build emits and admits.
 pub const GATE_REPORT_VERSION: u64 = 1;
 /// The one mutation gate report schema this build emits and admits.
-pub const KILL_REPORT_VERSION: u64 = 1;
+pub const KILL_REPORT_VERSION: u64 = 2;
 
 fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where

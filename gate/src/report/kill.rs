@@ -1,8 +1,8 @@
-/// Complete mutation inventory retained without an executable type.
+/// Complete mutation inventory retained without executable reconstruction authority.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReportMutationInventory {
-    tool: String,
+    tool: MutationToolIdentity,
     targets: Vec<String>,
     mutants: Vec<String>,
     attempts: u64,
@@ -14,7 +14,7 @@ impl ReportMutationInventory {
     fn current(run: &KillRun) -> Self {
         let inventory = run.inventory();
         Self {
-            tool: PINNED_CARGO_MUTANTS.to_owned(),
+            tool: inventory.tool().clone(),
             targets: inventory.targets().to_vec(),
             mutants: inventory.mutants().to_vec(),
             attempts: u64::try_from(inventory.attempts())
@@ -24,9 +24,9 @@ impl ReportMutationInventory {
         }
     }
 
-    /// Pinned mutation tool identity observed before the run.
+    /// Pinned content identity observed before and verified after the run.
     #[must_use]
-    pub fn tool(&self) -> &str {
+    pub const fn tool(&self) -> &MutationToolIdentity {
         &self.tool
     }
 
@@ -606,9 +606,17 @@ impl KillReport {
     #[must_use]
     pub fn render(&self) -> String {
         let mut rendered = format!(
-            "kill-report {}\ntool {}\nattempts {}\nseed {}\ntimeout-seconds {}\n",
+            concat!(
+                "kill-report {}\ntool {}\ntool-declaration {}\n",
+                "cargo-executable {}\ncargo-mutants-executable {}\n",
+                "tool-identity {}\nattempts {}\nseed {}\ntimeout-seconds {}\n"
+            ),
             self.version,
-            self.inventory.tool,
+            self.inventory.tool.expected(),
+            self.inventory.tool.declaration(),
+            self.inventory.tool.cargo(),
+            self.inventory.tool.mutants(),
+            self.inventory.tool.identity(),
             self.inventory.attempts,
             self.inventory.seed,
             self.inventory.timeout_seconds,
@@ -750,10 +758,16 @@ impl KillRun {
 }
 
 fn validate_kill_inventory(inventory: &ReportMutationInventory) -> Result<(), ReportDecodeError> {
-    if inventory.tool != PINNED_CARGO_MUTANTS {
+    if inventory.tool.expected() != PINNED_CARGO_MUTANTS {
         return Err(ReportDecodeError::inconsistent(
             "kill report",
             "inventory tool is not the pinned current mutation tool",
+        ));
+    }
+    if !inventory.tool.coherent() {
+        return Err(ReportDecodeError::inconsistent(
+            "kill report",
+            "inventory tool identity does not recompute from its retained components",
         ));
     }
     if inventory.attempts == 0 || inventory.timeout_seconds == 0 {
