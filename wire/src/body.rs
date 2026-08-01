@@ -99,7 +99,11 @@ pub struct TaskReviewed {
     /// How the review closed.
     pub verdict: Verdict,
     /// Recorded finding; absent on a clean verdict.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub finding: Option<String>,
 }
 
@@ -234,7 +238,11 @@ pub struct SteerSent {
     /// Directive text.
     pub text: String,
     /// Control channel the directive drives; absent on plain prose.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub control: Option<String>,
     /// Instant the directive expires without a disposition.
     pub expires: Instant,
@@ -329,7 +337,11 @@ pub struct ConsentGranted {
     /// Rule or operator that allowed it.
     pub rule: String,
     /// Budget remaining after the grant; absent when the rule carries no budget.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub budget: Option<u32>,
 }
 
@@ -512,7 +524,11 @@ pub struct TrustPended {
     /// Digest that entered quarantine.
     pub digest: Digest,
     /// Digest it replaced; absent the first time the surface is seen.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub previous: Option<Digest>,
 }
 

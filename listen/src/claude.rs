@@ -40,6 +40,13 @@ fn assistant(record: &Object, locus: Locus) -> Events {
                 content: ReasoningContent::Plain(vec![string(block, "thinking")?.to_owned()]),
                 locus,
             })),
+            "redacted_thinking" => {
+                let _ = string(block, "data")?;
+                events.push(Event::Reasoning(Reasoning {
+                    content: ReasoningContent::Opaque,
+                    locus,
+                }));
+            }
             "tool_use" => events.push(Event::Tool(Tool {
                 call_id: string(block, "id")?.to_owned(),
                 moment: ToolMoment::Call {
@@ -115,20 +122,48 @@ fn system(record: &Object, locus: Locus) -> Events {
 }
 
 fn result(record: &Object, locus: Locus) -> Events {
+    let subtype = string(record, "subtype")?;
     let is_error = required(record, "is_error")?
         .as_bool()
         .ok_or(ResidueKind::Malformed {
             field: "is_error",
             expected: "boolean",
         })?;
-    if !is_error {
-        return Err(ResidueKind::Unknown {
-            discriminator: "result:success".to_owned(),
-        });
+
+    match (subtype, is_error) {
+        ("success", false) => {
+            return Err(ResidueKind::Unknown {
+                discriminator: "result:success".to_owned(),
+            });
+        }
+        (
+            "error_during_execution"
+            | "error_max_turns"
+            | "error_max_budget_usd"
+            | "error_max_structured_output_retries",
+            true,
+        ) => {}
+        _ => return Err(drift(&format!("result:{subtype}"))),
+    }
+
+    let mut messages = Vec::new();
+    for value in array(record, "errors")? {
+        messages.push(
+            value
+                .as_str()
+                .ok_or(ResidueKind::Malformed {
+                    field: "errors[]",
+                    expected: "string",
+                })?
+                .to_owned(),
+        );
+    }
+    if messages.is_empty() {
+        return Err(ResidueKind::Absent { field: "errors[]" });
     }
 
     Ok(vec![Event::Failure(Failure {
-        message: string(record, "result")?.to_owned(),
+        message: messages.join("\n"),
         locus,
     })])
 }

@@ -106,6 +106,8 @@ pub struct CommandKindError(String);
 
 /// The witness law one command carries.
 ///
+/// identity-law: non-crossing - registry metadata held in static process memory.
+///
 /// `required` must all appear in a command's `expected` list. `optional`
 /// names predicates the row admits conditionally — an assignment witness on
 /// the review path, a budget predicate when a rule spends one. Anything
@@ -460,7 +462,7 @@ impl<'de> Deserialize<'de> for CommandKind {
 ///
 /// The body contains no caller-authored actor, lane, epoch, journal position,
 /// result, or fact envelope; the commit door assigns all of those.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Command<B> {
     /// Current wire version.
@@ -474,6 +476,49 @@ pub struct Command<B> {
     /// Kind-specific intent.
     pub body: B,
 }
+
+/// The expected predicates in a settled order, so two lists can be compared
+/// as the sets they represent.
+///
+/// This ranks by [`Witness`]'s own order while [`Command::canonical_json`]
+/// ranks by rendered text, and the two disagree about which predicate comes
+/// first. That is harmless and the difference is not worth erasing: sorting by
+/// any total order yields one representative per multiset, so both agree about
+/// which lists are the same list, which is the only question either is asked.
+///
+/// Sorting borrows rather than clones because the caller only needs the two
+/// sequences side by side for one comparison.
+fn ranked(expected: &[Witness]) -> Vec<&Witness> {
+    let mut ranked: Vec<&Witness> = expected.iter().collect();
+    ranked.sort_unstable();
+    ranked
+}
+
+impl<B: PartialEq> PartialEq for Command<B> {
+    /// Two requests are the same request when they canonicalize alike.
+    ///
+    /// `expected` is a set of predicates carried in a list, so the order a
+    /// client typed them in is not part of what it asked for.
+    /// [`Command::canonical_json`] already sorts that order away, and deriving
+    /// this would compare the vector position-wise and call two byte-identical
+    /// requests different. One value would then have two identities, which is
+    /// the same defect as one value having two spellings: a de-duplicating
+    /// caller and the canonical bytes would disagree about what it had already
+    /// seen.
+    ///
+    /// Multiplicity is kept rather than collapsed. Canonicalization sorts and
+    /// does not deduplicate, so a predicate named twice survives into the
+    /// bytes, and equality has to see what the bytes see.
+    fn eq(&self, other: &Self) -> bool {
+        self.v == other.v
+            && self.id == other.id
+            && self.kind == other.kind
+            && self.body == other.body
+            && ranked(&self.expected) == ranked(&other.expected)
+    }
+}
+
+impl<B: Eq> Eq for Command<B> {}
 
 impl<B> Command<B> {
     /// Check `expected` against this command's registry row.
