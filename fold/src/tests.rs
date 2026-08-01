@@ -290,23 +290,21 @@ fn snapshot(count: u64) -> journal::FactSnapshot {
             actor: wire::Actor::Spice,
             origin: "task:FOLD-a1".parse().expect("fixture origin"),
             cause: (position > 1).then(|| seq(position - 1)),
-            fact: any_fact(wire::Fact::new(wire::body::TaskNoted {
-                task: "FOLD-a1".parse().expect("fixture task handle"),
-                note: "fixture".to_owned(),
-            })),
+            fact: opaque_note(),
         })
         .collect();
     journal::FactSnapshot::from_facts(facts).expect("fixture snapshot")
 }
 
-/// Read a typed fact back the way a reader sweeping stored rows reads one.
+/// Read a typed fact back the way a journal verifier reads a stored row.
 ///
-/// [`wire::AnyFact`] keeps its fields private so nothing can hand a reader an
-/// opaque fact carrying a body its kind never registered. A fixture earns one
-/// the way production does, by encoding a typed fact and decoding it without
-/// its body type, which means a fixture body that would be refused on the wire
-/// is refused here too instead of reaching a reducer.
-fn any_fact<F: wire::Body>(fact: wire::Fact<F>) -> wire::AnyFact {
+/// A fixture mints its body through the registered DTO rather than spelling
+/// one out, so it can never carry fields the decoder would refuse.
+fn opaque_note() -> wire::AnyFact {
+    let fact = wire::Fact::new(wire::body::TaskNoted {
+        task: "FOLD-a1".parse().expect("fixture task handle"),
+        note: "fixture".to_owned(),
+    });
     let bytes = wire::encode(&fact).expect("a typed fact encodes");
     wire::decode(&bytes).expect("a stored fact reads back without its body type")
 }
