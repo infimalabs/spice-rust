@@ -16,6 +16,8 @@ use wire::{
     Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState, Seq, SeqRange, Witness,
 };
 
+mod steering;
+
 type CommandResult<T> = Result<T, Outcome<()>>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -25,6 +27,8 @@ struct RuntimePaths {
     journal: PathBuf,
     resident: PathBuf,
     canvas: PathBuf,
+    lane_canvas: PathBuf,
+    inbox: PathBuf,
     degraded: PathBuf,
     tape: PathBuf,
     stage: PathBuf,
@@ -43,6 +47,8 @@ impl RuntimePaths {
             journal: repository.journal_path(),
             resident: runtime.join("resident"),
             canvas: runtime.join("canvas"),
+            lane_canvas: runtime.join("canvas-lanes"),
+            inbox: runtime.join("inbox"),
             degraded: runtime.join("degraded"),
             tape: runtime.join("tape"),
             stage: repository.worktree_root().join("dist/stage"),
@@ -119,11 +125,13 @@ impl Drop for ResidentLock {
 #[derive(Debug)]
 struct PublishedDiscovery {
     path: PathBuf,
+    lane_root: PathBuf,
 }
 
 impl Drop for PublishedDiscovery {
     fn drop(&mut self) {
         let _ = remove_if_present(&self.path);
+        let _ = remove_tree_if_present(&self.lane_root);
     }
 }
 
@@ -150,6 +158,13 @@ fn up_from(current: &Path) -> Outcome<()> {
     if let Err(error) = remove_if_present(&paths.canvas) {
         return environment_fault("canvas::stale-discovery", &error.to_string());
     }
+    if let Err(error) = remove_tree_if_present(&paths.lane_canvas) {
+        return environment_fault("canvas::stale-lane-discovery", &error.to_string());
+    }
+    let config = match spice::config::load(current, &[]) {
+        Ok(config) => config.root().steer().clone(),
+        Err(error) => return environment_fault("steer::config-invalid", &error.to_string()),
+    };
 
     let journal = match journal::Journal::open(&paths.journal) {
         Ok(journal) => journal,
@@ -174,7 +189,7 @@ fn up_from(current: &Path) -> Outcome<()> {
         .enable_all()
         .build()
     {
-        Ok(runtime) => runtime.block_on(run_surface(&bus, &paths, epoch, &mut seats)),
+        Ok(runtime) => runtime.block_on(run_surface(&bus, &paths, epoch, &config, &mut seats)),
         Err(error) => Err(environment_fault(
             "resident::runtime-failed",
             &error.to_string(),
@@ -244,6 +259,7 @@ fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outcome<()> {
         &repository,
         contract,
         crate::command_client::SelectedCommand::Down,
+        None,
     );
     let outcome = decode_dark_outcome(outcome);
     if matches!(outcome, Outcome::Reply(_))
@@ -325,6 +341,7 @@ async fn run_surface(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
+    steering: &steer::Config,
     seats: &mut Seats,
 ) -> CommandResult<()> {
     let operator = new_uuid();
@@ -348,12 +365,15 @@ async fn run_surface(
     let discovery = server
         .discovery(operator)
         .map_err(|error| environment_fault("canvas::discovery-invalid", &error.to_string()))?;
+    let published = PublishedDiscovery {
+        path: paths.canvas.clone(),
+        lane_root: paths.lane_canvas.clone(),
+    };
+    steering::publish_lane_discoveries(paths, &discovery, residency.body())?;
+    steering::publish_inboxes(bus, paths, residency.body())?;
     discovery
         .publish(&paths.canvas)
         .map_err(|error| environment_fault("canvas::publish-failed", &error.to_string()))?;
-    let published = PublishedDiscovery {
-        path: paths.canvas.clone(),
-    };
     let (shutdown, stopped) = oneshot::channel();
     let mut server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;
@@ -368,7 +388,7 @@ async fn run_surface(
             }
         };
         let dark = is_dark_command(request.command());
-        let outcome = dispatch_command(bus, paths, epoch, seats, request.command());
+        let outcome = dispatch_command(bus, paths, epoch, steering, seats, request.command());
         let reached_dark = dark && matches!(outcome, Outcome::Reply(_));
         let response = request.respond(outcome);
         if reached_dark {
@@ -399,6 +419,7 @@ fn dispatch_command(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
+    steering: &steer::Config,
     seats: &mut Seats,
     command: &wire::AdmittedCommand,
 ) -> Outcome<CommandAnswer> {
@@ -408,6 +429,18 @@ fn dispatch_command(
         }
         (CommandKind::ReleasePublish, Intent::ReleasePublish(publish)) => {
             dispatch_release_publish(bus, paths, epoch, command, publish)
+        }
+        (CommandKind::SteerInbox, Intent::SteerInbox(inbox)) => {
+            steering::inbox(bus, epoch, command, inbox)
+        }
+        (CommandKind::SteerSend, Intent::SteerSend(send)) => {
+            steering::send(bus, paths, epoch, steering, command, send)
+        }
+        (CommandKind::SteerCancel, Intent::DirectiveRef(cancel)) => {
+            steering::cancel(bus, paths, epoch, command, cancel)
+        }
+        (CommandKind::SteerDispose, Intent::SteerDispose(dispose)) => {
+            steering::dispose(bus, paths, epoch, command, dispose)
         }
         _ => Outcome::Refusal(Refusal {
             reason: "command::handler-not-landed".to_owned(),
@@ -776,6 +809,14 @@ fn server_outcome(served: Result<Result<(), io::Error>, tokio::task::JoinError>)
 
 fn remove_if_present(path: &Path) -> io::Result<()> {
     match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn remove_tree_if_present(path: &Path) -> io::Result<()> {
+    match fs::remove_dir_all(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),

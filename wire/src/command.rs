@@ -1,4 +1,4 @@
-//! The command envelope: one mutating request crossing the socket.
+//! The command envelope: one authenticated request crossing the socket.
 //!
 //! The set of commands is closed, and the registry below carries the witness
 //! law beside the command. Both the spelling and the law are stated as
@@ -62,6 +62,8 @@ pub enum CommandKind {
 
     /// Append one durable directive to a lane.
     SteerSend,
+    /// Read pending direction visible to the authenticated principal.
+    SteerInbox,
     /// Send the same intent again with lineage and escalation carried.
     SteerResend,
     /// Retire a live directive with a typed disposition.
@@ -162,6 +164,12 @@ pub struct Law {
 }
 
 impl Law {
+    /// A snapshot read relies on no caller-authored predicate.
+    pub const READ: Self = Self {
+        required: &[],
+        optional: &[],
+        authority: Authority::Connected,
+    };
     /// True when this law admits `kind` at all.
     #[must_use]
     pub fn admits(&self, kind: WitnessKind) -> bool {
@@ -282,7 +290,7 @@ impl Law {
     pub const SEND: Self = Self {
         required: &[WitnessKind::Residency],
         optional: &[],
-        authority: Authority::Connected,
+        authority: Authority::Operator,
     };
     /// Exact directive disposition; resend also names the preceding directive
     /// in its lineage.
@@ -416,6 +424,7 @@ impl CommandKind {
         Self::ClaimLapse,
         Self::DocApply,
         Self::SteerSend,
+        Self::SteerInbox,
         Self::SteerResend,
         Self::SteerDispose,
         Self::SteerCancel,
@@ -457,6 +466,7 @@ impl CommandKind {
             Self::ClaimLapse => "claim::lapse",
             Self::DocApply => "doc::apply",
             Self::SteerSend => "steer::send",
+            Self::SteerInbox => "steer::inbox",
             Self::SteerResend => "steer::resend",
             Self::SteerDispose => "steer::dispose",
             Self::SteerCancel => "steer::cancel",
@@ -499,6 +509,7 @@ impl CommandKind {
             }
             Self::DocApply => Law::APPLY,
             Self::SteerSend => Law::SEND,
+            Self::SteerInbox => Law::READ,
             Self::SteerResend => Law::RESEND,
             Self::SteerDispose => Law::DISPOSE,
             Self::SteerCancel => Law::CANCEL,

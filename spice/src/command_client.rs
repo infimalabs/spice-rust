@@ -13,10 +13,10 @@ use spice::repository::Repository;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::header::ORIGIN;
 use tungstenite::{Message, WebSocket};
-use wire::intent::CommandAnswer;
+use wire::intent::{CommandAnswer, InboxAnswer};
 use wire::{
-    Actor, CanonicalUuid, Command, CommandKind, Fault, FaultClass, Outcome, Refusal, Reply,
-    ReplyPosition, Response, Witness,
+    Actor, CanonicalUuid, Command, CommandKind, Disposition, Fault, FaultClass, Outcome, Refusal,
+    Reply, ReplyPosition, Response, Witness,
 };
 
 use crate::cli::{Contract, Guard, Principal, ReplyPositionLaw};
@@ -35,6 +35,26 @@ pub(crate) enum SelectedCommand<'a> {
         release: &'a crate::release_command::AdmittedRelease,
         state: crate::release_command::PublicationState,
     },
+    /// The operator appends one durable directive to a seated lane.
+    SteerSend {
+        lane: CanonicalUuid,
+        message: &'a str,
+    },
+    /// The operator withdraws one live directive.
+    SteerCancel { directive: CanonicalUuid },
+    /// The authenticated principal reads visible pending direction.
+    SteerInbox { lane: Option<CanonicalUuid> },
+    /// The authenticated lane retires one live key.
+    SteerAck {
+        key: &'a steer::Key,
+        disposition: Disposition,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum Connection {
+    Operator,
+    Lane(CanonicalUuid),
 }
 
 /// Submit one contract-bound command to the current repository resident.
@@ -42,12 +62,111 @@ pub(crate) fn execute(
     repository: &Repository,
     contract: &Contract,
     selected: SelectedCommand<'_>,
+    lane_context: Option<CanonicalUuid>,
 ) -> Outcome<CommandAnswer> {
-    let mapped = match MappedCommand::selected(contract, selected) {
+    match selected {
+        SelectedCommand::SteerSend { lane, message } => {
+            let inbox = match read_inbox(repository, Connection::Operator, Some(lane)) {
+                Ok(inbox) => inbox.answer,
+                Err(outcome) => return outcome,
+            };
+            let Some(row) = inbox.lanes.iter().find(|row| row.lane == lane) else {
+                return steering_refusal(
+                    "steer::lane-unknown",
+                    Some(lane.to_string()),
+                    "seat the lane before sending it direction",
+                );
+            };
+            let Some(occupant) = row.occupant else {
+                return steering_refusal(
+                    "steer::lane-vacant",
+                    Some(lane.to_string()),
+                    "start an occupant in the lane before sending it direction",
+                );
+            };
+            let mapped = MappedCommand::new(
+                contract,
+                &["steer"],
+                CommandKind::SteerSend,
+                vec![Witness::Residency {
+                    lane,
+                    occupant,
+                    epoch: inbox.epoch,
+                }],
+                &wire::intent::SteerSend {
+                    lane,
+                    message: message.to_owned(),
+                },
+            );
+            execute_mapped(repository, contract, Connection::Operator, mapped)
+        }
+        SelectedCommand::SteerAck { key, disposition } => {
+            let Some(lane) = lane_context else {
+                return environment_fault(
+                    "steer::lane-context-absent",
+                    "ack requires the SPICE_LANE identity of an activated lane shell",
+                );
+            };
+            let inbox = match read_inbox(repository, Connection::Lane(lane), None) {
+                Ok(inbox) => inbox.answer,
+                Err(outcome) => return outcome,
+            };
+            let directive = inbox
+                .lanes
+                .iter()
+                .flat_map(|row| &row.pending)
+                .find(|pending| pending.key == key.as_str())
+                .map(|pending| pending.directive);
+            let Some(directive) = directive else {
+                return steering_refusal(
+                    "steer::key-not-live",
+                    Some(key.to_string()),
+                    "read the current lane inbox and acknowledge one live key",
+                );
+            };
+            let mapped = MappedCommand::new(
+                contract,
+                &["ack"],
+                CommandKind::SteerDispose,
+                vec![Witness::Directive {
+                    steer: directive,
+                    disposition: Disposition::Live,
+                }],
+                &wire::intent::SteerDispose {
+                    directive,
+                    disposition,
+                },
+            );
+            execute_mapped(repository, contract, Connection::Lane(lane), mapped)
+        }
+        SelectedCommand::SteerInbox { lane } => {
+            let connection = lane_context.map_or(Connection::Operator, Connection::Lane);
+            match read_inbox(repository, connection, lane) {
+                Ok(inbox) => Outcome::Reply(Reply {
+                    position: ReplyPosition::Snapshot(inbox.position),
+                    body: CommandAnswer::Inbox(inbox.answer),
+                }),
+                Err(outcome) => outcome,
+            }
+        }
+        selected => {
+            let mapped = MappedCommand::selected(contract, selected);
+            execute_mapped(repository, contract, Connection::Operator, mapped)
+        }
+    }
+}
+
+fn execute_mapped(
+    repository: &Repository,
+    contract: &Contract,
+    connection: Connection,
+    mapped: ClientResult<MappedCommand>,
+) -> Outcome<CommandAnswer> {
+    let mapped = match mapped {
         Ok(mapped) => mapped,
         Err(outcome) => return outcome,
     };
-    let discovery_path = repository.state_root().join("canvas");
+    let discovery_path = discovery_path(repository, connection);
     let discovery = match DiscoveryRead::open(&discovery_path) {
         Ok(discovery) => discovery,
         Err(outcome) => return outcome,
@@ -60,6 +179,50 @@ struct MappedCommand {
     kind: CommandKind,
     expected: Vec<Witness>,
     body: serde_json::Value,
+}
+
+struct InboxSnapshot {
+    answer: InboxAnswer,
+    position: wire::Seq,
+}
+
+fn read_inbox(
+    repository: &Repository,
+    connection: Connection,
+    lane: Option<CanonicalUuid>,
+) -> Result<InboxSnapshot, Outcome<CommandAnswer>> {
+    let contract = crate::cli::contract(&["inbox"])
+        .expect("the generated CLI registry carries the inbox contract");
+    let mapped = MappedCommand::new(
+        contract,
+        &["inbox"],
+        CommandKind::SteerInbox,
+        Vec::new(),
+        &wire::intent::SteerInbox { lane },
+    )?;
+    let outcome = execute_mapped(repository, contract, connection, Ok(mapped));
+    match outcome {
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(position),
+            body: CommandAnswer::Inbox(answer),
+        }) => Ok(InboxSnapshot { answer, position }),
+        Outcome::Reply(_) => Err(protocol_fault(
+            "steer::inbox-answer-invalid",
+            "resident inbox reply did not retain its snapshot position and body",
+        )),
+        Outcome::Refusal(refusal) => Err(Outcome::Refusal(refusal)),
+        Outcome::Fault(fault) => Err(Outcome::Fault(fault)),
+    }
+}
+
+fn discovery_path(repository: &Repository, connection: Connection) -> PathBuf {
+    match connection {
+        Connection::Operator => repository.state_root().join("canvas"),
+        Connection::Lane(lane) => repository
+            .state_root()
+            .join("canvas-lanes")
+            .join(lane.to_string()),
+    }
 }
 
 impl MappedCommand {
@@ -97,6 +260,16 @@ impl MappedCommand {
                     },
                 )
             }
+            (["steer", "cancel"], SelectedCommand::SteerCancel { directive }) => Self::new(
+                contract,
+                &["steer", "cancel"],
+                CommandKind::SteerCancel,
+                vec![Witness::Directive {
+                    steer: directive,
+                    disposition: Disposition::Live,
+                }],
+                &wire::intent::DirectiveRef { directive },
+            ),
             _ => Err(protocol_fault(
                 "command::mapping-unsupported",
                 "selected CLI contract has no resident command mapping",
@@ -643,6 +816,20 @@ fn capability_disclosed() -> Outcome<CommandAnswer> {
         "canvas::capability-disclosed",
         "resident response attempted to disclose the opening capability",
     )
+}
+
+fn steering_refusal(
+    reason: &str,
+    observed: Option<String>,
+    remedy: &str,
+) -> Outcome<CommandAnswer> {
+    Outcome::Refusal(Refusal {
+        reason: reason.to_owned(),
+        witness: Some("steering-inbox".to_owned()),
+        expected: Some("one live directive in the authenticated lane".to_owned()),
+        observed,
+        remedy: remedy.to_owned(),
+    })
 }
 
 fn protocol_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {

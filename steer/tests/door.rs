@@ -297,6 +297,7 @@ fn ledger() -> Ledger {
     ] {
         ledger
             .absorb(Steering::Sent(&SteerSent {
+                directive: directive(key),
                 key: key.to_owned(),
                 lane: lane(addressee),
                 text: text.to_owned(),
@@ -314,6 +315,15 @@ fn seal() -> Key {
 
 fn lane(text: &str) -> CanonicalUuid {
     text.parse().expect("lane")
+}
+
+fn directive(key: &str) -> CanonicalUuid {
+    let suffix = key.bytes().fold(0_u64, |value, byte| {
+        value.wrapping_mul(131).wrapping_add(u64::from(byte))
+    });
+    format!("00000000-0000-4000-8000-{:012x}", suffix & 0xffff_ffff_ffff)
+        .parse()
+        .expect("fixture directive UUID")
 }
 
 fn environment(entries: &[(&str, &str)]) -> sill::Environment {

@@ -20,6 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
+use serde::de::DeserializeOwned;
 use wire::body::{
     SteerAcked, SteerCanceled, SteerDeclined, SteerLapsed, SteerMissed, SteerResent, SteerSent,
 };
@@ -38,6 +39,7 @@ pub const LADDER: u32 = 3;
 /// One directive in a lineage, as the facts left it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Directive {
+    directive: CanonicalUuid,
     key: Key,
     lane: CanonicalUuid,
     text: String,
@@ -49,6 +51,12 @@ pub struct Directive {
 }
 
 impl Directive {
+    /// Durable identity of this directive rung.
+    #[must_use]
+    pub const fn directive(&self) -> CanonicalUuid {
+        self.directive
+    }
+
     /// The key this directive is quoted by.
     #[must_use]
     pub const fn key(&self) -> &Key {
@@ -132,6 +140,11 @@ pub enum Refusal {
         /// Key that is already taken.
         key: Key,
     },
+    /// A directive identity was already used by another rung.
+    IdentityDuplicate {
+        /// Identity that is already taken.
+        directive: CanonicalUuid,
+    },
     /// No directive carries this key.
     Unknown {
         /// Key nothing answers to.
@@ -187,6 +200,12 @@ impl fmt::Display for Refusal {
                 write!(formatter, "{field} does not spell a steering key: {text:?}")
             }
             Self::Duplicate { key } => write!(formatter, "a directive already carries {key}"),
+            Self::IdentityDuplicate { directive } => {
+                write!(
+                    formatter,
+                    "a directive already carries identity {directive}"
+                )
+            }
             Self::Unknown { key } => write!(formatter, "no directive carries {key}"),
             Self::Retired { key, disposition } => {
                 let word = disposition_word(*disposition);
@@ -246,6 +265,56 @@ impl Ledger {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Rebuild standing from one canonical journal snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns the exact fact position whose registered body or steering
+    /// transition contradicts the durable stream.
+    pub fn from_snapshot(snapshot: &journal::FactSnapshot) -> Result<Self, ReplayError> {
+        let mut ledger = Self::new();
+        for envelope in snapshot.facts() {
+            let kind = envelope.fact.kind();
+            let result = match kind {
+                wire::FactKind::SteerSent => {
+                    let body = decode_body::<SteerSent>(envelope)?;
+                    ledger.absorb(Steering::Sent(&body))
+                }
+                wire::FactKind::SteerResent => {
+                    let body = decode_body::<SteerResent>(envelope)?;
+                    ledger.absorb(Steering::Resent(&body))
+                }
+                wire::FactKind::SteerAcked => {
+                    let body = decode_body::<SteerAcked>(envelope)?;
+                    ledger.absorb(Steering::Acked(&body))
+                }
+                wire::FactKind::SteerDeclined => {
+                    let body = decode_body::<SteerDeclined>(envelope)?;
+                    ledger.absorb(Steering::Declined(&body))
+                }
+                wire::FactKind::SteerMissed => {
+                    let body = decode_body::<SteerMissed>(envelope)?;
+                    ledger.absorb(Steering::Missed(&body))
+                }
+                wire::FactKind::SteerLapsed => {
+                    let body = decode_body::<SteerLapsed>(envelope)?;
+                    ledger.absorb(Steering::Lapsed(&body))
+                }
+                wire::FactKind::SteerCanceled => {
+                    let body = decode_body::<SteerCanceled>(envelope)?;
+                    ledger.absorb(Steering::Canceled(&body))
+                }
+                _ => continue,
+            };
+            result.map_err(|error| ReplayError {
+                seq: envelope.seq,
+                kind,
+                detail: error.to_string(),
+            })?;
+        }
+        Ok(ledger)
     }
 
     /// Folds one steering fact into standing.
@@ -322,12 +391,26 @@ impl Ledger {
             .collect()
     }
 
+    /// One directive by durable identity, if it exists.
+    #[must_use]
+    pub fn directive(&self, id: CanonicalUuid) -> Option<&Directive> {
+        self.directives
+            .values()
+            .find(|directive| directive.directive == id)
+    }
+
     fn send(&mut self, body: &SteerSent) -> Result<(), Refusal> {
         let key = read("key", &body.key)?;
         if self.directives.contains_key(&key) {
             return Err(Refusal::Duplicate { key });
         }
+        if self.directive(body.directive).is_some() {
+            return Err(Refusal::IdentityDuplicate {
+                directive: body.directive,
+            });
+        }
         self.place(Directive {
+            directive: body.directive,
             key,
             lane: body.lane,
             text: body.text.clone(),
@@ -342,6 +425,11 @@ impl Ledger {
 
     fn resend(&mut self, body: &SteerResent) -> Result<(), Refusal> {
         let key = read("key", &body.key)?;
+        if self.directive(body.directive).is_some() {
+            return Err(Refusal::IdentityDuplicate {
+                directive: body.directive,
+            });
+        }
         let ancestor = read("ancestor", &body.ancestor)?;
         let below = self
             .directives
@@ -383,6 +471,7 @@ impl Ledger {
         }
 
         self.place(Directive {
+            directive: body.directive,
             key,
             lane: below.lane,
             text: below.text,
@@ -462,6 +551,41 @@ impl Ledger {
         self.order.push(directive.key.clone());
         self.directives.insert(directive.key.clone(), directive);
     }
+}
+
+/// A durable steering stream that cannot be reduced consistently.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayError {
+    seq: wire::Seq,
+    kind: wire::FactKind,
+    detail: String,
+}
+
+impl fmt::Display for ReplayError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "steering fact {} at {} is invalid: {}",
+            self.kind, self.seq, self.detail
+        )
+    }
+}
+
+impl Error for ReplayError {}
+
+fn decode_body<T: DeserializeOwned>(
+    envelope: &wire::Envelope<wire::AnyFact>,
+) -> Result<T, ReplayError> {
+    let bytes = wire::encode(envelope.fact.body()).map_err(|error| ReplayError {
+        seq: envelope.seq,
+        kind: envelope.fact.kind(),
+        detail: error.to_string(),
+    })?;
+    wire::decode(&bytes).map_err(|error| ReplayError {
+        seq: envelope.seq,
+        kind: envelope.fact.kind(),
+        detail: error.to_string(),
+    })
 }
 
 impl Standing for Ledger {
@@ -823,6 +947,7 @@ mod tests {
 
     fn sent(key: &str) -> SteerSent {
         SteerSent {
+            directive: directive(key),
             key: key.to_owned(),
             lane: lane(),
             text: "hold the line".to_owned(),
@@ -833,6 +958,7 @@ mod tests {
 
     fn resent(key: &str, ancestor: &str, escalation: u32) -> SteerResent {
         SteerResent {
+            directive: directive(key),
             key: key.to_owned(),
             ancestor: ancestor.to_owned(),
             lane: lane(),
@@ -855,5 +981,14 @@ mod tests {
             locus: "3:1".to_owned(),
             reason: "the tree is red".to_owned(),
         }
+    }
+
+    fn directive(key: &str) -> CanonicalUuid {
+        let suffix = key.bytes().fold(0_u64, |value, byte| {
+            value.wrapping_mul(131).wrapping_add(u64::from(byte))
+        });
+        format!("00000000-0000-4000-8000-{:012x}", suffix & 0xffff_ffff_ffff)
+            .parse()
+            .expect("fixture directive UUID")
     }
 }

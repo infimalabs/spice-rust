@@ -851,7 +851,11 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["run"]
         | ["config"]
         | ["release", "publish"]
-        | ["restore", "verify"] => Landing::Landed,
+        | ["restore", "verify"]
+        | ["steer"]
+        | ["steer", "cancel"]
+        | ["inbox"]
+        | ["ack"] => Landing::Landed,
         ["board"]
         | ["board", "graph"]
         | ["board", "handout"]
@@ -867,15 +871,9 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["task", "depends"]
         | ["doc"]
         | ["doc", "ledger"] => Landing::Gap("BOARD-1kJQlDDt"),
-        ["lane"]
-        | ["lane", "add"]
-        | ["lane", "drain"]
-        | ["lane", "wake"]
-        | ["steer"]
-        | ["steer", "cancel"]
-        | ["inbox"]
-        | ["recall"]
-        | ["ack"] => Landing::Gap("COORDIN-1kJQlDjc"),
+        ["lane"] | ["lane", "add"] | ["lane", "drain"] | ["lane", "wake"] | ["recall"] => {
+            Landing::Gap("COORDIN-1kJQlDjc")
+        }
         ["consent"]
         | ["consent", "allow"]
         | ["consent", "deny"]
@@ -960,6 +958,11 @@ fn child_names(contracts: &[Contract], path: &[&str]) -> BTreeSet<&'static str> 
 
 fn contract_at<'a>(contracts: &'a [Contract], path: &[&str]) -> Option<&'a Contract> {
     contracts.iter().find(|contract| contract.path == path)
+}
+
+/// Recover one registered contract by its complete command path.
+pub(crate) fn contract(path: &[&str]) -> Option<&'static Contract> {
+    contract_at(contracts(), path)
 }
 
 /// Recover the contract selected by the generated parser.

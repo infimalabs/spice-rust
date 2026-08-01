@@ -84,6 +84,7 @@ const BODIES: &[(CommandKind, &str)] = &[
   "message": "drain the queue"
 }"#,
     ),
+    (CommandKind::SteerInbox, r#"{}"#),
     (
         CommandKind::SteerResend,
         r#"{ "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4" }"#,
@@ -181,7 +182,24 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
         AnswerShape::Directive,
         r#"{
   "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+  "key": "1kJJP87B",
   "disposition": "acked"
+}"#,
+    ),
+    (
+        AnswerShape::Inbox,
+        r#"{
+  "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+  "lanes": [{
+    "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+    "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c5",
+    "pending": [{
+      "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+      "key": "1kJJP87B",
+      "text": "drain the queue",
+      "expires": "2026-08-01T07:07:19.000Z"
+    }]
+  }]
 }"#,
     ),
     (
@@ -359,6 +377,7 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::ClaimCarry,
     BodyShape::DocApply,
     BodyShape::SteerSend,
+    BodyShape::SteerInbox,
     BodyShape::DirectiveRef,
     BodyShape::SteerDispose,
     BodyShape::ConsentDecide,
@@ -377,6 +396,7 @@ const ALL_ANSWERS: &[AnswerShape] = &[
     AnswerShape::Claim,
     AnswerShape::Doc,
     AnswerShape::Directive,
+    AnswerShape::Inbox,
     AnswerShape::Consent,
     AnswerShape::Trust,
     AnswerShape::State,

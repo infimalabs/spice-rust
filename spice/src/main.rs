@@ -33,6 +33,8 @@ mod render;
 mod resident;
 #[cfg(not(target_arch = "wasm32"))]
 mod restore_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod steering_command;
 
 use render::Form;
 
@@ -91,6 +93,10 @@ fn main() {
             release_command::RunResult::Plan(outcome) => deliver(&outcome, form),
             release_command::RunResult::Published(outcome) => deliver(&outcome, form),
         },
+        ["steer"] | ["steer", "cancel"] | ["inbox"] | ["ack"] => deliver(
+            &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
+            form,
+        ),
         _ => {}
     }
     #[cfg(target_arch = "wasm32")]
