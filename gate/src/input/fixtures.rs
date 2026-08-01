@@ -38,6 +38,28 @@ mod tests {
     fn gate_set_admission_closes_every_metric_over_exactly_one_used_tool() {
         let current = GateSet::current().expect("compiled gate set");
 
+        let mut incomplete_camp = current.clone();
+        incomplete_camp.camp_metrics.pop();
+        assert!(matches!(
+            readmit(incomplete_camp),
+            Err(GateSetError::CampLoci { ref declared, ref measured })
+                if declared.len() == 4 && measured.len() == 3
+        ));
+
+        let mut empty_camp = current.clone();
+        empty_camp.camp = Camp::new([]).expect("the Camp type permits an empty collection");
+        assert!(matches!(
+            readmit(empty_camp),
+            Err(GateSetError::EmptyCamp)
+        ));
+
+        let mut duplicate_metric = current.clone();
+        duplicate_metric.camp_metrics[0].metric = duplicate_metric.metrics[0].metric.clone();
+        assert!(matches!(
+            readmit(duplicate_metric),
+            Err(GateSetError::DuplicateMetric { ref metric }) if metric == "rust.long-lines"
+        ));
+
         let mut missing = current.clone();
         missing.tools.clear();
         assert!(matches!(
@@ -117,6 +139,41 @@ mod tests {
         .expect("changed bounds remain valid");
         assert_ne!(bounds.digest(), changed_bounds.digest());
 
+        let mut changed_mutation_tool = current.clone();
+        changed_mutation_tool.kill.tool = MutationTool::new(
+            changed_mutation_tool.kill.tool.cargo_program(),
+            "/different/mutants",
+            changed_mutation_tool.kill.tool.identity(),
+            changed_mutation_tool.kill.tool.base_environment().clone(),
+        )
+        .expect("changed absolute declaration remains valid");
+        assert_ne!(
+            current.digest(),
+            changed_mutation_tool.digest(),
+            "the mutation executable declaration did not move the gate set"
+        );
+
+        let mut changed_mutation_bounds = current.clone();
+        changed_mutation_bounds.kill.bounds.capture += 1;
+        assert_ne!(
+            current.digest(),
+            changed_mutation_bounds.digest(),
+            "the mutation capture bound did not move the gate set"
+        );
+
+        let mut changed_battery = current.clone();
+        changed_battery.kill.battery = MutationBattery::new(
+            changed_battery.kill.battery.targets().iter().cloned(),
+            changed_battery.kill.battery.attempts(),
+            changed_battery.kill.battery.seed() + 1,
+        )
+        .expect("changed seed remains a valid battery");
+        assert_ne!(
+            current.digest(),
+            changed_battery.digest(),
+            "the mutation battery did not move the gate set"
+        );
+
         let first = identify_tool(&current.tools[0], &workspace_root(), &bounds)
             .expect("current tool answers its probe");
         let second = identify_tool(&current.tools[0], &workspace_root(), &bounds)
@@ -132,6 +189,13 @@ mod tests {
     }
 
     fn readmit(candidate: GateSet) -> Result<GateSet, GateSetError> {
-        GateSet::admit(candidate.metrics, candidate.floors, candidate.tools)
+        GateSet::admit(
+            candidate.metrics,
+            candidate.camp_metrics,
+            candidate.camp,
+            candidate.kill,
+            candidate.floors,
+            candidate.tools,
+        )
     }
 }

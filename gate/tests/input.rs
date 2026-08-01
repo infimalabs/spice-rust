@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use gate::{
-    BASELINE_PATH, BaselineError, Contract, ContractError, LONG_LINE_LIMIT, PolicyError, Standing,
+    BASELINE_PATH, BaselineError, Contract, ContractError, LONG_LINE_LIMIT, PINNED_CARGO_MUTANTS,
+    PolicyError, Standing,
 };
 use serde::Deserialize;
 
@@ -45,6 +46,42 @@ fn tracked_inputs_load_one_operational_current_contract() {
     assert_eq!(contract.tools().len(), 1);
     assert_eq!(contract.tools()[0].name(), "awk");
     assert_eq!(contract.tools()[0].program(), Path::new("/usr/bin/awk"));
+    assert_eq!(contract.camp().bounds().len(), 1);
+    assert_eq!(contract.camp().bounds()[0].limit(), LONG_LINE_LIMIT as u64);
+    assert_eq!(contract.camp().bounds()[0].loci().len(), 4);
+    assert_eq!(contract.kill().tool().identity(), PINNED_CARGO_MUTANTS);
+    assert!(contract.kill().tool().cargo_program().is_absolute());
+    assert!(contract.kill().tool().mutants_program().is_absolute());
+    assert_eq!(contract.kill().battery().attempts(), 3);
+    assert_eq!(contract.kill().battery().seed(), 41);
+    assert_eq!(contract.kill().battery().targets().len(), 4);
+    assert_eq!(
+        contract.kill().bounds().deadlines().runtime().as_secs(),
+        300
+    );
+    assert_eq!(contract.kill().bounds().grace().as_secs(), 1);
+    assert_eq!(contract.kill().bounds().capture(), 256 * 1024);
+    assert_eq!(contract.kill().floor().numerator(), 0);
+    assert_eq!(contract.kill().floor().denominator(), 1);
+    let declaration = contract.gate_set().render();
+    assert!(declaration.contains("kill identity cargo-mutants 27.1.0\n"));
+    assert!(declaration.contains("kill environment clear\n"));
+    assert!(declaration.contains("kill environment CARGO "));
+    assert!(declaration.contains("kill environment SPICE_MUTATION_SEED compiled-seed\n"));
+    assert!(declaration.contains("kill environment SPICE_MUTATION_ATTEMPT one-based-attempt\n"));
+    let target_lines = declaration
+        .lines()
+        .filter(|line| line.starts_with("kill target "))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        target_lines,
+        [
+            "kill target gate/src/camp.rs",
+            "kill target gate/src/input.rs",
+            "kill target gate/src/kill.rs",
+            "kill target gate/src/verdict.rs",
+        ]
+    );
     assert_eq!(
         contract.bounds().render(),
         "bounds 1\nowner gate current tools\nruntime-ms 30000\noutput-drain-ms 1000\n\
@@ -186,6 +223,17 @@ fn every_invalid_baseline_refuses_whole_and_names_its_exact_field() {
     assert!(matches!(
         not_toml,
         BaselineError::Toml { ref path, .. } if path == &baseline_path()
+    ));
+
+    let fractional_without_denominator = baseline_error(
+        "version = 1\n\n[[floor]]\nname = \"rust.long-lines\"\nvalue = 1\n\n\
+         [[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 2\n",
+    );
+    assert!(matches!(
+        fractional_without_denominator,
+        BaselineError::MutationRate { ref path, ref field, value: 2 }
+            if path == &baseline_path()
+                && field == "floor[rust.mutation-survivors].value"
     ));
 }
 

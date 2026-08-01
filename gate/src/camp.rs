@@ -12,8 +12,11 @@ use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
 
+use crate::input::Contract;
 use crate::measure::Measurement;
+use crate::ratchet::Ratchet;
 use crate::report::{ReportDecodeError, ReportVersionEvidence};
+use crate::verdict::{Run, RunError};
 
 /// The one camping report schema this build emits and admits.
 pub const CAMP_REPORT_VERSION: u64 = 1;
@@ -617,6 +620,52 @@ impl fmt::Display for CampError {
 }
 
 impl std::error::Error for CampError {}
+
+/// Why the compiled Camp profile did not produce a completed audit.
+#[derive(Debug)]
+pub enum CampRunError {
+    /// Snapshot-safe measurement did not complete.
+    Run(RunError),
+    /// Completed measurements did not satisfy the compiled declaration.
+    Audit(CampError),
+}
+
+impl fmt::Display for CampRunError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Run(source) => write!(formatter, "camp measurement failed: {source}"),
+            Self::Audit(source) => write!(formatter, "camp audit failed: {source}"),
+        }
+    }
+}
+
+impl std::error::Error for CampRunError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Run(source) => Some(source),
+            Self::Audit(source) => Some(source),
+        }
+    }
+}
+
+impl Contract {
+    /// Measure and audit this contract's compiled shared-bound profile.
+    ///
+    /// This uses the same snapshot-verified walk as an ordinary run and an
+    /// empty ratchet because a shared fixed bound is not own-history state.
+    ///
+    /// # Errors
+    ///
+    /// Returns the measurement or declaration failure. A partial measurement
+    /// never reaches the audit.
+    pub fn audit_camp(&self, root: &std::path::Path) -> Result<CampReport, CampRunError> {
+        let run = Run::adjudicate(self.camp_policy(), root, &Ratchet::default(), self.bounds())
+            .map_err(CampRunError::Run)?;
+        self.camp()
+            .audit(run.measurements())
+            .map_err(CampRunError::Audit)
+    }
+}
 
 fn stable_name(value: &str) -> bool {
     !value.is_empty() && !value.chars().any(char::is_whitespace)

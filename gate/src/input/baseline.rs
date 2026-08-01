@@ -32,6 +32,7 @@ impl Baseline {
         let rows = baseline_rows(path, &table)?;
         let floors = parse_floor_rows(path, rows, gate_set)?;
         require_all_floors(path, &floors, gate_set)?;
+        validate_mutation_floor(path, &floors)?;
 
         let baseline = Self { floors };
         let canonical = baseline.render();
@@ -94,6 +95,30 @@ impl Baseline {
         }
         Ratchet::parse(&text).expect("validated baseline names render one ratchet spelling")
     }
+
+    fn mutation_floor(&self) -> SurvivorRate {
+        SurvivorRate::new(
+            self.floor("rust.mutation-survivors")
+                .expect("a loaded baseline carries the mutation floor"),
+            1,
+        )
+        .expect("baseline admission restricts the mutation floor to zero or one")
+    }
+}
+
+fn validate_mutation_floor(path: &Path, floors: &[Floor]) -> Result<(), BaselineError> {
+    let floor = floors
+        .iter()
+        .find(|floor| floor.name == "rust.mutation-survivors")
+        .expect("the complete current baseline carries the mutation floor");
+    if floor.value > 1 {
+        return Err(BaselineError::MutationRate {
+            path: path.to_path_buf(),
+            field: "floor[rust.mutation-survivors].value".to_owned(),
+            value: floor.value,
+        });
+    }
+    Ok(())
 }
 
 fn parse_baseline_table(path: &Path, text: &str) -> Result<toml::Table, BaselineError> {

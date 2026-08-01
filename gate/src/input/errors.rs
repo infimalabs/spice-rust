@@ -63,6 +63,24 @@ impl Error for FieldError {}
 pub enum GateSetError {
     /// One parser or metric declaration is internally invalid.
     Metric(MetricError),
+    /// One shared-bound declaration is internally invalid.
+    Camp(CampError),
+    /// The compiled mutation profile is internally invalid.
+    Kill(RateError),
+    /// The current gate set declared no camping distribution.
+    EmptyCamp,
+    /// One metric name appears in more than one execution profile.
+    DuplicateMetric {
+        /// Repeated metric identity.
+        metric: String,
+    },
+    /// Compiled camping loci and measurement declarations differ.
+    CampLoci {
+        /// Loci named by every shared bound in canonical order.
+        declared: Vec<String>,
+        /// Metrics the camping measurement policy would execute.
+        measured: Vec<String>,
+    },
     /// A metric names no compiled tool declaration.
     MissingTool {
         /// Metric whose parser would otherwise execute without a probe.
@@ -106,6 +124,16 @@ impl fmt::Display for GateSetError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Metric(source) => write!(formatter, "invalid metric declaration: {source}"),
+            Self::Camp(source) => write!(formatter, "invalid camp declaration: {source}"),
+            Self::Kill(source) => write!(formatter, "invalid mutation declaration: {source}"),
+            Self::EmptyCamp => formatter.write_str("compiled gate set declares no camp bounds"),
+            Self::DuplicateMetric { metric } => {
+                write!(formatter, "compiled metric {metric} is declared more than once")
+            }
+            Self::CampLoci { declared, measured } => write!(
+                formatter,
+                "compiled camp loci {declared:?} do not equal measured metrics {measured:?}"
+            ),
             Self::MissingTool {
                 metric,
                 tool,
@@ -148,7 +176,12 @@ impl Error for GateSetError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Metric(source) => Some(source),
-            Self::MissingTool { .. }
+            Self::Camp(source) => Some(source),
+            Self::Kill(source) => Some(source),
+            Self::EmptyCamp
+            | Self::DuplicateMetric { .. }
+            | Self::CampLoci { .. }
+            | Self::MissingTool { .. }
             | Self::DuplicateToolName { .. }
             | Self::DuplicateToolProgram { .. }
             | Self::MismatchedTool { .. }
@@ -274,6 +307,15 @@ pub enum BaselineError {
         /// Unknown name.
         name: String,
     },
+    /// Version-one mutation state can encode only exact whole rates.
+    MutationRate {
+        /// Fixed baseline path.
+        path: PathBuf,
+        /// Exact mutation value field.
+        field: String,
+        /// Integer outside the admitted zero-or-one domain.
+        value: u64,
+    },
     /// The values were meaningful but not in the one admitted byte form.
     NonCanonical {
         /// Fixed baseline path.
@@ -331,6 +373,11 @@ impl fmt::Display for BaselineError {
                 "{} field {field} names unknown floor {name:?}",
                 path.display()
             ),
+            Self::MutationRate { path, field, value } => write!(
+                formatter,
+                "{} field {field} value {value} is not an exact version-one survivor rate",
+                path.display()
+            ),
             Self::NonCanonical {
                 path,
                 field,
@@ -355,6 +402,7 @@ impl Error for BaselineError {
             | Self::Unsorted { .. }
             | Self::Retired { .. }
             | Self::Unknown { .. }
+            | Self::MutationRate { .. }
             | Self::NonCanonical { .. } => None,
         }
     }

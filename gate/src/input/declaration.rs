@@ -93,33 +93,207 @@ impl MetricDeclaration {
         let _ = writeln!(into, "metric {} tool {}", self.metric.name(), self.tool);
         self.metric.render(into);
     }
+
+    fn render_camp(&self, into: &mut String) {
+        let _ = writeln!(
+            into,
+            "camp-metric {} tool {}",
+            self.metric.name(),
+            self.tool
+        );
+        self.metric.render(into);
+    }
 }
+
+const MUTATION_TARGETS: [&str; 4] = [
+    "gate/src/camp.rs",
+    "gate/src/input.rs",
+    "gate/src/kill.rs",
+    "gate/src/verdict.rs",
+];
+const MUTATION_ATTEMPTS: usize = 3;
+const MUTATION_SEED: u64 = 41;
+const MUTATION_RUNTIME: Duration = Duration::from_secs(300);
+const MUTATION_OUTPUT_DRAIN: Duration = Duration::from_secs(2);
+const MUTATION_REAP: Duration = Duration::from_secs(2);
+const MUTATION_GRACE: Duration = Duration::from_secs(1);
+const MUTATION_CAPTURE: usize = 256 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct KillBoundsDeclaration {
+    deadlines: Deadlines,
+    grace: Duration,
+    capture: usize,
+}
+
+impl KillBoundsDeclaration {
+    fn current() -> Result<Self, RateError> {
+        let deadlines = Deadlines::new(
+            MUTATION_RUNTIME,
+            MUTATION_OUTPUT_DRAIN,
+            MUTATION_REAP,
+        )
+        .map_err(RateError::Spec)?;
+        Ok(Self {
+            deadlines,
+            grace: MUTATION_GRACE,
+            capture: MUTATION_CAPTURE,
+        })
+    }
+
+    fn build(self) -> Result<KillBounds, RateError> {
+        KillBounds::new(
+            "gate current mutation profile",
+            self.deadlines,
+            self.grace,
+            self.capture,
+        )
+    }
+
+    fn render(self, into: &mut String) {
+        let _ = writeln!(
+            into,
+            "kill deadline-runtime-ms {}",
+            self.deadlines.runtime().as_millis()
+        );
+        let _ = writeln!(
+            into,
+            "kill deadline-output-drain-ms {}",
+            self.deadlines.output_drain().as_millis()
+        );
+        let _ = writeln!(
+            into,
+            "kill deadline-reap-ms {}",
+            self.deadlines.reap().as_millis()
+        );
+        let _ = writeln!(into, "kill grace-ms {}", self.grace.as_millis());
+        let _ = writeln!(into, "kill capture {}", self.capture);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct KillDeclaration {
+    tool: MutationTool,
+    battery: MutationBattery,
+    bounds: KillBoundsDeclaration,
+}
+
+impl KillDeclaration {
+    fn current() -> Result<Self, RateError> {
+        let cargo_program = PathBuf::from(env!("CARGO"));
+        let cargo_bin = cargo_program
+            .parent()
+            .expect("Cargo supplies an executable path with a parent")
+            .to_path_buf();
+        let mutants_program = Path::new(env!("HOME")).join(".cargo/bin/cargo-mutants");
+        let environment = Environment::new([
+            ("CARGO_HOME", concat!(env!("HOME"), "/.cargo").to_owned()),
+            ("PATH", cargo_bin.display().to_string()),
+        ])
+        .map_err(RateError::Spec)?;
+        let tool = MutationTool::new(
+            cargo_program,
+            mutants_program,
+            PINNED_CARGO_MUTANTS,
+            environment,
+        )?;
+        let battery = MutationBattery::new(
+            MUTATION_TARGETS,
+            MUTATION_ATTEMPTS,
+            MUTATION_SEED,
+        )?;
+        Ok(Self {
+            tool,
+            battery,
+            bounds: KillBoundsDeclaration::current()?,
+        })
+    }
+
+    fn build(&self) -> Result<Kill, RateError> {
+        Ok(Kill::new(
+            self.tool.clone(),
+            self.battery.clone(),
+            self.bounds.build()?,
+        ))
+    }
+
+    fn render(&self, into: &mut String) {
+        let _ = writeln!(
+            into,
+            "kill cargo-program {}",
+            self.tool.cargo_program().display()
+        );
+        let _ = writeln!(
+            into,
+            "kill mutants-program {}",
+            self.tool.mutants_program().display()
+        );
+        let _ = writeln!(into, "kill identity {}", self.tool.identity());
+        let _ = writeln!(into, "kill environment clear");
+        let _ = writeln!(
+            into,
+            "kill environment CARGO {}",
+            self.tool.cargo_program().display()
+        );
+        for (name, value) in self.tool.base_environment().entries() {
+            let _ = writeln!(
+                into,
+                "kill environment {} {}",
+                name.to_string_lossy(),
+                value.to_string_lossy()
+            );
+        }
+        let _ = writeln!(into, "kill environment {SEED_ENVIRONMENT} compiled-seed");
+        let _ = writeln!(
+            into,
+            "kill environment {ATTEMPT_ENVIRONMENT} one-based-attempt"
+        );
+        let _ = writeln!(into, "kill attempts {}", self.battery.attempts());
+        let _ = writeln!(into, "kill seed {}", self.battery.seed());
+        for target in self.battery.targets() {
+            let _ = writeln!(into, "kill target {target}");
+        }
+        self.bounds.render(into);
+    }
+}
+
+const CAMP_BOUND: &str = "rust.gate-line-length";
+const CAMP_LOCI: [(&str, &str); 4] = [
+    ("rust.max-line.camp", "gate/src/camp.rs"),
+    ("rust.max-line.input", "gate/src/input.rs"),
+    ("rust.max-line.kill", "gate/src/kill.rs"),
+    ("rust.max-line.verdict", "gate/src/verdict.rs"),
+];
 
 /// The compiled checks and floor names this build can execute.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GateSet {
     metrics: Vec<MetricDeclaration>,
+    camp_metrics: Vec<MetricDeclaration>,
+    camp: Camp,
+    kill: KillDeclaration,
     floors: Vec<FloorDeclaration>,
     tools: Vec<ToolDeclaration>,
 }
 
 impl GateSet {
     fn current() -> Result<Self, GateSetError> {
-        let program =
-            format!("length($0) > {LONG_LINE_LIMIT} {{ debt += 1 }} END {{ print debt + 0 }}");
-        let parser = Parser::new(AWK, [program]).map_err(GateSetError::Metric)?;
-        let metric = Metric::new(
-            "rust.long-lines",
-            "rust",
-            format!("source lines longer than {LONG_LINE_LIMIT} bytes"),
-            parser,
-            "*.rs",
-            "",
+        let metric = current_long_lines_metric()?;
+        let camp_metrics = current_camp_metrics()?;
+        let camp = Camp::new([SharedBound::new(
+            CAMP_BOUND,
+            LONG_LINE_LIMIT as u64,
+            CAMP_LOCI.map(|(name, _)| name),
         )
-        .map_err(GateSetError::Metric)?;
+        .map_err(GateSetError::Camp)?])
+        .map_err(GateSetError::Camp)?;
+        let kill = KillDeclaration::current().map_err(GateSetError::Kill)?;
 
         Self::admit(
             vec![MetricDeclaration::new("awk", metric)],
+            camp_metrics,
+            camp,
+            kill,
             vec![
                 FloorDeclaration::new("rust.long-lines", FloorKind::Measurement),
                 FloorDeclaration::new("rust.mutation-survivors", FloorKind::Mutation),
@@ -129,10 +303,30 @@ impl GateSet {
     }
 
     fn admit(
-        metrics: Vec<MetricDeclaration>,
-        floors: Vec<FloorDeclaration>,
-        tools: Vec<ToolDeclaration>,
+        mut metrics: Vec<MetricDeclaration>,
+        mut camp_metrics: Vec<MetricDeclaration>,
+        camp: Camp,
+        kill: KillDeclaration,
+        mut floors: Vec<FloorDeclaration>,
+        mut tools: Vec<ToolDeclaration>,
     ) -> Result<Self, GateSetError> {
+        metrics.sort_by(|left, right| left.metric.name().cmp(right.metric.name()));
+        camp_metrics.sort_by(|left, right| left.metric.name().cmp(right.metric.name()));
+        floors.sort_by(|left, right| left.name.cmp(&right.name));
+        tools.sort_by(|left, right| left.name.cmp(&right.name));
+
+        let mut metric_names = BTreeSet::new();
+        for declaration in metrics.iter().chain(&camp_metrics) {
+            if !metric_names.insert(declaration.metric.name().to_owned()) {
+                return Err(GateSetError::DuplicateMetric {
+                    metric: declaration.metric.name().to_owned(),
+                });
+            }
+        }
+
+        validate_camp_declarations(&camp_metrics, &camp)?;
+        kill.build().map_err(GateSetError::Kill)?;
+
         let mut names = BTreeSet::new();
         let mut programs = BTreeSet::new();
         for tool in &tools {
@@ -149,7 +343,7 @@ impl GateSet {
         }
 
         let mut used = BTreeSet::new();
-        for declaration in &metrics {
+        for declaration in metrics.iter().chain(&camp_metrics) {
             let Some(tool) = tools.iter().find(|tool| tool.name == declaration.tool) else {
                 return Err(GateSetError::MissingTool {
                     metric: declaration.metric.name().to_owned(),
@@ -178,6 +372,9 @@ impl GateSet {
 
         Ok(Self {
             metrics,
+            camp_metrics,
+            camp,
+            kill,
             floors,
             tools,
         })
@@ -187,6 +384,24 @@ impl GateSet {
     #[must_use]
     pub fn floors(&self) -> &[FloorDeclaration] {
         &self.floors
+    }
+
+    /// Current compiled shared-bound profile.
+    #[must_use]
+    pub const fn camp(&self) -> &Camp {
+        &self.camp
+    }
+
+    fn build_kill(&self) -> Kill {
+        self.kill
+            .build()
+            .expect("an admitted mutation declaration remains valid")
+    }
+
+    pub(crate) fn camp_metrics(&self) -> impl Iterator<Item = Metric> + '_ {
+        self.camp_metrics
+            .iter()
+            .map(|declaration| declaration.metric.clone())
     }
 
     /// Canonical compiled declaration, including parser argv and tool probes.
@@ -203,6 +418,21 @@ impl GateSet {
         for declaration in &self.metrics {
             declaration.render(&mut rendered);
         }
+        for bound in self.camp.bounds() {
+            let _ = writeln!(
+                rendered,
+                "camp {} limit {}",
+                bound.name(),
+                bound.limit()
+            );
+            for locus in bound.loci() {
+                let _ = writeln!(rendered, "camp {} locus {locus}", bound.name());
+            }
+        }
+        for declaration in &self.camp_metrics {
+            declaration.render_camp(&mut rendered);
+        }
+        self.kill.render(&mut rendered);
         rendered
     }
 
@@ -211,4 +441,64 @@ impl GateSet {
     pub fn digest(&self) -> Digest {
         Digest::compute(Domain::GateSet, self.render().as_bytes())
     }
+}
+
+fn current_long_lines_metric() -> Result<Metric, GateSetError> {
+    let program =
+        format!("length($0) > {LONG_LINE_LIMIT} {{ debt += 1 }} END {{ print debt + 0 }}");
+    let parser = Parser::new(AWK, [program]).map_err(GateSetError::Metric)?;
+    Metric::new(
+        "rust.long-lines",
+        "rust",
+        format!("source lines longer than {LONG_LINE_LIMIT} bytes"),
+        parser,
+        "*.rs",
+        "",
+    )
+    .map_err(GateSetError::Metric)
+}
+
+fn current_camp_metrics() -> Result<Vec<MetricDeclaration>, GateSetError> {
+    CAMP_LOCI
+        .iter()
+        .map(|(name, path)| {
+            let parser = Parser::new(
+                AWK,
+                ["{ if (length($0) > maximum) maximum = length($0) } END { print maximum + 0 }"],
+            )
+            .map_err(GateSetError::Metric)?;
+            let metric = Metric::new(
+                *name,
+                "rust",
+                "maximum source-line length in one gate implementation locus",
+                parser,
+                path,
+                "",
+            )
+            .map_err(GateSetError::Metric)?;
+            Ok(MetricDeclaration::new("awk", metric))
+        })
+        .collect()
+}
+
+fn validate_camp_declarations(
+    metrics: &[MetricDeclaration],
+    camp: &Camp,
+) -> Result<(), GateSetError> {
+    if camp.bounds().is_empty() {
+        return Err(GateSetError::EmptyCamp);
+    }
+    let declared: Vec<String> = camp
+        .bounds()
+        .iter()
+        .flat_map(|bound| bound.loci().iter().cloned())
+        .collect();
+    let measured: Vec<String> = metrics
+        .iter()
+        .map(|declaration| declaration.metric.name().to_owned())
+        .collect();
+    if declared != measured {
+        return Err(GateSetError::CampLoci { declared, measured });
+    }
+    Ok(())
 }

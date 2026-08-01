@@ -16,10 +16,15 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Deserialize;
-use sill::{Argv, Completion, Deadlines, SpecError, WaitError, spawn};
+use sill::{Argv, Completion, Deadlines, Environment, SpecError, WaitError, spawn};
 use wire::{Digest, Domain};
 
+use crate::camp::{Camp, CampError, SharedBound};
 use crate::jurisdiction::{Ignore, IgnoreError};
+use crate::kill::{
+    ATTEMPT_ENVIRONMENT, Kill, KillBounds, KillError, KillRun, MutationBattery, MutationTool,
+    PINNED_CARGO_MUTANTS, RateError, SEED_ENVIRONMENT, SurvivorRate,
+};
 use crate::measure::{Bounds, Metric, MetricError, Parser, Policy};
 use crate::ratchet::Ratchet;
 
@@ -69,11 +74,46 @@ impl ToolIdentity {
     }
 }
 
-/// Loaded current execution inputs, ready for one gate run.
+/// The complete mutation execution profile selected by one current contract.
+#[derive(Debug)]
+pub struct KillProfile {
+    runner: Kill,
+    floor: SurvivorRate,
+}
+
+impl KillProfile {
+    /// Direct executables and explicit environment.
+    #[must_use]
+    pub const fn tool(&self) -> &MutationTool {
+        self.runner.tool()
+    }
+
+    /// Fixed targets, retries, and seed.
+    #[must_use]
+    pub const fn battery(&self) -> &MutationBattery {
+        self.runner.battery()
+    }
+
+    /// Fixed process deadlines, grace, and capture.
+    #[must_use]
+    pub const fn bounds(&self) -> &KillBounds {
+        self.runner.bounds()
+    }
+
+    /// Exact committed survivor-rate floor.
+    #[must_use]
+    pub const fn floor(&self) -> SurvivorRate {
+        self.floor
+    }
+}
+
+/// Loaded current execution inputs, ready for ordinary, Camp, or Kill runs.
 #[derive(Debug)]
 pub struct Contract {
     gate_set: GateSet,
     policy: Policy,
+    camp_policy: Policy,
+    kill_profile: KillProfile,
     baseline: Baseline,
     ratchet: Ratchet,
     bounds: Bounds,
@@ -81,7 +121,10 @@ pub struct Contract {
 }
 
 impl Contract {
-    /// Load the two fixed tracked files and preflight every compiled tool.
+    /// Load the tracked files and preflight every parser tool.
+    ///
+    /// The mutation executable is declared here but is attested inside a
+    /// private selected tree immediately before mutation inventory begins.
     ///
     /// # Errors
     ///
@@ -118,10 +161,16 @@ impl Contract {
             .iter()
             .map(|declaration| declaration.metric.clone())
             .collect();
-        let policy = Policy::new(ignore, metrics).map_err(ContractError::Metric)?;
+        let policy = Policy::new(ignore.clone(), metrics).map_err(ContractError::Metric)?;
+        let camp_policy =
+            Policy::new(ignore, gate_set.camp_metrics()).map_err(ContractError::Metric)?;
         let baseline = Baseline::parse(baseline_path, baseline_text, &gate_set)
             .map_err(ContractError::Baseline)?;
         let ratchet = baseline.ratchet(&gate_set);
+        let kill_profile = KillProfile {
+            runner: gate_set.build_kill(),
+            floor: baseline.mutation_floor(),
+        };
         let tools = gate_set
             .tools
             .iter()
@@ -132,6 +181,8 @@ impl Contract {
         Ok(Self {
             gate_set,
             policy,
+            camp_policy,
+            kill_profile,
             baseline,
             ratchet,
             bounds,
@@ -149,6 +200,34 @@ impl Contract {
     #[must_use]
     pub const fn policy(&self) -> &Policy {
         &self.policy
+    }
+
+    /// Compiled shared-bound profile.
+    #[must_use]
+    pub const fn camp(&self) -> &Camp {
+        self.gate_set.camp()
+    }
+
+    pub(crate) const fn camp_policy(&self) -> &Policy {
+        &self.camp_policy
+    }
+
+    /// Complete compiled mutation execution profile and committed floor.
+    #[must_use]
+    pub const fn kill(&self) -> &KillProfile {
+        &self.kill_profile
+    }
+
+    /// Execute the compiled mutation profile against a private selected tree.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first selection, tool, inventory, baseline, or integrity
+    /// refusal. The caller tree and tracked baseline are never mutation roots.
+    pub fn execute_kill(&self, root: &Path) -> Result<KillRun, KillError> {
+        self.kill_profile
+            .runner
+            .run(root, self.policy.ignore(), Some(self.kill_profile.floor))
     }
 
     /// Complete versioned floor state.
