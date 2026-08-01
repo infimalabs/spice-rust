@@ -15,7 +15,7 @@ mod record;
 
 pub use acp::{PermissionRequestError, permission_request};
 pub use launch::{
-    Effort, Launch, McpServer, POST_TOOL_HOOK_EVENT, POST_TOOL_HOOK_STATUS_MESSAGE,
+    Attribution, Effort, Launch, McpServer, POST_TOOL_HOOK_EVENT, POST_TOOL_HOOK_STATUS_MESSAGE,
     POST_TOOL_HOOK_TIMEOUT_SECONDS, SteeringHook, SteeringKey,
 };
 pub use record::{
