@@ -13,6 +13,8 @@ pub mod handout;
 pub mod next;
 pub mod oops;
 pub mod phase;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod possession;
 pub mod task;
 pub mod urgency;
 
