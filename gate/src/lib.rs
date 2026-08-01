@@ -12,6 +12,7 @@
 //! otherwise.
 
 pub mod jurisdiction;
+pub mod kill;
 pub mod measure;
 pub mod message;
 pub mod names;
@@ -20,6 +21,11 @@ pub mod verdict;
 
 pub use jurisdiction::{
     Admission, Entry, Ignore, IgnoreError, Jurisdiction, Rule, Shape, WalkError,
+};
+pub use kill::{
+    AttemptEvidence, AttemptKind, Kill, KillBounds, KillError, KillRun, MutantDisposition,
+    MutantEvidence, MutationBattery, MutationInventory, MutationMovement, MutationTool,
+    OutcomeEvidence, ProcessCompletion, ProcessEvidence, RateError, StreamEvidence, SurvivorRate,
 };
 pub use measure::{
     Bounds, MeasureError, Measurement, Metric, MetricError, Parser, Policy, measurement_digest,
