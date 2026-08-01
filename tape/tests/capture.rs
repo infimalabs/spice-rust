@@ -20,6 +20,30 @@ use tape::{Index, Locus, Refusal, Seal, Tape};
 const VERBATIM: &[u8] = b"prose\x00\xff\xfe line\ntool call\r\n{\"partial\": ";
 
 #[test]
+fn the_observer_door_never_creates_or_follows_a_tape() {
+    let scratch = Scratch::new("observer-door");
+    let missing = scratch.path().join("missing");
+    assert!(Tape::open_existing(&missing).is_err());
+    assert!(!missing.exists(), "opening a missing tape is read-only");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+
+        let real = scratch.path().join("real");
+        fs::create_dir(&real).expect("real tape directory exists");
+        let alias = scratch.path().join("alias");
+        symlink(&real, &alias).expect("fixture symlink exists");
+        assert!(
+            Tape::open_existing(&alias).is_err(),
+            "an observer does not cross a selected symlink"
+        );
+    }
+
+    scratch.remove();
+}
+
+#[test]
 fn an_append_is_readable_before_anything_interprets_it() {
     let scratch = Scratch::new("append");
     let tape = Tape::open(scratch.path()).expect("tape opens");

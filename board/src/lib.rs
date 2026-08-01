@@ -29,19 +29,19 @@ pub use urgency::Urgency;
 /// The schema identity comes from `journal`, completeness is stated with the
 /// shared fold cursor, and rows are checked [`Entry`] values. This is a
 /// disposable answer; none of it can update authority.
-#[derive(Clone, Copy, Debug)]
-pub struct Snapshot<'a> {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Snapshot {
     schema_version: u32,
     cursor: fold::Cursor,
-    entries: &'a [Entry],
+    entries: Vec<Entry>,
 }
 
-impl<'a> Snapshot<'a> {
+impl Snapshot {
     /// Admit a snapshot only for the journal schema this build owns.
     pub fn new(
         schema_version: u32,
         cursor: fold::Cursor,
-        entries: &'a [Entry],
+        entries: Vec<Entry>,
     ) -> Result<Self, SnapshotRefusal> {
         if schema_version != journal::SCHEMA_VERSION {
             return Err(SnapshotRefusal {
@@ -56,22 +56,85 @@ impl<'a> Snapshot<'a> {
         })
     }
 
+    /// Reconstruct one owned board answer from authoritative journal heads.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn read(journal: &journal::Journal) -> Result<Self, SnapshotReadError> {
+        let (cursor, heads) = journal
+            .read(|read| Ok((read.cursor()?, read.task_heads()?)))
+            .map_err(SnapshotReadError::Journal)?;
+        let entries = heads
+            .into_iter()
+            .map(|heads| {
+                let (statement, workflow, claim, lease) = heads.into_bodies();
+                let handle = statement.handle.clone();
+                Entry::new(statement, workflow, claim, lease)
+                    .map_err(|source| SnapshotReadError::Task { handle, source })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let cursor = cursor.map_or_else(fold::Cursor::empty, fold::Cursor::at);
+        Ok(Self {
+            schema_version: journal::SCHEMA_VERSION,
+            cursor,
+            entries,
+        })
+    }
+
     /// Journal schema that supplied the heads.
     #[must_use]
-    pub const fn schema_version(self) -> u32 {
+    pub const fn schema_version(&self) -> u32 {
         self.schema_version
     }
 
     /// Greatest journal position covered by this answer.
     #[must_use]
-    pub const fn cursor(self) -> fold::Cursor {
+    pub const fn cursor(&self) -> fold::Cursor {
         self.cursor
     }
 
     /// Checked current head bundles.
     #[must_use]
-    pub const fn entries(self) -> &'a [Entry] {
-        self.entries
+    pub fn entries(&self) -> &[Entry] {
+        &self.entries
+    }
+}
+
+/// Why authoritative journal heads could not become one board snapshot.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+pub enum SnapshotReadError {
+    /// The journal could not return one complete checked head answer.
+    Journal(journal::GuardError),
+    /// One storage-valid head bundle violated board policy.
+    Task {
+        handle: wire::TaskHandle,
+        source: TaskError,
+    },
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl fmt::Display for SnapshotReadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Journal(error) => {
+                write!(formatter, "board snapshot journal read failed: {error}")
+            }
+            Self::Task { handle, source } => {
+                write!(
+                    formatter,
+                    "board snapshot task {handle} is invalid: {source}"
+                )
+            }
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl std::error::Error for SnapshotReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Journal(error) => Some(error),
+            Self::Task { source, .. } => Some(source),
+        }
     }
 }
 

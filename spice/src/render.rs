@@ -1,9 +1,9 @@
-//! Rendering one typed outcome at the binary rim.
+//! Rendering typed command results at the binary rim.
 //!
-//! A command produces one outcome. Text and `--json` are two renderings of
-//! that one value, not two behaviours: the same outcome speaks on the same
-//! stream and exits with the same code either way, and only the bytes differ.
-//! The flag therefore selects a form, never a destination and never a result.
+//! A command produces one result. Text and `--json` are two renderings of that
+//! one value, not two behaviours: the same result speaks on the same stream
+//! and exits with the same code either way, and only the bytes differ. The flag
+//! therefore selects a form, never a destination and never a result.
 //!
 //! Which stream an outcome speaks on is a property of the outcome, not of the
 //! form. A reply is the answer a caller pipes, so it goes to standard output;
@@ -20,6 +20,7 @@
 
 use std::io::{self, Write};
 
+use listen::StreamOutcome;
 use wire::Outcome;
 
 /// Which rendering of an outcome the caller asked for.
@@ -66,10 +67,9 @@ impl Rendering {
 
 /// Renders one outcome in the requested form.
 ///
-/// The body is `()` because no leaf lands one yet. Rendering a body generic
-/// over `Serialize` today would oblige this binary to name serde itself for a
-/// type that is always the unit, so the generality arrives with the first body
-/// that needs it.
+/// The body remains `()` for the envelope-based command leaves. Transcript
+/// streams use [`render_stream`] because each successful wake is the stream
+/// document itself rather than a reply envelope.
 ///
 /// # Errors
 ///
@@ -84,6 +84,18 @@ pub fn render(outcome: &Outcome<()>, form: Form) -> Result<Rendering, String> {
     };
     Ok(Rendering {
         stream: stream(outcome),
+        document,
+    })
+}
+
+/// Renders one successful transcript report in the requested form.
+pub fn render_stream(outcome: &StreamOutcome, form: Form) -> Result<Rendering, String> {
+    let document = match form {
+        Form::Text => terminated(outcome.to_string().into_bytes()),
+        Form::Json => line(wire::encode(outcome).map_err(|error| error.to_string())?),
+    };
+    Ok(Rendering {
+        stream: Stream::Out,
         document,
     })
 }
@@ -107,6 +119,13 @@ fn line(mut document: Vec<u8>) -> Vec<u8> {
     document
 }
 
+fn terminated(mut document: Vec<u8>) -> Vec<u8> {
+    if document.last() != Some(&b'\n') {
+        document.push(b'\n');
+    }
+    document
+}
+
 /// The one sentence an outcome renders to, when it has one.
 ///
 /// A refusal and a fault are each one sentence naming what happened and what
@@ -124,13 +143,13 @@ fn text(outcome: &Outcome<()>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, Seq};
+    use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
     use super::{Form, Stream, render};
 
     fn reply() -> Outcome<()> {
         Outcome::Reply(Reply {
-            position: ReplyPosition::Snapshot(Seq::new(7).expect("non-zero position")),
+            position: ReplyPosition::Direct {},
             body: (),
         })
     }
@@ -168,6 +187,29 @@ mod tests {
 
             assert_eq!(decoded, outcome);
         }
+    }
+
+    #[test]
+    fn a_direct_reply_has_the_same_typed_position_in_both_renderings() {
+        let outcome = reply();
+
+        let text = render(&outcome, Form::Text).expect("direct reply renders as text");
+        assert_eq!(text.stream, Stream::Out);
+        assert!(
+            text.document.is_empty(),
+            "the unit body has no prose format"
+        );
+
+        let json = render(&outcome, Form::Json).expect("direct reply renders as json");
+        let decoded: Outcome<()> =
+            wire::decode(&json.document).expect("json rendering decodes as its typed outcome");
+        assert_eq!(decoded, outcome);
+        assert!(
+            String::from_utf8(json.document)
+                .expect("wire JSON is utf8")
+                .contains("\"direct\":{}"),
+            "the JSON rendering states that the journal position is directly absent",
+        );
     }
 
     /// The form selects bytes and never a stream.

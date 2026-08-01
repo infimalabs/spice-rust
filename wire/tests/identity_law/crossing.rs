@@ -622,6 +622,15 @@ fn cover_refusal_frames(covered: &mut BTreeSet<String>) {
 fn cover_reply_frames(covered: &mut BTreeSet<String>) {
     law(
         covered,
+        "ReplyPosition",
+        &[
+            committed(48213),
+            ReplyPosition::Snapshot(seq(48213)),
+            ReplyPosition::Direct {},
+        ],
+    );
+    law(
+        covered,
         "Reply",
         &[
             Reply {
@@ -630,6 +639,10 @@ fn cover_reply_frames(covered: &mut BTreeSet<String>) {
             },
             Reply {
                 position: ReplyPosition::Snapshot(seq(48213)),
+                body: body("checked"),
+            },
+            Reply {
+                position: ReplyPosition::Direct {},
                 body: body("checked"),
             },
         ],
@@ -641,6 +654,10 @@ fn cover_reply_frames(covered: &mut BTreeSet<String>) {
             Outcome::Reply(Reply {
                 position: committed(48213),
                 body: body("checked"),
+            }),
+            Outcome::Reply(Reply {
+                position: ReplyPosition::Direct {},
+                body: body("checked directly"),
             }),
             Outcome::Refusal(stale_witness()),
         ],
@@ -656,6 +673,15 @@ fn cover_reply_frames(covered: &mut BTreeSet<String>) {
                 outcome: Outcome::Reply(Reply {
                     position: committed(48213),
                     body: body("checked"),
+                }),
+            },
+            Response {
+                v: WireVersion(1),
+                id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c4"),
+                epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
+                outcome: Outcome::Reply(Reply {
+                    position: ReplyPosition::Direct {},
+                    body: body("checked directly"),
                 }),
             },
             Response {

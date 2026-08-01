@@ -15,5 +15,5 @@ if [ -n "${SPICE_PROOF-}" ]; then
 else
 	SPICE_PROOF="${SPICE_LANE:?spice lane}"
 	export SPICE_PROOF
-	exec spice agent run -- "$@"
+	exec spice run -- "$@"
 fi

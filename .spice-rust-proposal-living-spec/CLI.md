@@ -28,6 +28,12 @@ not of the rendering: a `Reply` answers on stdout, a `Refusal` and a
 `Fault` speak on stderr, and `--json` changes the bytes on that stream
 without moving them to the other one.
 
+A successful daemonless leaf with no journal access carries the direct reply
+position, encoded exactly as `direct: {}`. It never opens the journal merely
+to borrow a cursor and never fabricates a sequence. Reads carry their actual
+snapshot cursor, while resident commands and recovery carry their committed
+range.
+
 Three independent labels state hermetic posture:
 
 | Label | Contract |

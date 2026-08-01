@@ -171,6 +171,18 @@ fn installation_places_every_stage_and_repeats_cleanly() {
     scratch.remove();
 }
 
+#[test]
+fn the_entry_stage_invokes_the_registered_rust_run_leaf() {
+    let entry = STAGES
+        .iter()
+        .find(|stage| stage.path() == "entry.sh")
+        .expect("the entry stage is registered")
+        .bytes();
+
+    assert!(entry.contains("exec spice run -- \"$@\""));
+    assert!(!entry.contains("spice agent run"));
+}
+
 /// Proof answers from the environment the caller hands in, so the same call
 /// runs identically in a test and under a shell that really did reexec.
 #[test]
