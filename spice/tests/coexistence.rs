@@ -284,6 +284,7 @@ fn a_rust_root_linked_to_python_authority_refuses_every_state_entry_point() {
         ["--json", "up"],
         ["--json", "version"],
         ["--json", "down"],
+        ["--json", "canvas"],
         ["--json", "lock"],
         ["--json", "proof"],
     ] {
@@ -304,7 +305,7 @@ fn linked_state_components_refuse_before_any_outside_mutation() {
         ("locks", "lock"),
         ("proof", "proof"),
         ("resident", "down"),
-        ("canvas", "down"),
+        ("canvas", "canvas"),
         ("degraded", "up"),
         ("tape", "up"),
     ] {
