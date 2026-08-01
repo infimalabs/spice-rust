@@ -1,5 +1,6 @@
 //! The fact envelope: version, position, instant, attribution, and cause.
 
+use std::cmp::Ordering;
 use std::fmt;
 use std::num::NonZeroU64;
 use std::str::FromStr;
@@ -72,7 +73,7 @@ impl fmt::Display for Seq {
 ///
 /// The resident derives this from the accepted capability; client text cannot
 /// choose it.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Actor {
     /// The operator acting directly.
     Operator,
@@ -85,6 +86,32 @@ pub enum Actor {
 impl Actor {
     /// Prefix introducing a lane principal.
     const LANE: &'static str = "lane:";
+}
+
+impl Ord for Actor {
+    /// Rank follows the crossing spelling, not the order the variants are
+    /// declared in.
+    ///
+    /// An actor crosses as the text [`fmt::Display`] writes, and deriving this
+    /// would rank by variant position instead: `Operator` is declared first
+    /// but `lane:` sorts before `operator`, so a derived order disagrees with
+    /// the bytes for every lane-versus-operator pair. Two orders for one value
+    /// is the same defect as two spellings for one value, and a ranked list
+    /// built from either one would not match the other.
+    ///
+    /// Comparing the rendered spelling costs an allocation. That is deliberate:
+    /// the invariant is stated here rather than re-derived from the knowledge
+    /// that variant order happens to match lexical order, which is exactly the
+    /// assumption that was already false.
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.to_string().cmp(&other.to_string())
+    }
+}
+
+impl PartialOrd for Actor {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 /// Text that does not name a principal.
