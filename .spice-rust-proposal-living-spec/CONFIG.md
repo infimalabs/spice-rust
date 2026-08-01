@@ -81,7 +81,7 @@ full path.
 | File | Carries | Written by |
 | --- | --- | --- |
 | spice.toml (tracked) | policy intent: consent, tastes, gate, lanes, vendors | operator commits only |
-| config.toml (repo-local) | the named non-policy set: local paths, local posture | `spice config KEY VALUE` |
+| config.toml (repo-local) | the named non-policy set: local paths, local posture | `spice config KEY VALUE` preview plus exact `--apply=<digest>` |
 | baseline.toml (tracked) | versioned ratchet state: inherited measures, kill rate | `spice install --apply`; moved by operator commits |
 
 Flags win over all three. Policy keys refuse `spice config` and name

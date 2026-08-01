@@ -59,8 +59,8 @@ operator authorizes cutover.
 
 ## Rust contracts
 
-The registry contains 63 command leaves. Twenty-four have executable dispatch,
-so current executable coverage is 24/63, or 38.1 percent. Completed domain
+The registry contains 63 command leaves. Thirty-five have executable dispatch,
+so current executable coverage is 35/63, or 55.6 percent. Completed domain
 libraries do not count as landed command surfaces.
 
 ### Landed
@@ -89,6 +89,17 @@ libraries do not count as landed command surfaces.
 - `consent allow`
 - `consent deny`
 - `consent policy`
+- `trust`
+- `trust grant`
+- `trust revoke`
+- `backup`
+- `restore`
+- `journal`
+- `journal replay`
+- `journal reindex`
+- `journal verify`
+- `fold`
+- `thread`
 
 The local command group retains the Python-first ownership boundary described
 above: plain `install` is a side-effect-free plan, and only an exact
@@ -140,20 +151,6 @@ read the Python authority under `<git-common>/.spice`.
 - `taste`
 - `taste add`
 - `taste drop`
-- `trust`
-- `trust grant`
-- `trust revoke`
-
-### `JOURNAL-1kJQlFfS`
-
-- `backup`
-- `restore`
-- `journal`
-- `journal replay`
-- `journal reindex`
-- `journal verify`
-- `fold`
-- `thread`
 
 ### `PUBLISH-1kJQlGb0`
 
@@ -190,8 +187,8 @@ the registry exposes them even though argparse requires a child action.
 - `config judge`: tracked `taste` policy; `POLICY-1kJQlFB6`.
 - `config personality`: typed `config` and vendor launch; `LOCAL-1kJQlG6b`.
 - `config say`: typed canvas speech; `SPEECH-1kJQnmkd`.
-- `config set`: landed typed machine-local writes with atomic replacement and
-  digest receipts; tracked task and policy authority remains read-only.
+- `config set`: landed typed machine-local preview plus exact digest apply with
+  atomic replacement; tracked task and policy authority remains read-only.
 - `config show`: landed Rust `config`.
 - `config system`: landed typed `config` provenance.
 - `config trust`: namespace; Rust `trust`; `POLICY-1kJQlFB6`.

@@ -26,6 +26,10 @@ mod gate_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod install_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod journal_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod journal_lock;
+#[cfg(not(target_arch = "wasm32"))]
 mod lock_command;
 mod proof_command;
 #[cfg(not(target_arch = "wasm32"))]
@@ -35,6 +39,8 @@ mod render;
 mod resident;
 #[cfg(not(target_arch = "wasm32"))]
 mod restore_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod trust_command;
 
 use render::Form;
 
@@ -136,6 +142,14 @@ fn main() {
                 deliver_with_code(&outcome, form, code)
             }
         },
+        ["backup"] => deliver(&journal_command::backup(leaf), form),
+        ["restore"] => deliver(&restore_command::restore(leaf), form),
+        ["journal"] => deliver(&journal_command::report(), form),
+        ["journal", "replay"] => deliver(&journal_command::replay(leaf), form),
+        ["journal", "reindex"] => deliver(&journal_command::reindex(), form),
+        ["journal", "verify"] => deliver(&journal_command::verify(), form),
+        ["fold"] => deliver(&journal_command::folds(), form),
+        ["thread"] => deliver(&journal_command::thread(leaf), form),
         ["version"] => deliver(&version_outcome(), form),
         ["release", "notes"] => deliver(&release_command::notes(leaf), form),
         ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
@@ -143,6 +157,9 @@ fn main() {
             release_command::RunResult::Plan(outcome) => deliver(&outcome, form),
             release_command::RunResult::Published(outcome) => deliver(&outcome, form),
         },
+        ["trust"] => deliver(&trust_command::report(contract), form),
+        ["trust", "grant"] => deliver(&trust_command::rule(leaf, contract, true), form),
+        ["trust", "revoke"] => deliver(&trust_command::rule(leaf, contract, false), form),
         _ => {}
     }
     #[cfg(target_arch = "wasm32")]

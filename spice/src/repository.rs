@@ -22,6 +22,7 @@ pub struct StatePaths {
     runtime: PathBuf,
     data: PathBuf,
     journal: PathBuf,
+    folds: PathBuf,
     locks: PathBuf,
     proof: PathBuf,
     resident: PathBuf,
@@ -35,6 +36,7 @@ impl StatePaths {
         let data = runtime.join("data");
         Self {
             journal: data.join("spicejournal.sqlite3"),
+            folds: data.join("spicefolds.sqlite3"),
             locks: runtime.join("locks"),
             proof: runtime.join("proof"),
             resident: runtime.join("resident"),
@@ -62,6 +64,12 @@ impl StatePaths {
     #[must_use]
     pub fn journal(&self) -> &Path {
         &self.journal
+    }
+
+    /// Disposable fold materialization database.
+    #[must_use]
+    pub fn folds(&self) -> &Path {
+        &self.folds
     }
 
     /// Parent of daemonless resource locks.
@@ -173,7 +181,12 @@ impl Repository {
         ] {
             admit(path, StateShape::Directory)?;
         }
-        for path in [paths.journal(), paths.resident(), paths.canvas()] {
+        for path in [
+            paths.journal(),
+            paths.folds(),
+            paths.resident(),
+            paths.canvas(),
+        ] {
             admit(path, StateShape::RegularFile)?;
         }
         Ok(paths)
@@ -518,6 +531,10 @@ mod tests {
             state.journal(),
             common.join(".spice-rust/data/spicejournal.sqlite3")
         );
+        assert_eq!(
+            state.folds(),
+            common.join(".spice-rust/data/spicefolds.sqlite3")
+        );
         assert_eq!(state.locks(), common.join(".spice-rust/locks"));
         assert_eq!(state.proof(), common.join(".spice-rust/proof"));
         assert_eq!(state.resident(), common.join(".spice-rust/resident"));
@@ -614,6 +631,7 @@ mod tests {
             ("runtime", Path::new("")),
             ("data", Path::new("data")),
             ("journal", Path::new("data/spicejournal.sqlite3")),
+            ("folds", Path::new("data/spicefolds.sqlite3")),
             ("locks", Path::new("locks")),
             ("proof", Path::new("proof")),
             ("resident", Path::new("resident")),
@@ -670,6 +688,7 @@ mod tests {
 
         for (label, relative) in [
             ("journal", Path::new("data/spicejournal.sqlite3")),
+            ("folds", Path::new("data/spicefolds.sqlite3")),
             ("resident", Path::new("resident")),
             ("canvas", Path::new("canvas")),
         ] {

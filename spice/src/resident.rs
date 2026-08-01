@@ -12,11 +12,12 @@ use spice::repository::Repository;
 use tokio::sync::oneshot;
 use wire::intent::{
     CommandAnswer, ConsentAnswer, ConsentDecide, Intent, RecognitionAnswer, ReleasePublish,
-    StateAnswer,
+    StateAnswer, TrustAnswer, TrustRef,
 };
 use wire::{
     Actor, CanonicalUuid, Command, CommandKind, Fault, FaultClass, Instant, Outcome, Producer,
-    Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState, Seq, SeqRange, Witness,
+    Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState, Seq, SeqRange, TrustHead,
+    TrustState, Witness,
 };
 
 type CommandResult<T> = Result<T, Outcome<()>>;
@@ -144,9 +145,7 @@ pub(crate) fn up() -> Outcome<()> {
 fn up_from(current: &Path) -> Outcome<()> {
     let repository = match Repository::discover(current) {
         Ok(repository) => repository,
-        Err(error) => {
-            return environment_fault("resident::git-unavailable", &error.to_string());
-        }
+        Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
     };
     let configuration = match spice::config::load_coexisting_repository(&repository, &[]) {
         Ok(configuration) => configuration,
@@ -156,6 +155,10 @@ fn up_from(current: &Path) -> Outcome<()> {
     let paths = match RuntimePaths::from_repository(&repository) {
         Ok(paths) => paths,
         Err(outcome) => return outcome,
+    };
+    let trust_surface = match crate::trust_command::Surface::load(&repository) {
+        Ok(surface) => surface,
+        Err(error) => return crate::trust_command::load_failure(&error),
     };
     if let Err(error) = fs::create_dir_all(&paths.data) {
         return environment_fault("resident::data-unavailable", &error.to_string());
@@ -181,7 +184,7 @@ fn up_from(current: &Path) -> Outcome<()> {
         Ok(bus) => bus,
         Err(error) => return store_fault("bus::start-failed", &error.to_string()),
     };
-    let startup = match commit_startup(&bus, epoch, migration) {
+    let startup = match commit_startup(&bus, &repository, &trust_surface, epoch, migration) {
         Ok(startup) => startup,
         Err(outcome) => return outcome,
     };
@@ -193,6 +196,7 @@ fn up_from(current: &Path) -> Outcome<()> {
     {
         Ok(runtime) => runtime.block_on(run_surface(
             &bus,
+            &repository,
             &paths,
             epoch,
             &mut seats,
@@ -328,6 +332,8 @@ struct StartupCommit {
 
 fn commit_startup(
     bus: &Bus,
+    repository: &Repository,
+    surface: &crate::trust_command::Surface,
     epoch: CanonicalUuid,
     migration: Option<journal::Migration>,
 ) -> CommandResult<StartupCommit> {
@@ -355,6 +361,48 @@ fn commit_startup(
         cause = FactCause::Existing(seq(committed.last()));
     }
 
+    let trust = bus
+        .trust_head(surface.digest())
+        .map_err(|error| store_fault("trust::head-unreadable", &error.to_string()))?;
+    if trust.is_none() {
+        let snapshot = bus
+            .fact_snapshot()
+            .map_err(|error| store_fault("trust::journal-unreadable", &error.to_string()))?;
+        let previous = latest_surface_digest(&snapshot)?;
+        let mut pending = write(Actor::Spice, epoch, Producer::CommandDoor)?;
+        let guarded_repository = repository.clone();
+        let guarded_surface = surface.clone();
+        pending.guard(JournalGuard::new(move |read| {
+            let current = crate::trust_command::Surface::load(&guarded_repository)
+                .map_err(|_| GuardError::refused("trust::surface-moved"))?;
+            if current != guarded_surface {
+                return Err(GuardError::refused("trust::surface-moved"));
+            }
+            if read.trust_head(guarded_surface.digest())?.is_some() {
+                return Err(GuardError::refused("trust::digest-already-pended"));
+            }
+            Ok(())
+        }));
+        let digest = surface.digest().clone();
+        let pended = pending
+            .fact(
+                wire::body::TrustPended {
+                    surface: crate::trust_command::SURFACE_NAME.to_owned(),
+                    digest: digest.clone(),
+                    previous,
+                },
+                cause,
+            )
+            .map_err(|error| store_fault("trust::fact-invalid", &error.to_string()))?;
+        pending.trust_head(pended, move |_| TrustHead {
+            digest,
+            state: TrustState::Pended,
+        });
+        let committed = commit(bus, pending)?;
+        first.get_or_insert_with(|| committed.first());
+        cause = FactCause::Existing(seq(committed.last()));
+    }
+
     let mut write = write(Actor::Spice, epoch, Producer::CommandDoor)?;
     let seated = write
         .fact(wire::body::UpSeated { epoch }, cause)
@@ -371,8 +419,27 @@ fn commit_startup(
     })
 }
 
+fn latest_surface_digest(snapshot: &journal::FactSnapshot) -> CommandResult<Option<wire::Digest>> {
+    for envelope in snapshot
+        .facts()
+        .iter()
+        .rev()
+        .filter(|envelope| envelope.fact.kind() == wire::FactKind::TrustPended)
+    {
+        let bytes = wire::encode(&envelope.fact)
+            .map_err(|error| store_fault("trust::fact-invalid", &error.to_string()))?;
+        let fact = wire::decode::<wire::Fact<wire::body::TrustPended>>(&bytes)
+            .map_err(|error| store_fault("trust::fact-invalid", &error.to_string()))?;
+        if fact.body.surface == crate::trust_command::SURFACE_NAME {
+            return Ok(Some(fact.body.digest));
+        }
+    }
+    Ok(None)
+}
+
 async fn run_surface(
     bus: &Bus,
+    repository: &Repository,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &mut Seats,
@@ -419,7 +486,15 @@ async fn run_surface(
             }
         };
         let dark = is_dark_command(request.command());
-        let outcome = dispatch_command(bus, paths, epoch, seats, consent_policy, request.command());
+        let outcome = dispatch_command(
+            bus,
+            repository,
+            paths,
+            epoch,
+            seats,
+            consent_policy,
+            request.command(),
+        );
         let reached_dark = dark && matches!(outcome, Outcome::Reply(_));
         let response = request.respond(outcome);
         if reached_dark {
@@ -448,6 +523,7 @@ fn is_dark_command(command: &wire::AdmittedCommand) -> bool {
 
 fn dispatch_command(
     bus: &Bus,
+    repository: &Repository,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &mut Seats,
@@ -469,6 +545,9 @@ fn dispatch_command(
         }
         (CommandKind::ConsentDecide, Intent::ConsentDecide(decide)) => {
             dispatch_consent_decide(bus, epoch, consent_policy, command, decide)
+        }
+        (CommandKind::TrustGrant | CommandKind::TrustRevoke, Intent::TrustRef(reference)) => {
+            dispatch_trust_rule(bus, repository, epoch, command, reference)
         }
         _ => Outcome::Refusal(Refusal {
             reason: "command::handler-not-landed".to_owned(),
@@ -658,6 +737,172 @@ fn dispatch_consent_decide(
     }
 }
 
+fn dispatch_trust_rule(
+    bus: &Bus,
+    repository: &Repository,
+    epoch: CanonicalUuid,
+    command: &wire::AdmittedCommand,
+    reference: &TrustRef,
+) -> Outcome<CommandAnswer> {
+    if !matches!(command.actor(), Actor::Operator) {
+        return Outcome::Refusal(Refusal {
+            reason: "command::authority".to_owned(),
+            witness: Some("principal".to_owned()),
+            expected: Some("operator".to_owned()),
+            observed: Some(command.actor().to_string()),
+            remedy: "reconnect with the current operator capability".to_owned(),
+        });
+    }
+    let (from, to) = match command.kind() {
+        CommandKind::TrustGrant => (TrustState::Pended, TrustState::Granted),
+        CommandKind::TrustRevoke => (TrustState::Granted, TrustState::Revoked),
+        _ => unreachable!("trust dispatcher receives only grant or revoke"),
+    };
+    let surface = match crate::trust_command::Surface::load(repository) {
+        Ok(surface) => surface,
+        Err(error) => return crate::trust_command::load_failure(&error),
+    };
+    if reference.digest != *surface.digest() {
+        return trust_refusal(
+            "trust::digest-not-current",
+            Some(surface.digest().to_string()),
+            Some(reference.digest.to_string()),
+            "run spice trust and rule on its exact current digest",
+        );
+    }
+    let head = match bus.trust_head(&reference.digest) {
+        Ok(Some(head)) => head,
+        Ok(None) => {
+            return trust_refusal(
+                "trust::digest-unknown",
+                Some(reference.digest.to_string()),
+                None,
+                "restart the resident to pend the exact current digest before ruling",
+            );
+        }
+        Err(error) => {
+            return typed_store_fault("trust::head-unreadable", &error.to_string());
+        }
+    };
+    if head.body().state != from {
+        return trust_refusal(
+            "trust::standing-moved",
+            Some(format!("{from:?}").to_lowercase()),
+            Some(format!("{:?}", head.body().state).to_lowercase()),
+            "re-read the current trust report before issuing another ruling",
+        );
+    }
+    let expected = Witness::Trust {
+        digest: reference.digest.clone(),
+        standing: from,
+    };
+    if command.expected() != [expected] {
+        return trust_refusal(
+            "trust::witness-moved",
+            Some(format!("{}:{from:?}", reference.digest).to_lowercase()),
+            Some(format!("{:?}", command.expected())),
+            "re-read the current trust head and retry its exact witness",
+        );
+    }
+    let residency = match bus.residency_head() {
+        Ok(Some(residency)) => residency,
+        Ok(None) => return typed_store_fault("resident::head-missing", "residency head is absent"),
+        Err(error) => {
+            return typed_store_fault("resident::head-unreadable", &error.to_string());
+        }
+    };
+    if command.epoch() != epoch || residency.body().epoch != epoch {
+        return typed_protocol_fault(
+            "resident::epoch-moved",
+            &format!(
+                "request {}, resident {}, durable head {}",
+                command.epoch(),
+                epoch,
+                residency.body().epoch
+            ),
+        );
+    }
+
+    let mut proposal = match write(command.actor().clone(), epoch, Producer::CommandDoor) {
+        Ok(proposal) => proposal,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let guarded_repository = repository.clone();
+    let guarded_surface = surface.clone();
+    let guarded_digest = reference.digest.clone();
+    proposal.guard(JournalGuard::new(move |read| {
+        let current = crate::trust_command::Surface::load(&guarded_repository)
+            .map_err(|_| GuardError::refused("trust::surface-moved"))?;
+        if current != guarded_surface {
+            return Err(GuardError::refused("trust::surface-moved"));
+        }
+        let current = read
+            .trust_head(&guarded_digest)?
+            .ok_or_else(|| GuardError::refused("trust::digest-unknown"))?;
+        if current.body().state != from {
+            return Err(GuardError::refused("trust::standing-moved"));
+        }
+        let residency = read
+            .residency_head()?
+            .ok_or_else(|| GuardError::refused("resident::head-missing"))?;
+        if residency.body().epoch != epoch {
+            return Err(GuardError::refused("resident::epoch-moved"));
+        }
+        Ok(())
+    }));
+    let fact = match command.kind() {
+        CommandKind::TrustGrant => proposal.fact(
+            wire::body::TrustGranted {
+                surface: crate::trust_command::SURFACE_NAME.to_owned(),
+                digest: reference.digest.clone(),
+            },
+            FactCause::Existing(head.position()),
+        ),
+        CommandKind::TrustRevoke => proposal.fact(
+            wire::body::TrustRevoked {
+                surface: crate::trust_command::SURFACE_NAME.to_owned(),
+                digest: reference.digest.clone(),
+            },
+            FactCause::Existing(head.position()),
+        ),
+        _ => unreachable!("trust dispatcher receives only grant or revoke"),
+    };
+    let fact = match fact {
+        Ok(fact) => fact,
+        Err(error) => return typed_store_fault("trust::fact-invalid", &error.to_string()),
+    };
+    let digest = reference.digest.clone();
+    proposal.trust_head(fact, move |_| TrustHead { digest, state: to });
+    let answer = TrustAnswer {
+        digest: reference.digest.clone(),
+        standing: to,
+    };
+    if let Err(error) = proposal.command_result(
+        Command {
+            v: wire::WireVersion::CURRENT,
+            id: command.id(),
+            epoch: command.epoch(),
+            kind: command.kind(),
+            expected: command.expected().to_vec(),
+            body: reference.clone(),
+        },
+        epoch,
+        answer.clone(),
+    ) {
+        return typed_store_fault("trust::receipt-invalid", &error.to_string());
+    }
+    match commit(bus, proposal) {
+        Ok(committed) => Outcome::Reply(Reply {
+            position: ReplyPosition::Committed(SeqRange {
+                first: seq(committed.first()),
+                last: seq(committed.last()),
+            }),
+            body: CommandAnswer::Trust(answer),
+        }),
+        Err(outcome) => typed_outcome(outcome),
+    }
+}
+
 enum ConsentTerminal {
     Granted(wire::body::ConsentGranted),
     Denied(wire::body::ConsentDenied),
@@ -690,6 +935,21 @@ fn consent_not_held(request: CanonicalUuid) -> Outcome<CommandAnswer> {
         expected: Some("a request in the current consent queue".to_owned()),
         observed: Some("absent or terminal".to_owned()),
         remedy: "re-read the consent queue and decide a request that is still pending".to_owned(),
+    })
+}
+
+fn trust_refusal(
+    reason: &str,
+    expected: Option<String>,
+    observed: Option<String>,
+    remedy: &str,
+) -> Outcome<CommandAnswer> {
+    Outcome::Refusal(Refusal {
+        reason: reason.to_owned(),
+        witness: Some("executable-policy".to_owned()),
+        expected,
+        observed,
+        remedy: remedy.to_owned(),
     })
 }
 
@@ -1176,10 +1436,13 @@ mod tests {
     #[test]
     fn cooperative_and_forced_groups_drive_observed_counts_and_residue() {
         let (root, paths) = resident_fixture("groups");
+        let repository = Repository::discover(&root).expect("fixture repository resolves");
+        let surface =
+            crate::trust_command::Surface::load(&repository).expect("fixture trust surface loads");
         let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
         let bus = Bus::start(journal).expect("fixture bus starts");
         let epoch = test_uuid(1);
-        commit_startup(&bus, epoch, None).expect("resident seats");
+        commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
         let mut seats = Seats::new();
 
         let drained_lane = test_uuid(2);
@@ -1290,10 +1553,14 @@ mod tests {
     #[test]
     fn a_post_seated_surface_failure_compensates_to_verified_dark() {
         let (root, paths) = resident_fixture("compensation");
+        let repository = Repository::discover(&root).expect("fixture repository resolves");
+        let surface =
+            crate::trust_command::Surface::load(&repository).expect("fixture trust surface loads");
         let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
         let bus = Bus::start(journal).expect("fixture bus starts");
         let epoch = test_uuid(7);
-        let startup = commit_startup(&bus, epoch, None).expect("resident seats");
+        let startup =
+            commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
         let original = environment_fault("canvas::fixture-failed", "after UpSeated");
 
         let settled = settle_surface(

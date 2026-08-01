@@ -116,7 +116,7 @@ fn every_contract_has_an_executable_succession_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 24);
+    assert_eq!(landed, 35);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
     assert_eq!(landing(&["lock", "run"]), Landing::Landed);
@@ -126,6 +126,21 @@ fn every_contract_has_an_executable_succession_disposition() {
     assert_eq!(landing(&["consent", "allow"]), Landing::Landed);
     assert_eq!(landing(&["consent", "deny"]), Landing::Landed);
     assert_eq!(landing(&["consent", "policy"]), Landing::Landed);
+    assert_eq!(landing(&["trust"]), Landing::Landed);
+    assert_eq!(landing(&["trust", "grant"]), Landing::Landed);
+    assert_eq!(landing(&["trust", "revoke"]), Landing::Landed);
+    for path in [
+        &["backup"][..],
+        &["restore"][..],
+        &["journal"][..],
+        &["journal", "replay"][..],
+        &["journal", "reindex"][..],
+        &["journal", "verify"][..],
+        &["fold"][..],
+        &["thread"][..],
+    ] {
+        assert_eq!(landing(path), Landing::Landed, "{path:?}");
+    }
 
     let owning_tasks = contracts()
         .iter()
@@ -139,7 +154,6 @@ fn every_contract_has_an_executable_succession_disposition() {
         BTreeSet::from([
             "BOARD-1kJQlDDt",
             "COORDIN-1kJQlDjc",
-            "JOURNAL-1kJQlFfS",
             "POLICY-1kJQlFB6",
             "PUBLISH-1kJQlGb0",
         ])
@@ -413,6 +427,7 @@ fn contract_syntax_drives_argument_registration() {
         &["spice", "restore", "verify", "bundle"],
         &["spice", "run", "--", "cargo", "test", "--locked"],
         &["spice", "config", "key", "value"],
+        &["spice", "config", "key", "value", "--apply=digest"],
     ] {
         parser
             .clone()

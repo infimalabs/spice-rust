@@ -806,12 +806,12 @@ const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["config"],
-        "config [KEY [VALUE]]",
+        "config [KEY [VALUE]] [--apply=<digest>]",
         Local,
         None,
         [],
-        [Daemonless, Offline],
-        Reply,
+        [Daemonless, Offline, DigestOnMutation],
+        Plan,
         "spice::config"
     ),
 ];
@@ -850,6 +850,17 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["down"]
         | ["run"]
         | ["config"]
+        | ["trust"]
+        | ["trust", "grant"]
+        | ["trust", "revoke"]
+        | ["backup"]
+        | ["restore"]
+        | ["journal"]
+        | ["journal", "replay"]
+        | ["journal", "reindex"]
+        | ["journal", "verify"]
+        | ["fold"]
+        | ["thread"]
         | ["release", "publish"]
         | ["consent"]
         | ["consent", "allow"]
@@ -880,20 +891,7 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["inbox"]
         | ["recall"]
         | ["ack"] => Landing::Gap("COORDIN-1kJQlDjc"),
-        ["taste"]
-        | ["taste", "add"]
-        | ["taste", "drop"]
-        | ["trust"]
-        | ["trust", "grant"]
-        | ["trust", "revoke"] => Landing::Gap("POLICY-1kJQlFB6"),
-        ["backup"]
-        | ["restore"]
-        | ["journal"]
-        | ["journal", "replay"]
-        | ["journal", "reindex"]
-        | ["journal", "verify"]
-        | ["fold"]
-        | ["thread"] => Landing::Gap("JOURNAL-1kJQlFfS"),
+        ["taste"] | ["taste", "add"] | ["taste", "drop"] => Landing::Gap("POLICY-1kJQlFB6"),
         ["canvas"] => Landing::Gap("PUBLISH-1kJQlGb0"),
         _ => Landing::Unaccounted,
     }

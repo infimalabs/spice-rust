@@ -1,5 +1,7 @@
-use std::fs;
-use std::io::{self, Write};
+use std::fs::{self, OpenOptions};
+use std::io::{self, Read, Write};
+#[cfg(unix)]
+use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 
 use clap::ArgMatches;
@@ -14,6 +16,7 @@ use wire::{
 };
 
 const IGNORED_TRACKED_ROOTS: &[&str] = &["policy", "tasks"];
+const CONFIG_PLAN_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub(crate) struct ConfigReport {
@@ -23,6 +26,8 @@ pub(crate) struct ConfigReport {
     provenance: Vec<ProvenanceRow>,
     #[serde(skip_serializing_if = "Option::is_none")]
     selected: Option<Selection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan: Option<MutationPlan>,
     #[serde(skip_serializing_if = "Option::is_none")]
     mutation: Option<MutationReceipt>,
 }
@@ -60,11 +65,44 @@ struct Selection {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 struct MutationReceipt {
+    plan: Digest,
     path: String,
     destination: PathBuf,
     before: Digest,
     after: Digest,
     changed: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct MutationPlan {
+    version: u16,
+    digest: Digest,
+    path: String,
+    destination: PathBuf,
+    before: Digest,
+    after: Digest,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case", tag = "state")]
+enum ParentWitness {
+    Absent,
+    Directory {
+        canonical: PathBuf,
+        #[cfg(unix)]
+        device: u64,
+        #[cfg(unix)]
+        inode: u64,
+    },
+}
+
+impl ParentWitness {
+    fn directory(&self) -> Option<&Path> {
+        match self {
+            Self::Absent => None,
+            Self::Directory { canonical, .. } => Some(canonical),
+        }
+    }
 }
 
 pub(crate) fn run(matches: &ArgMatches) -> Outcome<ConfigReport> {
@@ -83,8 +121,14 @@ pub(crate) fn run(matches: &ArgMatches) -> Outcome<ConfigReport> {
     };
     let key = matches.get_one::<String>("KEY");
     let value = matches.get_one::<String>("VALUE");
+    let apply = matches.get_one::<String>("apply");
     let result = match (key, value) {
-        (Some(key), Some(value)) => set(&repository, key, value),
+        (Some(key), Some(value)) => set(&repository, key, value, apply.map(String::as_str)),
+        (_, None) if apply.is_some() => Err(refusal(
+            "config::apply-without-mutation",
+            None,
+            "supply one machine-local KEY VALUE pair with the plan digest",
+        )),
         (key, None) => read(&repository, key.map(String::as_str)),
         (None, Some(_)) => unreachable!("clap cannot supply VALUE without KEY"),
     };
@@ -98,12 +142,17 @@ pub(crate) fn run(matches: &ArgMatches) -> Outcome<ConfigReport> {
 }
 
 fn read(repository: &Repository, key: Option<&str>) -> Result<ConfigReport, Outcome<()>> {
-    let resolved = config::load_coexisting_repository(repository, &[])
-        .map_err(|error| configuration_refusal(&error))?;
-    report(resolved, key, None)
+    let documents = Documents::read(repository)?;
+    let resolved = documents.resolve_current()?;
+    report(resolved, key, None, None)
 }
 
-fn set(repository: &Repository, key: &str, raw: &str) -> Result<ConfigReport, Outcome<()>> {
+fn set(
+    repository: &Repository,
+    key: &str,
+    raw: &str,
+    apply: Option<&str>,
+) -> Result<ConfigReport, Outcome<()>> {
     let keys = parse_key(key)?;
     let borrowed = borrowed(&keys);
     let descriptor = config::descriptor(&borrowed).ok_or_else(|| {
@@ -127,8 +176,68 @@ fn set(repository: &Repository, key: &str, raw: &str) -> Result<ConfigReport, Ou
     let candidate = toml::to_string_pretty(&local)
         .map_err(|error| protocol_fault("config::candidate-unencodable", &error.to_string()))?;
     let resolved = documents.resolve(&candidate)?;
-    let receipt = publish(&documents, key, candidate.as_bytes())?;
-    report(resolved, Some(key), Some(receipt))
+    let plan = MutationPlan::new(&documents, key, candidate.as_bytes())?;
+    let Some(spelling) = apply else {
+        return report(resolved, Some(key), Some(plan), None);
+    };
+    let applied = spelling.parse::<Digest>().map_err(|error| {
+        refusal(
+            "config::apply-digest-refused",
+            Some(error.to_string()),
+            "preview the current mutation and apply its exact digest",
+        )
+    })?;
+    if applied != plan.digest {
+        return Err(Outcome::Refusal(Refusal {
+            reason: "config::plan-moved".to_owned(),
+            witness: Some("config-plan".to_owned()),
+            expected: Some(plan.digest.to_string()),
+            observed: Some(applied.to_string()),
+            remedy: "preview the current mutation and apply its new exact digest".to_owned(),
+        }));
+    }
+    let receipt = publish(&documents, &plan, candidate.as_bytes())?;
+    report(resolved, Some(key), Some(plan), Some(receipt))
+}
+
+impl MutationPlan {
+    fn new(documents: &Documents, key: &str, candidate: &[u8]) -> Result<Self, Outcome<()>> {
+        #[derive(Serialize)]
+        struct Basis<'a> {
+            version: u16,
+            path: &'a str,
+            destination: &'a Path,
+            parent: &'a ParentWitness,
+            tracked: Option<&'a [u8]>,
+            local: Option<&'a [u8]>,
+            candidate: &'a [u8],
+        }
+
+        let before = Digest::compute(
+            Domain::ConfigLocal,
+            documents.local.as_deref().unwrap_or(&[]),
+        );
+        let after = Digest::compute(Domain::ConfigLocal, candidate);
+        let basis = Basis {
+            version: CONFIG_PLAN_VERSION,
+            path: key,
+            destination: &documents.local_path,
+            parent: &documents.parent,
+            tracked: documents.tracked.as_deref(),
+            local: documents.local.as_deref(),
+            candidate,
+        };
+        let encoded = wire::encode(&basis)
+            .map_err(|error| protocol_fault("config::plan-unencodable", &error.to_string()))?;
+        Ok(Self {
+            version: CONFIG_PLAN_VERSION,
+            digest: Digest::compute(Domain::ConfigPlan, &encoded),
+            path: key.to_owned(),
+            destination: documents.local_path.clone(),
+            before,
+            after,
+        })
+    }
 }
 
 struct Documents {
@@ -136,16 +245,20 @@ struct Documents {
     local: Option<Vec<u8>>,
     tracked_path: PathBuf,
     local_path: PathBuf,
+    parent: ParentWitness,
 }
 
 impl Documents {
     fn read(repository: &Repository) -> Result<Self, Outcome<()>> {
+        admit_repository_owner(repository)?;
         let locations = config::locations(repository);
+        let parent = admit_parent(locations.local())?;
         Ok(Self {
             tracked: read_optional(locations.tracked())?,
             local: read_optional(locations.local())?,
             tracked_path: locations.tracked().to_path_buf(),
             local_path: locations.local().to_path_buf(),
+            parent,
         })
     }
 
@@ -170,43 +283,57 @@ impl Documents {
     }
 
     fn resolve(&self, local: &str) -> Result<Resolved, Outcome<()>> {
+        self.resolve_with(Some(local))
+    }
+
+    fn resolve_current(&self) -> Result<Resolved, Outcome<()>> {
+        let local = optional_utf8(self.local.as_deref(), &self.local_path)?;
+        self.resolve_with(local)
+    }
+
+    fn resolve_with(&self, local: Option<&str>) -> Result<Resolved, Outcome<()>> {
         let tracked_text = optional_utf8(self.tracked.as_deref(), &self.tracked_path)?;
         let tracked_location = self.tracked_path.display().to_string();
         let local_location = self.local_path.display().to_string();
         config::resolve(Inputs::coexisting(
             tracked_text.map(|text| Document::new(&tracked_location, text)),
-            Some(Document::new(&local_location, local)),
+            local.map(|text| Document::new(&local_location, text)),
             &[],
         ))
         .map_err(|error| resolution_refusal(&error))
     }
 }
 
-fn publish(
-    documents: &Documents,
-    key: &str,
-    candidate: &[u8],
-) -> Result<MutationReceipt, Outcome<()>> {
-    let before = Digest::compute(
-        Domain::ConfigLocal,
-        documents.local.as_deref().unwrap_or(&[]),
-    );
-    let after = Digest::compute(Domain::ConfigLocal, candidate);
-    if before == after {
-        return Ok(receipt(key, &documents.local_path, before, after, false));
-    }
-    let parent = documents.local_path.parent().ok_or_else(|| {
+fn admit_repository_owner(repository: &Repository) -> Result<(), Outcome<()>> {
+    let marker = repository.worktree_root().join(".git");
+    let metadata = fs::symlink_metadata(&marker).map_err(|error| {
         environment_fault(
-            "config::local-parent-missing",
-            &documents.local_path.display().to_string(),
+            "config::local-owner-unavailable",
+            &format!("{}: {error}", marker.display()),
         )
     })?;
-    fs::create_dir_all(parent).map_err(|error| {
-        environment_fault("config::local-parent-unavailable", &error.to_string())
-    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(refusal(
+            "config::parent-refused",
+            Some(marker.display().to_string()),
+            "replace the repository owner marker with one Git directory or pointer file",
+        ));
+    }
+    Ok(())
+}
+
+fn publish(
+    documents: &Documents,
+    plan: &MutationPlan,
+    candidate: &[u8],
+) -> Result<MutationReceipt, Outcome<()>> {
+    let parent = materialize_parent(documents)?;
+    let parent_path = parent
+        .directory()
+        .expect("publication materializes one real directory");
     let lock = LockFile::new(
         LockName::new("config").expect("config is a valid lock name"),
-        parent.join("config.lock"),
+        parent_path.join("config.lock"),
     );
     let possession = match lock.try_acquire() {
         Ok(Acquisition::Acquired(possession)) => possession,
@@ -224,34 +351,45 @@ fn publish(
             ));
         }
     };
-    ensure_unchanged(documents)?;
+    ensure_unchanged(documents, &parent)?;
+    if plan.before == plan.after {
+        drop(possession);
+        return Ok(receipt(plan, false));
+    }
     let destination = atomic::Destination::new(&documents.local_path).map_err(|error| {
         environment_fault("config::publication-unavailable", &error.to_string())
     })?;
+    if destination.path() != documents.local_path {
+        return Err(refusal(
+            "config::parent-refused",
+            Some(destination.path().display().to_string()),
+            "restore the exact unlinked Git-common local configuration parent",
+        ));
+    }
+    ensure_parent(&documents.local_path, &parent)?;
     destination
         .publish(|staged| staged.write_all(candidate))
         .map_err(|error| environment_fault("config::publication-failed", &error.to_string()))?;
     drop(possession);
-    Ok(receipt(key, &documents.local_path, before, after, true))
+    Ok(receipt(plan, true))
 }
 
-fn receipt(
-    key: &str,
-    destination: &Path,
-    before: Digest,
-    after: Digest,
-    changed: bool,
-) -> MutationReceipt {
+fn receipt(plan: &MutationPlan, changed: bool) -> MutationReceipt {
     MutationReceipt {
-        path: key.to_owned(),
-        destination: destination.to_path_buf(),
-        before,
-        after,
+        plan: plan.digest.clone(),
+        path: plan.path.clone(),
+        destination: plan.destination.clone(),
+        before: plan.before.clone(),
+        after: plan.after.clone(),
         changed,
     }
 }
 
-fn ensure_unchanged(documents: &Documents) -> Result<(), Outcome<()>> {
+fn ensure_unchanged(
+    documents: &Documents,
+    expected_parent: &ParentWitness,
+) -> Result<(), Outcome<()>> {
+    ensure_parent(&documents.local_path, expected_parent)?;
     let tracked = read_optional(&documents.tracked_path)?;
     let local = read_optional(&documents.local_path)?;
     if tracked == documents.tracked && local == documents.local {
@@ -264,9 +402,111 @@ fn ensure_unchanged(documents: &Documents) -> Result<(), Outcome<()>> {
     ))
 }
 
+fn materialize_parent(documents: &Documents) -> Result<ParentWitness, Outcome<()>> {
+    let parent = local_parent(&documents.local_path)?;
+    match &documents.parent {
+        ParentWitness::Directory { .. } => {
+            let current = admit_parent(&documents.local_path)?;
+            if current == documents.parent {
+                Ok(current)
+            } else {
+                Err(source_moved(parent))
+            }
+        }
+        ParentWitness::Absent => {
+            if !matches!(admit_parent(&documents.local_path)?, ParentWitness::Absent) {
+                return Err(source_moved(parent));
+            }
+            match fs::create_dir(parent) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    return Err(source_moved(parent));
+                }
+                Err(error) => {
+                    return Err(environment_fault(
+                        "config::local-parent-unavailable",
+                        &error.to_string(),
+                    ));
+                }
+            }
+            let created = admit_parent(&documents.local_path)?;
+            if matches!(created, ParentWitness::Directory { .. }) {
+                Ok(created)
+            } else {
+                Err(source_moved(parent))
+            }
+        }
+    }
+}
+
+fn ensure_parent(local: &Path, expected: &ParentWitness) -> Result<(), Outcome<()>> {
+    let observed = admit_parent(local)?;
+    if &observed == expected {
+        Ok(())
+    } else {
+        Err(source_moved(local_parent(local)?))
+    }
+}
+
+fn admit_parent(local: &Path) -> Result<ParentWitness, Outcome<()>> {
+    let parent = local_parent(local)?;
+    let metadata = match fs::symlink_metadata(parent) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(ParentWitness::Absent),
+        Err(error) => {
+            return Err(environment_fault(
+                "config::local-parent-unavailable",
+                &format!("{}: {error}", parent.display()),
+            ));
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(refusal(
+            "config::parent-refused",
+            Some(parent.display().to_string()),
+            "replace the local configuration parent with one real directory",
+        ));
+    }
+    let canonical = fs::canonicalize(parent).map_err(|error| {
+        environment_fault(
+            "config::local-parent-unavailable",
+            &format!("{}: {error}", parent.display()),
+        )
+    })?;
+    if canonical != parent {
+        return Err(refusal(
+            "config::parent-refused",
+            Some(canonical.display().to_string()),
+            "restore the exact unlinked Git-common local configuration parent",
+        ));
+    }
+    Ok(ParentWitness::Directory {
+        canonical,
+        #[cfg(unix)]
+        device: metadata.dev(),
+        #[cfg(unix)]
+        inode: metadata.ino(),
+    })
+}
+
+fn local_parent(local: &Path) -> Result<&Path, Outcome<()>> {
+    local.parent().ok_or_else(|| {
+        environment_fault("config::local-parent-missing", &local.display().to_string())
+    })
+}
+
+fn source_moved(path: &Path) -> Outcome<()> {
+    refusal(
+        "config::source-moved",
+        Some(path.display().to_string()),
+        "preview the current tracked and local configuration generation and retry",
+    )
+}
+
 fn report(
     resolved: Resolved,
     key: Option<&str>,
+    plan: Option<MutationPlan>,
     mutation: Option<MutationReceipt>,
 ) -> Result<ConfigReport, Outcome<()>> {
     let selected = key.map(|key| selection(&resolved, key)).transpose()?;
@@ -285,6 +525,7 @@ fn report(
         effective: resolved.into_root(),
         provenance,
         selected,
+        plan,
         mutation,
     })
 }
@@ -438,12 +679,68 @@ fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, Outcome<()>> {
             "replace the source with one regular file",
         ));
     }
-    fs::read(path).map(Some).map_err(|error| {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW);
+    let mut file = options.open(path).map_err(|error| {
         environment_fault(
             "config::source-unreadable",
             &format!("{}: {error}", path.display()),
         )
-    })
+    })?;
+    let opened = file.metadata().map_err(|error| {
+        environment_fault(
+            "config::source-unreadable",
+            &format!("{}: {error}", path.display()),
+        )
+    })?;
+    if !opened.is_file() || !same_file(&metadata, &opened) {
+        return Err(source_moved(path));
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(|error| {
+        environment_fault(
+            "config::source-unreadable",
+            &format!("{}: {error}", path.display()),
+        )
+    })?;
+    let finished = file.metadata().map_err(|error| {
+        environment_fault(
+            "config::source-unreadable",
+            &format!("{}: {error}", path.display()),
+        )
+    })?;
+    if same_generation(&opened, &finished) {
+        Ok(Some(bytes))
+    } else {
+        Err(source_moved(path))
+    }
+}
+
+#[cfg(unix)]
+fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    left.dev() == right.dev() && left.ino() == right.ino()
+}
+
+#[cfg(unix)]
+fn same_generation(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    same_file(left, right)
+        && left.size() == right.size()
+        && left.mtime() == right.mtime()
+        && left.mtime_nsec() == right.mtime_nsec()
+        && left.ctime() == right.ctime()
+        && left.ctime_nsec() == right.ctime_nsec()
+}
+
+#[cfg(not(unix))]
+fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    left.is_file() == right.is_file() && left.len() == right.len()
+}
+
+#[cfg(not(unix))]
+fn same_generation(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    same_file(left, right) && left.modified().ok() == right.modified().ok()
 }
 
 fn optional_utf8<'a>(bytes: Option<&'a [u8]>, path: &Path) -> Result<Option<&'a str>, Outcome<()>> {
@@ -458,22 +755,6 @@ fn optional_utf8<'a>(bytes: Option<&'a [u8]>, path: &Path) -> Result<Option<&'a 
             })
         })
         .transpose()
-}
-
-fn configuration_refusal(error: &config::LoadError) -> Outcome<()> {
-    let mut details = Vec::new();
-    if let Some(repository) = error.repository() {
-        details.push(repository.to_string());
-    }
-    details.extend(error.acquisition().iter().map(ToString::to_string));
-    if let Some(resolution) = error.resolution() {
-        details.extend(resolution.issues().iter().map(ToString::to_string));
-    }
-    refusal(
-        "config::load-refused",
-        (!details.is_empty()).then(|| details.join(" | ")),
-        "repair the named tracked or local configuration issue and retry",
-    )
 }
 
 fn resolution_refusal(error: &config::ResolveError) -> Outcome<()> {
