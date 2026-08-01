@@ -41,7 +41,15 @@ impl Reduction {
         }
     }
 
-    /// A reduction whose completeness may trail its applied cursor.
+    /// A reduction whose completeness trails the facts it applied.
+    ///
+    /// Folds declare inputs the journal does not carry — a bounded ring, a
+    /// tape, a config digest, another fold. When one of those lags, the reducer
+    /// still applies every fact it was handed, so the cursor keeps up while the
+    /// answer is only settled through an earlier position. Readers meet that gap
+    /// through [`Horizon::availability`] and the fold's [`Beyond`] policy.
+    ///
+    /// [`Beyond`]: crate::Beyond
     pub fn bounded(
         cursor: Cursor,
         horizon: Horizon,
@@ -215,22 +223,29 @@ impl Store {
     }
 }
 
+/// Freshness asks whether authority was kept up with, which the cursor answers.
+///
+/// A fold that trails on a declared input it does not own — a bounded ring, a
+/// tape, another fold — applies every fact it is handed and still reports a
+/// [`Horizon`] short of its [`Cursor`]. Keying freshness on the horizon would
+/// call that generation stale forever and rebuild it on every read, without the
+/// rebuild ever being able to close the gap. Readers learn about the gap through
+/// [`Horizon::availability`] instead.
 fn is_fresh(current: &Materialization, facts: &journal::FactSnapshot, version: u32) -> bool {
-    let required = facts.horizon().map_or_else(Horizon::empty, Horizon::at);
-    current.reducer_version == version && current.horizon >= required
+    let applied = facts.horizon().map_or_else(Cursor::empty, Cursor::at);
+    current.reducer_version == version && current.cursor >= applied
 }
 
+/// Publication admits one rule: a reduction applied every fact it was handed.
+///
+/// How far the answer is *complete* is the reducer's declaration, already
+/// constrained against the cursor by [`Reduction::bounded`], so re-deriving it
+/// here would spell the same invariant twice.
 fn admit_reduction(facts: &journal::FactSnapshot, reduction: &Reduction) -> Result<(), Refusal> {
-    if reduction.horizon.position() > reduction.cursor.position() {
-        return Err(Refusal::HorizonPastCursor {
-            cursor: reduction.cursor,
-            horizon: reduction.horizon,
-        });
-    }
     let required = facts.horizon().map_or_else(Horizon::empty, Horizon::at);
-    if reduction.horizon < required {
+    if reduction.cursor.position() < required.position() {
         return Err(Refusal::BehindSnapshot {
-            produced: reduction.horizon,
+            applied: reduction.cursor,
             required,
         });
     }
@@ -475,29 +490,22 @@ pub(crate) fn baseline(connection: &Connection, current: u32) -> Result<(), Stor
 /// A generation publication refusal.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Refusal {
-    HorizonPastCursor {
-        cursor: Cursor,
-        horizon: Horizon,
-    },
-    BehindSnapshot {
-        produced: Horizon,
-        required: Horizon,
-    },
+    /// A reduction claimed to be complete past the last fact it applied.
+    HorizonPastCursor { cursor: Cursor, horizon: Horizon },
+    /// A reduction left facts of its own snapshot unapplied.
+    BehindSnapshot { applied: Cursor, required: Horizon },
+    /// A replacement would have retreated a fold's applied position.
     CursorMovedBackward {
         fold: FoldId,
         current: Cursor,
         next: Cursor,
     },
-    GenerationExhausted {
-        fold: FoldId,
-    },
-    PositionOutOfRange {
-        fold: FoldId,
-        value: u64,
-    },
-    ZeroReducerVersion {
-        fold: FoldId,
-    },
+    /// A fold has no generation number left to allocate.
+    GenerationExhausted { fold: FoldId },
+    /// A position cannot be stored in the signed column SQLite offers.
+    PositionOutOfRange { fold: FoldId, value: u64 },
+    /// Version zero is reserved, so no reducer may claim it.
+    ZeroReducerVersion { fold: FoldId },
 }
 
 /// A folds-store operation failure.
