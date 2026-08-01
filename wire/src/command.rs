@@ -21,7 +21,6 @@ use crate::witness::{Witness, WitnessKind, WitnessKind as W};
 /// Each variant is one row of WIRE.md's command registry. The discriminant
 /// selects the body DTO, witness schema, transition, and reply DTO together.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
 pub enum CommandKind {
     /// Add one task as direct intent.
     TaskAdd,
