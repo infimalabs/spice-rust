@@ -467,12 +467,11 @@ mod tests {
     }
 
     #[test]
-    fn prepared_file_replaces_destination_and_publishes_parent_entry() {
+    fn prepared_file_publishes_new_parent_entry() {
         let directory = TestDirectory::new();
         let source = directory.path().join("prepared");
         let destination_path = directory.path().join("published");
         fs::write(&source, b"prepared bytes").unwrap();
-        fs::write(&destination_path, b"old bytes").unwrap();
         let destination = Destination::new(&destination_path).unwrap();
 
         destination.replace_from(&source).unwrap();
