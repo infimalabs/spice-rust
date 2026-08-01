@@ -7,13 +7,14 @@ use board::claim::ClaimRefusal;
 use board::oops::{Friction, Report, Routed};
 use board::phase::PhaseRefusal;
 use board::{
-    Active, Entry, Preview, Snapshot, Transition, Urgency, View, apply, digest_of, graph, handout,
-    select,
+    Active, Entry, Preview, Snapshot, SnapshotReadError, Transition, Urgency, View, apply,
+    digest_of, graph, handout, select,
 };
 use fold::Cursor;
+use journal::{FactCause, Journal, JournalWrite};
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Digest, Domain, Instant, LeaseHead, Origin,
-    Phase, Seq, TaskHandle, TaskHead, WorkflowHead,
+    Phase, Producer, Seq, TaskHandle, TaskHead, WorkflowHead, body,
 };
 
 fn handle(text: &str) -> TaskHandle {
@@ -109,6 +110,40 @@ fn completed_entry(name: &str) -> Entry {
     .expect("valid completed heads")
 }
 
+fn journal_with_heads(mut statement: TaskHead, workflow: WorkflowHead) -> Journal {
+    let mut journal = Journal::in_memory().expect("board journal fixture");
+    let task = statement.handle.clone();
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        statement.provenance.clone(),
+        instant("2026-08-01T06:00:00.000Z"),
+        Producer::CommandDoor,
+    );
+    let fact = write
+        .fact(
+            body::TaskAdded {
+                task: task.clone(),
+                uuid: statement.uuid,
+                title: statement.title.clone(),
+                project: statement.project.clone(),
+                tags: statement.tags.clone(),
+                depends: statement.dependencies.clone(),
+                flow: workflow.flow.clone(),
+                phase: workflow.phase.clone(),
+                revision: 1,
+            },
+            FactCause::Root,
+        )
+        .expect("registered board fixture fact");
+    write.task_head(fact, move |position| {
+        statement.revision = position;
+        statement
+    });
+    write.workflow_head(task, fact, move |_| workflow);
+    journal.apply(write).expect("commit board fixture heads");
+    journal
+}
+
 #[test]
 fn statement_views_preserve_project_family_handle_and_dependency_heads() {
     let mut head = statement("BOARD-a1");
@@ -185,12 +220,46 @@ fn snapshot_is_a_schema_and_cursor_bounded_head_answer() {
     let entries = [entry("BOARD-a1")];
     let cursor = Cursor::at(seq(9));
     let snapshot =
-        Snapshot::new(journal::SCHEMA_VERSION, cursor, &entries).expect("current schema");
+        Snapshot::new(journal::SCHEMA_VERSION, cursor, entries.to_vec()).expect("current schema");
 
     assert_eq!(snapshot.schema_version(), journal::SCHEMA_VERSION);
     assert_eq!(snapshot.cursor(), cursor);
     assert_eq!(snapshot.entries(), entries.as_slice());
-    assert!(Snapshot::new(journal::SCHEMA_VERSION + 1, cursor, &entries).is_err());
+    assert!(Snapshot::new(journal::SCHEMA_VERSION + 1, cursor, entries.to_vec()).is_err());
+}
+
+#[test]
+fn durable_snapshot_owns_one_validated_journal_answer() {
+    let snapshot = {
+        let journal = journal_with_heads(statement("BOARD-a1"), workflow("todo"));
+        Snapshot::read(&journal).expect("authoritative board snapshot")
+    };
+
+    assert_eq!(snapshot.schema_version(), journal::SCHEMA_VERSION);
+    assert_eq!(snapshot.cursor(), Cursor::at(seq(1)));
+    assert_eq!(snapshot.entries().len(), 1);
+    assert_eq!(snapshot.entries()[0].statement().handle, handle("BOARD-a1"));
+}
+
+#[test]
+fn durable_snapshot_names_the_task_whose_heads_violate_board_policy() {
+    let mut invalid = workflow("todo");
+    invalid.flow.clear();
+    let journal = journal_with_heads(statement("BOARD-a1"), invalid);
+
+    let error = Snapshot::read(&journal).expect_err("empty flow refuses board snapshot");
+    assert!(matches!(
+        error,
+        SnapshotReadError::Task {
+            handle: ref observed,
+            source: board::TaskError::EmptyFlow,
+        } if observed == &handle("BOARD-a1")
+    ));
+    assert!(
+        error
+            .to_string()
+            .contains("board snapshot task BOARD-a1 is invalid")
+    );
 }
 
 #[test]

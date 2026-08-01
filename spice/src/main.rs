@@ -1,5 +1,14 @@
 use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::{
+    io::{self, Write},
+    process::ExitStatus,
+    sync::mpsc,
+};
+
+use listen::{RetroSelector, StreamOutcome, SurfaceError, Watch};
 use wire::{Fault, FaultClass, Outcome, Refusal};
 
 mod cli;
@@ -15,6 +24,13 @@ const REFUSAL_EXIT: i32 = 2;
 
 fn main() {
     let matches = cli::command().get_matches();
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if let Some(command) = cli::run_command(&matches) {
+            run(command);
+        }
+    }
+
     let contract = cli::selected_contract(&matches)
         .expect("the generated parser returns only registered command leaves");
     let form = if cli::json_selected(&matches) {
@@ -22,6 +38,13 @@ fn main() {
     } else {
         Form::Text
     };
+    let leaf = cli::selected_matches(&matches);
+    match contract.path {
+        ["watch"] => run_watch(leaf, form),
+        ["retro"] => run_retro(leaf, form),
+        _ => {}
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     let outcome = match contract.path {
         ["up"] => resident::up(),
@@ -46,6 +69,198 @@ fn not_landed(contract: &cli::Contract) -> Outcome<()> {
     })
 }
 
+fn run_retro(matches: &clap::ArgMatches, form: Form) -> ! {
+    let selector = match matches.get_one::<String>("LANE|LOCUS|PATH") {
+        Some(value) => match RetroSelector::parse(value) {
+            Ok(selector) => selector,
+            Err(error) => {
+                let refusal: Outcome<()> = Outcome::Refusal(Refusal {
+                    reason: "retro::selector".to_owned(),
+                    witness: None,
+                    expected: Some("LANE, M:O:L, or PATH".to_owned()),
+                    observed: Some(value.clone()),
+                    remedy: error.to_string(),
+                });
+                deliver(&refusal, form);
+            }
+        },
+        None => RetroSelector::Path(PathBuf::from(".")),
+    };
+    match listen::retro(".", selector) {
+        Ok(outcome) => deliver_stream_once(&outcome, form),
+        Err(error) => deliver_fault(surface_fault(error), form),
+    }
+}
+
+/// Emits any pending direction and hands the caller's command through.
+#[cfg(not(target_arch = "wasm32"))]
+fn run(command: Vec<OsString>) -> ! {
+    let (program, arguments) = command
+        .split_first()
+        .expect("clap requires the run command operand");
+
+    if let Some(rendering) = bootstrap_environment(steer::hook::INBOX) {
+        let mut stderr = io::stderr().lock();
+        let _ = steer::run::emit(Path::new(&rendering), &mut stderr);
+    }
+
+    match steer::run::hand(program, arguments) {
+        Ok(status) => terminate_child(status),
+        Err(error) => {
+            let mut stderr = io::stderr().lock();
+            let _ = writeln!(stderr, "spice run: {error}");
+            let code = match error.kind() {
+                io::ErrorKind::NotFound => 127,
+                io::ErrorKind::PermissionDenied => 126,
+                _ => FAULT_EXIT,
+            };
+            terminate_code(code);
+        }
+    }
+}
+
+fn run_watch(matches: &clap::ArgMatches, form: Form) -> ! {
+    let root = matches
+        .get_one::<String>("ROOT")
+        .map_or_else(|| PathBuf::from("."), PathBuf::from);
+    let once = matches.get_flag("once");
+    let mut watch = Watch::new(&root);
+
+    if once || !is_real_directory(&root) {
+        match poll_and_emit(&mut watch, form) {
+            Ok(()) => terminate_stream(),
+            Err(fault) => deliver_fault(fault, form),
+        }
+    }
+
+    follow(&root, &mut watch, form)
+}
+
+fn is_real_directory(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_dir())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn follow(root: &Path, watch: &mut Watch, form: Form) -> ! {
+    use notify::{RecursiveMode, Watcher};
+
+    let (sender, receiver) = mpsc::channel::<notify::Result<notify::Event>>();
+    let mut watcher = match notify::recommended_watcher(move |event| {
+        let _ = sender.send(event);
+    }) {
+        Ok(watcher) => watcher,
+        Err(error) => deliver_fault(watch_fault("create filesystem watcher", error), form),
+    };
+    if let Err(error) = watcher.watch(root, RecursiveMode::Recursive) {
+        deliver_fault(watch_fault("arm filesystem watcher", error), form);
+    }
+    if let Err(fault) = poll_and_emit(watch, form) {
+        deliver_fault(fault, form);
+    }
+
+    loop {
+        match receiver.recv() {
+            Ok(Ok(_)) => {
+                if let Err(fault) = poll_and_emit(watch, form) {
+                    deliver_fault(fault, form);
+                }
+            }
+            Ok(Err(error)) => {
+                deliver_fault(watch_fault("receive filesystem notification", error), form);
+            }
+            Err(error) => {
+                deliver_fault(
+                    Fault {
+                        class: FaultClass::Environment,
+                        reason: "watch::notification".to_owned(),
+                        detail: format!("filesystem notification channel disconnected: {error}"),
+                    },
+                    form,
+                );
+            }
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn follow(_root: &Path, _watch: &mut Watch, form: Form) -> ! {
+    deliver_fault(
+        Fault {
+            class: FaultClass::Environment,
+            reason: "watch::unavailable".to_owned(),
+            detail: "filesystem notifications are unavailable on wasm32".to_owned(),
+        },
+        form,
+    )
+}
+
+fn poll_and_emit(watch: &mut Watch, form: Form) -> Result<(), Fault> {
+    let outcome = watch.poll().map_err(surface_fault)?;
+    if !outcome.is_empty() {
+        render::render_stream(&outcome, form)
+            .map_err(render_fault)?
+            .speak();
+    }
+    Ok(())
+}
+
+fn deliver_stream_once(outcome: &StreamOutcome, form: Form) -> ! {
+    match render::render_stream(outcome, form) {
+        Ok(rendering) => {
+            rendering.speak();
+            terminate_stream();
+        }
+        Err(error) => deliver_fault(render_fault(error), form),
+    }
+}
+
+fn surface_fault(error: SurfaceError) -> Fault {
+    Fault {
+        class: FaultClass::Environment,
+        reason: "listen::surface".to_owned(),
+        detail: error.to_string(),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn watch_fault(operation: &str, error: notify::Error) -> Fault {
+    Fault {
+        class: FaultClass::Environment,
+        reason: "watch::notification".to_owned(),
+        detail: format!("failed to {operation}: {error}"),
+    }
+}
+
+fn render_fault(error: String) -> Fault {
+    Fault {
+        class: FaultClass::Protocol,
+        reason: "render::unencodable".to_owned(),
+        detail: error,
+    }
+}
+
+fn deliver_fault(fault: Fault, form: Form) -> ! {
+    deliver(&Outcome::Fault(fault), form)
+}
+
+fn terminate_stream() -> ! {
+    terminate_code(REPLY_EXIT);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn terminate_child(status: ExitStatus) -> ! {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+
+        if let Some(signal) = status.signal() {
+            terminate_code(128 + signal);
+        }
+    }
+
+    terminate_code(status.code().unwrap_or(FAULT_EXIT));
+}
+
 /// Renders one outcome in the selected form and exits on it.
 ///
 /// An outcome that cannot be encoded is a defect in this binary's own DTOs
@@ -59,11 +274,7 @@ fn deliver(outcome: &Outcome<()>, form: Form) -> ! {
             terminate(outcome);
         }
         Err(error) => {
-            let fault: Outcome<()> = Outcome::Fault(Fault {
-                class: FaultClass::Protocol,
-                reason: "render::unencodable".to_owned(),
-                detail: error,
-            });
+            let fault: Outcome<()> = Outcome::Fault(render_fault(error));
             render::render(&fault, Form::Text)
                 .expect("the text rendering of a fault encodes nothing")
                 .speak();
@@ -84,12 +295,16 @@ pub fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
 
 /// Terminate the process after the command result has returned to the binary
 /// rim.
+pub fn terminate<B>(outcome: &Outcome<B>) -> ! {
+    terminate_code(exit_status(outcome));
+}
+
 #[expect(
     clippy::disallowed_methods,
-    reason = "the binary rim alone maps typed outcomes to process exits"
+    reason = "the binary rim alone terminates the process"
 )]
-pub fn terminate<B>(outcome: &Outcome<B>) -> ! {
-    std::process::exit(exit_status(outcome));
+fn terminate_code(code: i32) -> ! {
+    std::process::exit(code);
 }
 
 const fn exit_status<B>(outcome: &Outcome<B>) -> i32 {
@@ -102,14 +317,14 @@ const fn exit_status<B>(outcome: &Outcome<B>) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, Seq};
+    use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
     use super::render::{self, Stream};
     use super::{FAULT_EXIT, REFUSAL_EXIT, REPLY_EXIT, exit_status};
 
     fn reply() -> Outcome<()> {
         Outcome::Reply(Reply {
-            position: ReplyPosition::Snapshot(Seq::new(1).expect("non-zero position")),
+            position: ReplyPosition::Direct {},
             body: (),
         })
     }

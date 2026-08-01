@@ -29,6 +29,7 @@ wire = { path = "../wire" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 jiff = "0.2.35"
+notify = "8.2.0"
 serde = "1.0.229"
 tokio = { version = "1.53.1", features = ["macros", "net", "rt", "sync"] }
 tungstenite = "0.29.0"

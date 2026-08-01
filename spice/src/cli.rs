@@ -2,7 +2,13 @@
 
 use std::collections::BTreeSet;
 
-use clap::{Arg, ArgAction, ArgMatches, Command, builder::PossibleValuesParser};
+#[cfg(not(target_arch = "wasm32"))]
+use std::ffi::OsString;
+
+use clap::{
+    Arg, ArgAction, ArgMatches, Command,
+    builder::{OsStringValueParser, PossibleValuesParser},
+};
 use wire::FactKind;
 
 /// The renderer flag, spelled once so its registration and its reader cannot
@@ -26,6 +32,27 @@ pub(crate) enum JournalAccess {
     Command,
     Recovery,
     Resident,
+}
+
+/// Journal relationship a successful reply must report.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ReplyPositionLaw {
+    /// The command is daemonless and has no journal position.
+    Direct,
+    /// The command answers from a read snapshot.
+    Snapshot,
+    /// The command commits authoritative state before answering.
+    Committed,
+}
+
+impl JournalAccess {
+    const fn reply_position(self) -> ReplyPositionLaw {
+        match self {
+            Self::None => ReplyPositionLaw::Direct,
+            Self::Read => ReplyPositionLaw::Snapshot,
+            Self::Command | Self::Recovery | Self::Resident => ReplyPositionLaw::Committed,
+        }
+    }
 }
 
 /// Additional posture or admission rule carried by a leaf.
@@ -77,6 +104,7 @@ pub(crate) struct Contract {
     pub(crate) syntax: &'static str,
     pub(crate) principal: Principal,
     pub(crate) journal: JournalAccess,
+    pub(crate) reply_position: ReplyPositionLaw,
     pub(crate) facts: &'static [FactKind],
     pub(crate) guards: &'static [Guard],
     pub(crate) result: ResultClass,
@@ -94,6 +122,7 @@ macro_rules! row {
             syntax: $syntax,
             principal: Principal::$principal,
             journal: JournalAccess::$journal,
+            reply_position: JournalAccess::$journal.reply_position(),
             facts: &[$(FactKind::$fact),*],
             guards: &[$(Guard::$guard),*],
             result: ResultClass::$result,
@@ -107,7 +136,7 @@ macro_rules! row {
 pub(crate) const CONTRACTS: &[Contract] = &[
     row!(
         ["watch"],
-        "watch [ROOT]",
+        "watch [ROOT] [--once]",
         Local,
         None,
         [],
@@ -939,7 +968,10 @@ fn positional(syntax: &'static str, required: bool, trailing: bool) -> Result<Ar
         argument = argument.num_args(1..);
     }
     if trailing {
-        argument = argument.last(true).allow_hyphen_values(true);
+        argument = argument
+            .last(true)
+            .allow_hyphen_values(true)
+            .value_parser(OsStringValueParser::new());
     }
     Ok(argument)
 }
@@ -999,6 +1031,23 @@ pub(crate) fn selected_contract(matches: &ArgMatches) -> Option<&'static Contrac
         cursor = child;
     }
     contract_at(CONTRACTS, &path)
+}
+
+/// Recover the leaf matches selected by the generated parser.
+pub(crate) fn selected_matches(mut matches: &ArgMatches) -> &ArgMatches {
+    while let Some((_, child)) = matches.subcommand() {
+        matches = child;
+    }
+    matches
+}
+
+/// Recover the command passed through the root `run` leaf.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn run_command(matches: &ArgMatches) -> Option<Vec<OsString>> {
+    matches
+        .subcommand_matches("run")?
+        .get_many::<OsString>("CMD")
+        .map(|values| values.cloned().collect())
 }
 
 /// Whether the caller asked for the JSON rendering.
@@ -1096,6 +1145,20 @@ mod tests {
                     "command journal access has no resident guard: {contract:?}",
                 );
             }
+            match (contract.journal, contract.reply_position) {
+                (JournalAccess::None, ReplyPositionLaw::Direct) => assert!(
+                    contract.guards.contains(&Guard::Daemonless),
+                    "a direct reply must belong to a daemonless leaf: {contract:?}",
+                ),
+                (JournalAccess::Read, ReplyPositionLaw::Snapshot)
+                | (
+                    JournalAccess::Command | JournalAccess::Recovery | JournalAccess::Resident,
+                    ReplyPositionLaw::Committed,
+                ) => {}
+                _ => panic!(
+                    "reply position does not match the leaf's journal authority: {contract:?}"
+                ),
+            }
             if contract.result == ResultClass::Plan {
                 assert!(
                     contract.guards.contains(&Guard::DigestOnMutation),
@@ -1120,6 +1183,7 @@ mod tests {
             syntax: "missing",
             principal: Principal::Local,
             journal: JournalAccess::None,
+            reply_position: ReplyPositionLaw::Direct,
             facts: &[],
             guards: &[],
             result: ResultClass::Reply,
@@ -1162,6 +1226,7 @@ mod tests {
         let parser = command();
         for argv in [
             &["spice", "doctor"][..],
+            &["spice", "watch", "root", "--once"],
             &["spice", "task", "add", "title", "--project", "rim.cli"],
             &["spice", "task", "depends", "TASK", "FIRST", "SECOND"],
             &["spice", "lane", "add", "--life", "Drive"],

@@ -57,6 +57,14 @@ impl fmt::Debug for JournalGuard {
 #[derive(Clone, Copy, Debug)]
 pub struct JournalRead<'a> {
     connection: &'a Connection,
+    cursor: Option<wire::Seq>,
+}
+
+impl<'a> JournalRead<'a> {
+    fn scoped(connection: &'a Connection) -> Result<Self, GuardError> {
+        let cursor = visible_cursor(connection)?;
+        Ok(Self { connection, cursor })
+    }
 }
 
 /// One authoritative head body and the fact position that established it.
@@ -64,6 +72,39 @@ pub struct JournalRead<'a> {
 pub struct JournalHead<T> {
     position: wire::Seq,
     body: T,
+}
+
+/// One task's complete current storage-head bundle.
+///
+/// `journal` proves that the indexed rows are canonical, consistently keyed,
+/// and observed at one cursor. Policy validation of the bodies belongs to
+/// `board`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskHeads {
+    statement: JournalHead<wire::TaskHead>,
+    workflow: JournalHead<wire::WorkflowHead>,
+    claim: Option<JournalHead<wire::ClaimHead>>,
+    lease: Option<JournalHead<wire::LeaseHead>>,
+}
+
+impl TaskHeads {
+    /// Consume the storage view and return its typed bodies.
+    #[must_use]
+    pub fn into_bodies(
+        self,
+    ) -> (
+        wire::TaskHead,
+        wire::WorkflowHead,
+        Option<wire::ClaimHead>,
+        Option<wire::LeaseHead>,
+    ) {
+        (
+            self.statement.into_body(),
+            self.workflow.into_body(),
+            self.claim.map(JournalHead::into_body),
+            self.lease.map(JournalHead::into_body),
+        )
+    }
 }
 
 impl<T> JournalHead<T> {
@@ -89,15 +130,65 @@ impl<T> JournalHead<T> {
 impl JournalRead<'_> {
     /// Last durable fact position visible to this transaction.
     pub fn cursor(&self) -> Result<Option<wire::Seq>, GuardError> {
-        let value = self
+        Ok(self.cursor)
+    }
+
+    /// Every current task storage bundle in ascending handle order.
+    ///
+    /// The union makes loose workflow, claim, and lease rows observable rather
+    /// than silently treating the statement table as the complete key set.
+    pub fn task_heads(&self) -> Result<Vec<TaskHeads>, GuardError> {
+        let mut statement = self
             .connection
-            .query_row(
-                "SELECT seq FROM cursor_head WHERE singleton = 1",
-                [],
-                |row| row.get::<_, Option<i64>>(0),
+            .prepare(
+                "SELECT handle FROM (\
+                    SELECT handle FROM task_heads UNION \
+                    SELECT handle FROM workflow_heads UNION \
+                    SELECT handle FROM claim_heads UNION \
+                    SELECT handle FROM lease_heads\
+                 ) ORDER BY handle",
             )
             .map_err(GuardError::Store)?;
-        decode_optional_seq(value).map_err(GuardError::Invalid)
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(GuardError::Store)?;
+        let mut bundles = Vec::new();
+        for row in rows {
+            let indexed = row.map_err(GuardError::Store)?;
+            let handle = indexed.parse::<wire::TaskHandle>().map_err(|error| {
+                GuardError::Invalid(format!("task head key {indexed:?} is invalid: {error}"))
+            })?;
+            let statement = self.task_head(&handle)?;
+            let workflow = self.workflow_head(&handle)?;
+            let claim = self.claim_head(&handle)?;
+            let lease = self.lease_head(&handle)?;
+            let loose_planes = [
+                workflow.as_ref().map(|_| "workflow"),
+                claim.as_ref().map(|_| "claim"),
+                lease.as_ref().map(|_| "lease"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+            let statement = statement.ok_or_else(|| {
+                GuardError::Invalid(format!(
+                    "task {handle} has loose {} head(s) without a statement head",
+                    loose_planes.join(", ")
+                ))
+            })?;
+            let workflow = workflow.ok_or_else(|| {
+                GuardError::Invalid(format!(
+                    "task {handle} has a statement head but no workflow head"
+                ))
+            })?;
+            bundles.push(TaskHeads {
+                statement,
+                workflow,
+                claim,
+                lease,
+            });
+        }
+        Ok(bundles)
     }
 
     /// Current task statement head, when the handle exists.
@@ -107,11 +198,19 @@ impl JournalRead<'_> {
     ) -> Result<Option<JournalHead<wire::TaskHead>>, GuardError> {
         let head = self.text_head::<wire::TaskHead>("task_heads", "handle", handle.as_str())?;
         if let Some(head) = &head
+            && head.body.handle != *handle
+        {
+            return Err(GuardError::Invalid(format!(
+                "task head indexed as {handle} carries body handle {}",
+                head.body.handle
+            )));
+        }
+        if let Some(head) = &head
             && head.body.revision != head.position
         {
-            return Err(GuardError::Invalid(
-                "task head revision disagrees with head_seq".to_owned(),
-            ));
+            return Err(GuardError::Invalid(format!(
+                "task {handle} statement head revision disagrees with head_seq"
+            )));
         }
         Ok(head)
     }
@@ -133,9 +232,9 @@ impl JournalRead<'_> {
         if let Some(head) = &head
             && head.body.fact != head.position
         {
-            return Err(GuardError::Invalid(
-                "claim head fact disagrees with head_seq".to_owned(),
-            ));
+            return Err(GuardError::Invalid(format!(
+                "task {handle} claim head fact disagrees with head_seq"
+            )));
         }
         Ok(head)
     }
@@ -214,7 +313,21 @@ impl JournalRead<'_> {
             .optional()
             .map_err(GuardError::Store)?;
         row.map_or(Ok(None), |(position, bytes)| {
-            decode_head(position, &bytes).map(Some)
+            let head = decode_head(position, &bytes).map_err(|error| {
+                let detail = match error {
+                    GuardError::Invalid(detail) => detail,
+                    other => other.to_string(),
+                };
+                GuardError::Invalid(format!("{table} {key_column} {key:?} is invalid: {detail}"))
+            })?;
+            if self.cursor.is_none_or(|cursor| head.position > cursor) {
+                return Err(GuardError::Invalid(format!(
+                    "{table} {key_column} {key:?} head position {} is beyond cursor {:?}",
+                    head.position,
+                    self.cursor.map(wire::Seq::get)
+                )));
+            }
+            Ok(Some(head))
         })
     }
 }
@@ -770,6 +883,25 @@ impl fmt::Display for CommitFault {
 impl Error for CommitFault {}
 
 impl Journal {
+    /// Evaluate an owned answer against one immutable SQLite snapshot.
+    ///
+    /// The cursor query is deliberately the first read in the deferred
+    /// transaction. It establishes the SQLite snapshot that every subsequent
+    /// query through `JournalRead` observes.
+    pub fn read<T, F>(&self, answer: F) -> Result<T, GuardError>
+    where
+        F: for<'a> FnOnce(&JournalRead<'a>) -> Result<T, GuardError>,
+    {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .map_err(GuardError::Store)?;
+        let read = JournalRead::scoped(&transaction)?;
+        let answer = answer(&read)?;
+        transaction.commit().map_err(GuardError::Store)?;
+        Ok(answer)
+    }
+
     /// Evaluate guards and apply every proposed effect in one immediate SQLite
     /// transaction.
     pub fn apply(&mut self, mut write: JournalWrite) -> Result<Applied, CommitError> {
@@ -783,8 +915,8 @@ impl Journal {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sqlite_fault)?;
-        run_guards(&transaction, std::mem::take(&mut write.guards))?;
         let current = read_cursor(&transaction)?;
+        run_guards(&transaction, current, std::mem::take(&mut write.guards))?;
         let assigned = assign_positions(current, write.facts.len())?;
         insert_facts(&transaction, &write, &assigned, current)?;
         apply_heads(&transaction, write.id, write.heads, &assigned)?;
@@ -812,9 +944,14 @@ impl Journal {
     }
 }
 
-fn run_guards(transaction: &Transaction<'_>, guards: Vec<JournalGuard>) -> Result<(), CommitError> {
+fn run_guards(
+    transaction: &Transaction<'_>,
+    cursor: Option<wire::Seq>,
+    guards: Vec<JournalGuard>,
+) -> Result<(), CommitError> {
     let read = JournalRead {
         connection: transaction,
+        cursor,
     };
     for guard in guards {
         match (guard.check)(&read) {
@@ -827,14 +964,19 @@ fn run_guards(transaction: &Transaction<'_>, guards: Vec<JournalGuard>) -> Resul
 }
 
 fn read_cursor(connection: &Connection) -> Result<Option<wire::Seq>, CommitError> {
+    visible_cursor(connection)
+        .map_err(|error| CommitError::Fault(CommitFault::new(error.to_string())))
+}
+
+fn visible_cursor(connection: &Connection) -> Result<Option<wire::Seq>, GuardError> {
     let value = connection
         .query_row(
             "SELECT seq FROM cursor_head WHERE singleton = 1",
             [],
             |row| row.get::<_, Option<i64>>(0),
         )
-        .map_err(sqlite_fault)?;
-    decode_optional_seq(value).map_err(|detail| CommitError::Fault(CommitFault::new(detail)))
+        .map_err(GuardError::Store)?;
+    decode_optional_seq(value).map_err(GuardError::Invalid)
 }
 
 fn assign_positions(
