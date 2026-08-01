@@ -241,96 +241,100 @@ impl JournalReader {
 
     /// Resolves one sequence or exact origin into a verified cause thread.
     pub fn thread(&self, reference: &str) -> Result<ThreadSnapshot, ThreadError> {
-        self.verify().map_err(ThreadError::Verify)?;
-        let roots = if let Ok(seq) = reference.parse::<u64>() {
-            let Some(seq) = wire::Seq::new(seq) else {
-                return Err(ThreadError::NotFound {
-                    reference: reference.to_owned(),
-                });
-            };
-            self.connection
-                .query_row(
-                    "SELECT root FROM thread_index WHERE seq = ?1",
-                    params![sqlite_integer(seq.get()).map_err(|error| match error {
-                        ReindexError::Sqlite(error) => ThreadError::Sqlite(error),
-                        ReindexError::Violations(_) =>
-                            unreachable!("integer conversion has no violations"),
-                    })?],
-                    |row| row.get::<_, i64>(0),
-                )
-                .optional()
-                .map_err(ThreadError::Sqlite)?
-                .and_then(|root| u64::try_from(root).ok())
-                .into_iter()
-                .collect::<Vec<_>>()
-        } else {
-            let mut statement = self
-                .connection
-                .prepare("SELECT DISTINCT root FROM thread_index WHERE origin = ?1 ORDER BY root")
-                .map_err(ThreadError::Sqlite)?;
-            let rows = statement
-                .query_map(params![reference], |row| row.get::<_, i64>(0))
-                .map_err(ThreadError::Sqlite)?;
-            let mut roots = Vec::new();
-            for row in rows {
-                let root = row.map_err(ThreadError::Sqlite)?;
-                if let Ok(root) = u64::try_from(root) {
-                    roots.push(root);
-                }
-            }
-            roots
+        thread_connection(&self.connection, reference)
+    }
+}
+
+pub(crate) fn thread_connection(
+    connection: &Connection,
+    reference: &str,
+) -> Result<ThreadSnapshot, ThreadError> {
+    verify_connection(connection).map_err(ThreadError::Verify)?;
+    let roots = if let Ok(seq) = reference.parse::<u64>() {
+        let Some(seq) = wire::Seq::new(seq) else {
+            return Err(ThreadError::NotFound {
+                reference: reference.to_owned(),
+            });
         };
-        let root = match roots.as_slice() {
-            [] => {
-                return Err(ThreadError::NotFound {
-                    reference: reference.to_owned(),
-                });
-            }
-            [root] => *root,
-            _ => {
-                return Err(ThreadError::Ambiguous {
-                    reference: reference.to_owned(),
-                    roots,
-                });
-            }
-        };
-        let snapshot = self.fact_snapshot().map_err(ThreadError::Snapshot)?;
-        let by_seq = snapshot
-            .facts()
-            .iter()
-            .map(|envelope| (envelope.seq.get(), envelope))
-            .collect::<BTreeMap<_, _>>();
-        let mut statement = self
-            .connection
-            .prepare("SELECT seq FROM thread_index WHERE root = ?1 ORDER BY seq")
-            .map_err(ThreadError::Sqlite)?;
-        let rows = statement
-            .query_map(
-                params![sqlite_integer(root).map_err(|error| match error {
+        connection
+            .query_row(
+                "SELECT root FROM thread_index WHERE seq = ?1",
+                params![sqlite_integer(seq.get()).map_err(|error| match error {
                     ReindexError::Sqlite(error) => ThreadError::Sqlite(error),
                     ReindexError::Violations(_) =>
                         unreachable!("integer conversion has no violations"),
                 })?],
                 |row| row.get::<_, i64>(0),
             )
+            .optional()
+            .map_err(ThreadError::Sqlite)?
+            .and_then(|root| u64::try_from(root).ok())
+            .into_iter()
+            .collect::<Vec<_>>()
+    } else {
+        let mut statement = connection
+            .prepare("SELECT DISTINCT root FROM thread_index WHERE origin = ?1 ORDER BY root")
             .map_err(ThreadError::Sqlite)?;
-        let mut entries = Vec::new();
+        let rows = statement
+            .query_map(params![reference], |row| row.get::<_, i64>(0))
+            .map_err(ThreadError::Sqlite)?;
+        let mut roots = Vec::new();
         for row in rows {
-            let seq = row.map_err(ThreadError::Sqlite)?;
-            let seq = u64::try_from(seq).map_err(|_| ThreadError::NotFound {
-                reference: reference.to_owned(),
-            })?;
-            let envelope = by_seq.get(&seq).ok_or_else(|| ThreadError::NotFound {
-                reference: reference.to_owned(),
-            })?;
-            entries.push((*envelope).clone());
+            let root = row.map_err(ThreadError::Sqlite)?;
+            if let Ok(root) = u64::try_from(root) {
+                roots.push(root);
+            }
         }
-        Ok(ThreadSnapshot {
+        roots
+    };
+    let root = match roots.as_slice() {
+        [] => {
+            return Err(ThreadError::NotFound {
+                reference: reference.to_owned(),
+            });
+        }
+        [root] => *root,
+        _ => {
+            return Err(ThreadError::Ambiguous {
+                reference: reference.to_owned(),
+                roots,
+            });
+        }
+    };
+    let snapshot = crate::read::read_snapshot(connection).map_err(ThreadError::Snapshot)?;
+    let by_seq = snapshot
+        .facts()
+        .iter()
+        .map(|envelope| (envelope.seq.get(), envelope))
+        .collect::<BTreeMap<_, _>>();
+    let mut statement = connection
+        .prepare("SELECT seq FROM thread_index WHERE root = ?1 ORDER BY seq")
+        .map_err(ThreadError::Sqlite)?;
+    let rows = statement
+        .query_map(
+            params![sqlite_integer(root).map_err(|error| match error {
+                ReindexError::Sqlite(error) => ThreadError::Sqlite(error),
+                ReindexError::Violations(_) => unreachable!("integer conversion has no violations"),
+            })?],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(ThreadError::Sqlite)?;
+    let mut entries = Vec::new();
+    for row in rows {
+        let seq = row.map_err(ThreadError::Sqlite)?;
+        let seq = u64::try_from(seq).map_err(|_| ThreadError::NotFound {
             reference: reference.to_owned(),
-            root: wire::Seq::new(root).expect("verified thread roots are positive"),
-            entries,
-        })
+        })?;
+        let envelope = by_seq.get(&seq).ok_or_else(|| ThreadError::NotFound {
+            reference: reference.to_owned(),
+        })?;
+        entries.push((*envelope).clone());
     }
+    Ok(ThreadSnapshot {
+        reference: reference.to_owned(),
+        root: wire::Seq::new(root).expect("verified thread roots are positive"),
+        entries,
+    })
 }
 
 fn sqlite_integer(value: u64) -> Result<i64, ReindexError> {
@@ -339,7 +343,7 @@ fn sqlite_integer(value: u64) -> Result<i64, ReindexError> {
     })
 }
 
-fn verify_connection(connection: &Connection) -> Result<Verification, VerifyError> {
+pub(crate) fn verify_connection(connection: &Connection) -> Result<Verification, VerifyError> {
     crate::migrate::finalized_version(connection).map_err(VerifyError::Open)?;
     let mut violations = Vec::new();
     verify_sqlite(connection, &mut violations)?;

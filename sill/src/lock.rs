@@ -65,7 +65,11 @@ impl LockFile {
         try_acquire(self)
     }
 
-    pub(crate) fn try_acquire_opened(&self, file: File) -> io::Result<Acquisition> {
+    /// Try to possess a caller-opened lock file without reopening its pathname.
+    ///
+    /// The caller owns how the descriptor is resolved. The descriptor must be
+    /// a close-on-exec regular file opened for reading and writing.
+    pub fn try_acquire_opened(&self, file: File) -> io::Result<Acquisition> {
         try_acquire_opened(self, file)
     }
 

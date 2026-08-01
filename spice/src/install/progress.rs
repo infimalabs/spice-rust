@@ -113,16 +113,30 @@ fn apply_operation(
     record_generation: Generation,
 ) -> Result<Generation, InstallError> {
     let operation = &record.plan.operations[index];
-    let current = observe(&operation.destination(repository))?;
-    let generation = if matches_generated(current.as_ref(), operation) {
-        validate_existing_generation(repository, record, operation, current.as_ref(), index)?
+    let (current, parent) = observe_bound(
+        operation.location.root(repository),
+        &operation.destination,
+        &operation.parent,
+    )?;
+    let (generation, parent) = if matches_generated(current.as_ref(), operation) {
+        (
+            validate_existing_generation(
+                repository,
+                record,
+                operation,
+                current.as_ref(),
+                index,
+                parent,
+            )?,
+            parent.ok_or_else(|| InstallError::ParentChanged(operation.destination(repository)))?,
+        )
     } else if current == operation.previous {
         publish_operation(repository, operation, generated)?
     } else {
         return Err(drift(operation, current));
     };
     record.installed[index] = Some(generation);
-    record.installed_parents[index] = Some(destination_parent_generation(repository, operation)?);
+    record.installed_parents[index] = Some(parent);
     write_record(repository, record, record_generation)
 }
 
@@ -132,13 +146,13 @@ fn validate_existing_generation(
     operation: &Operation,
     current: Option<&ObservedFile>,
     index: usize,
+    parent: Option<Generation>,
 ) -> Result<Generation, InstallError> {
     let generation = current.expect("a generated match is present").generation;
     if record.installed[index].is_some_and(|expected| expected != generation) {
         return Err(drift(operation, current.cloned()));
     }
-    let parent = destination_parent_generation(repository, operation)?;
-    if record.installed_parents[index].is_some_and(|expected| expected != parent) {
+    if record.installed_parents[index].is_some_and(|expected| Some(expected) != parent) {
         return Err(InstallError::ParentChanged(
             operation.destination(repository),
         ));
@@ -172,24 +186,39 @@ pub(super) fn unapply_with_interruption(
     while record.completed < record.plan.operations.len() {
         let reverse = record.plan.operations.len() - 1 - record.completed;
         let operation = &record.plan.operations[reverse];
-        let current = observe(&operation.destination(repository))?;
-        let restored = if restored_matches(current.as_ref(), operation, record.restored[reverse]) {
-            record.restored[reverse]
-        } else if restoration_image_matches(current.as_ref(), operation) {
-            current.as_ref().map(|observed| observed.generation)
-        } else if installed_matches(
-            current.as_ref(),
-            operation,
-            record.installed[reverse],
-            destination_parent_generation(repository, operation).ok(),
-            record.installed_parents[reverse],
-        ) {
-            restore_operation(repository, operation)?
-        } else {
-            return Err(drift(operation, current));
-        };
+        let (current, parent) = observe_bound(
+            operation.location.root(repository),
+            &operation.destination,
+            &operation.parent,
+        )?;
+        let (restored, needs_cleanup) =
+            if restored_matches(current.as_ref(), operation, record.restored[reverse]) {
+                (record.restored[reverse], true)
+            } else if restoration_image_matches(current.as_ref(), operation) {
+                (current.as_ref().map(|observed| observed.generation), true)
+            } else if installed_matches(
+                current.as_ref(),
+                operation,
+                record.installed[reverse],
+                parent,
+                record.installed_parents[reverse],
+            ) {
+                (
+                    restore_operation(
+                        repository,
+                        operation,
+                        record.installed[reverse]
+                            .expect("a complete record carries an installed generation"),
+                    )?,
+                    false,
+                )
+            } else {
+                return Err(drift(operation, current));
+            };
         record.restored[reverse] = restored;
-        cleanup_parents(repository, operation)?;
+        if needs_cleanup {
+            cleanup_operation(repository, operation)?;
+        }
         record_generation = write_record(repository, &record, record_generation)?;
         if interrupt_after_write == Some(reverse) {
             return Err(InstallError::Interrupted { operation: reverse });
@@ -208,8 +237,11 @@ pub(super) fn verify_progress(
 ) -> Result<(), InstallError> {
     record.validate_for_repository(repository)?;
     for (index, operation) in record.plan.operations.iter().enumerate() {
-        let observed = observe(&operation.destination(repository))?;
-        let parent = destination_parent_generation(repository, operation).ok();
+        let (observed, parent) = observe_bound(
+            operation.location.root(repository),
+            &operation.destination,
+            &operation.parent,
+        )?;
         let valid = match record.status {
             InstallStatus::Applying => record.installed[index].map_or_else(
                 || {
@@ -293,22 +325,6 @@ fn installed_matches(
             && observed_parent == expected_parent
             && expected_parent.is_some()
             && matches_generated(Some(observed), operation))
-}
-
-fn destination_parent_generation(
-    repository: &Repository,
-    operation: &Operation,
-) -> Result<Generation, InstallError> {
-    let destination = operation.destination(repository);
-    let parent = destination
-        .parent()
-        .expect("a strict destination below a root has a parent");
-    let metadata = fs::symlink_metadata(parent)
-        .map_err(|source| InstallError::io("inspect destination parent", parent, source))?;
-    if !metadata.is_dir() {
-        return Err(InstallError::PathShape(parent.to_path_buf()));
-    }
-    Ok(Generation::observe(&metadata))
 }
 
 fn restored_matches(

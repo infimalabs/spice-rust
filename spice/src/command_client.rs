@@ -1,22 +1,22 @@
 //! The native client's sole authenticated path to the current resident.
 
 use std::fs::{self, File, Metadata, OpenOptions};
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::header::ORIGIN;
 use tungstenite::{Message, WebSocket};
-use wire::intent::CommandAnswer;
+use wire::intent::{CommandAnswer, InboxAnswer};
 use wire::{
-    Actor, CanonicalUuid, Command, CommandKind, Fault, FaultClass, Outcome, Refusal, Reply,
-    ReplyPosition, Response, TrustState, Witness,
+    Actor, CanonicalUuid, Command, CommandKind, Disposition, Fault, FaultClass, Outcome, Refusal,
+    Reply, ReplyPosition, Response, TrustState, Witness,
 };
 
 use crate::cli::{Contract, Guard, Principal, ReplyPositionLaw};
@@ -53,10 +53,30 @@ pub(crate) enum SelectedCommand<'a> {
     LaneState { body: &'a wire::intent::LaneState },
     /// Read one bounded continuity account.
     LaneRecall { body: &'a wire::intent::LaneRecall },
+    /// The operator appends one durable directive to a seated lane.
+    SteerSend {
+        lane: CanonicalUuid,
+        message: &'a str,
+    },
+    /// The operator withdraws one live directive.
+    SteerCancel { directive: CanonicalUuid },
+    /// The authenticated principal reads visible pending direction.
+    SteerInbox { lane: Option<CanonicalUuid> },
+    /// The authenticated lane retires one live key.
+    SteerAck {
+        key: &'a steer::Key,
+        disposition: Disposition,
+    },
     /// The operator approves one exact pended executable digest.
     TrustGrant { digest: &'a wire::Digest },
     /// The operator withdraws approval from one exact granted digest.
     TrustRevoke { digest: &'a wire::Digest },
+}
+
+#[derive(Clone, Copy)]
+enum Connection {
+    Operator,
+    Lane(CanonicalUuid),
 }
 
 /// Submit one contract-bound command to the current repository resident.
@@ -68,11 +88,123 @@ pub(crate) fn execute(
     contract: &Contract,
     selected: SelectedCommand<'_>,
 ) -> Outcome<CommandAnswer> {
-    let mapped = match MappedCommand::selected(contract, selected) {
+    let mapped = MappedCommand::selected(contract, selected);
+    let connection = match ambient_lane_identity() {
+        Ok(Some(lane)) => Connection::Lane(lane),
+        Ok(None) => Connection::Operator,
+        Err(outcome) => return outcome,
+    };
+    execute_mapped(discovery_path, contract, connection, mapped)
+}
+
+/// Submit one steering command with the caller's optional activated lane.
+pub(crate) fn execute_steering(
+    discovery_path: &Path,
+    contract: &Contract,
+    selected: SelectedCommand<'_>,
+    lane_context: Option<CanonicalUuid>,
+) -> Outcome<CommandAnswer> {
+    match selected {
+        SelectedCommand::SteerSend { lane, message } => {
+            let inbox = match read_inbox(discovery_path, Connection::Operator, Some(lane)) {
+                Ok(inbox) => inbox.answer,
+                Err(outcome) => return outcome,
+            };
+            let Some(row) = inbox.lanes.iter().find(|row| row.lane == lane) else {
+                return steering_refusal(
+                    "steer::lane-unknown",
+                    Some(lane.to_string()),
+                    "seat the lane before sending it direction",
+                );
+            };
+            let Some(occupant) = row.occupant else {
+                return steering_refusal(
+                    "steer::lane-vacant",
+                    Some(lane.to_string()),
+                    "start an occupant in the lane before sending it direction",
+                );
+            };
+            let mapped = MappedCommand::new(
+                contract,
+                &["steer"],
+                CommandKind::SteerSend,
+                vec![Witness::Residency {
+                    lane,
+                    occupant,
+                    epoch: inbox.epoch,
+                }],
+                &wire::intent::SteerSend {
+                    lane,
+                    message: message.to_owned(),
+                },
+            );
+            execute_mapped(discovery_path, contract, Connection::Operator, mapped)
+        }
+        SelectedCommand::SteerAck { key, disposition } => {
+            let Some(lane) = lane_context else {
+                return environment_fault(
+                    "steer::lane-context-absent",
+                    "ack requires the SPICE_LANE identity of an activated lane shell",
+                );
+            };
+            let inbox = match read_inbox(discovery_path, Connection::Lane(lane), None) {
+                Ok(inbox) => inbox.answer,
+                Err(outcome) => return outcome,
+            };
+            let directive = inbox
+                .lanes
+                .iter()
+                .flat_map(|row| &row.pending)
+                .find(|pending| pending.key == key.as_str())
+                .map(|pending| pending.directive);
+            let Some(directive) = directive else {
+                return steering_refusal(
+                    "steer::key-not-live",
+                    Some(key.to_string()),
+                    "read the current lane inbox and acknowledge one live key",
+                );
+            };
+            let mapped = MappedCommand::new(
+                contract,
+                &["ack"],
+                CommandKind::SteerDispose,
+                vec![Witness::Directive {
+                    steer: directive,
+                    disposition: Disposition::Live,
+                }],
+                &wire::intent::SteerDispose {
+                    directive,
+                    disposition,
+                },
+            );
+            execute_mapped(discovery_path, contract, Connection::Lane(lane), mapped)
+        }
+        SelectedCommand::SteerInbox { lane } => {
+            let connection = lane_context.map_or(Connection::Operator, Connection::Lane);
+            match read_inbox(discovery_path, connection, lane) {
+                Ok(inbox) => Outcome::Reply(Reply {
+                    position: ReplyPosition::Snapshot(inbox.position),
+                    body: CommandAnswer::Inbox(inbox.answer),
+                }),
+                Err(outcome) => outcome,
+            }
+        }
+        selected => execute(discovery_path, contract, selected),
+    }
+}
+
+fn execute_mapped(
+    operator_discovery: &Path,
+    contract: &Contract,
+    connection: Connection,
+    mapped: ClientResult<MappedCommand>,
+) -> Outcome<CommandAnswer> {
+    let mapped = match mapped {
         Ok(mapped) => mapped,
         Err(outcome) => return outcome,
     };
-    let discovery = match DiscoveryRead::open(discovery_path) {
+    let discovery_path = selected_discovery_path(operator_discovery, connection);
+    let discovery = match DiscoveryRead::open(&discovery_path) {
         Ok(discovery) => discovery,
         Err(outcome) => return outcome,
     };
@@ -180,7 +312,8 @@ pub(crate) fn authenticate(
             "selected CLI contract has no authenticated resident read mapping",
         ));
     }
-    let discovery = DiscoveryRead::open(discovery_path)?;
+    let connection = ambient_lane_identity()?.map_or(Connection::Operator, Connection::Lane);
+    let discovery = DiscoveryRead::open(&selected_discovery_path(discovery_path, connection))?;
     let session = open_session(contract, discovery)?;
     Ok(session.accepted.epoch)
 }
@@ -190,6 +323,49 @@ struct MappedCommand {
     kind: CommandKind,
     expected: Vec<Witness>,
     body: serde_json::Value,
+}
+
+struct InboxSnapshot {
+    answer: InboxAnswer,
+    position: wire::Seq,
+}
+
+fn read_inbox(
+    operator_discovery: &Path,
+    connection: Connection,
+    lane: Option<CanonicalUuid>,
+) -> Result<InboxSnapshot, Outcome<CommandAnswer>> {
+    let contract = crate::cli::contract(&["inbox"])
+        .expect("the generated CLI registry carries the inbox contract");
+    let mapped = MappedCommand::new(
+        contract,
+        &["inbox"],
+        CommandKind::SteerInbox,
+        Vec::new(),
+        &wire::intent::SteerInbox { lane },
+    )?;
+    let outcome = execute_mapped(operator_discovery, contract, connection, Ok(mapped));
+    match outcome {
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(position),
+            body: CommandAnswer::Inbox(answer),
+        }) => Ok(InboxSnapshot { answer, position }),
+        Outcome::Reply(_) => Err(protocol_fault(
+            "steer::inbox-answer-invalid",
+            "resident inbox reply did not retain its snapshot position and body",
+        )),
+        Outcome::Refusal(refusal) => Err(Outcome::Refusal(refusal)),
+        Outcome::Fault(fault) => Err(Outcome::Fault(fault)),
+    }
+}
+
+fn selected_discovery_path(operator_discovery: &Path, connection: Connection) -> PathBuf {
+    match connection {
+        Connection::Operator => operator_discovery.to_path_buf(),
+        Connection::Lane(lane) => operator_discovery
+            .with_file_name("canvas-lanes")
+            .join(lane.to_string()),
+    }
 }
 
 impl MappedCommand {
@@ -210,6 +386,13 @@ impl MappedCommand {
             SelectedCommand::LaneSeat { body } => Self::lane_seat(contract, body),
             SelectedCommand::LaneState { body } => Self::lane_state(contract, body),
             SelectedCommand::LaneRecall { body } => Self::lane_recall(contract, body),
+            SelectedCommand::SteerCancel { directive } => Self::steer_cancel(contract, directive),
+            SelectedCommand::SteerSend { .. }
+            | SelectedCommand::SteerInbox { .. }
+            | SelectedCommand::SteerAck { .. } => Err(protocol_fault(
+                "command::mapping-unsupported",
+                "steering preflight must select its authenticated mapping path",
+            )),
             SelectedCommand::TrustGrant { digest } => Self::trust_rule(
                 contract,
                 digest,
@@ -340,6 +523,19 @@ impl MappedCommand {
         )
     }
 
+    fn steer_cancel(contract: &Contract, directive: CanonicalUuid) -> ClientResult<Self> {
+        Self::new(
+            contract,
+            &["steer", "cancel"],
+            CommandKind::SteerCancel,
+            vec![Witness::Directive {
+                steer: directive,
+                disposition: Disposition::Live,
+            }],
+            &wire::intent::DirectiveRef { directive },
+        )
+    }
+
     fn trust_rule(
         contract: &Contract,
         digest: &wire::Digest,
@@ -400,12 +596,12 @@ impl MappedCommand {
             )
         })?;
         let mapped = Self {
-            id: new_uuid(),
+            id: CanonicalUuid::new(uuid::Uuid::new_v4()),
             kind,
             expected,
             body,
         };
-        let preflight = mapped.envelope(new_uuid());
+        let preflight = mapped.envelope(CanonicalUuid::new(uuid::Uuid::new_v4()));
         preflight
             .witnessed()
             .map_err(|error| protocol_fault("command::witness-law", &error.to_string()))?;
@@ -434,6 +630,10 @@ struct DiscoveryRead {
 
 impl DiscoveryRead {
     fn open(path: &Path) -> ClientResult<Self> {
+        Self::open_with(path, || {})
+    }
+
+    fn open_with(path: &Path, before_open: impl FnOnce()) -> ClientResult<Self> {
         let parent = path.parent().ok_or_else(|| {
             environment_fault(
                 "canvas::discovery-unavailable",
@@ -450,6 +650,7 @@ impl DiscoveryRead {
                 "canvas discovery exceeds the current bounded document size",
             ));
         }
+        before_open();
         let mut file = open_discovery(path)?;
         let opened = file.metadata().map_err(discovery_unavailable)?;
         require_secure(&opened, DiscoveryKind::File)?;
@@ -457,7 +658,7 @@ impl DiscoveryRead {
             return Err(discovery_replaced());
         }
         let mut bytes = Vec::new();
-        file.by_ref()
+        Read::by_ref(&mut file)
             .take(MAX_DISCOVERY_BYTES + 1)
             .read_to_end(&mut bytes)
             .map_err(discovery_unavailable)?;
@@ -610,7 +811,7 @@ fn open_discovery(path: &Path) -> ClientResult<File> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
-    options.custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
+    options.custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK);
     options.open(path).map_err(discovery_unavailable)
 }
 
@@ -642,20 +843,118 @@ fn request(
 }
 
 struct AuthenticatedSession {
-    socket: WebSocket<TcpStream>,
+    socket: WebSocket<DeadlineStream>,
     discovery: DiscoveryRead,
     accepted: wire::Accepted,
     capability: CanonicalUuid,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum IoDirection {
+    Read,
+    Write,
+}
+
+struct DeadlineStream {
+    stream: TcpStream,
+    deadline: Instant,
+    last_failure: Option<IoDirection>,
+}
+
+impl DeadlineStream {
+    fn connect(address: &SocketAddr, deadline: Instant) -> io::Result<Self> {
+        let stream = TcpStream::connect_timeout(address, remaining(deadline)?)?;
+        Ok(Self {
+            stream,
+            deadline,
+            last_failure: None,
+        })
+    }
+
+    fn read_timeout(&mut self) -> io::Result<Duration> {
+        let timeout = remaining(self.deadline)?;
+        self.stream.set_read_timeout(Some(timeout))?;
+        Ok(timeout)
+    }
+
+    fn write_timeout(&mut self) -> io::Result<Duration> {
+        let timeout = remaining(self.deadline)?;
+        self.stream.set_write_timeout(Some(timeout))?;
+        Ok(timeout)
+    }
+}
+
+impl Read for DeadlineStream {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        self.last_failure = None;
+        if let Err(error) = self.read_timeout() {
+            self.last_failure = Some(IoDirection::Read);
+            return Err(error);
+        }
+        match self.stream.read(bytes) {
+            Ok(read) => Ok(read),
+            Err(error) => {
+                self.last_failure = Some(IoDirection::Read);
+                Err(error)
+            }
+        }
+    }
+}
+
+impl Write for DeadlineStream {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        self.last_failure = None;
+        if let Err(error) = self.write_timeout() {
+            self.last_failure = Some(IoDirection::Write);
+            return Err(error);
+        }
+        match self.stream.write(bytes) {
+            Ok(written) => Ok(written),
+            Err(error) => {
+                self.last_failure = Some(IoDirection::Write);
+                Err(error)
+            }
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.last_failure = None;
+        if let Err(error) = self.write_timeout() {
+            self.last_failure = Some(IoDirection::Write);
+            return Err(error);
+        }
+        match self.stream.flush() {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.last_failure = Some(IoDirection::Write);
+                Err(error)
+            }
+        }
+    }
+}
+
+fn remaining(deadline: Instant) -> io::Result<Duration> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "resident command deadline elapsed"))
 }
 
 fn open_session(
     contract: &Contract,
     discovery: DiscoveryRead,
 ) -> ClientResult<AuthenticatedSession> {
-    let capability = ambient_lane_capability()?.unwrap_or(discovery.value.capability);
+    let capability = discovery.value.capability;
     let (authority, address) = loopback_endpoint(&discovery.value.endpoint)?;
     discovery.verify_current()?;
-    let stream = match TcpStream::connect_timeout(&address, SOCKET_TIMEOUT) {
+    let deadline = Instant::now() + SOCKET_TIMEOUT;
+    let stream = match DeadlineStream::connect(&address, deadline) {
         Ok(stream) => stream,
         Err(error) => {
             return Err(environment_fault(
@@ -664,18 +963,6 @@ fn open_session(
             ));
         }
     };
-    if let Err(error) = stream.set_read_timeout(Some(SOCKET_TIMEOUT)) {
-        return Err(environment_fault(
-            "canvas::timeout-failed",
-            &error.to_string(),
-        ));
-    }
-    if let Err(error) = stream.set_write_timeout(Some(SOCKET_TIMEOUT)) {
-        return Err(environment_fault(
-            "canvas::timeout-failed",
-            &error.to_string(),
-        ));
-    }
     discovery.verify_current()?;
     let mut request = match format!("ws://{authority}/socket").into_client_request() {
         Ok(request) => request,
@@ -733,21 +1020,21 @@ fn open_session(
     })
 }
 
-fn ambient_lane_capability() -> ClientResult<Option<CanonicalUuid>> {
+fn ambient_lane_identity() -> ClientResult<Option<CanonicalUuid>> {
     let Some(value) = crate::bootstrap_environment("SPICE_LANE") else {
         // env-policy: allow
         return Ok(None);
     };
     let Some(value) = value.to_str() else {
         return Err(protocol_fault(
-            "hello::lane-capability-invalid",
+            "hello::lane-identity-invalid",
             "SPICE_LANE is not UTF-8",
         ));
     };
     value.parse().map(Some).map_err(|_| {
         protocol_fault(
-            "hello::lane-capability-invalid",
-            "SPICE_LANE is not one canonical capability UUID",
+            "hello::lane-identity-invalid",
+            "SPICE_LANE is not one canonical lane UUID",
         )
     })
 }
@@ -901,7 +1188,7 @@ fn discloses_capability(value: &impl Serialize, capability: CanonicalUuid) -> bo
     })
 }
 
-fn send<T: Serialize>(socket: &mut WebSocket<TcpStream>, value: &T) -> ClientResult<()> {
+fn send<T: Serialize>(socket: &mut WebSocket<DeadlineStream>, value: &T) -> ClientResult<()> {
     let bytes = wire::encode(value).map_err(|_| {
         protocol_fault(
             "canvas::request-unencodable",
@@ -913,12 +1200,20 @@ fn send<T: Serialize>(socket: &mut WebSocket<TcpStream>, value: &T) -> ClientRes
         .map_err(|error| environment_fault("canvas::send-failed", &error.to_string()))
 }
 
-fn receive(socket: &mut WebSocket<TcpStream>) -> ClientResult<Vec<u8>> {
+fn receive(socket: &mut WebSocket<DeadlineStream>) -> ClientResult<Vec<u8>> {
     loop {
-        match socket
-            .read()
-            .map_err(|error| environment_fault("canvas::receive-failed", &error.to_string()))?
-        {
+        let message = match socket.read() {
+            Ok(message) => message,
+            Err(error) => {
+                let reason = if socket.get_ref().last_failure == Some(IoDirection::Write) {
+                    "canvas::send-failed"
+                } else {
+                    "canvas::receive-failed"
+                };
+                return Err(environment_fault(reason, &error.to_string()));
+            }
+        };
+        match message {
             Message::Binary(bytes) => return Ok(bytes.to_vec()),
             Message::Text(text) => return Ok(text.as_bytes().to_vec()),
             Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
@@ -950,6 +1245,20 @@ fn capability_disclosed() -> Outcome<CommandAnswer> {
     )
 }
 
+fn steering_refusal(
+    reason: &str,
+    observed: Option<String>,
+    remedy: &str,
+) -> Outcome<CommandAnswer> {
+    Outcome::Refusal(Refusal {
+        reason: reason.to_owned(),
+        witness: Some("steering-inbox".to_owned()),
+        expected: Some("one live directive in the authenticated lane".to_owned()),
+        observed,
+        remedy: remedy.to_owned(),
+    })
+}
+
 fn protocol_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
     Outcome::Fault(Fault {
         class: FaultClass::Protocol,
@@ -964,10 +1273,6 @@ fn environment_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
         reason: reason.to_owned(),
         detail: detail.to_owned(),
     })
-}
-
-fn new_uuid() -> CanonicalUuid {
-    CanonicalUuid::new(uuid::Uuid::new_v4())
 }
 
 #[cfg(test)]
@@ -1346,6 +1651,50 @@ mod tests {
             panic!("symlink discovery must be refused");
         };
         assert_eq!(fault.reason, "canvas::discovery-insecure");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discovery_fifo_substitution_is_nonblocking_and_refused_from_the_descriptor() {
+        use rustix::fs::{OFlags, fcntl_getfl};
+        use std::os::unix::fs::OpenOptionsExt as _;
+
+        let fixture = Fixture::new("fifo-substitution");
+        let discovery = fixture.publish();
+        let mut anchor = None;
+
+        let started = Instant::now();
+        let outcome = DiscoveryRead::open_with(&fixture.canvas, || {
+            fs::remove_file(&fixture.canvas).expect("regular discovery removes");
+            let status = ProcessCommand::new("mkfifo")
+                .arg(&fixture.canvas)
+                .status()
+                .expect("mkfifo launches");
+            assert!(status.success(), "mkfifo creates the substitution");
+            anchor = Some(
+                OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .custom_flags(libc::O_CLOEXEC | libc::O_NONBLOCK)
+                    .open(&fixture.canvas)
+                    .expect("fixture anchor opens without waiting"),
+            );
+        });
+
+        let Err(Outcome::Fault(fault)) = outcome else {
+            panic!("FIFO substitution must fault");
+        };
+        assert_eq!(fault.reason, "canvas::discovery-insecure");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "FIFO substitution must not wait for a writer"
+        );
+        assert!(!fault.detail.contains(&discovery.capability.to_string()));
+
+        let opened = open_discovery(&fixture.canvas).expect("FIFO descriptor opens");
+        let flags = fcntl_getfl(&opened).expect("FIFO descriptor flags read");
+        assert!(flags.contains(OFlags::NONBLOCK));
+        drop(anchor);
     }
 
     #[test]

@@ -211,6 +211,19 @@ pub struct SteerSend {
     pub message: String,
 }
 
+/// Read pending direction visible to the authenticated principal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SteerInbox {
+    /// Lane selected by an operator, or the authenticated lane when absent.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub lane: Option<CanonicalUuid>,
+}
+
 /// Name one directive and nothing else.
 ///
 /// Resending and cancelling both identify a directive without adding to it.
@@ -391,8 +404,58 @@ pub struct DocAnswer {
 pub struct DirectiveAnswer {
     /// Directive the answer concerns.
     pub directive: CanonicalUuid,
+    /// Human-sized key quoted by inbox and acknowledgment prose.
+    pub key: String,
     /// Its disposition after the transaction.
     pub disposition: Disposition,
+}
+
+/// One pending directive returned by an inbox read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingDirective {
+    /// Durable directive identity.
+    pub directive: CanonicalUuid,
+    /// Human-sized acknowledgment key.
+    pub key: String,
+    /// Direction text.
+    pub text: String,
+    /// Control channel attached to the direction, when present.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub control: Option<String>,
+    /// Instant at which the directive lapses.
+    pub expires: Instant,
+}
+
+/// Pending direction for one lane at a resident snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaneInbox {
+    /// Lane this row describes.
+    pub lane: CanonicalUuid,
+    /// Occupant currently seated in the lane, when any.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub occupant: Option<CanonicalUuid>,
+    /// Pending directives in journal order.
+    pub pending: Vec<PendingDirective>,
+}
+
+/// Snapshot-positioned steering inbox answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InboxAnswer {
+    /// Resident generation that produced the answer.
+    pub epoch: CanonicalUuid,
+    /// Visible lanes in canonical lane order.
+    pub lanes: Vec<LaneInbox>,
 }
 
 /// The answer a consent decision returns.
@@ -628,6 +691,8 @@ pub enum BodyShape {
     DocApply,
     /// [`SteerSend`]
     SteerSend,
+    /// [`SteerInbox`]
+    SteerInbox,
     /// [`DirectiveRef`]
     DirectiveRef,
     /// [`SteerDispose`]
@@ -669,6 +734,8 @@ pub enum AnswerShape {
     Doc,
     /// [`DirectiveAnswer`]
     Directive,
+    /// [`InboxAnswer`]
+    Inbox,
     /// [`ConsentAnswer`]
     Consent,
     /// [`ConsentQueueAnswer`]
@@ -703,6 +770,8 @@ pub enum CommandAnswer {
     Doc(DocAnswer),
     /// [`AnswerShape::Directive`]
     Directive(DirectiveAnswer),
+    /// [`AnswerShape::Inbox`]
+    Inbox(InboxAnswer),
     /// [`AnswerShape::Consent`]
     Consent(ConsentAnswer),
     /// [`AnswerShape::ConsentQueue`]
@@ -734,6 +803,7 @@ impl CommandAnswer {
             Self::Claim(_) => AnswerShape::Claim,
             Self::Doc(_) => AnswerShape::Doc,
             Self::Directive(_) => AnswerShape::Directive,
+            Self::Inbox(_) => AnswerShape::Inbox,
             Self::Consent(_) => AnswerShape::Consent,
             Self::ConsentQueue(_) => AnswerShape::ConsentQueue,
             Self::ConsentPolicy(_) => AnswerShape::ConsentPolicy,
@@ -762,6 +832,7 @@ impl AnswerShape {
             Self::Claim => CommandAnswer::Claim(crate::decode(bytes)?),
             Self::Doc => CommandAnswer::Doc(crate::decode(bytes)?),
             Self::Directive => CommandAnswer::Directive(crate::decode(bytes)?),
+            Self::Inbox => CommandAnswer::Inbox(crate::decode(bytes)?),
             Self::Consent => CommandAnswer::Consent(crate::decode(bytes)?),
             Self::ConsentQueue => CommandAnswer::ConsentQueue(crate::decode(bytes)?),
             Self::ConsentPolicy => CommandAnswer::ConsentPolicy(crate::decode(bytes)?),
@@ -823,6 +894,7 @@ impl CommandKind {
             }
             Self::DocApply => Binding::of(B::DocApply, A::Doc),
             Self::SteerSend => Binding::of(B::SteerSend, A::Directive),
+            Self::SteerInbox => Binding::of(B::SteerInbox, A::Inbox),
             Self::SteerResend | Self::SteerCancel => Binding::of(B::DirectiveRef, A::Directive),
             Self::SteerDispose => Binding::of(B::SteerDispose, A::Directive),
             Self::ConsentDecide => Binding::of(B::ConsentDecide, A::Consent),
@@ -881,6 +953,8 @@ pub enum Intent {
     DocApply(DocApply),
     /// [`BodyShape::SteerSend`]
     SteerSend(SteerSend),
+    /// [`BodyShape::SteerInbox`]
+    SteerInbox(SteerInbox),
     /// [`BodyShape::DirectiveRef`]
     DirectiveRef(DirectiveRef),
     /// [`BodyShape::SteerDispose`]
@@ -930,6 +1004,7 @@ impl Intent {
             Self::ClaimCarry(_) => BodyShape::ClaimCarry,
             Self::DocApply(_) => BodyShape::DocApply,
             Self::SteerSend(_) => BodyShape::SteerSend,
+            Self::SteerInbox(_) => BodyShape::SteerInbox,
             Self::DirectiveRef(_) => BodyShape::DirectiveRef,
             Self::SteerDispose(_) => BodyShape::SteerDispose,
             Self::ConsentDecide(_) => BodyShape::ConsentDecide,
@@ -972,6 +1047,7 @@ impl BodyShape {
             Self::ClaimCarry => Intent::ClaimCarry(crate::decode(bytes)?),
             Self::DocApply => Intent::DocApply(crate::decode(bytes)?),
             Self::SteerSend => Intent::SteerSend(crate::decode(bytes)?),
+            Self::SteerInbox => Intent::SteerInbox(crate::decode(bytes)?),
             Self::DirectiveRef => Intent::DirectiveRef(crate::decode(bytes)?),
             Self::SteerDispose => Intent::SteerDispose(crate::decode(bytes)?),
             Self::ConsentDecide => Intent::ConsentDecide(crate::decode(bytes)?),

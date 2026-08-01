@@ -1,19 +1,17 @@
 use super::*;
 
-use std::io::Read as _;
-
 const RECALL_LIMIT: usize = 16;
 
 fn invoke_args(
     fixture: &Fixture,
     arguments: &[&str],
     json: bool,
-    lane_capability: Option<wire::CanonicalUuid>,
+    lane_context: Option<wire::CanonicalUuid>,
 ) -> Output {
     let mut process = Command::new(env!("CARGO_BIN_EXE_spice"));
     process.env_remove("SPICE_LANE"); // env-policy: allow
-    if let Some(capability) = lane_capability {
-        process.env("SPICE_LANE", capability.to_string()); // env-policy: allow
+    if let Some(lane) = lane_context {
+        process.env("SPICE_LANE", lane.to_string()); // env-policy: allow
     }
     if json {
         process.arg("--json");
@@ -227,7 +225,7 @@ fn seat_and_recall(fixture: &Fixture) -> (wire::intent::LaneChangeAnswer, wire::
         fixture,
         &["recall"],
         true,
-        Some(capability),
+        Some(added.lane),
     ));
     assert_eq!(
         (recalled.lane, recalled.residency.lanes.len()),
@@ -247,7 +245,7 @@ fn seat_and_recall(fixture: &Fixture) -> (wire::intent::LaneChangeAnswer, wire::
             .iter()
             .any(|entry| entry.kind == FactKind::LaneSeated)
     );
-    let forbidden = invoke_args(fixture, &["lane"], true, Some(capability));
+    let forbidden = invoke_args(fixture, &["lane"], true, Some(added.lane));
     assert_eq!(forbidden.status.code(), Some(FAULT_EXIT));
     let Outcome::Fault(fault) = outcome(&forbidden) else {
         panic!("lane principal must not cross an operator-only leaf");
@@ -413,7 +411,7 @@ fn assert_recovered_lane(
         fixture,
         &["recall"],
         true,
-        Some(capability),
+        Some(lane),
     ));
     assert_eq!(recall.lane, Some(lane));
     assert!(

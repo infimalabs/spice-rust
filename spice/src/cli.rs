@@ -138,6 +138,25 @@ pub(crate) enum Landing {
 
 macro_rules! row {
     (
+        [$($path:literal),+], $syntax:literal, $principal:ident,
+        $journal:ident => $position:ident,
+        [$($fact:ident),*], [$($guard:ident),*], $result:ident, $battery:literal
+    ) => {
+        Contract {
+            path: &[$($path),+],
+            syntax: $syntax,
+            principal: Principal::$principal,
+            journal: JournalAccess::$journal,
+            reply_position: ReplyPositionLaw::$position,
+            facts: &[$(FactKind::$fact),*],
+            guards: &[$(Guard::$guard),*],
+            tools: NO_TOOLS,
+            result: ResultClass::$result,
+            outcomes: ExitOutcome::ALL,
+            battery: $battery,
+        }
+    };
+    (
         [$($path:literal),+], $syntax:literal, $principal:ident, $journal:ident,
         [$($fact:ident),*], [$($guard:ident),*], $result:ident, $battery:literal
     ) => {
@@ -689,7 +708,7 @@ const CONTRACTS: &[Contract] = &[
         Operator,
         Recovery,
         [JournalBacked],
-        [Resident, OperatorCapability, JournalLock],
+        [Offline, JournalLock],
         Reply,
         "journal::backup"
     ),
@@ -699,7 +718,7 @@ const CONTRACTS: &[Contract] = &[
         Operator,
         Recovery,
         [JournalRestored],
-        [Resident, OperatorCapability, DigestOnMutation, JournalLock],
+        [Offline, DigestOnMutation, JournalLock],
         Plan,
         "journal::restore"
     ),
@@ -727,9 +746,9 @@ const CONTRACTS: &[Contract] = &[
         ["journal", "reindex"],
         "journal reindex",
         Operator,
-        Recovery,
+        Recovery => Snapshot,
         [],
-        [Resident, OperatorCapability, JournalLock],
+        [Offline, JournalLock],
         Reply,
         "journal::reindex"
     ),
@@ -869,6 +888,10 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["lane", "drain"]
         | ["lane", "wake"]
         | ["recall"]
+        | ["steer"]
+        | ["steer", "cancel"]
+        | ["inbox"]
+        | ["ack"]
         | ["consent"]
         | ["consent", "allow"]
         | ["consent", "deny"]
@@ -888,7 +911,6 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["task", "depends"]
         | ["doc"]
         | ["doc", "ledger"] => Landing::Gap("BOARD-1kJQlDDt"),
-        ["steer"] | ["steer", "cancel"] | ["inbox"] | ["ack"] => Landing::Gap("COORDIN-1kJQlDjc"),
         ["taste"] | ["taste", "add"] | ["taste", "drop"] => Landing::Gap("POLICY-1kJQlFB6"),
         _ => Landing::Unaccounted,
     }
@@ -958,6 +980,12 @@ fn child_names(contracts: &[Contract], path: &[&str]) -> BTreeSet<&'static str> 
 
 fn contract_at<'a>(contracts: &'a [Contract], path: &[&str]) -> Option<&'a Contract> {
     contracts.iter().find(|contract| contract.path == path)
+}
+
+/// Recover one registered contract by its complete command path.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn contract(path: &[&str]) -> Option<&'static Contract> {
+    contract_at(contracts(), path)
 }
 
 /// Recover the contract selected by the generated parser.

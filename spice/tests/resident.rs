@@ -1,9 +1,10 @@
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant as Monotonic};
 
@@ -23,6 +24,8 @@ use wire::{
 const FAULT_EXIT: i32 = 1;
 const REFUSAL_EXIT: i32 = 2;
 const READINESS_DEADLINE: Duration = Duration::from_secs(10);
+const CLIENT_DEADLINE_BOUND: Duration = Duration::from_secs(5);
+const ADVERSARIAL_PEER_LIFE: Duration = Duration::from_secs(7);
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -240,6 +243,9 @@ enum FakeBehavior {
     EchoCapability,
     ResidentLoss,
     ReadTimeout,
+    TotalDeadlineDrip,
+    ControlFrames,
+    WriteTimeout,
 }
 
 fn fake_down(fixture: &Fixture, behavior: FakeBehavior, json: bool) -> (Output, Duration) {
@@ -258,12 +264,15 @@ fn fake_down(fixture: &Fixture, behavior: FakeBehavior, json: bool) -> (Output, 
         .expect("fake discovery publishes");
     let canvas = fixture.canvas();
     let server_discovery = discovery.clone();
+    let stop = Arc::new(AtomicBool::new(false));
+    let server_stop = Arc::clone(&stop);
     let server = std::thread::spawn(move || {
-        run_fake_resident(listener, server_discovery, canvas, behavior);
+        run_fake_resident(listener, server_discovery, canvas, behavior, server_stop);
     });
     let started = Monotonic::now();
     let output = invoke_form(fixture, "down", json);
     let elapsed = started.elapsed();
+    stop.store(true, Ordering::Release);
     server.join().expect("fake resident completes");
     (output, elapsed)
 }
@@ -273,7 +282,12 @@ fn run_fake_resident(
     discovery: canvas::Discovery,
     canvas: PathBuf,
     behavior: FakeBehavior,
+    stop: Arc<AtomicBool>,
 ) {
+    if matches!(behavior, FakeBehavior::TotalDeadlineDrip) {
+        run_deadline_drip(listener, &discovery, &canvas, stop);
+        return;
+    }
     let mut socket = accept_fake(listener);
     assert_fake_hello(&mut socket, &discovery);
     if matches!(behavior, FakeBehavior::EchoCapability) {
@@ -297,13 +311,128 @@ fn run_fake_resident(
     }
     let command = read_fake_dark_command(&mut socket, discovery.epoch);
     if matches!(behavior, FakeBehavior::ReadTimeout) {
-        std::thread::sleep(Duration::from_secs(4));
+        hold_adversarial_peer(&stop);
+        return;
+    }
+    if matches!(behavior, FakeBehavior::ControlFrames) {
+        send_control_frames(&mut socket, &stop);
+        return;
+    }
+    if matches!(behavior, FakeBehavior::WriteTimeout) {
+        saturate_control_writes(&mut socket, &stop);
         return;
     }
     if matches!(behavior, FakeBehavior::Success) {
         fs::remove_file(canvas).expect("fake resident withdraws discovery");
     }
     send_dark_response(&mut socket, &discovery, &command, behavior);
+}
+
+struct DripStream {
+    stream: TcpStream,
+    stop: Arc<AtomicBool>,
+}
+
+impl Read for DripStream {
+    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        self.stream.read(bytes)
+    }
+}
+
+impl Write for DripStream {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        for chunk in bytes.chunks(8) {
+            if self.stop.load(Ordering::Acquire) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "fixture client completed",
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(75));
+            self.stream.write_all(chunk)?;
+        }
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.stream.flush()
+    }
+}
+
+fn run_deadline_drip(
+    listener: TcpListener,
+    discovery: &canvas::Discovery,
+    canvas: &Path,
+    stop: Arc<AtomicBool>,
+) {
+    let (stream, _) = listener.accept().expect("drip resident accepts");
+    stream
+        .set_read_timeout(Some(READINESS_DEADLINE))
+        .expect("drip resident read timeout");
+    stream
+        .set_write_timeout(Some(READINESS_DEADLINE))
+        .expect("drip resident write timeout");
+    let stream = DripStream { stream, stop };
+    let Ok(mut socket) = tungstenite::accept(stream) else {
+        return;
+    };
+    assert_fake_hello(&mut socket, discovery);
+    if send_server_result(
+        &mut socket,
+        &wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor: Actor::Operator,
+            epoch: discovery.epoch,
+        },
+    )
+    .is_err()
+    {
+        return;
+    }
+    let command = read_fake_dark_command(&mut socket, discovery.epoch);
+    fs::write(canvas.with_file_name("deadline-response"), b"response")
+        .expect("drip resident reaches the command response");
+    let _ = send_server_result(
+        &mut socket,
+        &dark_response(discovery, &command, FakeBehavior::Success),
+    );
+}
+
+fn send_control_frames(socket: &mut WebSocket<TcpStream>, stop: &AtomicBool) {
+    let deadline = Monotonic::now() + ADVERSARIAL_PEER_LIFE;
+    while !stop.load(Ordering::Acquire) && Monotonic::now() < deadline {
+        if socket.send(Message::Pong(vec![0x51].into())).is_err() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn saturate_control_writes(socket: &mut WebSocket<TcpStream>, stop: &AtomicBool) {
+    socket2::SockRef::from(socket.get_ref())
+        .set_recv_buffer_size(1_024)
+        .expect("fake resident receive buffer shrinks");
+    socket
+        .get_mut()
+        .set_write_timeout(Some(Duration::from_millis(100)))
+        .expect("fake resident flood write timeout");
+    let deadline = Monotonic::now() + ADVERSARIAL_PEER_LIFE;
+    while !stop.load(Ordering::Acquire) && Monotonic::now() < deadline {
+        if socket.send(Message::Ping(vec![0x57; 125].into())).is_err() {
+            hold_adversarial_peer_until(stop, deadline);
+            return;
+        }
+    }
+}
+
+fn hold_adversarial_peer(stop: &AtomicBool) {
+    hold_adversarial_peer_until(stop, Monotonic::now() + ADVERSARIAL_PEER_LIFE);
+}
+
+fn hold_adversarial_peer_until(stop: &AtomicBool, deadline: Monotonic) {
+    while !stop.load(Ordering::Acquire) && Monotonic::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 fn accept_fake(listener: TcpListener) -> WebSocket<TcpStream> {
@@ -317,7 +446,7 @@ fn accept_fake(listener: TcpListener) -> WebSocket<TcpStream> {
     tungstenite::accept(stream).expect("fake WebSocket accepts")
 }
 
-fn assert_fake_hello(socket: &mut WebSocket<TcpStream>, discovery: &canvas::Discovery) {
+fn assert_fake_hello<S: Read + Write>(socket: &mut WebSocket<S>, discovery: &canvas::Discovery) {
     let opening = socket
         .read()
         .expect("fake resident reads Hello")
@@ -328,7 +457,10 @@ fn assert_fake_hello(socket: &mut WebSocket<TcpStream>, discovery: &canvas::Disc
     assert_eq!(hello.epoch, discovery.epoch);
 }
 
-fn send_capability_echo(socket: &mut WebSocket<TcpStream>, capability: wire::CanonicalUuid) {
+fn send_capability_echo<S: Read + Write>(
+    socket: &mut WebSocket<S>,
+    capability: wire::CanonicalUuid,
+) {
     send_server(
         socket,
         &wire::Refusal {
@@ -341,8 +473,8 @@ fn send_capability_echo(socket: &mut WebSocket<TcpStream>, capability: wire::Can
     );
 }
 
-fn read_fake_dark_command(
-    socket: &mut WebSocket<TcpStream>,
+fn read_fake_dark_command<S: Read + Write>(
+    socket: &mut WebSocket<S>,
     epoch: wire::CanonicalUuid,
 ) -> wire::Command<serde_json::Value> {
     let frame = socket
@@ -376,43 +508,53 @@ fn read_fake_dark_command(
     command
 }
 
-fn send_dark_response(
-    socket: &mut WebSocket<TcpStream>,
+fn dark_response(
     discovery: &canvas::Discovery,
     command: &wire::Command<serde_json::Value>,
     behavior: FakeBehavior,
-) {
+) -> wire::Response<wire::intent::StateAnswer> {
     let id = if matches!(behavior, FakeBehavior::Replay) {
         uuid("00000000-0000-4000-8000-000000000033")
     } else {
         command.id
     };
-    send_server(
-        socket,
-        &wire::Response {
-            v: wire::WireVersion::CURRENT,
-            id,
-            epoch: discovery.epoch,
-            outcome: Outcome::Reply(wire::Reply {
-                position: ReplyPosition::Committed(wire::SeqRange {
-                    first: wire::Seq::new(1).expect("fixture position"),
-                    last: wire::Seq::new(2).expect("fixture position"),
-                }),
-                body: wire::intent::StateAnswer {
-                    from: wire::ResidentState::Seated,
-                    to: wire::ResidentState::Dark,
-                },
+    wire::Response {
+        v: wire::WireVersion::CURRENT,
+        id,
+        epoch: discovery.epoch,
+        outcome: Outcome::Reply(wire::Reply {
+            position: ReplyPosition::Committed(wire::SeqRange {
+                first: wire::Seq::new(1).expect("fixture position"),
+                last: wire::Seq::new(2).expect("fixture position"),
             }),
-        },
-    );
+            body: wire::intent::StateAnswer {
+                from: wire::ResidentState::Seated,
+                to: wire::ResidentState::Dark,
+            },
+        }),
+    }
 }
 
-fn send_server<T: serde::Serialize>(socket: &mut WebSocket<TcpStream>, value: &T) {
-    socket
-        .send(Message::Binary(
-            wire::encode(value).expect("fake response encodes").into(),
-        ))
-        .expect("fake response sends");
+fn send_dark_response<S: Read + Write>(
+    socket: &mut WebSocket<S>,
+    discovery: &canvas::Discovery,
+    command: &wire::Command<serde_json::Value>,
+    behavior: FakeBehavior,
+) {
+    send_server(socket, &dark_response(discovery, command, behavior));
+}
+
+fn send_server<S: Read + Write, T: serde::Serialize>(socket: &mut WebSocket<S>, value: &T) {
+    send_server_result(socket, value).expect("fake response sends");
+}
+
+fn send_server_result<S: Read + Write, T: serde::Serialize>(
+    socket: &mut WebSocket<S>,
+    value: &T,
+) -> tungstenite::Result<()> {
+    socket.send(Message::Binary(
+        wire::encode(value).expect("fake response encodes").into(),
+    ))
 }
 
 fn open_socket(discovery: &canvas::Discovery) -> WebSocket<TcpStream> {
@@ -794,10 +936,57 @@ fn command_client_process_bounds_an_unanswered_request() {
     let Outcome::Fault(fault) = outcome(&output) else {
         panic!("unanswered request must fault");
     };
+    assert_eq!(fault.reason, "canvas::receive-failed", "{fault:?}");
+    assert!(
+        elapsed < CLIENT_DEADLINE_BOUND,
+        "read deadline was not bounded: {elapsed:?}"
+    );
+}
+
+#[test]
+fn command_client_process_shares_one_deadline_across_dripped_socket_phases() {
+    let fixture = Fixture::new("client-total-deadline");
+    let (output, elapsed) = fake_down(&fixture, FakeBehavior::TotalDeadlineDrip, true);
+
+    assert_eq!(output.status.code(), Some(FAULT_EXIT));
+    let Outcome::Fault(fault) = outcome(&output) else {
+        panic!("a response dripped beyond the total deadline must fault");
+    };
+    assert_eq!(fault.reason, "canvas::receive-failed", "{fault:?}");
+    assert!(
+        fixture.runtime.join("deadline-response").is_file(),
+        "the peer must reach command response after dripping opening and Hello"
+    );
+    assert!(
+        elapsed < CLIENT_DEADLINE_BOUND,
+        "the shared socket deadline was renewed: {elapsed:?}"
+    );
+}
+
+#[test]
+fn command_client_process_bounds_unlimited_control_frames_and_control_writes() {
+    let fixture = Fixture::new("client-control-deadline");
+    let (output, elapsed) = fake_down(&fixture, FakeBehavior::ControlFrames, true);
+
+    assert_eq!(output.status.code(), Some(FAULT_EXIT));
+    let Outcome::Fault(fault) = outcome(&output) else {
+        panic!("unlimited control frames must fault at the total deadline");
+    };
     assert_eq!(fault.reason, "canvas::receive-failed");
     assert!(
-        elapsed < Duration::from_secs(6),
-        "read deadline was not bounded: {elapsed:?}"
+        elapsed < CLIENT_DEADLINE_BOUND,
+        "control frames renewed the receive deadline: {elapsed:?}"
+    );
+
+    let (output, elapsed) = fake_down(&fixture, FakeBehavior::WriteTimeout, true);
+    assert_eq!(output.status.code(), Some(FAULT_EXIT));
+    let Outcome::Fault(fault) = outcome(&output) else {
+        panic!("a saturated automatic control write must fault");
+    };
+    assert_eq!(fault.reason, "canvas::send-failed");
+    assert!(
+        elapsed < CLIENT_DEADLINE_BOUND,
+        "control write deadline was not bounded: {elapsed:?}"
     );
 }
 

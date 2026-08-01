@@ -9,7 +9,7 @@ use std::error::Error;
 use std::fmt;
 use std::str::FromStr;
 
-use wire::Disposition;
+use wire::{CanonicalUuid, Disposition};
 
 /// A steering key such as `1kJK6N3R`.
 ///
@@ -44,6 +44,22 @@ impl Key {
     #[must_use]
     pub fn shaped(text: &str) -> bool {
         text.len() == Self::WIDTH && text.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    }
+
+    /// Derive the one human-sized key for a durable directive identity.
+    #[must_use]
+    pub fn for_directive(directive: CanonicalUuid) -> Self {
+        const ALPHABET: &[u8; 62] =
+            b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+        const SPACE: u128 = 62_u128.pow(Key::WIDTH as u32);
+
+        let mut value = directive.get().as_u128() % SPACE;
+        let mut bytes = [b'0'; Key::WIDTH];
+        for byte in bytes.iter_mut().rev() {
+            *byte = ALPHABET[(value % 62) as usize];
+            value /= 62;
+        }
+        Self(bytes.into_iter().map(char::from).collect())
     }
 }
 
@@ -193,6 +209,17 @@ mod tests {
                 "{refused:?} was admitted as a key"
             );
         }
+    }
+
+    #[test]
+    fn a_directive_identity_has_one_stable_key() {
+        let directive = "018f82d4-6f59-7d06-92e3-bce9131163c4"
+            .parse()
+            .expect("directive UUID");
+        let key = Key::for_directive(directive);
+
+        assert_eq!(key, Key::for_directive(directive));
+        assert!(Key::shaped(key.as_str()));
     }
 
     /// The spellings are the ones the wire already serializes, not a second

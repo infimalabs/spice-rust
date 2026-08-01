@@ -34,6 +34,23 @@ const OUTPUT_DRAIN: Duration = Duration::from_secs(2);
 const REAP: Duration = Duration::from_secs(2);
 const TERMINATION_GRACE: Duration = Duration::from_secs(1);
 
+pub(super) struct Runtime<'a> {
+    capabilities: &'a canvas::axum::Capabilities,
+    discovery: &'a canvas::Discovery,
+}
+
+impl<'a> Runtime<'a> {
+    pub(super) const fn new(
+        capabilities: &'a canvas::axum::Capabilities,
+        discovery: &'a canvas::Discovery,
+    ) -> Self {
+        Self {
+            capabilities,
+            discovery,
+        }
+    }
+}
+
 /// Reconstruct every durable unfinished seat beneath the new resident epoch.
 pub(super) fn restore_seats(
     bus: &Bus,
@@ -46,14 +63,9 @@ pub(super) fn restore_seats(
         if row.occupant.is_none() {
             continue;
         }
-        let capability = *row.capabilities.first().ok_or_else(|| {
-            store_fault(
-                "lane::capability-missing",
-                &format!("durable lane {} has no capability", row.lane),
-            )
-        })?;
+        super::steering::lane_capability(&row)?;
         let occupant = new_uuid();
-        let spec = occupant_spec(paths, &row.worktree, &row.vendor, capability)?;
+        let spec = occupant_spec(paths, &row.worktree, &row.vendor, row.lane)?;
         let group = seats
             .seat(row.lane, occupant, spec)
             .map_err(|error| store_fault("lane::restart-launch-failed", &error.to_string()))?
@@ -92,7 +104,7 @@ pub(super) fn seat(
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &mut Seats,
-    capabilities: &canvas::axum::Capabilities,
+    runtime: &Runtime<'_>,
     command: &wire::AdmittedCommand,
     request: &LaneSeat,
 ) -> Outcome<CommandAnswer> {
@@ -151,21 +163,29 @@ pub(super) fn seat(
 
     let capability = new_uuid();
     let actor = Actor::Lane(request.lane);
-    if let Err(error) = capabilities.insert(capability, actor.clone()) {
+    if let Err(error) = runtime.capabilities.insert(capability, actor.clone()) {
         return typed_environment_fault("lane::capability-unavailable", &error.to_string());
     }
+    if let Err(outcome) =
+        super::steering::publish_lane_surface(paths, runtime.discovery, request.lane, capability)
+    {
+        runtime.capabilities.remove(capability, &actor);
+        return typed_outcome(outcome);
+    }
     let occupant = new_uuid();
-    let spec = match occupant_spec(paths, &request.worktree, &request.vendor, capability) {
+    let spec = match occupant_spec(paths, &request.worktree, &request.vendor, request.lane) {
         Ok(spec) => spec,
         Err(outcome) => {
-            capabilities.remove(capability, &actor);
+            runtime.capabilities.remove(capability, &actor);
+            super::steering::remove_lane_surface(paths, request.lane);
             return typed_outcome(outcome);
         }
     };
     let group = match seats.seat(request.lane, occupant, spec) {
         Ok(occupant) => occupant.group(),
         Err(error) => {
-            capabilities.remove(capability, &actor);
+            runtime.capabilities.remove(capability, &actor);
+            super::steering::remove_lane_surface(paths, request.lane);
             return typed_environment_fault("lane::launch-failed", &error.to_string());
         }
     };
@@ -181,7 +201,8 @@ pub(super) fn seat(
         Ok(proposal) => proposal,
         Err(outcome) => {
             drop(seats.vacate(request.lane));
-            capabilities.remove(capability, &actor);
+            runtime.capabilities.remove(capability, &actor);
+            super::steering::remove_lane_surface(paths, request.lane);
             return typed_outcome(outcome);
         }
     };
@@ -189,7 +210,8 @@ pub(super) fn seat(
         Ok(committed) => committed_lane_reply(committed, answer),
         Err(outcome) => {
             drop(seats.vacate(request.lane));
-            capabilities.remove(capability, &actor);
+            runtime.capabilities.remove(capability, &actor);
+            super::steering::remove_lane_surface(paths, request.lane);
             typed_outcome(outcome)
         }
     }
@@ -383,11 +405,11 @@ fn wake(
             "seat a new lane because drain life is terminal",
         );
     }
-    let Some(capability) = row.capabilities.first().copied() else {
-        return typed_store_fault("lane::capability-missing", "durable lane has no capability");
-    };
+    if let Err(outcome) = super::steering::lane_capability(row) {
+        return typed_outcome(outcome);
+    }
     let occupant = new_uuid();
-    let spec = match occupant_spec(paths, &row.worktree, &row.vendor, capability) {
+    let spec = match occupant_spec(paths, &row.worktree, &row.vendor, row.lane) {
         Ok(spec) => spec,
         Err(outcome) => return typed_outcome(outcome),
     };
@@ -666,7 +688,7 @@ fn occupant_spec(
     paths: &RuntimePaths,
     worktree: &str,
     name: &wire::Name,
-    capability: CanonicalUuid,
+    lane: CanonicalUuid,
 ) -> CommandResult<Spec> {
     let repository = Repository::discover(worktree)
         .map_err(|error| store_fault("lane::worktree-unresolved", &error.to_string()))?;
@@ -732,13 +754,13 @@ fn occupant_spec(
         .into_iter()
         .filter_map(|name| crate::bootstrap_environment(name).map(|value| (name.into(), value)))
         .collect::<Vec<(OsString, OsString)>>();
-    environment.push(("SPICE_LANE".into(), capability.to_string().into())); // env-policy: allow
+    environment.push(("SPICE_LANE".into(), lane.to_string().into())); // env-policy: allow
     let environment = Environment::new(environment)
         .map_err(|error| store_fault("lane::environment-invalid", &error.to_string()))?;
     let deadlines = Deadlines::new(resolved.root().lane().lease().get(), OUTPUT_DRAIN, REAP)
         .map_err(|error| store_fault("lane::deadlines-invalid", &error.to_string()))?;
     let wait = WaitPolicy::new(
-        format!("lane {capability}"),
+        format!("lane {lane}"),
         Cancellation::Never,
         RestartDisposition::CallerDecides,
     )

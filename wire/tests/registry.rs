@@ -69,7 +69,8 @@ fn every_command_names_the_witnesses_it_requires() {
             assert!(
                 matches!(
                     kind,
-                    CommandKind::ConsentRead
+                    CommandKind::SteerInbox
+                        | CommandKind::ConsentRead
                         | CommandKind::ConsentPolicy
                         | CommandKind::LaneRead
                         | CommandKind::LaneSeat

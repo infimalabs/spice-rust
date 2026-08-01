@@ -7,7 +7,8 @@ use wire::intent::{CommandAnswer, Intent};
 use wire::{CanonicalUuid, CommandKind, Outcome, Refusal};
 
 use super::{
-    RuntimePaths, dispatch_release_publish, dispatch_up_change, lane_surface, policy_surface,
+    RuntimePaths, SurfaceConfig, dispatch_release_publish, dispatch_up_change, lane_surface,
+    policy_surface, steering,
 };
 
 pub(super) struct Surface<'a> {
@@ -16,7 +17,8 @@ pub(super) struct Surface<'a> {
     paths: &'a RuntimePaths,
     epoch: CanonicalUuid,
     capabilities: &'a canvas::axum::Capabilities,
-    consent_policy: &'a consent::Policy,
+    discovery: &'a canvas::Discovery,
+    config: &'a SurfaceConfig,
 }
 
 impl<'a> Surface<'a> {
@@ -26,7 +28,8 @@ impl<'a> Surface<'a> {
         paths: &'a RuntimePaths,
         epoch: CanonicalUuid,
         capabilities: &'a canvas::axum::Capabilities,
-        consent_policy: &'a consent::Policy,
+        discovery: &'a canvas::Discovery,
+        config: &'a SurfaceConfig,
     ) -> Self {
         Self {
             bus,
@@ -34,7 +37,8 @@ impl<'a> Surface<'a> {
             paths,
             epoch,
             capabilities,
-            consent_policy,
+            discovery,
+            config,
         }
     }
 
@@ -58,7 +62,7 @@ impl<'a> Surface<'a> {
                 self.paths,
                 self.epoch,
                 seats,
-                self.capabilities,
+                &lane_surface::Runtime::new(self.capabilities, self.discovery),
                 command,
                 seat,
             ),
@@ -68,14 +72,31 @@ impl<'a> Surface<'a> {
             (CommandKind::LaneRecall, Intent::LaneRecall(recall)) => {
                 lane_surface::recall(self.bus, self.paths, self.epoch, command, recall)
             }
+            (CommandKind::SteerInbox, Intent::SteerInbox(inbox)) => {
+                steering::inbox(self.bus, self.epoch, command, inbox)
+            }
+            (CommandKind::SteerSend, Intent::SteerSend(send)) => steering::send(
+                self.bus,
+                self.paths,
+                self.epoch,
+                &self.config.steering,
+                command,
+                send,
+            ),
+            (CommandKind::SteerCancel, Intent::DirectiveRef(cancel)) => {
+                steering::cancel(self.bus, self.paths, self.epoch, command, cancel)
+            }
+            (CommandKind::SteerDispose, Intent::SteerDispose(dispose)) => {
+                steering::dispose(self.bus, self.paths, self.epoch, command, dispose)
+            }
             (CommandKind::ConsentRead, Intent::ConsentRead(_)) => {
-                policy_surface::read(self.bus, self.consent_policy)
+                policy_surface::read(self.bus, &self.config.consent)
             }
             (CommandKind::ConsentPolicy, Intent::ConsentPolicy(_)) => {
-                policy_surface::policy(self.bus, self.consent_policy)
+                policy_surface::policy(self.bus, &self.config.consent)
             }
             (CommandKind::ConsentDecide, Intent::ConsentDecide(decide)) => {
-                policy_surface::decide(self.bus, self.epoch, self.consent_policy, command, decide)
+                policy_surface::decide(self.bus, self.epoch, &self.config.consent, command, decide)
             }
             (CommandKind::TrustGrant | CommandKind::TrustRevoke, Intent::TrustRef(reference)) => {
                 policy_surface::trust_rule(

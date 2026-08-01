@@ -85,6 +85,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
                 )
             }
             (JournalAccess::Read, ReplyPositionLaw::Snapshot)
+            | (JournalAccess::Recovery, ReplyPositionLaw::Snapshot)
             | (
                 JournalAccess::Command | JournalAccess::Recovery | JournalAccess::Resident,
                 ReplyPositionLaw::Committed,
@@ -116,7 +117,7 @@ fn every_contract_has_an_executable_succession_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 41);
+    assert_eq!(landed, 45);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
     assert_eq!(landing(&["lock", "run"]), Landing::Landed);
@@ -127,6 +128,10 @@ fn every_contract_has_an_executable_succession_disposition() {
     assert_eq!(landing(&["lane", "drain"]), Landing::Landed);
     assert_eq!(landing(&["lane", "wake"]), Landing::Landed);
     assert_eq!(landing(&["recall"]), Landing::Landed);
+    assert_eq!(landing(&["steer"]), Landing::Landed);
+    assert_eq!(landing(&["steer", "cancel"]), Landing::Landed);
+    assert_eq!(landing(&["inbox"]), Landing::Landed);
+    assert_eq!(landing(&["ack"]), Landing::Landed);
     assert_eq!(landing(&["consent"]), Landing::Landed);
     assert_eq!(landing(&["consent", "allow"]), Landing::Landed);
     assert_eq!(landing(&["consent", "deny"]), Landing::Landed);
@@ -157,7 +162,7 @@ fn every_contract_has_an_executable_succession_disposition() {
         .collect::<BTreeSet<_>>();
     assert_eq!(
         owning_tasks,
-        BTreeSet::from(["BOARD-1kJQlDDt", "COORDIN-1kJQlDjc", "POLICY-1kJQlFB6",])
+        BTreeSet::from(["BOARD-1kJQlDDt", "POLICY-1kJQlFB6"])
     );
 
     let (rust_ledger, _) = include_str!("../../../PORTING.md")
