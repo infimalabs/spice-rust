@@ -8,7 +8,7 @@ use serde_json::json;
 
 use crate::{
     Availability, Beyond, Cursor, FactPlane, FoldId, HeadSource, Horizon, INVENTORY, RebuildCause,
-    Reducer, Reduction, RingId, Source, Store,
+    Reducer, Reduction, Refusal, RingId, Source, Store, StoreError,
 };
 
 static NEXT_STORE: AtomicU64 = AtomicU64::new(0);
@@ -249,6 +249,280 @@ fn replacement_keeps_old_readers_whole_and_payload_bytes_deterministic() {
     );
 }
 
+#[test]
+fn a_replacement_may_never_retreat_the_applied_cursor() {
+    let mut store = Store::in_memory().expect("fold store");
+    let ahead = store
+        .read_or_rebuild_snapshot(&snapshot(2), &KindReducer::new(FoldId::TasteActive, 1))
+        .expect("first generation");
+    assert_eq!(ahead.materialization.cursor, Cursor::at(seq(2)));
+
+    // A new reducer version is stale against any snapshot, so this rebuilds
+    // rather than serving the current generation, and the replacement it
+    // derives sits behind what the fold already applied.
+    let retreat =
+        store.read_or_rebuild_snapshot(&snapshot(1), &KindReducer::new(FoldId::TasteActive, 2));
+    assert_eq!(
+        refusal(retreat),
+        Refusal::CursorMovedBackward {
+            fold: FoldId::TasteActive,
+            current: Cursor::at(seq(2)),
+            next: Cursor::at(seq(1)),
+        }
+    );
+    assert_eq!(
+        store
+            .read(FoldId::TasteActive)
+            .expect("read current")
+            .expect("the refused publication left the old generation whole"),
+        ahead.materialization
+    );
+}
+
+#[test]
+fn a_corrupt_generation_is_the_one_cause_allowed_to_retreat() {
+    let path = store_path("retreat");
+    let reducer = KindReducer::new(FoldId::TasteActive, 1);
+    let mut store = Store::open(&path).expect("fold store");
+    store
+        .read_or_rebuild_snapshot(&snapshot(2), &reducer)
+        .expect("first generation");
+    drop(store);
+
+    let connection = Connection::open(&path).expect("open fixture directly");
+    connection
+        .execute(
+            "UPDATE fold_generations SET payload = X'00' WHERE fold = ?1",
+            params![FoldId::TasteActive.as_str()],
+        )
+        .expect("corrupt payload");
+    drop(connection);
+
+    // Nothing trustworthy remains to retreat from, so a shorter snapshot heals.
+    let mut store = Store::open(&path).expect("reopen fold store");
+    let healed = store
+        .read_or_rebuild_snapshot(&snapshot(1), &reducer)
+        .expect("a corrupt generation heals to whatever authority now says");
+    assert_eq!(healed.rebuilt, Some(RebuildCause::Corrupt));
+    assert_eq!(healed.materialization.cursor, Cursor::at(seq(1)));
+    drop(store);
+    fs::remove_file(path).expect("remove fixture store");
+}
+
+#[test]
+fn a_bounded_fold_publishes_an_answer_that_trails_the_facts_it_applied() {
+    let mut store = Store::in_memory().expect("fold store");
+    let reducer = DeclaredReducer {
+        fold: FoldId::LaneCanary,
+        version: 1,
+        cursor: Cursor::at(seq(3)),
+        horizon: Horizon::at(seq(2)),
+    };
+    let published = store
+        .read_or_rebuild_snapshot(&snapshot(3), &reducer)
+        .expect("every fact applied, answer settled through an earlier position")
+        .materialization;
+    assert_eq!(published.cursor, Cursor::at(seq(3)));
+    assert_eq!(published.horizon, Horizon::at(seq(2)));
+    assert_ne!(published.cursor.position(), published.horizon.position());
+
+    // The gap survives storage rather than being normalized away on read.
+    let stored = store
+        .read(FoldId::LaneCanary)
+        .expect("read current")
+        .expect("generation exists");
+    assert_eq!(stored.cursor, Cursor::at(seq(3)));
+    assert_eq!(stored.horizon, Horizon::at(seq(2)));
+
+    // Readers meet the gap through the horizon, not by rebuilding forever.
+    assert_eq!(
+        stored.horizon.availability(seq(2), Beyond::Answer),
+        Availability::Complete
+    );
+    assert_eq!(
+        stored.horizon.availability(seq(3), Beyond::Answer),
+        Availability::Marked(Horizon::at(seq(2)))
+    );
+    let reread = store
+        .read_or_rebuild_snapshot(&snapshot(3), &reducer)
+        .expect("second read");
+    assert_eq!(reread.rebuilt, None, "a trailing horizon is not staleness");
+    assert_eq!(reread.materialization, published);
+}
+
+#[test]
+fn every_publication_refusal_is_reachable_and_named_by_value() {
+    let mut store = Store::in_memory().expect("fold store");
+
+    // Declared out of order, before any store is involved.
+    assert_eq!(
+        Reduction::bounded(Cursor::at(seq(2)), Horizon::at(seq(3)), json!(null))
+            .expect_err("completeness cannot outrun what was applied"),
+        Refusal::HorizonPastCursor {
+            cursor: Cursor::at(seq(2)),
+            horizon: Horizon::at(seq(3)),
+        }
+    );
+
+    // Facts handed over and left unapplied.
+    assert_eq!(
+        refusal(store.read_or_rebuild_snapshot(
+            &snapshot(3),
+            &DeclaredReducer {
+                fold: FoldId::SteerInbox,
+                version: 1,
+                cursor: Cursor::at(seq(1)),
+                horizon: Horizon::at(seq(1)),
+            },
+        )),
+        Refusal::BehindSnapshot {
+            applied: Cursor::at(seq(1)),
+            required: Horizon::at(seq(3)),
+        }
+    );
+
+    // Version zero is reserved and never reaches storage.
+    assert_eq!(
+        refusal(
+            store
+                .read_or_rebuild_snapshot(&snapshot(1), &KindReducer::new(FoldId::ConsentQueue, 0))
+        ),
+        Refusal::ZeroReducerVersion {
+            fold: FoldId::ConsentQueue,
+        }
+    );
+
+    // A position SQLite's signed column cannot hold.
+    assert_eq!(
+        refusal(store.read_or_rebuild_snapshot(
+            &snapshot(0),
+            &DeclaredReducer {
+                fold: FoldId::CanvasFlow,
+                version: 1,
+                cursor: Cursor::at(seq(u64::MAX)),
+                horizon: Horizon::empty(),
+            },
+        )),
+        Refusal::PositionOutOfRange {
+            fold: FoldId::CanvasFlow,
+            value: u64::MAX,
+        }
+    );
+}
+
+#[test]
+fn a_fold_out_of_generation_numbers_refuses_rather_than_wrapping() {
+    let path = store_path("exhausted");
+    let mut store = Store::open(&path).expect("fold store");
+    store
+        .read_or_rebuild_snapshot(&snapshot(1), &KindReducer::new(FoldId::ReleaseHistory, 1))
+        .expect("first generation");
+    drop(store);
+
+    // Age the fold to the last generation number the column can hold, in the
+    // order publication itself uses: write the successor, move the head, then
+    // drop the predecessor. The head's foreign key holds at every step.
+    let connection = Connection::open(&path).expect("open fixture directly");
+    connection
+        .execute_batch(&format!(
+            "INSERT INTO fold_generations(fold, generation, reducer_version, cursor, horizon, payload)
+                 SELECT fold, {max}, reducer_version, cursor, horizon, payload
+                 FROM fold_generations WHERE fold = '{fold}';
+             UPDATE fold_heads SET generation = {max} WHERE fold = '{fold}';
+             DELETE FROM fold_generations WHERE fold = '{fold}' AND generation <> {max};",
+            max = i64::MAX,
+            fold = FoldId::ReleaseHistory.as_str(),
+        ))
+        .expect("age the fold to the last generation");
+    drop(connection);
+
+    let mut store = Store::open(&path).expect("reopen fold store");
+    assert_eq!(
+        refusal(
+            store.read_or_rebuild_snapshot(
+                &snapshot(1),
+                &KindReducer::new(FoldId::ReleaseHistory, 2),
+            )
+        ),
+        Refusal::GenerationExhausted {
+            fold: FoldId::ReleaseHistory,
+        }
+    );
+    drop(store);
+    fs::remove_file(path).expect("remove fixture store");
+}
+
+#[test]
+fn a_concurrent_reader_sees_one_whole_generation_across_a_publish() {
+    let path = store_path("concurrent");
+    let mut writer = Store::open(&path).expect("writer store");
+    let first = writer
+        .read_or_rebuild_snapshot(&snapshot(1), &KindReducer::new(FoldId::CanvasVerdicts, 1))
+        .expect("first generation")
+        .materialization;
+
+    let reader = Store::open(&path).expect("a second connection to the same store");
+    assert_eq!(
+        reader
+            .read(FoldId::CanvasVerdicts)
+            .expect("reader sees the first generation")
+            .expect("generation exists"),
+        first
+    );
+
+    let second = writer
+        .read_or_rebuild_snapshot(&snapshot(2), &KindReducer::new(FoldId::CanvasVerdicts, 1))
+        .expect("replacement generation")
+        .materialization;
+    assert_eq!(second.generation, 2);
+
+    // The reader crosses the publish and lands on exactly one whole generation:
+    // never the predecessor that was deleted, never a head without a row.
+    let observed = reader
+        .read(FoldId::CanvasVerdicts)
+        .expect("reader crosses the publish")
+        .expect("a head always points at a row that exists");
+    assert_eq!(observed, second);
+    assert_eq!(
+        reader
+            .read(FoldId::CanvasVerdicts)
+            .expect("a corrupt or dangling head would surface here"),
+        Some(second.clone())
+    );
+    drop(reader);
+    drop(writer);
+
+    // Exactly one generation survives, and the head names it.
+    let connection = Connection::open(&path).expect("open fixture directly");
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .expect("state the integrity this assertion rests on rather than inherit it");
+    let rows: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM fold_generations WHERE fold = ?1",
+            params![FoldId::CanvasVerdicts.as_str()],
+            |row| row.get(0),
+        )
+        .expect("count generations");
+    assert_eq!(rows, 1, "predecessors are deleted, not accumulated");
+
+    // Deleting the pointed-at row is refused, so no publication can ever leave
+    // the head naming a generation that is gone.
+    let orphan = connection.execute(
+        "DELETE FROM fold_generations WHERE fold = ?1 AND generation = ?2",
+        params![
+            FoldId::CanvasVerdicts.as_str(),
+            i64::try_from(second.generation).expect("fixture generation fits"),
+        ],
+    );
+    assert!(
+        orphan.is_err(),
+        "the head's foreign key must restrict deleting its own generation",
+    );
+    drop(connection);
+    fs::remove_file(path).expect("remove fixture store");
+}
+
 struct KindReducer {
     fold: FoldId,
     version: u32,
@@ -307,6 +581,40 @@ fn opaque_note() -> wire::AnyFact {
     });
     let bytes = wire::encode(&fact).expect("a typed fact encodes");
     wire::decode(&bytes).expect("a stored fact reads back without its body type")
+}
+
+/// A reducer that declares exactly the boundaries a fixture hands it.
+///
+/// [`KindReducer`] can only produce complete reductions, so it can never reach
+/// the publication rules that exist for reducers whose answer trails the facts.
+struct DeclaredReducer {
+    fold: FoldId,
+    version: u32,
+    cursor: Cursor,
+    horizon: Horizon,
+}
+
+impl Reducer for DeclaredReducer {
+    fn fold(&self) -> FoldId {
+        self.fold
+    }
+
+    fn version(&self) -> u32 {
+        self.version
+    }
+
+    fn rebuild(&self, _facts: &journal::FactSnapshot) -> Result<Reduction, String> {
+        Reduction::bounded(self.cursor, self.horizon, json!({"declared": true}))
+            .map_err(|refusal| format!("{refusal:?}"))
+    }
+}
+
+/// The one refusal a store returned, or a panic naming what it did instead.
+fn refusal<T: std::fmt::Debug>(outcome: Result<T, StoreError>) -> Refusal {
+    match outcome {
+        Err(StoreError::Refused(refusal)) => refusal,
+        other => panic!("expected a publication refusal, got {other:?}"),
+    }
 }
 
 fn seq(value: u64) -> wire::Seq {
