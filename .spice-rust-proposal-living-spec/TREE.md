@@ -23,9 +23,11 @@ spice/                          the rim; the published binary
 
 wire/                           the crossing types
 └── src/
+    ├── ident.rs                the one admitted uuid and instant spelling
     ├── envelope.rs             version, seq, at, actor, origin, cause, and kind
     ├── fact.rs                 the closed fact vocabulary
     ├── hello.rs                wire, capability, and epoch opening
+    ├── command.rs              kind, expected witnesses, and canonical bytes
     ├── reply.rs                Reply, Refusal, and Fault
     ├── packed.rs               Packed<T>: rows, overflow, and horizon
     └── witness.rs              named predicates over command subjects
