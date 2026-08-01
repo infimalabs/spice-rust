@@ -182,7 +182,6 @@ name = "dist"
 version = "0.0.0"
 dependencies = [
  "atomic",
- "blake3",
  "serde_json",
  "sill",
  "thiserror",
