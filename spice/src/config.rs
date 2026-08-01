@@ -7,8 +7,10 @@
 use serde::{Deserialize, Serialize};
 use wire::ConfigSource;
 
+mod load;
 mod resolve;
 
+pub use load::{AcquisitionIssue, AcquisitionKind, LoadError, load};
 pub use resolve::{
     ConcretePath, Document, FlagError, FlagOverride, FlagValue, Inputs, Issue, IssueKind,
     Provenance, ResolveError, Resolved, resolve,
