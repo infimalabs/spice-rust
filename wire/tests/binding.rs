@@ -103,8 +103,8 @@ const BODIES: &[(CommandKind, &str)] = &[
     (
         CommandKind::SteerDispose,
         r#"{
-  "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4",
-  "disposition": "live"
+  "token": "1kJJP87B",
+  "disposition": "acked"
 }"#,
     ),
     (

@@ -65,30 +65,17 @@ fn the_specified_command_satisfies_its_own_registry_row() {
 fn every_command_names_the_witnesses_it_requires() {
     for kind in CommandKind::ALL {
         let law = kind.law();
-        if law.required.is_empty() {
-            assert!(
-                matches!(
-                    kind,
-                    CommandKind::BoardRead
-                        | CommandKind::BoardGraph
-                        | CommandKind::BoardHandout
-                        | CommandKind::DocLedger
-                        | CommandKind::SteerInbox
-                        | CommandKind::ConsentRead
-                        | CommandKind::ConsentPolicy
-                        | CommandKind::LaneRead
-                        | CommandKind::LaneSeat
-                        | CommandKind::LaneState
-                        | CommandKind::LaneRecall
-                ),
-                "{kind} unexpectedly carries a witness-free registry row",
-            );
+        let scanner_disposition = matches!(kind, CommandKind::SteerDispose);
+        let lane_lifecycle = matches!(kind, CommandKind::LaneSeat | CommandKind::LaneState);
+        assert_eq!(
+            law.required.is_empty(),
+            kind.is_read() || scanner_disposition || lane_lifecycle,
+            "only reads, lane lifecycle, and scanner dispositions may omit required witnesses",
+        );
+        if scanner_disposition {
+            assert_eq!(law.optional, &[WitnessKind::Directive]);
+        } else if law.required.is_empty() {
             assert!(law.optional.is_empty());
-        } else {
-            assert!(
-                !law.required.is_empty(),
-                "{kind} carries a registry row that requires nothing",
-            );
         }
         for optional in law.optional {
             assert!(

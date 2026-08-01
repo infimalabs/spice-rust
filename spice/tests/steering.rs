@@ -62,6 +62,10 @@ impl Fixture {
     fn canvas(&self) -> PathBuf {
         self.runtime.join("canvas")
     }
+
+    fn tape(&self, lane: wire::CanonicalUuid) -> PathBuf {
+        self.runtime.join("tape").join(lane.to_string())
+    }
 }
 
 impl Drop for Fixture {
@@ -162,6 +166,15 @@ struct Lanes {
     target: wire::CanonicalUuid,
     occupant: wire::CanonicalUuid,
     other: wire::CanonicalUuid,
+}
+
+#[derive(Clone)]
+struct ExpectedRecognition {
+    directive: wire::CanonicalUuid,
+    key: String,
+    epoch: wire::CanonicalUuid,
+    disposition: wire::Disposition,
+    locus: wire::body::TranscriptLocus,
 }
 
 fn invoke(fixture: &Fixture, arguments: &[&str], json: bool) -> Output {
@@ -338,7 +351,51 @@ fn seed_occupied_lane(
     bus.shutdown().expect("fixture bus stops");
 }
 
-fn acknowledgment_paths(fixture: &Fixture, resident: &mut RunningResident, lanes: Lanes) {
+fn record_reply(
+    fixture: &Fixture,
+    lane: wire::CanonicalUuid,
+    text: &str,
+    token: &str,
+) -> wire::body::TranscriptLocus {
+    let record = serde_json::json!({
+        "type": "assistant",
+        "message": {
+            "type": "message",
+            "role": "assistant",
+            "content": [{ "type": "text", "text": text }],
+            "usage": {
+                "input_tokens": 7,
+                "cache_read_input_tokens": 5,
+                "cache_creation_input_tokens": 3,
+                "output_tokens": 2
+            }
+        }
+    });
+    let mut bytes = wire::encode(&record).expect("assistant transcript record encodes");
+    bytes.push(b'\n');
+    let tape = tape::Tape::open(fixture.tape(lane)).expect("lane tape opens");
+    let locus = tape.tee(&bytes).expect("assistant record reaches tape");
+    let column = text.find(token).expect("reply names its token") + 1;
+    wire::body::TranscriptLocus {
+        member: locus.member,
+        offset: locus.offset,
+        length: locus.length,
+        event: 0,
+        line: 1,
+        column: u32::try_from(column).expect("fixture column fits"),
+    }
+}
+
+fn lane_epoch(fixture: &Fixture, lane: wire::CanonicalUuid) -> wire::CanonicalUuid {
+    let lane = lane.to_string();
+    text_inbox(&invoke(fixture, &["inbox", &lane], false)).epoch
+}
+
+fn acknowledgment_paths(
+    fixture: &Fixture,
+    resident: &mut RunningResident,
+    lanes: Lanes,
+) -> (ExpectedRecognition, String) {
     let lane = lanes.target.to_string();
     let sent = invoke(
         fixture,
@@ -363,37 +420,87 @@ fn acknowledgment_paths(fixture: &Fixture, resident: &mut RunningResident, lanes
     assert_eq!(inbox.lanes[0].pending[0].key, sent.key);
 
     let other = lanes.other.to_string();
+    record_reply(
+        fixture,
+        lanes.other,
+        &format!("ACK {}: wrong lane", sent.key),
+        &sent.key,
+    );
     let wrong = invoke_as_lane(fixture, &other, &["ack", &sent.key], true);
-    assert_refusal(&wrong, "steer::key-not-live");
+    assert_refusal(&wrong, "steer::lane-scope");
+    let locus = record_reply(
+        fixture,
+        lanes.target,
+        &format!("ACK {}: applied", sent.key),
+        &sent.key,
+    );
     let acknowledged = text_directive(&invoke_as_lane(fixture, &lane, &["ack", &sent.key], false));
     assert_eq!(acknowledged.directive, sent.directive);
     assert_eq!(acknowledged.disposition, wire::Disposition::Acked);
     let duplicate = invoke_as_lane(fixture, &lane, &["ack", &sent.key], true);
-    assert_refusal(&duplicate, "steer::key-not-live");
+    assert_refusal(&duplicate, "steer::ack-missed");
+    let duplicate_again = invoke_as_lane(fixture, &lane, &["ack", &sent.key], true);
+    assert_refusal(&duplicate_again, "steer::ack-missed");
+    (
+        ExpectedRecognition {
+            directive: sent.directive,
+            key: sent.key.clone(),
+            epoch: inbox.epoch,
+            disposition: wire::Disposition::Acked,
+            locus,
+        },
+        sent.key,
+    )
 }
 
-fn decline_path(fixture: &Fixture, lane: wire::CanonicalUuid) {
+fn decline_path(fixture: &Fixture, lane: wire::CanonicalUuid) -> ExpectedRecognition {
     let lane = lane.to_string();
     let sent = text_directive(&invoke(
         fixture,
         &["steer", &lane, "decline this direction"],
         false,
     ));
+    let epoch = lane_epoch(fixture, lane.parse().expect("lane UUID"));
+    let locus = record_reply(
+        fixture,
+        lane.parse().expect("lane UUID"),
+        &format!("NACK {}: cannot apply", sent.key),
+        &sent.key,
+    );
+    let mismatched = invoke_as_lane(fixture, &lane, &["ack", &sent.key], true);
+    assert_refusal(&mismatched, "steer::transcript-disposition-mismatch");
     let declined = invoke_as_lane(fixture, &lane, &["ack", &sent.key, "--decline"], true);
     let Outcome::Reply(reply): Outcome<wire::intent::DirectiveAnswer> = json_outcome(&declined)
     else {
         panic!("JSON decline must reply: {:?}", declined.stderr);
     };
     assert_eq!(reply.body.disposition, wire::Disposition::Declined);
+    ExpectedRecognition {
+        directive: sent.directive,
+        key: sent.key,
+        epoch,
+        disposition: wire::Disposition::Declined,
+        locus,
+    }
 }
 
-fn cancellation_race(fixture: &Fixture, lane: wire::CanonicalUuid) -> wire::Disposition {
+fn cancellation_race(
+    fixture: &Fixture,
+    lane: wire::CanonicalUuid,
+) -> (wire::Disposition, Option<ExpectedRecognition>) {
     let lane = lane.to_string();
     let sent = text_directive(&invoke(
         fixture,
         &["steer", &lane, "retire exactly once under contention"],
         false,
     ));
+    let epoch = lane_epoch(fixture, lane.parse().expect("lane UUID"));
+    let locus = record_reply(
+        fixture,
+        lane.parse().expect("lane UUID"),
+        &format!("ACK {}: raced", sent.key),
+        &sent.key,
+    );
     let directive = sent.directive.to_string();
     let barrier = Arc::new(Barrier::new(3));
     let (cancel, ack) = std::thread::scope(|scope| {
@@ -422,11 +529,24 @@ fn cancellation_race(fixture: &Fixture, lane: wire::CanonicalUuid) -> wire::Disp
         (Outcome::Refusal(refusal), Outcome::Reply(reply)) => (reply.body.disposition, refusal),
         outcomes => panic!("race must have one winner and one refusal: {outcomes:?}"),
     };
-    assert!(matches!(
-        loser.reason.as_str(),
-        "steer::directive-retired" | "steer::directive-moved" | "steer::key-not-live"
-    ));
-    disposition
+    assert!(
+        matches!(
+            loser.reason.as_str(),
+            "steer::directive-retired"
+                | "steer::directive-moved"
+                | "steer::witness-moved"
+                | "steer::ack-missed"
+        ),
+        "unexpected race refusal: {loser:?}"
+    );
+    let recognition = (disposition == wire::Disposition::Acked).then_some(ExpectedRecognition {
+        directive: sent.directive,
+        key: sent.key.clone(),
+        epoch,
+        disposition,
+        locus,
+    });
+    (disposition, recognition)
 }
 
 fn cancellation_path(fixture: &Fixture, lane: wire::CanonicalUuid) {
@@ -442,8 +562,39 @@ fn cancellation_path(fixture: &Fixture, lane: wire::CanonicalUuid) {
         false,
     ));
     assert_eq!(canceled.disposition, wire::Disposition::Canceled);
+    record_reply(
+        fixture,
+        lane.parse().expect("lane UUID"),
+        &format!("ACK {}: too late", sent.key),
+        &sent.key,
+    );
     let refused = invoke_as_lane(fixture, &lane, &["ack", &sent.key], true);
-    assert_refusal(&refused, "steer::key-not-live");
+    assert_refusal(&refused, "steer::ack-missed");
+}
+
+fn direct_input_cannot_ack(fixture: &Fixture, lane: wire::CanonicalUuid) {
+    let lane = lane.to_string();
+    let sent = text_directive(&invoke(
+        fixture,
+        &["steer", &lane, "require durable transcript evidence"],
+        false,
+    ));
+    let refused = invoke_as_lane(fixture, &lane, &["ack", &sent.key], false);
+    assert_text_refusal(&refused, "steer::transcript-evidence-absent");
+    let inbox = text_inbox(&invoke(fixture, &["inbox", &lane], false));
+    assert!(
+        inbox.lanes[0]
+            .pending
+            .iter()
+            .any(|pending| pending.directive == sent.directive),
+        "direct ack input retired a directive without transcript evidence"
+    );
+    let canceled = text_directive(&invoke(
+        fixture,
+        &["steer", "cancel", &sent.directive.to_string()],
+        false,
+    ));
+    assert_eq!(canceled.disposition, wire::Disposition::Canceled);
 }
 
 fn rendering_failure_path(fixture: &Fixture, lane: wire::CanonicalUuid) {
@@ -472,7 +623,12 @@ fn rendering_failure_path(fixture: &Fixture, lane: wire::CanonicalUuid) {
     assert_eq!(canceled.disposition, wire::Disposition::Canceled);
 }
 
-fn restart_path(fixture: &Fixture, resident: RunningResident, lane: wire::CanonicalUuid) {
+fn restart_path(
+    fixture: &Fixture,
+    resident: RunningResident,
+    lane: wire::CanonicalUuid,
+    historical_key: &str,
+) {
     let lane = lane.to_string();
     let unread = text_directive(&invoke(
         fixture,
@@ -499,6 +655,8 @@ fn restart_path(fixture: &Fixture, resident: RunningResident, lane: wire::Canoni
             .unwrap()
             .contains(&unread.key)
     );
+    let duplicate = invoke_as_lane(fixture, &lane, &["ack", historical_key], true);
+    assert_refusal(&duplicate, "steer::ack-missed");
     let canceled = invoke(
         fixture,
         &["steer", "cancel", &unread.directive.to_string()],
@@ -519,7 +677,19 @@ fn assert_refusal(output: &Output, reason: &str) {
     assert_eq!(refusal.reason, reason);
 }
 
-fn verify_authority(fixture: &Fixture, lane: wire::CanonicalUuid, race: wire::Disposition) {
+fn assert_text_refusal(output: &Output, reason: &str) {
+    assert_eq!(output.status.code(), Some(REFUSAL_EXIT));
+    assert!(output.stdout.is_empty());
+    let text = std::str::from_utf8(&output.stderr).expect("text refusal is UTF-8");
+    assert!(text.starts_with(&format!("spice: {reason};")), "{text:?}");
+}
+
+fn verify_authority(
+    fixture: &Fixture,
+    lane: wire::CanonicalUuid,
+    race: wire::Disposition,
+    expected: &[ExpectedRecognition],
+) {
     let journal = journal::Journal::open(fixture.journal()).expect("steering journal opens");
     journal.verify().expect("steering authority verifies");
     let snapshot = journal.fact_snapshot().expect("steering facts read");
@@ -530,7 +700,7 @@ fn verify_authority(fixture: &Fixture, lane: wire::CanonicalUuid, race: wire::Di
             .filter(|fact| fact.fact.kind() == kind)
             .count()
     };
-    assert_eq!(count(FactKind::SteerSent), 6);
+    assert_eq!(count(FactKind::SteerSent), 7);
     assert_eq!(
         count(FactKind::SteerAcked),
         1 + usize::from(race == wire::Disposition::Acked)
@@ -538,7 +708,7 @@ fn verify_authority(fixture: &Fixture, lane: wire::CanonicalUuid, race: wire::Di
     assert_eq!(count(FactKind::SteerDeclined), 1);
     assert_eq!(
         count(FactKind::SteerCanceled),
-        3 + usize::from(race == wire::Disposition::Canceled)
+        4 + usize::from(race == wire::Disposition::Canceled)
     );
     assert!(snapshot.facts().iter().all(|fact| {
         !matches!(
@@ -546,6 +716,108 @@ fn verify_authority(fixture: &Fixture, lane: wire::CanonicalUuid, race: wire::Di
             FactKind::SteerAcked | FactKind::SteerDeclined
         ) || matches!(fact.actor, Actor::Lane(named) if named == lane)
     }));
+    let mut observed = Vec::new();
+    for envelope in snapshot.facts() {
+        match envelope.fact.kind() {
+            FactKind::SteerAcked => {
+                let body: wire::body::SteerAcked = fact_body(envelope);
+                observed.push(ExpectedRecognition {
+                    directive: body.directive,
+                    key: body.key,
+                    epoch: body.epoch,
+                    disposition: wire::Disposition::Acked,
+                    locus: body.locus,
+                });
+            }
+            FactKind::SteerDeclined => {
+                let body: wire::body::SteerDeclined = fact_body(envelope);
+                observed.push(ExpectedRecognition {
+                    directive: body.directive,
+                    key: body.key,
+                    epoch: body.epoch,
+                    disposition: wire::Disposition::Declined,
+                    locus: body.locus,
+                });
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(observed.len(), expected.len());
+    for expected in expected {
+        assert!(observed.iter().any(|observed| {
+            observed.directive == expected.directive
+                && observed.key == expected.key
+                && observed.epoch == expected.epoch
+                && observed.disposition == expected.disposition
+                && observed.locus == expected.locus
+        }));
+        assert_transcript_locus(fixture, lane, expected.locus, &expected.key);
+    }
+    let missed = snapshot
+        .facts()
+        .iter()
+        .filter(|fact| fact.fact.kind() == FactKind::SteerMissed)
+        .map(fact_body::<wire::body::SteerMissed>)
+        .collect::<Vec<_>>();
+    assert!(
+        missed.len() >= 2,
+        "duplicate and historical ACKs were not recorded"
+    );
+    let initial_epoch = expected.first().expect("successful recognition").epoch;
+    assert!(missed.iter().all(|body| {
+        body.lane == lane
+            && body.miss == wire::body::AcknowledgmentMiss::Historical
+            && body.epoch == initial_epoch
+    }));
+    let unique = missed
+        .iter()
+        .map(|body| (&body.key, body.locus))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        unique.len(),
+        missed.len(),
+        "a missed recognition was duplicated"
+    );
+    for body in &missed {
+        assert_transcript_locus(fixture, lane, body.locus, &body.key);
+    }
+}
+
+fn fact_body<T: serde::de::DeserializeOwned>(envelope: &wire::Envelope<wire::AnyFact>) -> T {
+    let bytes = wire::encode(envelope.fact.body()).expect("fact body encodes");
+    wire::decode(&bytes).expect("registered fact body decodes")
+}
+
+fn assert_transcript_locus(
+    fixture: &Fixture,
+    lane: wire::CanonicalUuid,
+    locus: wire::body::TranscriptLocus,
+    token: &str,
+) {
+    let tape = tape::Tape::open_existing(fixture.tape(lane)).expect("lane tape reopens");
+    let bytes = tape
+        .read(tape::Locus::new(locus.member, locus.offset, locus.length))
+        .expect("persisted transcript locus resolves");
+    let decoded = listen::decode(
+        listen::Dialect::Claude,
+        &bytes,
+        tape::Locus::new(locus.member, locus.offset, locus.length),
+    )
+    .expect("persisted transcript locus is exact");
+    let event = decoded
+        .events()
+        .get(usize::try_from(locus.event).expect("event index fits"))
+        .expect("persisted transcript event exists");
+    let listen::Event::Prose(prose) = event else {
+        panic!("persisted transcript event is not assistant prose");
+    };
+    let line = prose
+        .text
+        .lines()
+        .nth(usize::try_from(locus.line - 1).expect("line index fits"))
+        .expect("persisted transcript line exists");
+    let column = usize::try_from(locus.column - 1).expect("column index fits");
+    assert_eq!(line.get(column..column + token.len()), Some(token));
 }
 
 fn uuid(value: &str) -> wire::CanonicalUuid {
@@ -559,15 +831,18 @@ fn instant(value: &str) -> Instant {
 #[test]
 fn steering_commands_preserve_principals_races_and_restart_state() {
     let (fixture, mut resident, lanes) = setup();
-    acknowledgment_paths(&fixture, &mut resident, lanes);
-    decline_path(&fixture, lanes.target);
-    let race = cancellation_race(&fixture, lanes.target);
+    let (acknowledged, historical_key) = acknowledgment_paths(&fixture, &mut resident, lanes);
+    let declined = decline_path(&fixture, lanes.target);
+    let (race, raced) = cancellation_race(&fixture, lanes.target);
     assert!(matches!(
         race,
         wire::Disposition::Canceled | wire::Disposition::Acked
     ));
     cancellation_path(&fixture, lanes.target);
+    direct_input_cannot_ack(&fixture, lanes.target);
     rendering_failure_path(&fixture, lanes.target);
-    restart_path(&fixture, resident, lanes.target);
-    verify_authority(&fixture, lanes.target, race);
+    restart_path(&fixture, resident, lanes.target, &historical_key);
+    let mut expected = vec![acknowledged, declined];
+    expected.extend(raced);
+    verify_authority(&fixture, lanes.target, race, &expected);
 }

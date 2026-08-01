@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use wire::{
     Accepted, Answer, Authority, CanonicalUuid, Command, CommandKind, Derived, Digest, FaultClass,
     FoldName, Name, Outcome, Overflow, Packed, Response, Seq, TaskHandle, TrustState, Witness,
+    WitnessKind,
 };
 
 /// Capability the operator session opens with.
@@ -688,7 +689,6 @@ fn commands_sharing_witnesses_do_not_share_an_authority() {
     // which is why each holds its own registry row. A single row per move
     // would have to state one authority for both and would be wrong for one.
     for (unrestricted, restricted) in [
-        (CommandKind::SteerDispose, CommandKind::SteerCancel),
         (CommandKind::TrustPend, CommandKind::TrustGrant),
         (CommandKind::TrustPend, CommandKind::TrustRevoke),
     ] {
@@ -702,6 +702,21 @@ fn commands_sharing_witnesses_do_not_share_an_authority() {
         assert_eq!(unrestricted.law().authority, Authority::Connected);
         assert_eq!(restricted.law().authority, Authority::Operator);
     }
+}
+
+#[test]
+fn transcript_disposition_admits_a_conditional_directive_witness() {
+    let dispose = CommandKind::SteerDispose.law();
+    let cancel = CommandKind::SteerCancel.law();
+
+    // A scanner miss can name durable transcript evidence without a live
+    // directive predicate. Operator cancellation cannot.
+    assert!(dispose.required.is_empty());
+    assert_eq!(dispose.optional, &[WitnessKind::Directive]);
+    assert_eq!(dispose.authority, Authority::Connected);
+    assert_eq!(cancel.required, &[WitnessKind::Directive]);
+    assert!(cancel.optional.is_empty());
+    assert_eq!(cancel.authority, Authority::Operator);
 }
 
 #[test]

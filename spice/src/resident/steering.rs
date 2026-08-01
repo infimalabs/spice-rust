@@ -5,6 +5,8 @@ use std::fs;
 use bus::Bus;
 use journal::{FactCause, GuardError, JournalGuard, JournalWrite};
 use steer::Standing as _;
+use steer::{Miss, Outcome as ScanOutcome};
+use wire::body::TranscriptLocus;
 use wire::intent::{CommandAnswer, DirectiveAnswer, InboxAnswer, LaneInbox, PendingDirective};
 use wire::{
     Actor, CanonicalUuid, Command, Disposition, Fault, FaultClass, Instant, Outcome, Producer,
@@ -13,8 +15,12 @@ use wire::{
 
 use super::{
     CommandResult, RuntimePaths, commit, current_residency, environment_fault, seq, store_fault,
-    typed_outcome, typed_protocol_fault, typed_store_fault, write_at_origin,
+    typed_outcome, typed_protocol_fault, typed_store_fault, write, write_at_origin,
 };
+
+mod transcript;
+
+use transcript::transcript_recognition;
 
 pub(super) fn publish_lane_discoveries(
     paths: &RuntimePaths,
@@ -404,15 +410,73 @@ pub(super) fn dispose(
             "submit acknowledgment from an activated lane shell",
         );
     };
+    let residency = match current_residency(bus, epoch) {
+        Ok(residency) => residency,
+        Err(outcome) => return typed_outcome(outcome),
+    };
     let snapshot = match snapshot(bus) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let directive = match live_directive(&snapshot.ledger, dispose.directive) {
-        Ok(directive) => directive,
+    let recognition = match transcript_recognition(
+        paths,
+        *actor_lane,
+        &dispose.token,
+        dispose.disposition,
+        &snapshot.ledger,
+    ) {
+        Ok(recognition) => recognition,
         Err(outcome) => return outcome,
     };
-    if directive.lane() != *actor_lane {
+    match recognition.outcome {
+        ScanOutcome::Retired { key, disposition } => record_disposition(
+            bus,
+            paths,
+            epoch,
+            command,
+            dispose,
+            residency.body(),
+            &snapshot,
+            *actor_lane,
+            key,
+            disposition,
+            recognition.locus,
+        ),
+        ScanOutcome::Missed { token, miss } => record_miss(
+            bus,
+            epoch,
+            command,
+            residency.position(),
+            &snapshot.facts,
+            token,
+            miss,
+            recognition.locus,
+            *actor_lane,
+        ),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_disposition(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    command: &wire::AdmittedCommand,
+    dispose: &wire::intent::SteerDispose,
+    residency: &ResidencyHead,
+    snapshot: &SteeringSnapshot,
+    actor_lane: CanonicalUuid,
+    key: steer::Key,
+    disposition: Disposition,
+    locus: TranscriptLocus,
+) -> Outcome<CommandAnswer> {
+    let directive = snapshot
+        .ledger
+        .directives()
+        .into_iter()
+        .find(|directive| directive.key() == &key && directive.disposition() == Disposition::Live)
+        .expect("the scanner retires only a live directive key");
+    if directive.lane() != actor_lane {
         return refusal(
             "steer::lane-scope",
             Some(directive.lane().to_string()),
@@ -421,48 +485,34 @@ pub(super) fn dispose(
         );
     }
     let witness = Witness::Directive {
-        steer: dispose.directive,
+        steer: directive.directive(),
         disposition: Disposition::Live,
     };
     if command.expected() != [witness.clone()] {
         return witness_refusal(command.expected(), &witness);
     }
-    let (origin, cause) = directive_cause(&snapshot.facts, dispose.directive);
+    let (origin, cause) = directive_cause(&snapshot.facts, directive.directive());
     let mut proposal = match write_at_origin(command.actor().clone(), origin, Producer::AckScanner)
     {
         Ok(proposal) => proposal,
         Err(outcome) => return typed_outcome(outcome),
     };
-    proposal.guard(live_guard(dispose.directive));
-    let locus = format!("command:{}@{}", command.id(), command.epoch());
-    let cause = FactCause::Existing(cause);
-    let result = match dispose.disposition {
-        Disposition::Acked => proposal.fact(
-            wire::body::SteerAcked {
-                key: directive.key().to_string(),
-                lane: directive.lane(),
-                locus,
-            },
-            cause,
-        ),
-        Disposition::Declined => proposal.fact(
-            wire::body::SteerDeclined {
-                key: directive.key().to_string(),
-                lane: directive.lane(),
-                locus,
-                reason: "authenticated lane declined without transcript prose".to_owned(),
-            },
-            cause,
-        ),
-        _ => unreachable!("invalid disposition returned above"),
-    };
-    if let Err(error) = result {
+    proposal.guard(live_guard(directive.directive()));
+    if let Err(error) = append_disposition_fact(
+        &mut proposal,
+        directive,
+        &key,
+        epoch,
+        locus,
+        disposition,
+        FactCause::Existing(cause),
+    ) {
         return typed_store_fault("steer::fact-invalid", &error.to_string());
     }
     let answer = DirectiveAnswer {
-        directive: dispose.directive,
-        key: directive.key().to_string(),
-        disposition: dispose.disposition,
+        directive: directive.directive(),
+        key: key.to_string(),
+        disposition,
     };
     if let Err(error) = proposal.command_result(
         typed_command(command, dispose.clone()),
@@ -471,18 +521,126 @@ pub(super) fn dispose(
     ) {
         return typed_store_fault("steer::receipt-invalid", &error.to_string());
     }
-    let residency = match current_residency(bus, epoch) {
-        Ok(residency) => residency,
-        Err(outcome) => return typed_outcome(outcome),
+    finish(bus, paths, residency, directive.lane(), proposal, answer)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_disposition_fact(
+    proposal: &mut JournalWrite,
+    directive: &steer::Directive,
+    key: &steer::Key,
+    epoch: CanonicalUuid,
+    locus: TranscriptLocus,
+    disposition: Disposition,
+    cause: FactCause,
+) -> Result<(), journal::BuildError> {
+    match disposition {
+        Disposition::Acked => proposal.fact(
+            wire::body::SteerAcked {
+                directive: directive.directive(),
+                key: key.to_string(),
+                lane: directive.lane(),
+                epoch,
+                locus,
+            },
+            cause,
+        ),
+        Disposition::Declined => proposal.fact(
+            wire::body::SteerDeclined {
+                directive: directive.directive(),
+                key: key.to_string(),
+                lane: directive.lane(),
+                epoch,
+                locus,
+                reason: "declined at the cited assistant transcript locus".to_owned(),
+            },
+            cause,
+        ),
+        _ => unreachable!("the transcript scanner emits only terminal lane dispositions"),
+    }
+    .map(|_| ())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_miss(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    command: &wire::AdmittedCommand,
+    residency: Seq,
+    facts: &journal::FactSnapshot,
+    token: String,
+    miss: Miss,
+    locus: TranscriptLocus,
+    lane: CanonicalUuid,
+) -> Outcome<CommandAnswer> {
+    if !command.expected().is_empty() {
+        return refusal(
+            "steer::witness-moved",
+            Some("no live directive witness".to_owned()),
+            Some(format!("{:?}", command.expected())),
+            "read the current steering snapshot before recording a missed recognition",
+        );
+    }
+    let body = wire::body::SteerMissed {
+        key: token.clone(),
+        lane,
+        epoch,
+        locus,
+        miss: acknowledgment_miss(miss),
     };
-    finish(
-        bus,
-        paths,
-        residency.body(),
-        directive.lane(),
-        proposal,
-        answer,
+    if !miss_recorded(facts, &body) {
+        let mut proposal = match write(command.actor().clone(), epoch, Producer::AckScanner) {
+            Ok(proposal) => proposal,
+            Err(outcome) => return typed_outcome(outcome),
+        };
+        proposal.guard(miss_guard(body.clone()));
+        if let Err(error) = proposal.fact(body, FactCause::Existing(residency)) {
+            return typed_store_fault("steer::fact-invalid", &error.to_string());
+        }
+        if let Err(outcome) = commit(bus, proposal) {
+            return typed_outcome(outcome);
+        }
+    }
+    refusal(
+        "steer::ack-missed",
+        Some("one live directive recognition".to_owned()),
+        Some(format!("{token}:{}", miss.as_str())),
+        "read the current inbox and acknowledge a live key in new assistant prose",
     )
+}
+
+fn acknowledgment_miss(miss: Miss) -> wire::body::AcknowledgmentMiss {
+    match miss {
+        Miss::Buried => wire::body::AcknowledgmentMiss::Buried,
+        Miss::Quoted => wire::body::AcknowledgmentMiss::Quoted,
+        Miss::Malformed => wire::body::AcknowledgmentMiss::Malformed,
+        Miss::Unknown => wire::body::AcknowledgmentMiss::Unknown,
+        Miss::Historical => wire::body::AcknowledgmentMiss::Historical,
+    }
+}
+
+fn evidence_refusal(token: &str, observed: &str) -> Outcome<CommandAnswer> {
+    refusal(
+        "steer::transcript-evidence-absent",
+        Some(format!("assistant prose recognizing {token}")),
+        Some(observed.to_owned()),
+        "emit an ACK or NACK header in assistant prose before invoking ack",
+    )
+}
+
+fn miss_recorded(snapshot: &journal::FactSnapshot, expected: &wire::body::SteerMissed) -> bool {
+    snapshot.facts().iter().any(|envelope| {
+        if envelope.fact.kind() != wire::FactKind::SteerMissed {
+            return false;
+        }
+        let Some(observed) = steering_body::<wire::body::SteerMissed>(envelope) else {
+            return false;
+        };
+        observed.key == expected.key
+            && observed.lane == expected.lane
+            && observed.locus == expected.locus
+            && observed.miss == expected.miss
+    })
 }
 
 struct SteeringSnapshot {
@@ -660,6 +818,19 @@ fn live_guard(directive: CanonicalUuid) -> JournalGuard {
         match ledger.directive(directive) {
             Some(current) if current.disposition() == Disposition::Live => Ok(()),
             _ => Err(GuardError::refused("steer::directive-moved")),
+        }
+    })
+}
+
+fn miss_guard(expected: wire::body::SteerMissed) -> JournalGuard {
+    JournalGuard::new(move |read| {
+        let snapshot = read
+            .fact_snapshot()
+            .map_err(|error| GuardError::Invalid(error.to_string()))?;
+        if miss_recorded(&snapshot, &expected) {
+            Err(GuardError::refused("steer::recognition-recorded"))
+        } else {
+            Ok(())
         }
     })
 }

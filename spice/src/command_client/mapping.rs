@@ -1,0 +1,261 @@
+//! Contract-bound command mapping before transport authentication.
+
+use wire::TrustState;
+
+use super::*;
+
+impl MappedCommand {
+    pub(super) fn selected(
+        contract: &Contract,
+        selected: SelectedCommand<'_>,
+    ) -> ClientResult<Self> {
+        match selected {
+            SelectedCommand::Down => Self::down(contract),
+            SelectedCommand::ConsentRead => Self::consent_read(contract),
+            SelectedCommand::ConsentPolicy => Self::consent_policy(contract),
+            SelectedCommand::ConsentDecide {
+                request,
+                answer,
+                expected,
+            } => Self::consent_decide(contract, request, answer, expected),
+            SelectedCommand::ReleasePublish { release, state } => {
+                Self::release_publish(contract, release, state)
+            }
+            SelectedCommand::LaneRead => Self::lane_read(contract),
+            SelectedCommand::LaneSeat { body } => Self::lane_seat(contract, body),
+            SelectedCommand::LaneState { body } => Self::lane_state(contract, body),
+            SelectedCommand::LaneRecall { body } => Self::lane_recall(contract, body),
+            SelectedCommand::SteerCancel { directive } => Self::steer_cancel(contract, directive),
+            SelectedCommand::SteerSend { .. }
+            | SelectedCommand::SteerInbox { .. }
+            | SelectedCommand::SteerAck { .. } => Err(protocol_fault(
+                "command::mapping-unsupported",
+                "steering preflight must select its authenticated mapping path",
+            )),
+            SelectedCommand::TrustGrant { digest } => Self::trust_rule(
+                contract,
+                digest,
+                TrustState::Pended,
+                CommandKind::TrustGrant,
+            ),
+            SelectedCommand::TrustRevoke { digest } => Self::trust_rule(
+                contract,
+                digest,
+                TrustState::Granted,
+                CommandKind::TrustRevoke,
+            ),
+        }
+    }
+
+    fn down(contract: &Contract) -> ClientResult<Self> {
+        Self::new(
+            contract,
+            &["down"],
+            CommandKind::UpChange,
+            vec![Witness::Transition {
+                from: wire::ResidentState::Seated,
+                to: wire::ResidentState::Dark,
+            }],
+            &wire::intent::UpChange {
+                state: wire::ResidentState::Dark,
+            },
+        )
+    }
+
+    fn consent_read(contract: &Contract) -> ClientResult<Self> {
+        Self::new(
+            contract,
+            &["consent"],
+            CommandKind::ConsentRead,
+            Vec::new(),
+            &wire::intent::ConsentRead {},
+        )
+    }
+
+    fn consent_policy(contract: &Contract) -> ClientResult<Self> {
+        Self::new(
+            contract,
+            &["consent", "policy"],
+            CommandKind::ConsentPolicy,
+            Vec::new(),
+            &wire::intent::ConsentPolicy {},
+        )
+    }
+
+    fn consent_decide(
+        contract: &Contract,
+        request: CanonicalUuid,
+        answer: wire::Answer,
+        expected: Vec<Witness>,
+    ) -> ClientResult<Self> {
+        Self::new(
+            contract,
+            contract.path,
+            CommandKind::ConsentDecide,
+            expected,
+            &wire::intent::ConsentDecide { request, answer },
+        )
+    }
+
+    fn release_publish(
+        contract: &Contract,
+        release: &crate::release_command::AdmittedRelease,
+        state: crate::release_command::PublicationState,
+    ) -> ClientResult<Self> {
+        let mut expected = vec![Witness::Observation {
+            key: release.key().clone(),
+            head: state.observation(),
+        }];
+        expected.extend(release.receipts().map(|proof| Witness::Sealed {
+            proof: proof.clone(),
+            manifest: release.manifest().clone(),
+        }));
+        Self::new(
+            contract,
+            &["release", "publish"],
+            CommandKind::ReleasePublish,
+            expected,
+            &wire::intent::ReleasePublish {
+                key: release.key().clone(),
+                manifest: release.manifest().clone(),
+            },
+        )
+    }
+
+    fn lane_read(contract: &Contract) -> ClientResult<Self> {
+        Self::new(
+            contract,
+            &["lane"],
+            CommandKind::LaneRead,
+            Vec::new(),
+            &wire::intent::LaneRead {},
+        )
+    }
+
+    fn lane_seat(contract: &Contract, body: &wire::intent::LaneSeat) -> ClientResult<Self> {
+        Self::new(
+            contract,
+            &["lane", "add"],
+            CommandKind::LaneSeat,
+            Vec::new(),
+            body,
+        )
+    }
+
+    fn lane_state(contract: &Contract, body: &wire::intent::LaneState) -> ClientResult<Self> {
+        Self::new(
+            contract,
+            contract.path,
+            CommandKind::LaneState,
+            Vec::new(),
+            body,
+        )
+    }
+
+    fn lane_recall(contract: &Contract, body: &wire::intent::LaneRecall) -> ClientResult<Self> {
+        Self::new(
+            contract,
+            &["recall"],
+            CommandKind::LaneRecall,
+            Vec::new(),
+            body,
+        )
+    }
+
+    fn steer_cancel(contract: &Contract, directive: CanonicalUuid) -> ClientResult<Self> {
+        Self::new(
+            contract,
+            &["steer", "cancel"],
+            CommandKind::SteerCancel,
+            vec![Witness::Directive {
+                steer: directive,
+                disposition: Disposition::Live,
+            }],
+            &wire::intent::DirectiveRef { directive },
+        )
+    }
+
+    fn trust_rule(
+        contract: &Contract,
+        digest: &wire::Digest,
+        standing: TrustState,
+        kind: CommandKind,
+    ) -> ClientResult<Self> {
+        let path = match kind {
+            CommandKind::TrustGrant => &["trust", "grant"][..],
+            CommandKind::TrustRevoke => &["trust", "revoke"][..],
+            _ => unreachable!("trust mapping receives only grant or revoke"),
+        };
+        Self::new(
+            contract,
+            path,
+            kind,
+            vec![Witness::Trust {
+                digest: digest.clone(),
+                standing,
+            }],
+            &wire::intent::TrustRef {
+                digest: digest.clone(),
+            },
+        )
+    }
+
+    pub(super) fn new<B: Serialize>(
+        contract: &Contract,
+        mapped_path: &[&str],
+        kind: CommandKind,
+        expected: Vec<Witness>,
+        body: &B,
+    ) -> ClientResult<Self> {
+        if contract.path != mapped_path
+            || !contract.guards.contains(&Guard::Resident)
+            || matches!(contract.principal, Principal::Local)
+            || kind.is_read() != matches!(contract.journal, crate::cli::JournalAccess::Read)
+        {
+            return Err(protocol_fault(
+                "command::mapping-unsupported",
+                "selected CLI contract has no resident command mapping",
+            ));
+        }
+        let encoded = wire::encode(body).map_err(|_| {
+            protocol_fault(
+                "command::body-unencodable",
+                "selected CLI body cannot be represented by the current wire",
+            )
+        })?;
+        kind.binding().body.decode(&encoded).map_err(|_| {
+            protocol_fault(
+                "command::body-incomplete",
+                "selected CLI body does not match the command registry binding",
+            )
+        })?;
+        let body = wire::decode(&encoded).map_err(|_| {
+            protocol_fault(
+                "command::body-unrepresentable",
+                "validated command body did not retain its wire representation",
+            )
+        })?;
+        let mapped = Self {
+            id: CanonicalUuid::new(uuid::Uuid::new_v4()),
+            kind,
+            expected,
+            body,
+        };
+        let preflight = mapped.envelope(CanonicalUuid::new(uuid::Uuid::new_v4()));
+        preflight
+            .witnessed()
+            .map_err(|error| protocol_fault("command::witness-law", &error.to_string()))?;
+        Ok(mapped)
+    }
+
+    pub(super) fn envelope(&self, epoch: CanonicalUuid) -> Command<serde_json::Value> {
+        Command {
+            v: wire::WireVersion::CURRENT,
+            id: self.id,
+            epoch,
+            kind: self.kind,
+            expected: self.expected.clone(),
+            body: self.body.clone(),
+        }
+    }
+}

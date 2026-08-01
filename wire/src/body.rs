@@ -266,28 +266,70 @@ pub struct SteerResent {
     pub escalation: u32,
 }
 
+/// Exact assistant-prose evidence inside one durable lane-tape record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TranscriptLocus {
+    /// Tape member containing the complete vendor record.
+    pub member: u64,
+    /// Byte offset of the record within its member.
+    pub offset: u64,
+    /// Byte length of the complete vendor record.
+    pub length: u64,
+    /// Zero-based typed event index inside the decoded record.
+    pub event: u32,
+    /// One-based assistant-prose line carrying the token.
+    pub line: u32,
+    /// One-based byte column at which the token begins.
+    pub column: u32,
+}
+
 /// A live directive was acknowledged at a transcript locus.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SteerAcked {
+    /// Durable directive identity retired by this recognition.
+    pub directive: CanonicalUuid,
     /// Acknowledged directive key.
     pub key: String,
     /// Lane that acknowledged.
     pub lane: CanonicalUuid,
+    /// Resident generation that authenticated the lane.
+    pub epoch: CanonicalUuid,
     /// Transcript locus carrying the acknowledgement.
-    pub locus: String,
+    pub locus: TranscriptLocus,
 }
 
 /// A live directive was declined at a transcript locus.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SteerDeclined {
+    /// Durable directive identity retired by this recognition.
+    pub directive: CanonicalUuid,
     /// Declined directive key.
     pub key: String,
     /// Lane that declined.
     pub lane: CanonicalUuid,
+    /// Resident generation that authenticated the lane.
+    pub epoch: CanonicalUuid,
     /// Transcript locus carrying the refusal.
-    pub locus: String,
+    pub locus: TranscriptLocus,
     /// Stated reason the directive cannot be done.
     pub reason: String,
+}
+
+/// Why a transcript acknowledgment recognition retired nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AcknowledgmentMiss {
+    /// The acknowledgment marker did not lead its line.
+    Buried,
+    /// The acknowledgment sat inside quoted prose or code.
+    Quoted,
+    /// The named token was not a steering key.
+    Malformed,
+    /// No directive carried the named key.
+    Unknown,
+    /// The named directive had already retired.
+    Historical,
 }
 
 /// An ACK named no live directive; the unmatched key was recorded and nothing retired.
@@ -297,8 +339,12 @@ pub struct SteerMissed {
     pub key: String,
     /// Lane that named it.
     pub lane: CanonicalUuid,
+    /// Resident generation that authenticated the lane.
+    pub epoch: CanonicalUuid,
     /// Transcript locus the unmatched key appeared at.
-    pub locus: String,
+    pub locus: TranscriptLocus,
+    /// Scanner classification that prevented retirement.
+    pub miss: AcknowledgmentMiss,
 }
 
 /// A directive reached expiry without a valid disposition.
