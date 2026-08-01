@@ -241,9 +241,7 @@ pub(super) fn write_record(
     expected: Generation,
 ) -> Result<Generation, InstallError> {
     record.validate_for_repository(repository)?;
-    let path = repository
-        .common_dir()
-        .join(&record.plan.record.destination);
+    let path = record_path(repository);
     let metadata = fs::symlink_metadata(&path)
         .map_err(|source| InstallError::io("inspect install record", &path, source))?;
     if !metadata.file_type().is_file() || Generation::observe(&metadata) != expected {
@@ -256,9 +254,7 @@ fn write_record_bytes(
     repository: &Repository,
     record: &InstallRecord,
 ) -> Result<Generation, InstallError> {
-    let path = repository
-        .common_dir()
-        .join(&record.plan.record.destination);
+    let path = record_path(repository);
     let bytes = wire::encode(record).map_err(InstallError::Encode)?;
     publish_image(&path, &FileImage::new(RECORD_MODE, bytes), true)
 }
