@@ -712,11 +712,24 @@ fn cover_journal_reply_frames(covered: &mut BTreeSet<String>) {
                 schema: 1,
                 cursor: None,
                 facts: 0,
+                entries: Packed {
+                    rows: Vec::new(),
+                    overflow: None,
+                    horizon: seq(1),
+                },
             },
             JournalReport {
                 schema: 1,
                 cursor: Some(seq(19)),
                 facts: 19,
+                entries: Packed {
+                    rows: Vec::new(),
+                    overflow: Some(Overflow {
+                        omitted: 19,
+                        continuation: seq(1),
+                    }),
+                    horizon: seq(19),
+                },
             },
         ],
     );
@@ -757,6 +770,7 @@ fn cover_fold_reply_frames(covered: &mut BTreeSet<String>) {
                 cursor: None,
                 horizon: None,
                 recovery: "spice journal replay canvas::flow".to_owned(),
+                sources: vec!["task::*".to_owned(), "task".to_owned()],
                 payload: None,
             },
             FoldState {
@@ -766,6 +780,7 @@ fn cover_fold_reply_frames(covered: &mut BTreeSet<String>) {
                 cursor: Some(seq(19)),
                 horizon: Some(seq(19)),
                 recovery: "spice journal replay release::history".to_owned(),
+                sources: vec!["proof::*".to_owned(), "release::*".to_owned()],
                 payload: Some(serde_json::json!({"facts": []})),
             },
         ],
