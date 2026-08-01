@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::envelope::WireVersion;
+use crate::envelope::{Actor, WireVersion};
 use crate::ident::CanonicalUuid;
 use crate::reply::{Fault, FaultClass, Refusal};
 
@@ -18,6 +18,28 @@ pub struct Hello {
     /// Capability authenticating an operator or lane connection.
     pub capability: CanonicalUuid,
     /// Resident generation the client believes it is addressing.
+    pub epoch: CanonicalUuid,
+}
+
+/// The resident's answer to an opening it accepted.
+///
+/// The resident derives actor and rights from the presented capability when it
+/// accepts the connection; caller fields may describe provenance but cannot
+/// grant it. This frame is how a client learns which principal it is acting
+/// as, so it never has to assert one — and so a client that asserted one
+/// anyway would be describing provenance the resident already ignored.
+///
+/// The capability is deliberately absent. It crosses once, inside [`Hello`],
+/// and echoing it would place a live credential on the return path of every
+/// accepted connection to tell the client something it already knows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Accepted {
+    /// Socket schema version the resident speaks.
+    pub wire: WireVersion,
+    /// Principal the resident derived from the presented capability.
+    pub actor: Actor,
+    /// Resident generation this session addresses.
     pub epoch: CanonicalUuid,
 }
 
