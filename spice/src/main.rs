@@ -13,6 +13,8 @@ use listen::{RetroSelector, StreamOutcome, SurfaceError, Watch};
 use wire::{Fault, FaultClass, Outcome, Refusal};
 
 mod cli;
+#[cfg(not(target_arch = "wasm32"))]
+mod gate_command;
 mod render;
 #[cfg(not(target_arch = "wasm32"))]
 mod resident;
@@ -44,6 +46,26 @@ fn main() {
         ["watch"] => run_watch(leaf, form),
         ["retro"] => run_retro(leaf, form),
         _ => {}
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    match contract.path {
+        ["gate"] => deliver(&gate_command::run(leaf), form),
+        ["gate", "camp"] => deliver(&gate_command::camp(), form),
+        ["gate", "kill"] => deliver(&gate_command::kill(), form),
+        ["gate", "receipt"] => deliver(&gate_command::receipt(), form),
+        _ => {}
+    }
+    #[cfg(target_arch = "wasm32")]
+    if contract.path.first() == Some(&"gate") {
+        deliver_fault(
+            Fault {
+                class: FaultClass::Environment,
+                reason: "gate::target-unsupported".to_owned(),
+                detail: "immutable Git tree selection is unavailable on wasm32".to_owned(),
+            },
+            form,
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
