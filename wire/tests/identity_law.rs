@@ -654,13 +654,6 @@ fn cover_head_enums(covered: &mut BTreeSet<String>) {
         "WitnessClass",
         &[WitnessClass::Assignment, WitnessClass::Transition],
     );
-    // The predicate classes a command registry row cites. Distinct from
-    // `WitnessClass`, which classifies what a stored witness head carries.
-    law(
-        covered,
-        "WitnessKind",
-        &[WitnessKind::Task, WitnessKind::Transition],
-    );
 }
 
 /// The frames a caller sends across the socket.
