@@ -27,5 +27,12 @@ taste = { path = "../taste" }
 vendor = { path = "../vendor" }
 wire = { path = "../wire" }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+jiff = "0.2.35"
+serde = "1.0.229"
+tokio = { version = "1.53.1", features = ["macros", "net", "rt", "sync"] }
+tungstenite = "0.29.0"
+uuid = { version = "1.24.0", features = ["v4"] }
+
 [lints]
 workspace = true

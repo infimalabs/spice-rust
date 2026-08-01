@@ -15,12 +15,17 @@ use crate::{Journal, MigrationError, OpenError, SCHEMA_VERSION, ViolationClass};
 #[test]
 fn empty_database_reaches_the_same_finalized_baseline_once() {
     let mut journal = Journal::in_memory().expect("empty journal migrates");
+    let migration = journal.migration().expect("empty journal migrated");
+    assert_eq!((migration.from(), migration.to()), (0, SCHEMA_VERSION));
     assert_eq!(
         journal.schema_version().expect("schema version"),
         SCHEMA_VERSION
     );
 
-    crate::migrate::baseline(&mut journal.connection).expect("baseline is idempotent");
+    assert_eq!(
+        crate::migrate::baseline(&mut journal.connection).expect("baseline is idempotent"),
+        None
+    );
     assert_eq!(
         journal.schema_version().expect("schema version"),
         SCHEMA_VERSION

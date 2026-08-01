@@ -18,7 +18,7 @@ pub use guard::{
     JournalGuard, JournalHead, JournalRead, JournalWrite, PendingFact,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use migrate::{MigrationError, OpenError};
+pub use migrate::{Migration, MigrationError, OpenError};
 #[cfg(not(target_arch = "wasm32"))]
 pub use read::{FactSnapshot, SnapshotError};
 #[cfg(not(target_arch = "wasm32"))]
@@ -47,6 +47,7 @@ use rusqlite::Connection;
 #[derive(Debug)]
 pub struct Journal {
     connection: Connection,
+    migration: Option<Migration>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -66,12 +67,21 @@ impl Journal {
         migrate::finalized_version(&self.connection)
     }
 
+    /// Schema transition this open completed, absent when authority was current.
+    #[must_use]
+    pub const fn migration(&self) -> Option<Migration> {
+        self.migration
+    }
+
     fn from_connection(mut connection: Connection) -> Result<Self, OpenError> {
         connection
             .execute_batch("PRAGMA foreign_keys = ON; PRAGMA trusted_schema = OFF;")
             .map_err(OpenError::Sqlite)?;
-        migrate::baseline(&mut connection)?;
-        Ok(Self { connection })
+        let migration = migrate::baseline(&mut connection)?;
+        Ok(Self {
+            connection,
+            migration,
+        })
     }
 }
 
