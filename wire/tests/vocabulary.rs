@@ -44,9 +44,18 @@ const CLAIM_RENEWED: &str = r#"{
 
 const STEER_ACKED: &str = r#"{
   "kind": "steer::acked",
+  "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4",
   "key": "1kJJP87B",
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
-  "locus": "turn:48213#0"
+  "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+  "locus": {
+    "member": 4,
+    "offset": 8213,
+    "length": 512,
+    "event": 0,
+    "line": 1,
+    "column": 5
+  }
 }"#;
 
 const GATE_FOUND: &str = r#"{
@@ -139,7 +148,10 @@ fn the_ack_scanner_body_matches_the_specified_fields() {
     assert_eq!(fact.kind(), FactKind::SteerAcked);
     assert_eq!(fact.producer(), Producer::AckScanner);
     assert_eq!(fact.body.key, "1kJJP87B");
-    assert_eq!(fact.body.locus, "turn:48213#0");
+    assert_eq!(fact.body.locus.member, 4);
+    assert_eq!(fact.body.locus.offset, 8213);
+    assert_eq!(fact.body.locus.line, 1);
+    assert_eq!(fact.body.locus.column, 5);
 }
 
 #[test]

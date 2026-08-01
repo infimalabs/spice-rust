@@ -325,8 +325,8 @@ impl Law {
     };
     /// Exact directive disposition.
     pub const DISPOSE: Self = Self {
-        required: &[WitnessKind::Directive],
-        optional: &[],
+        required: &[],
+        optional: &[WitnessKind::Directive],
         authority: Authority::Connected,
     };
     /// Exact directive disposition, withdrawn as operator intent.
