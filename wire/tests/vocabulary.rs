@@ -1,0 +1,271 @@
+//! The kind-to-body-to-producer registry.
+//!
+//! Every kind in the closed vocabulary registers one body DTO and one producer
+//! class. These fixtures are literal documents: decoding them and re-encoding
+//! to the same JSON proves the body field names are WIRE.md's own nouns rather
+//! than whatever a constructor happened to spell.
+//!
+//! Its sibling `registry.rs` covers the other registry WIRE.md names, which
+//! binds a command to the witnesses it must re-prove. Both are closed tables
+//! stated in WIRE.md; they share no rows.
+
+use std::collections::BTreeSet;
+
+use wire::{Fact, FactKind, Producer, body};
+
+/// Decode, re-encode, and assert the JSON value is unchanged.
+fn round_trip<T>(document: &str) -> T
+where
+    T: serde::Serialize + serde::de::DeserializeOwned,
+{
+    let decoded: T = wire::decode(document.as_bytes()).expect("document decodes");
+    let reencoded: serde_json::Value =
+        serde_json::from_slice(&wire::encode(&decoded).expect("value encodes"))
+            .expect("re-encoded bytes are json");
+    let original: serde_json::Value = serde_json::from_str(document).expect("document is json");
+    assert_eq!(reencoded, original, "round trip changed the document");
+    decoded
+}
+
+const DOC_APPLIED: &str = r#"{
+  "kind": "doc::applied",
+  "digest": "9f2b4c7d1e6a08b35c4f9d2e7a1b8c05d6e3f4a291b7c8d0e5f6a3b2c1d4e7f8",
+  "barrier": 48213,
+  "operations": 7
+}"#;
+
+const CLAIM_RENEWED: &str = r#"{
+  "kind": "claim::renewed",
+  "task": "SPICE-aBcD",
+  "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+  "until": "2030-04-12T19:44:09.271Z",
+  "maximum": "2030-04-12T22:44:09.271Z"
+}"#;
+
+const STEER_ACKED: &str = r#"{
+  "kind": "steer::acked",
+  "key": "1kJJP87B",
+  "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "locus": "turn:48213#0"
+}"#;
+
+const GATE_FOUND: &str = r#"{
+  "kind": "gate::found",
+  "identity": "wire::untyped-body",
+  "severity": "high",
+  "locus": "wire/src/fact.rs:213",
+  "owner": "lane:018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "receipt": "018f82d4-6f59-7d06-92e3-bce9131163c7"
+}"#;
+
+const TASTE_CONFIRMED: &str = r#"{
+  "kind": "taste::confirmed",
+  "taste": "polling",
+  "locus": "turn:48213#3"
+}"#;
+
+const RELEASE_PUBLISHED: &str = r#"{
+  "kind": "release::published",
+  "manifest": "4a1b9c2d3e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef",
+  "targets": [
+    {
+      "target": "aarch64-apple-darwin",
+      "artifact": "0f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbccddeeff0",
+      "receipt": "018f82d4-6f59-7d06-92e3-bce9131163c8"
+    }
+  ]
+}"#;
+
+#[test]
+fn the_command_door_body_matches_the_specified_fields() {
+    let fact: Fact<body::DocApplied> = round_trip(DOC_APPLIED);
+
+    assert_eq!(fact.kind, FactKind::DocApplied);
+    assert_eq!(fact.producer(), Producer::CommandDoor);
+    assert_eq!(fact.body.operations, 7);
+    assert_eq!(fact.body.barrier.get(), 48213);
+}
+
+#[test]
+fn the_bus_timer_body_matches_the_specified_fields() {
+    let fact: Fact<body::ClaimRenewed> = round_trip(CLAIM_RENEWED);
+
+    assert_eq!(fact.kind, FactKind::ClaimRenewed);
+    assert_eq!(fact.producer(), Producer::BusTimer);
+    assert_eq!(fact.body.task.as_str(), "SPICE-aBcD");
+    assert!(
+        fact.body.until < fact.body.maximum,
+        "a renewal extends the lease within its maximum"
+    );
+}
+
+#[test]
+fn the_ack_scanner_body_matches_the_specified_fields() {
+    let fact: Fact<body::SteerAcked> = round_trip(STEER_ACKED);
+
+    assert_eq!(fact.kind, FactKind::SteerAcked);
+    assert_eq!(fact.producer(), Producer::AckScanner);
+    assert_eq!(fact.body.key, "1kJJP87B");
+    assert_eq!(fact.body.locus, "turn:48213#0");
+}
+
+#[test]
+fn the_resident_recognition_body_matches_the_specified_fields() {
+    let fact: Fact<body::GateFound> = round_trip(GATE_FOUND);
+
+    assert_eq!(fact.kind, FactKind::GateFound);
+    assert_eq!(fact.producer(), Producer::ResidentRecognition);
+    assert_eq!(fact.body.severity, body::Severity::High);
+    assert_eq!(fact.body.identity, "wire::untyped-body");
+}
+
+#[test]
+fn the_judge_body_matches_the_specified_fields() {
+    let fact: Fact<body::TasteConfirmed> = round_trip(TASTE_CONFIRMED);
+
+    assert_eq!(fact.kind, FactKind::TasteConfirmed);
+    assert_eq!(fact.producer(), Producer::Judge);
+    assert_eq!(fact.body.taste, "polling");
+}
+
+#[test]
+fn a_nested_body_keeps_its_specified_entry_fields() {
+    let fact: Fact<body::ReleasePublished> = round_trip(RELEASE_PUBLISHED);
+
+    assert_eq!(fact.kind, FactKind::ReleasePublished);
+    let [target] = fact.body.targets.as_slice() else {
+        panic!("the fixture publishes exactly one target");
+    };
+    assert_eq!(target.target, "aarch64-apple-darwin");
+}
+
+#[test]
+fn a_body_refuses_a_kind_it_is_not_registered_against() {
+    let foreign = TASTE_CONFIRMED.replace("taste::confirmed", "taste::cleared");
+
+    let error = wire::decode::<Fact<body::TasteConfirmed>>(foreign.as_bytes())
+        .expect_err("a body does not answer for a kind it is not registered against");
+
+    let detail = error.to_string();
+    assert!(
+        detail.contains("taste::cleared") && detail.contains("taste::confirmed"),
+        "the refusal names the kind it read and the kind it expected: {detail}"
+    );
+}
+
+#[test]
+fn an_unspelled_kind_is_not_a_fact() {
+    let invented = TASTE_CONFIRMED.replace("taste::confirmed", "taste::suspected");
+
+    assert!(
+        wire::decode::<Fact<body::TasteConfirmed>>(invented.as_bytes()).is_err(),
+        "a spelling absent from the vocabulary is not a fact"
+    );
+}
+
+#[test]
+fn a_body_pairs_only_with_its_own_kind() {
+    let fact = Fact::new(body::TaskWoken {
+        task: "SPICE-aBcD".parse().expect("handle"),
+    });
+
+    assert_eq!(fact.kind, FactKind::TaskWoken);
+    assert_eq!(fact.producer(), Producer::CommandDoor);
+}
+
+#[test]
+fn the_vocabulary_is_closed_and_every_spelling_is_distinct() {
+    let spellings: BTreeSet<&str> = FactKind::ALL.iter().map(|kind| kind.as_str()).collect();
+
+    assert_eq!(
+        spellings.len(),
+        FactKind::ALL.len(),
+        "two kinds share a wire spelling"
+    );
+    for kind in FactKind::ALL {
+        let spelling = kind.as_str();
+        let (domain, verb) = spelling
+            .split_once("::")
+            .unwrap_or_else(|| panic!("a kind is a path of single words: {spelling}"));
+        assert!(
+            !domain.is_empty() && domain.bytes().all(|byte| byte.is_ascii_lowercase()),
+            "the domain is one lower-case word: {spelling}"
+        );
+        assert!(
+            !verb.is_empty() && verb.bytes().all(|byte| byte.is_ascii_lowercase()),
+            "the verb is one lower-case word: {spelling}"
+        );
+    }
+}
+
+#[test]
+fn every_kind_names_a_producer_and_every_producer_mints_a_kind() {
+    let mut minted: BTreeSet<&str> = BTreeSet::new();
+    for kind in FactKind::ALL {
+        minted.insert(kind.producer().as_str());
+    }
+
+    let classes = Producer::ALL;
+    for class in classes {
+        assert!(
+            minted.contains(class.as_str()),
+            "a producer class that never mints is as dead as a kind with no fold: {class}"
+        );
+    }
+    assert_eq!(
+        minted.len(),
+        classes.len(),
+        "the producer enumeration is closed"
+    );
+}
+
+#[test]
+fn producer_assignment_follows_the_specified_enumeration() {
+    // WIRE.md names the exceptions to the domain: everything else in a domain
+    // follows its lead, so listing them here fails loudly if a row moves.
+    let bus_timers = [
+        FactKind::ClaimLapsed,
+        FactKind::ClaimRenewed,
+        FactKind::SteerLapsed,
+        FactKind::LaneHeld,
+        FactKind::LaneResumed,
+    ];
+    for kind in bus_timers {
+        assert_eq!(
+            kind.producer(),
+            Producer::BusTimer,
+            "{kind} is minted by a bus timer"
+        );
+    }
+
+    let scanned = [
+        FactKind::SteerAcked,
+        FactKind::SteerDeclined,
+        FactKind::SteerMissed,
+    ];
+    for kind in scanned {
+        assert_eq!(
+            kind.producer(),
+            Producer::AckScanner,
+            "{kind} is minted by the ack scanner"
+        );
+    }
+
+    for kind in FactKind::ALL {
+        if bus_timers.contains(kind) || scanned.contains(kind) {
+            continue;
+        }
+        let spelling = kind.as_str();
+        let expected = match spelling.split_once("::").expect("a domain and a verb").0 {
+            "task" | "doc" | "consent" | "trust" | "up" => Producer::CommandDoor,
+            "taste" => Producer::Judge,
+            "lane" | "canary" | "vendor" | "commit" | "gate" | "journal" | "proof" | "release" => {
+                Producer::ResidentRecognition
+            }
+            // `claim` and `steer` split across the door and the timers, so the
+            // remainder of each is pinned by the explicit lists above.
+            _ => continue,
+        };
+        assert_eq!(kind.producer(), expected, "{kind} names the wrong producer");
+    }
+}
