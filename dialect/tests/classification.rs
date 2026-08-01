@@ -1,6 +1,6 @@
 use dialect::{
-    Classification, ClassificationContext, EdgeKind, RefusalCode, WarningCode, classify,
-    classify_with_context, emit,
+    Classification, ClassificationContext, EdgeKind, PROJECT_MAX_DEPTH, PROJECT_MIN_DEPTH,
+    RefusalCode, WarningCode, classify, classify_with_context, emit,
 };
 
 fn document(classification: &Classification) -> &dialect::Document {
@@ -9,11 +9,54 @@ fn document(classification: &Classification) -> &dialect::Document {
         .expect("fixture should produce a document")
 }
 
+/// Slug-spelled segments carrying every byte class a segment may use.
+fn segments_of_depth(depth: usize) -> Vec<String> {
+    (0..depth).map(|segment| format!("seg_{segment}")).collect()
+}
+
+/// A project of exactly this many segments.
+///
+/// Fixtures that merely need *a* valid project call this rather than spelling
+/// one out, so a change to the declared depth in `spice.toml` cannot turn them
+/// red for a reason they are not about.
+fn project_of_depth(depth: usize) -> String {
+    segments_of_depth(depth).join(".")
+}
+
+/// A project at a declared depth whose first segment carries this spelling.
+fn project_spelled(spelling: &str) -> String {
+    let mut segments = segments_of_depth(PROJECT_MIN_DEPTH);
+    segments[0] = spelling.to_owned();
+    segments.join(".")
+}
+
+fn classify_project(project: &str) -> Classification {
+    classify_with_context(
+        "# Goal\n",
+        ClassificationContext {
+            project: Some(project.to_owned()),
+            origin: None,
+        },
+    )
+}
+
+fn accepts_project(project: &str) -> bool {
+    classify_project(project).document().is_some()
+}
+
+fn refuses_project(project: &str) -> bool {
+    classify_project(project)
+        .refusals()
+        .iter()
+        .any(|refusal| refusal.code == RefusalCode::InvalidProject)
+}
+
 #[test]
 fn canonical_output_is_current_and_carries_caller_identity() {
     let source = "# Cut release\n\n- Build backend\n  Acceptance: binary is reproducible\n  Priority: high\n- Build frontend\n  After: build-backend\n  Flow: todo, verify, review\n  Tags: web, release\n";
+    let project = project_of_depth(PROJECT_MIN_DEPTH);
     let context = ClassificationContext {
-        project: Some("dist.release".to_owned()),
+        project: Some(project.clone()),
         origin: Some("ack:1kExample".to_owned()),
     };
     let first = classify_with_context(source, context.clone());
@@ -21,7 +64,7 @@ fn canonical_output_is_current_and_carries_caller_identity() {
     let second = classify_with_context(&canonical, context);
     assert!(matches!(second, Classification::Current(_)));
     let graph = document(&second);
-    assert_eq!(graph.project.as_deref(), Some("dist.release"));
+    assert_eq!(graph.project.as_deref(), Some(project.as_str()));
     assert_eq!(graph.origin.as_deref(), Some("ack:1kExample"));
     assert_eq!(graph.nodes[graph.root].slug, "cut-release");
     assert!(graph.edges.iter().any(|edge| {
@@ -115,33 +158,37 @@ fn invalid_context_is_a_named_refusal() {
     );
 }
 
+/// Depth is declared law, so the fixture asks the declaration what to try.
+///
+/// Spelling the depths out here would restate the bound the classifier just
+/// stopped restating: changing the declared number in `spice.toml` would turn
+/// this red and force exactly the Rust edit the declaration exists to avoid.
 #[test]
-fn project_context_uses_the_scheduler_segment_contract() {
-    for project in ["wire.identity", "wire.identity_law.fixture2"] {
-        let classification = classify_with_context(
-            "# Goal\n",
-            ClassificationContext {
-                project: Some(project.to_owned()),
-                origin: None,
-            },
+fn project_depth_follows_the_declared_bounds() {
+    for depth in PROJECT_MIN_DEPTH..=PROJECT_MAX_DEPTH {
+        let project = project_of_depth(depth);
+        assert!(
+            accepts_project(&project),
+            "depth {depth} is within the declared bounds: {project}",
         );
-        assert!(classification.document().is_some(), "{project}");
     }
 
-    for project in ["wire", "wire-name", "Wire", "wire.identity.law.extra"] {
-        let classification = classify_with_context(
-            "# Goal\n",
-            ClassificationContext {
-                project: Some(project.to_owned()),
-                origin: None,
-            },
-        );
+    for depth in [PROJECT_MIN_DEPTH - 1, PROJECT_MAX_DEPTH + 1] {
+        let project = project_of_depth(depth);
         assert!(
-            classification
-                .refusals()
-                .iter()
-                .any(|refusal| { refusal.code == RefusalCode::InvalidProject }),
-            "{project}"
+            refuses_project(&project),
+            "depth {depth} is outside the declared bounds: {project}",
+        );
+    }
+}
+
+#[test]
+fn project_segments_must_be_slug_spelled_at_a_declared_depth() {
+    for spelling in ["wire-name", "Wire", "wire name", ""] {
+        let project = project_spelled(spelling);
+        assert!(
+            refuses_project(&project),
+            "a segment spelled `{spelling}` is not a slug: {project}",
         );
     }
 }
