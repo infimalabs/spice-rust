@@ -251,7 +251,8 @@ fn retro_accounts_for_partial_malformed_missing_and_ambiguous_spans() {
     .expect("ambiguous locus is accounted");
     assert!(matches!(
         ambiguous.observations.as_slice(),
-        [Observation::Ambiguous { candidates, .. }] if candidates == &vec![codex, scratch.path().join("lane-b/claude")]
+        [Observation::Ambiguous { candidates, .. }]
+            if candidates == &vec![codex, scratch.path().join("lane-b/claude")]
     ));
 
     scratch.remove();
