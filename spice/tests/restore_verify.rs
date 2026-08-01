@@ -261,6 +261,54 @@ fn corrupt_manifest_digest_and_replay_closure_fault_as_store_evidence() {
 }
 
 #[test]
+fn manifest_bound_truncated_authority_reaches_captured_byte_admission_unchanged() {
+    let fixture = Fixture::new("truncated-authority");
+    let authority = fixture.bundle.join(AUTHORITY);
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(&authority)
+        .expect("authority opens for truncation");
+    file.set_len(64).expect("authority truncates");
+    drop(file);
+    fixture.write_manifest(JOURNAL_BACKUP_VERSION, journal::SCHEMA_VERSION);
+    let authority_bytes = fs::read(&authority).expect("truncated authority reads");
+    let manifest: JournalBackupManifest =
+        wire::decode(&fs::read(fixture.bundle.join("manifest.json")).expect("manifest reads"))
+            .expect("manifest decodes");
+    let declared = manifest
+        .members
+        .iter()
+        .find(|member| member.path == AUTHORITY)
+        .expect("manifest names authority");
+    assert_eq!(declared.bytes, 64);
+    assert_eq!(
+        declared.digest,
+        Digest::compute(Domain::JournalBackupMember, &authority_bytes)
+    );
+    let before = tree(&fixture.root);
+
+    let output = fixture.invoke(true);
+
+    assert_eq!(output.status.code(), Some(FAULT_EXIT));
+    let Outcome::<RestoreVerification>::Fault(fault) =
+        wire::decode(&output.stderr).expect("truncation fault decodes")
+    else {
+        panic!("truncated authority did not fault: {:?}", output.stderr);
+    };
+    assert_eq!(fault.class, FaultClass::Store);
+    assert_eq!(fault.reason, "restore::bundle-invalid");
+    assert!(
+        fault.detail.contains("backup authority was refused"),
+        "member authentication stopped before captured-byte SQLite admission: {fault:?}"
+    );
+    assert_eq!(
+        tree(&fixture.root),
+        before,
+        "failed admission mutated bundle"
+    );
+}
+
+#[test]
 fn manifest_canonicality_member_metadata_and_schema_drift_are_store_evidence() {
     let noncanonical = Fixture::new("noncanonical");
     let mut bytes = fs::read(noncanonical.bundle.join("manifest.json")).expect("manifest reads");
