@@ -15,6 +15,7 @@ use crate::repository::Repository;
 mod binding;
 mod error;
 mod files;
+mod handle;
 mod path;
 mod progress;
 mod record;
@@ -23,8 +24,8 @@ use binding::{BoundDestination, bind_destination, validate_operation_binding};
 pub use binding::{Generation, ParentObservation};
 pub use error::InstallError;
 use files::{
-    cleanup_parents, matches_generated, materialize_generated, observe, publish_operation,
-    restore_operation,
+    cleanup_operation, matches_generated, materialize_generated, observe, observe_bound,
+    publish_operation, restore_operation,
 };
 use path::{relative_parents, validate_relative};
 use progress::{apply_with_interruption, unapply_with_interruption, verify_progress};
@@ -582,7 +583,8 @@ fn destination_state(
     path: &str,
 ) -> Result<(BoundDestination, Option<ObservedFile>), InstallError> {
     let bound = bind_destination(location.root(repository), path)?;
-    let previous = observe(&location.root(repository).join(&bound.destination))?;
+    let (previous, _) =
+        observe_bound(location.root(repository), &bound.destination, &bound.parent)?;
     Ok((bound, previous))
 }
 

@@ -155,7 +155,6 @@ fn failure<B>(error: InstallError) -> Outcome<B> {
         }),
         InstallError::Encode(_)
         | InstallError::Decode(_)
-        | InstallError::Atomic(_)
         | InstallError::InvalidRecord(_)
         | InstallError::Interrupted { .. } => Outcome::Fault(Fault {
             class: FaultClass::Store,
