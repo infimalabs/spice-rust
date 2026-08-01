@@ -32,5 +32,5 @@ pub mod view;
 
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
 pub use socket::{Admitted, Session};
-pub use state::{Answer, Applied, BrowserState, CausalLink, ChainEnd, ChainWalk};
+pub use state::{Answer, Applied, BrowserState, CAUSAL_HEADERS, CausalLink, ChainEnd, ChainWalk};
 pub use view::{Axis, Pane};
