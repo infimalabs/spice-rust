@@ -5,7 +5,7 @@
 //! answer; it never merges two answers, never repairs a gap, and never
 //! reports a horizon, overflow, or cursor it did not receive.
 
-use wire::{CanonicalUuid, Envelope, Overflow, Packed, Seq};
+use wire::{Body, CanonicalUuid, Envelope, Overflow, Packed, Seq};
 
 use crate::socket::Admitted;
 
@@ -78,7 +78,7 @@ impl<T> BrowserState<T> {
     /// frame this build cannot read has no path in. Version admission belongs
     /// at the door; requiring the door's own receipt here means state cannot
     /// be updated by bytes that never reached it.
-    pub fn apply<F>(&mut self, admitted: &Admitted<Envelope<F>>) -> Applied {
+    pub fn apply<F: Body>(&mut self, admitted: &Admitted<Envelope<F>>) -> Applied {
         let envelope = admitted.get();
         match self.cursor {
             Some(cursor) if envelope.seq == cursor => Applied::Duplicate,

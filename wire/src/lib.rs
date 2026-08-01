@@ -9,6 +9,7 @@
 //! migration at open, and the browser has no independent clock because the app
 //! is compiled from this crate and embedded in the binary that owns the socket.
 
+pub mod body;
 pub mod command;
 pub mod envelope;
 pub mod fact;
@@ -21,11 +22,14 @@ pub mod witness;
 
 pub use command::{Command, CommandKind, CommandKindError, Law, LawError};
 pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVersion};
-pub use fact::{Fact, FactKind};
+pub use fact::{Body, Fact, FactKind, Producer};
+// `head::WitnessKind` is deliberately not re-exported here. It classes a board
+// head, while [`witness::WitnessKind`] discriminates a command's expectations;
+// the two are different closed sets and the command registry states its law in
+// terms of the latter, so that one holds the crate-root spelling.
 pub use head::{
     ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency, LeaseHead,
-    ResidencyHead, ResidentState, TaskHead, TrustHead, TrustState, WitnessHead, WitnessKind,
-    WorkflowHead,
+    ResidencyHead, ResidentState, TaskHead, TrustHead, TrustState, WitnessHead, WorkflowHead,
 };
 pub use hello::{Hello, Rejected};
 pub use ident::{CanonicalUuid, Digest, IdentError, Instant};

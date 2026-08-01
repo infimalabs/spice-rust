@@ -7,7 +7,7 @@
 //! allowed to reach browser state.
 
 use serde::de::DeserializeOwned;
-use wire::{CanonicalUuid, Envelope, Fault, FaultClass, Hello, Response, WireVersion};
+use wire::{Body, CanonicalUuid, Envelope, Fault, FaultClass, Hello, Response, WireVersion};
 
 /// Reasons this door names when it turns a frame away.
 ///
@@ -182,10 +182,7 @@ impl Session {
     ///
     /// Returns a protocol fault when the bytes do not decode or carry a
     /// version this build does not speak.
-    pub fn admit_envelope<F: DeserializeOwned>(
-        &self,
-        bytes: &[u8],
-    ) -> Result<Admitted<Envelope<F>>, Fault> {
+    pub fn admit_envelope<F: Body>(&self, bytes: &[u8]) -> Result<Admitted<Envelope<F>>, Fault> {
         let frame: Envelope<F> = decode_frame(bytes)?;
         admit_wire(frame.v)?;
         Ok(Admitted(frame))
