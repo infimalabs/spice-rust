@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::{ffi::OsStr, path::Path, process::Command};
 
 use wire::Outcome;
 
@@ -13,10 +13,16 @@ struct Spoken {
 }
 
 fn invoke(argv: &[&str]) -> Spoken {
-    let output = Command::new(env!("CARGO_BIN_EXE_spice"))
-        .args(argv)
-        .output()
-        .expect("spice launches");
+    invoke_with_inbox(argv, None)
+}
+
+fn invoke_with_inbox(argv: &[&str], inbox: Option<&OsStr>) -> Spoken {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+    command.args(argv).env_remove(steer::hook::INBOX);
+    if let Some(inbox) = inbox {
+        command.env(steer::hook::INBOX, inbox);
+    }
+    let output = command.output().expect("spice launches");
     Spoken {
         code: output.status.code(),
         out: output.stdout,
@@ -122,25 +128,100 @@ fn the_renderer_flag_is_read_wherever_it_is_written() {
 /// output and hand the child a shorter command than was typed, and the child
 /// is as likely as spice to have a flag by that name.
 #[test]
+#[cfg(unix)]
 fn a_child_commands_flag_is_not_the_renderers() {
-    let child = invoke(&["run", "--", "echo", "--json"]);
+    let child = invoke(&["run", "--", "/bin/echo", "--json"]);
 
-    assert_eq!(child.code, Some(REFUSAL_EXIT));
-    assert!(child.out.is_empty());
-    assert_eq!(
-        utf8(child.err),
-        "spice: release::not-landed; finish the steer::run battery before Rust release one admits this leaf\n",
+    assert_eq!(child.code, Some(0));
+    assert_eq!(child.out, b"--json\n");
+    assert!(child.err.is_empty());
+
+    let renderer = invoke(&["run", "--json", "--", "/bin/echo", "child"]);
+    assert_eq!(renderer.code, Some(0));
+    assert_eq!(renderer.out, b"child\n");
+    assert!(renderer.err.is_empty());
+}
+
+#[test]
+#[cfg(unix)]
+fn run_emits_pending_direction_then_inherits_the_childs_streams_and_exit() {
+    let inbox = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/run-inbox.txt");
+    let spoken = invoke_with_inbox(
+        &[
+            "run",
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf child-out; printf child-err >&2; exit 7",
+        ],
+        Some(inbox.as_os_str()),
     );
 
-    let renderer = invoke(&["run", "--json", "--", "echo"]);
-    assert_eq!(renderer.code, Some(REFUSAL_EXIT));
-    assert!(renderer.out.is_empty());
+    assert_eq!(spoken.code, Some(7));
+    assert_eq!(spoken.out, b"child-out");
+    assert_eq!(
+        spoken.err,
+        b"<run-test>\npending direction\n</run-test>\nchild-err"
+    );
+}
 
-    let decoded: Outcome<()> = wire::decode(&renderer.err).expect("the document is the wire DTO");
-    let Outcome::Refusal(refusal) = decoded else {
-        panic!("an unlanded leaf refuses: {decoded:?}");
-    };
-    assert_eq!(refusal.observed.as_deref(), Some("run"));
+#[test]
+#[cfg(unix)]
+fn absent_empty_and_unreadable_inboxes_never_block_the_child() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let absent = manifest.join("tests/never-written-run-inbox");
+
+    for inbox in [absent.as_path(), Path::new("/dev/null"), manifest] {
+        let spoken = invoke_with_inbox(
+            &["run", "--", "/bin/sh", "-c", "printf ran"],
+            Some(inbox.as_os_str()),
+        );
+
+        assert_eq!(spoken.code, Some(0), "{}", inbox.display());
+        assert_eq!(spoken.out, b"ran", "{}", inbox.display());
+        assert!(spoken.err.is_empty(), "{}", inbox.display());
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn run_preserves_the_childs_argument_vector() {
+    let spoken = invoke(&[
+        "run",
+        "--",
+        "/bin/sh",
+        "-c",
+        "printf '<%s>\\n' \"$@\"",
+        "sh",
+        "two words",
+        "--json",
+        "",
+    ]);
+
+    assert_eq!(spoken.code, Some(0));
+    assert_eq!(spoken.out, b"<two words>\n<--json>\n<>\n");
+    assert!(spoken.err.is_empty());
+}
+
+#[test]
+#[cfg(unix)]
+fn run_maps_a_child_signal_to_the_shell_exit_contract() {
+    let spoken = invoke(&["run", "--", "/bin/sh", "-c", "kill -TERM $$"]);
+
+    assert_eq!(spoken.code, Some(128 + 15));
+    assert!(spoken.out.is_empty());
+    assert!(spoken.err.is_empty());
+}
+
+#[test]
+fn run_without_a_child_is_a_clap_refusal() {
+    let spoken = invoke(&["run", "--"]);
+
+    assert_eq!(spoken.code, Some(REFUSAL_EXIT));
+    assert!(spoken.out.is_empty());
+    let stderr = utf8(spoken.err);
+    assert!(stderr.contains("required arguments were not provided"));
+    assert!(stderr.contains("<CMD>"));
 }
 
 #[test]

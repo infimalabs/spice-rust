@@ -1,5 +1,12 @@
 use std::ffi::{OsStr, OsString};
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::{
+    io::{self, Write},
+    path::Path,
+    process::ExitStatus,
+};
+
 use wire::{Fault, FaultClass, Outcome, Refusal};
 
 mod cli;
@@ -13,6 +20,13 @@ const REFUSAL_EXIT: i32 = 2;
 
 fn main() {
     let matches = cli::command().get_matches();
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if let Some(command) = cli::run_command(&matches) {
+            run(command);
+        }
+    }
+
     let contract = cli::selected_contract(&matches)
         .expect("the generated parser returns only registered command leaves");
     let form = if cli::json_selected(&matches) {
@@ -32,6 +46,47 @@ fn main() {
         ),
     });
     deliver(&outcome, form);
+}
+
+/// Emits any pending direction and hands the caller's command through.
+#[cfg(not(target_arch = "wasm32"))]
+fn run(command: Vec<OsString>) -> ! {
+    let (program, arguments) = command
+        .split_first()
+        .expect("clap requires the run command operand");
+
+    if let Some(rendering) = bootstrap_environment(steer::hook::INBOX) {
+        let mut stderr = io::stderr().lock();
+        let _ = steer::run::emit(Path::new(&rendering), &mut stderr);
+    }
+
+    match steer::run::hand(program, arguments) {
+        Ok(status) => terminate_child(status),
+        Err(error) => {
+            let mut stderr = io::stderr().lock();
+            let _ = writeln!(stderr, "spice run: {error}");
+            let code = match error.kind() {
+                io::ErrorKind::NotFound => 127,
+                io::ErrorKind::PermissionDenied => 126,
+                _ => FAULT_EXIT,
+            };
+            terminate_code(code);
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn terminate_child(status: ExitStatus) -> ! {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+
+        if let Some(signal) = status.signal() {
+            terminate_code(128 + signal);
+        }
+    }
+
+    terminate_code(status.code().unwrap_or(FAULT_EXIT));
 }
 
 /// Renders one outcome in the selected form and exits on it.
@@ -72,12 +127,16 @@ pub fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
 
 /// Terminate the process after the command result has returned to the binary
 /// rim.
+pub fn terminate<B>(outcome: &Outcome<B>) -> ! {
+    terminate_code(exit_status(outcome));
+}
+
 #[expect(
     clippy::disallowed_methods,
-    reason = "the binary rim alone maps typed outcomes to process exits"
+    reason = "the binary rim alone terminates the process"
 )]
-pub fn terminate<B>(outcome: &Outcome<B>) -> ! {
-    std::process::exit(exit_status(outcome));
+fn terminate_code(code: i32) -> ! {
+    std::process::exit(code);
 }
 
 const fn exit_status<B>(outcome: &Outcome<B>) -> i32 {
