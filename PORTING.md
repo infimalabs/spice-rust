@@ -48,7 +48,10 @@ journal, and `down` reads the discovery published at
 `<git-common>/.spice-rust/canvas`.
 
 The same root owns resident locks, lane tape, degraded-state evidence, command
-locks, and proof receipts. Rust startup does not inspect Python databases below
+locks, and proof receipts. Resident, version, lock, proof, and release commands
+first admit the fixed root and parent components without following links; a
+linked or malformed component returns `repository::state-path-refused` with
+its exact path. Rust startup does not inspect Python databases below
 `<git-common>/.spice`. An unfinalized or incompatible `.spice-rust` journal
 returns the typed `journal::schema-refused` outcome naming its state. The
 ambient `spice` command and `.spice/hooks` remain Python-owned until the
@@ -56,8 +59,8 @@ operator authorizes cutover.
 
 ## Rust contracts
 
-The registry contains 63 command leaves. Twenty-five have executable dispatch,
-so current executable coverage is 25/63, or 39.7 percent. Completed domain
+The registry contains 63 command leaves. Forty-one have executable dispatch,
+so current executable coverage is 41/63, or 65.1 percent. Completed domain
 libraries do not count as landed command surfaces.
 
 ### Landed
@@ -87,12 +90,31 @@ libraries do not count as landed command surfaces.
 - `lane drain`
 - `lane wake`
 - `recall`
+- `consent`
+- `consent allow`
+- `consent deny`
+- `consent policy`
+- `trust`
+- `trust grant`
+- `trust revoke`
+- `backup`
+- `restore`
+- `journal`
+- `journal replay`
+- `journal reindex`
+- `journal verify`
+- `fold`
+- `thread`
+- `canvas`
 
 The local command group retains the Python-first ownership boundary described
 above: plain `install` is a side-effect-free plan, and only an exact
-`--apply=<digest>` crosses its fixed authored mutation plan. Rust binaries,
-hook stages, and install records remain namespaced below `.spice/rust`; the
-plan does not replace the ambient command or active `core.hooksPath`.
+`--apply=<digest>` crosses its fixed authored mutation plan. Rust binaries and
+hook stages remain namespaced below worktree `.spice/rust`, while the install
+receipt lives below Git-common `.spice-rust`. The plan does not replace the
+ambient command or active `core.hooksPath`. Durable receipts at the retired
+`.spice/install` and `.spice/rust/install.json` locations are refused with
+their owning installer task named; they are never read as a fallback.
 
 `doctor`, `version`, and `up` are executable but not yet usable against the
 current worktree state; the configuration and bootstrap tasks above own those
@@ -127,31 +149,9 @@ read the Python authority under `<git-common>/.spice`.
 
 ### `POLICY-1kJQlFB6`
 
-- `consent`
-- `consent allow`
-- `consent deny`
-- `consent policy`
 - `taste`
 - `taste add`
 - `taste drop`
-- `trust`
-- `trust grant`
-- `trust revoke`
-
-### `JOURNAL-1kJQlFfS`
-
-- `backup`
-- `restore`
-- `journal`
-- `journal replay`
-- `journal reindex`
-- `journal verify`
-- `fold`
-- `thread`
-
-### `PUBLISH-1kJQlGb0`
-
-- `canvas`
 
 `spice/src/cli.rs::landing` carries the same classification. Its closure test
 fails for any registered Rust leaf without a disposition. A leaf classified
@@ -184,8 +184,8 @@ the registry exposes them even though argparse requires a child action.
 - `config judge`: tracked `taste` policy; `POLICY-1kJQlFB6`.
 - `config personality`: typed `config` and vendor launch; `LOCAL-1kJQlG6b`.
 - `config say`: typed canvas speech; `SPEECH-1kJQnmkd`.
-- `config set`: landed `config` refuses writes until a digest-bound mutation
-  contract is admitted.
+- `config set`: landed typed machine-local preview plus exact digest apply with
+  atomic replacement; tracked task and policy authority remains read-only.
 - `config show`: landed Rust `config`.
 - `config system`: landed typed `config` provenance.
 - `config trust`: namespace; Rust `trust`; `POLICY-1kJQlFB6`.
@@ -266,9 +266,9 @@ not a shipped one-for-one product verb. `VERIFY-1kJQlH5b` owns policy parity.
 
 ### Operator canvas
 
-- `serve`: Rust `canvas`; `PUBLISH-1kJQlGb0`.
+- `serve`: landed Rust `canvas`.
 - `serve browser-artifact-path`: embedded canvas discovery;
-  `PUBLISH-1kJQlGb0`.
+  landed Rust `canvas`.
 - `serve rebuild-projections`: `journal replay` and `fold`;
   `JOURNAL-1kJQlFfS`.
 - `serve teams`: `lane` and `board`; coordination and board tasks.

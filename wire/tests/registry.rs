@@ -69,7 +69,9 @@ fn every_command_names_the_witnesses_it_requires() {
             assert!(
                 matches!(
                     kind,
-                    CommandKind::LaneRead
+                    CommandKind::ConsentRead
+                        | CommandKind::ConsentPolicy
+                        | CommandKind::LaneRead
                         | CommandKind::LaneSeat
                         | CommandKind::LaneState
                         | CommandKind::LaneRecall
@@ -77,6 +79,11 @@ fn every_command_names_the_witnesses_it_requires() {
                 "{kind} unexpectedly carries a witness-free registry row",
             );
             assert!(law.optional.is_empty());
+        } else {
+            assert!(
+                !law.required.is_empty(),
+                "{kind} carries a registry row that requires nothing",
+            );
         }
         for optional in law.optional {
             assert!(

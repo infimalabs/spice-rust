@@ -131,6 +131,7 @@ command without an explicit row does not compile:
 | Apply a document | Exact normalized preview digest and one named board barrier containing the task and workflow heads the preview read. |
 | Send, dispose, or cancel a directive | Exact directive disposition; resend also names the preceding directive in its lineage; cancel additionally requires operator capability. A disposition's evidence is a transcript locus or the authenticated lane command that carried it, and the fact records which. |
 | Wire a dependency edge | Exact task statement and workflow heads of both tasks and the absence of the edge; no board barrier — one edge is direct intent. |
+| Read consent queue or policy | No mutable predicate; the snapshot cursor is the read barrier and operator capability is required. |
 | Decide consent | Exact request disposition, named rule, and budget predicate when a rule spends or renews a budget. |
 | Pend, grant, or revoke trust | Exact executable digest and its current trust state. Operator capability is additionally required for grant and revoke. |
 | Seat or change lane state | Exact residency head, lane and occupant identities when present, and resident epoch. |

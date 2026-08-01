@@ -175,12 +175,16 @@ fn invoke(fixture: &Fixture, command: &str) -> Output {
 }
 
 fn invoke_form(fixture: &Fixture, command: &str, json: bool) -> Output {
+    invoke_args(fixture, &[command], json)
+}
+
+fn invoke_args(fixture: &Fixture, arguments: &[&str], json: bool) -> Output {
     let mut process = Command::new(env!("CARGO_BIN_EXE_spice"));
     if json {
         process.arg("--json");
     }
     process
-        .arg(command)
+        .args(arguments)
         .current_dir(&fixture.root)
         .output()
         .expect("spice launches")
@@ -193,6 +197,40 @@ fn outcome(output: &Output) -> Outcome<()> {
         &output.stderr
     };
     wire::decode(bytes).expect("process speaks one outcome")
+}
+
+fn value_outcome(output: &Output) -> Outcome<serde_json::Value> {
+    let bytes = if output.status.success() {
+        &output.stdout
+    } else {
+        &output.stderr
+    };
+    wire::decode(bytes).expect("process speaks one typed value outcome")
+}
+
+fn journal_cursor(fixture: &Fixture) -> wire::Seq {
+    journal::JournalReader::open(fixture.journal())
+        .expect("fixture journal reads")
+        .cursor()
+        .expect("fixture cursor reads")
+        .expect("running resident has a cursor")
+}
+
+fn trust_pended(fixture: &Fixture) -> Vec<wire::body::TrustPended> {
+    journal::JournalReader::open(fixture.journal())
+        .expect("fixture journal reads")
+        .fact_snapshot()
+        .expect("fixture facts read")
+        .facts()
+        .iter()
+        .filter(|envelope| envelope.fact.kind() == FactKind::TrustPended)
+        .map(|envelope| {
+            let bytes = wire::encode(&envelope.fact).expect("opaque trust fact encodes");
+            wire::decode::<wire::Fact<wire::body::TrustPended>>(&bytes)
+                .expect("validated trust fact decodes to its registered body")
+                .body
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy)]
@@ -933,7 +971,7 @@ fn authenticated_down_rejects_a_stale_epoch_then_reaches_verified_dark() {
     let ReplyPosition::Committed(range) = reply.position else {
         panic!("down mutates the lifecycle");
     };
-    assert_eq!((range.first.get(), range.last.get()), (3, 8));
+    assert_eq!((range.first.get(), range.last.get()), (4, 9));
 
     let up = resident.wait();
     assert!(up.status.success(), "up failed: {:?}", up.stderr);
@@ -943,7 +981,7 @@ fn authenticated_down_rejects_a_stale_epoch_then_reaches_verified_dark() {
     let ReplyPosition::Committed(range) = reply.position else {
         panic!("up commits startup");
     };
-    assert_eq!((range.first.get(), range.last.get()), (1, 2));
+    assert_eq!((range.first.get(), range.last.get()), (1, 3));
     assert!(!fixture.canvas().exists(), "dark removes discovery");
     assert_eq!(fs::read(fixture.resident()).expect("holder file"), b"");
 
@@ -960,6 +998,7 @@ fn authenticated_down_rejects_a_stale_epoch_then_reaches_verified_dark() {
         kinds,
         [
             FactKind::JournalMigrated,
+            FactKind::TrustPended,
             FactKind::UpSeated,
             FactKind::UpQuiescing,
             FactKind::UpDraining,
@@ -1142,3 +1181,6 @@ fn down_releases_before_reply_and_linked_worktrees_use_common_state() {
 
 #[path = "resident/lane_process.rs"]
 mod lane_process;
+
+#[path = "resident/trust_process.rs"]
+mod trust_process;

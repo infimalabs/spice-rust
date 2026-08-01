@@ -8,7 +8,7 @@ use wire::Digest;
 use super::files::{create_directory, publish_image};
 use super::{
     FileImage, Generation, InstallError, InstallPlan, InstallReceipt, InstallStatus,
-    LEGACY_RECORD_PATH, RECORD_MODE, RECORD_PATH, RECORD_VERSION, Repository, RepositoryIdentity,
+    LEGACY_RECORDS, RECORD_MODE, RECORD_NAME, RECORD_VERSION, Repository, RepositoryIdentity,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -174,7 +174,7 @@ impl InstallRecord {
 
 pub(super) fn read_record(repository: &Repository) -> Result<Option<LoadedRecord>, InstallError> {
     refuse_legacy_record(repository)?;
-    let path = record_path(repository);
+    let path = record_path(repository)?;
     let metadata = match fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -204,7 +204,7 @@ pub(super) fn write_initial_record(
     record: &InstallRecord,
 ) -> Result<Generation, InstallError> {
     record.validate_for_repository(repository)?;
-    let logical = record_path(repository);
+    let logical = record_path(repository)?;
     match fs::symlink_metadata(&logical) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Ok(_) => return Err(InstallError::ParentChanged(logical)),
@@ -228,9 +228,7 @@ pub(super) fn write_record(
     expected: Generation,
 ) -> Result<Generation, InstallError> {
     record.validate_for_repository(repository)?;
-    let path = repository
-        .common_dir()
-        .join(&record.plan.record.destination);
+    let path = record_path(repository)?;
     let metadata = fs::symlink_metadata(&path)
         .map_err(|source| InstallError::io("inspect install record", &path, source))?;
     if !metadata.file_type().is_file() || Generation::observe(&metadata) != expected {
@@ -243,26 +241,33 @@ fn write_record_bytes(
     repository: &Repository,
     record: &InstallRecord,
 ) -> Result<Generation, InstallError> {
-    let path = repository
-        .common_dir()
-        .join(&record.plan.record.destination);
+    let path = record_path(repository)?;
     let bytes = wire::encode(record).map_err(InstallError::Encode)?;
     publish_image(&path, &FileImage::new(RECORD_MODE, bytes), true)
 }
 
-pub(super) fn record_path(repository: &Repository) -> PathBuf {
-    repository.common_dir().join(RECORD_PATH)
+pub(super) fn record_path(repository: &Repository) -> Result<PathBuf, InstallError> {
+    Ok(repository
+        .admit_state()
+        .map_err(InstallError::State)?
+        .runtime()
+        .join(RECORD_NAME))
 }
 
 fn refuse_legacy_record(repository: &Repository) -> Result<(), InstallError> {
-    let path = repository.common_dir().join(LEGACY_RECORD_PATH);
-    match fs::symlink_metadata(&path) {
-        Ok(_) => Err(InstallError::LegacyRecord(path)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(InstallError::io(
-            "inspect legacy install record",
-            path,
-            source,
-        )),
+    for (relative, owner) in LEGACY_RECORDS {
+        let path = repository.common_dir().join(relative);
+        match fs::symlink_metadata(&path) {
+            Ok(_) => return Err(InstallError::LegacyRecord { path, owner }),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(InstallError::io(
+                    "inspect legacy install record",
+                    path,
+                    source,
+                ));
+            }
+        }
     }
+    Ok(())
 }

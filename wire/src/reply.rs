@@ -2,7 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::Envelope;
 use crate::envelope::{Seq, WireVersion};
+use crate::fact::AnyFact;
 use crate::ident::{CanonicalUuid, Digest};
 use crate::manifest::ReleaseTarget;
 
@@ -156,6 +158,19 @@ pub struct Version {
     pub app: Digest,
 }
 
+/// Receipt for opening the current resident's published browser surface.
+///
+/// The operator capability is intentionally absent. It is a socket credential,
+/// not browser state, and must never cross the native command's output boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanvasOpen {
+    /// Exact loopback HTTP origin read from owner-only discovery.
+    pub endpoint: String,
+    /// Resident generation whose discovery was still current at launch.
+    pub epoch: CanonicalUuid,
+}
+
 /// Authenticated identities and replay counts for one offline restore bundle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -178,6 +193,145 @@ pub struct RestoreVerification {
     pub heads: u64,
     /// Origin/cause thread-index rows whose closure verified.
     pub threads: u64,
+}
+
+/// One consistent read of finalized journal identity and extent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JournalReport {
+    /// Finalized journal schema admitted by the reader.
+    pub schema: u32,
+    /// Greatest committed position, absent for an empty authority.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub cursor: Option<Seq>,
+    /// Number of canonical fact envelopes in the snapshot.
+    pub facts: u64,
+}
+
+/// Counts proved by a complete read-only authority verification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JournalVerification {
+    /// Finalized journal schema that was verified.
+    pub schema: u32,
+    /// Canonical fact envelopes verified.
+    pub facts: u64,
+    /// Command receipts verified.
+    pub receipts: u64,
+    /// Current authority heads verified.
+    pub heads: u64,
+    /// Derived thread-index rows verified.
+    pub threads: u64,
+}
+
+/// Counts returned after rebuilding the disposable thread index.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JournalReindex {
+    /// Immutable fact envelopes used as the rebuild source.
+    pub facts: u64,
+    /// Thread rows published by the transaction.
+    pub threads: u64,
+}
+
+/// Receipt for one complete, authenticated backup bundle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JournalBackup {
+    /// Operator-selected bundle destination.
+    pub output: String,
+    /// Authentication and replay proof for the published bundle.
+    pub verification: RestoreVerification,
+}
+
+/// Digest-pinned preview or completed authority replacement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JournalRestore {
+    /// Domain-separated identity of this bundle, destination, and predecessor.
+    pub plan: Digest,
+    /// Repository authority path the plan names.
+    pub destination: String,
+    /// Identity of the authority present when the plan was made, if any.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub previous: Option<Digest>,
+    /// Complete verification of the proposed replacement generation.
+    pub verification: RestoreVerification,
+    /// True only after the digest-pinned replacement and reopen verification.
+    pub applied: bool,
+}
+
+/// One registered fold's current materialization state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FoldState {
+    /// Closed-inventory fold name.
+    pub fold: String,
+    /// Published generation, absent before first replay.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub generation: Option<u64>,
+    /// Reducer semantic version carried by that generation.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub reducer_version: Option<u32>,
+    /// Greatest journal fact applied by the generation.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub cursor: Option<Seq>,
+    /// Greatest position through which its answer is complete.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub horizon: Option<Seq>,
+    /// Exact command that recreates the fold.
+    pub recovery: String,
+    /// Deterministic derived answer, absent before first replay.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub payload: Option<serde_json::Value>,
+}
+
+/// Complete closed-inventory fold report or replay receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FoldReport {
+    /// Fold states in dependency-safe inventory order.
+    pub folds: Vec<FoldState>,
+}
+
+/// One verified cause thread reconstructed from immutable envelopes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadReport {
+    /// Exact sequence or origin reference supplied by the caller.
+    pub reference: String,
+    /// Root fact of the resolved thread.
+    pub root: Seq,
+    /// Canonical envelopes ordered from root through descendants.
+    pub entries: Vec<Envelope<AnyFact>>,
 }
 
 /// One fully admitted target named in deterministic release notes.

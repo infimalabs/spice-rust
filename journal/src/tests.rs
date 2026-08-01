@@ -392,6 +392,96 @@ fn fact_snapshot_reads_the_canonical_authority_stream() {
 }
 
 #[test]
+fn read_only_snapshot_and_thread_follow_the_verified_cause_chain() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("authority.sqlite3");
+    drop(authority_file_fixture(&path));
+
+    let reader = JournalReader::open(&path).expect("open authority read-only");
+    let snapshot = reader.fact_snapshot().expect("read-only fact snapshot");
+    assert_eq!(snapshot.horizon(), Seq::new(2));
+
+    let thread = reader.thread("2").expect("resolve descendant sequence");
+    assert_eq!(thread.root, Seq::new(1).expect("root sequence"));
+    assert_eq!(
+        thread
+            .entries
+            .iter()
+            .map(|entry| entry.seq.get())
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    assert_eq!(thread.entries[1].cause, Seq::new(1));
+}
+
+#[test]
+fn reindex_rebuilds_only_derived_threads_and_rolls_back_on_bad_history() {
+    let mut journal = authority_fixture();
+    let head_before = journal
+        .connection
+        .query_row(
+            "SELECT body FROM task_heads WHERE handle = 'JOURNAL-a1'",
+            [],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .expect("read task head before reindex");
+    journal
+        .connection
+        .execute("DELETE FROM thread_index", [])
+        .expect("remove derived thread rows");
+
+    let rebuilt = journal.reindex().expect("reindex valid history");
+    assert_eq!((rebuilt.facts, rebuilt.threads), (2, 2));
+    journal.verify().expect("rebuilt authority verifies");
+    let head_after = journal
+        .connection
+        .query_row(
+            "SELECT body FROM task_heads WHERE handle = 'JOURNAL-a1'",
+            [],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .expect("read task head after reindex");
+    assert_eq!(head_after, head_before, "reindex changed an authority head");
+
+    journal
+        .connection
+        .execute(
+            "UPDATE fact_envelopes SET envelope = X'00' WHERE seq = 2",
+            [],
+        )
+        .expect("corrupt immutable fact fixture");
+    let threads_before = thread_index_bytes(&journal.connection);
+    let error = journal
+        .reindex()
+        .expect_err("corrupt history must refuse reindex");
+    assert!(matches!(error, crate::ReindexError::Violations(_)));
+    assert_eq!(
+        thread_index_bytes(&journal.connection),
+        threads_before,
+        "failed reindex changed derived rows"
+    );
+}
+
+fn thread_index_bytes(connection: &Connection) -> Vec<(i64, String, Option<i64>, i64, i64)> {
+    let mut statement = connection
+        .prepare("SELECT seq, origin, cause, root, depth FROM thread_index ORDER BY seq")
+        .expect("prepare thread snapshot");
+    statement
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })
+        .expect("query thread snapshot")
+        .map(|row| row.expect("read thread row"))
+        .collect()
+}
+
+#[test]
 fn scoped_read_returns_owned_cursor_complete_task_bundles_without_mutation() {
     let empty = Journal::in_memory().expect("empty journal");
     let empty_changes = empty.connection.total_changes();

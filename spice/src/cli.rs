@@ -806,12 +806,12 @@ const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["config"],
-        "config [KEY [VALUE]]",
+        "config [KEY [VALUE]] [--apply=<digest>]",
         Local,
         None,
         [],
-        [Daemonless, Offline],
-        Reply,
+        [Daemonless, Offline, DigestOnMutation],
+        Plan,
         "spice::config"
     ),
 ];
@@ -850,13 +850,29 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["down"]
         | ["run"]
         | ["config"]
+        | ["trust"]
+        | ["trust", "grant"]
+        | ["trust", "revoke"]
+        | ["backup"]
+        | ["restore"]
+        | ["journal"]
+        | ["journal", "replay"]
+        | ["journal", "reindex"]
+        | ["journal", "verify"]
+        | ["fold"]
+        | ["thread"]
+        | ["canvas"]
         | ["release", "publish"]
         | ["restore", "verify"]
         | ["lane"]
         | ["lane", "add"]
         | ["lane", "drain"]
         | ["lane", "wake"]
-        | ["recall"] => Landing::Landed,
+        | ["recall"]
+        | ["consent"]
+        | ["consent", "allow"]
+        | ["consent", "deny"]
+        | ["consent", "policy"] => Landing::Landed,
         ["board"]
         | ["board", "graph"]
         | ["board", "handout"]
@@ -873,25 +889,7 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["doc"]
         | ["doc", "ledger"] => Landing::Gap("BOARD-1kJQlDDt"),
         ["steer"] | ["steer", "cancel"] | ["inbox"] | ["ack"] => Landing::Gap("COORDIN-1kJQlDjc"),
-        ["consent"]
-        | ["consent", "allow"]
-        | ["consent", "deny"]
-        | ["consent", "policy"]
-        | ["taste"]
-        | ["taste", "add"]
-        | ["taste", "drop"]
-        | ["trust"]
-        | ["trust", "grant"]
-        | ["trust", "revoke"] => Landing::Gap("POLICY-1kJQlFB6"),
-        ["backup"]
-        | ["restore"]
-        | ["journal"]
-        | ["journal", "replay"]
-        | ["journal", "reindex"]
-        | ["journal", "verify"]
-        | ["fold"]
-        | ["thread"] => Landing::Gap("JOURNAL-1kJQlFfS"),
-        ["canvas"] => Landing::Gap("PUBLISH-1kJQlGb0"),
+        ["taste"] | ["taste", "add"] | ["taste", "drop"] => Landing::Gap("POLICY-1kJQlFB6"),
         _ => Landing::Unaccounted,
     }
 }
@@ -924,6 +922,9 @@ fn branch(contracts: &[Contract], name: &'static str, path: &[&'static str]) -> 
     let contract = contract_at(contracts, path);
     let children = child_names(contracts, path);
     let mut command = Command::new(name).disable_help_subcommand(true);
+    if !children.is_empty() {
+        command = command.subcommand_negates_reqs(true);
+    }
 
     if let Some(contract) = contract {
         command = command.override_usage(format!("spice {}", contract.syntax));

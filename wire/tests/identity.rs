@@ -63,32 +63,36 @@ fn a_non_canonical_uuid_is_refused_by_the_decoder_too() {
 const fn position(domain: Domain) -> usize {
     match domain {
         Domain::BoardDocument => 0,
-        Domain::JournalBackupManifest => 1,
-        Domain::JournalBackupMember => 2,
-        Domain::DistTargetPayload => 3,
-        Domain::DistArtifact => 4,
-        Domain::InstallArtifact => 5,
-        Domain::InstallPlan => 6,
-        Domain::DistPins => 7,
-        Domain::DistInventory => 8,
-        Domain::DistSourceCommit => 9,
-        Domain::DistReleaseManifest => 10,
-        Domain::DistReleaseNotes => 11,
-        Domain::DistReleasePlan => 12,
-        Domain::ProofBattery => 13,
-        Domain::ProofReplayV2 => 14,
-        Domain::ProofReceiptV2 => 15,
-        Domain::ProofNativeRunner => 16,
-        Domain::GateFile => 17,
-        Domain::GateTree => 18,
-        Domain::GateSet => 19,
-        Domain::GatePolicy => 20,
-        Domain::GateBounds => 21,
-        Domain::GateBaseline => 22,
-        Domain::GateTool => 23,
-        Domain::GateInventory => 24,
-        Domain::GateMeasurement => 25,
-        Domain::GateReceipt => 26,
+        Domain::ConfigLocal => 1,
+        Domain::ConfigPlan => 2,
+        Domain::JournalBackupManifest => 3,
+        Domain::JournalBackupMember => 4,
+        Domain::JournalRestorePlan => 5,
+        Domain::DistTargetPayload => 6,
+        Domain::DistArtifact => 7,
+        Domain::InstallArtifact => 8,
+        Domain::InstallPlan => 9,
+        Domain::DistPins => 10,
+        Domain::DistInventory => 11,
+        Domain::DistSourceCommit => 12,
+        Domain::DistReleaseManifest => 13,
+        Domain::DistReleaseNotes => 14,
+        Domain::DistReleasePlan => 15,
+        Domain::ProofBattery => 16,
+        Domain::ProofReplayV2 => 17,
+        Domain::ProofReceiptV2 => 18,
+        Domain::ProofNativeRunner => 19,
+        Domain::GateFile => 20,
+        Domain::GateTree => 21,
+        Domain::GateSet => 22,
+        Domain::GatePolicy => 23,
+        Domain::GateBounds => 24,
+        Domain::GateBaseline => 25,
+        Domain::GateTool => 26,
+        Domain::GateInventory => 27,
+        Domain::GateMeasurement => 28,
+        Domain::GateReceipt => 29,
+        Domain::ConfigExecutableSurface => 30,
     }
 }
 
@@ -104,10 +108,13 @@ fn the_sweep_names_every_domain_exactly_once() {
 }
 
 /// Every domain, so a new class cannot be added without being swept here.
-const DOMAINS: [Domain; 27] = [
+const DOMAINS: [Domain; 31] = [
     Domain::BoardDocument,
+    Domain::ConfigLocal,
+    Domain::ConfigPlan,
     Domain::JournalBackupManifest,
     Domain::JournalBackupMember,
+    Domain::JournalRestorePlan,
     Domain::DistTargetPayload,
     Domain::DistArtifact,
     Domain::InstallArtifact,
@@ -132,6 +139,7 @@ const DOMAINS: [Domain; 27] = [
     Domain::GateInventory,
     Domain::GateMeasurement,
     Domain::GateReceipt,
+    Domain::ConfigExecutableSurface,
 ];
 
 #[test]
@@ -184,8 +192,11 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
         tags,
         [
             "spice.board.document.v1",
+            "spice.config.local.v1",
+            "spice.config.plan.v1",
             "spice.journal.backup-manifest.v1",
             "spice.journal.backup-member.v1",
+            "spice.journal.restore-plan.v1",
             "spice.dist.target-payload.v1",
             "spice.dist.artifact.v1",
             "spice.install.artifact.v1",
@@ -210,6 +221,7 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
             "spice.gate.inventory.v1",
             "spice.gate.measurement.v1",
             "spice.gate.receipt.v1",
+            "spice.config.executable-surface.v1",
         ],
         "a domain tag changed; that re-points digests already published under it"
     );

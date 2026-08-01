@@ -1,19 +1,17 @@
-use std::fs;
-use std::io::{self, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
-#[cfg(test)]
-use std::time::Duration;
-
 use bus::{Bus, CommitOutcome, JournalCommit};
 use journal::{FactCause, GuardError, JournalGuard, JournalWrite};
 use lane::occupant::Seats;
 use sill::{Acquisition, LockFile, LockName, Possession};
-use spice::repository::{Repository, ResolveError};
+use spice::repository::Repository;
+use std::fs;
+use std::io::{self, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 use tokio::sync::oneshot;
 use wire::intent::{CommandAnswer, Intent, RecognitionAnswer, ReleasePublish, StateAnswer};
 use wire::{
     Actor, CanonicalUuid, Command, CommandKind, Fault, FaultClass, Instant, Outcome, Producer,
-    Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState, Seq, SeqRange, Witness,
+    Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState, Seq, SeqRange, TrustHead,
+    TrustState, Witness,
 };
 
 type CommandResult<T> = Result<T, Outcome<()>>;
@@ -33,26 +31,29 @@ struct RuntimePaths {
 }
 
 impl RuntimePaths {
-    fn discover(start: &Path) -> Result<Self, ResolveError> {
-        let repository = Repository::discover(start)?;
-        Ok(Self::from_repository(&repository))
+    #[cfg(test)]
+    fn discover(start: &Path) -> CommandResult<Self> {
+        let repository = Repository::discover(start)
+            .map_err(|error| environment_fault("resident::git-unavailable", &error.to_string()))?;
+        Self::from_repository(&repository)
     }
 
-    fn from_repository(repository: &Repository) -> Self {
-        let runtime = repository.state_root();
-        let data = runtime.join("data");
-        Self {
+    fn from_repository(repository: &Repository) -> CommandResult<Self> {
+        let state = repository
+            .admit_state()
+            .map_err(|error| crate::state_failure(&error).outcome())?;
+        Ok(Self {
             worktree: repository.worktree_root().to_path_buf(),
             common: repository.common_dir().to_path_buf(),
-            journal: repository.journal_path(),
-            resident: runtime.join("resident"),
-            canvas: runtime.join("canvas"),
-            degraded: runtime.join("degraded"),
-            tape: runtime.join("tape"),
+            runtime: state.runtime().to_path_buf(),
+            data: state.data().to_path_buf(),
+            journal: state.journal().to_path_buf(),
+            resident: state.resident().to_path_buf(),
+            canvas: state.canvas().to_path_buf(),
+            degraded: state.degraded().to_path_buf(),
+            tape: state.tape().to_path_buf(),
             stage: repository.worktree_root().join("dist/stage"),
-            runtime,
-            data,
-        }
+        })
     }
 }
 
@@ -140,9 +141,22 @@ pub(crate) fn up() -> Outcome<()> {
 }
 
 fn up_from(current: &Path) -> Outcome<()> {
-    let paths = match RuntimePaths::discover(current) {
-        Ok(paths) => paths,
+    let repository = match Repository::discover(current) {
+        Ok(repository) => repository,
         Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
+    };
+    let configuration = match spice::config::load_coexisting_repository(&repository, &[]) {
+        Ok(configuration) => configuration,
+        Err(error) => return configuration_refusal(&error),
+    };
+    let consent_policy = configuration.root().consent().policy().clone();
+    let paths = match RuntimePaths::from_repository(&repository) {
+        Ok(paths) => paths,
+        Err(outcome) => return outcome,
+    };
+    let trust_surface = match crate::trust_command::Surface::load(&repository) {
+        Ok(surface) => surface,
+        Err(error) => return crate::trust_command::load_failure(&error),
     };
     if let Err(error) = fs::create_dir_all(&paths.data) {
         return environment_fault("resident::data-unavailable", &error.to_string());
@@ -168,7 +182,7 @@ fn up_from(current: &Path) -> Outcome<()> {
         Ok(bus) => bus,
         Err(error) => return store_fault("bus::start-failed", &error.to_string()),
     };
-    let startup = match commit_startup(&bus, epoch, migration) {
+    let startup = match commit_startup(&bus, &repository, &trust_surface, epoch, migration) {
         Ok(startup) => startup,
         Err(outcome) => return outcome,
     };
@@ -178,7 +192,14 @@ fn up_from(current: &Path) -> Outcome<()> {
         .enable_all()
         .build()
     {
-        Ok(runtime) => runtime.block_on(run_surface(&bus, &paths, epoch, &mut seats)),
+        Ok(runtime) => runtime.block_on(run_surface(
+            &bus,
+            &repository,
+            &paths,
+            epoch,
+            &mut seats,
+            &consent_policy,
+        )),
         Err(error) => Err(environment_fault(
             "resident::runtime-failed",
             &error.to_string(),
@@ -208,6 +229,30 @@ fn journal_open_failure(error: journal::OpenError) -> Outcome<()> {
         }),
         error => store_fault("journal::open-failed", &error.to_string()),
     }
+}
+
+fn configuration_refusal(error: &spice::config::LoadError) -> Outcome<()> {
+    let mut diagnostics = error
+        .acquisition()
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if let Some(resolution) = error.resolution() {
+        diagnostics.extend(resolution.issues().iter().map(ToString::to_string));
+    }
+    if let Some(repository) = error.repository() {
+        diagnostics.push(repository.to_string());
+    }
+    if diagnostics.is_empty() {
+        diagnostics.push(error.to_string());
+    }
+    Outcome::Refusal(Refusal {
+        reason: "resident::configuration-refused".to_owned(),
+        witness: Some("effective-configuration".to_owned()),
+        expected: Some("one admitted effective repository configuration".to_owned()),
+        observed: Some(diagnostics.join(" | ")),
+        remedy: "repair tracked or local configuration before starting the resident".to_owned(),
+    })
 }
 
 fn settle_surface(
@@ -243,9 +288,12 @@ fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outcome<()> {
         Ok(repository) => repository,
         Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
     };
-    let paths = RuntimePaths::from_repository(&repository);
+    let paths = match RuntimePaths::from_repository(&repository) {
+        Ok(paths) => paths,
+        Err(outcome) => return outcome,
+    };
     let outcome = crate::command_client::execute(
-        &repository,
+        &paths.canvas,
         contract,
         crate::command_client::SelectedCommand::Down,
     );
@@ -282,6 +330,8 @@ struct StartupCommit {
 
 fn commit_startup(
     bus: &Bus,
+    repository: &Repository,
+    surface: &crate::trust_command::Surface,
     epoch: CanonicalUuid,
     migration: Option<journal::Migration>,
 ) -> CommandResult<StartupCommit> {
@@ -309,6 +359,48 @@ fn commit_startup(
         cause = FactCause::Existing(seq(committed.last()));
     }
 
+    let trust = bus
+        .trust_head(surface.digest())
+        .map_err(|error| store_fault("trust::head-unreadable", &error.to_string()))?;
+    if trust.is_none() {
+        let snapshot = bus
+            .fact_snapshot()
+            .map_err(|error| store_fault("trust::journal-unreadable", &error.to_string()))?;
+        let previous = latest_surface_digest(&snapshot)?;
+        let mut pending = write(Actor::Spice, epoch, Producer::CommandDoor)?;
+        let guarded_repository = repository.clone();
+        let guarded_surface = surface.clone();
+        pending.guard(JournalGuard::new(move |read| {
+            let current = crate::trust_command::Surface::load(&guarded_repository)
+                .map_err(|_| GuardError::refused("trust::surface-moved"))?;
+            if current != guarded_surface {
+                return Err(GuardError::refused("trust::surface-moved"));
+            }
+            if read.trust_head(guarded_surface.digest())?.is_some() {
+                return Err(GuardError::refused("trust::digest-already-pended"));
+            }
+            Ok(())
+        }));
+        let digest = surface.digest().clone();
+        let pended = pending
+            .fact(
+                wire::body::TrustPended {
+                    surface: crate::trust_command::SURFACE_NAME.to_owned(),
+                    digest: digest.clone(),
+                    previous,
+                },
+                cause,
+            )
+            .map_err(|error| store_fault("trust::fact-invalid", &error.to_string()))?;
+        pending.trust_head(pended, move |_| TrustHead {
+            digest,
+            state: TrustState::Pended,
+        });
+        let committed = commit(bus, pending)?;
+        first.get_or_insert_with(|| committed.first());
+        cause = FactCause::Existing(seq(committed.last()));
+    }
+
     let mut write = write(Actor::Spice, epoch, Producer::CommandDoor)?;
     let seated = write
         .fact(wire::body::UpSeated { epoch }, cause)
@@ -325,11 +417,31 @@ fn commit_startup(
     })
 }
 
+fn latest_surface_digest(snapshot: &journal::FactSnapshot) -> CommandResult<Option<wire::Digest>> {
+    for envelope in snapshot
+        .facts()
+        .iter()
+        .rev()
+        .filter(|envelope| envelope.fact.kind() == wire::FactKind::TrustPended)
+    {
+        let bytes = wire::encode(&envelope.fact)
+            .map_err(|error| store_fault("trust::fact-invalid", &error.to_string()))?;
+        let fact = wire::decode::<wire::Fact<wire::body::TrustPended>>(&bytes)
+            .map_err(|error| store_fault("trust::fact-invalid", &error.to_string()))?;
+        if fact.body.surface == crate::trust_command::SURFACE_NAME {
+            return Ok(Some(fact.body.digest));
+        }
+    }
+    Ok(None)
+}
+
 async fn run_surface(
     bus: &Bus,
+    repository: &Repository,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &mut Seats,
+    consent_policy: &consent::Policy,
 ) -> CommandResult<()> {
     let operator = new_uuid();
     let capabilities = canvas::axum::Capabilities::default();
@@ -363,6 +475,8 @@ async fn run_surface(
         let _ = stopped.await;
     }));
     lane_surface::restore_seats(bus, paths, epoch, seats)?;
+    let command_surface =
+        command_surface::Surface::new(bus, repository, paths, epoch, &capabilities, consent_policy);
     loop {
         let request = tokio::select! {
             request = control.recv() => request.ok_or_else(|| {
@@ -373,7 +487,7 @@ async fn run_surface(
             }
         };
         let dark = is_dark_command(request.command());
-        let outcome = dispatch_command(bus, paths, epoch, seats, &capabilities, request.command());
+        let outcome = command_surface.dispatch(seats, request.command());
         let reached_dark = dark && matches!(outcome, Outcome::Reply(_));
         let response = request.respond(outcome);
         if reached_dark {
@@ -398,43 +512,6 @@ fn is_dark_command(command: &wire::AdmittedCommand) -> bool {
             state: ResidentState::Dark
         })
     )
-}
-
-fn dispatch_command(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
-    seats: &mut Seats,
-    capabilities: &canvas::axum::Capabilities,
-    command: &wire::AdmittedCommand,
-) -> Outcome<CommandAnswer> {
-    match (command.kind(), command.body()) {
-        (CommandKind::UpChange, Intent::UpChange(change)) => {
-            dispatch_up_change(bus, paths, epoch, seats, command, change)
-        }
-        (CommandKind::ReleasePublish, Intent::ReleasePublish(publish)) => {
-            dispatch_release_publish(bus, paths, epoch, command, publish)
-        }
-        (CommandKind::LaneRead, Intent::LaneRead(_)) => {
-            lane_surface::read(bus, paths, epoch, command)
-        }
-        (CommandKind::LaneSeat, Intent::LaneSeat(seat)) => {
-            lane_surface::seat(bus, paths, epoch, seats, capabilities, command, seat)
-        }
-        (CommandKind::LaneState, Intent::LaneState(state)) => {
-            lane_surface::state(bus, paths, epoch, seats, command, state)
-        }
-        (CommandKind::LaneRecall, Intent::LaneRecall(recall)) => {
-            lane_surface::recall(bus, paths, epoch, command, recall)
-        }
-        _ => Outcome::Refusal(Refusal {
-            reason: "command::handler-not-landed".to_owned(),
-            witness: None,
-            expected: Some(command.kind().to_string()),
-            observed: None,
-            remedy: "land the registered resident handler before exposing this CLI leaf".to_owned(),
-        }),
-    }
 }
 
 fn dispatch_release_publish(
@@ -726,7 +803,9 @@ fn dispatch_up_change(
     }
 }
 
+mod command_surface;
 mod lane_surface;
+mod policy_surface;
 mod shutdown;
 
 use shutdown::{current_residency, drive_shutdown};
@@ -856,301 +935,5 @@ fn fault<B>(class: FaultClass, reason: &str, detail: &str) -> Outcome<B> {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::Instant as Monotonic;
-
-    use sill::{
-        Argv, Cancellation, Deadlines, Environment, Output, ProcessGroup, Redaction,
-        RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
-    };
-
-    use super::*;
-
-    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
-
-    fn fixture(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "spice-resident-{name}-{}-{}",
-            std::process::id(),
-            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
-        ))
-    }
-
-    #[test]
-    fn runtime_paths_follow_the_repository_common_directory() {
-        let root = fixture("main");
-        let nested = root.join("a/b");
-        fs::create_dir_all(root.join(".git")).expect("git directory");
-        fs::create_dir_all(&nested).expect("nested directory");
-
-        let paths = RuntimePaths::discover(&nested).expect("paths resolve");
-        let common = fs::canonicalize(root.join(".git")).expect("canonical common directory");
-
-        assert_eq!(paths.runtime, common.join(".spice-rust"));
-        assert_eq!(
-            paths.journal,
-            common.join(".spice-rust/data/spicejournal.sqlite3")
-        );
-        fs::remove_dir_all(root).expect("fixture cleanup");
-    }
-
-    #[test]
-    fn linked_worktrees_share_the_git_common_directory() {
-        let root = fixture("linked");
-        let worktree = root.join("worktree");
-        let common = root.join("common.git");
-        let git_dir = common.join("worktrees/linked");
-        fs::create_dir_all(&worktree).expect("worktree directory");
-        fs::create_dir_all(&git_dir).expect("git directory");
-        fs::write(
-            worktree.join(".git"),
-            format!("gitdir: {}\n", git_dir.display()),
-        )
-        .expect("git marker");
-        fs::write(git_dir.join("commondir"), "../..\n").expect("common marker");
-
-        let paths = RuntimePaths::discover(&worktree).expect("paths resolve");
-        let common = fs::canonicalize(&common).expect("canonical common directory");
-
-        assert_eq!(paths.runtime, common.join(".spice-rust"));
-        fs::remove_dir_all(root).expect("fixture cleanup");
-    }
-
-    #[test]
-    fn cooperative_and_forced_groups_drive_observed_counts_and_residue() {
-        let (root, paths) = resident_fixture("groups");
-        let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
-        let bus = Bus::start(journal).expect("fixture bus starts");
-        let epoch = test_uuid(1);
-        commit_startup(&bus, epoch, None).expect("resident seats");
-        let mut seats = Seats::new();
-
-        let drained_lane = test_uuid(2);
-        let drained_occupant = test_uuid(3);
-        seats
-            .seat(
-                drained_lane,
-                drained_occupant,
-                process_spec("sleep 0.05", Duration::from_secs(5)),
-            )
-            .expect("cooperative group starts");
-        seed_lane(&bus, epoch, drained_lane, drained_occupant);
-
-        let killed_lane = test_uuid(4);
-        let killed_occupant = test_uuid(5);
-        seats
-            .seat(
-                killed_lane,
-                killed_occupant,
-                process_spec(
-                    "trap '' TERM; while :; do sleep 1; done",
-                    Duration::from_millis(100),
-                ),
-            )
-            .expect("non-cooperative group starts");
-        seed_lane(&bus, epoch, killed_lane, killed_occupant);
-
-        fs::create_dir_all(&paths.degraded).expect("degraded directory");
-        fs::write(
-            paths.degraded.join(drained_lane.to_string()),
-            "offline run\n",
-        )
-        .expect("degraded marker");
-        fs::create_dir_all(&paths.tape).expect("tape directory");
-        let tape_lane = test_uuid(6);
-        fs::write(paths.tape.join(tape_lane.to_string()), "not a tape")
-            .expect("malformed tape residue");
-        let sealed_lane = test_uuid(8);
-        let tape =
-            tape::Tape::open(paths.tape.join(sealed_lane.to_string())).expect("live tape opens");
-        let locus = tape
-            .tee(b"resident shutdown evidence")
-            .expect("tape captures");
-
-        let shutdown_started = Monotonic::now();
-        assert!(matches!(
-            drive_shutdown(&bus, &paths, epoch, &mut seats),
-            Outcome::Reply(_)
-        ));
-        assert!(
-            shutdown_started.elapsed() < Duration::from_secs(2),
-            "one group's unused runtime extended another group's drain bound"
-        );
-        assert!(seats.is_empty());
-        bus.verify().expect("Dark authority verifies");
-        let snapshot = bus.fact_snapshot().expect("facts read through bus");
-        assert_eq!(
-            fact_u64(&snapshot, wire::FactKind::UpDraining, "occupants"),
-            2
-        );
-        assert_eq!(
-            fact_u64(&snapshot, wire::FactKind::UpTerminating, "occupants"),
-            1
-        );
-        assert_eq!(
-            fact_u64(&snapshot, wire::FactKind::UpKilling, "occupants"),
-            1
-        );
-        assert!(
-            snapshot
-                .facts()
-                .iter()
-                .any(|fact| fact.fact.kind() == wire::FactKind::LaneDrained)
-        );
-        assert!(
-            snapshot
-                .facts()
-                .iter()
-                .any(|fact| fact.fact.kind() == wire::FactKind::LaneExited)
-        );
-        let degraded = snapshot
-            .facts()
-            .iter()
-            .filter(|fact| fact.fact.kind() == wire::FactKind::LaneDegraded)
-            .count();
-        assert_eq!(degraded, 2, "disk residue was not named once per lane");
-        let head = bus
-            .residency_head()
-            .expect("head read")
-            .expect("head exists")
-            .into_body();
-        assert_eq!(head.state, ResidentState::Dark);
-        assert_eq!(head.lanes.len(), 2);
-        assert!(head.lanes.iter().all(|lane| lane.occupant.is_none()));
-        assert!(!paths.degraded.join(drained_lane.to_string()).exists());
-        assert_eq!(
-            tape.read(locus).expect("sealed tape remains readable"),
-            b"resident shutdown evidence"
-        );
-        assert!(matches!(
-            tape.seal().expect("tape was sealed"),
-            tape::Seal::Empty
-        ));
-        bus.shutdown().expect("fixture bus stops");
-        fs::remove_dir_all(root).expect("fixture cleanup");
-    }
-
-    #[test]
-    fn a_post_seated_surface_failure_compensates_to_verified_dark() {
-        let (root, paths) = resident_fixture("compensation");
-        let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
-        let bus = Bus::start(journal).expect("fixture bus starts");
-        let epoch = test_uuid(7);
-        let startup = commit_startup(&bus, epoch, None).expect("resident seats");
-        let original = environment_fault("canvas::fixture-failed", "after UpSeated");
-
-        let settled = settle_surface(
-            &bus,
-            &paths,
-            epoch,
-            startup,
-            &mut Seats::new(),
-            Err(original),
-        );
-
-        let Outcome::Fault(fault) = settled else {
-            panic!("the original startup failure must remain visible");
-        };
-        assert_eq!(fault.reason, "canvas::fixture-failed");
-        let head = bus
-            .residency_head()
-            .expect("head read")
-            .expect("head exists")
-            .into_body();
-        assert_eq!(head.state, ResidentState::Dark);
-        assert!(head.lanes.is_empty());
-        bus.verify().expect("compensated authority verifies");
-        bus.shutdown().expect("fixture bus stops");
-        fs::remove_dir_all(root).expect("fixture cleanup");
-    }
-
-    fn resident_fixture(name: &str) -> (PathBuf, RuntimePaths) {
-        let root = fixture(name);
-        fs::create_dir_all(root.join(".git")).expect("git directory");
-        let paths = RuntimePaths::discover(&root).expect("runtime paths resolve");
-        fs::create_dir_all(&paths.data).expect("data directory");
-        (root, paths)
-    }
-
-    fn process_spec(command: &str, runtime: Duration) -> Spec {
-        Spec {
-            argv: Argv::new("/bin/sh", ["-c", command]).expect("fixture argv"),
-            cwd: PathBuf::from("/"),
-            environment: Environment::new([("PATH", "/usr/bin:/bin")])
-                .expect("fixture environment"),
-            group: ProcessGroup::New,
-            deadlines: Deadlines::new(runtime, Duration::from_secs(1), Duration::from_secs(1))
-                .expect("fixture deadlines"),
-            wait: WaitPolicy::new(
-                "resident fixture",
-                Cancellation::Never,
-                RestartDisposition::Never,
-            )
-            .expect("fixture wait policy"),
-            output: Output::new(StdinPolicy::Null, StreamPolicy::Null, StreamPolicy::Null),
-            redaction: Redaction::None,
-            grace: Duration::from_millis(100),
-        }
-    }
-
-    fn seed_lane(bus: &Bus, epoch: CanonicalUuid, lane: CanonicalUuid, occupant: CanonicalUuid) {
-        let current = current_residency(bus, epoch).expect("current residency");
-        let mut head = current.body().clone();
-        head.lanes.push(wire::LaneResidency {
-            lane,
-            worktree: "/fixture".to_owned(),
-            life: "drive".to_owned(),
-            vendor: "claude".parse().expect("fixture vendor"),
-            occupant: Some(occupant),
-            lineage: vec![occupant],
-            capabilities: vec![test_uuid(9)],
-            disposition: "occupied".to_owned(),
-        });
-        head.lanes.sort_by_key(|lane| lane.lane);
-        let mut write = write(Actor::Spice, epoch, Producer::ResidentRecognition)
-            .expect("fixture write starts");
-        let seated = write
-            .fact(
-                wire::body::LaneSeated {
-                    lane,
-                    capability: test_uuid(9),
-                    worktree: "/fixture".to_owned(),
-                    life: "drive".to_owned(),
-                    vendor: "claude".parse().expect("fixture vendor"),
-                },
-                FactCause::Existing(current.position()),
-            )
-            .expect("lane seats");
-        let started = write
-            .fact(
-                wire::body::LaneStarted {
-                    lane,
-                    occupant,
-                    epoch,
-                    group: 123,
-                },
-                FactCause::Pending(seated),
-            )
-            .expect("occupant starts");
-        write.residency_head(started, move |_| head);
-        commit(bus, write).expect("fixture lane commits");
-    }
-
-    fn fact_u64(snapshot: &journal::FactSnapshot, kind: wire::FactKind, field: &str) -> u64 {
-        snapshot
-            .facts()
-            .iter()
-            .find(|fact| fact.fact.kind() == kind)
-            .and_then(|fact| fact.fact.body().get(field))
-            .and_then(|value| value.as_u64())
-            .expect("fact carries numeric fixture field")
-    }
-
-    fn test_uuid(last: u8) -> CanonicalUuid {
-        format!("018f82d4-6f59-7d06-92e3-bce9131163{last:02}")
-            .parse()
-            .expect("fixture UUID")
-    }
-}
+#[path = "resident/tests.rs"]
+mod tests;

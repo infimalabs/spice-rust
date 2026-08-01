@@ -5,12 +5,13 @@ use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 
 use atomic::Destination;
-use wire::manifest::{BuildPins, InventoryEntry, ReleaseTarget, TargetPayload};
+use wire::manifest::{
+    BuildPins, InventoryEntry, ReleaseTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
+};
 use wire::{Digest, Domain};
 
 use crate::pins::{PinError, RequiredPins};
 
-const PAYLOAD_VERSION: u16 = 1;
 const DATA_MODE: u32 = 0o644;
 const EXECUTABLE_MODE: u32 = 0o755;
 
@@ -231,7 +232,7 @@ fn make_payload(
     let pins_digest = Digest::compute(Domain::DistPins, &wire::encode(pins)?);
     let inventory_digest = Digest::compute(Domain::DistInventory, &wire::encode(&inventory)?);
     Ok(TargetPayload {
-        version: PAYLOAD_VERSION,
+        version: TARGET_PAYLOAD_VERSION,
         target,
         source,
         app: artifacts[0].digest.clone(),

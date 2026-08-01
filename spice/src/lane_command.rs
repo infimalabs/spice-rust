@@ -20,13 +20,18 @@ pub(crate) fn run(matches: &ArgMatches, contract: &Contract) -> Outcome<CommandA
         Ok(repository) => repository,
         Err(error) => return environment_fault("lane::repository-unresolved", &error.to_string()),
     };
+    let state_paths = match repository.admit_state() {
+        Ok(state_paths) => state_paths,
+        Err(error) => return crate::state_failure(&error).outcome(),
+    };
+    let canvas = state_paths.canvas();
 
     match contract.path {
-        ["lane"] => command_client::execute(&repository, contract, SelectedCommand::LaneRead),
-        ["lane", "add"] => add(&repository, &current, matches, contract),
-        ["lane", "drain"] => state(&repository, matches, contract, LaneAction::Drain),
-        ["lane", "wake"] => state(&repository, matches, contract, LaneAction::Wake),
-        ["recall"] => recall(&repository, matches, contract),
+        ["lane"] => command_client::execute(canvas, contract, SelectedCommand::LaneRead),
+        ["lane", "add"] => add(&repository, canvas, &current, matches, contract),
+        ["lane", "drain"] => state(canvas, matches, contract, LaneAction::Drain),
+        ["lane", "wake"] => state(canvas, matches, contract, LaneAction::Wake),
+        ["recall"] => recall(canvas, matches, contract),
         _ => protocol_fault(
             "lane::dispatch-gap",
             "lane command runner received a contract outside its closed family",
@@ -36,6 +41,7 @@ pub(crate) fn run(matches: &ArgMatches, contract: &Contract) -> Outcome<CommandA
 
 fn add(
     repository: &Repository,
+    canvas: &Path,
     current: &Path,
     matches: &ArgMatches,
     contract: &Contract,
@@ -93,15 +99,11 @@ fn add(
         life,
         vendor,
     };
-    command_client::execute(
-        repository,
-        contract,
-        SelectedCommand::LaneSeat { body: &body },
-    )
+    command_client::execute(canvas, contract, SelectedCommand::LaneSeat { body: &body })
 }
 
 fn state(
-    repository: &Repository,
+    canvas: &Path,
     matches: &ArgMatches,
     contract: &Contract,
     action: LaneAction,
@@ -117,18 +119,10 @@ fn state(
         Err(error) => return protocol_fault("lane::id-invalid", &error.to_string()),
     };
     let body = LaneState { lane, action };
-    command_client::execute(
-        repository,
-        contract,
-        SelectedCommand::LaneState { body: &body },
-    )
+    command_client::execute(canvas, contract, SelectedCommand::LaneState { body: &body })
 }
 
-fn recall(
-    repository: &Repository,
-    matches: &ArgMatches,
-    contract: &Contract,
-) -> Outcome<CommandAnswer> {
+fn recall(canvas: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
     let lane = match matches.get_one::<String>("LANE") {
         Some(lane) => match lane.parse::<CanonicalUuid>() {
             Ok(lane) => Some(lane),
@@ -138,7 +132,7 @@ fn recall(
     };
     let body = LaneRecall { lane };
     command_client::execute(
-        repository,
+        canvas,
         contract,
         SelectedCommand::LaneRecall { body: &body },
     )
