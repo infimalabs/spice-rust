@@ -107,6 +107,45 @@ fn the_axes_partition_the_panes_without_overlap_or_remainder() {
 }
 
 #[test]
+fn each_axis_lists_exactly_the_panes_that_name_it() {
+    // `Axis::panes` reads the registry; the descent does not. Comparing them
+    // per axis is what keeps the convenient direction honest, because a pane
+    // dropped from `ALL` would vanish from `panes` while still naming its axis.
+    for axis in descend_axes() {
+        let listed = axis.panes().collect::<Vec<_>>();
+        let naming = descend_panes()
+            .into_iter()
+            .filter(|pane| pane.axis() == axis)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            listed,
+            naming,
+            "the {} axis lists the wrong panes",
+            axis.as_str()
+        );
+        assert!(
+            !listed.is_empty(),
+            "the {} axis lists nothing",
+            axis.as_str()
+        );
+    }
+}
+
+#[test]
+fn walking_the_axes_in_order_visits_the_whole_registry_once() {
+    // Concatenating the axes' pane lists reproduces the registry exactly, which
+    // says two things at once: no pane is reachable through two axes, and the
+    // registry is written grouped by axis rather than merely claiming to be.
+    let gathered = descend_axes()
+        .into_iter()
+        .flat_map(Axis::panes)
+        .collect::<Vec<_>>();
+
+    assert_eq!(gathered, descend_panes());
+}
+
+#[test]
 fn one_plane_standing_on_two_axes_is_two_panes() {
     // Consent is the case the spec names twice: its budgets and rates are
     // amounts, and its dispositions are events. Two questions, so two panes,

@@ -65,6 +65,20 @@ impl Axis {
             Self::Chronology => "What happened, in what order, and what waits?",
         }
     }
+
+    /// The panes standing on this axis, in registry order.
+    ///
+    /// A view renders one axis at a time and needs the panes under it, which
+    /// is the direction [`Pane::axis`] does not run. This derives that
+    /// direction from the registry instead of declaring it, so there is no
+    /// second table that could come to disagree with the first: a pane moved
+    /// to another axis leaves this list and joins that one in the same edit.
+    pub fn panes(self) -> impl Iterator<Item = Pane> {
+        Pane::ALL
+            .iter()
+            .copied()
+            .filter(move |pane| pane.axis() == self)
+    }
 }
 
 /// Every derived pane, one registry row apiece.
