@@ -4,6 +4,10 @@
 //! class. These fixtures are literal documents: decoding them and re-encoding
 //! to the same JSON proves the body field names are WIRE.md's own nouns rather
 //! than whatever a constructor happened to spell.
+//!
+//! Its sibling `registry.rs` covers the other registry WIRE.md names, which
+//! binds a command to the witnesses it must re-prove. Both are closed tables
+//! stated in WIRE.md; they share no rows.
 
 use std::collections::BTreeSet;
 
@@ -25,7 +29,7 @@ where
 
 const DOC_APPLIED: &str = r#"{
   "kind": "doc::applied",
-  "digest": "9f2b4c7d1e6a08b35c4f9d2e7a1b8c05d6e3f4a291b7c8d0e5f6a3b2c1d4e7f80",
+  "digest": "9f2b4c7d1e6a08b35c4f9d2e7a1b8c05d6e3f4a291b7c8d0e5f6a3b2c1d4e7f8",
   "barrier": 48213,
   "operations": 7
 }"#;
@@ -201,13 +205,7 @@ fn every_kind_names_a_producer_and_every_producer_mints_a_kind() {
         minted.insert(kind.producer().as_str());
     }
 
-    let classes = [
-        Producer::CommandDoor,
-        Producer::BusTimer,
-        Producer::AckScanner,
-        Producer::ResidentRecognition,
-        Producer::Judge,
-    ];
+    let classes = Producer::ALL;
     for class in classes {
         assert!(
             minted.contains(class.as_str()),

@@ -178,10 +178,16 @@ impl Session {
     /// The session that admits this envelope is the one whose epoch it belongs
     /// to, and a session never outlives its generation.
     ///
+    /// The body is a registered one rather than anything that deserializes,
+    /// so the caller names a kind from the closed vocabulary before any bytes
+    /// arrive and the decoder refuses a document whose `kind` disagrees. A
+    /// fact the app invented a shape for has no door.
+    ///
     /// # Errors
     ///
     /// Returns a protocol fault when the bytes do not decode or carry a
-    /// version this build does not speak.
+    /// version this build does not speak. Bytes that decode as a frame but
+    /// name another kind fail decoding, so they fault here too.
     pub fn admit_envelope<F: Body>(&self, bytes: &[u8]) -> Result<Admitted<Envelope<F>>, Fault> {
         let frame: Envelope<F> = decode_frame(bytes)?;
         admit_wire(frame.v)?;

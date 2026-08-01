@@ -35,6 +35,18 @@ pub enum Producer {
 }
 
 impl Producer {
+    /// Every producer class, in the order WIRE.md enumerates them.
+    ///
+    /// The set is closed, so a caller sweeping it is sweeping the whole of
+    /// what can mint a fact rather than a list it restated by hand.
+    pub const ALL: &[Self] = &[
+        Self::CommandDoor,
+        Self::BusTimer,
+        Self::AckScanner,
+        Self::ResidentRecognition,
+        Self::Judge,
+    ];
+
     /// The producer class as it is spelled on the wire.
     #[must_use]
     pub const fn as_str(self) -> &'static str {

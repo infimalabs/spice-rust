@@ -4,6 +4,11 @@
 //! because the socket carries bytes and the app's only honest input is bytes.
 //! A test that built a DTO in memory would prove the app agrees with itself;
 //! these prove it agrees with the wire.
+//!
+//! The streamed fixtures name [`wire::body::TaskPhased`] rather than a shape
+//! declared here, so the fact they carry is one the vocabulary registers. A
+//! locally declared body would have let this suite pass against a kind no
+//! producer mints.
 
 use app::{Admitted, Applied, BrowserState, Session};
 use serde::{Deserialize, Serialize};
