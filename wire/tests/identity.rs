@@ -63,25 +63,27 @@ fn a_non_canonical_uuid_is_refused_by_the_decoder_too() {
 const fn position(domain: Domain) -> usize {
     match domain {
         Domain::BoardDocument => 0,
-        Domain::DistTargetPayload => 1,
-        Domain::DistArtifact => 2,
-        Domain::DistPins => 3,
-        Domain::DistInventory => 4,
-        Domain::DistReleaseManifest => 5,
-        Domain::ProofBattery => 6,
-        Domain::ProofReplayV2 => 7,
-        Domain::ProofReceiptV2 => 8,
-        Domain::ProofNativeRunner => 9,
-        Domain::GateFile => 10,
-        Domain::GateTree => 11,
-        Domain::GateSet => 12,
-        Domain::GatePolicy => 13,
-        Domain::GateBounds => 14,
-        Domain::GateBaseline => 15,
-        Domain::GateTool => 16,
-        Domain::GateInventory => 17,
-        Domain::GateMeasurement => 18,
-        Domain::GateReceipt => 19,
+        Domain::JournalBackupManifest => 1,
+        Domain::JournalBackupMember => 2,
+        Domain::DistTargetPayload => 3,
+        Domain::DistArtifact => 4,
+        Domain::DistPins => 5,
+        Domain::DistInventory => 6,
+        Domain::DistReleaseManifest => 7,
+        Domain::ProofBattery => 8,
+        Domain::ProofReplayV2 => 9,
+        Domain::ProofReceiptV2 => 10,
+        Domain::ProofNativeRunner => 11,
+        Domain::GateFile => 12,
+        Domain::GateTree => 13,
+        Domain::GateSet => 14,
+        Domain::GatePolicy => 15,
+        Domain::GateBounds => 16,
+        Domain::GateBaseline => 17,
+        Domain::GateTool => 18,
+        Domain::GateInventory => 19,
+        Domain::GateMeasurement => 20,
+        Domain::GateReceipt => 21,
     }
 }
 
@@ -97,8 +99,10 @@ fn the_sweep_names_every_domain_exactly_once() {
 }
 
 /// Every domain, so a new class cannot be added without being swept here.
-const DOMAINS: [Domain; 20] = [
+const DOMAINS: [Domain; 22] = [
     Domain::BoardDocument,
+    Domain::JournalBackupManifest,
+    Domain::JournalBackupMember,
     Domain::DistTargetPayload,
     Domain::DistArtifact,
     Domain::DistPins,
@@ -170,6 +174,8 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
         tags,
         [
             "spice.board.document.v1",
+            "spice.journal.backup-manifest.v1",
+            "spice.journal.backup-member.v1",
             "spice.dist.target-payload.v1",
             "spice.dist.artifact.v1",
             "spice.dist.pins.v1",

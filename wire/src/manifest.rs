@@ -11,6 +11,35 @@ use crate::Digest;
 
 const OCI_SHA256_HEX_LEN: usize = 64;
 
+/// The sole current journal backup bundle schema.
+pub const JOURNAL_BACKUP_VERSION: u16 = 1;
+
+/// One regular file authenticated by a journal backup manifest.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct JournalBackupMember {
+    /// Canonical slash-separated path relative to the bundle root.
+    pub path: String,
+    /// Exact byte length of the member.
+    pub bytes: u64,
+    /// Domain-separated identity of the member bytes.
+    pub digest: Digest,
+}
+
+/// Complete immutable inventory for one journal backup bundle.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct JournalBackupManifest {
+    /// Current bundle schema.
+    pub version: u16,
+    /// Finalized journal schema carried by the authority member.
+    pub journal_schema: u32,
+    /// Member path containing the SQLite authority.
+    pub authority: String,
+    /// Every regular file other than this manifest, ordered by path.
+    pub members: Vec<JournalBackupMember>,
+}
+
 /// The sole current detached proof receipt schema.
 pub const PROOF_RECEIPT_VERSION: u16 = 2;
 /// The sole current multi-target release manifest schema.

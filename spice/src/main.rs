@@ -21,6 +21,8 @@ mod proof_command;
 mod render;
 #[cfg(not(target_arch = "wasm32"))]
 mod resident;
+#[cfg(not(target_arch = "wasm32"))]
+mod restore_command;
 
 use render::Form;
 
@@ -61,6 +63,7 @@ fn main() {
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
         ["gate", "receipt"] => deliver(&gate_command::receipt(), form),
         ["version"] => deliver(&version_outcome(), form),
+        ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
         _ => {}
     }
     #[cfg(target_arch = "wasm32")]
