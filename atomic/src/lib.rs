@@ -51,11 +51,15 @@ impl Destination {
     pub fn stage(&self) -> Result<StagedWrite, Error> {
         for _ in 0..CREATE_ATTEMPTS {
             let temporary = self.parent.join(temporary_name());
-            match OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temporary)
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
             {
+                use std::os::unix::fs::OpenOptionsExt;
+
+                options.mode(0o600);
+            }
+            match options.open(&temporary) {
                 Ok(file) => {
                     return Ok(StagedWrite {
                         file: Some(file),
@@ -598,6 +602,15 @@ mod tests {
         staged.write_all(b"abandoned bytes").unwrap();
         let temporary = staged.temporary_path().to_path_buf();
         assert!(temporary.is_file());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            assert_eq!(
+                fs::metadata(&temporary).unwrap().permissions().mode() & 0o7777,
+                0o600
+            );
+        }
 
         drop(staged);
 

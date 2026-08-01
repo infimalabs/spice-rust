@@ -1,7 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, params};
 use serde::de::DeserializeOwned;
@@ -42,16 +43,23 @@ impl Fixture {
         }
     }
 
-    fn invoke(&self, arguments: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_spice"))
-            .arg("--json")
+    fn invoke_form(&self, arguments: &[&str], json: bool) -> Output {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+        if json {
+            command.arg("--json");
+        }
+        command
             .args(arguments)
             .current_dir(&self.root)
             .output()
             .expect("launch spice journal command")
     }
 
-    fn reply<B: DeserializeOwned>(&self, arguments: &[&str]) -> B {
+    fn invoke(&self, arguments: &[&str]) -> Output {
+        self.invoke_form(arguments, true)
+    }
+
+    fn reply<B: DeserializeOwned>(&self, arguments: &[&str]) -> wire::Reply<B> {
         let output = self.invoke(arguments);
         assert!(
             output.status.success(),
@@ -63,7 +71,11 @@ impl Fixture {
         else {
             panic!("command {arguments:?} did not reply")
         };
-        reply.body
+        reply
+    }
+
+    fn start(&self) -> RunningResident {
+        RunningResident::spawn(self)
     }
 }
 
@@ -73,48 +85,150 @@ impl Drop for Fixture {
     }
 }
 
+struct RunningResident {
+    child: Option<Child>,
+}
+
+impl RunningResident {
+    fn spawn(fixture: &Fixture) -> Self {
+        let child = Command::new(env!("CARGO_BIN_EXE_spice"))
+            .args(["--json", "up"])
+            .current_dir(&fixture.root)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("launch foreground resident");
+        let mut resident = Self { child: Some(child) };
+        let canvas = fixture.root.join(".git/.spice-rust/canvas");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !canvas.is_file() {
+            assert!(
+                resident
+                    .child
+                    .as_mut()
+                    .expect("resident child")
+                    .try_wait()
+                    .expect("resident status")
+                    .is_none(),
+                "resident exited before publishing discovery"
+            );
+            assert!(Instant::now() < deadline, "resident readiness timed out");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        resident
+    }
+
+    fn stop(mut self, fixture: &Fixture) {
+        let down = fixture.invoke(&["down"]);
+        assert!(
+            down.status.success(),
+            "resident down failed: {}",
+            String::from_utf8_lossy(&down.stderr)
+        );
+        let output = self
+            .child
+            .take()
+            .expect("resident child")
+            .wait_with_output()
+            .expect("resident exits");
+        assert!(
+            output.status.success(),
+            "foreground resident failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn terminate(mut self, fixture: &Fixture) {
+        let mut child = self.child.take().expect("resident child");
+        child.kill().expect("terminate damaged resident");
+        child.wait().expect("reap damaged resident");
+        let canvas = fixture.root.join(".git/.spice-rust/canvas");
+        if canvas.exists() {
+            fs::remove_file(canvas).expect("remove interrupted discovery");
+        }
+    }
+}
+
+impl Drop for RunningResident {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
 #[test]
 fn journal_replay_reindex_thread_backup_and_restore_round_trip() {
     let fixture = Fixture::new();
+    let resident = fixture.start();
     assert_journal_thread_and_fold(&fixture);
+    resident.stop(&fixture);
     assert_reindex(&fixture);
     assert_backup(&fixture);
     assert_restore(&fixture);
 }
 
 fn assert_journal_thread_and_fold(fixture: &Fixture) {
-    let report = fixture.reply::<JournalReport>(&["journal"]);
+    let reply = fixture.reply::<JournalReport>(&["journal"]);
+    let wire::ReplyPosition::Snapshot(position) = reply.position else {
+        panic!("journal read did not carry a snapshot position")
+    };
+    let report = reply.body;
     assert_eq!(report.schema, journal::SCHEMA_VERSION);
-    assert_eq!(report.cursor, Seq::new(2));
-    assert_eq!(report.facts, 2);
+    assert_eq!(report.cursor, Some(position));
+    assert_eq!(
+        usize::try_from(report.facts).expect("fact count fits usize"),
+        report.entries.rows.len()
+    );
+    assert!(report.entries.rows.len() >= 2);
+    assert_eq!(
+        report.entries.rows[0].seq,
+        Seq::new(1).expect("first sequence")
+    );
+    assert_eq!(report.entries.horizon, position);
+    assert!(report.entries.overflow.is_none());
+    let text = fixture.invoke_form(&["journal"], false);
+    assert!(text.status.success());
+    let text_body: JournalReport = wire::decode(&text.stdout).expect("text journal body");
+    assert_eq!(text_body, report, "text and JSON carry the same body");
+
     let verified = fixture.reply::<JournalVerification>(&["journal", "verify"]);
-    assert_eq!((verified.facts, verified.threads), (2, 2));
+    assert_eq!(verified.position, wire::ReplyPosition::Snapshot(position));
+    assert_eq!(verified.body.facts, report.facts);
 
     let thread = fixture.reply::<ThreadReport>(&["thread", "2"]);
+    assert_eq!(thread.position, wire::ReplyPosition::Snapshot(position));
+    let thread = thread.body;
     assert_eq!(thread.root, Seq::new(1).expect("root sequence"));
     assert_eq!(
         thread
             .entries
+            .rows
             .iter()
             .map(|entry| entry.seq.get())
             .collect::<Vec<_>>(),
         vec![1, 2]
     );
 
-    let missing = fixture.reply::<FoldReport>(&["fold"]);
+    let missing = fixture.reply::<FoldReport>(&["fold"]).body;
     assert!(missing.folds.iter().all(|fold| fold.generation.is_none()));
     assert!(
         !fixture.folds.exists(),
         "read-only fold report created a store"
     );
-    let first = fixture.reply::<FoldReport>(&["journal", "replay", "canvas::flow"]);
-    let second = fixture.reply::<FoldReport>(&["journal", "replay", "canvas::flow"]);
+    let first = fixture
+        .reply::<FoldReport>(&["journal", "replay", "canvas::flow"])
+        .body;
+    let second = fixture
+        .reply::<FoldReport>(&["journal", "replay", "canvas::flow"])
+        .body;
     assert_eq!(
         second, first,
         "fresh deterministic replay minted a generation"
     );
     let fold_bytes = fs::read(&fixture.folds).expect("read folds before report");
-    assert_eq!(fixture.reply::<FoldReport>(&["fold"]), second);
+    assert_eq!(fixture.reply::<FoldReport>(&["fold"]).body, second);
     assert_eq!(
         fs::read(&fixture.folds).expect("read folds after report"),
         fold_bytes,
@@ -126,7 +240,8 @@ fn assert_journal_thread_and_fold(fixture: &Fixture) {
         .find(|fold| fold.fold == "canvas::flow")
         .expect("canvas flow state");
     assert_eq!(flow.generation, Some(1));
-    assert_eq!(flow.cursor, Seq::new(2));
+    assert_eq!(flow.cursor, Some(position));
+    assert!(!flow.sources.is_empty(), "fold provenance is explicit");
     assert_eq!(
         flow.payload.as_ref().expect("flow payload")["facts"]
             .as_array()
@@ -140,21 +255,78 @@ fn assert_reindex(fixture: &Fixture) {
         .expect("open authority for index damage")
         .execute("DELETE FROM thread_index WHERE seq = 2", [])
         .expect("damage disposable index");
+    assert!(
+        journal::JournalReader::open(&fixture.authority)
+            .expect("damaged authority opens")
+            .verify()
+            .is_err(),
+        "damaged index unexpectedly verified"
+    );
+    let resident = fixture.start();
     let invalid = fixture.invoke(&["journal", "verify"]);
     assert_eq!(invalid.status.code(), Some(2));
+    let Outcome::Refusal(refusal) = wire::decode::<Outcome<JournalVerification>>(&invalid.stderr)
+        .expect("verification refusal decodes")
+    else {
+        panic!("damaged authority did not refuse verification")
+    };
+    assert!(
+        refusal
+            .observed
+            .as_deref()
+            .is_some_and(|observed| observed.contains("Thread")),
+        "verification omitted the named thread defect: {refusal:?}"
+    );
+    resident.terminate(fixture);
     let rebuilt = fixture.reply::<JournalReindex>(&["journal", "reindex"]);
-    assert_eq!((rebuilt.facts, rebuilt.threads), (2, 2));
-    fixture.reply::<JournalVerification>(&["journal", "verify"]);
-    fixture.reply::<ThreadReport>(&["thread", "2"]);
+    let expected = journal::JournalReader::open(&fixture.authority)
+        .expect("reindexed authority cursor opens")
+        .cursor()
+        .expect("reindexed authority cursor reads")
+        .expect("reindexed authority cursor exists");
+    assert_eq!(rebuilt.position, wire::ReplyPosition::Snapshot(expected));
+    assert_eq!(rebuilt.body.facts, rebuilt.body.threads);
+    let reader = journal::JournalReader::open(&fixture.authority).expect("rebuilt authority opens");
+    reader.verify().expect("rebuilt authority verifies");
+    assert_eq!(reader.thread("2").expect("rebuilt thread").entries.len(), 2);
 }
 
 fn assert_backup(fixture: &Fixture) {
+    let before = journal::JournalReader::open(&fixture.authority)
+        .expect("authority before backup")
+        .fact_snapshot()
+        .expect("authority snapshot before backup");
     let backup = fixture.reply::<JournalBackup>(&[
         "backup",
         fixture.bundle.to_str().expect("UTF-8 backup path"),
     ]);
-    assert_eq!(backup.verification.facts, 2);
-    assert_eq!(backup.verification.threads, 2);
+    let wire::ReplyPosition::Committed(range) = backup.position else {
+        panic!("backup did not commit its recognition")
+    };
+    assert_eq!(range.first, range.last);
+    assert_eq!(
+        usize::try_from(backup.body.verification.facts).expect("fact count fits usize"),
+        before.facts().len()
+    );
+    assert_eq!(
+        usize::try_from(backup.body.verification.threads).expect("thread count fits usize"),
+        before.facts().len()
+    );
+    let after = journal::JournalReader::open(&fixture.authority)
+        .expect("authority after backup")
+        .fact_snapshot()
+        .expect("authority snapshot after backup");
+    assert_eq!(after.facts().len(), before.facts().len() + 1);
+    assert_eq!(
+        after.facts().last().expect("backup fact").fact.kind(),
+        FactKind::JournalBacked
+    );
+    #[cfg(unix)]
+    {
+        assert_eq!(mode(&fixture.bundle), 0o700);
+        assert_eq!(mode(&fixture.bundle.join("manifest.json")), 0o600);
+        assert_eq!(mode(&fixture.bundle.join("spicejournal.sqlite3")), 0o600);
+    }
     let backup_authority = fs::read(fixture.bundle.join("spicejournal.sqlite3"))
         .expect("read published backup authority");
     let duplicate = fixture.invoke(&[
@@ -173,13 +345,21 @@ fn assert_backup(fixture: &Fixture) {
 fn assert_restore(fixture: &Fixture) {
     fs::remove_file(&fixture.authority).expect("remove authority for empty replacement");
     drop(journal::Journal::open(&fixture.authority).expect("create empty replacement authority"));
-    assert_eq!(fixture.reply::<JournalReport>(&["journal"]).facts, 0);
+    assert!(
+        journal::JournalReader::open(&fixture.authority)
+            .expect("empty replacement authority")
+            .fact_snapshot()
+            .expect("empty replacement snapshot")
+            .facts()
+            .is_empty()
+    );
 
     let preview = fixture.reply::<JournalRestore>(&[
         "restore",
         fixture.bundle.to_str().expect("UTF-8 backup path"),
     ]);
-    assert!(!preview.applied);
+    assert_eq!(preview.position, wire::ReplyPosition::Direct {});
+    assert!(!preview.body.applied);
     let before_stale = fs::read(&fixture.authority).expect("read predecessor before stale plan");
     let stale = fixture.invoke(&[
         "restore",
@@ -196,11 +376,42 @@ fn assert_restore(fixture: &Fixture) {
     let applied = fixture.reply::<JournalRestore>(&[
         "restore",
         fixture.bundle.to_str().expect("UTF-8 backup path"),
-        &format!("--apply={}", preview.plan),
+        &format!("--apply={}", preview.body.plan),
     ]);
-    assert!(applied.applied);
-    assert_eq!(fixture.reply::<JournalReport>(&["journal"]).facts, 2);
+    assert!(matches!(
+        applied.position,
+        wire::ReplyPosition::Committed(_)
+    ));
+    assert!(applied.body.applied);
+    #[cfg(unix)]
+    assert_eq!(mode(&fixture.authority), 0o600);
+    let restored_snapshot = journal::JournalReader::open(&fixture.authority)
+        .expect("restored authority opens")
+        .fact_snapshot()
+        .expect("restored authority snapshot");
+    assert_eq!(
+        restored_snapshot.facts().len(),
+        usize::try_from(applied.body.verification.facts).expect("fact count fits usize") + 1
+    );
+    assert_eq!(
+        restored_snapshot
+            .facts()
+            .last()
+            .expect("restore fact")
+            .fact
+            .kind(),
+        FactKind::JournalRestored
+    );
+    journal::JournalReader::open(&fixture.authority)
+        .expect("restored authority opens")
+        .verify()
+        .expect("restored authority verifies");
+
+    let resident = fixture.start();
+    let report = fixture.reply::<JournalReport>(&["journal"]);
+    assert!(matches!(report.position, wire::ReplyPosition::Snapshot(_)));
     fixture.reply::<JournalVerification>(&["journal", "verify"]);
+    resident.stop(fixture);
 
     let restored = fs::read(&fixture.authority).expect("read restored authority");
     fs::write(
@@ -242,6 +453,158 @@ fn active_writer_refuses_maintenance_in_a_typed_envelope() {
     };
     assert_eq!(refusal.reason, "journal::writer-active");
     assert!(!fixture.bundle.exists(), "contended backup created output");
+}
+
+#[test]
+fn resident_reads_require_authentication_without_mutating_authority() {
+    let fixture = Fixture::new();
+    let before = fs::read(&fixture.authority).expect("authority before unauthenticated reads");
+    for arguments in [
+        &["journal"][..],
+        &["journal", "verify"][..],
+        &["journal", "replay", "canvas::flow"][..],
+        &["fold"][..],
+        &["thread", "2"][..],
+    ] {
+        let output = fixture.invoke(arguments);
+        assert_eq!(output.status.code(), Some(1), "{arguments:?}");
+        let Outcome::Fault(fault) = wire::decode::<Outcome<serde_json::Value>>(&output.stderr)
+            .expect("unauthenticated read has a typed fault")
+        else {
+            panic!("unauthenticated read did not fault: {arguments:?}")
+        };
+        assert_eq!(fault.reason, "canvas::discovery-unavailable");
+    }
+    assert_eq!(
+        fs::read(&fixture.authority).expect("authority after unauthenticated reads"),
+        before,
+        "unauthenticated reads changed authority"
+    );
+    assert!(
+        !fixture.folds.exists(),
+        "unauthenticated replay created folds"
+    );
+}
+
+#[test]
+fn journal_and_thread_reports_bound_rows_and_name_continuation() {
+    let fixture = Fixture::new();
+    append_note_facts(&fixture.authority, 300);
+    let resident = fixture.start();
+
+    let journal = fixture.reply::<JournalReport>(&["journal"]).body;
+    assert_eq!(journal.entries.rows.len(), 256);
+    let journal_overflow = journal.entries.overflow.expect("journal overflow marker");
+    assert!(journal_overflow.omitted > 0);
+    assert_eq!(journal_overflow.continuation.get(), 257);
+
+    let thread = fixture.reply::<ThreadReport>(&["thread", "300"]).body;
+    assert_eq!(thread.entries.rows.len(), 256);
+    let thread_overflow = thread.entries.overflow.expect("thread overflow marker");
+    assert_eq!(thread_overflow.omitted, 44);
+    assert_eq!(thread_overflow.continuation.get(), 257);
+    resident.stop(&fixture);
+}
+
+#[test]
+fn live_resident_excludes_every_lock_held_recovery_mutation() {
+    let fixture = Fixture::new();
+    fixture.reply::<JournalBackup>(&[
+        "backup",
+        fixture.bundle.to_str().expect("UTF-8 backup path"),
+    ]);
+    let resident = fixture.start();
+    let before = journal::JournalReader::open(&fixture.authority)
+        .expect("live authority opens")
+        .fact_snapshot()
+        .expect("live authority snapshot");
+
+    let alternate = fixture.root.join("second-backup");
+    let backup = fixture.invoke(&["backup", alternate.to_str().expect("UTF-8 backup path")]);
+    assert_refusal(&backup, "journal::writer-active");
+    assert!(!alternate.exists());
+
+    let reindex = fixture.invoke(&["journal", "reindex"]);
+    assert_refusal(&reindex, "journal::writer-active");
+
+    let preview = fixture.reply::<JournalRestore>(&[
+        "restore",
+        fixture.bundle.to_str().expect("UTF-8 bundle path"),
+    ]);
+    let restore = fixture.invoke(&[
+        "restore",
+        fixture.bundle.to_str().expect("UTF-8 bundle path"),
+        &format!("--apply={}", preview.body.plan),
+    ]);
+    assert_refusal(&restore, "restore::writer-active");
+    let after = journal::JournalReader::open(&fixture.authority)
+        .expect("live authority reopens")
+        .fact_snapshot()
+        .expect("live authority resnapshot");
+    assert_eq!(after, before, "refused recovery changed authority");
+    resident.stop(&fixture);
+}
+
+#[cfg(unix)]
+#[test]
+fn interrupted_restore_staging_preserves_the_old_authority() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = Fixture::new();
+    fixture.reply::<JournalBackup>(&[
+        "backup",
+        fixture.bundle.to_str().expect("UTF-8 backup path"),
+    ]);
+    fs::remove_file(&fixture.authority).expect("remove authority for interruption predecessor");
+    drop(
+        journal::Journal::open(&fixture.authority)
+            .expect("create interruption predecessor authority"),
+    );
+    let preview = fixture.reply::<JournalRestore>(&[
+        "restore",
+        fixture.bundle.to_str().expect("UTF-8 bundle path"),
+    ]);
+    let before = fs::read(&fixture.authority).expect("read interruption predecessor");
+    let parent = fixture.authority.parent().expect("authority data parent");
+    fs::set_permissions(parent, fs::Permissions::from_mode(0o500))
+        .expect("make restore staging unavailable");
+    let output = fixture.invoke(&[
+        "restore",
+        fixture.bundle.to_str().expect("UTF-8 bundle path"),
+        &format!("--apply={}", preview.body.plan),
+    ]);
+    fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
+        .expect("restore data directory permissions");
+    assert!(
+        !output.status.success(),
+        "unwritable staging unexpectedly applied"
+    );
+    assert_eq!(
+        fs::read(&fixture.authority).expect("read predecessor after interruption"),
+        before,
+        "interrupted staging replaced the old authority"
+    );
+}
+
+fn assert_refusal(output: &Output, reason: &str) {
+    assert_eq!(output.status.code(), Some(2));
+    let Outcome::Refusal(refusal) =
+        wire::decode::<Outcome<serde_json::Value>>(&output.stderr).expect("typed refusal")
+    else {
+        panic!("recovery did not refuse")
+    };
+    assert_eq!(refusal.reason, reason);
+}
+
+#[cfg(unix)]
+fn mode(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::metadata(path)
+        .expect("backup member metadata")
+        .permissions()
+        .mode()
+        & 0o7777
 }
 
 fn seed_authority(path: &Path) {
@@ -302,6 +665,54 @@ fn seed_authority(path: &Path) {
              UPDATE cursor_head SET seq = 2, wake = 1 WHERE singleton = 1;",
         )
         .expect("insert index and cursor fixture");
+}
+
+fn append_note_facts(path: &Path, through: u64) {
+    let connection = Connection::open(path).expect("open authority for bounded-report facts");
+    for seq in 3..=through {
+        let envelope = fact(
+            seq,
+            Some(seq - 1),
+            FactKind::TaskNoted,
+            json!({"task": "JOURNAL-a1", "note": format!("note {seq}")}),
+        );
+        let bytes = wire::encode(&envelope).expect("encode bounded-report fact");
+        connection
+            .execute(
+                concat!(
+                    "INSERT INTO fact_envelopes(seq, wire_version, instant, actor, origin, ",
+                    "cause, kind, envelope) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+                ),
+                params![
+                    i64::try_from(seq).expect("fixture sequence fits"),
+                    envelope.v.0,
+                    envelope.at.to_string(),
+                    envelope.actor.to_string(),
+                    envelope.origin.as_str(),
+                    i64::try_from(seq - 1).expect("fixture cause fits"),
+                    envelope.fact.kind().as_str(),
+                    bytes,
+                ],
+            )
+            .expect("insert bounded-report fact");
+        connection
+            .execute(
+                "INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES (?1, ?2, ?3, 1, ?4)",
+                params![
+                    i64::try_from(seq).expect("fixture sequence fits"),
+                    envelope.origin.as_str(),
+                    i64::try_from(seq - 1).expect("fixture cause fits"),
+                    i64::try_from(seq - 1).expect("fixture depth fits"),
+                ],
+            )
+            .expect("insert bounded-report thread");
+    }
+    connection
+        .execute(
+            "UPDATE cursor_head SET seq = ?1, wake = 1 WHERE singleton = 1",
+            [i64::try_from(through).expect("fixture cursor fits")],
+        )
+        .expect("advance bounded-report cursor");
 }
 
 fn fact(
