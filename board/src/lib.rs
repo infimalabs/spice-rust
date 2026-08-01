@@ -4,6 +4,8 @@
 
 use std::fmt;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod allocate;
 pub mod apply;
 pub mod claim;
 pub mod graph;

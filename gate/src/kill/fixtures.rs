@@ -63,50 +63,74 @@ write_outcome() {
     printf '%s\n' "$1" > "$output_dir/outcomes.json"
 }
 
+caught='{
+    "cargo_mutants_version":"27.1.0",
+    "total_mutants":1,
+    "missed":0,
+    "caught":1,
+    "timeout":0,
+    "unviable":0,
+    "outcomes":[{"summary":"CaughtMutant"}]
+}'
+survived='{
+    "cargo_mutants_version":"27.1.0",
+    "total_mutants":1,
+    "missed":1,
+    "caught":0,
+    "timeout":0,
+    "unviable":0,
+    "outcomes":[{"summary":"MissedMutant"}]
+}'
+timed_out='{
+    "cargo_mutants_version":"27.1.0",
+    "total_mutants":1,
+    "missed":0,
+    "caught":0,
+    "timeout":1,
+    "unviable":0,
+    "outcomes":[{"summary":"Timeout"}]
+}'
+unviable='{
+    "cargo_mutants_version":"27.1.0",
+    "total_mutants":1,
+    "missed":0,
+    "caught":0,
+    "timeout":0,
+    "unviable":1,
+    "outcomes":[{"summary":"Unviable"}]
+}'
+
 printf 'mutated\n' >> src/lib.rs
 case "$identity" in
     *Killed*)
-        write_outcome '{"cargo_mutants_version":"27.1.0","total_mutants":1,'\
-'"missed":0,"caught":1,"timeout":0,"unviable":0,'\
-'"outcomes":[{"summary":"CaughtMutant"}]}'
+        write_outcome "$caught"
         exit 0
         ;;
     *Survived*)
-        write_outcome '{"cargo_mutants_version":"27.1.0","total_mutants":1,'\
-'"missed":1,"caught":0,"timeout":0,"unviable":0,'\
-'"outcomes":[{"summary":"MissedMutant"}]}'
+        write_outcome "$survived"
         exit 2
         ;;
     *Flaky*)
         if [ "$SPICE_MUTATION_ATTEMPT" = "1" ]; then
-            write_outcome '{"cargo_mutants_version":"27.1.0","total_mutants":1,'\
-'"missed":0,"caught":1,"timeout":0,"unviable":0,'\
-'"outcomes":[{"summary":"CaughtMutant"}]}'
+            write_outcome "$caught"
             exit 0
         fi
-        write_outcome '{"cargo_mutants_version":"27.1.0","total_mutants":1,'\
-'"missed":1,"caught":0,"timeout":0,"unviable":0,'\
-'"outcomes":[{"summary":"MissedMutant"}]}'
+        write_outcome "$survived"
         exit 2
         ;;
     *Timeout*)
-        write_outcome '{"cargo_mutants_version":"27.1.0","total_mutants":1,'\
-'"missed":0,"caught":0,"timeout":1,"unviable":0,'\
-'"outcomes":[{"summary":"Timeout"}]}'
+        write_outcome "$timed_out"
         exit 3
         ;;
     *Incomplete*)
-        write_outcome '{"cargo_mutants_version":"27.1.0","total_mutants":1,'\
-'"missed":0,"caught":1,"timeout":0,"unviable":0,'\
-'"outcomes":[{"summary":"CaughtMutant"}]}'
-        printf 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'\
-'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+        write_outcome "$caught"
+        printf '%s%s' \
+            'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' \
+            'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
         exit 0
         ;;
     *Unviable*)
-        write_outcome '{"cargo_mutants_version":"27.1.0","total_mutants":1,'\
-'"missed":0,"caught":0,"timeout":0,"unviable":1,'\
-'"outcomes":[{"summary":"Unviable"}]}'
+        write_outcome "$unviable"
         exit 0
         ;;
     *NoOutcome*)
@@ -473,7 +497,7 @@ esac
             concat!(
                 "{\"cargo_mutants_version\":\"27.1.0\",\"total_mutants\":1,",
                 "\"missed\":0,\"caught\":1,\"timeout\":0,\"unviable\":0,",
-                "\"outcomes\":[{\"summary\":\"CaughtMutant\"}]}\n",
+                "\"outcomes\":[{\"summary\":\"CaughtMutant\"}]}\n"
             ),
         );
         let run = gate(&tool, &log, &["src/lib.rs"], 2, 4096)
