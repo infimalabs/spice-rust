@@ -713,20 +713,16 @@ impl Parser {
             }
             return root;
         }
-        if roots
+        if let Some(index) = self
+            .nodes
             .iter()
-            .any(|index| self.nodes[*index].slug == DOCUMENT_ROOT_SLUG)
+            .position(|node| node.slug == DOCUMENT_ROOT_SLUG)
         {
-            let index = roots
-                .iter()
-                .copied()
-                .find(|index| self.nodes[*index].slug == DOCUMENT_ROOT_SLUG)
-                .expect("matching root exists");
             self.refusals.push(Refusal::new(
                 RefusalCode::SyntheticRootCollision,
                 Some(self.nodes[index].line),
                 format!(
-                    "title collides with the synthetic root: {} (line {}); rename or nest it",
+                    "title collides with the synthetic root: {} (line {}); rename it or use one authored top-level root",
                     self.nodes[index].title, self.nodes[index].line
                 ),
             ));
@@ -996,7 +992,7 @@ fn valid_dependency_target(target: &str) -> bool {
 }
 
 fn valid_dependency_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || matches!(byte, b' ' | b'-' | b'_' | b'.' | b'/' | b'(' | b')')
+    byte.is_ascii_alphanumeric() || b" -_./()".contains(&byte)
 }
 
 fn is_slug_spelling(target: &str) -> bool {
@@ -1109,7 +1105,9 @@ fn is_thematic_break(line: &str) -> bool {
 }
 
 fn fenced_block(lines: &[String], start: usize) -> Option<(usize, String, bool)> {
-    let opener = lines.get(start)?.trim_start();
+    let opener_line = lines.get(start)?;
+    let opener_indent = indent_width(opener_line);
+    let opener = opener_line.trim_start();
     let marker = if opener.starts_with("```") {
         '`'
     } else if opener.starts_with("~~~") {
@@ -1121,13 +1119,30 @@ fn fenced_block(lines: &[String], start: usize) -> Option<(usize, String, bool)>
     let mut block = vec![lines[start].trim_start().to_owned()];
     for (index, line) in lines.iter().enumerate().skip(start + 1) {
         let trimmed = line.trim();
-        block.push(line.to_owned());
+        block.push(strip_container_indent(line, opener_indent));
         if trimmed.len() >= marker_len && trimmed.chars().all(|ch| ch == marker) {
             return Some((index + 1, block.join("\n"), true));
         }
     }
     block.push(marker.to_string().repeat(marker_len));
     Some((lines.len(), block.join("\n"), false))
+}
+
+fn strip_container_indent(line: &str, width: usize) -> String {
+    let mut consumed = 0;
+    let mut byte_end = 0;
+    for (index, ch) in line.char_indices() {
+        if consumed >= width || !ch.is_whitespace() || matches!(ch, '\n' | '\r') {
+            break;
+        }
+        let columns = if ch == '\t' { 4 } else { 1 };
+        if consumed + columns > width {
+            break;
+        }
+        consumed += columns;
+        byte_end = index + ch.len_utf8();
+    }
+    line[byte_end..].to_owned()
 }
 
 fn cycle_from(start: usize, adjacency: &[Vec<usize>], state: &mut [u8]) -> Option<usize> {

@@ -135,3 +135,18 @@ fn accepted_corpus_converges_after_one_normalization() {
         assert_eq!(emit(document(&second)), once);
     }
 }
+
+#[test]
+fn nested_fenced_annotations_reach_the_same_fixed_point() {
+    let source = "# Goal\n\n- Task\n\n  ```text\n  preserved\n    nested\n  ```\n";
+
+    let first = classify(source);
+    let once = emit(document(&first));
+    let second = classify(&once);
+
+    assert!(
+        matches!(second, Classification::Current(_)),
+        "nested fence did not become current:\n{once}"
+    );
+    assert_eq!(emit(document(&second)), once);
+}
