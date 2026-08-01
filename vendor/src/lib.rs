@@ -1,1 +1,18 @@
-//! Vendor command seam crate skeleton.
+//! Outbound agent launch contracts and the single process-door handoff.
+//!
+//! Vendor modules state exact command lines, while [`Record`] owns the common
+//! binary, argument, stream, dialect, and resume contract. Process creation is
+//! delegated to `sill`, and captured records are delegated to `listen` after a
+//! caller has committed them to tape and supplied their locus.
+
+#![forbid(unsafe_code)]
+
+pub mod acp;
+pub mod claude;
+pub mod codex;
+mod record;
+
+pub use acp::{PermissionRequestError, permission_request};
+pub use record::{
+    LaunchError, Process, ProcessError, Record, RecordStream, Resume, SessionId, SessionIdError,
+};
