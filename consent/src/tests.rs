@@ -160,10 +160,10 @@ fn a_glob_backtracks_rather_than_stopping_at_its_first_candidate() {
 fn a_bounded_rule_grants_to_its_bound_and_then_queues_for_renewal() {
     let mut actuator = Actuator::new(table(vec![rule("reads", "read", Answer::Allow, Some(2))]));
 
-    let first = actuator.decide(&asked("read"), Reversibility::Reversible);
-    let second = actuator.decide(&asked("read"), Reversibility::Reversible);
+    let first = decide(&mut actuator, &asked("read"), Reversibility::Reversible);
+    let second = decide(&mut actuator, &asked("read"), Reversibility::Reversible);
     let third_request = asked("read");
-    let third = actuator.decide(&third_request, Reversibility::Reversible);
+    let third = decide(&mut actuator, &third_request, Reversibility::Reversible);
 
     assert_eq!(granted_budget(&first), Some(Some(1)));
     assert_eq!(granted_budget(&second), Some(Some(0)));
@@ -207,22 +207,30 @@ fn renewal_uses_the_exact_held_request_and_changes_no_other_budget_or_hold() {
     ]));
 
     assert_eq!(
-        granted_budget(&actuator.decide(&asked("read"), Reversibility::Reversible)),
+        granted_budget(&decide(
+            &mut actuator,
+            &asked("read"),
+            Reversibility::Reversible,
+        )),
         Some(Some(0)),
     );
     assert_eq!(
-        granted_budget(&actuator.decide(&asked("write"), Reversibility::Reversible)),
+        granted_budget(&decide(
+            &mut actuator,
+            &asked("write"),
+            Reversibility::Reversible,
+        )),
         Some(Some(0)),
     );
 
     let exhausted_read = asked("read");
     let exhausted_write = asked("write");
     assert!(matches!(
-        actuator.decide(&exhausted_read, Reversibility::Reversible),
+        decide(&mut actuator, &exhausted_read, Reversibility::Reversible),
         Outcome::Queued(_)
     ));
     assert!(matches!(
-        actuator.decide(&exhausted_write, Reversibility::Reversible),
+        decide(&mut actuator, &exhausted_write, Reversibility::Reversible),
         Outcome::Queued(_)
     ));
     assert_eq!(actuator.pending().len(), 2);
@@ -244,10 +252,13 @@ fn renewal_uses_the_exact_held_request_and_changes_no_other_budget_or_hold() {
     let renewed_write = actuator
         .renew(exhausted_write.request)
         .expect("the write request names the writes budget");
-    assert_eq!(renewed_write.rule(), "writes");
-    assert_eq!(
-        renewed_write.cause(),
-        ConsentQueueCause::BudgetExhausted { bound: 1 }
+    assert!(
+        matches!(&renewed_write, Outcome::Granted(granted)
+            if granted.request == exhausted_write.request
+                && granted.lane == exhausted_write.lane
+                && granted.rule == OPERATOR
+                && granted.budget.is_none()),
+        "renewal records the operator grant that resolves the queued request",
     );
     assert_eq!(actuator.budgets().remaining("writes", 1), 1);
     assert_eq!(actuator.budgets().remaining("reads", 1), 0);
@@ -257,10 +268,21 @@ fn renewal_uses_the_exact_held_request_and_changes_no_other_budget_or_hold() {
     assert!(actuator.pending().holds(exhausted_read.request));
     assert_eq!(actuator.pending().len(), 1);
 
+    let after_write_renewal = actuator.clone();
+    let repeated = actuator
+        .renew(exhausted_write.request)
+        .expect_err("one request cannot renew its budget twice");
+    assert_eq!(repeated.reason, "consent::request-not-held");
+    assert_eq!(
+        actuator, after_write_renewal,
+        "a repeated renewal neither restores the budget again nor mints another grant",
+    );
+
     let renewed_read = actuator
         .renew(exhausted_read.request)
         .expect("the read request names the reads budget");
-    assert_eq!(renewed_read.rule(), "reads");
+    assert!(matches!(&renewed_read, Outcome::Granted(granted)
+        if granted.request == exhausted_read.request && granted.rule == OPERATOR));
     assert_eq!(actuator.budgets().remaining("reads", 1), 1);
     assert_eq!(actuator.budgets().remaining("writes", 1), 1);
     assert!(actuator.pending().is_empty());
@@ -290,7 +312,7 @@ fn a_held_request_lets_reversible_work_continue_while_the_irreversible_waits() {
 
     assert!(actuator.proceeds(request.request, Reversibility::Irreversible));
 
-    let outcome = actuator.decide(&request, Reversibility::Irreversible);
+    let outcome = decide(&mut actuator, &request, Reversibility::Irreversible);
 
     let Outcome::Queued(queued) = outcome else {
         panic!("the queue rule must pend its request");
@@ -345,7 +367,7 @@ fn a_held_request_leaves_a_distinct_irreversible_request_independently_decidable
     let tag = asked("git tag v1.0.0");
 
     assert!(matches!(
-        actuator.decide(&push, Reversibility::Irreversible),
+        decide(&mut actuator, &push, Reversibility::Irreversible),
         Outcome::Queued(_)
     ));
 
@@ -355,7 +377,7 @@ fn a_held_request_leaves_a_distinct_irreversible_request_independently_decidable
     );
     assert!(
         matches!(
-            actuator.decide(&tag, Reversibility::Irreversible),
+            decide(&mut actuator, &tag, Reversibility::Irreversible),
             Outcome::Granted(_)
         ),
         "a distinct operation is answered by its own rule while another request is held",
@@ -383,11 +405,11 @@ fn releasing_one_held_request_leaves_every_other_request_held() {
     let second = asked("git push --mirror");
 
     assert!(matches!(
-        actuator.decide(&first, Reversibility::Irreversible),
+        decide(&mut actuator, &first, Reversibility::Irreversible),
         Outcome::Queued(_)
     ));
     assert!(matches!(
-        actuator.decide(&second, Reversibility::Irreversible),
+        decide(&mut actuator, &second, Reversibility::Irreversible),
         Outcome::Queued(_)
     ));
 
@@ -433,7 +455,7 @@ fn a_request_the_operator_refused_never_proceeds_and_owes_its_refusal() {
     let request = asked("git push --force");
 
     assert!(matches!(
-        actuator.decide(&request, Reversibility::Irreversible),
+        decide(&mut actuator, &request, Reversibility::Irreversible),
         Outcome::Queued(_)
     ));
 
@@ -484,7 +506,7 @@ fn a_request_the_operator_granted_proceeds_and_mints_its_grant() {
     let request = asked("git push --force");
 
     assert!(matches!(
-        actuator.decide(&request, Reversibility::Irreversible),
+        decide(&mut actuator, &request, Reversibility::Irreversible),
         Outcome::Queued(_)
     ));
 
@@ -505,6 +527,79 @@ fn a_request_the_operator_granted_proceeds_and_mints_its_grant() {
     assert!(actuator.proceeds(request.request, Reversibility::Irreversible));
 }
 
+#[test]
+fn a_held_request_cannot_be_queued_twice_or_answered_both_ways() {
+    let mut actuator = Actuator::new(table(vec![rule(
+        "pushes",
+        "git push*",
+        Answer::Queue,
+        None,
+    )]));
+    let request = asked("git push --force");
+
+    assert!(matches!(
+        decide(&mut actuator, &request, Reversibility::Irreversible),
+        Outcome::Queued(_)
+    ));
+    let held = actuator.clone();
+    let replay = actuator
+        .decide(&request, Reversibility::Irreversible)
+        .expect_err("an identity already in the queue cannot queue again");
+    assert_eq!(replay.reason, "consent::request-already-known");
+    assert_eq!(replay.observed.as_deref(), Some("held"));
+    assert_eq!(actuator, held, "rejecting a replay changes no seat state");
+
+    assert!(matches!(
+        actuator.release(request.request, Ruling::Deny),
+        Some(Outcome::Denied(_))
+    ));
+    let denied = actuator.clone();
+    let replay = actuator
+        .decide(&request, Reversibility::Irreversible)
+        .expect_err("a denied identity must be asked again under a new UUID");
+    assert_eq!(replay.observed.as_deref(), Some("denied"));
+    assert!(
+        actuator.release(request.request, Ruling::Allow).is_none(),
+        "the denied identity cannot later mint a grant",
+    );
+    assert!(
+        actuator.renew(request.request).is_err(),
+        "the denied identity cannot reach a grant through renewal either",
+    );
+    assert_eq!(actuator, denied);
+    assert!(!actuator.proceeds(request.request, Reversibility::Irreversible));
+}
+
+#[test]
+fn an_operator_grant_cannot_be_replayed_into_a_denial() {
+    let mut actuator = Actuator::new(table(vec![rule(
+        "pushes",
+        "git push*",
+        Answer::Queue,
+        None,
+    )]));
+    let request = asked("git push --force");
+
+    assert!(matches!(
+        decide(&mut actuator, &request, Reversibility::Irreversible),
+        Outcome::Queued(_)
+    ));
+    assert!(matches!(
+        actuator.release(request.request, Ruling::Allow),
+        Some(Outcome::Granted(_))
+    ));
+    let granted = actuator.clone();
+
+    let replay = actuator
+        .decide(&request, Reversibility::Irreversible)
+        .expect_err("a granted identity must not be decided again");
+    assert_eq!(replay.observed.as_deref(), Some("granted"));
+    assert!(actuator.release(request.request, Ruling::Deny).is_none());
+    assert!(actuator.renew(request.request).is_err());
+    assert_eq!(actuator, granted);
+    assert!(actuator.proceeds(request.request, Reversibility::Irreversible));
+}
+
 /// Answering one request answers only that request.
 #[test]
 fn a_refusal_stops_its_own_request_and_leaves_another_decidable() {
@@ -516,7 +611,7 @@ fn a_refusal_stops_its_own_request_and_leaves_another_decidable() {
     let tag = asked("git tag v1.0.0");
 
     assert!(matches!(
-        actuator.decide(&push, Reversibility::Irreversible),
+        decide(&mut actuator, &push, Reversibility::Irreversible),
         Outcome::Queued(_)
     ));
     assert!(
@@ -527,7 +622,7 @@ fn a_refusal_stops_its_own_request_and_leaves_another_decidable() {
 
     assert!(
         matches!(
-            actuator.decide(&tag, Reversibility::Irreversible),
+            decide(&mut actuator, &tag, Reversibility::Irreversible),
             Outcome::Granted(_)
         ),
         "one refused request does not answer an unrelated operation",
@@ -561,22 +656,37 @@ fn a_queue_holds_each_request_under_its_own_identity() {
     let first = asked("git push");
     let second = asked("git push --force");
 
-    pending.hold(
-        &first,
-        Reversibility::Irreversible,
-        "pushes".to_owned(),
-        ConsentQueueCause::Policy {},
-    );
-    pending.hold(
-        &second,
-        Reversibility::Reversible,
-        "writes".to_owned(),
-        ConsentQueueCause::BudgetExhausted { bound: 4 },
-    );
+    pending
+        .hold(
+            &first,
+            Reversibility::Irreversible,
+            "pushes".to_owned(),
+            ConsentQueueCause::Policy {},
+        )
+        .expect("fresh request");
+    pending
+        .hold(
+            &second,
+            Reversibility::Reversible,
+            "writes".to_owned(),
+            ConsentQueueCause::BudgetExhausted { bound: 4 },
+        )
+        .expect("fresh request");
 
     assert_eq!(pending.len(), 2);
     assert!(pending.holds(first.request));
     assert!(pending.holds(second.request));
+    let two_held = pending.clone();
+    let replay = pending
+        .hold(
+            &first,
+            Reversibility::Irreversible,
+            "pushes".to_owned(),
+            ConsentQueueCause::Policy {},
+        )
+        .expect_err("a held identity cannot mint another queue fact");
+    assert_eq!(replay.observed.as_deref(), Some("held"));
+    assert_eq!(pending, two_held);
     let held = pending.get(second.request).expect("second request is held");
     assert_eq!(held.rule(), "writes");
     assert_eq!(
@@ -591,6 +701,17 @@ fn a_queue_holds_each_request_under_its_own_identity() {
     );
     assert!(!pending.holds(first.request));
     assert!(!pending.is_empty());
+
+    let replay = pending
+        .hold(
+            &first,
+            Reversibility::Irreversible,
+            "pushes".to_owned(),
+            ConsentQueueCause::Policy {},
+        )
+        .expect_err("a granted identity cannot return to the queue");
+    assert_eq!(replay.observed.as_deref(), Some("granted"));
+    assert!(pending.proceeds(first.request, Reversibility::Irreversible));
 }
 
 #[test]
@@ -606,7 +727,11 @@ fn a_denial_refuses_loudly_and_a_grant_or_a_queue_does_not_refuse_at_all() {
         .expect("valid table"),
     );
 
-    let denied = actuator.decide(&asked("rm -rf /"), Reversibility::Irreversible);
+    let denied = decide(
+        &mut actuator,
+        &asked("rm -rf /"),
+        Reversibility::Irreversible,
+    );
     let refusal = denied.refusal().expect("a denial refuses");
 
     assert_eq!(refusal.witness.as_deref(), Some("blocked"));
@@ -617,13 +742,15 @@ fn a_denial_refuses_loudly_and_a_grant_or_a_queue_does_not_refuse_at_all() {
     assert!(!refusal.reason.is_empty());
 
     assert_eq!(
-        actuator
-            .decide(&asked("read"), Reversibility::Reversible)
-            .refusal(),
+        decide(&mut actuator, &asked("read"), Reversibility::Reversible).refusal(),
         None,
         "a grant happened, so it cannot pretend to be a refusal",
     );
-    let posture = actuator.decide(&asked("anything else"), Reversibility::Reversible);
+    let posture = decide(
+        &mut actuator,
+        &asked("anything else"),
+        Reversibility::Reversible,
+    );
     assert_eq!(
         posture.refusal(),
         None,
@@ -637,6 +764,47 @@ fn a_denial_refuses_loudly_and_a_grant_or_a_queue_does_not_refuse_at_all() {
 }
 
 #[test]
+fn policy_answers_are_terminal_without_spending_twice_on_replay() {
+    let mut actuator = Actuator::new(table(vec![
+        rule("reads", "read", Answer::Allow, Some(2)),
+        rule("blocked", "rm *", Answer::Deny, None),
+    ]));
+    let granted_request = asked("read");
+
+    assert_eq!(
+        granted_budget(&decide(
+            &mut actuator,
+            &granted_request,
+            Reversibility::Irreversible,
+        )),
+        Some(Some(1)),
+    );
+    let granted = actuator.clone();
+    let replay = actuator
+        .decide(&granted_request, Reversibility::Irreversible)
+        .expect_err("the rule already granted this identity");
+    assert_eq!(replay.observed.as_deref(), Some("granted"));
+    assert_eq!(
+        actuator, granted,
+        "the duplicate grant neither emits a fact nor spends the budget twice",
+    );
+    assert!(actuator.proceeds(granted_request.request, Reversibility::Irreversible));
+
+    let denied_request = asked("rm -rf /");
+    assert!(matches!(
+        decide(&mut actuator, &denied_request, Reversibility::Irreversible),
+        Outcome::Denied(_)
+    ));
+    let denied = actuator.clone();
+    let replay = actuator
+        .decide(&denied_request, Reversibility::Irreversible)
+        .expect_err("the rule already denied this identity");
+    assert_eq!(replay.observed.as_deref(), Some("denied"));
+    assert_eq!(actuator, denied);
+    assert!(!actuator.proceeds(denied_request.request, Reversibility::Irreversible));
+}
+
+#[test]
 fn a_decided_request_keeps_the_identity_and_lane_it_arrived_with() {
     let mut actuator = Actuator::new(table(vec![
         rule("blocked", "rm *", Answer::Deny, None),
@@ -644,7 +812,7 @@ fn a_decided_request_keeps_the_identity_and_lane_it_arrived_with() {
     ]));
     let request = asked("read");
 
-    match actuator.decide(&request, Reversibility::Reversible) {
+    match decide(&mut actuator, &request, Reversibility::Reversible) {
         Outcome::Granted(granted) => {
             assert_eq!(granted.request, request.request);
             assert_eq!(granted.lane, request.lane);
@@ -667,6 +835,7 @@ fn every_outcome_this_seat_can_reach_is_a_fact_of_the_declared_consent_plane() {
     for operation in ["read", "rm -rf /", "git push", "unmatched"] {
         let kind = actuator
             .decide(&asked(operation), Reversibility::Reversible)
+            .expect("the sweep mints a fresh request for each operation")
             .kind();
         assert!(
             fold::FactPlane::Consent.contains(kind),
@@ -704,7 +873,7 @@ fn a_seated_table_and_its_queue_read_back_as_the_operator_configured_them() {
     );
 
     let request = asked("git push --force");
-    actuator.decide(&request, Reversibility::Irreversible);
+    decide(&mut actuator, &request, Reversibility::Irreversible);
 
     assert_eq!(
         actuator
@@ -723,6 +892,12 @@ fn table(rules: Vec<Rule>) -> Policy {
 
 fn rule(name: &str, tool: &str, answer: Answer, budget: Option<u32>) -> Rule {
     Rule::new(name, tool, answer, budget).expect("valid rule")
+}
+
+fn decide(actuator: &mut Actuator, asked: &ConsentAsked, reversibility: Reversibility) -> Outcome {
+    actuator
+        .decide(asked, reversibility)
+        .expect("the fixture uses a fresh request identity")
 }
 
 /// Mint a request the way `vendor::acp` states one.

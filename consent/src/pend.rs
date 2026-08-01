@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, btree_map::Entry};
 
 use wire::CanonicalUuid;
 use wire::body::{ConsentAsked, ConsentQueueCause, ConsentQueued};
@@ -67,18 +67,49 @@ impl Held {
     }
 }
 
-/// Requests pended to the operator, keyed by request identity.
+/// The request registry and its operator queue, keyed by request identity.
 ///
 /// Holding is not blocking. A lane with requests outstanding keeps doing
 /// reversible work, and only the irreversible action a request covers waits.
 ///
-/// A refused request is remembered after it leaves the queue, because the
-/// answer that ends the wait is the same answer that decides whether the
-/// action may be taken at all.
+/// A policy answer or operator ruling remains under the same identity after it
+/// becomes terminal. This prevents replaying one request into a second queue or
+/// answer and keeps the proceed gate and duplicate-request check on one source
+/// of truth.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Pending {
-    held: BTreeMap<CanonicalUuid, Held>,
-    refused: BTreeSet<CanonicalUuid>,
+    requests: BTreeMap<CanonicalUuid, RequestState>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum RequestState {
+    Held(Held),
+    Terminal(TerminalDisposition),
+}
+
+impl RequestState {
+    const fn name(&self) -> &'static str {
+        match self {
+            Self::Held(_) => "held",
+            Self::Terminal(TerminalDisposition::Granted) => "granted",
+            Self::Terminal(TerminalDisposition::Denied) => "denied",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TerminalDisposition {
+    Granted,
+    Denied,
+}
+
+impl From<Ruling> for TerminalDisposition {
+    fn from(ruling: Ruling) -> Self {
+        match ruling {
+            Ruling::Allow => Self::Granted,
+            Ruling::Deny => Self::Denied,
+        }
+    }
 }
 
 impl Pending {
@@ -89,50 +120,62 @@ impl Pending {
     }
 
     /// Hold this request for the operator and state the fact that says so.
+    ///
+    /// # Errors
+    ///
+    /// Returns a loud refusal when this request identity is already held or
+    /// has reached a terminal disposition.
     pub fn hold(
         &mut self,
         asked: &ConsentAsked,
         reversibility: Reversibility,
         rule: String,
         cause: ConsentQueueCause,
-    ) -> ConsentQueued {
+    ) -> Result<ConsentQueued, wire::Refusal> {
         let queued = ConsentQueued {
             request: asked.request,
             lane: asked.lane,
             rule,
             cause,
         };
-        self.held.insert(
-            asked.request,
-            Held {
+        self.insert(
+            queued.request,
+            RequestState::Held(Held {
                 lane: asked.lane,
                 operation: asked.operation.clone(),
                 reversibility,
                 rule: queued.rule.clone(),
                 cause,
-            },
-        );
-        queued
+            }),
+        )?;
+        Ok(queued)
     }
 
     /// Release a request the operator answered, yielding what was held.
     ///
-    /// A refusal is kept after the release, because taking the request out of
-    /// the queue must not open what the operator closed. The identity stays
-    /// refused for good; asking again is a new request under a new identity
-    /// that the operator has not answered.
+    /// The terminal answer replaces the held state under this identity. A
+    /// second release therefore yields nothing and cannot change the answer.
     pub fn release(&mut self, request: CanonicalUuid, ruling: Ruling) -> Option<Held> {
-        let held = self.held.remove(&request)?;
-        if ruling == Ruling::Deny {
-            self.refused.insert(request);
+        let Entry::Occupied(mut entry) = self.requests.entry(request) else {
+            return None;
+        };
+        if !matches!(entry.get(), RequestState::Held(_)) {
+            return None;
         }
+        let previous = entry.insert(RequestState::Terminal(ruling.into()));
+        let RequestState::Held(held) = previous else {
+            unreachable!("only a held request is replaced")
+        };
         Some(held)
     }
 
     /// The request held under this identity, if it is still pending.
     #[must_use]
     pub fn get(&self, request: CanonicalUuid) -> Option<&Held> {
-        self.held.get(&request)
+        match self.requests.get(&request) {
+            Some(RequestState::Held(held)) => Some(held),
+            Some(RequestState::Terminal(_)) | None => None,
+        }
     }
 
     /// Whether this request is still waiting on the operator.
@@ -141,10 +184,13 @@ impl Pending {
         self.get(request).is_some()
     }
 
-    /// Whether the operator refused this request.
+    /// Whether this request reached a denied terminal disposition.
     #[must_use]
     pub fn refuses(&self, request: CanonicalUuid) -> bool {
-        self.refused.contains(&request)
+        matches!(
+            self.requests.get(&request),
+            Some(RequestState::Terminal(TerminalDisposition::Denied))
+        )
     }
 
     /// Whether this request's action proceeds while requests are held.
@@ -157,30 +203,75 @@ impl Pending {
     /// about this one, and treating it as one would make the first queued
     /// request a global halt on every lane.
     ///
-    /// A request the operator refused never proceeds again. Waiting and being
-    /// refused are different reasons to stop, and only the first one ends.
+    /// A request denied by policy or the operator never proceeds again. Waiting
+    /// and being denied are different reasons to stop, and only the first one
+    /// ends.
     #[must_use]
     pub fn proceeds(&self, request: CanonicalUuid, reversibility: Reversibility) -> bool {
         match reversibility {
             Reversibility::Reversible => true,
-            Reversibility::Irreversible => !self.holds(request) && !self.refuses(request),
+            Reversibility::Irreversible => matches!(
+                self.requests.get(&request),
+                None | Some(RequestState::Terminal(TerminalDisposition::Granted))
+            ),
         }
     }
 
     /// Held requests in request order.
     pub fn iter(&self) -> impl Iterator<Item = (CanonicalUuid, &Held)> {
-        self.held.iter().map(|(request, held)| (*request, held))
+        self.requests
+            .iter()
+            .filter_map(|(request, state)| match state {
+                RequestState::Held(held) => Some((*request, held)),
+                RequestState::Terminal(_) => None,
+            })
     }
 
     /// How many requests are waiting on the operator.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.held.len()
+        self.iter().count()
     }
 
     /// Whether nothing is waiting on the operator.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.held.is_empty()
+        self.iter().next().is_none()
+    }
+
+    pub(crate) fn ensure_unseen(&self, request: CanonicalUuid) -> Result<(), wire::Refusal> {
+        match self.requests.get(&request) {
+            None => Ok(()),
+            Some(state) => Err(replayed_request(request, state.name())),
+        }
+    }
+
+    pub(crate) fn record(
+        &mut self,
+        request: CanonicalUuid,
+        disposition: TerminalDisposition,
+    ) -> Result<(), wire::Refusal> {
+        self.insert(request, RequestState::Terminal(disposition))
+    }
+
+    fn insert(&mut self, request: CanonicalUuid, state: RequestState) -> Result<(), wire::Refusal> {
+        match self.requests.entry(request) {
+            Entry::Vacant(entry) => {
+                entry.insert(state);
+                Ok(())
+            }
+            Entry::Occupied(entry) => Err(replayed_request(request, entry.get().name())),
+        }
+    }
+}
+
+fn replayed_request(request: CanonicalUuid, observed: &str) -> wire::Refusal {
+    wire::Refusal {
+        reason: "consent::request-already-known".to_owned(),
+        witness: Some(request.to_string()),
+        expected: Some("a request identity consent has not seen".to_owned()),
+        observed: Some(observed.to_owned()),
+        remedy: "use the existing disposition, or ask again under a new request identity"
+            .to_owned(),
     }
 }
