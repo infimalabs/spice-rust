@@ -6,7 +6,6 @@ use std::net::{SocketAddr, TcpStream};
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
-use std::process::{Command as ProcessCommand, Stdio};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -21,9 +20,8 @@ use wire::{
 
 use crate::cli::{Contract, Guard, Principal, ReplyPositionLaw};
 
+mod browser;
 mod steering;
-
-use steering::steering_refusal;
 
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_DISCOVERY_BYTES: u64 = 16 * 1024;
@@ -34,6 +32,16 @@ type ClientResult<T> = Result<T, Outcome<CommandAnswer>>;
 pub(crate) enum SelectedCommand<'a> {
     /// The operator requests the current resident's bounded Dark transition.
     Down,
+    /// Read the current resident's durable consent queue.
+    ConsentRead,
+    /// Read the tracked consent policy held by the current resident.
+    ConsentPolicy,
+    /// Terminally answer one request from an exact queue snapshot.
+    ConsentDecide {
+        request: CanonicalUuid,
+        answer: wire::Answer,
+        expected: Vec<Witness>,
+    },
     /// The operator recognizes one exact, already admitted release publication.
     ReleasePublish {
         release: &'a crate::release_command::AdmittedRelease,
@@ -82,14 +90,14 @@ pub(crate) fn execute(
                 Err(outcome) => return outcome,
             };
             let Some(row) = inbox.lanes.iter().find(|row| row.lane == lane) else {
-                return steering_refusal(
+                return steering::steering_refusal(
                     "steer::lane-unknown",
                     Some(lane.to_string()),
                     "seat the lane before sending it direction",
                 );
             };
             let Some(occupant) = row.occupant else {
-                return steering_refusal(
+                return steering::steering_refusal(
                     "steer::lane-vacant",
                     Some(lane.to_string()),
                     "start an occupant in the lane before sending it direction",
@@ -129,7 +137,7 @@ pub(crate) fn execute(
                 .find(|pending| pending.key == key.as_str())
                 .map(|pending| pending.directive);
             let Some(directive) = directive else {
-                return steering_refusal(
+                return steering::steering_refusal(
                     "steer::key-not-live",
                     Some(key.to_string()),
                     "read the current lane inbox and acknowledge one live key",
@@ -191,7 +199,7 @@ fn execute_mapped(
 /// acquisition therefore has one file-identity, ownership, mode, wire-shape,
 /// and loopback-origin admission path rather than a browser-specific reader.
 pub(crate) fn open_canvas(discovery_path: &Path) -> Outcome<wire::CanvasOpen> {
-    open_canvas_with(discovery_path, || {}, system_browser)
+    open_canvas_with(discovery_path, || {}, browser::system_browser)
 }
 
 fn open_canvas_with(
@@ -224,41 +232,6 @@ fn open_canvas_with(
             epoch: discovery.value.epoch,
         },
     })
-}
-
-fn system_browser(endpoint: &str) -> Result<(), String> {
-    let mut command = browser_command(endpoint)?;
-    let status = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map_err(|error| format!("the platform browser launcher did not start: {error}"))?;
-    if !status.success() {
-        return Err(format!(
-            "the platform browser launcher did not accept the current endpoint: {status}"
-        ));
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn browser_command(endpoint: &str) -> Result<ProcessCommand, String> {
-    let mut command = ProcessCommand::new("/usr/bin/open");
-    command.arg("-u").arg(endpoint);
-    Ok(command)
-}
-
-#[cfg(target_os = "linux")]
-fn browser_command(endpoint: &str) -> Result<ProcessCommand, String> {
-    let mut command = ProcessCommand::new("/usr/bin/xdg-open");
-    command.arg(endpoint);
-    Ok(command)
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn browser_command(_endpoint: &str) -> Result<ProcessCommand, String> {
-    Err("canvas browser launch is unsupported on this build target".to_owned())
 }
 
 fn rebody<B>(outcome: Outcome<CommandAnswer>) -> Outcome<B> {
@@ -355,6 +328,34 @@ impl MappedCommand {
                 &wire::intent::UpChange {
                     state: wire::ResidentState::Dark,
                 },
+            ),
+            (["consent"], SelectedCommand::ConsentRead) => Self::new(
+                contract,
+                &["consent"],
+                CommandKind::ConsentRead,
+                Vec::new(),
+                &wire::intent::ConsentRead {},
+            ),
+            (["consent", "policy"], SelectedCommand::ConsentPolicy) => Self::new(
+                contract,
+                &["consent", "policy"],
+                CommandKind::ConsentPolicy,
+                Vec::new(),
+                &wire::intent::ConsentPolicy {},
+            ),
+            (
+                ["consent", "allow"] | ["consent", "deny"],
+                SelectedCommand::ConsentDecide {
+                    request,
+                    answer,
+                    expected,
+                },
+            ) => Self::new(
+                contract,
+                contract.path,
+                CommandKind::ConsentDecide,
+                expected,
+                &wire::intent::ConsentDecide { request, answer },
             ),
             (["release", "publish"], SelectedCommand::ReleasePublish { release, state }) => {
                 let mut expected = vec![Witness::Observation {

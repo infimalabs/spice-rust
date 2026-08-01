@@ -331,7 +331,8 @@ fn canvas_platform_launcher_has_one_fixed_program_and_exact_endpoint() {
     use std::ffi::OsStr;
 
     let endpoint = "http://127.0.0.1:48123";
-    let command = browser_command(endpoint).expect("this platform has one launcher");
+    let command =
+        super::browser::browser_command(endpoint).expect("this platform has one launcher");
     #[cfg(target_os = "macos")]
     {
         assert_eq!(command.get_program(), OsStr::new("/usr/bin/open"));

@@ -20,6 +20,8 @@ mod command_client;
 #[cfg(not(target_arch = "wasm32"))]
 mod config_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod consent_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod doctor;
 #[cfg(not(target_arch = "wasm32"))]
 mod gate_command;
@@ -127,6 +129,16 @@ fn main() {
             install_command::Answer::Receipt(outcome) => deliver(&outcome, form),
         },
         ["config"] => deliver_config(&config_command::run(leaf), form),
+        ["consent"] => deliver(&consent_command::read(contract), form),
+        ["consent", "allow"] => deliver(
+            &consent_command::decide(leaf, contract, wire::Answer::Granted),
+            form,
+        ),
+        ["consent", "deny"] => deliver(
+            &consent_command::decide(leaf, contract, wire::Answer::Denied),
+            form,
+        ),
+        ["consent", "policy"] => deliver(&consent_command::policy(contract), form),
         ["lock"] => deliver(&lock_command::report(), form),
         ["lock", "run"] => match lock_command::run(leaf) {
             lock_command::RunResult::Child(status) => terminate_child(status),

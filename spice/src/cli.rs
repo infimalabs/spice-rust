@@ -867,7 +867,11 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["steer"]
         | ["steer", "cancel"]
         | ["inbox"]
-        | ["ack"] => Landing::Landed,
+        | ["ack"]
+        | ["consent"]
+        | ["consent", "allow"]
+        | ["consent", "deny"]
+        | ["consent", "policy"] => Landing::Landed,
         ["board"]
         | ["board", "graph"]
         | ["board", "handout"]
@@ -886,13 +890,7 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         ["lane"] | ["lane", "add"] | ["lane", "drain"] | ["lane", "wake"] | ["recall"] => {
             Landing::Gap("COORDIN-1kJQlDjc")
         }
-        ["consent"]
-        | ["consent", "allow"]
-        | ["consent", "deny"]
-        | ["consent", "policy"]
-        | ["taste"]
-        | ["taste", "add"]
-        | ["taste", "drop"] => Landing::Gap("POLICY-1kJQlFB6"),
+        ["taste"] | ["taste", "add"] | ["taste", "drop"] => Landing::Gap("POLICY-1kJQlFB6"),
         _ => Landing::Unaccounted,
     }
 }

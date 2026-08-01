@@ -11,7 +11,8 @@ use sill::{Acquisition, LockFile, LockName, Possession};
 use spice::repository::Repository;
 use tokio::sync::oneshot;
 use wire::intent::{
-    CommandAnswer, Intent, RecognitionAnswer, ReleasePublish, StateAnswer, TrustAnswer, TrustRef,
+    CommandAnswer, ConsentAnswer, ConsentDecide, Intent, RecognitionAnswer, ReleasePublish,
+    StateAnswer, TrustAnswer, TrustRef,
 };
 use wire::{
     Actor, CanonicalUuid, Command, CommandKind, Fault, FaultClass, Instant, Outcome, Producer,
@@ -35,6 +36,11 @@ struct RuntimePaths {
     degraded: PathBuf,
     tape: PathBuf,
     stage: PathBuf,
+}
+
+struct SurfaceConfig {
+    steering: steer::Config,
+    consent: consent::Policy,
 }
 
 impl RuntimePaths {
@@ -154,6 +160,14 @@ fn up_from(current: &Path) -> Outcome<()> {
         Ok(repository) => repository,
         Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
     };
+    let configuration = match spice::config::load_coexisting_repository(&repository, &[]) {
+        Ok(configuration) => configuration,
+        Err(error) => return configuration_refusal(&error),
+    };
+    let surface_config = SurfaceConfig {
+        steering: configuration.root().steer().clone(),
+        consent: configuration.root().consent().policy().clone(),
+    };
     let paths = match RuntimePaths::from_repository(&repository) {
         Ok(paths) => paths,
         Err(outcome) => return outcome,
@@ -175,11 +189,6 @@ fn up_from(current: &Path) -> Outcome<()> {
     if let Err(error) = remove_tree_if_present(&paths.lane_canvas) {
         return environment_fault("canvas::stale-lane-discovery", &error.to_string());
     }
-    let config = match spice::config::load(current, &[]) {
-        Ok(config) => config.root().steer().clone(),
-        Err(error) => return environment_fault("steer::config-invalid", &error.to_string()),
-    };
-
     let journal = match journal::Journal::open(&paths.journal) {
         Ok(journal) => journal,
         Err(error) => return journal_open_failure(error),
@@ -208,7 +217,7 @@ fn up_from(current: &Path) -> Outcome<()> {
             &repository,
             &paths,
             epoch,
-            &config,
+            &surface_config,
             &mut seats,
         )),
         Err(error) => Err(environment_fault(
@@ -240,6 +249,30 @@ fn journal_open_failure(error: journal::OpenError) -> Outcome<()> {
         }),
         error => store_fault("journal::open-failed", &error.to_string()),
     }
+}
+
+fn configuration_refusal(error: &spice::config::LoadError) -> Outcome<()> {
+    let mut diagnostics = error
+        .acquisition()
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if let Some(resolution) = error.resolution() {
+        diagnostics.extend(resolution.issues().iter().map(ToString::to_string));
+    }
+    if let Some(repository) = error.repository() {
+        diagnostics.push(repository.to_string());
+    }
+    if diagnostics.is_empty() {
+        diagnostics.push(error.to_string());
+    }
+    Outcome::Refusal(Refusal {
+        reason: "resident::configuration-refused".to_owned(),
+        witness: Some("effective-configuration".to_owned()),
+        expected: Some("one admitted effective repository configuration".to_owned()),
+        observed: Some(diagnostics.join(" | ")),
+        remedy: "repair tracked or local configuration before starting the resident".to_owned(),
+    })
 }
 
 fn settle_surface(
@@ -428,7 +461,7 @@ async fn run_surface(
     repository: &Repository,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
-    steering: &steer::Config,
+    config: &SurfaceConfig,
     seats: &mut Seats,
 ) -> CommandResult<()> {
     let operator = new_uuid();
@@ -480,7 +513,7 @@ async fn run_surface(
             repository,
             paths,
             epoch,
-            steering,
+            config,
             seats,
             request.command(),
         );
@@ -515,7 +548,7 @@ fn dispatch_command(
     repository: &Repository,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
-    steering: &steer::Config,
+    config: &SurfaceConfig,
     seats: &mut Seats,
     command: &wire::AdmittedCommand,
 ) -> Outcome<CommandAnswer> {
@@ -530,13 +563,22 @@ fn dispatch_command(
             steering::inbox(bus, epoch, command, inbox)
         }
         (CommandKind::SteerSend, Intent::SteerSend(send)) => {
-            steering::send(bus, paths, epoch, steering, command, send)
+            steering::send(bus, paths, epoch, &config.steering, command, send)
         }
         (CommandKind::SteerCancel, Intent::DirectiveRef(cancel)) => {
             steering::cancel(bus, paths, epoch, command, cancel)
         }
         (CommandKind::SteerDispose, Intent::SteerDispose(dispose)) => {
             steering::dispose(bus, paths, epoch, command, dispose)
+        }
+        (CommandKind::ConsentRead, Intent::ConsentRead(_)) => {
+            dispatch_consent_read(bus, &config.consent)
+        }
+        (CommandKind::ConsentPolicy, Intent::ConsentPolicy(_)) => {
+            dispatch_consent_policy(bus, &config.consent)
+        }
+        (CommandKind::ConsentDecide, Intent::ConsentDecide(decide)) => {
+            dispatch_consent_decide(bus, epoch, &config.consent, command, decide)
         }
         (CommandKind::TrustGrant | CommandKind::TrustRevoke, Intent::TrustRef(reference)) => {
             dispatch_trust_rule(bus, repository, epoch, command, reference)
@@ -548,6 +590,184 @@ fn dispatch_command(
             observed: None,
             remedy: "land the registered resident handler before exposing this CLI leaf".to_owned(),
         }),
+    }
+}
+
+fn dispatch_consent_read(bus: &Bus, policy: &consent::Policy) -> Outcome<CommandAnswer> {
+    let (snapshot, queue) = match consent_snapshot(bus, policy) {
+        Ok(state) => state,
+        Err(outcome) => return outcome,
+    };
+    let answer = match queue.answer(policy) {
+        Ok(answer) => answer,
+        Err(error) => {
+            return typed_protocol_fault("consent::queue-invalid", &error.to_string());
+        }
+    };
+    Outcome::Reply(Reply {
+        position: ReplyPosition::Snapshot(
+            snapshot
+                .horizon()
+                .expect("resident startup always precedes a socket snapshot"),
+        ),
+        body: CommandAnswer::ConsentQueue(answer),
+    })
+}
+
+fn dispatch_consent_policy(bus: &Bus, policy: &consent::Policy) -> Outcome<CommandAnswer> {
+    let (snapshot, queue) = match consent_snapshot(bus, policy) {
+        Ok(state) => state,
+        Err(outcome) => return outcome,
+    };
+    Outcome::Reply(Reply {
+        position: ReplyPosition::Snapshot(
+            snapshot
+                .horizon()
+                .expect("resident startup always precedes a socket snapshot"),
+        ),
+        body: CommandAnswer::ConsentPolicy(queue.policy_answer(policy)),
+    })
+}
+
+fn dispatch_consent_decide(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    policy: &consent::Policy,
+    command: &wire::AdmittedCommand,
+    decide: &ConsentDecide,
+) -> Outcome<CommandAnswer> {
+    if !matches!(command.actor(), Actor::Operator) {
+        return Outcome::Refusal(Refusal {
+            reason: "command::authority".to_owned(),
+            witness: Some("principal".to_owned()),
+            expected: Some("operator".to_owned()),
+            observed: Some(command.actor().to_string()),
+            remedy: "reconnect with the current operator capability".to_owned(),
+        });
+    }
+    if !matches!(decide.answer, wire::Answer::Granted | wire::Answer::Denied) {
+        return Outcome::Refusal(Refusal {
+            reason: "consent::ruling-invalid".to_owned(),
+            witness: Some(decide.request.to_string()),
+            expected: Some("granted or denied".to_owned()),
+            observed: Some(format!("{:?}", decide.answer).to_lowercase()),
+            remedy: "choose allow or deny for the queued request".to_owned(),
+        });
+    }
+    let (_, queue) = match consent_snapshot(bus, policy) {
+        Ok(state) => state,
+        Err(outcome) => return outcome,
+    };
+    let answer = match queue.answer(policy) {
+        Ok(answer) => answer,
+        Err(error) => {
+            return typed_protocol_fault("consent::queue-invalid", &error.to_string());
+        }
+    };
+    let Some(pending_answer) = answer
+        .pending
+        .iter()
+        .find(|pending| pending.request == decide.request)
+    else {
+        return consent_not_held(decide.request);
+    };
+    let exact = match consent::decision_witnesses(pending_answer, decide.answer) {
+        Ok(exact) => exact,
+        Err(refusal) => return Outcome::Refusal(refusal),
+    };
+    if !same_witnesses(command.expected(), &exact) {
+        return Outcome::Refusal(Refusal {
+            reason: "consent::witness-moved".to_owned(),
+            witness: Some(decide.request.to_string()),
+            expected: Some(format!("{exact:?}")),
+            observed: Some(format!("{:?}", command.expected())),
+            remedy: "re-read the consent queue and retry its exact current request".to_owned(),
+        });
+    }
+    let pending = queue
+        .pending(decide.request)
+        .expect("the wire queue answer and internal queue share pending identities");
+    let terminal = match decide.answer {
+        wire::Answer::Granted => ConsentTerminal::Granted(wire::body::ConsentGranted {
+            request: decide.request,
+            lane: pending.lane(),
+            rule: consent::OPERATOR.to_owned(),
+            budget: None,
+        }),
+        wire::Answer::Denied => ConsentTerminal::Denied(wire::body::ConsentDenied {
+            request: decide.request,
+            lane: pending.lane(),
+            rule: consent::OPERATOR.to_owned(),
+        }),
+        _ => unreachable!("non-terminal answers returned above"),
+    };
+    let mut proposal = match write_at_origin(
+        command.actor().clone(),
+        pending.origin().clone(),
+        Producer::CommandDoor,
+    ) {
+        Ok(proposal) => proposal,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let guarded_policy = policy.clone();
+    let guarded_expected = exact.clone();
+    let guarded_request = decide.request;
+    let guarded_answer = decide.answer;
+    proposal.guard(JournalGuard::new(move |read| {
+        let snapshot = read
+            .fact_snapshot()
+            .map_err(|error| GuardError::Invalid(error.to_string()))?;
+        let queue = consent::Queue::from_snapshot(&snapshot, &guarded_policy)
+            .map_err(|error| GuardError::Invalid(error.to_string()))?;
+        let answer = queue
+            .answer(&guarded_policy)
+            .map_err(|error| GuardError::Invalid(error.to_string()))?;
+        let current = answer
+            .pending
+            .iter()
+            .find(|pending| pending.request == guarded_request)
+            .ok_or_else(|| GuardError::refused("consent::request-moved"))?;
+        let witnesses = consent::decision_witnesses(current, guarded_answer)
+            .map_err(|_| GuardError::refused("consent::request-moved"))?;
+        if !same_witnesses(&witnesses, &guarded_expected) {
+            return Err(GuardError::refused("consent::witness-moved"));
+        }
+        Ok(())
+    }));
+    let fact = match terminal {
+        ConsentTerminal::Granted(body) => proposal.fact(body, FactCause::Existing(pending.fact())),
+        ConsentTerminal::Denied(body) => proposal.fact(body, FactCause::Existing(pending.fact())),
+    };
+    if let Err(error) = fact {
+        return typed_store_fault("consent::fact-invalid", &error.to_string());
+    }
+    let result = ConsentAnswer {
+        request: decide.request,
+        answer: decide.answer,
+    };
+    if let Err(error) = proposal.command_result(
+        Command {
+            v: wire::WireVersion::CURRENT,
+            id: command.id(),
+            epoch: command.epoch(),
+            kind: CommandKind::ConsentDecide,
+            expected: command.expected().to_vec(),
+            body: decide.clone(),
+        },
+        epoch,
+        result.clone(),
+    ) {
+        return typed_store_fault("consent::receipt-invalid", &error.to_string());
+    }
+    match commit(bus, proposal) {
+        Ok(committed) => Outcome::Reply(Reply {
+            position: ReplyPosition::Committed(SeqRange {
+                first: seq(committed.first()),
+                last: seq(committed.last()),
+            }),
+            body: CommandAnswer::Consent(result),
+        }),
+        Err(outcome) => typed_outcome(outcome),
     }
 }
 
@@ -715,6 +935,41 @@ fn dispatch_trust_rule(
         }),
         Err(outcome) => typed_outcome(outcome),
     }
+}
+
+enum ConsentTerminal {
+    Granted(wire::body::ConsentGranted),
+    Denied(wire::body::ConsentDenied),
+}
+
+fn consent_snapshot(
+    bus: &Bus,
+    policy: &consent::Policy,
+) -> Result<(journal::FactSnapshot, consent::Queue), Outcome<CommandAnswer>> {
+    let snapshot = bus
+        .fact_snapshot()
+        .map_err(|error| typed_store_fault("consent::journal-unreadable", &error.to_string()))?;
+    let queue = consent::Queue::from_snapshot(&snapshot, policy)
+        .map_err(|error| typed_protocol_fault("consent::queue-invalid", &error.to_string()))?;
+    Ok((snapshot, queue))
+}
+
+fn same_witnesses(left: &[Witness], right: &[Witness]) -> bool {
+    let mut left = left.to_vec();
+    let mut right = right.to_vec();
+    left.sort_unstable();
+    right.sort_unstable();
+    left == right
+}
+
+fn consent_not_held(request: CanonicalUuid) -> Outcome<CommandAnswer> {
+    Outcome::Refusal(Refusal {
+        reason: "consent::request-not-held".to_owned(),
+        witness: Some(request.to_string()),
+        expected: Some("a request in the current consent queue".to_owned()),
+        observed: Some("absent or terminal".to_owned()),
+        remedy: "re-read the consent queue and decide a request that is still pending".to_owned(),
+    })
 }
 
 fn trust_refusal(
