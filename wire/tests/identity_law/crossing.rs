@@ -1,0 +1,669 @@
+// Executable samples covering every custom wire-crossing identity.
+
+fn at(text: &str) -> Instant {
+    text.parse().expect("instant")
+}
+
+/// A committed position covering exactly one sequence.
+fn committed(position: u64) -> ReplyPosition {
+    ReplyPosition::Committed(SeqRange {
+        first: seq(position),
+        last: seq(position),
+    })
+}
+
+/// The refusal the reply frames reuse, carrying every optional field.
+fn stale_witness() -> Refusal {
+    Refusal {
+        reason: "witness::stale".to_owned(),
+        witness: Some("task".to_owned()),
+        expected: Some("48190".to_owned()),
+        observed: Some("48213".to_owned()),
+        remedy: "re-read the task head and retry".to_owned(),
+    }
+}
+
+/// The fault the reply frames reuse.
+fn moved_epoch() -> Fault {
+    Fault {
+        class: FaultClass::Protocol,
+        reason: "epoch::moved".to_owned(),
+        detail: "resident epoch moved".to_owned(),
+    }
+}
+
+#[test]
+fn every_crossing_type_obeys_the_identity_law() {
+    // Coverage accumulates across the families so one assertion can speak for
+    // the whole crate; splitting it per family would let a missing family pass.
+    let mut covered = BTreeSet::new();
+
+    cover_spellings(&mut covered);
+    cover_journal_frames(&mut covered);
+    cover_task_heads(&mut covered);
+    cover_claim_heads(&mut covered);
+    cover_policy_heads(&mut covered);
+    cover_residency_heads(&mut covered);
+    cover_head_enums(&mut covered);
+    cover_command_frames(&mut covered);
+    cover_packed_frames(&mut covered);
+    cover_refusal_frames(&mut covered);
+    cover_reply_frames(&mut covered);
+    cover_witness_values(&mut covered);
+    cover_vocabularies(&mut covered);
+
+    assert_coverage_is_complete(&covered);
+}
+
+/// The spelling newtypes.
+///
+/// Instant's samples include sub-millisecond, pre-epoch, and boundary readings,
+/// which is the narrowing path that broke this law before.
+fn cover_spellings(covered: &mut BTreeSet<String>) {
+    spelling_law(
+        covered,
+        "Instant",
+        &[
+            Instant::new("0000-01-01T00:00:00Z".parse().expect("minimum wire year"))
+                .expect("minimum wire instant"),
+            Instant::new("2030-04-12T18:44:09.271828Z".parse().expect("timestamp"))
+                .expect("reading is in the wire year range"),
+            Instant::new("2030-04-12T18:44:09.271Z".parse().expect("timestamp"))
+                .expect("reading is in the wire year range"),
+            Instant::new("1969-12-31T23:59:59.999999Z".parse().expect("timestamp"))
+                .expect("reading is in the wire year range"),
+            Instant::new(jiff::Timestamp::MAX).expect("maximum wire instant"),
+        ],
+    );
+    spelling_law(
+        covered,
+        "CanonicalUuid",
+        &[
+            uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+            uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
+        ],
+    );
+    spelling_law(
+        covered,
+        "TaskHandle",
+        &[handle("SPICE-aBcD"), handle("WIRE-1kJJP2Qc")],
+    );
+    spelling_law(covered, "Phase", &[phase("todo"), phase("review")]);
+    spelling_law(
+        covered,
+        "Origin",
+        &[
+            "task:SPICE-aBcD".parse::<Origin>().expect("origin"),
+            "repo:genesis".parse::<Origin>().expect("origin"),
+        ],
+    );
+    spelling_law(
+        covered,
+        "FoldName",
+        &[
+            "board::ready".parse::<FoldName>().expect("fold name"),
+            "bus::refusals".parse::<FoldName>().expect("fold name"),
+        ],
+    );
+    spelling_law(
+        covered,
+        "Actor",
+        &[
+            Actor::Lane(uuid("018f82d4-6f59-7d06-92e3-bce9131163c2")),
+            Actor::Operator,
+        ],
+    );
+    // A position spells decimal digits but ranks as a number, and the journal
+    // reads it as a number: `9` before `10`, which is the reverse of how the
+    // two spell. Samples span that step so the fixture pins the numeric order
+    // rather than a lexical one that happens to agree on the samples chosen.
+    ranked_law(covered, "Seq", &[seq(1), seq(9), seq(10), seq(48213)]);
+    spelling_law(
+        covered,
+        "Name",
+        &[
+            "next".parse::<Name>().expect("name"),
+            "reads".parse::<Name>().expect("name"),
+        ],
+    );
+    spelling_law(covered, "Digest", &[digest("a"), digest("b")]);
+}
+
+/// The frames that rest in the journal.
+///
+/// These derive only Eq and inherit the law structurally, so their samples vary
+/// one field at a time against a shared base.
+fn cover_journal_frames(covered: &mut BTreeSet<String>) {
+    law(
+        covered,
+        "Envelope",
+        &[
+            Envelope {
+                v: WireVersion(1),
+                seq: seq(48213),
+                at: at("2030-04-12T18:44:09.271Z"),
+                actor: Actor::Operator,
+                origin: "task:SPICE-aBcD".parse().expect("origin"),
+                cause: Some(seq(48190)),
+                fact: Fact::new(body("checked")),
+            },
+            Envelope {
+                v: WireVersion(1),
+                seq: seq(48214),
+                at: at("2030-04-12T18:44:09.272Z"),
+                actor: Actor::Operator,
+                origin: "task:SPICE-aBcD".parse().expect("origin"),
+                cause: None,
+                fact: Fact::new(body("cargo test --workspace")),
+            },
+        ],
+    );
+    law(
+        covered,
+        "Fact",
+        &[
+            Fact::new(body("checked")),
+            Fact::new(body("cargo test --workspace")),
+        ],
+    );
+
+    // The opaque read of the same fact. It obeys the identity law for the same
+    // reason the typed one does — a verifier that re-encodes a row it read must
+    // get the row back — and the samples are the typed bodies above so a drift
+    // between the two readings would show up here as a byte difference.
+    law(
+        covered,
+        "AnyFact",
+        &[
+            any_fact(Fact::new(body("checked"))),
+            any_fact(Fact::new(body("cargo test --workspace"))),
+        ],
+    );
+}
+
+/// Read a typed fact back the way a journal verifier reads a stored row.
+fn any_fact<F: wire::Body>(fact: Fact<F>) -> AnyFact {
+    let bytes = wire::encode(&fact).expect("a typed fact encodes");
+    wire::decode(&bytes).expect("a stored fact reads back without its body type")
+}
+
+/// Task statement and workflow heads.
+fn cover_task_heads(covered: &mut BTreeSet<String>) {
+    let first_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
+    let second_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c3");
+    let task = handle("SPICE-aBcD");
+
+    law(
+        covered,
+        "TaskHead",
+        &[
+            TaskHead {
+                handle: task.clone(),
+                uuid: first_uuid,
+                title: "Build the gate".to_owned(),
+                project: "gate".to_owned(),
+                tags: vec!["guard".to_owned()],
+                dependencies: Vec::new(),
+                provenance: "repo:genesis".parse().expect("origin"),
+                revision: seq(10),
+            },
+            TaskHead {
+                handle: task.clone(),
+                uuid: second_uuid,
+                title: "Review the gate".to_owned(),
+                project: "gate".to_owned(),
+                tags: vec!["guard".to_owned(), "review".to_owned()],
+                dependencies: vec![handle("WIRE-eFgH")],
+                provenance: "task:SPICE-aBcD".parse().expect("origin"),
+                revision: seq(11),
+            },
+        ],
+    );
+    law(
+        covered,
+        "WorkflowHead",
+        &[
+            WorkflowHead {
+                flow: vec![
+                    "todo".parse().expect("phase"),
+                    "review".parse().expect("phase"),
+                ],
+                phase: "todo".parse().expect("phase"),
+                status: "pending".to_owned(),
+                review: "unassigned".to_owned(),
+                assignment: Some(Actor::Operator),
+                deferral: Some(at("2030-04-12T18:44:09.271Z")),
+                completion: None,
+            },
+            WorkflowHead {
+                flow: vec![
+                    "todo".parse().expect("phase"),
+                    "review".parse().expect("phase"),
+                ],
+                phase: "review".parse().expect("phase"),
+                status: "completed".to_owned(),
+                review: "clean".to_owned(),
+                assignment: Some(Actor::Lane(first_uuid)),
+                deferral: None,
+                completion: Some(at("2030-04-12T18:44:09.272Z")),
+            },
+        ],
+    );
+}
+
+/// Claim possession and lease heads.
+fn cover_claim_heads(covered: &mut BTreeSet<String>) {
+    let first_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
+    let second_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c3");
+
+    law(
+        covered,
+        "ClaimHead",
+        &[
+            ClaimHead {
+                actor: Actor::Operator,
+                fact: seq(12),
+                lane: first_uuid,
+                occupant: second_uuid,
+                epoch: first_uuid,
+                disposition: ClaimDisposition::Active,
+            },
+            ClaimHead {
+                actor: Actor::Lane(first_uuid),
+                fact: seq(13),
+                lane: second_uuid,
+                occupant: first_uuid,
+                epoch: second_uuid,
+                disposition: ClaimDisposition::Lapsed,
+            },
+        ],
+    );
+    law(
+        covered,
+        "LeaseHead",
+        &[
+            LeaseHead {
+                start: at("2030-04-12T18:44:09.271Z"),
+                renewal: at("2030-04-12T18:44:09.272Z"),
+                maximum: at("2030-04-12T18:45:09.271Z"),
+                expiry: at("2030-04-12T18:45:00.271Z"),
+                epoch: first_uuid,
+            },
+            LeaseHead {
+                start: at("2030-04-12T18:44:10.271Z"),
+                renewal: at("2030-04-12T18:44:10.272Z"),
+                maximum: at("2030-04-12T18:46:09.271Z"),
+                expiry: at("2030-04-12T18:46:00.271Z"),
+                epoch: second_uuid,
+            },
+        ],
+    );
+}
+
+/// Witness, trust, and gate-finding heads.
+fn cover_policy_heads(covered: &mut BTreeSet<String>) {
+    law(
+        covered,
+        "WitnessHead",
+        &[
+            WitnessHead {
+                name: "review".to_owned(),
+                kind: WitnessClass::Review,
+                predicate: "reviewer differs from author".to_owned(),
+                head: seq(14),
+            },
+            WitnessHead {
+                name: "budget".to_owned(),
+                kind: WitnessClass::Budget,
+                predicate: "remaining equals 2".to_owned(),
+                head: seq(15),
+            },
+        ],
+    );
+    law(
+        covered,
+        "TrustHead",
+        &[
+            TrustHead {
+                digest: digest("a"),
+                state: TrustState::Pended,
+            },
+            TrustHead {
+                digest: digest("b"),
+                state: TrustState::Granted,
+            },
+        ],
+    );
+    law(
+        covered,
+        "FindingHead",
+        &[
+            FindingHead {
+                identity: "gate::one".to_owned(),
+                severity: "high".to_owned(),
+                locus: "wire/src/lib.rs".to_owned(),
+                owner: "wire".to_owned(),
+                receipt: digest("c"),
+                state: FindingState::Open,
+            },
+            FindingHead {
+                identity: "gate::two".to_owned(),
+                severity: "low".to_owned(),
+                locus: "wire/src/head.rs".to_owned(),
+                owner: "gate".to_owned(),
+                receipt: digest("d"),
+                state: FindingState::Cleared,
+            },
+        ],
+    );
+}
+
+/// Resident generation, lane, and cursor heads.
+fn cover_residency_heads(covered: &mut BTreeSet<String>) {
+    let first_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
+    let second_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c3");
+
+    let occupied = LaneResidency {
+        lane: first_uuid,
+        occupant: Some(second_uuid),
+        lineage: vec![first_uuid],
+        capabilities: vec![second_uuid],
+        disposition: "seated".to_owned(),
+    };
+    let empty = LaneResidency {
+        lane: second_uuid,
+        occupant: None,
+        lineage: Vec::new(),
+        capabilities: Vec::new(),
+        disposition: "empty".to_owned(),
+    };
+    law(covered, "LaneResidency", &[occupied.clone(), empty.clone()]);
+    law(
+        covered,
+        "ResidencyHead",
+        &[
+            ResidencyHead {
+                epoch: first_uuid,
+                state: ResidentState::Seated,
+                lanes: vec![occupied],
+            },
+            ResidencyHead {
+                epoch: second_uuid,
+                state: ResidentState::Dark,
+                lanes: vec![empty],
+            },
+        ],
+    );
+    law(
+        covered,
+        "CursorHead",
+        &[
+            CursorHead {
+                seq: None,
+                wake: None,
+            },
+            CursorHead {
+                seq: Some(seq(16)),
+                wake: Some(seq(15)),
+            },
+        ],
+    );
+}
+
+/// Closed enums carried inside authoritative heads.
+fn cover_head_enums(covered: &mut BTreeSet<String>) {
+    law(
+        covered,
+        "ClaimDisposition",
+        &[ClaimDisposition::Active, ClaimDisposition::Freed],
+    );
+    law(
+        covered,
+        "FindingState",
+        &[FindingState::Open, FindingState::Cleared],
+    );
+    law(
+        covered,
+        "WitnessClass",
+        &[WitnessClass::Assignment, WitnessClass::Transition],
+    );
+}
+
+/// The frames a caller sends across the socket.
+///
+/// A command is checked under the encoder its identity binds rather than the
+/// generic one, so the pairwise arm reads canonical bytes. Its samples carry
+/// several witnesses in more than one order, because a single-witness sample
+/// cannot tell a sorted encoding from an unsorted one.
+fn cover_command_frames(covered: &mut BTreeSet<String>) {
+    law_under(
+        covered,
+        "Command",
+        &[
+            command("task::done", vec![task_witness()]),
+            command("task::done", vec![task_witness(), workflow_witness()]),
+            command("task::done", vec![workflow_witness(), task_witness()]),
+            command("task::done", vec![task_witness(), task_witness()]),
+            Command {
+                v: WireVersion(1),
+                id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
+                kind: "task::note".parse::<CommandKind>().expect("command kind"),
+                expected: Vec::new(),
+                body: body("checked"),
+            },
+        ],
+        canonical_command_identity,
+    );
+    cover_witness_values(covered);
+    law(
+        covered,
+        "Hello",
+        &[
+            Hello {
+                wire: WireVersion(1),
+                capability: uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+                epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
+            },
+            Hello {
+                wire: WireVersion(1),
+                capability: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
+                epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
+            },
+        ],
+    );
+    law(
+        covered,
+        "Accepted",
+        &[
+            Accepted {
+                wire: WireVersion(1),
+                actor: Actor::Operator,
+                epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+            },
+            Accepted {
+                wire: WireVersion(1),
+                actor: Actor::Spice,
+                epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+            },
+            Accepted {
+                wire: WireVersion(1),
+                actor: Actor::Lane(uuid("018f82d4-6f59-7d06-92e3-bce9131163c4")),
+                epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+            },
+        ],
+    );
+}
+
+/// Concrete command predicates and their nested state vocabularies.
+///
+/// Every type here derives `Ord` and `Hash` over a declared sequence rather
+/// than over its spelling, so each states that sequence in full and the
+/// fixture pins it. Reordering a variant is then a failing test naming the
+/// pair that moved, not a silent change to how a rendered column sorts.
+fn cover_witness_values(covered: &mut BTreeSet<String>) {
+    ranked_law(
+        covered,
+        "Witness",
+        &[
+            Witness::Task {
+                task: handle("SPICE-aBcD"),
+                head: seq(48190),
+            },
+            Witness::Workflow {
+                task: handle("SPICE-aBcD"),
+                head: seq(48190),
+                phase: "todo".parse().expect("phase"),
+            },
+            Witness::Directive {
+                steer: uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+                disposition: Disposition::Live,
+            },
+            Witness::Consent {
+                request: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
+                answer: Answer::Asked,
+            },
+            Witness::Trust {
+                digest: digest("c"),
+                standing: TrustState::Pended,
+            },
+            Witness::Transition {
+                from: ResidentState::Seated,
+                to: ResidentState::Quiescing,
+            },
+        ],
+    );
+}
+
+/// The paged frames, sampled with and without an overflow tail.
+fn cover_packed_frames(covered: &mut BTreeSet<String>) {
+    let rows = vec![Row {
+        task: handle("SPICE-aBcD"),
+    }];
+    let plain = Packed {
+        rows: rows.clone(),
+        overflow: None,
+        horizon: seq(48213),
+    };
+    let overflowing = Packed {
+        rows,
+        overflow: Some(Overflow {
+            omitted: 7,
+            continuation: seq(48220),
+        }),
+        horizon: seq(48213),
+    };
+
+    law(covered, "Packed", &[plain.clone(), overflowing.clone()]);
+    law(
+        covered,
+        "Derived",
+        &[
+            Derived {
+                fold: "board::ready".parse().expect("fold name"),
+                r#gen: 12,
+                cursor: seq(48213),
+                packed: plain,
+            },
+            Derived {
+                fold: "board::ready".parse().expect("fold name"),
+                r#gen: 13,
+                cursor: seq(48214),
+                packed: overflowing,
+            },
+        ],
+    );
+}
+
+/// The frames that carry a refusal or a fault back to a caller.
+fn cover_refusal_frames(covered: &mut BTreeSet<String>) {
+    law(
+        covered,
+        "SeqRange",
+        &[
+            SeqRange {
+                first: seq(1),
+                last: seq(2),
+            },
+            SeqRange {
+                first: seq(1),
+                last: seq(3),
+            },
+        ],
+    );
+    law(
+        covered,
+        "Refusal",
+        &[
+            Refusal {
+                reason: "wire::mismatch".to_owned(),
+                witness: None,
+                expected: None,
+                observed: None,
+                remedy: "reconnect with the resident's current wire".to_owned(),
+            },
+            stale_witness(),
+        ],
+    );
+    law(
+        covered,
+        "Fault",
+        &[
+            moved_epoch(),
+            Fault {
+                class: FaultClass::Store,
+                reason: "journal::unreadable".to_owned(),
+                detail: "journal read failed".to_owned(),
+            },
+        ],
+    );
+}
+
+/// The frames a caller reads back after a command lands.
+fn cover_reply_frames(covered: &mut BTreeSet<String>) {
+    law(
+        covered,
+        "Reply",
+        &[
+            Reply {
+                position: committed(48213),
+                body: body("checked"),
+            },
+            Reply {
+                position: ReplyPosition::Snapshot(seq(48213)),
+                body: body("checked"),
+            },
+        ],
+    );
+    law(
+        covered,
+        "Outcome",
+        &[
+            Outcome::Reply(Reply {
+                position: committed(48213),
+                body: body("checked"),
+            }),
+            Outcome::Refusal(stale_witness()),
+        ],
+    );
+    law(
+        covered,
+        "Response",
+        &[
+            Response {
+                v: WireVersion(1),
+                id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+                epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
+                outcome: Outcome::Reply(Reply {
+                    position: committed(48213),
+                    body: body("checked"),
+                }),
+            },
+            Response {
+                v: WireVersion(1),
+                id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
+                epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
+                outcome: Outcome::Fault(moved_epoch()),
+            },
+        ],
+    );
+}

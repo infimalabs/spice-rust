@@ -1003,17 +1003,14 @@ fn is_slug_spelling(target: &str) -> bool {
 }
 
 fn valid_project(project: &str) -> bool {
-    let mut segments = project.split('.');
-    let count = segments
-        .by_ref()
-        .filter(|segment| {
+    let segments = project.split('.').collect::<Vec<_>>();
+    (1..=3).contains(&segments.len())
+        && segments.iter().all(|segment| {
             !segment.is_empty()
                 && segment
                     .bytes()
-                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
         })
-        .count();
-    count == project.split('.').count() && (2..=3).contains(&count)
 }
 
 fn valid_origin(origin: &str) -> bool {
