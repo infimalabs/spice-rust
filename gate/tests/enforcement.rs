@@ -11,8 +11,8 @@ use gate::jurisdiction::{Admission, Shape};
 use gate::measure::{Bounds, MeasureError, Measurement};
 use gate::ratchet::{Malady, Movement};
 use gate::{
-    Ignore, Jurisdiction, Metric, Parser, Policy, Ratchet, Run, RunError, Standing, Verdict,
-    measurement_digest,
+    Contract, Ignore, Jurisdiction, Metric, Parser, Policy, Ratchet, Run, RunError, Standing,
+    Verdict, measurement_digest,
 };
 use sill::Deadlines;
 use wire::{Digest, Domain};
@@ -287,12 +287,9 @@ fn a_clean_run_earns_a_tighter_baseline_and_a_regression_earns_nothing() {
     let held = ratchet("rust.lines 3\n");
     let run = Run::adjudicate(&policy, &tree.root, &held, &bounds()).expect("adjudicate");
 
-    assert_eq!(run.verdict().standing, Standing::Clean);
+    assert_eq!(run.standing(), Standing::Clean);
     assert_eq!(run.measurements()[0].value(), 3);
-    assert_eq!(
-        run.verdict().findings[0].movement,
-        Movement::Held { baseline: 3 }
-    );
+    assert_eq!(run.findings()[0].movement, Movement::Held { baseline: 3 });
     assert_eq!(
         run.earned(&held)
             .expect("a clean run earns a ratchet")
@@ -303,9 +300,9 @@ fn a_clean_run_earns_a_tighter_baseline_and_a_regression_earns_nothing() {
     tree.write("src/lib.rs", "one\ntwo\nthree\nfour\n");
     let regressed = Run::adjudicate(&policy, &tree.root, &held, &bounds()).expect("adjudicate");
 
-    assert_eq!(regressed.verdict().standing, Standing::Refused);
+    assert_eq!(regressed.standing(), Standing::Refused);
     assert_eq!(
-        regressed.verdict().findings[0].movement,
+        regressed.findings()[0].movement,
         Movement::Regressed {
             baseline: 3,
             measured: 4
@@ -325,9 +322,9 @@ fn an_improvement_lowers_the_baseline_and_no_run_ever_raises_one() {
     let held = ratchet("rust.lines 9\n");
     let run = Run::adjudicate(&policy(""), &tree.root, &held, &bounds()).expect("adjudicate");
 
-    assert_eq!(run.verdict().standing, Standing::Clean);
+    assert_eq!(run.standing(), Standing::Clean);
     assert_eq!(
-        run.verdict().findings[0].movement,
+        run.findings()[0].movement,
         Movement::Shrank {
             baseline: 9,
             measured: 1
@@ -365,12 +362,12 @@ fn a_baseline_whose_metric_stopped_being_declared_refuses_rather_than_evaporatin
     let run = Run::adjudicate(&policy(""), &tree.root, &held, &bounds()).expect("adjudicate");
 
     assert_eq!(
-        run.verdict().standing,
+        run.standing(),
         Standing::Refused,
         "a baseline nothing measures has risen to infinity in all but spelling"
     );
     assert_eq!(
-        run.verdict().findings[1].movement,
+        run.findings()[1].movement,
         Movement::Retired { baseline: 0 }
     );
     assert!(run.earned(&held).is_none());
@@ -394,31 +391,33 @@ fn a_malformed_baseline_is_refused_by_line_and_never_half_read() {
 }
 
 #[test]
-fn a_receipt_moves_when_any_one_of_its_four_inputs_moves() {
+fn completed_run_identity_moves_when_any_observed_input_moves() {
     let tree = Tree::new("receipt");
     tree.write("src/lib.rs", "one\ntwo\n");
 
     let held = ratchet("rust.lines 2\n");
     let first = Run::adjudicate(&policy(""), &tree.root, &held, &bounds()).expect("adjudicate");
-    let original = first.verdict().clone();
+    let original_tree = first.tree().clone();
+    let original_measurement = first.measurement().clone();
+    let original_inventory = first.inventory().clone();
 
     // Same line count, different bytes: the tree moved and nothing else did.
     tree.write("src/lib.rs", "ONE\nTWO\n");
     let rewritten = Run::adjudicate(&policy(""), &tree.root, &held, &bounds()).expect("adjudicate");
-    assert_ne!(rewritten.verdict().tree, original.tree);
-    assert_eq!(rewritten.verdict().measurement, original.measurement);
-    assert_eq!(rewritten.verdict().inventory, original.inventory);
+    assert_ne!(rewritten.tree(), &original_tree);
+    assert_eq!(rewritten.measurement(), &original_measurement);
+    assert_eq!(rewritten.inventory(), &original_inventory);
 
     // A file nobody measures still moves the inventory, because the record of
     // what was refused is part of what the receipt stands behind.
     tree.write("notes.txt", "prose\n");
     let noticed =
         Run::adjudicate(&policy("*.txt\n"), &tree.root, &held, &bounds()).expect("adjudicate");
-    assert_ne!(noticed.verdict().inventory, rewritten.verdict().inventory);
-    assert_eq!(noticed.verdict().tree, rewritten.verdict().tree);
+    assert_ne!(noticed.inventory(), rewritten.inventory());
+    assert_eq!(noticed.tree(), rewritten.tree());
     assert_ne!(
-        noticed.verdict().policy,
-        rewritten.verdict().policy,
+        noticed.policy(),
+        rewritten.policy(),
         "the ignore rules are part of the declaration the receipt names"
     );
 
@@ -427,9 +426,9 @@ fn a_receipt_moves_when_any_one_of_its_four_inputs_moves() {
     tree.write("src/lib.rs", "ONE\nTWO\nTHREE\n");
     let counted =
         Run::adjudicate(&policy("*.txt\n"), &tree.root, &held, &bounds()).expect("adjudicate");
-    assert_ne!(counted.verdict().measurement, noticed.verdict().measurement);
-    assert_eq!(counted.verdict().inventory, noticed.verdict().inventory);
-    assert_eq!(counted.verdict().policy, noticed.verdict().policy);
+    assert_ne!(counted.measurement(), noticed.measurement());
+    assert_eq!(counted.inventory(), noticed.inventory());
+    assert_eq!(counted.policy(), noticed.policy());
 }
 
 #[test]
@@ -438,15 +437,41 @@ fn a_published_receipt_survives_a_round_trip_and_an_interrupted_successor() {
     tree.write("src/lib.rs", "one\n");
     let receipt = tree.path("verdict.json");
 
-    let held = ratchet("rust.lines 1\n");
-    let run = Run::adjudicate(&policy(""), &tree.root, &held, &bounds()).expect("adjudicate");
-    run.verdict()
+    let policy_path = tree.path("spice.toml");
+    let baseline_path = tree.path("baseline.toml");
+    let baseline = "version = 1\n\n[[floor]]\nname = \"rust.long-lines\"\nvalue = 1\n\n\
+                    [[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n";
+    tree.write("spice.toml", "");
+    tree.write("baseline.toml", baseline);
+    let contract = Contract::from_tracked(&tree.root, &policy_path, "", &baseline_path, baseline)
+        .expect("load current contract");
+    let run = contract
+        .adjudicate(&tree.root)
+        .expect("adjudicate current contract");
+    assert_eq!(run.receipt().tree(), run.run().tree());
+    assert_eq!(run.receipt().gate_set(), &contract.gate_set().digest());
+    assert_eq!(run.receipt().policy(), &contract.policy().digest());
+    assert_eq!(run.receipt().inventory(), run.run().inventory());
+    assert_eq!(run.receipt().measurement(), run.run().measurement());
+    assert_eq!(run.receipt().bounds(), &contract.bounds().digest());
+    assert_eq!(run.receipt().baseline(), &contract.baseline().digest());
+    assert_eq!(run.receipt().tools().len(), contract.tools().len());
+    assert_eq!(
+        run.receipt().tools()[0].identity(),
+        contract.tools()[0].digest()
+    );
+    run.receipt()
         .publish(&receipt)
         .expect("publish the receipt");
 
     let published = fs::read(&receipt).expect("read the published receipt");
-    let decoded: Verdict = wire::decode(&published).expect("decode the published receipt");
-    assert_eq!(&decoded, run.verdict());
+    let retained = String::from_utf8(published.clone()).expect("receipt JSON is UTF-8");
+    assert!(!retained.contains("/usr/bin/awk"));
+    assert!(!retained.contains("length($0)"));
+    assert!(!retained.contains(".git/"));
+    assert!(!retained.contains("runtime-ms"));
+    let decoded = Verdict::decode(&published).expect("decode the published receipt");
+    assert_eq!(&decoded, run.receipt());
 
     // A run that dies between staging and the swap leaves the previous receipt
     // exactly as it was, and leaves no half-written file beside it either.
@@ -742,8 +767,8 @@ fn every_metric_reads_the_same_captured_jurisdiction() {
         ]
     );
     assert_eq!(
-        run.verdict().tree,
-        run.jurisdiction().tree_digest().expect("digest live tree"),
+        run.tree(),
+        &run.jurisdiction().tree_digest().expect("digest live tree"),
     );
     assert_eq!(
         fs::read_to_string(tree.path("src/lib.rs")).expect("read restored live tree"),
