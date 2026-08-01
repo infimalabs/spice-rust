@@ -2,6 +2,9 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+use wire::Name;
+
 /// Name the posture answers to, which no rule may take.
 pub const POSTURE: &str = "posture";
 
@@ -9,13 +12,15 @@ pub const POSTURE: &str = "posture";
 pub const OPERATOR: &str = "operator";
 
 /// What an authority answers for a request it decides.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Answer {
     /// The action proceeds.
     Allow,
     /// The action is refused, loudly, naming the rule that refused it.
     Deny,
     /// The action waits for the operator while reversible work continues.
+    #[default]
     Queue,
 }
 
@@ -54,7 +59,7 @@ impl Authority {
 /// carrying the old one forward.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rule {
-    name: String,
+    name: Name,
     tool: String,
     answer: Answer,
     budget: Option<u32>,
@@ -82,14 +87,23 @@ impl Rule {
         if name == POSTURE || name == OPERATOR {
             return Err(PolicyError::ReservedName);
         }
+        let name = name
+            .parse::<Name>()
+            .map_err(|_| PolicyError::MalformedName { rule: name })?;
         if tool.is_empty() {
-            return Err(PolicyError::EmptyPattern { rule: name });
+            return Err(PolicyError::EmptyPattern {
+                rule: name.to_string(),
+            });
         }
         if budget.is_some() && answer != Answer::Allow {
-            return Err(PolicyError::UngrantableBudget { rule: name });
+            return Err(PolicyError::UngrantableBudget {
+                rule: name.to_string(),
+            });
         }
         if budget == Some(0) {
-            return Err(PolicyError::ZeroBudget { rule: name });
+            return Err(PolicyError::ZeroBudget {
+                rule: name.to_string(),
+            });
         }
         Ok(Self {
             name,
@@ -102,7 +116,7 @@ impl Rule {
     /// The rule's identity.
     #[must_use]
     pub fn name(&self) -> &str {
-        &self.name
+        self.name.as_str()
     }
 
     /// Exact operation or glob this rule answers for.
@@ -259,6 +273,8 @@ pub enum PolicyError {
     UnnamedRule,
     /// A rule took a name an authority other than a rule answers to.
     ReservedName,
+    /// A rule identity was not one lower-case ASCII word.
+    MalformedName { rule: String },
     /// A rule matched nothing because its pattern was empty.
     EmptyPattern { rule: String },
     /// A rule that never grants carried a grant budget.
@@ -276,6 +292,7 @@ impl PolicyError {
         match self {
             Self::UnnamedRule => "consent rule is unnamed",
             Self::ReservedName => "consent rule takes a reserved authority name",
+            Self::MalformedName { .. } => "consent rule name is malformed",
             Self::EmptyPattern { .. } => "consent rule matches nothing",
             Self::UngrantableBudget { .. } => "consent rule cannot spend a budget",
             Self::ZeroBudget { .. } => "consent budget grants nothing",
@@ -292,6 +309,9 @@ impl PolicyError {
             }
             Self::ReservedName => format!(
                 "rename the rule; `{POSTURE}` names the disposition unmatched requests take and `{OPERATOR}` names the operator answering a held request"
+            ),
+            Self::MalformedName { rule } => format!(
+                "rename `{rule}` with one lower-case word; rule names are stable fact identities"
             ),
             Self::EmptyPattern { rule } => {
                 format!("give `{rule}` an exact operation or a glob such as `git push*`")
@@ -313,7 +333,8 @@ impl PolicyError {
     pub fn rule(&self) -> Option<&str> {
         match self {
             Self::UnnamedRule | Self::ReservedName => None,
-            Self::EmptyPattern { rule }
+            Self::MalformedName { rule }
+            | Self::EmptyPattern { rule }
             | Self::UngrantableBudget { rule }
             | Self::ZeroBudget { rule }
             | Self::DuplicateName { rule } => Some(rule),

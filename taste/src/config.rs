@@ -15,10 +15,95 @@
 use std::error::Error;
 use std::fmt;
 
-use serde::Deserialize;
+use serde::de::{Deserializer, Error as _, MapAccess, Visitor};
+use serde::ser::{SerializeMap, Serializer};
+use serde::{Deserialize, Serialize};
 use wire::{Name, NameError};
 
 use crate::bag::{Bag, BagError, Taste};
+
+/// A defaultable set of operator-authored `[taste.NAME]` rows.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Config {
+    bag: Bag,
+}
+
+impl Config {
+    /// The admitted active taste set.
+    #[must_use]
+    pub const fn bag(&self) -> &Bag {
+        &self.bag
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            bag: Bag::new(Vec::new()).expect("an empty configured taste set is valid"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Config {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_map(ConfigVisitor)
+    }
+}
+
+struct ConfigVisitor;
+
+impl<'de> Visitor<'de> for ConfigVisitor {
+    type Value = Config;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a map of named taste rows")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut rows: A) -> Result<Self::Value, A::Error> {
+        let mut tastes = Vec::with_capacity(rows.size_hint().unwrap_or_default());
+        while let Some((name, row)) = rows.next_entry::<String, Row>()? {
+            let identity = name.parse::<Name>().map_err(|error| {
+                A::Error::custom(format!("taste.{name} does not name a taste: {error}"))
+            })?;
+            tastes.push(
+                Taste::new(identity, row.words, row.message).map_err(|error| {
+                    let field = match &error {
+                        BagError::EmptyMessage(_) => "message",
+                        BagError::Trigger(_) | BagError::EmptyWords(_) => "words",
+                        BagError::Duplicate(_) => "",
+                    };
+                    let path = if field.is_empty() {
+                        format!("taste.{name}")
+                    } else {
+                        format!("taste.{name}.{field}")
+                    };
+                    A::Error::custom(format!("{path} is refused: {error}"))
+                })?,
+            );
+        }
+        let bag = Bag::new(tastes)
+            .map_err(|error| A::Error::custom(format!("taste is refused: {error}")))?;
+        Ok(Config { bag })
+    }
+}
+
+impl Serialize for Config {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(Some(self.bag.tastes().len()))?;
+        for taste in self.bag.tastes() {
+            let row = Row {
+                words: taste
+                    .triggers()
+                    .iter()
+                    .map(|trigger| trigger.as_str().to_owned())
+                    .collect(),
+                message: taste.message().to_owned(),
+            };
+            map.serialize_entry(taste.name().as_str(), &row)?;
+        }
+        map.end()
+    }
+}
 
 /// The one root section this decoder reads.
 ///
@@ -38,7 +123,7 @@ struct Document {
 /// Unknown keys are refused. A misspelled `word` would otherwise leave a taste
 /// with no selectors under a name that still reads as active, which is the one
 /// failure a curated set cannot afford to take quietly.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Row {
     words: Vec<String>,

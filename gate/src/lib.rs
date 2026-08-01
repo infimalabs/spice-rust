@@ -13,6 +13,7 @@
 //! otherwise.
 
 pub mod camp;
+pub mod config;
 pub mod input;
 pub mod jurisdiction;
 pub mod kill;
@@ -28,6 +29,7 @@ pub use camp::{
     BoundRelation, Camp, CampError, CampFinding, CampReport, CampStanding, DistributionReport,
     LocusDistance, SharedBound,
 };
+pub use config::{Config, WalkConfig};
 pub use input::{
     BASELINE_PATH, BASELINE_VERSION, Baseline, BaselineError, Contract, ContractError, FieldError,
     Floor, FloorDeclaration, FloorKind, GateSet, LONG_LINE_LIMIT, POLICY_PATH, PolicyError,

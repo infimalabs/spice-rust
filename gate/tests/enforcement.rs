@@ -258,14 +258,15 @@ fn every_gate_digest_is_frozen_at_its_published_spelling() {
 
 #[test]
 fn ignore_lines_with_more_than_one_spelling_are_refused() {
-    for line in [" *.rs", "*.rs ", "!", "**/*.rs", "a\\ b"] {
+    for line in [" *.rs", "*.rs ", "!"] {
         let refused = Ignore::parse(line).expect_err("a second spelling is refused");
         assert_eq!(refused.line(), line, "the refusal quotes the exact line");
     }
 
-    let accepted = Ignore::parse("# a comment\n\n*.rs\n").expect("comments and blanks are fine");
-    assert_eq!(accepted.rules().len(), 1);
-    assert_eq!(accepted.render(), "*.rs\n");
+    let accepted = Ignore::parse("# a comment\n\n**/*.rs\na\\ b\n")
+        .expect("comments, blanks, crossing stars, and escapes are Gitignore syntax");
+    assert_eq!(accepted.rules().len(), 2);
+    assert_eq!(accepted.render(), "**/*.rs\na\\ b\n");
 
     // A rendered policy has to parse back to itself, or the policy digest would
     // be over a spelling that no operator could commit and re-derive.

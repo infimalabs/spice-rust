@@ -12,7 +12,7 @@ fn the_first_matching_rule_answers_and_later_matches_do_not() {
         rule("pushes", "git push*", Answer::Queue, None),
         // A rule that would also match `git push --force`, placed after the
         // one that answers, so a first-match failure shows up as this name.
-        rule("everything-git", "git *", Answer::Allow, None),
+        rule("everythinggit", "git *", Answer::Allow, None),
     ]);
 
     assert_eq!(
@@ -22,7 +22,7 @@ fn the_first_matching_rule_answers_and_later_matches_do_not() {
     assert_eq!(policy.decide("git push --force").answer(), Answer::Queue);
     assert_eq!(
         policy.decide("git status").authority(),
-        &Authority::Rule("everything-git".to_owned()),
+        &Authority::Rule("everythinggit".to_owned()),
     );
 }
 

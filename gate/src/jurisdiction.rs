@@ -136,10 +136,8 @@ impl Entry {
 /// One ignore-file line, holding the shape of the match it performs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rule {
-    pattern: String,
-    negated: bool,
-    anchored: bool,
-    directory_only: bool,
+    source: String,
+    pattern: gix_glob::Pattern,
 }
 
 impl Rule {
@@ -157,99 +155,42 @@ impl Rule {
             return Ok(None);
         }
 
-        let (negated, rest) = match line.strip_prefix('!') {
-            Some(rest) => (true, rest),
-            None => (false, line),
-        };
-        let (directory_only, rest) = match rest.strip_suffix('/') {
-            Some(rest) => (true, rest),
-            None => (false, rest),
-        };
-        let (rooted, pattern) = match rest.strip_prefix('/') {
-            Some(rest) => (true, rest),
-            None => (false, rest),
-        };
-
-        if pattern.is_empty() {
+        if line.contains(['\r', '\n']) {
+            return refuse(Malady::LineBreak);
+        }
+        let Some(pattern) = gix_glob::Pattern::from_bytes(line.as_bytes()) else {
             return refuse(Malady::EmptyPattern);
-        }
-        if pattern.contains("**") {
-            return refuse(Malady::CrossingStar);
-        }
-        if pattern.contains('\\') {
-            return refuse(Malady::Escape);
-        }
+        };
 
         Ok(Some(Self {
-            anchored: rooted || pattern.contains('/'),
-            pattern: pattern.to_owned(),
-            negated,
-            directory_only,
+            source: line.to_owned(),
+            pattern,
         }))
     }
 
     /// Whether this rule re-admits rather than excludes.
     #[must_use]
-    pub const fn negated(&self) -> bool {
-        self.negated
+    pub fn negated(&self) -> bool {
+        self.pattern.is_negative()
     }
 
     /// Whether this rule matches a path of this shape.
     #[must_use]
     pub fn matches(&self, path: &str, shape: Shape) -> bool {
-        if self.directory_only && !matches!(shape, Shape::Directory) {
-            return false;
-        }
-
-        let target = if self.anchored {
-            path
-        } else {
-            &path[path.rfind('/').map_or(0, |slash| slash + 1)..]
-        };
-        glob_matches(self.pattern.as_bytes(), target.as_bytes())
+        self.pattern.matches_repo_relative_path(
+            path.as_bytes().into(),
+            path.rfind('/').map(|slash| slash + 1),
+            Some(matches!(shape, Shape::Directory)),
+            gix_glob::pattern::Case::Sensitive,
+            gix_glob::wildmatch::Mode::NO_MATCH_SLASH_LITERAL,
+        )
     }
 }
 
 impl fmt::Display for Rule {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let bang = if self.negated { "!" } else { "" };
-        let root = if self.anchored && !self.pattern.contains('/') {
-            "/"
-        } else {
-            ""
-        };
-        let slash = if self.directory_only { "/" } else { "" };
-        write!(formatter, "{bang}{root}{}{slash}", self.pattern)
+        formatter.write_str(&self.source)
     }
-}
-
-/// Whether a glob matches this text, with `*` and `?` never crossing `/`.
-fn glob_matches(pattern: &[u8], text: &[u8]) -> bool {
-    let (mut at_pattern, mut at_text) = (0, 0);
-    let (mut star, mut consumed) = (None, 0);
-
-    while at_text < text.len() {
-        let literal = pattern
-            .get(at_pattern)
-            .is_some_and(|byte| *byte == text[at_text] || (*byte == b'?' && text[at_text] != b'/'));
-
-        if literal {
-            at_pattern += 1;
-            at_text += 1;
-        } else if pattern.get(at_pattern) == Some(&b'*') {
-            star = Some(at_pattern);
-            consumed = at_text;
-            at_pattern += 1;
-        } else if let Some(index) = star.filter(|_| text[consumed] != b'/') {
-            consumed += 1;
-            at_text = consumed;
-            at_pattern = index + 1;
-        } else {
-            return false;
-        }
-    }
-
-    pattern[at_pattern..].iter().all(|byte| *byte == b'*')
 }
 
 /// The ordered ignore policy one jurisdiction answers to.
@@ -262,6 +203,12 @@ pub struct Ignore {
 }
 
 impl Ignore {
+    /// Build a policy from already admitted rules in decision order.
+    #[must_use]
+    pub fn from_rules(rules: Vec<Rule>) -> Self {
+        Self { rules }
+    }
+
     /// Parse an ignore file.
     ///
     /// # Errors
@@ -696,10 +643,8 @@ pub enum Malady {
     SurroundingSpace,
     /// The line names no pattern at all.
     EmptyPattern,
-    /// `**` is not part of the matcher this gate declares.
-    CrossingStar,
-    /// Backslash escapes are not part of the matcher this gate declares.
-    Escape,
+    /// One array entry attempted to carry more than one ignore line.
+    LineBreak,
 }
 
 impl fmt::Display for Malady {
@@ -709,11 +654,7 @@ impl fmt::Display for Malady {
                 formatter.write_str("carries surrounding space, so it has more than one spelling")
             }
             Self::EmptyPattern => formatter.write_str("names no pattern"),
-            Self::CrossingStar => {
-                formatter.write_str("uses ** , which this matcher does not implement")
-            }
-            Self::Escape => formatter
-                .write_str("uses a backslash escape, which this matcher does not implement"),
+            Self::LineBreak => formatter.write_str("contains a line break"),
         }
     }
 }

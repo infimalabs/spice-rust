@@ -18,8 +18,10 @@
 use std::error::Error;
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 /// The closed set of policies a seat is supervised under.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum Life {
     /// The occupant is directed and waits to be told.
     Steer,

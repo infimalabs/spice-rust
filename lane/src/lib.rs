@@ -17,9 +17,12 @@
 //! [`renew`] is told whether an occupant is alive; neither consults a clock, so
 //! the same facts read in the same order always reduce to the same seat.
 
+pub mod config;
 pub mod drain;
 pub mod hold;
 pub mod life;
 pub mod occupant;
 pub mod renew;
 pub mod table;
+
+pub use config::Config;
