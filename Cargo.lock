@@ -1540,6 +1540,7 @@ name = "journal"
 version = "0.0.0"
 dependencies = [
  "atomic",
+ "libc",
  "rusqlite",
  "serde",
  "serde_json",

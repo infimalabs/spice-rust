@@ -5,7 +5,7 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use wire::manifest::{JOURNAL_BACKUP_VERSION, JournalBackupManifest, JournalBackupMember};
-use wire::{Digest, Domain, FaultClass, Outcome, ReplyPosition, RestoreVerification};
+use wire::{Digest, Domain, FaultClass, Outcome, ReplyPosition, RestoreVerification, WireVersion};
 
 const FAULT_EXIT: i32 = 1;
 const REFUSAL_EXIT: i32 = 2;
@@ -20,8 +20,12 @@ struct Fixture {
 
 impl Fixture {
     fn new(name: &str) -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "spice-restore-verify-{name}-{}-{}",
+        #[cfg(unix)]
+        let fixture_base = PathBuf::from("/tmp");
+        #[cfg(not(unix))]
+        let fixture_base = std::env::temp_dir();
+        let root = fixture_base.join(format!(
+            "srv-{}-{}-{name}",
             std::process::id(),
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
@@ -40,12 +44,17 @@ impl Fixture {
     }
 
     fn write_manifest(&self, version: u16, journal_schema: u32) {
+        self.write_manifest_versions(version, WireVersion::CURRENT, journal_schema);
+    }
+
+    fn write_manifest_versions(&self, version: u16, wire: WireVersion, journal_schema: u32) {
         let mut members = [AUTHORITY, "tape/lane-a"]
             .into_iter()
             .map(|path| {
                 let bytes = fs::read(self.bundle.join(path)).expect("member reads");
                 JournalBackupMember {
                     path: path.to_owned(),
+                    mode: member_mode(&self.bundle.join(path)),
                     bytes: u64::try_from(bytes.len()).expect("fixture length crosses"),
                     digest: Digest::compute(Domain::JournalBackupMember, &bytes),
                 }
@@ -54,13 +63,25 @@ impl Fixture {
         members.sort_by(|left, right| left.path.cmp(&right.path));
         let manifest = JournalBackupManifest {
             version,
+            wire,
             journal_schema,
             authority: AUTHORITY.to_owned(),
             members,
         };
+        self.persist_manifest(&manifest);
+    }
+
+    fn rewrite_manifest(&self, rewrite: impl FnOnce(&mut JournalBackupManifest)) {
+        let bytes = fs::read(self.bundle.join("manifest.json")).expect("manifest reads");
+        let mut manifest = wire::decode::<JournalBackupManifest>(&bytes).expect("manifest decodes");
+        rewrite(&mut manifest);
+        self.persist_manifest(&manifest);
+    }
+
+    fn persist_manifest(&self, manifest: &JournalBackupManifest) {
         fs::write(
             self.bundle.join("manifest.json"),
-            wire::encode(&manifest).expect("manifest encodes"),
+            wire::encode(manifest).expect("manifest encodes"),
         )
         .expect("manifest writes");
     }
@@ -81,6 +102,12 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        for directory in [&self.root, &self.bundle, &self.bundle.join("tape")] {
+            use std::os::unix::fs::PermissionsExt;
+
+            let _ = fs::set_permissions(directory, fs::Permissions::from_mode(0o755));
+        }
         fs::remove_dir_all(&self.root).expect("fixture cleanup");
     }
 }
@@ -102,6 +129,7 @@ fn valid_bundle_verifies_in_both_forms_without_mutating_the_repository() {
         panic!("valid bundle must reply");
     };
     assert_eq!(reply.position, ReplyPosition::Direct {});
+    assert_eq!(reply.body.wire, WireVersion::CURRENT);
     assert_eq!(reply.body.journal_schema, journal::SCHEMA_VERSION);
     assert_eq!(reply.body.members, 2);
     assert_eq!(reply.body.facts, 0);
@@ -113,6 +141,13 @@ fn valid_bundle_verifies_in_both_forms_without_mutating_the_repository() {
         Digest::compute(
             Domain::JournalBackupMember,
             &fs::read(fixture.bundle.join(AUTHORITY)).expect("authority reads")
+        )
+    );
+    assert_eq!(
+        reply.body.bundle,
+        Digest::compute(
+            Domain::JournalBackupManifest,
+            &fs::read(fixture.bundle.join("manifest.json")).expect("manifest reads")
         )
     );
 
@@ -131,6 +166,24 @@ fn valid_bundle_verifies_in_both_forms_without_mutating_the_repository() {
     );
 }
 
+fn member_mode(path: &Path) -> u32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::metadata(path)
+            .expect("member metadata reads")
+            .permissions()
+            .mode()
+            & 0o7777
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        0
+    }
+}
+
 #[test]
 fn missing_forward_and_incomplete_bundles_refuse_by_class() {
     let missing = Fixture::new("missing");
@@ -146,6 +199,18 @@ fn missing_forward_and_incomplete_bundles_refuse_by_class() {
     let forward = Fixture::new("forward");
     forward.write_manifest(JOURNAL_BACKUP_VERSION, journal::SCHEMA_VERSION + 1);
     assert_refusal(&forward.invoke(true), "restore::schema-forward");
+
+    let retired_bundle = Fixture::new("retired-bundle");
+    retired_bundle.write_manifest(JOURNAL_BACKUP_VERSION + 1, journal::SCHEMA_VERSION);
+    assert_refusal(&retired_bundle.invoke(true), "restore::bundle-version");
+
+    let foreign_wire = Fixture::new("foreign-wire");
+    foreign_wire.write_manifest_versions(
+        JOURNAL_BACKUP_VERSION,
+        WireVersion(WireVersion::CURRENT.0 + 1),
+        journal::SCHEMA_VERSION,
+    );
+    assert_refusal(&foreign_wire.invoke(true), "restore::wire-version");
 
     let hidden_forward = Fixture::new("hidden-forward");
     let connection = rusqlite::Connection::open(hidden_forward.bundle.join(AUTHORITY))
@@ -166,6 +231,10 @@ fn missing_forward_and_incomplete_bundles_refuse_by_class() {
     let incomplete = Fixture::new("incomplete");
     fs::remove_file(incomplete.bundle.join("tape/lane-a")).expect("member removes");
     assert_refusal(&incomplete.invoke(true), "restore::bundle-incomplete");
+
+    let extra = Fixture::new("extra");
+    fs::write(extra.bundle.join("unmanifested"), b"not admitted").expect("extra member writes");
+    assert_refusal(&extra.invoke(true), "restore::bundle-incomplete");
 }
 
 #[test]
@@ -191,6 +260,97 @@ fn corrupt_manifest_digest_and_replay_closure_fault_as_store_evidence() {
     assert_eq!(tree(&replay.root), before, "failed replay mutated bundle");
 }
 
+#[test]
+fn manifest_canonicality_member_metadata_and_schema_drift_are_store_evidence() {
+    let noncanonical = Fixture::new("noncanonical");
+    let mut bytes = fs::read(noncanonical.bundle.join("manifest.json")).expect("manifest reads");
+    bytes.push(b'\n');
+    fs::write(noncanonical.bundle.join("manifest.json"), bytes).expect("manifest rewrites");
+    assert_store_fault(&noncanonical.invoke(true));
+
+    let mode = Fixture::new("mode");
+    set_mode(&mode.bundle.join("tape/lane-a"), 0o600);
+    assert_store_fault(&mode.invoke(true));
+
+    let declared_mode = Fixture::new("declared-mode");
+    declared_mode.rewrite_manifest(|manifest| manifest.members[0].mode = 0o10_000);
+    assert_store_fault(&declared_mode.invoke(true));
+
+    let length = Fixture::new("length");
+    length.rewrite_manifest(|manifest| manifest.members[0].bytes += 1);
+    assert_store_fault(&length.invoke(true));
+
+    let digest = Fixture::new("declared-digest");
+    digest.rewrite_manifest(|manifest| {
+        manifest.members[0].digest =
+            Digest::compute(Domain::JournalBackupMember, b"another generation");
+    });
+    assert_store_fault(&digest.invoke(true));
+
+    let stale_schema = Fixture::new("stale-schema");
+    stale_schema.write_manifest(JOURNAL_BACKUP_VERSION, journal::SCHEMA_VERSION - 1);
+    assert_store_fault(&stale_schema.invoke(true));
+}
+
+#[test]
+fn noncanonical_paths_duplicate_order_and_extra_file_kinds_are_rejected() {
+    let traversal = Fixture::new("traversal");
+    traversal.rewrite_manifest(|manifest| manifest.authority = "../authority".to_owned());
+    assert_store_fault(&traversal.invoke(true));
+
+    let duplicate = Fixture::new("duplicate");
+    duplicate.rewrite_manifest(|manifest| manifest.members.push(manifest.members[0].clone()));
+    assert_refusal(&duplicate.invoke(true), "restore::bundle-incomplete");
+
+    let unordered = Fixture::new("unordered");
+    unordered.rewrite_manifest(|manifest| manifest.members.reverse());
+    assert_refusal(&unordered.invoke(true), "restore::bundle-incomplete");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        use std::os::unix::net::UnixListener;
+
+        let linked = Fixture::new("symlink");
+        fs::remove_file(linked.bundle.join("tape/lane-a")).expect("member removes");
+        symlink("../spicejournal.sqlite3", linked.bundle.join("tape/lane-a"))
+            .expect("symlink creates");
+        assert_store_fault(&linked.invoke(true));
+
+        let special = Fixture::new("special");
+        let _socket = UnixListener::bind(special.bundle.join("special.sock"))
+            .expect("special socket creates");
+        assert_store_fault(&special.invoke(true));
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn a_genuinely_read_only_bundle_verifies_without_changing_bytes_or_modes() {
+    let fixture = Fixture::new("read-only");
+    set_mode(&fixture.bundle.join(AUTHORITY), 0o444);
+    set_mode(&fixture.bundle.join("tape/lane-a"), 0o444);
+    fixture.write_manifest(JOURNAL_BACKUP_VERSION, journal::SCHEMA_VERSION);
+    set_mode(&fixture.bundle.join("manifest.json"), 0o444);
+    set_mode(&fixture.bundle.join("tape"), 0o555);
+    set_mode(&fixture.bundle, 0o555);
+    let before = tree(&fixture.root);
+
+    let output = fixture.invoke(true);
+    assert!(
+        output.status.success(),
+        "read-only verification failed: {:?}",
+        output.stderr
+    );
+    assert_eq!(tree(&fixture.root), before, "read-only inputs changed");
+
+    set_mode(&fixture.bundle, 0o755);
+    set_mode(&fixture.bundle.join("tape"), 0o755);
+    set_mode(&fixture.bundle.join(AUTHORITY), 0o644);
+    set_mode(&fixture.bundle.join("tape/lane-a"), 0o644);
+    set_mode(&fixture.bundle.join("manifest.json"), 0o644);
+}
+
 fn assert_refusal(output: &Output, reason: &str) {
     assert_eq!(output.status.code(), Some(REFUSAL_EXIT));
     let Outcome::<RestoreVerification>::Refusal(refusal) =
@@ -214,13 +374,26 @@ fn assert_store_fault(output: &Output) {
     assert!(output.stdout.is_empty(), "fault spoke on stdout");
 }
 
-fn tree(root: &Path) -> BTreeMap<String, Option<Vec<u8>>> {
+fn set_mode(path: &Path, mode: u32) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("fixture mode changes");
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, mode);
+    }
+}
+
+fn tree(root: &Path) -> BTreeMap<String, (u32, Option<Vec<u8>>)> {
     let mut state = BTreeMap::new();
     walk(root, root, &mut state);
     state
 }
 
-fn walk(root: &Path, directory: &Path, state: &mut BTreeMap<String, Option<Vec<u8>>>) {
+fn walk(root: &Path, directory: &Path, state: &mut BTreeMap<String, (u32, Option<Vec<u8>>)>) {
     let mut entries = fs::read_dir(directory)
         .expect("snapshot directory reads")
         .collect::<Result<Vec<_>, _>>()
@@ -234,11 +407,15 @@ fn walk(root: &Path, directory: &Path, state: &mut BTreeMap<String, Option<Vec<u
             .to_string_lossy()
             .into_owned();
         let kind = entry.file_type().expect("snapshot file type");
+        let mode = member_mode(&path);
         if kind.is_dir() {
-            state.insert(relative, None);
+            state.insert(relative, (mode, None));
             walk(root, &path, state);
         } else {
-            state.insert(relative, Some(fs::read(path).expect("snapshot file reads")));
+            state.insert(
+                relative,
+                (mode, Some(fs::read(path).expect("snapshot file reads"))),
+            );
         }
     }
 }

@@ -11,7 +11,10 @@ use wire::manifest::{
 use wire::{Digest, Domain, Outcome, ReleaseNotes, ReplyPosition};
 
 const REFUSAL_EXIT: i32 = 2;
-const OCI_IMAGE: &str = "ghcr.io/example/spice-proof@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const OCI_IMAGE: [&str; 2] = [
+    "ghcr.io/example/spice-proof@sha256:",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+];
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -271,7 +274,7 @@ fn write_manifest(path: &Path, commit: &str, complete: bool) {
         target(
             ReleaseTarget::X86_64UnknownLinuxMusl,
             b"linux",
-            ProofEnvironment::oci(OCI_IMAGE).expect("fixture OCI identity is pinned"),
+            ProofEnvironment::oci(OCI_IMAGE.concat()).expect("fixture OCI identity is pinned"),
         ),
     ];
     if !complete {

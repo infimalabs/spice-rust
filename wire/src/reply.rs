@@ -162,6 +162,8 @@ pub struct Version {
 pub struct RestoreVerification {
     /// Domain-separated identity of the canonical backup manifest.
     pub bundle: Digest,
+    /// Crossing schema admitted by the canonical manifest.
+    pub wire: WireVersion,
     /// Finalized schema admitted from the authority member.
     pub journal_schema: u32,
     /// Domain-separated identity of the SQLite authority bytes.
