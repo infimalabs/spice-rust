@@ -13,6 +13,8 @@ use listen::{RetroSelector, StreamOutcome, SurfaceError, Watch};
 use wire::{Fault, FaultClass, Outcome, Refusal};
 
 #[cfg(not(target_arch = "wasm32"))]
+mod board_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod canvas_command;
 mod cli;
 #[cfg(not(target_arch = "wasm32"))]
@@ -162,6 +164,21 @@ fn main() {
             release_command::RunResult::Plan(outcome) => deliver(&outcome, form),
             release_command::RunResult::Published(outcome) => deliver(&outcome, form),
         },
+        ["board"]
+        | ["board", "graph"]
+        | ["board", "handout"]
+        | ["task", "next"]
+        | ["task", "add"]
+        | ["task", "done"]
+        | ["task", "review"]
+        | ["task", "note"]
+        | ["task", "defer"]
+        | ["task", "wake"]
+        | ["task", "free"]
+        | ["task", "oops"]
+        | ["task", "depends"]
+        | ["doc"]
+        | ["doc", "ledger"] => deliver(&board_command::run(leaf, contract), form),
         ["steer"] | ["steer", "cancel"] | ["inbox"] | ["ack"] => deliver(
             &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
             form,
@@ -186,6 +203,14 @@ fn main() {
 
 #[cfg(target_arch = "wasm32")]
 fn deliver_target_refusal(path: &[&str], form: Form) {
+    let Some(fault) = target_unsupported(path) else {
+        return;
+    };
+    deliver_fault(fault, form);
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn target_unsupported(path: &[&str]) -> Option<Fault> {
     let (reason, detail) = match path {
         ["gate", ..] => (
             "gate::target-unsupported",
@@ -199,20 +224,25 @@ fn deliver_target_refusal(path: &[&str], form: Form) {
             "install::target-unsupported",
             "filesystem installation is unavailable on wasm32",
         ),
+        ["lock"] | ["lock", "run"] => (
+            "lock::target-unsupported",
+            "filesystem-backed process locks are unavailable on wasm32",
+        ),
+        ["restore", "verify"] => (
+            "restore::target-unsupported",
+            "reading and verifying a restore archive is unavailable on wasm32",
+        ),
         ["canvas"] => (
             "canvas::target-unsupported",
             "repository discovery and platform browser launch are unavailable on wasm32",
         ),
-        _ => return,
+        _ => return None,
     };
-    deliver_fault(
-        Fault {
-            class: FaultClass::Environment,
-            reason: reason.to_owned(),
-            detail: detail.to_owned(),
-        },
-        form,
-    );
+    Some(Fault {
+        class: FaultClass::Environment,
+        reason: reason.to_owned(),
+        detail: detail.to_owned(),
+    })
 }
 
 fn not_landed(contract: &cli::Contract) -> Outcome<()> {
@@ -672,7 +702,7 @@ mod tests {
     use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
     use super::render::{self, Stream};
-    use super::{FAULT_EXIT, REFUSAL_EXIT, REPLY_EXIT, exit_status};
+    use super::{FAULT_EXIT, REFUSAL_EXIT, REPLY_EXIT, exit_status, target_unsupported};
 
     fn reply() -> Outcome<()> {
         Outcome::Reply(Reply {
@@ -705,6 +735,24 @@ mod tests {
         assert_eq!(exit_status(&refusal()), REFUSAL_EXIT);
         assert_eq!(exit_status(&fault()), FAULT_EXIT);
         assert_eq!((REPLY_EXIT, REFUSAL_EXIT, FAULT_EXIT), (0, 2, 1));
+    }
+
+    #[test]
+    fn daemonless_local_os_contracts_have_named_wasm_refusals() {
+        for (path, reason) in [
+            (&["install"][..], "install::target-unsupported"),
+            (&["lock"][..], "lock::target-unsupported"),
+            (&["lock", "run"][..], "lock::target-unsupported"),
+            (&["restore", "verify"][..], "restore::target-unsupported"),
+            (&["release", "notes"][..], "release::target-unsupported"),
+        ] {
+            let fault = target_unsupported(path)
+                .unwrap_or_else(|| panic!("{} needs a wasm refusal", path.join(" ")));
+            assert_eq!(fault.class, FaultClass::Environment);
+            assert_eq!(fault.reason, reason);
+            assert!(!fault.detail.is_empty());
+        }
+        assert!(target_unsupported(&["version"]).is_none());
     }
 
     /// The stream an outcome speaks on and the exit it carries read the same.

@@ -17,6 +17,10 @@ use wire::intent::{AnswerShape, BodyShape, CommandAnswer, Intent};
 /// Every command body, spelled as WIRE spells it, paired with the kind whose
 /// binding must decode it.
 const BODIES: &[(CommandKind, &str)] = &[
+    (CommandKind::BoardRead, r#"{}"#),
+    (CommandKind::BoardGraph, r#"{ "view": "dependencies" }"#),
+    (CommandKind::BoardHandout, r#"{ "output": "-" }"#),
+    (CommandKind::DocLedger, r#"{ "task": "SPICE-aBcD" }"#),
     (
         CommandKind::TaskAdd,
         r#"{
@@ -75,14 +79,17 @@ const BODIES: &[(CommandKind, &str)] = &[
     (CommandKind::ClaimLapse, r#"{ "task": "SPICE-aBcD" }"#),
     (
         CommandKind::DocApply,
-        r#"{ "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }"#,
+        r##"{
+  "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "document": "# Task\n"
+}"##,
     ),
     (
         CommandKind::SteerSend,
-        r#"{
+        r##"{
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "message": "drain the queue"
-}"#,
+}"##,
     ),
     (CommandKind::SteerInbox, r#"{}"#),
     (
@@ -165,6 +172,24 @@ const BODIES: &[(CommandKind, &str)] = &[
 
 /// One successful reply body for every declared answer shape.
 const ANSWERS: &[(AnswerShape, &str)] = &[
+    (
+        AnswerShape::Board,
+        r#"{
+  "schema": 1,
+  "cursor": 1,
+  "principal": "operator",
+  "tasks": [],
+  "residency": {
+    "position": 1,
+    "body": {
+      "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+      "state": "seated",
+      "lanes": []
+    }
+  }
+}"#,
+    ),
+    (AnswerShape::Text, r#"{ "text": "graph dependencies\n" }"#),
     (
         AnswerShape::Task,
         r#"{ "task": "SPICE-aBcD", "status": "done" }"#,
@@ -373,6 +398,10 @@ fn a_kind_binds_one_body_and_one_answer() {
 
 /// Shapes a body may take, listed so an unreachable one is caught.
 const ALL_BODIES: &[BodyShape] = &[
+    BodyShape::BoardRead,
+    BodyShape::BoardGraph,
+    BodyShape::BoardHandout,
+    BodyShape::DocLedger,
     BodyShape::TaskAdd,
     BodyShape::TaskEdit,
     BodyShape::TaskNote,
@@ -404,6 +433,8 @@ const ALL_BODIES: &[BodyShape] = &[
 
 /// Shapes an answer may take, listed for the same reason.
 const ALL_ANSWERS: &[AnswerShape] = &[
+    AnswerShape::Board,
+    AnswerShape::Text,
     AnswerShape::Task,
     AnswerShape::Claim,
     AnswerShape::Doc,

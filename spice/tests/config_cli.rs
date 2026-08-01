@@ -174,9 +174,9 @@ fn machine_local_sets_preview_then_apply_one_exact_digest() {
                     .expect("local state entry")
                     .file_name()
                     .to_string_lossy()
-                    .starts_with(".spice-atomic-")
+                    .starts_with(".spice-config-")
             }),
-        "atomic publication leaves no stage residue"
+        "handle-bound publication leaves no stage residue"
     );
 
     refusal(

@@ -263,15 +263,15 @@ fn root_help_exposes_the_generated_command_families() {
 
 #[test]
 fn a_registered_unlanded_leaf_refuses_by_name() {
-    let spoken = invoke(&["task", "next"]);
+    let spoken = invoke(&["lane"]);
 
     assert_eq!(spoken.code, Some(REFUSAL_EXIT));
     assert!(spoken.out.is_empty());
     assert_eq!(
         utf8(spoken.err),
         concat!(
-            "spice: release::not-landed; complete BOARD-1kJQlDDt ",
-            "(board::next) before Rust release one admits this leaf\n",
+            "spice: release::not-landed; complete COORDIN-1kJQlDjc ",
+            "(lane::read) before Rust release one admits this leaf\n",
         ),
     );
 }
@@ -382,8 +382,8 @@ fn version_refuses_unfinalized_and_incompatible_schema_without_mutation() {
 /// that happen to match today.
 #[test]
 fn one_outcome_reaches_one_stream_in_either_form() {
-    let text = invoke(&["task", "next"]);
-    let json = invoke(&["--json", "task", "next"]);
+    let text = invoke(&["lane"]);
+    let json = invoke(&["--json", "lane"]);
 
     assert_eq!(text.code, Some(REFUSAL_EXIT));
     assert_eq!(json.code, Some(REFUSAL_EXIT));

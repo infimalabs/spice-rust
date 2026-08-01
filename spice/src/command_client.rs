@@ -23,11 +23,15 @@ use crate::cli::{Contract, Guard, Principal, ReplyPositionLaw};
 
 mod browser;
 mod steering;
+mod typed;
 
 pub(crate) use browser::open_canvas;
 #[cfg(test)]
 use browser::{browser_command, open_canvas_with};
 pub(crate) use steering::execute_steering;
+pub(crate) use typed::execute_typed;
+#[cfg(test)]
+use typed::kind_for;
 
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_DISCOVERY_BYTES: u64 = 16 * 1024;
@@ -292,6 +296,7 @@ impl MappedCommand {
         if contract.path != mapped_path
             || !contract.guards.contains(&Guard::Resident)
             || matches!(contract.principal, Principal::Local)
+            || kind.is_read() != matches!(contract.journal, crate::cli::JournalAccess::Read)
         {
             return Err(protocol_fault(
                 "command::mapping-unsupported",

@@ -153,6 +153,46 @@ fn mapping_enforces_the_wire_witness_law() {
 }
 
 #[test]
+fn every_landed_board_family_leaf_uses_one_current_command_kind() {
+    let expected = [
+        (&["board"][..], CommandKind::BoardRead),
+        (&["board", "graph"][..], CommandKind::BoardGraph),
+        (&["board", "handout"][..], CommandKind::BoardHandout),
+        (&["task", "next"][..], CommandKind::ClaimWin),
+        (&["task", "add"][..], CommandKind::TaskAdd),
+        (&["task", "done"][..], CommandKind::TaskDone),
+        (&["task", "review"][..], CommandKind::TaskReview),
+        (&["task", "note"][..], CommandKind::TaskNote),
+        (&["task", "defer"][..], CommandKind::TaskDefer),
+        (&["task", "wake"][..], CommandKind::TaskWake),
+        (&["task", "free"][..], CommandKind::ClaimFree),
+        (&["task", "oops"][..], CommandKind::TaskAdd),
+        (&["task", "depends"][..], CommandKind::TaskDepends),
+        (&["doc"][..], CommandKind::DocApply),
+        (&["doc", "ledger"][..], CommandKind::DocLedger),
+    ];
+
+    for (path, kind) in expected {
+        assert_eq!(
+            kind_for(path),
+            Some(kind),
+            "current mapping moved: {path:?}"
+        );
+        assert_eq!(
+            crate::cli::landing(path),
+            crate::cli::Landing::Landed,
+            "mapped family leaf is not visible: {path:?}",
+        );
+    }
+    let mapped_family_leaves = crate::cli::contracts()
+        .iter()
+        .filter(|contract| matches!(contract.path[0], "board" | "task" | "doc"))
+        .filter(|contract| kind_for(contract.path).is_some())
+        .count();
+    assert_eq!(mapped_family_leaves, expected.len());
+}
+
+#[test]
 fn discovery_replacement_is_detected_by_file_identity() {
     let fixture = Fixture::new("replacement");
     let original = fixture.publish();
