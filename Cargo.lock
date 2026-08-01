@@ -5,6 +5,9 @@ version = 4
 [[package]]
 name = "app"
 version = "0.0.0"
+dependencies = [
+ "wire",
+]
 
 [[package]]
 name = "atomic"
@@ -13,18 +16,40 @@ version = "0.0.0"
 [[package]]
 name = "board"
 version = "0.0.0"
+dependencies = [
+ "dialect",
+ "fold",
+ "journal",
+ "wire",
+]
 
 [[package]]
 name = "bus"
 version = "0.0.0"
+dependencies = [
+ "fold",
+ "journal",
+]
 
 [[package]]
 name = "canvas"
 version = "0.0.0"
+dependencies = [
+ "atomic",
+ "bus",
+ "fold",
+ "journal",
+ "wire",
+]
 
 [[package]]
 name = "consent"
 version = "0.0.0"
+dependencies = [
+ "fold",
+ "journal",
+ "wire",
+]
 
 [[package]]
 name = "dialect"
@@ -33,30 +58,72 @@ version = "0.0.0"
 [[package]]
 name = "dist"
 version = "0.0.0"
+dependencies = [
+ "atomic",
+ "sill",
+ "wire",
+]
 
 [[package]]
 name = "fold"
 version = "0.0.0"
+dependencies = [
+ "journal",
+ "wire",
+]
 
 [[package]]
 name = "gate"
 version = "0.0.0"
+dependencies = [
+ "atomic",
+ "sill",
+ "wire",
+]
 
 [[package]]
 name = "journal"
 version = "0.0.0"
+dependencies = [
+ "atomic",
+ "sill",
+ "wire",
+]
 
 [[package]]
 name = "lane"
 version = "0.0.0"
+dependencies = [
+ "atomic",
+ "bus",
+ "consent",
+ "fold",
+ "journal",
+ "listen",
+ "sill",
+ "steer",
+ "tape",
+ "taste",
+ "vendor",
+]
 
 [[package]]
 name = "listen"
 version = "0.0.0"
+dependencies = [
+ "tape",
+ "wire",
+]
 
 [[package]]
 name = "proof"
 version = "0.0.0"
+dependencies = [
+ "atomic",
+ "gate",
+ "sill",
+ "wire",
+]
 
 [[package]]
 name = "sill"
@@ -65,22 +132,64 @@ version = "0.0.0"
 [[package]]
 name = "spice"
 version = "0.0.0"
+dependencies = [
+ "atomic",
+ "board",
+ "bus",
+ "canvas",
+ "consent",
+ "dialect",
+ "fold",
+ "gate",
+ "journal",
+ "lane",
+ "listen",
+ "proof",
+ "sill",
+ "steer",
+ "tape",
+ "taste",
+ "vendor",
+ "wire",
+]
 
 [[package]]
 name = "steer"
 version = "0.0.0"
+dependencies = [
+ "atomic",
+ "fold",
+ "journal",
+ "sill",
+ "wire",
+]
 
 [[package]]
 name = "tape"
 version = "0.0.0"
+dependencies = [
+ "atomic",
+ "sill",
+]
 
 [[package]]
 name = "taste"
 version = "0.0.0"
+dependencies = [
+ "fold",
+ "journal",
+ "listen",
+ "wire",
+]
 
 [[package]]
 name = "vendor"
 version = "0.0.0"
+dependencies = [
+ "listen",
+ "sill",
+ "wire",
+]
 
 [[package]]
 name = "wire"

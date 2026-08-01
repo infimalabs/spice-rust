@@ -6,5 +6,12 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[dependencies]
+atomic = { path = "../atomic" }
+fold = { path = "../fold" }
+journal = { path = "../journal" }
+sill = { path = "../sill" }
+wire = { path = "../wire" }
+
 [lints]
 workspace = true
