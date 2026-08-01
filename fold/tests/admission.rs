@@ -207,15 +207,31 @@ fn an_unknown_fold_source_is_refused_by_name() {
 }
 
 #[test]
-fn a_fold_before_its_source_fold_is_refused_by_name() {
+fn a_fold_must_follow_its_source_fold() {
     let mut folds = folds();
-    fold_mut(&mut folds, "steer::inbox").sources = LATER_FOLD_SOURCE;
+    let dependent = fold_mut(&mut folds, "steer::inbox");
+    let mut sources = dependent.sources.to_vec();
+    sources.extend_from_slice(LATER_FOLD_SOURCE);
+    dependent.sources = Box::leak(sources.into_boxed_slice());
 
     assert_refusal(
         &folds,
         &rings(),
         "fold steer::inbox must follow source fold consent::queue",
     );
+
+    let dependent = folds
+        .iter()
+        .position(|fold| fold.name == "steer::inbox")
+        .expect("fixture contains the dependent fold");
+    let source = folds
+        .iter()
+        .position(|fold| fold.name == "consent::queue")
+        .expect("fixture contains the source fold");
+    folds.swap(dependent, source);
+
+    admission::validate(FactKind::ALL, &folds, &rings())
+        .expect("dependency-safe order must be admitted");
 }
 
 #[test]

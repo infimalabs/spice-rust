@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -97,29 +97,6 @@ fn assert_every_variant_consumed<T: Copy + Eq + std::fmt::Debug>(
                 .any(|found| found == *variant),
             "{variant:?} is declared but no fold names it as a source",
         );
-    }
-}
-
-#[test]
-fn fold_id_all_is_dependency_safe_rebuild_order() {
-    let positions = FoldId::ALL
-        .iter()
-        .enumerate()
-        .map(|(position, fold)| (*fold, position))
-        .collect::<BTreeMap<_, _>>();
-    for definition in INVENTORY.definitions() {
-        let dependent_position = positions[&definition.fold];
-        for source in definition.sources {
-            if let Source::Fold(source) = source {
-                let source_position = positions[source];
-                assert!(
-                    source_position < dependent_position,
-                    "dependent fold {} at position {dependent_position} must follow source fold \
-                     {source} at position {source_position}",
-                    definition.fold,
-                );
-            }
-        }
     }
 }
 
