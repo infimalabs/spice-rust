@@ -59,8 +59,8 @@ operator authorizes cutover.
 
 ## Rust contracts
 
-The registry contains 63 command leaves. Thirty-six have executable dispatch,
-so current executable coverage is 36/63, or 57.1 percent. Completed domain
+The registry contains 63 command leaves. Forty have executable dispatch,
+so current executable coverage is 40/63, or 63.5 percent. Completed domain
 libraries do not count as landed command surfaces.
 
 ### Landed
@@ -83,6 +83,10 @@ libraries do not count as landed command surfaces.
 - `up`
 - `down`
 - `run`
+- `steer`
+- `steer cancel`
+- `inbox`
+- `ack`
 - `config`
 - `restore verify`
 - `consent`
@@ -141,11 +145,7 @@ read the Python authority under `<git-common>/.spice`.
 - `lane add`
 - `lane drain`
 - `lane wake`
-- `steer`
-- `steer cancel`
-- `inbox`
 - `recall`
-- `ack`
 
 ### `POLICY-1kJQlFB6`
 
@@ -169,8 +169,8 @@ the registry exposes them even though argparse requires a child action.
 - `agent activation`: `lane` and canvas discovery; `COORDIN-1kJQlDjc`.
 - `agent ensure`: `lane add`; `COORDIN-1kJQlDjc`.
 - `agent import`: removed by the LATER.md drop ledger.
-- `agent post-tool-hook`: `run`, `inbox`, and `ack`; `COORDIN-1kJQlDjc`.
-- `agent reply`: `ack`; `COORDIN-1kJQlDjc`.
+- `agent post-tool-hook`: landed `run`, `inbox`, and `ack`.
+- `agent reply`: landed `ack`.
 - `agent requeue-deadletter`: removed by the LATER.md drop ledger.
 - `agent run`: landed `run`.
 - `agent show`: `lane` and `recall`; `COORDIN-1kJQlDjc`.

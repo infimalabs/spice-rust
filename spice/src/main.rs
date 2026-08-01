@@ -42,6 +42,8 @@ mod resident;
 #[cfg(not(target_arch = "wasm32"))]
 mod restore_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod steering_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod trust_command;
 
 use render::Form;
@@ -160,6 +162,10 @@ fn main() {
             release_command::RunResult::Plan(outcome) => deliver(&outcome, form),
             release_command::RunResult::Published(outcome) => deliver(&outcome, form),
         },
+        ["steer"] | ["steer", "cancel"] | ["inbox"] | ["ack"] => deliver(
+            &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
+            form,
+        ),
         ["trust"] => deliver(&trust_command::report(contract), form),
         ["trust", "grant"] => deliver(&trust_command::rule(leaf, contract, true), form),
         ["trust", "revoke"] => deliver(&trust_command::rule(leaf, contract, false), form),
