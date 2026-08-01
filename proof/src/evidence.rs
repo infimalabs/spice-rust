@@ -31,9 +31,12 @@ pub(crate) struct AdmittedReceipt {
 }
 
 impl AdmittedReceipt {
-    #[cfg(test)]
     pub(crate) const fn digest(&self) -> &Digest {
         &self.digest
+    }
+
+    pub(crate) const fn value(&self) -> &ProofReceipt {
+        &self.value
     }
 
     #[cfg(test)]

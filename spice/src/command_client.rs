@@ -27,16 +27,21 @@ const MAX_DISCOVERY_BYTES: u64 = 16 * 1024;
 type ClientResult<T> = Result<T, Outcome<CommandAnswer>>;
 
 /// One generated CLI selection with a landed command-envelope mapping.
-pub(crate) enum SelectedCommand {
+pub(crate) enum SelectedCommand<'a> {
     /// The operator requests the current resident's bounded Dark transition.
     Down,
+    /// The operator recognizes one exact, already admitted release publication.
+    ReleasePublish {
+        release: &'a crate::release_command::AdmittedRelease,
+        state: crate::release_command::PublicationState,
+    },
 }
 
 /// Submit one contract-bound command to the current repository resident.
 pub(crate) fn execute(
     repository: &Repository,
     contract: &Contract,
-    selected: SelectedCommand,
+    selected: SelectedCommand<'_>,
 ) -> Outcome<CommandAnswer> {
     let mapped = match MappedCommand::selected(contract, selected) {
         Ok(mapped) => mapped,
@@ -58,7 +63,7 @@ struct MappedCommand {
 }
 
 impl MappedCommand {
-    fn selected(contract: &Contract, selected: SelectedCommand) -> ClientResult<Self> {
+    fn selected(contract: &Contract, selected: SelectedCommand<'_>) -> ClientResult<Self> {
         match (contract.path, selected) {
             (["down"], SelectedCommand::Down) => Self::new(
                 contract,
@@ -72,6 +77,26 @@ impl MappedCommand {
                     state: wire::ResidentState::Dark,
                 },
             ),
+            (["release", "publish"], SelectedCommand::ReleasePublish { release, state }) => {
+                let mut expected = vec![Witness::Observation {
+                    key: release.key().clone(),
+                    head: state.observation(),
+                }];
+                expected.extend(release.receipts().map(|proof| Witness::Sealed {
+                    proof: proof.clone(),
+                    manifest: release.manifest().clone(),
+                }));
+                Self::new(
+                    contract,
+                    &["release", "publish"],
+                    CommandKind::ReleasePublish,
+                    expected,
+                    &wire::intent::ReleasePublish {
+                        key: release.key().clone(),
+                        manifest: release.manifest().clone(),
+                    },
+                )
+            }
             _ => Err(protocol_fault(
                 "command::mapping-unsupported",
                 "selected CLI contract has no resident command mapping",

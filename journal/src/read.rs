@@ -3,7 +3,7 @@ use std::fmt;
 
 use rusqlite::Connection;
 
-use crate::Journal;
+use crate::{Journal, JournalReader};
 
 /// One immutable, contiguous view of the journal fact stream.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -55,7 +55,14 @@ impl Journal {
     }
 }
 
-fn read_snapshot(connection: &Connection) -> Result<FactSnapshot, SnapshotError> {
+impl JournalReader {
+    /// Read the canonical authority stream without creating or migrating it.
+    pub fn fact_snapshot(&self) -> Result<FactSnapshot, SnapshotError> {
+        read_snapshot(&self.connection)
+    }
+}
+
+pub(crate) fn read_snapshot(connection: &Connection) -> Result<FactSnapshot, SnapshotError> {
     let mut statement = connection
         .prepare("SELECT seq, kind, envelope FROM fact_envelopes ORDER BY seq")
         .map_err(SnapshotError::Sqlite)?;
