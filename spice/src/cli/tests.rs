@@ -301,6 +301,34 @@ fn contract_syntax_drives_argument_registration() {
 }
 
 #[test]
+fn configuration_flag_mappings_resolve_in_the_generated_tree() {
+    let parser = command();
+    for mapping in spice::config::descriptors()
+        .iter()
+        .filter_map(|descriptor| descriptor.flag())
+    {
+        let contract = contract_at(CONTRACTS, mapping.command())
+            .unwrap_or_else(|| panic!("missing command contract for {mapping:?}"));
+        assert!(
+            contract.syntax.contains(mapping.flag()),
+            "contract syntax lost {mapping:?}: {:?}",
+            contract.syntax
+        );
+
+        let leaf = mapping.command().iter().fold(&parser, |command, name| {
+            command
+                .find_subcommand(name)
+                .unwrap_or_else(|| panic!("generated tree lost {mapping:?}"))
+        });
+        assert!(
+            leaf.get_arguments()
+                .any(|argument| argument.get_long() == mapping.flag().strip_prefix("--")),
+            "generated parser lost {mapping:?}"
+        );
+    }
+}
+
+#[test]
 fn mutating_contract_syntax_mutates_registration_and_help() {
     let mut contracts = CONTRACTS.to_vec();
     let doctor = contracts
