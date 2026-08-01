@@ -107,3 +107,12 @@ fn bare_reference_to_qualified_duplicates_is_ambiguous() {
         "ambiguous After target: shared (line 11; use a qualified slug)",
     );
 }
+
+#[test]
+fn every_node_is_checked_for_the_reserved_synthetic_root_identity() {
+    assert_refusal(
+        "# Alpha\n- Document root\n# Beta\n",
+        RefusalCode::SyntheticRootCollision,
+        "title collides with the synthetic root: Document root (line 2); rename it or use one authored top-level root",
+    );
+}
