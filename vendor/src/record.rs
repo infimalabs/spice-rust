@@ -18,15 +18,21 @@ pub struct SessionId(String);
 impl SessionId {
     /// Admit a nonempty vendor session identity.
     ///
+    /// Surrounding whitespace is not part of an identity, so it is removed
+    /// rather than merely looked past: keeping it would let this admit one value
+    /// and store another, and the padding would ride into `--resume` where the
+    /// vendor matches identities literally.
+    ///
     /// # Errors
     ///
     /// Returns [`SessionIdError`] when `value` is empty or whitespace only.
     pub fn new(value: impl Into<String>) -> Result<Self, SessionIdError> {
         let value = value.into();
-        if value.trim().is_empty() {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
             return Err(SessionIdError);
         }
-        Ok(Self(value))
+        Ok(Self(trimmed.to_owned()))
     }
 
     /// Vendor spelling of this session identity.

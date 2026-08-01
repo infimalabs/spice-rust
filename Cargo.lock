@@ -684,6 +684,8 @@ name = "vendor"
 version = "0.0.0"
 dependencies = [
  "listen",
+ "serde",
+ "serde_json",
  "sill",
  "wire",
 ]
