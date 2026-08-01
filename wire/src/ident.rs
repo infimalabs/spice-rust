@@ -77,8 +77,6 @@ pub enum Domain {
     DistTargetPayload,
     /// The bytes of one staged artifact.
     DistArtifact,
-    /// The repository identity used to qualify installation artifacts.
-    InstallRepository,
     /// The bytes of one file selected by an installation plan.
     InstallArtifact,
     /// The complete observed installation plan.
@@ -91,6 +89,8 @@ pub enum Domain {
     DistSourceCommit,
     /// The complete two-target release manifest admitted after proof.
     DistReleaseManifest,
+    /// The complete deterministic release-note input document.
+    DistReleaseNotes,
     /// The ordered command inventory one sealed proof replay consumes.
     ProofBattery,
     /// The complete typed result of one sealed proof replay.
@@ -135,13 +135,13 @@ impl Domain {
             Self::JournalBackupMember => "spice.journal.backup-member.v1",
             Self::DistTargetPayload => "spice.dist.target-payload.v1",
             Self::DistArtifact => "spice.dist.artifact.v1",
-            Self::InstallRepository => "spice.install.repository.v1",
             Self::InstallArtifact => "spice.install.artifact.v1",
-            Self::InstallPlan => "spice.install.plan.v1",
+            Self::InstallPlan => "spice.install.coexistence-plan.v1",
             Self::DistPins => "spice.dist.pins.v1",
             Self::DistInventory => "spice.dist.inventory.v1",
             Self::DistSourceCommit => "spice.dist.source-commit.v1",
             Self::DistReleaseManifest => "spice.dist.release-manifest.v1",
+            Self::DistReleaseNotes => "spice.dist.release-notes.v1",
             Self::ProofBattery => "spice.proof.battery.v1",
             Self::ProofReplayV2 => "spice.proof.replay.v2",
             Self::ProofReceiptV2 => "spice.proof.receipt.v2",

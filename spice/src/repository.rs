@@ -6,6 +6,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// Repository-common directory owned exclusively by the Rust construction.
+pub const STATE_DIRECTORY: &str = ".spice-rust";
+
 /// One repository resolved to its worktree and shared Git directory.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Repository {
@@ -68,13 +71,16 @@ impl Repository {
         &self.common
     }
 
+    /// The sole repository-common state root owned by the Rust construction.
+    #[must_use]
+    pub fn state_root(&self) -> PathBuf {
+        self.common.join(STATE_DIRECTORY)
+    }
+
     /// The sole authority database path under repository-common Spice state.
     #[must_use]
     pub fn journal_path(&self) -> PathBuf {
-        self.common
-            .join(".spice")
-            .join("data")
-            .join("spicejournal.sqlite3")
+        self.state_root().join("data").join("spicejournal.sqlite3")
     }
 }
 
@@ -310,14 +316,15 @@ mod tests {
 
         assert_eq!(repository.worktree_root(), worktree);
         assert_eq!(repository.common_dir(), common);
+        assert_eq!(repository.state_root(), common.join(".spice-rust"));
         assert_eq!(
             repository.journal_path(),
-            common.join(".spice/data/spicejournal.sqlite3")
+            common.join(".spice-rust/data/spicejournal.sqlite3")
         );
         assert_eq!(
             proof::Layout::new(
                 repository.worktree_root(),
-                repository.common_dir(),
+                repository.state_root(),
                 wire::manifest::ReleaseTarget::Aarch64AppleDarwin,
             )
             .payload_path(),
@@ -353,9 +360,15 @@ mod tests {
             fs::canonicalize(&common).expect("canonical common directory")
         );
         assert_eq!(
+            repository.state_root(),
+            fs::canonicalize(&common)
+                .expect("canonical shared state root")
+                .join(".spice-rust")
+        );
+        assert_eq!(
             proof::Layout::new(
                 repository.worktree_root(),
-                repository.common_dir(),
+                repository.state_root(),
                 wire::manifest::ReleaseTarget::X86_64UnknownLinuxMusl,
             )
             .payload_path(),

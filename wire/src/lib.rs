@@ -78,9 +78,8 @@ pub use hello::{Accepted, Hello, Rejected};
 pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
-    Fault, FaultClass, Outcome, ProofEvidence, Refusal, ReleaseNoteChange, ReleaseNotes,
-    ReleaseNotesRange, ReleaseNotesTarget, Reply, ReplyPosition, Response, RestoreVerification,
-    SchemaMovement, SeqRange, SeqRangeError, Version,
+    Fault, FaultClass, Outcome, ProofEvidence, Refusal, ReleaseNotes, ReleaseNotesTarget, Reply,
+    ReplyPosition, Response, RestoreVerification, SeqRange, SeqRangeError, Version,
 };
 pub use witness::{
     Answer, Disposition, Name, NameError, Phase, PhaseError, TaskHandle, TaskHandleError, Witness,

@@ -42,7 +42,7 @@ pub(crate) fn execute(
         Ok(mapped) => mapped,
         Err(outcome) => return outcome,
     };
-    let discovery_path = repository.common_dir().join(".spice").join("canvas");
+    let discovery_path = repository.state_root().join("canvas");
     let discovery = match DiscoveryRead::open(&discovery_path) {
         Ok(discovery) => discovery,
         Err(outcome) => return outcome,

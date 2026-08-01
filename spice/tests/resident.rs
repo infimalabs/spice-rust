@@ -10,6 +10,7 @@ use std::time::{Duration, Instant as Monotonic};
 use bus::{Bus, CommitOutcome};
 use journal::{FactCause, JournalWrite};
 use notify::{RecursiveMode, Watcher};
+use rusqlite::{Connection, params};
 use sill::{Acquisition, LockFile, LockName};
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::header::ORIGIN;
@@ -38,7 +39,7 @@ impl Fixture {
             std::process::id(),
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
-        let runtime = root.join(".git/.spice");
+        let runtime = root.join(".git/.spice-rust");
         fs::create_dir_all(root.join(".git")).expect("fixture git directory");
         Self {
             cleanup: root.clone(),
@@ -63,7 +64,7 @@ impl Fixture {
         fs::write(git.join("commondir"), "../..\n").expect("linked common pointer");
         Self {
             root,
-            runtime: common.join(".spice"),
+            runtime: common.join(".spice-rust"),
             cleanup,
         }
     }
@@ -833,6 +834,49 @@ fn command_client_process_refuses_untrusted_discovery_before_connecting() {
             .stderr
             .windows(capability.len())
             .any(|w| w == capability.as_bytes())
+    );
+}
+
+#[test]
+fn unfinalized_rust_schema_refuses_startup_with_its_exact_state() {
+    let fixture = Fixture::new("schema-refusal");
+    fs::create_dir_all(fixture.journal().parent().expect("journal parent"))
+        .expect("data directory");
+    let connection = Connection::open(fixture.journal()).expect("open schema fixture");
+    connection
+        .execute_batch(concat!(
+            "CREATE TABLE journal_schema(singleton INTEGER PRIMARY KEY, ",
+            "version INTEGER NOT NULL, state TEXT NOT NULL, ",
+            "from_version INTEGER, to_version INTEGER, plan_digest TEXT);",
+        ))
+        .expect("create schema identity");
+    connection
+        .execute(
+            concat!(
+                "INSERT INTO journal_schema(singleton, version, state, ",
+                "from_version, to_version) VALUES (1, ?1, ?2, ?3, ?4)"
+            ),
+            params![1_u32, "prepared", 0_u32, 1_u32],
+        )
+        .expect("insert prepared schema identity");
+    connection
+        .pragma_update(None, "user_version", 1_u32)
+        .expect("set schema pragma");
+    drop(connection);
+
+    let output = invoke(&fixture, "up");
+
+    assert_eq!(output.status.code(), Some(REFUSAL_EXIT));
+    let Outcome::Refusal(refusal) = outcome(&output) else {
+        panic!("an unfinalized Rust journal must refuse");
+    };
+    assert_eq!(refusal.reason, "journal::schema-refused");
+    assert!(
+        refusal
+            .observed
+            .as_deref()
+            .is_some_and(|observed| observed.contains("prepared and unfinalized")),
+        "refusal omitted the exact schema state: {refusal:?}",
     );
 }
 

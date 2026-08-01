@@ -318,7 +318,7 @@ const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["release", "notes"],
-        "release notes RANGE MANIFEST",
+        "release notes INPUT",
         Local,
         None,
         [],
