@@ -55,7 +55,7 @@ pub use head::{
     WorkflowHead,
 };
 pub use hello::{Hello, Rejected};
-pub use ident::{CanonicalUuid, Digest, IdentError, Instant};
+pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
     Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, Response, SeqRange, SeqRangeError,
