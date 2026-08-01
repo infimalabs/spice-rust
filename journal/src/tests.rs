@@ -232,7 +232,12 @@ fn structure_defect_fixture() -> Journal {
     let journal = authority_fixture();
     insert_fact(
         &journal,
-        fact(4, None, FactKind::TaskNoted, json!({"task": "JOURNAL-a1"})),
+        fact(
+            4,
+            None,
+            FactKind::TaskNoted,
+            json!({"task": "JOURNAL-a1", "note": "Journal fixture note"}),
+        ),
     );
     journal
         .connection
