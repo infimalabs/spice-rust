@@ -1,5 +1,5 @@
 use listen::{Event, Locus, Prose, Usage};
-use taste::{Bag, Decision, Taste, Trigger, TriggerError, judge};
+use taste::{Bag, Decision, JudgmentFact, Taste, Trigger, TriggerError, judge};
 use wire::FactKind;
 
 const BEHAVIOR: &str = include_str!("fixtures/behavior.txt");
@@ -93,20 +93,27 @@ fn judgment_is_the_only_door_from_a_hit_to_a_fact() {
         .next()
         .expect("behavior fixture hits");
 
-    let cleared = judge(hit.clone(), Decision::Clear);
-    assert!(cleared.into_fact().is_none(), "a clearance is not a fact");
+    let cleared = judge(hit.clone(), Decision::Clear).into_fact();
+    assert_eq!(cleared.kind(), FactKind::TasteCleared);
+    assert!(fold::FactPlane::Taste.contains(cleared.kind()));
+    let JudgmentFact::Cleared(cleared) = cleared else {
+        panic!("a clearance minted the wrong typed body");
+    };
+    assert_eq!(cleared.body.taste, "fallbacks");
+    assert_eq!(cleared.body.locus, locus(BEHAVIOR).to_string());
 
-    let confirmed = judge(hit, Decision::Confirm)
-        .into_fact()
-        .expect("a confirmation mints a fact");
+    let confirmed = judge(hit, Decision::Confirm).into_fact();
     assert_eq!(confirmed.kind(), FactKind::TasteConfirmed);
     assert!(fold::FactPlane::Taste.contains(confirmed.kind()));
+    let JudgmentFact::Confirmed(confirmed) = confirmed else {
+        panic!("a confirmation minted the wrong typed body");
+    };
     assert_eq!(confirmed.body.taste, "fallbacks");
     assert_eq!(confirmed.body.locus, locus(BEHAVIOR).to_string());
 }
 
 #[test]
-fn a_harmless_mention_clears_without_reaching_the_fact_path() {
+fn a_harmless_mention_reaches_the_clearance_fact_path() {
     let bag = Bag::new(vec![fallback_taste()]).expect("bag");
     let hit = bag
         .hits(&prose(MENTION))
@@ -114,5 +121,32 @@ fn a_harmless_mention_clears_without_reaching_the_fact_path() {
         .next()
         .expect("mention still selects a candidate");
 
-    assert!(judge(hit, Decision::Clear).into_fact().is_none());
+    assert_eq!(
+        judge(hit, Decision::Clear).into_fact().kind(),
+        FactKind::TasteCleared
+    );
+}
+
+#[test]
+fn every_taste_plane_kind_has_a_judgment_producer() {
+    let bag = Bag::new(vec![fallback_taste()]).expect("bag");
+    let hit = bag
+        .hits(&prose(BEHAVIOR))
+        .into_iter()
+        .next()
+        .expect("behavior fixture hits");
+    let mut produced = [
+        judge(hit.clone(), Decision::Confirm).into_fact().kind(),
+        judge(hit, Decision::Clear).into_fact().kind(),
+    ];
+    produced.sort_unstable();
+
+    let mut taste_plane = FactKind::ALL
+        .iter()
+        .copied()
+        .filter(|kind| fold::FactPlane::Taste.contains(*kind))
+        .collect::<Vec<_>>();
+    taste_plane.sort_unstable();
+
+    assert_eq!(produced.as_slice(), taste_plane);
 }

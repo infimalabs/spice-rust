@@ -129,6 +129,7 @@ name = "bus"
 version = "0.0.0"
 dependencies = [
  "fold",
+ "jiff",
  "journal",
 ]
 
@@ -312,6 +313,7 @@ dependencies = [
  "journal",
  "rusqlite",
  "serde_json",
+ "syn 3.0.3",
  "wire",
 ]
 
@@ -719,6 +721,7 @@ dependencies = [
  "fold",
  "journal",
  "sill",
+ "syn 3.0.3",
  "wire",
 ]
 

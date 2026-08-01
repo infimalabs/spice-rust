@@ -1,4 +1,4 @@
-use std::fmt;
+use crate::{FoldId, RingId};
 
 /// Declare a closed vocabulary and the slice that enumerates it.
 ///
@@ -25,50 +25,6 @@ macro_rules! closed_vocabulary {
             pub const ALL: &[Self] = &[$(Self::$variant),+];
         }
     };
-}
-
-closed_vocabulary! {
-    /// One registered disposable materialization.
-    ///
-    /// Declaration order is dependency-safe rebuild order: a fold appears after
-    /// every fold it names as a source.
-    pub enum FoldId {
-        SteerInbox,
-        ConsentQueue,
-        LaneCanary,
-        TasteActive,
-        CanvasVerdicts,
-        CanvasMagnitude,
-        CanvasFlow,
-        CanvasTopology,
-        CanvasChronology,
-        ReleaseHistory,
-    }
-}
-
-impl FoldId {
-    /// The fold's wire name.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::SteerInbox => "steer::inbox",
-            Self::ConsentQueue => "consent::queue",
-            Self::LaneCanary => "lane::canary",
-            Self::TasteActive => "taste::active",
-            Self::CanvasVerdicts => "canvas::verdicts",
-            Self::CanvasMagnitude => "canvas::magnitude",
-            Self::CanvasFlow => "canvas::flow",
-            Self::CanvasTopology => "canvas::topology",
-            Self::CanvasChronology => "canvas::chronology",
-            Self::ReleaseHistory => "release::history",
-        }
-    }
-}
-
-impl fmt::Display for FoldId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
 }
 
 closed_vocabulary! {
@@ -247,23 +203,6 @@ closed_vocabulary! {
 }
 
 closed_vocabulary! {
-    /// One bounded non-replayable ring source.
-    pub enum RingId {
-        BusRefusals,
-    }
-}
-
-impl RingId {
-    /// The ring's wire name.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::BusRefusals => "bus::refusals",
-        }
-    }
-}
-
-closed_vocabulary! {
     /// Tracked configuration whose digest is an explicit fold input.
     pub enum ConfigSource {
         Consent,
@@ -289,6 +228,14 @@ pub enum Source {
     Config(ConfigSource),
     Tape(TapeSource),
     CommandResults,
+}
+
+/// One admitted fact or head family named by a fold answer.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum AnswerContent {
+    Fact(wire::FactKind),
+    Facts(FactPlane),
+    Head(HeadSource),
 }
 
 /// Policy for a requested position beyond a fold's complete horizon.

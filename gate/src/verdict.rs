@@ -96,9 +96,23 @@ impl Run {
         bounds: &Bounds,
     ) -> Result<Self, RunError> {
         let jurisdiction = Jurisdiction::walk(root, policy.ignore()).map_err(RunError::Walk)?;
+        let inventory = jurisdiction.inventory_digest();
+        let tree = jurisdiction.tree_digest().map_err(RunError::Walk)?;
         let measurements = policy
             .measure(&jurisdiction, bounds)
             .map_err(RunError::Measure)?;
+
+        let observed = Jurisdiction::walk(root, policy.ignore()).map_err(RunError::Walk)?;
+        let observed_inventory = observed.inventory_digest();
+        let observed_tree = observed.tree_digest().map_err(RunError::Walk)?;
+        if inventory != observed_inventory || tree != observed_tree {
+            return Err(RunError::JurisdictionChanged {
+                inventory,
+                observed_inventory,
+                tree,
+                observed_tree,
+            });
+        }
 
         let findings = ratchet.compare(&measurements);
         let standing = if findings.iter().all(|finding| finding.movement.passes()) {
@@ -108,9 +122,9 @@ impl Run {
         };
 
         let verdict = Verdict {
-            tree: jurisdiction.tree_digest().map_err(RunError::Walk)?,
+            tree,
             policy: policy.digest(),
-            inventory: jurisdiction.inventory_digest(),
+            inventory,
             measurement: measurement_digest(&measurements),
             standing,
             findings,
@@ -163,6 +177,17 @@ pub enum RunError {
     Walk(WalkError),
     /// A metric could not be measured.
     Measure(MeasureError),
+    /// The inventory or admitted contents moved during measurement.
+    JurisdictionChanged {
+        /// Inventory established before measurement.
+        inventory: Digest,
+        /// Inventory observed after measurement.
+        observed_inventory: Digest,
+        /// Admitted contents established before measurement.
+        tree: Digest,
+        /// Admitted contents observed after measurement.
+        observed_tree: Digest,
+    },
 }
 
 impl fmt::Display for RunError {
@@ -170,6 +195,16 @@ impl fmt::Display for RunError {
         match self {
             Self::Walk(source) => write!(formatter, "{source}"),
             Self::Measure(source) => write!(formatter, "{source}"),
+            Self::JurisdictionChanged {
+                inventory,
+                observed_inventory,
+                tree,
+                observed_tree,
+            } => write!(
+                formatter,
+                "jurisdiction changed during measurement: inventory {inventory} became \
+                 {observed_inventory}; tree {tree} became {observed_tree}"
+            ),
         }
     }
 }
@@ -179,6 +214,7 @@ impl std::error::Error for RunError {
         match self {
             Self::Walk(source) => Some(source),
             Self::Measure(source) => Some(source),
+            Self::JurisdictionChanged { .. } => None,
         }
     }
 }

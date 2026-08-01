@@ -8,10 +8,10 @@ mod inventory;
 mod store;
 
 pub use contract::{
-    Availability, Beyond, ConfigSource, Cursor, FactPlane, FoldId, HeadSource, Horizon, Recovery,
-    RingId, Source, TapeSource,
+    AnswerContent, Availability, Beyond, ConfigSource, Cursor, FactPlane, HeadSource, Horizon,
+    Recovery, Source, TapeSource,
 };
-pub use inventory::{Definition, INVENTORY, Inventory, RingDefinition};
+pub use inventory::{Definition, FoldId, INVENTORY, Inventory, RingDefinition, RingId};
 #[cfg(not(target_arch = "wasm32"))]
 pub use store::{
     Materialization, ReadOutcome, RebuildCause, Reducer, Reduction, Refusal, Store, StoreError,

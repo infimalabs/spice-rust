@@ -95,6 +95,19 @@ fn claimed_entry(name: &str, current: &str) -> Entry {
     .expect("valid claimed heads")
 }
 
+fn completed_entry(name: &str) -> Entry {
+    let mut completed = workflow("review");
+    completed.status = "completed".to_owned();
+    completed.completion = Some(instant("2026-08-01T06:06:00.000Z"));
+    Entry::new(
+        statement(name),
+        completed,
+        Some(claim(ClaimDisposition::Active)),
+        Some(lease()),
+    )
+    .expect("valid completed heads")
+}
+
 #[test]
 fn statement_views_preserve_project_family_handle_and_dependency_heads() {
     let mut head = statement("BOARD-a1");
@@ -239,6 +252,54 @@ fn workflow_advances_only_one_declared_station_and_completes_only_the_last() {
     assert_eq!(
         complete.next().completion,
         Some(instant("2026-08-01T06:06:00.000Z"))
+    );
+}
+
+#[test]
+fn active_claim_for_another_task_cannot_advance_workflow() {
+    let owned = claimed_entry("BOARD-a1", "todo");
+    let active = Active::admit(&owned, &Actor::Spice, instant("2026-08-01T06:05:00.000Z"))
+        .expect("active claim");
+    let other = claimed_entry("BOARD-b2", "todo");
+
+    assert_eq!(
+        Transition::advance(&other, &active, phase("review")).expect_err("claim is task-bound"),
+        PhaseRefusal::ClaimForAnotherTask
+    );
+}
+
+#[test]
+fn completed_workflow_refuses_both_advance_and_completion() {
+    let completed = completed_entry("BOARD-a1");
+    let active = Active::admit(
+        &completed,
+        &Actor::Spice,
+        instant("2026-08-01T06:05:00.000Z"),
+    )
+    .expect("active claim");
+
+    assert_eq!(
+        Transition::advance(&completed, &active, phase("todo"))
+            .expect_err("completed workflow cannot advance"),
+        PhaseRefusal::Completed
+    );
+    assert_eq!(
+        Transition::complete(&completed, &active, instant("2026-08-01T06:07:00.000Z"))
+            .expect_err("completed workflow cannot complete again"),
+        PhaseRefusal::Completed
+    );
+}
+
+#[test]
+fn advance_target_outside_declared_flow_is_named() {
+    let entry = claimed_entry("BOARD-a1", "todo");
+    let active = Active::admit(&entry, &Actor::Spice, instant("2026-08-01T06:05:00.000Z"))
+        .expect("active claim");
+    let outside = phase("verify");
+
+    assert_eq!(
+        Transition::advance(&entry, &active, outside.clone()).expect_err("outside target refuses"),
+        PhaseRefusal::TargetOutsideFlow(outside)
     );
 }
 
