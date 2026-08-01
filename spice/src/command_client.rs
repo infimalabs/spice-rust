@@ -34,6 +34,10 @@ pub(crate) enum SelectedCommand<'a> {
         release: &'a crate::release_command::AdmittedRelease,
         state: crate::release_command::PublicationState,
     },
+    /// The operator approves one exact pended executable digest.
+    TrustGrant { digest: &'a wire::Digest },
+    /// The operator withdraws approval from one exact granted digest.
+    TrustRevoke { digest: &'a wire::Digest },
 }
 
 /// Submit one contract-bound command to the current repository resident.
@@ -54,6 +58,24 @@ pub(crate) fn execute(
         Err(outcome) => return outcome,
     };
     request(contract, mapped, discovery)
+}
+
+/// Prove the selected read contract through the resident's sole authenticated
+/// opening path and return the generation that accepted it.
+pub(crate) fn authenticate(
+    discovery_path: &Path,
+    contract: &Contract,
+) -> ClientResult<CanonicalUuid> {
+    if !contract.guards.contains(&Guard::Resident) || matches!(contract.principal, Principal::Local)
+    {
+        return Err(protocol_fault(
+            "command::mapping-unsupported",
+            "selected CLI contract has no authenticated resident read mapping",
+        ));
+    }
+    let discovery = DiscoveryRead::open(discovery_path)?;
+    let session = open_session(contract, discovery)?;
+    Ok(session.accepted.epoch)
 }
 
 struct MappedCommand {
@@ -98,6 +120,30 @@ impl MappedCommand {
                     },
                 )
             }
+            (["trust", "grant"], SelectedCommand::TrustGrant { digest }) => Self::new(
+                contract,
+                &["trust", "grant"],
+                CommandKind::TrustGrant,
+                vec![Witness::Trust {
+                    digest: digest.clone(),
+                    standing: wire::TrustState::Pended,
+                }],
+                &wire::intent::TrustRef {
+                    digest: digest.clone(),
+                },
+            ),
+            (["trust", "revoke"], SelectedCommand::TrustRevoke { digest }) => Self::new(
+                contract,
+                &["trust", "revoke"],
+                CommandKind::TrustRevoke,
+                vec![Witness::Trust {
+                    digest: digest.clone(),
+                    standing: wire::TrustState::Granted,
+                }],
+                &wire::intent::TrustRef {
+                    digest: digest.clone(),
+                },
+            ),
             _ => Err(protocol_fault(
                 "command::mapping-unsupported",
                 "selected CLI contract has no resident command mapping",
@@ -359,48 +405,84 @@ fn request(
     mapped: MappedCommand,
     discovery: DiscoveryRead,
 ) -> Outcome<CommandAnswer> {
-    let authority = match endpoint_authority(&discovery.value.endpoint) {
-        Ok(authority) => authority,
+    let mut session = match open_session(contract, discovery) {
+        Ok(session) => session,
         Err(outcome) => return outcome,
     };
+    let command = mapped.envelope(session.discovery.value.epoch);
+    if let Err(outcome) = send(&mut session.socket, &command) {
+        return outcome;
+    }
+    let response = match receive(&mut session.socket) {
+        Ok(response) => response,
+        Err(outcome) => return outcome,
+    };
+    decode_response(
+        &response,
+        contract,
+        mapped.id,
+        mapped.kind,
+        session.discovery.value.epoch,
+        session.discovery.value.capability,
+    )
+}
+
+struct AuthenticatedSession {
+    socket: WebSocket<TcpStream>,
+    discovery: DiscoveryRead,
+    accepted: wire::Accepted,
+}
+
+fn open_session(
+    contract: &Contract,
+    discovery: DiscoveryRead,
+) -> ClientResult<AuthenticatedSession> {
+    let authority = endpoint_authority(&discovery.value.endpoint)?;
     let address = match authority.parse::<SocketAddr>() {
         Ok(address) if address.ip().is_loopback() => address,
         Ok(_) => {
-            return protocol_fault(
+            return Err(protocol_fault(
                 "canvas::endpoint-not-loopback",
                 "canvas discovery does not name a loopback socket",
-            );
+            ));
         }
         Err(_) => {
-            return protocol_fault(
+            return Err(protocol_fault(
                 "canvas::endpoint-invalid",
                 "canvas discovery does not name one socket authority",
-            );
+            ));
         }
     };
-    if let Err(outcome) = discovery.verify_current() {
-        return outcome;
-    }
+    discovery.verify_current()?;
     let stream = match TcpStream::connect_timeout(&address, SOCKET_TIMEOUT) {
         Ok(stream) => stream,
-        Err(error) => return environment_fault("canvas::connect-failed", &error.to_string()),
+        Err(error) => {
+            return Err(environment_fault(
+                "canvas::connect-failed",
+                &error.to_string(),
+            ));
+        }
     };
     if let Err(error) = stream.set_read_timeout(Some(SOCKET_TIMEOUT)) {
-        return environment_fault("canvas::timeout-failed", &error.to_string());
+        return Err(environment_fault(
+            "canvas::timeout-failed",
+            &error.to_string(),
+        ));
     }
     if let Err(error) = stream.set_write_timeout(Some(SOCKET_TIMEOUT)) {
-        return environment_fault("canvas::timeout-failed", &error.to_string());
+        return Err(environment_fault(
+            "canvas::timeout-failed",
+            &error.to_string(),
+        ));
     }
-    if let Err(outcome) = discovery.verify_current() {
-        return outcome;
-    }
+    discovery.verify_current()?;
     let mut request = match format!("ws://{authority}/socket").into_client_request() {
         Ok(request) => request,
         Err(_) => {
-            return protocol_fault(
+            return Err(protocol_fault(
                 "canvas::request-invalid",
                 "canvas endpoint cannot form the current socket request",
-            );
+            ));
         }
     };
     let origin = match discovery
@@ -410,61 +492,43 @@ fn request(
     {
         Ok(origin) => origin,
         Err(_) => {
-            return protocol_fault(
+            return Err(protocol_fault(
                 "canvas::origin-invalid",
                 "canvas endpoint cannot form the current socket origin",
-            );
+            ));
         }
     };
     request.headers_mut().insert(ORIGIN, origin);
     let (mut socket, _) = match tungstenite::client(request, stream) {
         Ok(opened) => opened,
-        Err(error) => return environment_fault("canvas::opening-failed", &error.to_string()),
+        Err(error) => {
+            return Err(environment_fault(
+                "canvas::opening-failed",
+                &error.to_string(),
+            ));
+        }
     };
-    if let Err(outcome) = discovery.verify_current() {
-        return outcome;
-    }
+    discovery.verify_current()?;
     let hello = wire::Hello {
         wire: wire::WireVersion::CURRENT,
         capability: discovery.value.capability,
         epoch: discovery.value.epoch,
     };
-    if let Err(outcome) = send(&mut socket, &hello) {
-        return outcome;
-    }
-    let opening = match receive(&mut socket) {
-        Ok(opening) => opening,
-        Err(outcome) => return outcome,
-    };
-    let accepted = match decode_opening(&opening, &discovery.value) {
-        Ok(accepted) => accepted,
-        Err(outcome) => return outcome,
-    };
+    send(&mut socket, &hello)?;
+    let opening = receive(&mut socket)?;
+    let accepted = decode_opening(&opening, &discovery.value)?;
     if !principal_matches(contract.principal, &accepted.actor) {
-        return protocol_fault(
+        return Err(protocol_fault(
             "command::principal-mismatch",
             "resident capability resolved to a principal outside the selected CLI contract",
-        );
+        ));
     }
-    if let Err(outcome) = discovery.verify_current() {
-        return outcome;
-    }
-    let command = mapped.envelope(discovery.value.epoch);
-    if let Err(outcome) = send(&mut socket, &command) {
-        return outcome;
-    }
-    let response = match receive(&mut socket) {
-        Ok(response) => response,
-        Err(outcome) => return outcome,
-    };
-    decode_response(
-        &response,
-        contract,
-        mapped.id,
-        mapped.kind,
-        discovery.value.epoch,
-        discovery.value.capability,
-    )
+    discovery.verify_current()?;
+    Ok(AuthenticatedSession {
+        socket,
+        discovery,
+        accepted,
+    })
 }
 
 fn endpoint_authority(endpoint: &str) -> ClientResult<&str> {

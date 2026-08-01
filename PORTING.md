@@ -59,8 +59,8 @@ operator authorizes cutover.
 
 ## Rust contracts
 
-The registry contains 63 command leaves. Twenty-eight have executable dispatch,
-so current executable coverage is 28/63, or 44.4 percent. Completed domain
+The registry contains 63 command leaves. Thirty-one have executable dispatch,
+so current executable coverage is 31/63, or 49.2 percent. Completed domain
 libraries do not count as landed command surfaces.
 
 ### Landed
@@ -85,6 +85,9 @@ libraries do not count as landed command surfaces.
 - `run`
 - `config`
 - `restore verify`
+- `trust`
+- `trust grant`
+- `trust revoke`
 - `backup`
 - `restore`
 - `journal`
@@ -148,9 +151,6 @@ read the Python authority under `<git-common>/.spice`.
 - `taste`
 - `taste add`
 - `taste drop`
-- `trust`
-- `trust grant`
-- `trust revoke`
 
 ### `PUBLISH-1kJQlGb0`
 

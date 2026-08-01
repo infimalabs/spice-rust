@@ -14,8 +14,8 @@ mod load;
 mod resolve;
 
 pub use load::{
-    AcquisitionIssue, AcquisitionKind, LoadError, Locations, load, load_coexisting_repository,
-    load_repository, locations,
+    AcquisitionIssue, AcquisitionKind, LoadError, Loaded, Locations, capture_repository, load,
+    load_coexisting_repository, load_repository, locations,
 };
 pub use resolve::{
     ConcretePath, Document, FlagError, FlagOverride, FlagValue, Inputs, Issue, IssueKind,
