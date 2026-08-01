@@ -67,11 +67,14 @@ const fn position(domain: Domain) -> usize {
         Domain::DistArtifact => 2,
         Domain::DistPins => 3,
         Domain::DistInventory => 4,
-        Domain::GateFile => 5,
-        Domain::GateTree => 6,
-        Domain::GatePolicy => 7,
-        Domain::GateInventory => 8,
-        Domain::GateMeasurement => 9,
+        Domain::ProofBattery => 5,
+        Domain::ProofReplay => 6,
+        Domain::ProofReceipt => 7,
+        Domain::GateFile => 8,
+        Domain::GateTree => 9,
+        Domain::GatePolicy => 10,
+        Domain::GateInventory => 11,
+        Domain::GateMeasurement => 12,
     }
 }
 
@@ -87,12 +90,15 @@ fn the_sweep_names_every_domain_exactly_once() {
 }
 
 /// Every domain, so a new class cannot be added without being swept here.
-const DOMAINS: [Domain; 10] = [
+const DOMAINS: [Domain; 13] = [
     Domain::BoardDocument,
     Domain::DistTargetPayload,
     Domain::DistArtifact,
     Domain::DistPins,
     Domain::DistInventory,
+    Domain::ProofBattery,
+    Domain::ProofReplay,
+    Domain::ProofReceipt,
     Domain::GateFile,
     Domain::GateTree,
     Domain::GatePolicy,
@@ -154,6 +160,9 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
             "spice.dist.artifact.v1",
             "spice.dist.pins.v1",
             "spice.dist.inventory.v1",
+            "spice.proof.battery.v1",
+            "spice.proof.replay.v1",
+            "spice.proof.receipt.v1",
             "spice.gate.file.v1",
             "spice.gate.tree.v1",
             "spice.gate.policy.v1",

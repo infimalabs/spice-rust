@@ -1,4 +1,6 @@
-use wire::manifest::{BuildPins, InventoryEntry, ReleaseTarget, TargetPayload};
+use wire::manifest::{
+    BuildPins, InventoryEntry, ProofReceipt, ProofStanding, ReleaseTarget, TargetPayload,
+};
 use wire::{Digest, Domain};
 
 /// Hex width of an OCI `sha256:` reference.
@@ -45,6 +47,18 @@ fn payload(target: ReleaseTarget, marker: &str) -> TargetPayload {
     }
 }
 
+fn receipt(target: ReleaseTarget, marker: &str) -> ProofReceipt {
+    ProofReceipt {
+        version: 1,
+        target,
+        payload: Digest::compute(Domain::DistTargetPayload, marker.as_bytes()),
+        battery: Digest::compute(Domain::ProofBattery, marker.as_bytes()),
+        replay: Digest::compute(Domain::ProofReplay, marker.as_bytes()),
+        environment: format!("registry.example/proof@sha256:{}", "4".repeat(64)),
+        standing: ProofStanding::Clean,
+    }
+}
+
 #[test]
 fn release_payloads_round_trip_without_aliasing_targets() {
     let darwin = payload(ReleaseTarget::Aarch64AppleDarwin, "darwin");
@@ -72,6 +86,27 @@ fn release_targets_encode_as_canonical_rust_triples() {
     assert_eq!(
         wire::encode(&ReleaseTarget::X86_64UnknownLinuxMusl).expect("target encodes"),
         br#""x86_64-unknown-linux-musl""#
+    );
+}
+
+#[test]
+fn detached_proof_receipts_round_trip_in_the_current_shape() {
+    let receipt = receipt(ReleaseTarget::X86_64UnknownLinuxMusl, "linux-proof");
+    let bytes = wire::encode(&receipt).expect("proof receipt encodes");
+
+    assert_eq!(
+        wire::decode::<ProofReceipt>(&bytes).expect("proof receipt decodes"),
+        receipt
+    );
+
+    let mut changed: serde_json::Value = serde_json::from_slice(&bytes).expect("receipt is JSON");
+    changed["unknown"] = serde_json::Value::Bool(true);
+    assert!(
+        wire::decode::<ProofReceipt>(
+            &serde_json::to_vec(&changed).expect("changed receipt is JSON")
+        )
+        .is_err(),
+        "a receipt outside the current shape must refuse"
     );
 }
 
