@@ -55,13 +55,72 @@ fn a_non_canonical_uuid_is_refused_by_the_decoder_too() {
     assert!(refused.is_err(), "upper-case text is not a canonical uuid");
 }
 
+/// Where each class sits in the sweep below.
+///
+/// The sweep is a hand-written array, and on its own an array goes stale in
+/// silence: add a variant, forget the line, and every domain test keeps passing
+/// while covering one class less. This match is the half the compiler checks. A
+/// new variant fails to compile here first, and the arm it forces names the
+/// index the sweep then has to fill.
+const fn position(domain: Domain) -> usize {
+    match domain {
+        Domain::DistTargetPayload => 0,
+        Domain::DistArtifact => 1,
+        Domain::DistPins => 2,
+        Domain::DistInventory => 3,
+        Domain::GateFile => 4,
+        Domain::GateTree => 5,
+        Domain::GatePolicy => 6,
+        Domain::GateInventory => 7,
+        Domain::GateMeasurement => 8,
+    }
+}
+
+#[test]
+fn the_sweep_names_every_domain_exactly_once() {
+    for (index, domain) in DOMAINS.iter().enumerate() {
+        assert_eq!(
+            position(*domain),
+            index,
+            "the domain sweep and the class list disagree about {domain:?}"
+        );
+    }
+}
+
 /// Every domain, so a new class cannot be added without being swept here.
-const DOMAINS: [Domain; 4] = [
-    Domain::TargetPayload,
-    Domain::Artifact,
-    Domain::Pins,
-    Domain::Inventory,
+const DOMAINS: [Domain; 9] = [
+    Domain::DistTargetPayload,
+    Domain::DistArtifact,
+    Domain::DistPins,
+    Domain::DistInventory,
+    Domain::GateFile,
+    Domain::GateTree,
+    Domain::GatePolicy,
+    Domain::GateInventory,
+    Domain::GateMeasurement,
 ];
+
+#[test]
+fn every_class_leads_with_the_plane_its_tag_names() {
+    for domain in DOMAINS {
+        let plane = domain
+            .tag()
+            .split('.')
+            .nth(1)
+            .expect("a tag names the plane its class belongs to");
+        let spelled = format!("{domain:?}");
+
+        assert!(
+            spelled.len() > plane.len() && spelled[..plane.len()].eq_ignore_ascii_case(plane),
+            "{spelled} is tagged {} but does not lead with the plane {plane}",
+            domain.tag()
+        );
+        assert!(
+            spelled[plane.len()..].starts_with(|letter: char| letter.is_ascii_uppercase()),
+            "{spelled} must begin a new word after the plane {plane}"
+        );
+    }
+}
 
 #[test]
 fn the_same_bytes_under_two_domains_never_collide() {
@@ -94,6 +153,11 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
             "spice.dist.artifact.v1",
             "spice.dist.pins.v1",
             "spice.dist.inventory.v1",
+            "spice.gate.file.v1",
+            "spice.gate.tree.v1",
+            "spice.gate.policy.v1",
+            "spice.gate.inventory.v1",
+            "spice.gate.measurement.v1",
         ],
         "a domain tag changed; that re-points digests already published under it"
     );
@@ -138,12 +202,12 @@ fn the_domain_framing_separates_the_tag_from_the_bytes() {
     // long tag and another's leading bytes hash identically. Stating the exact
     // framing here pins the construction against a silent change.
     let mut expected = blake3::Hasher::new();
-    expected.update(Domain::Artifact.tag().as_bytes());
+    expected.update(Domain::DistArtifact.tag().as_bytes());
     expected.update(&[0]);
     expected.update(b"payload");
 
     assert_eq!(
-        Digest::compute(Domain::Artifact, b"payload").as_str(),
+        Digest::compute(Domain::DistArtifact, b"payload").as_str(),
         expected.finalize().to_hex().as_str(),
         "the digest is BLAKE3 over tag, NUL, then bytes"
     );
@@ -151,7 +215,9 @@ fn the_domain_framing_separates_the_tag_from_the_bytes() {
 
 #[test]
 fn only_the_canonical_digest_spelling_is_admitted() {
-    let canonical = Digest::compute(Domain::Pins, b"pins").as_str().to_owned();
+    let canonical = Digest::compute(Domain::DistPins, b"pins")
+        .as_str()
+        .to_owned();
     let upper = canonical.to_ascii_uppercase();
 
     for spelling in [
@@ -180,7 +246,7 @@ fn only_the_canonical_digest_spelling_is_admitted() {
 fn a_non_canonical_digest_is_refused_by_the_decoder_too() {
     // Same reason as the uuid decoder fixture: a caller-side check would let a
     // decoded frame carry a spelling the parser rejects.
-    let canonical = Digest::compute(Domain::Inventory, b"inventory")
+    let canonical = Digest::compute(Domain::DistInventory, b"inventory")
         .as_str()
         .to_owned();
 

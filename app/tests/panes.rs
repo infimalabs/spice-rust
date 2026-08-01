@@ -53,8 +53,8 @@ fn session() -> Session {
 }
 
 /// A ranked row, standing in for whatever a pane lists.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Row(&'static str);
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Row(String);
 
 /// The body of a command and of the reply that answers it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,14 +89,11 @@ fn lane() -> Principal {
 /// State holding one complete answer from this generation.
 fn answered() -> BrowserState<Row> {
     let mut state = BrowserState::new(uuid(EPOCH));
-    state.replace(Packed {
-        rows: vec![Row("SPICE-aBcD"), Row("SPICE-eFgH")],
-        overflow: Some(Overflow {
-            omitted: 41,
-            continuation: seq(48250),
-        }),
-        horizon: seq(48213),
-    });
+    assert!(state.replace(&packed_answer(
+        &["SPICE-aBcD", "SPICE-eFgH"],
+        Some((41, 48250)),
+        48213,
+    )));
     state
 }
 
@@ -141,6 +138,37 @@ fn response(id: &str, outcome: &str) -> Admitted<Response<Note>> {
     session()
         .admit_frame::<Note>(&response_bytes(id, outcome))
         .expect("the fixture answer is admitted")
+}
+
+/// One packed reply admitted through the session before browser state sees it.
+fn packed_answer(
+    rows: &[&str],
+    overflow: Option<(u64, u64)>,
+    horizon: u64,
+) -> Admitted<Response<Packed<Row>>> {
+    let rows = rows
+        .iter()
+        .map(|row| format!(r#""{row}""#))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let overflow = overflow.map_or_else(String::new, |(omitted, continuation)| {
+        format!(r#""overflow": {{ "omitted": {omitted}, "continuation": {continuation} }},"#)
+    });
+    let bytes = format!(
+        r#"{{
+  "v": 1,
+  "id": "{COMMAND}",
+  "epoch": "{EPOCH}",
+  "outcome": {{
+    "kind": "reply",
+    "cursor": {horizon},
+    "body": {{ "rows": [{rows}], {overflow} "horizon": {horizon} }}
+  }}
+}}"#
+    );
+    session()
+        .admit_frame(&bytes.into_bytes())
+        .expect("the packed fixture answer is admitted")
 }
 
 /// A command a lane is offered, built through the pane that offers it.
@@ -216,7 +244,7 @@ fn a_read_pane_shows_the_answer_it_was_given() {
 
     assert_eq!(
         pane.rows(),
-        [Row("SPICE-aBcD"), Row("SPICE-eFgH")].as_slice()
+        [Row("SPICE-aBcD".to_owned()), Row("SPICE-eFgH".to_owned())].as_slice()
     );
     assert_eq!(pane.horizon(), Some(seq(48213)));
     assert_eq!(
@@ -264,15 +292,15 @@ fn no_rendered_row_promotes_a_lane_principal() {
     // Rows an occupant can cause to exist: text naming the operator, the
     // operator actor spelled exactly as the wire spells it, and the session
     // capability itself.
-    state.replace(Packed {
-        rows: vec![
-            Row("operator"),
-            Row("actor: operator"),
-            Row("018f82d4-6f59-7d06-92e3-bce9131163c1"),
+    assert!(state.replace(&packed_answer(
+        &[
+            "operator",
+            "actor: operator",
+            "018f82d4-6f59-7d06-92e3-bce9131163c1",
         ],
-        overflow: None,
-        horizon: seq(48213),
-    });
+        None,
+        48213,
+    )));
 
     let read = ReadPane::over(&lane, &state).expect("state is from this generation");
     assert_eq!(read.rows().len(), 3, "the rows are rendered, not hidden");

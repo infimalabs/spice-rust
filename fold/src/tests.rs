@@ -6,9 +6,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use rusqlite::{Connection, params};
 use serde_json::json;
 
+use crate::store::STORE_SCHEMA_VERSION;
 use crate::{
-    Availability, Beyond, Cursor, FactPlane, FoldId, HeadSource, Horizon, INVENTORY, RebuildCause,
-    Reducer, Reduction, RingId, Source, Store,
+    Availability, Beyond, ConfigSource, Cursor, FactPlane, FoldId, HeadSource, Horizon, INVENTORY,
+    RebuildCause, Reducer, Reduction, RingId, Source, Store, StoreError, TapeSource,
 };
 
 static NEXT_STORE: AtomicU64 = AtomicU64::new(0);
@@ -56,19 +57,35 @@ fn source_contains(source: Source, kind: wire::FactKind) -> bool {
 }
 
 fn assert_source_sets(definitions: &[crate::Definition]) {
-    let heads = definitions
+    let sources = definitions
         .iter()
         .flat_map(|definition| definition.sources)
-        .filter_map(|source| match source {
-            Source::Head(head) => Some(*head),
-            _ => None,
-        })
-        .collect::<BTreeSet<_>>();
-    assert_eq!(heads, HeadSource::ALL.iter().copied().collect());
+        .copied()
+        .collect::<Vec<_>>();
 
-    let rings = definitions
+    assert_every_variant_consumed(FactPlane::ALL, &sources, |source| match source {
+        Source::Facts(plane) => Some(plane),
+        _ => None,
+    });
+    assert_every_variant_consumed(HeadSource::ALL, &sources, |source| match source {
+        Source::Head(head) => Some(head),
+        _ => None,
+    });
+    assert_every_variant_consumed(RingId::ALL, &sources, |source| match source {
+        Source::Ring(ring) => Some(ring),
+        _ => None,
+    });
+    assert_every_variant_consumed(ConfigSource::ALL, &sources, |source| match source {
+        Source::Config(config) => Some(config),
+        _ => None,
+    });
+    assert_every_variant_consumed(TapeSource::ALL, &sources, |source| match source {
+        Source::Tape(tape) => Some(tape),
+        _ => None,
+    });
+
+    let rings = sources
         .iter()
-        .flat_map(|definition| definition.sources)
         .filter_map(|source| match source {
             Source::Ring(ring) => Some(*ring),
             _ => None,
@@ -79,8 +96,29 @@ fn assert_source_sets(definitions: &[crate::Definition]) {
         .iter()
         .map(|definition| definition.ring)
         .collect::<BTreeSet<_>>();
-    assert_eq!(rings, RingId::ALL.iter().copied().collect());
     assert_eq!(rings, declared);
+}
+
+/// Every variant a closed vocabulary declares must be named by some fold.
+///
+/// The sweep reads the generated `ALL` rather than a list retyped here, so a
+/// variant added to the enum arrives in this check on its own and fails by
+/// name until a fold consumes it. A variant no fold names is dead vocabulary.
+fn assert_every_variant_consumed<T: Copy + Eq + std::fmt::Debug>(
+    declared: &[T],
+    sources: &[Source],
+    named: impl Fn(Source) -> Option<T>,
+) {
+    for variant in declared {
+        assert!(
+            sources
+                .iter()
+                .copied()
+                .filter_map(&named)
+                .any(|found| found == *variant),
+            "{variant:?} is declared but no fold names it as a source",
+        );
+    }
 }
 
 fn assert_fold_order(definitions: &[crate::Definition]) {
@@ -290,21 +328,23 @@ fn snapshot(count: u64) -> journal::FactSnapshot {
             actor: wire::Actor::Spice,
             origin: "task:FOLD-a1".parse().expect("fixture origin"),
             cause: (position > 1).then(|| seq(position - 1)),
-            fact: any_fact(),
+            fact: opaque_note(),
         })
         .collect();
     journal::FactSnapshot::from_facts(facts).expect("fixture snapshot")
 }
 
-/// One opaque fact, built the only way a consumer can build one.
+/// Read a typed fact back the way a journal verifier reads a stored row.
 ///
-/// `AnyFact` keeps its fields private so that a decoded body is always one the
-/// kind's registered DTO admitted. A fixture cannot assemble the pair directly
-/// without asserting a validation that never ran, so it decodes like everyone
-/// else.
-fn any_fact() -> wire::AnyFact {
-    wire::decode(br#"{"kind":"task::noted","task":"FOLD-a1","note":"fixture"}"#)
-        .expect("fixture fact decodes")
+/// A fixture mints its body through the registered DTO rather than spelling
+/// one out, so it can never carry fields the decoder would refuse.
+fn opaque_note() -> wire::AnyFact {
+    let fact = wire::Fact::new(wire::body::TaskNoted {
+        task: "FOLD-a1".parse().expect("fixture task handle"),
+        note: "fixture".to_owned(),
+    });
+    let bytes = wire::encode(&fact).expect("a typed fact encodes");
+    wire::decode(&bytes).expect("a stored fact reads back without its body type")
 }
 
 fn seq(value: u64) -> wire::Seq {
@@ -320,31 +360,53 @@ fn store_path(label: &str) -> PathBuf {
 }
 
 #[test]
-fn every_fact_plane_is_represented_by_the_closed_vocabulary() {
-    let represented = wire::FactKind::ALL
-        .iter()
-        .flat_map(|kind| {
-            [
-                FactPlane::Task,
-                FactPlane::Claim,
-                FactPlane::Document,
-                FactPlane::Steering,
-                FactPlane::Consent,
-                FactPlane::Lane,
-                FactPlane::Taste,
-                FactPlane::Canary,
-                FactPlane::Vendor,
-                FactPlane::Trust,
-                FactPlane::Commit,
-                FactPlane::Gate,
-                FactPlane::Journal,
-                FactPlane::Resident,
-                FactPlane::Proof,
-                FactPlane::Release,
-            ]
-            .into_iter()
-            .filter(|plane| plane.contains(*kind))
-        })
-        .collect::<BTreeSet<_>>();
-    assert_eq!(represented.len(), 16);
+fn every_declared_fact_plane_claims_at_least_one_fact_kind() {
+    for plane in FactPlane::ALL {
+        assert!(
+            wire::FactKind::ALL.iter().any(|kind| plane.contains(*kind)),
+            "fact plane {plane:?} claims no fact kind",
+        );
+    }
+}
+
+/// A fresh store seeds whatever version the caller declares as current.
+///
+/// This is the falsifier for a version written into the SQL: a literal seeds
+/// its own number, so opening a brand-new store under a bumped constant would
+/// fail as a version disagreement on a store that has nothing to migrate.
+#[test]
+fn a_fresh_store_seeds_the_version_it_is_opened_at() {
+    let connection = Connection::open_in_memory().expect("in-memory connection");
+
+    crate::store::baseline(&connection, STORE_SCHEMA_VERSION + 1)
+        .expect("a fresh store opens at a bumped version");
+
+    assert_eq!(seeded_version(&connection), STORE_SCHEMA_VERSION + 1);
+}
+
+/// A store an older version wrote keeps its number and is refused, so the bump
+/// above cannot be mistaken for silently rewriting existing data.
+#[test]
+fn a_store_written_by_another_version_is_refused_rather_than_reseeded() {
+    let connection = Connection::open_in_memory().expect("in-memory connection");
+    crate::store::baseline(&connection, STORE_SCHEMA_VERSION).expect("a fresh store opens");
+
+    let refusal = crate::store::baseline(&connection, STORE_SCHEMA_VERSION + 1);
+
+    assert!(matches!(
+        refusal,
+        Err(StoreError::SchemaVersion { found, current })
+            if found == STORE_SCHEMA_VERSION && current == STORE_SCHEMA_VERSION + 1
+    ));
+    assert_eq!(seeded_version(&connection), STORE_SCHEMA_VERSION);
+}
+
+fn seeded_version(connection: &Connection) -> u32 {
+    connection
+        .query_row(
+            "SELECT version FROM fold_schema WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("the schema row is seeded")
 }

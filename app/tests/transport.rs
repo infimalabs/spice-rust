@@ -12,7 +12,9 @@
 
 use app::{Admitted, Applied, BrowserState, ChainEnd, Session};
 use serde::{Deserialize, Serialize};
-use wire::{CanonicalUuid, Envelope, Fact, FaultClass, Overflow, Packed, Seq, WireVersion, body};
+use wire::{
+    CanonicalUuid, Envelope, Fact, FaultClass, Overflow, Packed, Response, Seq, WireVersion, body,
+};
 
 /// Capability this session opens with.
 const CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163c1";
@@ -41,8 +43,8 @@ struct Status {
 }
 
 /// A ranked row, standing in for whatever a pane lists.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Row(&'static str);
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Row(String);
 
 /// One envelope document at `seq` and `version`, as bytes off the stream.
 ///
@@ -97,6 +99,37 @@ fn response(version: u32, epoch: &str) -> Vec<u8> {
 }}"#
     )
     .into_bytes()
+}
+
+/// One packed reply admitted through the same response door as every answer.
+fn packed_answer(
+    rows: &[&str],
+    overflow: Option<(u64, u64)>,
+    horizon: u64,
+) -> Admitted<Response<Packed<Row>>> {
+    let rows = rows
+        .iter()
+        .map(|row| format!(r#""{row}""#))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let overflow = overflow.map_or_else(String::new, |(omitted, continuation)| {
+        format!(r#""overflow": {{ "omitted": {omitted}, "continuation": {continuation} }},"#)
+    });
+    let bytes = format!(
+        r#"{{
+  "v": 1,
+  "id": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+  "epoch": "{EPOCH}",
+  "outcome": {{
+    "kind": "reply",
+    "cursor": {horizon},
+    "body": {{ "rows": [{rows}], {overflow} "horizon": {horizon} }}
+  }}
+}}"#
+    );
+    session()
+        .admit_frame(&bytes.into_bytes())
+        .expect("the packed fixture answer is admitted")
 }
 
 /// A position, which every fixture spells above zero.
@@ -394,33 +427,18 @@ fn a_received_stale_frame_can_complete_a_previously_dangling_walk() {
 #[test]
 fn a_later_answer_replaces_the_earlier_one_whole() {
     let mut state = BrowserState::new(uuid(EPOCH));
-    state.replace(Packed {
-        rows: vec![Row("first"), Row("second")],
-        overflow: None,
-        horizon: seq(48213),
-    });
+    assert!(state.replace(&packed_answer(&["first", "second"], None, 48213)));
 
-    state.replace(Packed {
-        rows: vec![Row("third")],
-        overflow: None,
-        horizon: seq(48214),
-    });
+    assert!(state.replace(&packed_answer(&["third"], None, 48214)));
 
-    assert_eq!(state.rows(), [Row("third")].as_slice());
+    assert_eq!(state.rows(), [Row("third".to_owned())].as_slice());
     assert_eq!(state.horizon(), Some(seq(48214)));
 }
 
 #[test]
 fn overflow_is_carried_from_the_answer_rather_than_inferred_from_length() {
     let mut state = BrowserState::new(uuid(EPOCH));
-    state.replace(Packed {
-        rows: vec![Row("only")],
-        overflow: Some(Overflow {
-            omitted: 41,
-            continuation: seq(48250),
-        }),
-        horizon: seq(48213),
-    });
+    assert!(state.replace(&packed_answer(&["only"], Some((41, 48250)), 48213)));
 
     assert!(state.is_overflowing());
     assert_eq!(
@@ -436,20 +454,9 @@ fn overflow_is_carried_from_the_answer_rather_than_inferred_from_length() {
 #[test]
 fn a_complete_answer_clears_the_overflow_an_earlier_one_declared() {
     let mut state = BrowserState::new(uuid(EPOCH));
-    state.replace(Packed {
-        rows: vec![Row("only")],
-        overflow: Some(Overflow {
-            omitted: 41,
-            continuation: seq(48250),
-        }),
-        horizon: seq(48213),
-    });
+    assert!(state.replace(&packed_answer(&["only"], Some((41, 48250)), 48213)));
 
-    state.replace(Packed {
-        rows: vec![Row("only"), Row("rest")],
-        overflow: None,
-        horizon: seq(48214),
-    });
+    assert!(state.replace(&packed_answer(&["only", "rest"], None, 48214)));
 
     assert!(!state.is_overflowing());
     assert_eq!(state.overflow(), None);
@@ -459,11 +466,7 @@ fn a_complete_answer_clears_the_overflow_an_earlier_one_declared() {
 fn reconnecting_to_a_new_generation_starts_empty() {
     let mut state = BrowserState::new(uuid(EPOCH));
     state.apply(&envelope(48213));
-    state.replace(Packed {
-        rows: vec![Row("stale")],
-        overflow: None,
-        horizon: seq(48213),
-    });
+    assert!(state.replace(&packed_answer(&["stale"], None, 48213)));
 
     state.reconnect(uuid(NEXT_EPOCH));
 
@@ -479,17 +482,13 @@ fn reconnecting_to_a_new_generation_starts_empty() {
 fn reconnecting_to_the_same_generation_resumes_where_it_left_off() {
     let mut state = BrowserState::new(uuid(EPOCH));
     state.apply(&envelope(48213));
-    state.replace(Packed {
-        rows: vec![Row("live")],
-        overflow: None,
-        horizon: seq(48213),
-    });
+    assert!(state.replace(&packed_answer(&["live"], None, 48213)));
 
     state.reconnect(uuid(EPOCH));
 
     assert_eq!(state.epoch(), uuid(EPOCH));
     assert_eq!(state.cursor(), Some(seq(48213)));
-    assert_eq!(state.rows(), [Row("live")].as_slice());
+    assert_eq!(state.rows(), [Row("live".to_owned())].as_slice());
 }
 
 #[test]

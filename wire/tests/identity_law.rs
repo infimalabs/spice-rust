@@ -39,113 +39,23 @@
 //! `Equal`-only comparison, which is what let [`Actor`] rank `Operator` before
 //! `Lane(..)` while spelling `lane:` before `operator`.
 
-use std::collections::BTreeSet;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::num::NonZeroU64;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use syn::{Attribute, Fields, Item, Meta, Token, UseTree, Visibility};
 use wire::{
     Accepted, Actor, Answer, AnyFact, CanonicalUuid, ClaimDisposition, ClaimHead, Command,
-    CommandKind, CursorHead, Derived, Digest, Disposition, Envelope, Fact, Fault, FaultClass,
-    FindingHead, FindingState, FoldName, Hello, Instant, LaneResidency, LeaseHead, Name, Origin,
-    Outcome, Overflow, Packed, Phase, Producer, Refusal, Reply, ReplyPosition, ResidencyHead,
-    ResidentState, Response, Seq, SeqRange, TaskHandle, TaskHead, TrustHead, TrustState,
-    WireVersion, Witness, WitnessClass, WitnessHead, WitnessKind, WorkflowHead, body,
+    CommandKind, CursorHead, Derived, Digest, Disposition, Envelope, Fact, FactKind, Fault,
+    FaultClass, FindingHead, FindingState, FoldName, Hello, Instant, LaneResidency, LeaseHead,
+    Name, Origin, Outcome, Overflow, Packed, Phase, Producer, Refusal, Reply, ReplyPosition,
+    ResidencyHead, ResidentState, Response, Seq, SeqRange, TaskHandle, TaskHead, TrustHead,
+    TrustState, WireVersion, Witness, WitnessClass, WitnessHead, WitnessKind, WorkflowHead, body,
 };
-
-/// Names `wire` re-exports that never cross as values, each with its reason.
-///
-/// Every re-export is either exercised by the law below or listed here. A new
-/// DTO that is neither fails `every_crossing_type_obeys_the_identity_law`,
-/// which prints the unaccounted name rather than passing quietly.
-const NOT_CROSSING: &[(&str, &str)] = &[
-    (
-        "ActorError",
-        "parse refusal; returned to a caller, never encoded",
-    ),
-    (
-        "Body",
-        "a trait naming which bodies the vocabulary registers; a bound is not \
-         a value and has no bytes",
-    ),
-    (
-        "Law",
-        "a registry row held in the binary as static slices; the command it \
-         governs crosses, the row itself never leaves the process",
-    ),
-    (
-        "LawError",
-        "witness-law refusal; returned to a caller, never encoded",
-    ),
-    (
-        "NameError",
-        "parse refusal; returned to a caller, never encoded",
-    ),
-    (
-        "CommandKindError",
-        "parse refusal; returned to a caller, never encoded",
-    ),
-    (
-        "Domain",
-        "names a digest class at computation time; the computed Digest crosses instead",
-    ),
-    (
-        "FoldNameError",
-        "parse refusal; returned to a caller, never encoded",
-    ),
-    (
-        "IdentError",
-        "parse refusal; returned to a caller, never encoded",
-    ),
-    (
-        "OriginError",
-        "parse refusal; returned to a caller, never encoded",
-    ),
-    (
-        "PhaseError",
-        "parse refusal; returned to a caller, never encoded",
-    ),
-    (
-        "SeqRangeError",
-        "construction refusal; returned to a caller, never encoded",
-    ),
-    (
-        "TaskHandleError",
-        "parse refusal; returned to a caller, never encoded",
-    ),
-    (
-        "Rejected",
-        "carries an already-covered Refusal or Fault to a caller; the admitted \
-         outcome crosses, the rejection does not",
-    ),
-    (
-        "CommandKind",
-        "exercised through Command, whose kind field is this type",
-    ),
-    (
-        "FactKind",
-        "exercised through Fact, whose kind field is this type",
-    ),
-    (
-        "FaultClass",
-        "exercised through Fault, whose class field is this type",
-    ),
-    (
-        "ReplyPosition",
-        "exercised through Reply, whose position field is this type",
-    ),
-    (
-        "Overflow",
-        "exercised through Packed, whose overflow field is this type",
-    ),
-    (
-        "WireVersion",
-        "exercised through Hello and Envelope, whose version fields are this type",
-    ),
-];
 
 /// Row used by the packed frames.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1154,72 +1064,348 @@ fn cover_reply_frames(covered: &mut BTreeSet<String>) {
     );
 }
 
-/// Fail by name when a re-exported type is neither exercised nor excused.
+/// Fail by name when a re-exported type has no executable or structural proof.
 fn assert_coverage_is_complete(covered: &BTreeSet<String>) {
-    let exported = re_exported_names();
-    let excused: BTreeSet<String> = NOT_CROSSING
-        .iter()
-        .map(|(name, _)| (*name).to_owned())
-        .collect();
+    let source = fs::read_to_string(lib_source()).expect("wire/src/lib.rs is readable");
+    let exports = parse_exports(&source).expect("wire/src/lib.rs re-exports parse");
+    let modules = read_module_sources(&exports);
+    let audit = audit_coverage(&source, &modules, covered).expect("wire source declarations parse");
 
-    let accounted: BTreeSet<String> = covered.union(&excused).cloned().collect();
-
-    let unaccounted: Vec<&String> = exported.difference(&accounted).collect();
     assert!(
-        unaccounted.is_empty(),
-        "these wire re-exports obey no stated identity law: {unaccounted:?}. \
-         Exercise each in every_crossing_type_obeys_the_identity_law, or list \
-         it in NOT_CROSSING with the reason it never crosses as a value.",
+        audit.unaccounted.is_empty(),
+        "these wire re-exports obey no stated identity law: {:?}. Exercise a \
+         custom crossing type in every_crossing_type_obeys_the_identity_law. \
+         Mark a process-only type beside its declaration with `identity-law: \
+         non-crossing - <reason>`.",
+        audit.unaccounted,
     );
-
-    let stale: Vec<&String> = accounted.difference(&exported).collect();
     assert!(
-        stale.is_empty(),
-        "these names are covered or excused but no longer re-exported: {stale:?}",
+        audit.stale.is_empty(),
+        "these names have law samples but are no longer re-exported: {:?}",
+        audit.stale,
     );
 }
 
-/// The type names `wire/src/lib.rs` re-exports, read from the source.
-///
-/// Reading the source rather than restating the list is what makes a newly
-/// added DTO fail here instead of passing unnoticed.
-fn re_exported_names() -> BTreeSet<String> {
-    let source = fs::read_to_string(lib_source()).expect("wire/src/lib.rs is readable");
+#[derive(Debug)]
+struct Export {
+    module: String,
+    source_name: String,
+}
 
-    let mut names = BTreeSet::new();
-    let mut rest = source.as_str();
-    while let Some(start) = rest.find("pub use ") {
-        rest = &rest[start + "pub use ".len()..];
-        let end = rest.find(';').expect("a re-export ends in a semicolon");
-        let statement = &rest[..end];
-        rest = &rest[end..];
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeclarationClass {
+    Structural,
+    Error,
+    Trait,
+    NonCrossing,
+    Custom,
+}
 
-        let braced = statement
-            .find('{')
-            .map(|open| {
-                let close = statement.find('}').expect("a braced group closes");
-                &statement[open + 1..close]
-            })
-            .unwrap_or_else(|| {
-                statement
-                    .rsplit("::")
-                    .next()
-                    .expect("a re-export names something")
-            });
+#[derive(Debug, PartialEq, Eq)]
+struct CoverageAudit {
+    unaccounted: BTreeMap<String, String>,
+    stale: BTreeSet<String>,
+}
 
-        for name in braced.split(',') {
-            let name = name.trim();
-            if !name.is_empty() {
-                names.insert(name.to_owned());
+/// Parse root re-exports and classify their declarations where those declarations live.
+fn audit_coverage(
+    root_source: &str,
+    module_sources: &BTreeMap<String, String>,
+    covered: &BTreeSet<String>,
+) -> Result<CoverageAudit, String> {
+    let exports = parse_exports(root_source)?;
+    let mut declarations = BTreeMap::new();
+
+    for (module, source) in module_sources {
+        let file = syn::parse_file(source)
+            .map_err(|error| format!("could not parse module {module}: {error}"))?;
+        for item in &file.items {
+            if let Some((name, class)) = classify_declaration(item)? {
+                declarations.insert((module.clone(), name), class);
             }
         }
     }
 
-    assert!(
-        !names.is_empty(),
-        "no re-exports parsed from wire/src/lib.rs; the parser has drifted from the source",
-    );
-    names
+    let mut unaccounted = BTreeMap::new();
+    for (exported_name, export) in &exports {
+        if covered.contains(exported_name) {
+            continue;
+        }
+
+        let key = (export.module.clone(), export.source_name.clone());
+        match declarations.get(&key) {
+            Some(
+                DeclarationClass::Structural
+                | DeclarationClass::Error
+                | DeclarationClass::Trait
+                | DeclarationClass::NonCrossing,
+            ) => {}
+            Some(DeclarationClass::Custom) => {
+                unaccounted.insert(
+                    exported_name.clone(),
+                    format!(
+                        "{}::{} has custom or potentially narrowing encoding",
+                        export.module, export.source_name
+                    ),
+                );
+            }
+            None => {
+                unaccounted.insert(
+                    exported_name.clone(),
+                    format!(
+                        "{}::{} has no source declaration the audit can classify",
+                        export.module, export.source_name
+                    ),
+                );
+            }
+        }
+    }
+
+    let exported: BTreeSet<String> = exports.into_keys().collect();
+    Ok(CoverageAudit {
+        unaccounted,
+        stale: covered.difference(&exported).cloned().collect(),
+    })
+}
+
+fn parse_exports(source: &str) -> Result<BTreeMap<String, Export>, String> {
+    let file = syn::parse_file(source).map_err(|error| error.to_string())?;
+    let mut exports = BTreeMap::new();
+    for item in file.items {
+        let Item::Use(item_use) = item else {
+            continue;
+        };
+        if !matches!(item_use.vis, Visibility::Public(_)) {
+            continue;
+        }
+        collect_exports(&item_use.tree, &mut Vec::new(), &mut exports)?;
+    }
+    if exports.is_empty() {
+        return Err("no public re-exports found".to_owned());
+    }
+    Ok(exports)
+}
+
+fn collect_exports(
+    tree: &UseTree,
+    path: &mut Vec<String>,
+    exports: &mut BTreeMap<String, Export>,
+) -> Result<(), String> {
+    match tree {
+        UseTree::Path(item) => {
+            path.push(item.ident.to_string());
+            collect_exports(&item.tree, path, exports)?;
+            path.pop();
+        }
+        UseTree::Name(item) => {
+            insert_export(
+                path,
+                item.ident.to_string(),
+                item.ident.to_string(),
+                exports,
+            )?;
+        }
+        UseTree::Rename(item) => {
+            insert_export(
+                path,
+                item.ident.to_string(),
+                item.rename.to_string(),
+                exports,
+            )?;
+        }
+        UseTree::Group(item) => {
+            for child in &item.items {
+                collect_exports(child, path, exports)?;
+            }
+        }
+        UseTree::Glob(_) => {
+            return Err("glob re-exports cannot prove which wire types crossed".to_owned());
+        }
+    }
+    Ok(())
+}
+
+fn insert_export(
+    path: &[String],
+    source_name: String,
+    exported_name: String,
+    exports: &mut BTreeMap<String, Export>,
+) -> Result<(), String> {
+    if path.is_empty() {
+        return Err(format!(
+            "root re-export {exported_name} has no owning module"
+        ));
+    }
+    let export = Export {
+        module: path.join("::"),
+        source_name,
+    };
+    if exports.insert(exported_name.clone(), export).is_some() {
+        return Err(format!("root name {exported_name} is re-exported twice"));
+    }
+    Ok(())
+}
+
+fn read_module_sources(exports: &BTreeMap<String, Export>) -> BTreeMap<String, String> {
+    let source_dir = lib_source()
+        .parent()
+        .expect("wire/src/lib.rs has a parent")
+        .to_path_buf();
+    let modules: BTreeSet<&str> = exports
+        .values()
+        .map(|export| export.module.as_str())
+        .collect();
+
+    modules
+        .into_iter()
+        .map(|module| {
+            let path = source_dir
+                .join(module.replace("::", "/"))
+                .with_extension("rs");
+            let source = fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("{} is readable: {error}", path.display()));
+            (module.to_owned(), source)
+        })
+        .collect()
+}
+
+fn classify_declaration(item: &Item) -> Result<Option<(String, DeclarationClass)>, String> {
+    match item {
+        Item::Struct(item) if matches!(item.vis, Visibility::Public(_)) => Ok(Some((
+            item.ident.to_string(),
+            classify_data(&item.attrs, fields_attributes(&item.fields))?,
+        ))),
+        Item::Enum(item) if matches!(item.vis, Visibility::Public(_)) => {
+            let nested = item.variants.iter().flat_map(|variant| {
+                variant
+                    .attrs
+                    .iter()
+                    .chain(fields_attributes(&variant.fields))
+            });
+            Ok(Some((
+                item.ident.to_string(),
+                classify_data(&item.attrs, nested)?,
+            )))
+        }
+        Item::Trait(item) if matches!(item.vis, Visibility::Public(_)) => {
+            Ok(Some((item.ident.to_string(), DeclarationClass::Trait)))
+        }
+        Item::Type(item) if matches!(item.vis, Visibility::Public(_)) => {
+            Ok(Some((item.ident.to_string(), DeclarationClass::Custom)))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn fields_attributes(fields: &Fields) -> impl Iterator<Item = &Attribute> {
+    fields.iter().flat_map(|field| field.attrs.iter())
+}
+
+fn classify_data<'a>(
+    attrs: &[Attribute],
+    nested_attrs: impl Iterator<Item = &'a Attribute>,
+) -> Result<DeclarationClass, String> {
+    if has_non_crossing_marker(attrs)? {
+        return Ok(DeclarationClass::NonCrossing);
+    }
+
+    let derives = derive_names(attrs)?;
+    if derives.contains("Error") {
+        return Ok(DeclarationClass::Error);
+    }
+
+    let nested_attrs: Vec<&Attribute> = nested_attrs.collect();
+    let structural = derives.contains("Serialize")
+        && derives.contains("Deserialize")
+        && derives.contains("PartialEq")
+        && !has_narrowing_serde(attrs.iter().chain(nested_attrs))?;
+    Ok(if structural {
+        DeclarationClass::Structural
+    } else {
+        DeclarationClass::Custom
+    })
+}
+
+fn derive_names(attrs: &[Attribute]) -> Result<BTreeSet<String>, String> {
+    let mut names = BTreeSet::new();
+    for attr in attrs.iter().filter(|attr| attr.path().is_ident("derive")) {
+        let paths = attr
+            .parse_args_with(syn::punctuated::Punctuated::<syn::Path, Token![,]>::parse_terminated)
+            .map_err(|error| format!("could not parse derive attribute: {error}"))?;
+        for path in paths {
+            let name = path
+                .segments
+                .last()
+                .expect("a derive path has one segment")
+                .ident
+                .to_string();
+            names.insert(name);
+        }
+    }
+    Ok(names)
+}
+
+fn has_narrowing_serde<'a>(attrs: impl Iterator<Item = &'a Attribute>) -> Result<bool, String> {
+    const NARROWING: &[&str] = &[
+        "flatten",
+        "from",
+        "into",
+        "skip",
+        "skip_deserializing",
+        "skip_serializing",
+        "skip_serializing_if",
+        "try_from",
+        "with",
+        "deserialize_with",
+        "serialize_with",
+    ];
+
+    for attr in attrs.filter(|attr| attr.path().is_ident("serde")) {
+        let metas = attr
+            .parse_args_with(syn::punctuated::Punctuated::<Meta, Token![,]>::parse_terminated)
+            .map_err(|error| format!("could not parse serde attribute: {error}"))?;
+        for meta in metas {
+            let Some(name) = meta.path().segments.last() else {
+                continue;
+            };
+            if NARROWING.contains(&name.ident.to_string().as_str()) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn has_non_crossing_marker(attrs: &[Attribute]) -> Result<bool, String> {
+    let mut found = false;
+    for attr in attrs.iter().filter(|attr| attr.path().is_ident("doc")) {
+        let Meta::NameValue(meta) = &attr.meta else {
+            continue;
+        };
+        let syn::Expr::Lit(expression) = &meta.value else {
+            continue;
+        };
+        let syn::Lit::Str(line) = &expression.lit else {
+            continue;
+        };
+        let line = line.value();
+        let line = line.trim();
+        if !line.contains("identity-law:") {
+            continue;
+        }
+        let reason = line
+            .strip_prefix("identity-law: non-crossing -")
+            .ok_or_else(|| format!("malformed identity-law source marker: {line:?}"))?
+            .trim();
+        if reason.is_empty() {
+            return Err("identity-law non-crossing marker has no reason".to_owned());
+        }
+        if found {
+            return Err("declaration has more than one identity-law source marker".to_owned());
+        }
+        found = true;
+    }
+    Ok(found)
 }
 
 fn lib_source() -> PathBuf {
@@ -1229,48 +1415,53 @@ fn lib_source() -> PathBuf {
 }
 
 #[test]
-fn the_excuse_list_stays_anchored_to_the_source() {
-    // Coverage itself is asserted by the law test. This asserts the registry
-    // that assertion reads against is sound: the parser finds real names, every
-    // excuse points at a re-export that still exists, and every excuse says why.
-    // Without this, the excuse list could drift into an unchecked wish list.
-    let exported = re_exported_names();
-    assert!(
-        exported.contains("Instant"),
-        "the re-export parser lost a name it should have found",
+fn a_concurrent_structural_export_needs_no_shared_registry_edit() {
+    let root = "pub use landed::{ConcurrentDto, ParseError, ProcessOnly};";
+    let module = r#"
+        #[derive(Serialize, Deserialize, PartialEq)]
+        #[serde(deny_unknown_fields)]
+        pub struct ConcurrentDto { pub value: String }
+
+        #[derive(Debug, thiserror::Error)]
+        #[error("bad input")]
+        pub struct ParseError;
+
+        /// identity-law: non-crossing - process-local registry metadata.
+        pub struct ProcessOnly;
+    "#;
+    let modules = BTreeMap::from([("landed".to_owned(), module.to_owned())]);
+    let audit = audit_coverage(root, &modules, &BTreeSet::new()).expect("fixture parses");
+
+    assert_eq!(
+        audit,
+        CoverageAudit {
+            unaccounted: BTreeMap::new(),
+            stale: BTreeSet::new(),
+        }
+    );
+}
+
+#[test]
+fn a_custom_encoder_still_requires_executable_law_samples() {
+    let root = "pub use landed::CustomCodec;";
+    let module = r#"
+        #[derive(Serialize, Deserialize, PartialEq)]
+        pub struct CustomCodec {
+            #[serde(skip)]
+            hidden: String,
+        }
+    "#;
+    let modules = BTreeMap::from([("landed".to_owned(), module.to_owned())]);
+    let uncovered = audit_coverage(root, &modules, &BTreeSet::new()).expect("fixture parses");
+    assert_eq!(
+        uncovered.unaccounted.keys().collect::<Vec<_>>(),
+        vec!["CustomCodec"]
     );
 
-    let excused: BTreeSet<String> = NOT_CROSSING
-        .iter()
-        .map(|(name, _)| (*name).to_owned())
-        .collect();
-    let unknown: Vec<&String> = excused.difference(&exported).collect();
-    assert!(
-        unknown.is_empty(),
-        "NOT_CROSSING excuses names that are not re-exported: {unknown:?}",
-    );
-
-    for (name, reason) in NOT_CROSSING {
-        assert!(
-            !reason.trim().is_empty(),
-            "{name} is excused without a reason",
-        );
-    }
-
-    // Two rows for one name is how a merge leaves this list: both sides excuse
-    // the same type and only the first reason is ever read, so the second is a
-    // claim about the crate that nothing checks.
-    let mut seen = BTreeSet::new();
-    let repeated: Vec<&str> = NOT_CROSSING
-        .iter()
-        .filter(|(name, _)| !seen.insert(*name))
-        .map(|(name, _)| *name)
-        .collect();
-    assert!(
-        repeated.is_empty(),
-        "NOT_CROSSING excuses these names more than once, so a reason is going \
-         unread: {repeated:?}",
-    );
+    let covered = BTreeSet::from(["CustomCodec".to_owned()]);
+    let sampled = audit_coverage(root, &modules, &covered).expect("fixture parses");
+    assert!(sampled.unaccounted.is_empty());
+    assert!(sampled.stale.is_empty());
 }
 
 #[test]
@@ -1306,6 +1497,8 @@ fn a_seq_cannot_encode_a_zero_position() {
 /// `ranked_law` wants anyway, so the sweep and the order assertion are the same
 /// list.
 fn cover_vocabularies(covered: &mut BTreeSet<String>) {
+    ranked_law(covered, "CommandKind", CommandKind::ALL);
+    ranked_law(covered, "FactKind", FactKind::ALL);
     ranked_law(covered, "Producer", Producer::ALL);
     ranked_law(covered, "WitnessKind", WitnessKind::ALL);
     ranked_law(
