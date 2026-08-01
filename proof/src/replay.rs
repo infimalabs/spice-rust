@@ -272,16 +272,36 @@ impl ReplayVerdict {
         environment: ProofEnvironment,
         battery: Digest,
     ) -> Self {
+        Self::fixture_with(
+            target,
+            environment,
+            battery,
+            [CheckStanding::Clean; CheckKind::ALL.len()],
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_with(
+        target: ReleaseTarget,
+        environment: ProofEnvironment,
+        battery: Digest,
+        standings: [CheckStanding; CheckKind::ALL.len()],
+    ) -> Self {
         let checks = CheckKind::ALL
             .into_iter()
-            .map(|kind| CheckVerdict {
+            .zip(standings)
+            .map(|(kind, standing)| CheckVerdict {
                 kind,
-                standing: CheckStanding::Clean,
+                standing,
                 stdout: Vec::new(),
                 stderr: Vec::new(),
             })
             .collect::<Vec<_>>();
-        let standing = ProofStanding::Clean;
+        let standing = if checks.iter().all(|check| check.standing.passes()) {
+            ProofStanding::Clean
+        } else {
+            ProofStanding::Refused
+        };
         let replay = replay_digest(target, &environment, &battery, standing, &checks);
         Self {
             target,
@@ -457,6 +477,14 @@ impl ReplayError {
     #[must_use]
     pub fn evidence(&self) -> &str {
         &self.source
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture(check: CheckKind, source: impl Into<String>) -> Self {
+        Self {
+            check,
+            source: source.into(),
+        }
     }
 }
 

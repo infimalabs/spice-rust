@@ -16,10 +16,11 @@ pub mod layout;
 pub mod native;
 pub mod payload;
 pub mod replay;
+pub mod seal;
 
 pub use config::{Config, DEFAULT_IMAGE, ExecutablePath, Image};
 pub use container::{Container, ContainerError, Limits, OciRuntime};
-pub use environment::{EnvironmentError, SealedEnvironment, UnsupportedHost};
+pub use environment::{EnvironmentError, SealedEnvironment, UnsupportedHost, compiled_target};
 pub use evidence::{EvidenceError, EvidencePublishError, VerifiedEvidence, publish, verify};
 pub use layout::{Input, InputError, Layout, LayoutError, ReceiptInput};
 pub use native::{NativeError, NativeRunner};
@@ -28,3 +29,4 @@ pub use replay::{
     Battery, Check, CheckKind, CheckStanding, CheckVerdict, ReceiptError, ReplayError,
     ReplayVerdict, replay,
 };
+pub use seal::{ReplayRefusal, SealError, seal};
