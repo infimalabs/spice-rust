@@ -22,8 +22,8 @@ use wire::{Digest, Domain};
 use crate::camp::{Camp, CampError, SharedBound};
 use crate::jurisdiction::{Ignore, IgnoreError};
 use crate::kill::{
-    ATTEMPT_ENVIRONMENT, Kill, KillBounds, KillError, KillRun, MutationBattery, MutationTool,
-    PINNED_CARGO_MUTANTS, RateError, SEED_ENVIRONMENT, SurvivorRate,
+    Kill, KillBounds, KillError, KillRun, MutationBattery, MutationTool, PINNED_CARGO_MUTANTS,
+    RateError, SurvivorRate,
 };
 use crate::measure::{Bounds, Metric, MetricError, Parser, Policy};
 use crate::ratchet::Ratchet;

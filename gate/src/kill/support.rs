@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt;
+use std::io;
 use std::path::PathBuf;
 
 use sill::{Completion, SpecError, WaitOutcome};
@@ -7,8 +8,8 @@ use wire::Digest;
 
 use super::{
     AttemptEvidence, AttemptKind, MutantDisposition, MutationInventory, MutationMovement,
-    OutcomeEvidence, ProcessCompletion, ProcessEvidence, StreamEvidence, SurvivorRate,
-    ToolOutcomes,
+    MutationToolIdentity, OutcomeEvidence, ProcessCompletion, ProcessEvidence, StreamEvidence,
+    SurvivorRate, ToolOutcomes,
 };
 use crate::jurisdiction::WalkError;
 
@@ -183,6 +184,22 @@ impl Error for RateError {
 pub enum KillError {
     /// Selected-tree walking or snapshotting failed.
     Walk(WalkError),
+    /// One direct mutation executable could not be read for identification.
+    ToolRead {
+        /// Executable role.
+        role: &'static str,
+        /// Compiled absolute path.
+        program: PathBuf,
+        /// Filesystem refusal.
+        source: io::Error,
+    },
+    /// Executable bytes changed while the mutation battery was running.
+    ToolIdentityDrift {
+        /// Identity observed before tool attestation.
+        before: Box<MutationToolIdentity>,
+        /// Identity observed after all mutation processes completed.
+        after: Box<MutationToolIdentity>,
+    },
     /// The pinned tool could not produce complete successful version evidence.
     ToolUnavailable(Box<ProcessEvidence>),
     /// Tool version did not equal the distribution pin.
@@ -217,6 +234,21 @@ impl fmt::Display for KillError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Walk(source) => source.fmt(formatter),
+            Self::ToolRead {
+                role,
+                program,
+                source,
+            } => write!(
+                formatter,
+                "direct {role} executable {} could not be identified: {source}",
+                program.display()
+            ),
+            Self::ToolIdentityDrift { before, after } => write!(
+                formatter,
+                "mutation tool identity changed during execution: {} -> {}",
+                before.identity(),
+                after.identity()
+            ),
             Self::ToolUnavailable(evidence) => {
                 write!(
                     formatter,
@@ -270,6 +302,7 @@ impl Error for KillError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Walk(source) => Some(source),
+            Self::ToolRead { source, .. } => Some(source),
             _ => None,
         }
     }

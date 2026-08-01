@@ -45,6 +45,11 @@ if [ "$SPICE_MUTATION_SEED" != "41" ] || [ -z "$SPICE_MUTATION_ATTEMPT" ]; then
     exit 72
 fi
 
+if [ -f "$FAKE_TOOL_DRIFT" ]; then
+    printf '\n# same-version drift\n' >> "$FAKE_PROGRAM"
+    /bin/rm "$FAKE_TOOL_DRIFT"
+fi
+
 identity=
 output_dir=
 previous=
@@ -187,9 +192,14 @@ esac
 
         let tool = Fixture::new("tool");
         tool.write("cargo", FAKE_TOOL);
-        let program = tool.path("cargo");
-        fs::set_permissions(&program, fs::Permissions::from_mode(0o755))
-            .expect("fixture executable");
+        tool.write("cargo-mutants", FAKE_TOOL);
+        fs::set_permissions(tool.path("cargo"), fs::Permissions::from_mode(0o755))
+            .expect("fixture Cargo executable");
+        fs::set_permissions(
+            tool.path("cargo-mutants"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .expect("fixture executable");
         let log = tool.path("calls.log");
         (source, tool, log)
     }
@@ -203,17 +213,25 @@ esac
             ),
             (
                 OsString::from("FAKE_PROGRAM"),
-                tool.path("cargo").into_os_string(),
+                tool.path("cargo-mutants").into_os_string(),
             ),
             (
                 OsString::from("FAKE_DRIFT"),
                 tool.path("drifted").into_os_string(),
             ),
+            (
+                OsString::from("FAKE_TOOL_DRIFT"),
+                tool.path("tool-drift").into_os_string(),
+            ),
         ])
         .expect("fixture environment");
-        let program = tool.path("cargo");
-        let tool = MutationTool::new(&program, &program, PINNED_CARGO_MUTANTS, environment)
-            .expect("pinned tool");
+        let tool = MutationTool::new(
+            tool.path("cargo"),
+            tool.path("cargo-mutants"),
+            PINNED_CARGO_MUTANTS,
+            environment,
+        )
+        .expect("pinned tool");
         let battery =
             MutationBattery::new(targets.iter().copied(), attempts, 41).expect("fixture battery");
         let bounds = KillBounds::new(
@@ -235,48 +253,58 @@ esac
         Ignore::parse("").expect("empty ignore")
     }
 
-    fn expected_inventory() -> &'static str {
-        concat!(
-            "tool cargo-mutants 27.1.0\n",
-            "version-argument --version\n",
-            "baseline-argument test\n",
-            "baseline-argument --locked\n",
-            "baseline-argument --workspace\n",
-            "baseline-argument --all-targets\n",
-            "inventory-argument --no-config\n",
-            "inventory-argument --no-shuffle\n",
-            "inventory-argument --list\n",
-            "inventory-argument --json\n",
-            "attempt-argument --no-config\n",
-            "attempt-argument --no-shuffle\n",
-            "attempt-argument --jobs=1\n",
-            "attempt-argument --test-workspace=true\n",
-            "attempt-argument --baseline=skip\n",
-            "attempt-argument --colors=never\n",
-            "attempt-argument --no-times\n",
-            "attempt-argument --cargo-test-arg=--locked\n",
-            "attempt-argument --cargo-test-arg=--all-targets\n",
-            "attempt-argument --timeout=10\n",
-            "attempt-argument --output\n",
-            "attempt-argument .spice-gate-mutants\n",
-            "attempts 2\n",
-            "seed 41\n",
-            "inventory-argument --file\n",
-            "inventory-argument src/lib.rs\n",
-            "attempt-argument --file\n",
-            "attempt-argument src/lib.rs\n",
-            "target src/lib.rs\n",
-            "inventory-argument --file\n",
-            "inventory-argument src/z.rs\n",
-            "attempt-argument --file\n",
-            "attempt-argument src/z.rs\n",
-            "target src/z.rs\n",
-            "mutant Killed\n",
-            "mutant-argument --re\n",
-            "mutant-argument ^Killed$\n",
-            "mutant Survived\n",
-            "mutant-argument --re\n",
-            "mutant-argument ^Survived$\n",
+    fn expected_inventory(tool: &MutationToolIdentity) -> String {
+        format!(
+            concat!(
+                "tool cargo-mutants 27.1.0\n",
+                "tool-declaration {}\n",
+                "cargo-executable {}\n",
+                "cargo-mutants-executable {}\n",
+                "tool-identity {}\n",
+                "version-argument --version\n",
+                "baseline-argument test\n",
+                "baseline-argument --locked\n",
+                "baseline-argument --workspace\n",
+                "baseline-argument --all-targets\n",
+                "inventory-argument --no-config\n",
+                "inventory-argument --no-shuffle\n",
+                "inventory-argument --list\n",
+                "inventory-argument --json\n",
+                "attempt-argument --no-config\n",
+                "attempt-argument --no-shuffle\n",
+                "attempt-argument --jobs=1\n",
+                "attempt-argument --test-workspace=true\n",
+                "attempt-argument --baseline=skip\n",
+                "attempt-argument --colors=never\n",
+                "attempt-argument --no-times\n",
+                "attempt-argument --cargo-test-arg=--locked\n",
+                "attempt-argument --cargo-test-arg=--all-targets\n",
+                "attempt-argument --timeout=10\n",
+                "attempt-argument --output\n",
+                "attempt-argument .spice-gate-mutants\n",
+                "attempts 2\n",
+                "seed 41\n",
+                "inventory-argument --file\n",
+                "inventory-argument src/lib.rs\n",
+                "attempt-argument --file\n",
+                "attempt-argument src/lib.rs\n",
+                "target src/lib.rs\n",
+                "inventory-argument --file\n",
+                "inventory-argument src/z.rs\n",
+                "attempt-argument --file\n",
+                "attempt-argument src/z.rs\n",
+                "target src/z.rs\n",
+                "mutant Killed\n",
+                "mutant-argument --re\n",
+                "mutant-argument ^Killed$\n",
+                "mutant Survived\n",
+                "mutant-argument --re\n",
+                "mutant-argument ^Survived$\n",
+            ),
+            tool.declaration(),
+            tool.cargo(),
+            tool.mutants(),
+            tool.identity(),
         )
     }
 
@@ -302,7 +330,10 @@ esac
 
         assert_eq!(run.inventory().targets(), ["src/lib.rs", "src/z.rs"]);
         assert_eq!(run.inventory().mutants(), ["Killed", "Survived"]);
-        assert_eq!(run.inventory().render(), expected_inventory());
+        assert_eq!(
+            run.inventory().render(),
+            expected_inventory(run.inventory().tool())
+        );
 
         assert_eq!(
             run.mutants()
@@ -476,29 +507,16 @@ esac
     }
 
     #[test]
-    fn launch_errors_remain_ordered_unconfirmed_evidence() {
+    fn mutation_tool_removal_refuses_the_completed_run_identity() {
         let (source, tool, log) = fixture(r#"[{"name":"RemoveTool"}]"#);
-        let run = gate(&tool, &log, &["src/lib.rs"], 2, 4096)
+        let refused = gate(&tool, &log, &["src/lib.rs"], 2, 4096)
             .run(&source.root, &empty_ignore(), None)
-            .expect("launch failure remains scored as evidence");
-
-        let mutant = &run.mutants()[0];
-        assert_eq!(mutant.disposition, MutantDisposition::Unconfirmed);
-        assert_eq!(
-            mutant
-                .attempts
-                .iter()
-                .map(|attempt| attempt.kind.clone())
-                .collect::<Vec<_>>(),
-            [AttemptKind::Undecodable, AttemptKind::LaunchError]
-        );
+            .expect_err("removed executable cannot retain its earlier identity");
         assert!(matches!(
-            mutant.attempts[1].process.completion,
-            ProcessCompletion::LaunchError(_)
+            refused,
+            KillError::ToolRead { role: "cargo-mutants", source, .. }
+                if source.kind() == std::io::ErrorKind::NotFound
         ));
-        assert_eq!(mutant.attempts[1].outcome, OutcomeEvidence::Absent);
-        assert_eq!(run.rate(), None);
-        assert_eq!(run.proposed_floor(), None);
     }
 
     #[test]
@@ -563,11 +581,12 @@ esac
             .expect_err("drifted inventory refuses");
         assert!(matches!(drift, KillError::InventoryDrift { .. }));
 
-        let unavailable_root = Fixture::new("unavailable");
+        let (missing_mutants_source, missing_mutants_tool, missing_mutants_log) =
+            fixture(r#"[{"name":"Killed"}]"#);
         let environment = Environment::empty();
         let tool = MutationTool::new(
-            "/bin/true",
-            unavailable_root.path("absent-cargo-mutants"),
+            missing_mutants_tool.path("cargo"),
+            missing_mutants_tool.path("absent-cargo-mutants"),
             PINNED_CARGO_MUTANTS,
             environment,
         )
@@ -586,9 +605,43 @@ esac
         )
         .expect("bounds");
         let unavailable = Kill::new(tool, battery, bounds)
-            .run(&empty_source.root, &empty_ignore(), None)
+            .run(&missing_mutants_source.root, &empty_ignore(), None)
             .expect_err("unavailable tool refuses");
-        assert!(matches!(unavailable, KillError::ToolUnavailable(_)));
+        assert!(
+            matches!(
+                &unavailable,
+                KillError::ToolRead { role: "cargo-mutants", source, .. }
+                    if source.kind() == std::io::ErrorKind::NotFound
+            ),
+            "unexpected missing cargo-mutants refusal: {unavailable:?}"
+        );
+        assert!(
+            !missing_mutants_log.exists(),
+            "missing cargo-mutants reached process attestation"
+        );
+
+        let (missing_cargo_source, missing_cargo_tool, missing_cargo_log) =
+            fixture(r#"[{"name":"Killed"}]"#);
+        let mut missing_cargo = gate(
+            &missing_cargo_tool,
+            &missing_cargo_log,
+            &["src/lib.rs"],
+            1,
+            4096,
+        );
+        missing_cargo.tool.cargo_program = missing_cargo_tool.path("absent-cargo");
+        let refused = missing_cargo
+            .run(&missing_cargo_source.root, &empty_ignore(), None)
+            .expect_err("missing direct Cargo refuses before attestation");
+        assert!(matches!(
+            refused,
+            KillError::ToolRead { role: "cargo", ref source, .. }
+                if source.kind() == std::io::ErrorKind::NotFound
+        ));
+        assert!(
+            !missing_cargo_log.exists(),
+            "missing Cargo reached process attestation"
+        );
 
         let (drifted_source, drifted_tool, drifted_log) = fixture(r#"[{"name":"Killed"}]"#);
         drifted_tool.write("bad-version", "yes\n");
@@ -596,6 +649,50 @@ esac
             .run(&drifted_source.root, &empty_ignore(), None)
             .expect_err("drifted tool refuses");
         assert!(matches!(drifted, KillError::ToolDrift { .. }));
+    }
+
+    #[test]
+    fn executable_content_identities_are_stable_and_same_version_bytes_move_them() {
+        let (source, tool, log) = fixture(r#"[{"name":"Killed"}]"#);
+        let gate = gate(&tool, &log, &["src/lib.rs"], 1, 4096);
+        let first = gate
+            .run(&source.root, &empty_ignore(), None)
+            .expect("first identified run");
+        let second = gate
+            .run(&source.root, &empty_ignore(), None)
+            .expect("unchanged identified run");
+        assert_eq!(first.inventory().tool(), second.inventory().tool());
+
+        tool.write(
+            "cargo-mutants",
+            &(FAKE_TOOL.to_owned() + "\n# same semantic version, different bytes\n"),
+        );
+        let changed = gate
+            .run(&source.root, &empty_ignore(), None)
+            .expect("same-version replacement remains operational");
+        assert_eq!(
+            first.inventory().tool().expected(),
+            changed.inventory().tool().expected()
+        );
+        assert_ne!(
+            first.inventory().tool().mutants(),
+            changed.inventory().tool().mutants()
+        );
+        assert_ne!(
+            first.inventory().tool().identity(),
+            changed.inventory().tool().identity()
+        );
+        assert_ne!(first.report().render(), changed.report().render());
+    }
+
+    #[test]
+    fn executable_byte_drift_during_a_run_refuses_the_run() {
+        let (source, tool, log) = fixture(r#"[{"name":"Killed"}]"#);
+        tool.write("tool-drift", "armed\n");
+        let refused = gate(&tool, &log, &["src/lib.rs"], 1, 4096)
+            .run(&source.root, &empty_ignore(), None)
+            .expect_err("mid-run executable drift refuses");
+        assert!(matches!(refused, KillError::ToolIdentityDrift { .. }));
     }
 
     #[test]

@@ -12,11 +12,12 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sill::{
     Argv, Cancellation, CapturedOutput, Deadlines, Environment, Output, ProcessGroup, Redaction,
     RestartDisposition, Spec, SpecError, StdinPolicy, StreamPolicy, WaitPolicy, spawn,
 };
+use wire::{Digest, Domain};
 
 use crate::jurisdiction::{Ignore, Jurisdiction};
 
@@ -111,7 +112,7 @@ fn greatest_common_divisor(mut left: u64, mut right: u64) -> u64 {
 /// Canonical tool, target, argument, seed, and mutant inventory.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MutationInventory {
-    tool: String,
+    tool: MutationToolIdentity,
     targets: Vec<String>,
     mutants: Vec<String>,
     attempts: usize,
@@ -120,9 +121,9 @@ pub struct MutationInventory {
 }
 
 impl MutationInventory {
-    /// Version identity attested before inventory.
+    /// Content-bound tool identity observed before attestation and inventory.
     #[must_use]
-    pub fn tool(&self) -> &str {
+    pub const fn tool(&self) -> &MutationToolIdentity {
         &self.tool
     }
 
@@ -162,7 +163,11 @@ impl MutationInventory {
         use std::fmt::Write as _;
 
         let mut rendered = String::new();
-        let _ = writeln!(rendered, "tool {}", self.tool);
+        let _ = writeln!(rendered, "tool {}", self.tool.expected());
+        let _ = writeln!(rendered, "tool-declaration {}", self.tool.declaration());
+        let _ = writeln!(rendered, "cargo-executable {}", self.tool.cargo());
+        let _ = writeln!(rendered, "cargo-mutants-executable {}", self.tool.mutants());
+        let _ = writeln!(rendered, "tool-identity {}", self.tool.identity());
         for argument in VERSION_ARGUMENTS {
             let _ = writeln!(rendered, "version-argument {argument}");
         }
@@ -458,6 +463,7 @@ impl Kill {
         let caller_inventory = caller.inventory_digest();
         let caller_tree = caller.tree_digest().map_err(KillError::Walk)?;
         let selected = caller.snapshot().map_err(KillError::Walk)?;
+        let tool = self.tool.identify()?;
 
         {
             let private = selected
@@ -471,7 +477,7 @@ impl Kill {
                 .jurisdiction()
                 .snapshot()
                 .map_err(KillError::Walk)?;
-            self.inventory(private.jurisdiction().root())?
+            self.inventory(private.jurisdiction().root(), &tool)?
         };
         if before.mutants.is_empty() {
             return Err(KillError::EmptyInventory);
@@ -488,7 +494,7 @@ impl Kill {
                 .jurisdiction()
                 .snapshot()
                 .map_err(KillError::Walk)?;
-            self.inventory(private.jurisdiction().root())?
+            self.inventory(private.jurisdiction().root(), &tool)?
         };
         if before != after {
             return Err(KillError::InventoryDrift {
@@ -524,6 +530,13 @@ impl Kill {
                 observed_inventory,
                 tree: caller_tree,
                 observed_tree,
+            });
+        }
+        let observed_tool = self.tool.identify()?;
+        if tool != observed_tool {
+            return Err(KillError::ToolIdentityDrift {
+                before: Box::new(tool),
+                after: Box::new(observed_tool),
             });
         }
 
@@ -575,7 +588,11 @@ impl Kill {
         Ok(())
     }
 
-    fn inventory(&self, root: &Path) -> Result<MutationInventory, KillError> {
+    fn inventory(
+        &self,
+        root: &Path,
+        tool: &MutationToolIdentity,
+    ) -> Result<MutationInventory, KillError> {
         let arguments = inventory_arguments(&self.battery.targets);
         let evidence = self.process(self.tool.mutants_program(), root, arguments, None);
         if !evidence.exited(0) || !evidence.outputs_complete() {
@@ -598,7 +615,7 @@ impl Kill {
             return Err(KillError::DuplicateMutant(pair[0].clone()));
         }
         Ok(MutationInventory {
-            tool: self.tool.identity.clone(),
+            tool: tool.clone(),
             targets: self.battery.targets.clone(),
             mutants,
             attempts: self.battery.attempts,

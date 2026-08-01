@@ -42,8 +42,8 @@ pub use jurisdiction::{
 pub use kill::{
     AttemptEvidence, AttemptKind, Kill, KillBounds, KillError, KillRun, MutantDisposition,
     MutantEvidence, MutationBattery, MutationInventory, MutationMovement, MutationTool,
-    OutcomeEvidence, PINNED_CARGO_MUTANTS, ProcessCompletion, ProcessEvidence, RateError,
-    StreamEvidence, SurvivorRate,
+    MutationToolIdentity, OutcomeEvidence, PINNED_CARGO_MUTANTS, ProcessCompletion,
+    ProcessEvidence, RateError, StreamEvidence, SurvivorRate,
 };
 pub use measure::{
     Bounds, MeasureError, Measurement, Metric, MetricError, Parser, Policy, measurement_digest,
