@@ -24,9 +24,6 @@ use crate::ack::keys::{Key, MARKERS, Marker};
 /// decorated prose is misplaced rather than quoted.
 const QUOTING: [char; 4] = ['`', '"', '\'', '>'];
 
-/// The prefix a fenced block opens and closes with.
-const FENCE: &str = "```";
-
 /// Where in the scanned prose a recognition sits.
 ///
 /// Both parts are one-based, and the column is a byte offset within its line.
@@ -129,17 +126,63 @@ pub trait Standing {
 /// first.
 pub fn scan(prose: &str, standing: &impl Standing) -> Vec<Recognition> {
     let mut recognitions = Vec::new();
-    let mut fenced = false;
+    let mut fence = None;
     for (index, line) in prose.lines().enumerate() {
-        if line.trim_start().starts_with(FENCE) {
-            fenced = !fenced;
+        if fence.is_some_and(|open: Fence| open.closes(line)) {
+            fence = None;
             continue;
         }
-        if let Some(clause) = Clause::read(line, fenced) {
+        if fence.is_none()
+            && let Some(open) = Fence::opens(line)
+        {
+            fence = Some(open);
+            continue;
+        }
+        if let Some(clause) = Clause::read(line, fence.is_some()) {
             clause.judge(index + 1, standing, &mut recognitions);
         }
     }
     recognitions
+}
+
+/// One Markdown fenced block, closed only by its own character and width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Fence {
+    marker: u8,
+    length: usize,
+}
+
+impl Fence {
+    fn opens(line: &str) -> Option<Self> {
+        let (marker, length, _) = fence_run(line)?;
+        Some(Self { marker, length })
+    }
+
+    fn closes(self, line: &str) -> bool {
+        fence_run(line).is_some_and(|(marker, length, rest)| {
+            marker == self.marker
+                && length >= self.length
+                && line.get(rest..).is_some_and(|tail| tail.trim().is_empty())
+        })
+    }
+}
+
+/// A backtick or tilde run of at least three characters after at most three spaces.
+fn fence_run(line: &str) -> Option<(u8, usize, usize)> {
+    let bytes = line.as_bytes();
+    let indentation = bytes.iter().take_while(|byte| **byte == b' ').count();
+    if indentation > 3 {
+        return None;
+    }
+    let marker = *bytes.get(indentation)?;
+    if !matches!(marker, b'`' | b'~') {
+        return None;
+    }
+    let length = bytes[indentation..]
+        .iter()
+        .take_while(|byte| **byte == marker)
+        .count();
+    (length >= 3).then_some((marker, length, indentation + length))
 }
 
 /// Where a clause sat, which decides whether it speaks at all.
@@ -300,10 +343,15 @@ fn position(line: &str, start: usize, fenced: bool) -> Position {
     if fenced {
         return Position::Quoted;
     }
-    let leading = line.get(..start).unwrap_or(line).trim();
-    if leading.is_empty() {
-        Position::Placed
-    } else if leading
+    let leading = line.get(..start).unwrap_or(line);
+    let trimmed = leading.trim();
+    if trimmed.is_empty() {
+        if indentation_width(leading) >= 4 {
+            Position::Quoted
+        } else {
+            Position::Placed
+        }
+    } else if trimmed
         .chars()
         .all(|character| QUOTING.contains(&character))
     {
@@ -311,4 +359,14 @@ fn position(line: &str, start: usize, fenced: bool) -> Position {
     } else {
         Position::Buried
     }
+}
+
+/// Markdown indentation columns, with a tab advancing to the next four-column stop.
+fn indentation_width(leading: &str) -> usize {
+    leading.chars().fold(0, |width, character| match character {
+        ' ' => width + 1,
+        '\t' => width + (4 - width % 4),
+        _ if character.is_whitespace() => width + 1,
+        _ => width,
+    })
 }

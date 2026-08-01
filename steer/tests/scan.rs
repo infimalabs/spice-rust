@@ -15,6 +15,9 @@ use wire::Disposition;
 const ACKNOWLEDGED: &str = include_str!("prose/acknowledged.md");
 const REFUSED: &str = include_str!("prose/refused.md");
 const MISSED: &str = include_str!("prose/missed.md");
+const INDENTED_CODE: &str = include_str!("prose/indented-code.md");
+const TILDE_FENCE: &str = include_str!("prose/tilde-fence.md");
+const LONG_FENCE: &str = include_str!("prose/long-fence.md");
 
 /// A header naming two live keys retires both, at the column each was written.
 ///
@@ -83,6 +86,30 @@ fn a_turn_that_only_quotes_keys_retires_none_of_them() {
             recognition.locus
         );
     }
+}
+
+#[test]
+fn a_four_space_indented_code_clause_is_quoted() {
+    assert_eq!(
+        report(&scan(INDENTED_CODE, &board())),
+        vec!["1:9 1kJK6N3R quoted".to_owned()],
+    );
+}
+
+#[test]
+fn a_tilde_fenced_clause_is_quoted() {
+    assert_eq!(
+        report(&scan(TILDE_FENCE, &board())),
+        vec!["2:5 1kJK6M0V quoted".to_owned()],
+    );
+}
+
+#[test]
+fn a_shorter_inner_backtick_run_does_not_close_a_long_fence() {
+    assert_eq!(
+        report(&scan(LONG_FENCE, &board())),
+        vec!["3:5 1kJK7Sqy quoted".to_owned()],
+    );
 }
 
 /// Prose that uses the word without naming a key is not an attempt at all, so
