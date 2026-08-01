@@ -14,13 +14,19 @@ use wire::{Fault, FaultClass, Outcome, Refusal};
 
 mod cli;
 #[cfg(not(target_arch = "wasm32"))]
+mod config_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod doctor;
 #[cfg(not(target_arch = "wasm32"))]
 mod gate_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod lock_command;
 mod proof_command;
 mod render;
 #[cfg(not(target_arch = "wasm32"))]
 mod resident;
+#[cfg(not(target_arch = "wasm32"))]
+mod restore_command;
 
 use render::Form;
 
@@ -61,7 +67,16 @@ fn main() {
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
         ["gate", "receipt"] => deliver(&gate_command::receipt(), form),
+        ["config"] => deliver(&config_command::run(leaf), form),
+        ["lock"] => deliver(&lock_command::report(), form),
+        ["lock", "run"] => match lock_command::run(leaf) {
+            lock_command::RunResult::Child(status) => terminate_child(status),
+            lock_command::RunResult::Rejected { outcome, code } => {
+                deliver_with_code(&outcome, form, code)
+            }
+        },
         ["version"] => deliver(&version_outcome(), form),
+        ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
         _ => {}
     }
     #[cfg(target_arch = "wasm32")]
@@ -150,14 +165,40 @@ fn install_refusal(reason: &str, remedy: &str) -> Outcome<spice::install::Plan> 
 }
 
 fn not_landed(contract: &cli::Contract) -> Outcome<()> {
+    let task = match cli::landing(contract.path) {
+        cli::Landing::Gap(task) => task,
+        cli::Landing::Landed => {
+            return Outcome::Fault(Fault {
+                class: FaultClass::Protocol,
+                reason: "release::dispatch-gap".to_owned(),
+                detail: format!(
+                    concat!(
+                        "registered landed command reached the terminal ",
+                        "release branch: {}"
+                    ),
+                    contract.path.join(" ")
+                ),
+            });
+        }
+        cli::Landing::Unaccounted => {
+            return Outcome::Fault(Fault {
+                class: FaultClass::Protocol,
+                reason: "release::succession-unaccounted".to_owned(),
+                detail: format!(
+                    "registered command has no succession disposition: {}",
+                    contract.path.join(" ")
+                ),
+            });
+        }
+    };
     Outcome::Refusal(Refusal {
         reason: "release::not-landed".to_owned(),
         witness: None,
         expected: None,
         observed: Some(contract.path.join(" ")),
         remedy: format!(
-            "finish the {} battery before Rust release one admits this leaf",
-            contract.battery
+            "complete {task} ({}) before Rust release one admits this leaf",
+            contract.battery,
         ),
     })
 }
@@ -482,6 +523,23 @@ fn deliver<B: serde::Serialize>(outcome: &Outcome<B>, form: Form) -> ! {
         Ok(rendering) => {
             rendering.speak();
             terminate(outcome);
+        }
+        Err(error) => {
+            let fault: Outcome<()> = Outcome::Fault(render_fault(error));
+            render::render(&fault, Form::Text)
+                .expect("the text rendering of a fault encodes nothing")
+                .speak();
+            terminate(&fault);
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn deliver_with_code<B: serde::Serialize>(outcome: &Outcome<B>, form: Form, code: i32) -> ! {
+    match render::render(outcome, form) {
+        Ok(rendering) => {
+            rendering.speak();
+            terminate_code(code);
         }
         Err(error) => {
             let fault: Outcome<()> = Outcome::Fault(render_fault(error));

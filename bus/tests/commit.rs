@@ -155,6 +155,7 @@ fn command_receipts_refuse_body_and_answer_shapes_from_another_binding() {
             Command {
                 v: WireVersion::CURRENT,
                 id: uuid(COMMAND_ONE),
+                epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
                 kind: CommandKind::TaskAdd,
                 expected: vec![Witness::Absence { task: task.clone() }],
                 body: intent::TaskNote {
@@ -177,6 +178,7 @@ fn command_receipts_refuse_body_and_answer_shapes_from_another_binding() {
             Command {
                 v: WireVersion::CURRENT,
                 id: uuid(COMMAND_ONE),
+                epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
                 kind: CommandKind::TaskAdd,
                 expected: vec![Witness::Absence { task }],
                 body: intent::TaskAdd {
@@ -263,6 +265,7 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
             Command {
                 v: WireVersion::CURRENT,
                 id: command_id,
+                epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
                 kind: CommandKind::TaskAdd,
                 expected: vec![Witness::Absence { task: task.clone() }],
                 body: intent::TaskAdd {
@@ -325,6 +328,7 @@ fn note_write(
             Command {
                 v: WireVersion::CURRENT,
                 id: command_id,
+                epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
                 kind: CommandKind::TaskNote,
                 expected: vec![Witness::Existence { task: task.clone() }],
                 body: intent::TaskNote {

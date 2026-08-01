@@ -54,6 +54,7 @@ const WITNESS: &str = r#"{
 const COMMAND: &str = r#"{
   "v": 1,
   "id": "018f82d4-6f59-7d06-92e3-bce913116304",
+  "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
   "kind": "task::note",
   "expected": [{ "kind": "existence", "task": "WIRE-aBcD" }],
   "body": {}

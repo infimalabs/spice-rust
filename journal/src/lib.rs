@@ -11,6 +11,8 @@ mod migrate;
 mod read;
 #[cfg(not(target_arch = "wasm32"))]
 mod replay;
+#[cfg(not(target_arch = "wasm32"))]
+mod restore;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use guard::{
@@ -23,6 +25,8 @@ pub use migrate::{Migration, MigrationError, OpenError};
 pub use read::{FactSnapshot, SnapshotError};
 #[cfg(not(target_arch = "wasm32"))]
 pub use replay::{Verification, VerifyError, Violation, ViolationClass};
+#[cfg(not(target_arch = "wasm32"))]
+pub use restore::{BackupVerifyError, verify_restore_bundle};
 
 /// Current crossing types used to prepare journal work without depending on
 /// the journal's storage implementation.

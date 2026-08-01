@@ -269,7 +269,10 @@ fn a_registered_unlanded_leaf_refuses_by_name() {
     assert!(spoken.out.is_empty());
     assert_eq!(
         utf8(spoken.err),
-        "spice: release::not-landed; finish the board::next battery before Rust release one admits this leaf\n",
+        concat!(
+            "spice: release::not-landed; complete BOARD-1kJQlDDt ",
+            "(board::next) before Rust release one admits this leaf\n",
+        ),
     );
 }
 
