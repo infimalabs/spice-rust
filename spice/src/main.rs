@@ -1,12 +1,33 @@
 use std::ffi::{OsStr, OsString};
 
-use wire::Outcome;
+use wire::{Outcome, Refusal};
+
+mod cli;
 
 const REPLY_EXIT: i32 = 0;
 const FAULT_EXIT: i32 = 1;
 const REFUSAL_EXIT: i32 = 2;
 
-fn main() {}
+fn main() {
+    let matches = cli::command().get_matches();
+    let contract = cli::selected_contract(&matches)
+        .expect("the generated parser returns only registered command leaves");
+    let command = contract.path.join(" ");
+    let outcome: Outcome<()> = Outcome::Refusal(Refusal {
+        reason: "release::not-landed".to_owned(),
+        witness: None,
+        expected: None,
+        observed: Some(command),
+        remedy: format!(
+            "finish the {} battery before Rust release one admits this leaf",
+            contract.battery
+        ),
+    });
+    if let Outcome::Refusal(refusal) = &outcome {
+        eprintln!("spice: {}; {}", refusal.reason, refusal.remedy);
+    }
+    terminate(&outcome);
+}
 
 /// Acquire one ambient bootstrap value before typed configuration crosses
 /// into the library graph.
