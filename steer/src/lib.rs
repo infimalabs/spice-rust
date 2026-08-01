@@ -22,6 +22,7 @@
 #![forbid(unsafe_code)]
 
 pub mod ack;
+pub mod config;
 pub mod directives;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod hook;
@@ -32,4 +33,5 @@ pub mod run;
 
 pub use ack::keys::{DISPOSITIONS, DispositionError, Key, KeyError, MARKERS, Marker, disposition};
 pub use ack::scan::{Locus, Miss, Outcome, Recognition, Standing, scan};
+pub use config::Config;
 pub use directives::{Directive, LADDER, Ledger, Refusal, Steering};

@@ -206,12 +206,11 @@ fn malformed_policy_and_unknown_gate_fields_refuse_before_a_contract_exists() {
     assert_eq!(field.field(), "gate.walk.timeout");
 
     let selector = fixture_contract("[gate.walk]\nskip = [\"fixtures/**\"]\n", TRACKED_BASELINE)
-        .expect_err("unsupported skip spelling is refused");
-    assert!(matches!(
-        selector,
-        ContractError::Policy(PolicyError::Selector { ref path, ref field, .. })
-            if path == &policy_path() && field == "gate.walk.skip[0]"
-    ));
+        .expect("documented crossing-star skip is admitted");
+    assert_eq!(
+        selector.policy().ignore().render(),
+        ".git/\ntarget/\nfixtures/**\n"
+    );
 }
 
 fn fixture_contract(policy: &str, baseline: &str) -> Result<Contract, ContractError> {

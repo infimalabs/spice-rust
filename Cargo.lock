@@ -215,6 +215,7 @@ dependencies = [
  "dialect",
  "fold",
  "journal",
+ "serde",
  "wire",
 ]
 
@@ -335,6 +336,7 @@ version = "0.0.0"
 dependencies = [
  "fold",
  "journal",
+ "serde",
  "wire",
 ]
 
@@ -623,6 +625,7 @@ version = "0.0.0"
 dependencies = [
  "atomic",
  "gix",
+ "gix-glob",
  "serde",
  "serde_json",
  "sill",
@@ -1582,11 +1585,13 @@ dependencies = [
  "fold",
  "journal",
  "listen",
+ "serde",
  "sill",
  "steer",
  "tape",
  "taste",
  "vendor",
+ "wire",
 ]
 
 [[package]]
@@ -1821,6 +1826,7 @@ version = "0.0.0"
 dependencies = [
  "atomic",
  "gate",
+ "serde",
  "sill",
  "wire",
 ]
@@ -1981,6 +1987,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_path_to_error"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10a9ff822e371bb5403e391ecd83e182e0e77ba7f6fe0160b795797109d1b457"
+dependencies = [
+ "itoa",
+ "serde",
+ "serde_core",
+]
+
+[[package]]
 name = "serde_spanned"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2080,11 +2097,13 @@ dependencies = [
  "proof",
  "rusqlite",
  "serde",
+ "serde_path_to_error",
  "sill",
  "steer",
  "tape",
  "taste",
  "tokio",
+ "toml",
  "tungstenite",
  "uuid",
  "vendor",
@@ -2104,6 +2123,7 @@ dependencies = [
  "atomic",
  "fold",
  "journal",
+ "serde",
  "sill",
  "syn 3.0.3",
  "wire",

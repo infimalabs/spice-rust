@@ -14,10 +14,12 @@
 #![forbid(unsafe_code)]
 
 pub mod budget;
+pub mod config;
 pub mod pend;
 pub mod policy;
 
 pub use budget::{Budgets, Spend};
+pub use config::Config;
 pub use pend::{Held, Pending, Reversibility, Ruling};
 pub use policy::{Answer, Authority, Decision, OPERATOR, POSTURE, Policy, PolicyError, Rule};
 

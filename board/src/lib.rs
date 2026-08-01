@@ -8,6 +8,7 @@ use std::fmt;
 pub mod allocate;
 pub mod apply;
 pub mod claim;
+pub mod config;
 pub mod graph;
 pub mod handout;
 #[cfg(not(target_arch = "wasm32"))]
@@ -24,6 +25,7 @@ pub use apply::{
     ApplyError, ApplyReceipt, AuthorityTransaction, Preview, PreviewRefusal, apply, digest_of,
 };
 pub use claim::{Active, ClaimRefusal};
+pub use config::{Config, NextConfig};
 pub use graph::{Diagram, View};
 pub use next::{Selection, select};
 pub use phase::{PhaseRefusal, Transition, TransitionKind};

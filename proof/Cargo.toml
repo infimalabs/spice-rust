@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 atomic = { path = "../atomic" }
 gate = { path = "../gate" }
+serde = { version = "1.0.229", features = ["derive"] }
 sill = { path = "../sill" }
 wire = { path = "../wire" }
 

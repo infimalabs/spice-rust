@@ -13,11 +13,13 @@ consent = { path = "../consent" }
 fold = { path = "../fold" }
 journal = { path = "../journal" }
 listen = { path = "../listen" }
+serde = { version = "1.0.229", features = ["derive"] }
 sill = { path = "../sill" }
 steer = { path = "../steer" }
 tape = { path = "../tape" }
 taste = { path = "../taste" }
 vendor = { path = "../vendor" }
+wire = { path = "../wire" }
 
 [lints]
 workspace = true
