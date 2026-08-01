@@ -97,10 +97,16 @@ pub struct LeaseHead {
     pub epoch: CanonicalUuid,
 }
 
-/// Closed classes of authoritative command predicates.
+/// Closed classes of authoritative witness heads.
+///
+/// This classifies seven stored predicate-head rows. Command preconditions use
+/// the 23-variant [`crate::witness::WitnessKind`] vocabulary instead. They
+/// overlap on assignment, directive, consent, budget, and transition, but
+/// neither contains the other: only heads name review and document classes,
+/// while only commands name task, workflow, claim, and other concrete subjects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum WitnessKind {
+pub enum WitnessClass {
     /// Allocation or reviewer assignment.
     Assignment,
     /// Review authorship or verdict state.
@@ -124,7 +130,7 @@ pub struct WitnessHead {
     /// Stable predicate name.
     pub name: String,
     /// Predicate class from WIRE's closed authority list.
-    pub kind: WitnessKind,
+    pub kind: WitnessClass,
     /// Canonical predicate statement.
     pub predicate: String,
     /// Fact that established the current predicate.

@@ -234,7 +234,6 @@ pub enum Up {
 /// traffic cannot lose a race because it is not witnessed.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
-#[non_exhaustive]
 pub enum Witness {
     /// The task statement head.
     Task {
@@ -406,9 +405,11 @@ pub enum Witness {
 ///
 /// The command registry states its law in these terms because a required
 /// witness is known at compile time while the value it proves is not.
+/// [`crate::WitnessClass`] separately classifies the seven durable witness-head
+/// rows. The two vocabularies overlap on assignment, directive, consent,
+/// budget, and transition, but neither contains the other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-#[non_exhaustive]
 pub enum WitnessKind {
     /// The task statement head.
     Task,

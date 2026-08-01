@@ -8,6 +8,25 @@
 //! the socket admits the current version only, the journal runs one forward
 //! migration at open, and the browser has no independent clock because the app
 //! is compiled from this crate and embedded in the binary that owns the socket.
+//!
+//! # The vocabularies are closed, so they stay enumerable
+//!
+//! [`CommandKind`], [`FactKind`], [`Witness`], [`WitnessKind`], and
+//! [`WitnessClass`] each name a closed set, and none of them is
+//! `#[non_exhaustive]`. `WitnessKind` classifies command predicates;
+//! `WitnessClass` classifies authoritative witness heads. That
+//! attribute protects consumers compiled against an older release of a
+//! published crate, and this crate has no such consumer: the socket admits the
+//! current version only, the journal runs one forward migration at open, and
+//! the browser app is compiled from this crate into the binary that owns the
+//! socket. Every consumer recompiles from this source.
+//!
+//! What the attribute costs is what decides it. Marking these enums
+//! non-exhaustive obliges every fold, producer, and view outside this crate to
+//! carry a wildcard arm, which turns "a kind was added" from a build failure
+//! naming the unhandled variant into a value that quietly takes the default
+//! branch. Exhaustive matching is the strongest enforcement a closed vocabulary
+//! can have, and these sets are declared closed precisely so they can have it.
 
 pub mod command;
 pub mod envelope;
@@ -15,6 +34,7 @@ pub mod fact;
 pub mod head;
 pub mod hello;
 pub mod ident;
+pub mod manifest;
 pub mod packed;
 pub mod reply;
 pub mod witness;
@@ -24,7 +44,7 @@ pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVe
 pub use fact::{Fact, FactKind};
 pub use head::{
     ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency, LeaseHead,
-    ResidencyHead, ResidentState, TaskHead, TrustHead, TrustState, WitnessHead, WitnessKind,
+    ResidencyHead, ResidentState, TaskHead, TrustHead, TrustState, WitnessClass, WitnessHead,
     WorkflowHead,
 };
 pub use hello::{Hello, Rejected};

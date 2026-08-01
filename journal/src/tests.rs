@@ -6,7 +6,7 @@ use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind, Envelope, Fact,
     FactKind, FindingHead, FindingState, Instant, LaneResidency, LeaseHead, Origin, Outcome, Phase,
     Reply, ReplyPosition, ResidencyHead, ResidentState, Response, Seq, SeqRange, TaskHandle,
-    TaskHead, TrustHead, TrustState, WireVersion, Witness, WitnessHead, WorkflowHead,
+    TaskHead, TrustHead, TrustState, WireVersion, Witness, WitnessClass, WitnessHead, WorkflowHead,
 };
 
 use crate::{Journal, MigrationError, OpenError, SCHEMA_VERSION, ViolationClass};
@@ -387,7 +387,7 @@ fn lease_head() -> LeaseHead {
 fn witness_head() -> WitnessHead {
     WitnessHead {
         name: "review:JOURNAL-a1".to_owned(),
-        kind: wire::head::WitnessKind::Review,
+        kind: WitnessClass::Review,
         predicate: "workflow is review".to_owned(),
         head: Seq::new(2).expect("witness head"),
     }

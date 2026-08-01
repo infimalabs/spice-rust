@@ -1,0 +1,68 @@
+# Tracked repository policy for the Rust port.
+#
+# This file carries intent only. It deliberately contains none of the
+# predecessor's Python runtime configuration -- no wrapper argv, no pytest or
+# release commands, no suite-seam paths, no interpreter-specific env allowlist.
+# Those describe how a Python checkout runs itself; this repository builds a
+# Rust workspace, and `scripts/verify.sh` already owns its verification.
+
+[tasks]
+# The public project stems work may route to, beyond the base `task` and
+# `serve` stems the packaged defaults supply.
+#
+# The predecessor repository declared seven stems: session, mail, hooks,
+# studies, cli, lifecycle, and tests. Each was adjudicated against current
+# Rust-port work rather than transliterated, because a stem is public
+# vocabulary: once declared it names handles, and a stem naming a removed
+# surface mints work for something deliberately dropped.
+#
+# Retained, respelled into the current lexicon:
+#
+#   cli   -> rim     The clap, exit, and env edge is the one surface every
+#                    leaf reaches through and no single crate owns; the
+#                    generated agent skill derives from that same clap tree.
+#                    `rim` is the current word for that edge, and it is a role
+#                    the binary crate plays rather than a workspace member, so
+#                    it names work the crate axis cannot.
+#
+#   tests -> corpus  Recorded fixture sets replayed as law -- dialect
+#                    refusals, vendor streams, and the proof battery -- span
+#                    three crates and are governed as one body of evidence.
+#                    `corpus` is the current word for that; plain `tests`
+#                    names an activity every crate performs locally.
+#
+# Dropped, with the reason each is not current Rust-port work:
+#
+#   session    Session forensics was removed as a command family in the clean
+#              break. The word survives only as an attribution lens beside
+#              actor and lineage; the surviving forensic surfaces are watch,
+#              retro, recall, and thread, which their own crates own.
+#
+#   mail       The word does not exist in this port. Durable outbound
+#              direction is `steer`, and its crate already owns directives,
+#              the inbox, and acknowledgment scanning.
+#
+#   hooks      `hook` remains current but is never written bare: a path
+#              qualifies it as a gate hook or a steer hook. Both qualifiers
+#              are crates, so the work routes under them and a bare stem would
+#              reintroduce the unqualified spelling the lexicon refuses.
+#
+#   studies    Retired outright in favor of `gate` -- enforcement is one
+#              organ, not a curriculum. Declaring it would seed the very
+#              deny-list the gate generates.
+#
+#   lifecycle  A compound whose tail was shed; the current word is `life`, and
+#              the three lane lives are Steer, Drive, and Drain. Lane and
+#              resident transitions are owned by the lane crate and the
+#              `up::*` facts, so this is crate work.
+#
+# Crate names are deliberately absent. Work on a workspace member already
+# routes as `task.<crate>` on the live board, and carving a second spelling
+# for the same sense is exactly what the lexicon's one-sense law forbids.
+stems = ["rim", "corpus"]
+
+# Pinned rather than inherited, because the stem inventory above was chosen
+# against these bounds: every stem takes exactly one child segment, with a
+# third available when a child needs to subdivide.
+project_min_depth = 2
+project_max_depth = 3
