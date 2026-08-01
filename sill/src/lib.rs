@@ -1,12 +1,14 @@
-//! Dependency-free process and advisory-lock floor.
+//! Process and advisory-lock floor with typed lock configuration.
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_arch = "wasm32")))]
 compile_error!("sill supports the Linux and macOS release targets plus wasm contract checks");
 
+pub mod config;
 mod lock;
 mod spawn;
 mod spec;
 
+pub use config::{ConfigError, ExitCode, ExitStatuses, LockConfig, ShardCount};
 pub use lock::{Acquisition, LockFile, LockName, LockNameError, Possession};
 pub use spawn::{CapturedOutput, Completion, Running, WaitError, WaitOutcome, WaitStep, spawn};
 pub use spec::{

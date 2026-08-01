@@ -10,11 +10,13 @@
 mod canary;
 mod claude;
 mod codex;
+pub mod config;
 mod event;
 mod residue;
 mod surface;
 
 pub use canary::{Alarm, Canary};
+pub use config::{Config, ConfigError};
 pub use event::{
     Compaction, Event, EventKind, Failure, Prose, Reasoning, ReasoningContent, Tool, ToolMoment,
     ToolResult, Usage,
