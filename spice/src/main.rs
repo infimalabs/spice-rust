@@ -14,6 +14,8 @@ use wire::{Fault, FaultClass, Outcome, Refusal};
 
 mod cli;
 #[cfg(not(target_arch = "wasm32"))]
+mod command_client;
+#[cfg(not(target_arch = "wasm32"))]
 mod config_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod doctor;
@@ -107,7 +109,7 @@ fn main() {
     #[cfg(not(target_arch = "wasm32"))]
     let outcome = match contract.path {
         ["up"] => resident::up(),
-        ["down"] => resident::down(),
+        ["down"] => resident::down(contract),
         _ => not_landed(contract),
     };
     #[cfg(target_arch = "wasm32")]
