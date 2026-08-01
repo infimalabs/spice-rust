@@ -79,6 +79,24 @@ rows = 80
 image = "registry.example/proof@sha256:4444444444444444444444444444444444444444444444444444444444444444"
 "#;
 
+#[cfg(not(windows))]
+fn absolute(name: &str) -> String {
+    format!("/opt/spice/{name}")
+}
+
+#[cfg(windows)]
+fn absolute(name: &str) -> String {
+    format!("C:/spice/{name}")
+}
+
+fn complete() -> String {
+    format!(
+        "{COMPLETE}container = \"{}\"\nrunner = \"{}\"\n",
+        absolute("container"),
+        absolute("runner")
+    )
+}
+
 fn decode(document: &str) -> Result<Root, String> {
     let deserializer = toml::Deserializer::parse(document).map_err(|error| error.to_string())?;
     serde_path_to_error::deserialize(deserializer).map_err(|error| error.to_string())
@@ -170,11 +188,13 @@ fn sample_path(template: &str) -> Vec<OwnedSegment> {
 
 #[test]
 fn root_is_exactly_the_eleven_typed_domains() {
-    let root = decode(COMPLETE).expect("the complete root decodes");
+    let root = decode(&complete()).expect("the complete root decodes");
     let round_trip = decode(&toml::to_string_pretty(&root).expect("root renders"))
         .expect("rendered root decodes");
     assert_eq!(round_trip, root);
     assert_eq!(decode("").expect("empty root"), Root::default());
+    assert!(root.proof().container().is_some());
+    assert!(root.proof().runner().is_some());
 
     let Value::Table(table) = encoded(&Root::default()) else {
         panic!("a root must encode as a table");
@@ -199,7 +219,7 @@ fn root_is_exactly_the_eleven_typed_domains() {
 
 #[test]
 fn one_registry_row_covers_every_populated_serde_leaf() {
-    let root = decode(COMPLETE).expect("the complete root decodes");
+    let root = decode(&complete()).expect("the complete root decodes");
     let mut coverage = BTreeMap::<&str, usize>::new();
 
     for (path, _) in leaves(&encoded(&root)) {
@@ -242,7 +262,11 @@ fn registry_builtins_are_the_typed_root_defaults() {
         seen,
         descriptors()
             .iter()
-            .filter(|entry| entry.builtin().is_some())
+            .filter(|entry| {
+                entry
+                    .builtin()
+                    .is_some_and(|builtin| builtin != Builtin::Absent)
+            })
             .map(|entry| entry.template().as_str())
             .collect()
     );
@@ -251,6 +275,13 @@ fn registry_builtins_are_the_typed_root_defaults() {
             .and_then(|entry| entry.builtin()),
         Some(Builtin::String(proof::DEFAULT_IMAGE))
     );
+    for leaf in ["container", "runner"] {
+        assert_eq!(
+            descriptor(&[PathSegment::Key("proof"), PathSegment::Key(leaf)])
+                .and_then(|entry| entry.builtin()),
+            Some(Builtin::Absent)
+        );
+    }
 }
 
 #[test]
@@ -282,6 +313,8 @@ fn templates_are_unique_single_word_non_overlapping_and_stably_ordered() {
         "lock.<name>.shards",
         "canvas.pack.rows",
         "proof.image",
+        "proof.container",
+        "proof.runner",
     ];
     assert_eq!(
         descriptors()
@@ -356,6 +389,8 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
             "lock.full",
             "lock.<name>.shards",
             "canvas.pack.rows",
+            "proof.container",
+            "proof.runner",
         ]
     );
 
@@ -372,7 +407,16 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
     assert_eq!(flags[1].1.flag(), "--vendor");
 
     for entry in descriptors() {
-        assert!(entry.layers().contains(&ConfigSource::Tracked));
+        let local_only = matches!(
+            entry.template().as_str(),
+            "proof.container" | "proof.runner"
+        );
+        assert_eq!(
+            entry.layers().contains(&ConfigSource::Tracked),
+            !local_only,
+            "{}",
+            entry.template().as_str()
+        );
         assert!(!entry.layers().contains(&ConfigSource::Builtin));
         assert_eq!(
             entry.policy_class() == PolicyClass::MachineLocal,
@@ -390,6 +434,7 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
         let compatible = matches!(
             (entry.kind(), entry.builtin()),
             (_, None)
+                | (ValueKind::String, Some(Builtin::Absent))
                 | (
                     ValueKind::String | ValueKind::Duration | ValueKind::Answer | ValueKind::Life,
                     Some(Builtin::String(_)),

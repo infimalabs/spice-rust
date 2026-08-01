@@ -14,7 +14,7 @@ pub mod layout;
 pub mod payload;
 pub mod replay;
 
-pub use config::{Config, DEFAULT_IMAGE, Image};
+pub use config::{Config, DEFAULT_IMAGE, ExecutablePath, Image};
 pub use container::{Container, ContainerError, Limits, OciRuntime};
 pub use evidence::{EvidenceError, EvidencePublishError, VerifiedEvidence, publish, verify};
 pub use layout::{Input, InputError, Layout, LayoutError, ReceiptInput};

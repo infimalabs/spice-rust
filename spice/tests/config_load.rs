@@ -9,6 +9,16 @@ use wire::{ConfigSource, Name};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(not(windows))]
+fn absolute(name: &str) -> String {
+    format!("/opt/spice/{name}")
+}
+
+#[cfg(windows)]
+fn absolute(name: &str) -> String {
+    format!("C:/spice/{name}")
+}
+
 fn path_source(resolved: &Resolved, expected: &str) -> ConfigSource {
     resolved
         .provenance()
@@ -70,9 +80,17 @@ fn main_worktree_reads_only_the_two_exact_paths_and_passes_typed_flags() {
         root.join("spice.toml"),
         b"[lane]\nvendor = \"codex\"\n[listen]\nwindow = \"2m\"\n",
     );
+    let container = absolute("container");
+    let runner = absolute("runner");
     write(
         local_path(&root),
-        b"[listen]\nwindow = \"3m\"\n[lock.alpha]\nshards = 2\n",
+        format!(
+            concat!(
+                "[listen]\nwindow = \"3m\"\n[lock.alpha]\nshards = 2\n",
+                "[proof]\ncontainer = \"{}\"\nrunner = \"{}\"\n",
+            ),
+            container, runner
+        ),
     );
 
     for ignored in [
@@ -100,6 +118,24 @@ fn main_worktree_reads_only_the_two_exact_paths_and_passes_typed_flags() {
     assert_eq!(
         resolved
             .root()
+            .proof()
+            .container()
+            .expect("container path")
+            .as_path(),
+        Path::new(&container)
+    );
+    assert_eq!(
+        resolved
+            .root()
+            .proof()
+            .runner()
+            .expect("runner path")
+            .as_path(),
+        Path::new(&runner)
+    );
+    assert_eq!(
+        resolved
+            .root()
             .lock()
             .named()
             .map(|(name, shards)| (name.as_str(), shards.get()))
@@ -108,6 +144,11 @@ fn main_worktree_reads_only_the_two_exact_paths_and_passes_typed_flags() {
     );
     assert_eq!(path_source(&resolved, "lane.vendor"), ConfigSource::Flag);
     assert_eq!(path_source(&resolved, "listen.window"), ConfigSource::Local);
+    assert_eq!(
+        path_source(&resolved, "proof.container"),
+        ConfigSource::Local
+    );
+    assert_eq!(path_source(&resolved, "proof.runner"), ConfigSource::Local);
 }
 
 #[test]
