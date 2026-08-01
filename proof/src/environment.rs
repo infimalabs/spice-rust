@@ -1,0 +1,551 @@
+//! Closed compiled-host selection for the two sealed proof environments.
+
+use std::error::Error;
+use std::fmt;
+use std::path::Path;
+
+use wire::manifest::{ProofEnvironment, ReleaseTarget};
+
+use crate::config::Config;
+use crate::container::{Container, ContainerError, Limits, OciRuntime};
+use crate::native::{NativeError, NativeRunner};
+use crate::payload::AdmittedPayload;
+
+/// The sole admitted sealed environment for the compiled release target.
+#[derive(Clone, Debug)]
+pub struct SealedEnvironment {
+    target: ReleaseTarget,
+    kind: EnvironmentKind,
+}
+
+#[derive(Clone, Debug)]
+enum EnvironmentKind {
+    Oci(Container),
+    Native(NativeRunner),
+}
+
+impl SealedEnvironment {
+    /// Select and admit the environment fixed by the compiled host tuple.
+    ///
+    /// Host selection happens before any configured path is inspected. The
+    /// selected branch reads only its corresponding optional local path.
+    ///
+    /// # Errors
+    ///
+    /// Refuses every host except exact `aarch64-apple-darwin` and
+    /// `x86_64-unknown-linux-musl`, a missing selected path, or failed runtime
+    /// admission.
+    pub fn current(
+        config: &Config,
+        payload: &AdmittedPayload,
+        workspace: impl AsRef<Path>,
+        limits: Limits,
+    ) -> Result<Self, EnvironmentError> {
+        let target = select_host(Host::compiled()).map_err(EnvironmentError::UnsupportedHost)?;
+        validate_payload_environment(
+            target,
+            payload.value().target,
+            &payload.value().pins.proof_container,
+            config,
+        )?;
+        Self::for_target(target, config, workspace.as_ref(), limits)
+    }
+
+    fn for_target(
+        target: ReleaseTarget,
+        config: &Config,
+        workspace: &Path,
+        limits: Limits,
+    ) -> Result<Self, EnvironmentError> {
+        let kind = match target {
+            ReleaseTarget::X86_64UnknownLinuxMusl => {
+                let binary = config
+                    .container()
+                    .ok_or(EnvironmentError::MissingContainerPath)?;
+                let runtime = OciRuntime::attest(binary, limits).map_err(EnvironmentError::Oci)?;
+                let container = Container::new(runtime, config.image().as_str(), workspace, limits)
+                    .map_err(EnvironmentError::Oci)?;
+                EnvironmentKind::Oci(container)
+            }
+            ReleaseTarget::Aarch64AppleDarwin => {
+                let binary = config.runner().ok_or(EnvironmentError::MissingRunnerPath)?;
+                let runner = NativeRunner::attest(binary, workspace, limits)
+                    .map_err(EnvironmentError::Native)?;
+                EnvironmentKind::Native(runner)
+            }
+        };
+        Ok(Self { target, kind })
+    }
+
+    /// Release target selected solely from the compiled host.
+    #[must_use]
+    pub const fn target(&self) -> ReleaseTarget {
+        self.target
+    }
+
+    /// Typed identity observed for the selected environment.
+    #[must_use]
+    pub fn identity(&self) -> ProofEnvironment {
+        match &self.kind {
+            EnvironmentKind::Oci(container) => ProofEnvironment::Oci {
+                image: container.proof_image().clone(),
+            },
+            EnvironmentKind::Native(runner) => ProofEnvironment::native(runner.identity().clone()),
+        }
+    }
+
+    pub(crate) fn execute(
+        &self,
+        program: &str,
+        arguments: &[String],
+    ) -> Result<crate::container::Execution, String> {
+        match &self.kind {
+            EnvironmentKind::Oci(container) => container
+                .execute(program, arguments)
+                .map_err(|source| source.to_string()),
+            EnvironmentKind::Native(runner) => runner
+                .execute(program, arguments)
+                .map_err(|source| source.to_string()),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_oci(container: Container) -> Self {
+        Self {
+            target: ReleaseTarget::X86_64UnknownLinuxMusl,
+            kind: EnvironmentKind::Oci(container),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_native(runner: NativeRunner) -> Self {
+        Self {
+            target: ReleaseTarget::Aarch64AppleDarwin,
+            kind: EnvironmentKind::Native(runner),
+        }
+    }
+}
+
+fn validate_payload_environment(
+    selected: ReleaseTarget,
+    payload: ReleaseTarget,
+    payload_image: &str,
+    config: &Config,
+) -> Result<(), EnvironmentError> {
+    if payload != selected {
+        return Err(EnvironmentError::PayloadTarget { selected, payload });
+    }
+    if selected == ReleaseTarget::X86_64UnknownLinuxMusl && payload_image != config.image().as_str()
+    {
+        return Err(EnvironmentError::ImageMismatch {
+            payload: payload_image.to_owned(),
+            configured: config.image().as_str().to_owned(),
+        });
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Host {
+    arch: &'static str,
+    vendor: &'static str,
+    os: &'static str,
+    environment: &'static str,
+    abi: &'static str,
+}
+
+impl Host {
+    const fn compiled() -> Self {
+        Self {
+            arch: compiled_arch(),
+            vendor: compiled_vendor(),
+            os: compiled_os(),
+            environment: compiled_environment(),
+            abi: compiled_abi(),
+        }
+    }
+}
+
+fn select_host(host: Host) -> Result<ReleaseTarget, UnsupportedHost> {
+    match host {
+        Host {
+            arch: "aarch64",
+            vendor: "apple",
+            os: "macos",
+            environment: "",
+            abi: "",
+        } => Ok(ReleaseTarget::Aarch64AppleDarwin),
+        Host {
+            arch: "x86_64",
+            vendor: "unknown",
+            os: "linux",
+            environment: "musl",
+            abi: "",
+        } => Ok(ReleaseTarget::X86_64UnknownLinuxMusl),
+        _ => Err(UnsupportedHost {
+            arch: host.arch,
+            vendor: host.vendor,
+            os: host.os,
+            environment: host.environment,
+            abi: host.abi,
+        }),
+    }
+}
+
+const fn compiled_arch() -> &'static str {
+    if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else if cfg!(target_arch = "x86_64") {
+        "x86_64"
+    } else {
+        "other"
+    }
+}
+
+const fn compiled_vendor() -> &'static str {
+    if cfg!(target_vendor = "apple") {
+        "apple"
+    } else if cfg!(target_vendor = "unknown") {
+        "unknown"
+    } else {
+        "other"
+    }
+}
+
+const fn compiled_os() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        "other"
+    }
+}
+
+const fn compiled_environment() -> &'static str {
+    if cfg!(target_env = "musl") {
+        "musl"
+    } else if cfg!(target_env = "") {
+        ""
+    } else {
+        "other"
+    }
+}
+
+const fn compiled_abi() -> &'static str {
+    if cfg!(target_abi = "") { "" } else { "other" }
+}
+
+/// The exact compiled host tuple that has no release proof environment.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnsupportedHost {
+    arch: &'static str,
+    vendor: &'static str,
+    os: &'static str,
+    environment: &'static str,
+    abi: &'static str,
+}
+
+impl fmt::Display for UnsupportedHost {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            concat!(
+                "compiled host has no sealed proof environment: ",
+                "arch={:?}, vendor={:?}, os={:?}, env={:?}, abi={:?}"
+            ),
+            self.arch, self.vendor, self.os, self.environment, self.abi
+        )
+    }
+}
+
+impl Error for UnsupportedHost {}
+
+/// Why the one compiled-host environment could not be established.
+#[derive(Debug)]
+pub enum EnvironmentError {
+    UnsupportedHost(UnsupportedHost),
+    PayloadTarget {
+        selected: ReleaseTarget,
+        payload: ReleaseTarget,
+    },
+    ImageMismatch {
+        payload: String,
+        configured: String,
+    },
+    MissingContainerPath,
+    MissingRunnerPath,
+    Oci(ContainerError),
+    Native(NativeError),
+}
+
+impl fmt::Display for EnvironmentError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedHost(source) => source.fmt(formatter),
+            Self::PayloadTarget { selected, payload } => write!(
+                formatter,
+                "compiled host selects {selected}, but admitted payload targets {payload}"
+            ),
+            Self::ImageMismatch {
+                payload,
+                configured,
+            } => write!(
+                formatter,
+                concat!(
+                    "configured proof image does not match admitted musl payload: ",
+                    "payload={:?}, configured={:?}"
+                ),
+                payload, configured
+            ),
+            Self::MissingContainerPath => formatter
+                .write_str("proof.container is required for x86_64-unknown-linux-musl proof"),
+            Self::MissingRunnerPath => {
+                formatter.write_str("proof.runner is required for aarch64-apple-darwin proof")
+            }
+            Self::Oci(source) => source.fmt(formatter),
+            Self::Native(source) => source.fmt(formatter),
+        }
+    }
+}
+
+impl Error for EnvironmentError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::UnsupportedHost(source) => Some(source),
+            Self::Oci(source) => Some(source),
+            Self::Native(source) => Some(source),
+            Self::PayloadTarget { .. }
+            | Self::ImageMismatch { .. }
+            | Self::MissingContainerPath
+            | Self::MissingRunnerPath => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
+
+    use sill::Deadlines;
+    use wire::manifest::ReleaseTarget;
+
+    use super::{
+        EnvironmentError, Host, SealedEnvironment, UnsupportedHost, select_host,
+        validate_payload_environment,
+    };
+    use crate::config::Config;
+    use crate::container::Limits;
+
+    const DARWIN: Host = Host {
+        arch: "aarch64",
+        vendor: "apple",
+        os: "macos",
+        environment: "",
+        abi: "",
+    };
+    const MUSL: Host = Host {
+        arch: "x86_64",
+        vendor: "unknown",
+        os: "linux",
+        environment: "musl",
+        abi: "",
+    };
+
+    #[test]
+    fn only_the_two_exact_compiled_host_tuples_select_targets() {
+        assert_eq!(select_host(DARWIN), Ok(ReleaseTarget::Aarch64AppleDarwin));
+        assert_eq!(select_host(MUSL), Ok(ReleaseTarget::X86_64UnknownLinuxMusl));
+    }
+
+    #[test]
+    fn every_host_component_is_a_closed_selection_boundary() {
+        for unsupported in [
+            Host {
+                arch: "x86_64",
+                ..DARWIN
+            },
+            Host {
+                vendor: "unknown",
+                ..DARWIN
+            },
+            Host {
+                os: "linux",
+                ..DARWIN
+            },
+            Host {
+                environment: "gnu",
+                ..DARWIN
+            },
+            Host {
+                abi: "sim",
+                ..DARWIN
+            },
+            Host {
+                arch: "aarch64",
+                ..MUSL
+            },
+            Host {
+                vendor: "pc",
+                ..MUSL
+            },
+            Host {
+                os: "macos",
+                ..MUSL
+            },
+            Host {
+                environment: "gnu",
+                ..MUSL
+            },
+            Host {
+                abi: "eabi",
+                ..MUSL
+            },
+        ] {
+            assert_eq!(
+                select_host(unsupported),
+                Err(UnsupportedHost {
+                    arch: unsupported.arch,
+                    vendor: unsupported.vendor,
+                    os: unsupported.os,
+                    environment: unsupported.environment,
+                    abi: unsupported.abi,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn each_target_inspects_only_its_selected_configured_path() {
+        let fixture = Fixture::new();
+        let missing = fixture.root.join("must-not-be-inspected");
+
+        let darwin_config = Config::fixture(Some(missing.clone()), Some(fixture.runner.clone()));
+        let darwin = SealedEnvironment::for_target(
+            ReleaseTarget::Aarch64AppleDarwin,
+            &darwin_config,
+            &fixture.workspace,
+            limits(),
+        )
+        .expect("Darwin ignores proof.container");
+        assert!(matches!(
+            darwin.identity(),
+            wire::manifest::ProofEnvironment::Native { .. }
+        ));
+
+        let musl_config = Config::fixture(Some(fixture.container.clone()), Some(missing));
+        let musl = SealedEnvironment::for_target(
+            ReleaseTarget::X86_64UnknownLinuxMusl,
+            &musl_config,
+            &fixture.workspace,
+            limits(),
+        )
+        .expect("musl ignores proof.runner");
+        assert!(matches!(
+            musl.identity(),
+            wire::manifest::ProofEnvironment::Oci { .. }
+        ));
+    }
+
+    #[test]
+    fn payload_target_and_musl_image_mismatch_before_runtime_admission() {
+        let config = Config::default();
+        assert!(matches!(
+            validate_payload_environment(
+                ReleaseTarget::Aarch64AppleDarwin,
+                ReleaseTarget::X86_64UnknownLinuxMusl,
+                config.image().as_str(),
+                &config,
+            ),
+            Err(EnvironmentError::PayloadTarget { .. })
+        ));
+        assert!(matches!(
+            validate_payload_environment(
+                ReleaseTarget::X86_64UnknownLinuxMusl,
+                ReleaseTarget::X86_64UnknownLinuxMusl,
+                "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+                &config,
+            ),
+            Err(EnvironmentError::ImageMismatch { .. })
+        ));
+        assert!(
+            validate_payload_environment(
+                ReleaseTarget::Aarch64AppleDarwin,
+                ReleaseTarget::Aarch64AppleDarwin,
+                "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+                &config,
+            )
+            .is_ok(),
+            "Darwin does not inspect the payload's OCI-only pin"
+        );
+    }
+
+    struct Fixture {
+        root: std::path::PathBuf,
+        workspace: std::path::PathBuf,
+        container: std::path::PathBuf,
+        runner: std::path::PathBuf,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "spice-proof-environment-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            let workspace = root.join("workspace");
+            let container = root.join("container");
+            let runner = root.join("runner");
+            fs::create_dir_all(&workspace).expect("fixture workspace");
+            fs::write(
+                &container,
+                "#!/bin/sh\n[ \"$1\" = --version ] && printf 'Docker version fixture\\n'\n",
+            )
+            .expect("fixture container runtime");
+            fs::write(&runner, "#!/bin/sh\nexit 0\n").expect("fixture native runner");
+            make_executable(&container);
+            make_executable(&runner);
+            Self {
+                root,
+                workspace,
+                container,
+                runner,
+            }
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.root).expect("remove fixture");
+        }
+    }
+
+    fn limits() -> Limits {
+        Limits::new(
+            Deadlines::new(
+                Duration::from_secs(5),
+                Duration::from_secs(1),
+                Duration::from_secs(1),
+            )
+            .expect("deadlines"),
+            Duration::from_millis(10),
+            4096,
+        )
+        .expect("limits")
+    }
+
+    #[cfg(unix)]
+    fn make_executable(path: &std::path::Path) {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+            .expect("make fixture executable");
+    }
+
+    #[cfg(not(unix))]
+    fn make_executable(_path: &std::path::Path) {}
+}

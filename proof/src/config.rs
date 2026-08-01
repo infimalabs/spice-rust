@@ -6,7 +6,7 @@ use serde::de::{Deserializer, Error as _};
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 
-use crate::container::is_digest_pinned;
+use wire::manifest::ProofImage;
 
 /// Proof image sealed into the compiled defaults documented by `CONFIG.md`.
 pub const DEFAULT_IMAGE: &str =
@@ -14,38 +14,35 @@ pub const DEFAULT_IMAGE: &str =
 
 /// An exact lower-case SHA-256 image reference.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Image(String);
+pub struct Image(ProofImage);
 
 impl Image {
     /// Exact digest reference.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.0
+        self.0.as_str()
     }
 }
 
 impl Default for Image {
     fn default() -> Self {
-        Self(DEFAULT_IMAGE.to_owned())
+        Self(
+            DEFAULT_IMAGE
+                .parse()
+                .expect("compiled proof image is a canonical digest reference"),
+        )
     }
 }
 
 impl<'de> Deserialize<'de> for Image {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = String::deserialize(deserializer)?;
-        if is_digest_pinned(&value) {
-            Ok(Self(value))
-        } else {
-            Err(D::Error::custom(
-                "proof image must be an exact lower-case sha256 digest reference",
-            ))
-        }
+        ProofImage::deserialize(deserializer).map(Self)
     }
 }
 
 impl Serialize for Image {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.0)
+        self.0.serialize(serializer)
     }
 }
 
@@ -117,5 +114,14 @@ impl Config {
     #[must_use]
     pub const fn runner(&self) -> Option<&ExecutablePath> {
         self.runner.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture(container: Option<PathBuf>, runner: Option<PathBuf>) -> Self {
+        Self {
+            image: Image::default(),
+            container: container.map(ExecutablePath),
+            runner: runner.map(ExecutablePath),
+        }
     }
 }

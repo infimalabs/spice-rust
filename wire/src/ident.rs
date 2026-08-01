@@ -80,9 +80,11 @@ pub enum Domain {
     /// The ordered command inventory one sealed proof replay consumes.
     ProofBattery,
     /// The complete typed result of one sealed proof replay.
-    ProofReplay,
+    ProofReplayV2,
     /// The detached receipt binding a replay to one target payload.
-    ProofReceipt,
+    ProofReceiptV2,
+    /// The exact bytes of one admitted native proof runner executable.
+    ProofNativeRunner,
     /// The bytes of one file inside a gate's jurisdiction.
     GateFile,
     /// The admitted file set of one gate jurisdiction, by content.
@@ -120,8 +122,9 @@ impl Domain {
             Self::DistPins => "spice.dist.pins.v1",
             Self::DistInventory => "spice.dist.inventory.v1",
             Self::ProofBattery => "spice.proof.battery.v1",
-            Self::ProofReplay => "spice.proof.replay.v1",
-            Self::ProofReceipt => "spice.proof.receipt.v1",
+            Self::ProofReplayV2 => "spice.proof.replay.v2",
+            Self::ProofReceiptV2 => "spice.proof.receipt.v2",
+            Self::ProofNativeRunner => "spice.proof.native-runner.v1",
             Self::GateFile => "spice.gate.file.v1",
             Self::GateTree => "spice.gate.tree.v1",
             Self::GateSet => "spice.gate.set.v1",

@@ -3,12 +3,14 @@
 use std::error::Error;
 use std::fmt;
 
-use wire::manifest::{ProofReceipt, ProofStanding, TargetPayload};
+use wire::manifest::{
+    PROOF_RECEIPT_VERSION, ProofEnvironment, ProofReceipt, ProofStanding, ReleaseTarget,
+    TargetPayload,
+};
 use wire::{Digest, Domain};
 
-use crate::container::{Container, Execution, ExecutionCompletion};
-
-const RECEIPT_VERSION: u16 = 1;
+use crate::container::{Execution, ExecutionCompletion};
+use crate::environment::SealedEnvironment;
 
 /// The complete generated proof battery, in execution order.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -202,7 +204,8 @@ impl CheckStanding {
 /// One typed verdict over the complete battery.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReplayVerdict {
-    environment: String,
+    target: ReleaseTarget,
+    environment: ProofEnvironment,
     battery: Digest,
     replay: Digest,
     standing: ProofStanding,
@@ -211,7 +214,12 @@ pub struct ReplayVerdict {
 
 impl ReplayVerdict {
     #[must_use]
-    pub fn environment(&self) -> &str {
+    pub const fn target(&self) -> ReleaseTarget {
+        self.target
+    }
+
+    #[must_use]
+    pub const fn environment(&self) -> &ProofEnvironment {
         &self.environment
     }
 
@@ -236,21 +244,34 @@ impl ReplayVerdict {
     }
 
     /// Bind this complete replay to one exact receipt-free target payload.
-    #[must_use]
-    pub fn receipt(&self, payload: &TargetPayload, payload_digest: Digest) -> ProofReceipt {
-        ProofReceipt {
-            version: RECEIPT_VERSION,
-            target: payload.target,
+    pub fn receipt(
+        &self,
+        payload: &TargetPayload,
+        payload_digest: Digest,
+    ) -> Result<ProofReceipt, ReceiptError> {
+        if payload.target != self.target {
+            return Err(ReceiptError {
+                payload: payload.target,
+                replay: self.target,
+            });
+        }
+        Ok(ProofReceipt {
+            version: PROOF_RECEIPT_VERSION,
+            target: self.target,
             payload: payload_digest,
             battery: self.battery.clone(),
             replay: self.replay.clone(),
             environment: self.environment.clone(),
             standing: self.standing,
-        }
+        })
     }
 
     #[cfg(test)]
-    pub(crate) fn fixture_clean(environment: String, battery: Digest) -> Self {
+    pub(crate) fn fixture_clean(
+        target: ReleaseTarget,
+        environment: ProofEnvironment,
+        battery: Digest,
+    ) -> Self {
         let checks = CheckKind::ALL
             .into_iter()
             .map(|kind| CheckVerdict {
@@ -261,8 +282,9 @@ impl ReplayVerdict {
             })
             .collect::<Vec<_>>();
         let standing = ProofStanding::Clean;
-        let replay = replay_digest(&environment, &battery, standing, &checks);
+        let replay = replay_digest(target, &environment, &battery, standing, &checks);
         Self {
+            target,
             environment,
             battery,
             replay,
@@ -279,23 +301,27 @@ impl ReplayVerdict {
 /// Returns the exact member whose container process could not be established
 /// or observed. Ordinary nonzero exits and timeouts remain inside the one
 /// typed [`ReplayVerdict`].
-pub fn replay(container: &Container) -> Result<ReplayVerdict, ReplayError> {
-    run_with(container, &Battery::current())
+pub fn replay(environment: &SealedEnvironment) -> Result<ReplayVerdict, ReplayError> {
+    run_with(environment, &Battery::current())
 }
 
 trait Executor {
-    fn environment(&self) -> &str;
+    fn target(&self) -> ReleaseTarget;
+    fn environment(&self) -> ProofEnvironment;
     fn execute(&self, check: &Check) -> Result<Execution, String>;
 }
 
-impl Executor for Container {
-    fn environment(&self) -> &str {
-        self.image()
+impl Executor for SealedEnvironment {
+    fn target(&self) -> ReleaseTarget {
+        self.target()
+    }
+
+    fn environment(&self) -> ProofEnvironment {
+        self.identity()
     }
 
     fn execute(&self, check: &Check) -> Result<Execution, String> {
         self.execute(check.program(), check.arguments())
-            .map_err(|source| source.to_string())
     }
 }
 
@@ -313,9 +339,11 @@ fn run_with<E: Executor>(executor: &E, battery: &Battery) -> Result<ReplayVerdic
     } else {
         ProofStanding::Refused
     };
-    let environment = executor.environment().to_owned();
-    let replay = replay_digest(&environment, battery.digest(), standing, &checks);
+    let target = executor.target();
+    let environment = executor.environment();
+    let replay = replay_digest(target, &environment, battery.digest(), standing, &checks);
     Ok(ReplayVerdict {
+        target,
         environment,
         battery: battery.digest.clone(),
         replay,
@@ -367,13 +395,18 @@ fn battery_digest(checks: &[Check]) -> Digest {
 }
 
 fn replay_digest(
-    environment: &str,
+    target: ReleaseTarget,
+    environment: &ProofEnvironment,
     battery: &Digest,
     standing: ProofStanding,
     checks: &[CheckVerdict],
 ) -> Digest {
     let mut bytes = Vec::new();
-    frame_bytes(&mut bytes, environment.as_bytes());
+    frame_bytes(&mut bytes, target.as_str().as_bytes());
+    frame_bytes(
+        &mut bytes,
+        &wire::encode(environment).expect("ProofEnvironment always has canonical wire bytes"),
+    );
     frame_bytes(&mut bytes, battery.as_str().as_bytes());
     frame_bytes(
         &mut bytes,
@@ -396,7 +429,7 @@ fn replay_digest(
         frame_bytes(&mut bytes, &check.stdout);
         frame_bytes(&mut bytes, &check.stderr);
     }
-    Digest::compute(Domain::ProofReplay, &bytes)
+    Digest::compute(Domain::ProofReplayV2, &bytes)
 }
 
 fn frame_usize(bytes: &mut Vec<u8>, value: usize) {
@@ -440,10 +473,31 @@ impl fmt::Display for ReplayError {
 
 impl Error for ReplayError {}
 
+/// A replay cannot mint a receipt for another release target.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReceiptError {
+    payload: ReleaseTarget,
+    replay: ReleaseTarget,
+}
+
+impl fmt::Display for ReceiptError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "cannot bind {} replay to {} target payload",
+            self.replay, self.payload
+        )
+    }
+}
+
+impl Error for ReceiptError {}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
     use std::collections::VecDeque;
+
+    use wire::manifest::{ProofEnvironment, ReleaseTarget};
 
     use super::{Battery, Check, CheckKind, CheckStanding, Executor, ProofStanding, run_with};
     use crate::container::{Captured, Execution, ExecutionCompletion};
@@ -516,7 +570,8 @@ mod tests {
         assert_eq!(verdict.checks().len(), CheckKind::ALL.len());
         assert_eq!(executor.ran.borrow().as_slice(), CheckKind::ALL);
         assert_eq!(verdict.battery_digest(), battery.digest());
-        assert_eq!(verdict.environment(), ENVIRONMENT);
+        assert_eq!(verdict.environment(), &environment());
+        assert_eq!(verdict.target(), ReleaseTarget::X86_64UnknownLinuxMusl);
     }
 
     #[test]
@@ -548,7 +603,53 @@ mod tests {
         assert_eq!(executor.ran.borrow().as_slice(), CheckKind::ALL);
     }
 
-    const ENVIRONMENT: &str = "registry.example/proof@sha256:4444444444444444444444444444444444444444444444444444444444444444";
+    #[test]
+    fn receipt_construction_refuses_a_payload_for_another_target() {
+        use wire::manifest::{BuildPins, TargetPayload};
+        use wire::{Digest, Domain};
+
+        let verdict = run_with(
+            &FakeExecutor::new(vec![
+                exited(true, b"gate"),
+                exited(true, b"mutation"),
+                exited(true, b"dialect"),
+                exited(true, b"process"),
+                exited(true, b"supply"),
+            ]),
+            &Battery::current(),
+        )
+        .expect("fixture replay");
+        let digest = || Digest::compute(Domain::DistArtifact, b"fixture");
+        let payload = TargetPayload {
+            version: 1,
+            target: ReleaseTarget::Aarch64AppleDarwin,
+            source: digest(),
+            app: digest(),
+            embedded_app: digest(),
+            native: digest(),
+            pins: BuildPins {
+                rust: String::new(),
+                wasm_target: String::new(),
+                trunk: String::new(),
+                cargo_mutants: String::new(),
+                proof_container: ENVIRONMENT.to_owned(),
+            },
+            pins_digest: digest(),
+            inventory: Vec::new(),
+            inventory_digest: digest(),
+        };
+
+        assert!(verdict.receipt(&payload, digest()).is_err());
+    }
+
+    const ENVIRONMENT: &str = concat!(
+        "registry.example/proof@sha256:",
+        "4444444444444444444444444444444444444444444444444444444444444444"
+    );
+
+    fn environment() -> ProofEnvironment {
+        ProofEnvironment::oci(ENVIRONMENT).expect("fixture image is pinned")
+    }
 
     struct FakeExecutor {
         outcomes: RefCell<VecDeque<Execution>>,
@@ -565,8 +666,12 @@ mod tests {
     }
 
     impl Executor for FakeExecutor {
-        fn environment(&self) -> &str {
-            ENVIRONMENT
+        fn target(&self) -> ReleaseTarget {
+            ReleaseTarget::X86_64UnknownLinuxMusl
+        }
+
+        fn environment(&self) -> ProofEnvironment {
+            environment()
         }
 
         fn execute(&self, check: &Check) -> Result<Execution, String> {

@@ -3,11 +3,8 @@
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
-use std::fmt::Write as _;
 use std::fs;
 use std::io;
-#[cfg(unix)]
-use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -15,13 +12,14 @@ use sill::{
     Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction,
     RestartDisposition, Spec, SpecError, StdinPolicy, StreamPolicy, WaitError, WaitPolicy,
 };
+use wire::manifest::ProofImage;
+
+use crate::challenge::Challenge;
 
 const WORKSPACE_MOUNT: &str = "/workspace";
 const CARGO_HOME: &str = "/cargo-home";
 const CARGO_TARGET: &str = "/cargo-target";
-const SHA256_HEX_LENGTH: usize = 64;
 const ATTESTATION_PREFIX: &str = "spice-proof-attestation-v2:";
-const CHALLENGE_BYTES: usize = 32;
 const PREFLIGHT_SCRIPT: &str = r#"
 refuse() {
     printf 'spice-proof-preflight-refused:%s\n' "$1" >&2
@@ -126,44 +124,30 @@ impl RuntimeKind {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Attestation {
-    challenge: String,
+    challenge: Challenge,
 }
 
 impl Attestation {
     fn fresh() -> Result<Self, ContainerError> {
-        let mut bytes = [0_u8; CHALLENGE_BYTES];
-        fill_attestation_challenge(&mut bytes)
-            .map_err(ContainerError::CreateAttestationChallenge)?;
-        let mut challenge = String::with_capacity(CHALLENGE_BYTES * 2);
-        for byte in bytes {
-            write!(&mut challenge, "{byte:02x}").expect("writing to a String cannot fail");
-        }
-        Ok(Self { challenge })
+        Ok(Self {
+            challenge: Challenge::fresh().map_err(ContainerError::CreateAttestationChallenge)?,
+        })
     }
 
     fn marker(&self, kind: RuntimeKind) -> String {
-        format!("{ATTESTATION_PREFIX}{}:{}\n", kind.as_str(), self.challenge)
+        format!(
+            "{ATTESTATION_PREFIX}{}:{}\n",
+            kind.as_str(),
+            self.challenge.as_str()
+        )
     }
 
     #[cfg(test)]
     fn fixture(challenge: &str) -> Self {
         Self {
-            challenge: challenge.to_owned(),
+            challenge: Challenge::fixture(challenge),
         }
     }
-}
-
-#[cfg(unix)]
-fn fill_attestation_challenge(bytes: &mut [u8]) -> io::Result<()> {
-    fs::File::open("/dev/urandom")?.read_exact(bytes)
-}
-
-#[cfg(not(unix))]
-fn fill_attestation_challenge(_bytes: &mut [u8]) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "sealed OCI runtime attestation requires Unix randomness",
-    ))
 }
 
 /// Explicit process bounds for every battery member.
@@ -192,6 +176,33 @@ impl Limits {
             deadlines,
             grace,
             output_limit,
+        })
+    }
+
+    pub(crate) fn process_spec(
+        self,
+        argv: Argv,
+        cwd: PathBuf,
+        label: impl Into<String>,
+    ) -> Result<Spec, SpecError> {
+        Ok(Spec {
+            argv,
+            cwd,
+            environment: Environment::empty(),
+            group: ProcessGroup::New,
+            deadlines: self.deadlines,
+            wait: WaitPolicy::new(label, Cancellation::Never, RestartDisposition::Never)?,
+            output: Output::new(
+                StdinPolicy::Null,
+                StreamPolicy::Capture {
+                    limit: self.output_limit,
+                },
+                StreamPolicy::Capture {
+                    limit: self.output_limit,
+                },
+            ),
+            redaction: Redaction::None,
+            grace: self.grace,
         })
     }
 }
@@ -284,7 +295,7 @@ fn parse_runtime_kind(bytes: &[u8]) -> Option<RuntimeKind> {
 #[derive(Clone, Debug)]
 pub struct Container {
     runtime: OciRuntime,
-    image: String,
+    image: ProofImage,
     workspace: PathBuf,
     limits: Limits,
 }
@@ -307,9 +318,9 @@ impl Container {
         limits: Limits,
     ) -> Result<Self, ContainerError> {
         let image = image.into();
-        if !is_digest_pinned(&image) {
-            return Err(ContainerError::ImageNotDigestPinned(image));
-        }
+        let image = image
+            .parse::<ProofImage>()
+            .map_err(|_| ContainerError::ImageNotDigestPinned(image))?;
         let requested = workspace.as_ref();
         let workspace =
             fs::canonicalize(requested).map_err(|source| ContainerError::InspectWorkspace {
@@ -337,6 +348,10 @@ impl Container {
     /// Digest-pinned environment identity executed by every battery member.
     #[must_use]
     pub fn image(&self) -> &str {
+        self.image.as_str()
+    }
+
+    pub(crate) const fn proof_image(&self) -> &ProofImage {
         &self.image
     }
 
@@ -372,45 +387,28 @@ impl Container {
             format!("CARGO_TARGET_DIR={CARGO_TARGET}"),
             "--env".to_owned(),
             "CARGO_NET_OFFLINE=true".to_owned(),
-            self.image.clone(),
+            self.image.to_string(),
             "/bin/sh".to_owned(),
             "-ceu".to_owned(),
             PREFLIGHT_SCRIPT.to_owned(),
             "spice-proof-attestation".to_owned(),
             self.runtime.kind.as_str().to_owned(),
-            attestation.challenge.clone(),
+            attestation.challenge.as_str().to_owned(),
             program.to_owned(),
         ];
         runtime_arguments.extend(arguments.iter().cloned());
 
-        Ok(Spec {
-            argv: Argv::new(
-                self.runtime.binary.as_os_str().to_owned(),
-                runtime_arguments.into_iter().map(OsString::from),
-            )
-            .map_err(ContainerError::Spec)?,
-            cwd: self.workspace.clone(),
-            environment: Environment::empty(),
-            group: ProcessGroup::New,
-            deadlines: self.limits.deadlines,
-            wait: WaitPolicy::new(
+        self.limits
+            .process_spec(
+                Argv::new(
+                    self.runtime.binary.as_os_str().to_owned(),
+                    runtime_arguments.into_iter().map(OsString::from),
+                )
+                .map_err(ContainerError::Spec)?,
+                self.workspace.clone(),
                 format!("sealed proof battery member {program:?}"),
-                Cancellation::Never,
-                RestartDisposition::Never,
             )
-            .map_err(ContainerError::Spec)?,
-            output: Output::new(
-                StdinPolicy::Null,
-                StreamPolicy::Capture {
-                    limit: self.limits.output_limit,
-                },
-                StreamPolicy::Capture {
-                    limit: self.limits.output_limit,
-                },
-            ),
-            redaction: Redaction::None,
-            grace: self.limits.grace,
-        })
+            .map_err(ContainerError::Spec)
     }
 
     pub(crate) fn execute(
@@ -652,23 +650,7 @@ impl Error for ContainerError {
     }
 }
 
-pub(crate) fn is_digest_pinned(image: &str) -> bool {
-    let digest = if let Some(digest) = image.strip_prefix("sha256:") {
-        Some(digest)
-    } else if let Some((repository, digest)) = image.rsplit_once("@sha256:") {
-        (!repository.is_empty()).then_some(digest)
-    } else {
-        None
-    };
-    digest.is_some_and(|digest| {
-        digest.len() == SHA256_HEX_LENGTH
-            && digest.bytes().all(|byte| {
-                byte.is_ascii_digit() || (byte.is_ascii_lowercase() && byte.is_ascii_hexdigit())
-            })
-    })
-}
-
-fn validate_command(program: &str, arguments: &[String]) -> Result<(), ContainerError> {
+pub(crate) fn validate_command(program: &str, arguments: &[String]) -> Result<(), ContainerError> {
     if program.is_empty() {
         return Err(ContainerError::EmptyProgram);
     }
@@ -679,14 +661,14 @@ fn validate_command(program: &str, arguments: &[String]) -> Result<(), Container
 }
 
 #[cfg(unix)]
-fn is_executable(metadata: &fs::Metadata) -> bool {
+pub(crate) fn is_executable(metadata: &fs::Metadata) -> bool {
     use std::os::unix::fs::PermissionsExt as _;
 
     metadata.permissions().mode() & 0o111 != 0
 }
 
 #[cfg(not(unix))]
-fn is_executable(_metadata: &fs::Metadata) -> bool {
+pub(crate) fn is_executable(_metadata: &fs::Metadata) -> bool {
     false
 }
 
@@ -809,7 +791,8 @@ exit 0
     #[test]
     fn an_executable_that_ignores_the_oci_contract_cannot_produce_a_replay_verdict() {
         let fixture = Fixture::new();
-        let error = crate::replay::replay(&fixture.container())
+        let environment = crate::environment::SealedEnvironment::fixture_oci(fixture.container());
+        let error = crate::replay::replay(&environment)
             .expect_err("an unattested runtime cannot produce any verdict");
 
         assert_eq!(error.check(), crate::replay::CheckKind::Gate);
@@ -824,7 +807,8 @@ exit 0
     #[test]
     fn a_replayed_public_marker_cannot_produce_a_replay_verdict() {
         let fixture = Fixture::with_runtime(FIXED_MARKER_RUNTIME);
-        let error = crate::replay::replay(&fixture.container())
+        let environment = crate::environment::SealedEnvironment::fixture_oci(fixture.container());
+        let error = crate::replay::replay(&environment)
             .expect_err("a fixed marker cannot answer a fresh challenge");
 
         assert_eq!(error.check(), crate::replay::CheckKind::Gate);

@@ -1,5 +1,6 @@
 use wire::manifest::{
-    BuildPins, InventoryEntry, ProofReceipt, ProofStanding, ReleaseTarget, TargetPayload,
+    BuildPins, InventoryEntry, PROOF_RECEIPT_VERSION, ProofEnvironment, ProofReceipt,
+    ProofStanding, ReleaseTarget, TargetPayload,
 };
 use wire::{Digest, Domain};
 
@@ -49,13 +50,57 @@ fn payload(target: ReleaseTarget, marker: &str) -> TargetPayload {
 
 fn receipt(target: ReleaseTarget, marker: &str) -> ProofReceipt {
     ProofReceipt {
-        version: 1,
+        version: PROOF_RECEIPT_VERSION,
         target,
         payload: Digest::compute(Domain::DistTargetPayload, marker.as_bytes()),
         battery: Digest::compute(Domain::ProofBattery, marker.as_bytes()),
-        replay: Digest::compute(Domain::ProofReplay, marker.as_bytes()),
-        environment: format!("registry.example/proof@sha256:{}", "4".repeat(64)),
+        replay: Digest::compute(Domain::ProofReplayV2, marker.as_bytes()),
+        environment: ProofEnvironment::oci(format!(
+            "registry.example/proof@sha256:{}",
+            "4".repeat(64)
+        ))
+        .expect("fixture image is pinned"),
         standing: ProofStanding::Clean,
+    }
+}
+
+#[test]
+fn proof_environments_have_one_strict_canonical_wire_shape() {
+    let oci = ProofEnvironment::oci(format!("registry.example/proof@sha256:{}", "4".repeat(64)))
+        .expect("canonical OCI identity");
+    let native = ProofEnvironment::native(Digest::compute(Domain::ProofNativeRunner, b"runner"));
+
+    assert_eq!(
+        wire::encode(&oci).expect("OCI identity encodes"),
+        format!(
+            r#"{{"oci":{{"image":"registry.example/proof@sha256:{}"}}}}"#,
+            "4".repeat(64)
+        )
+        .as_bytes()
+    );
+    assert_eq!(
+        wire::decode::<ProofEnvironment>(&wire::encode(&native).expect("native identity encodes"))
+            .expect("native identity decodes"),
+        native
+    );
+
+    let digest = "4".repeat(64);
+    let refused = [
+        format!(r#"{{"container":{{"image":"sha256:{digest}"}}}}"#),
+        r#"{"oci":{"image":"proof:latest"}}"#.to_owned(),
+        format!(r#"{{"oci":{{"image":"Registry/proof@sha256:{digest}"}}}}"#),
+        format!(r#"{{"oci":{{"image":"registry.example/proof:latest@sha256:{digest}"}}}}"#),
+        format!(r#"{{"oci":{{"image":"registry.example//proof@sha256:{digest}"}}}}"#),
+        format!(r#"{{"oci":{{"image":"registry.example/proof..alias@sha256:{digest}"}}}}"#),
+        format!(r#"{{"oci":{{"image":"sha256:{}"}}}}"#, "A".repeat(64)),
+        format!(r#"{{"oci":{{"image":"sha256:{digest}","unknown":true}}}}"#),
+        format!(r#"{{"native":{{"runner":"{digest}","unknown":true}}}}"#),
+    ];
+    for refused in refused {
+        assert!(
+            wire::decode::<ProofEnvironment>(refused.as_bytes()).is_err(),
+            "noncanonical environment must refuse: {refused}"
+        );
     }
 }
 
@@ -107,6 +152,18 @@ fn detached_proof_receipts_round_trip_in_the_current_shape() {
         )
         .is_err(),
         "a receipt outside the current shape must refuse"
+    );
+
+    let mut retired: serde_json::Value = serde_json::from_slice(&bytes).expect("receipt is JSON");
+    retired["version"] = serde_json::Value::from(1);
+    let retired_environment = format!("registry.example/proof@sha256:{}", "4".repeat(64));
+    retired["environment"] = serde_json::Value::String(retired_environment);
+    assert!(
+        wire::decode::<ProofReceipt>(
+            &serde_json::to_vec(&retired).expect("retired receipt is JSON")
+        )
+        .is_err(),
+        "the retired string-valued environment must not remain as an alternate schema"
     );
 }
 
