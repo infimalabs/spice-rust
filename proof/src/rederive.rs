@@ -402,7 +402,7 @@ mod tests {
             fs::create_dir_all(&common).expect("fixture common directory");
             let payload = payload(target);
             let payload_bytes = wire::encode(&payload).expect("fixture payload encodes");
-            let layout = Layout::new(&worktree, &common, target);
+            let layout = Layout::new(&worktree, common.join(".spice-rust"), target);
             fs::create_dir_all(layout.payload_path().parent().expect("payload parent"))
                 .expect("create payload parent");
             fs::write(layout.payload_path(), &payload_bytes).expect("write payload");
@@ -418,7 +418,7 @@ mod tests {
         }
 
         fn layout(&self) -> Layout {
-            Layout::new(&self.worktree, &self.common, self.target)
+            Layout::new(&self.worktree, self.common.join(".spice-rust"), self.target)
         }
 
         fn prepared(&self) -> (AdmittedPayload, AdmittedReceipt, ReplayVerdict) {
@@ -475,9 +475,15 @@ mod tests {
         fn plant_state_markers(&self) {
             for (path, bytes) in [
                 ("worktree/src/lib.rs", b"repository bytes".as_slice()),
-                ("common/.spice/journal.sqlite", b"journal bytes".as_slice()),
-                ("common/.spice/fold/head", b"fold bytes".as_slice()),
-                ("common/.spice/resident.json", b"discovery bytes".as_slice()),
+                (
+                    "common/.spice-rust/journal.sqlite",
+                    b"journal bytes".as_slice(),
+                ),
+                ("common/.spice-rust/fold/head", b"fold bytes".as_slice()),
+                (
+                    "common/.spice-rust/resident.json",
+                    b"discovery bytes".as_slice(),
+                ),
             ] {
                 let path = self.selected.join(path);
                 fs::create_dir_all(path.parent().expect("marker parent"))

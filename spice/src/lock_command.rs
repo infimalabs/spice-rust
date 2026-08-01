@@ -211,7 +211,7 @@ impl Invocation {
         })?;
         let resolved =
             spice::config::load_repository(&repository, &[]).map_err(Failure::configuration)?;
-        let root = repository.common_dir().join(".spice").join("locks");
+        let root = repository.state_root().join("locks");
         let topology = LockTopology::new(root, resolved.root().lock());
         Ok(Self { working, topology })
     }

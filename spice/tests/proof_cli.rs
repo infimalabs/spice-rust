@@ -221,6 +221,13 @@ fn runner_refusal_process_fault_and_publication_io_fault_stay_distinct() {
 
     fixture.write_selected_runtime();
     fixture.clear_invocations();
+    fs::create_dir_all(
+        fixture
+            .proof_root()
+            .parent()
+            .expect("proof root has Rust state parent"),
+    )
+    .expect("create Rust state root");
     fs::write(fixture.proof_root(), b"blocks receipt directory")
         .expect("plant publication obstruction");
     let obstructed = snapshot(fixture.repository());
@@ -386,7 +393,7 @@ impl Fixture {
     }
 
     fn proof_root(&self) -> PathBuf {
-        self.repository.join(".git/.spice/proof")
+        self.repository.join(".git/.spice-rust/proof")
     }
 
     fn receipt_path(&self) -> PathBuf {
@@ -479,11 +486,11 @@ impl Fixture {
     fn assert_daemonless(&self) {
         assert!(!self.python_marker.exists(), "no Python shim was started");
         for path in [
-            ".git/.spice/data",
-            ".git/.spice/resident",
-            ".git/.spice/canvas",
-            ".git/.spice/degraded",
-            ".git/.spice/tape",
+            ".git/.spice-rust/data",
+            ".git/.spice-rust/resident",
+            ".git/.spice-rust/canvas",
+            ".git/.spice-rust/degraded",
+            ".git/.spice-rust/tape",
         ] {
             assert!(
                 !self.repository.join(path).exists(),

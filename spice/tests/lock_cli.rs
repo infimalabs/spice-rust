@@ -57,7 +57,7 @@ impl Scratch {
     fn lock_root(&self) -> PathBuf {
         fs::canonicalize(self.0.join(".git"))
             .expect("fixture Git directory canonicalizes")
-            .join(".spice/locks")
+            .join(".spice-rust/locks")
     }
 }
 

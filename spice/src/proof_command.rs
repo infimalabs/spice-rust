@@ -94,7 +94,7 @@ impl Invocation {
         let config =
             spice::config::load_repository(&repository, &[]).map_err(Failure::configuration)?;
         let layout =
-            proof::Layout::new(repository.worktree_root(), repository.common_dir(), target);
+            proof::Layout::new(repository.worktree_root(), repository.state_root(), target);
         Ok(Self {
             layout,
             workspace: repository.worktree_root().to_path_buf(),
