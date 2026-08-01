@@ -19,15 +19,18 @@ mod path;
 
 pub use error::InstallError;
 use files::{
-    cleanup_parents, ensure_directory, matches_generated, materialize_generated, observe,
-    publish_image, publish_operation, restore_operation,
+    cleanup_parents, matches_generated, materialize_generated, observe, publish_operation,
+    publish_record, restore_operation,
 };
 use path::{relative_parents, validate_relative};
 
 const PLAN_VERSION: u16 = 1;
 const RECORD_VERSION: u16 = 1;
-const LEGACY_RECORD_PATH: &str = ".spice/install";
-const RECORD_PATH: &str = "install.json";
+const LEGACY_RECORDS: [(&str, &str); 2] = [
+    (".spice/install", "SURFACE-1kJQkpFs"),
+    (".spice/rust/install.json", "SURFACE-1kJRGpf2"),
+];
+const RECORD_NAME: &str = "install.json";
 const RECORD_MODE: u32 = 0o600;
 const DIRECTORY_MODE: u32 = 0o700;
 const DATA_MODE: u32 = 0o644;
@@ -770,33 +773,31 @@ fn read_record(repository: &Repository) -> Result<Option<InstallRecord>, Install
 }
 
 fn refuse_legacy_record(repository: &Repository) -> Result<(), InstallError> {
-    let path = repository.common_dir().join(LEGACY_RECORD_PATH);
-    match fs::symlink_metadata(&path) {
-        Ok(_) => Err(InstallError::LegacyRecord(path)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(InstallError::io(
-            "inspect legacy install record",
-            path,
-            source,
-        )),
+    for (relative, owner) in LEGACY_RECORDS {
+        let path = repository.common_dir().join(relative);
+        match fs::symlink_metadata(&path) {
+            Ok(_) => return Err(InstallError::LegacyRecord { path, owner }),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(InstallError::io(
+                    "inspect legacy install record",
+                    path,
+                    source,
+                ));
+            }
+        }
     }
+    Ok(())
 }
 
 fn write_record(repository: &Repository, record: &InstallRecord) -> Result<(), InstallError> {
     record.validate()?;
-    let path = record_path(repository);
-    ensure_private_record_parent(repository.common_dir())?;
     let bytes = wire::encode(record).map_err(InstallError::Encode)?;
-    publish_image(&path, &FileImage::new(RECORD_MODE, bytes), true)
+    publish_record(repository, RECORD_NAME, bytes)
 }
 
 fn record_path(repository: &Repository) -> PathBuf {
-    repository.state_root().join(RECORD_PATH)
-}
-
-fn ensure_private_record_parent(common: &Path) -> Result<(), InstallError> {
-    ensure_directory(common, crate::repository::STATE_DIRECTORY)?;
-    Ok(())
+    repository.state_root().join(RECORD_NAME)
 }
 
 fn validate_operation(

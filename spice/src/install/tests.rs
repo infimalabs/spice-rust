@@ -78,6 +78,17 @@ fn apply_is_idempotent_preserves_python_and_unapply_is_exact() {
             .contains(EXCLUDE_BLOCK)
     );
     assert_eq!(fs::read_to_string(scratch.join(SKILL_PATH)).unwrap(), SKILL);
+    assert_eq!(
+        record_path(&repository),
+        repository.state_root().join(RECORD_NAME)
+    );
+    assert_eq!(mode(&record_path(&repository)), RECORD_MODE);
+    assert!(
+        !repository
+            .common_dir()
+            .join(".spice/rust/install.json")
+            .exists()
+    );
 
     let removed = unapply(&repository).expect("reverse exact install");
     let repeated_remove = unapply(&repository).expect("repeat exact reversal");
@@ -246,22 +257,25 @@ fn malformed_record_and_divergent_exclusions_refuse_without_mutation() {
 
 #[test]
 fn legacy_record_names_its_owning_release_and_refuses_without_mutation() {
-    let scratch = Scratch::new("legacy-record");
-    let repository = scratch.repository();
-    let legacy = repository.common_dir().join(LEGACY_RECORD_PATH);
-    fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-    fs::write(&legacy, b"legacy record bytes\n").unwrap();
-    let before_exclude = fs::read(scratch.exclude()).unwrap();
+    for (relative, owner) in LEGACY_RECORDS {
+        let scratch = Scratch::new(owner);
+        let repository = scratch.repository();
+        let legacy = repository.common_dir().join(relative);
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        fs::write(&legacy, b"legacy record bytes\n").unwrap();
+        let before_exclude = fs::read(scratch.exclude()).unwrap();
 
-    let error = plan(&repository, None).unwrap_err();
-    assert!(matches!(
-        &error,
-        InstallError::LegacyRecord(path) if path == &legacy
-    ));
-    assert!(error.to_string().contains("SURFACE-1kJQkpFs"));
-    assert_eq!(fs::read(scratch.exclude()).unwrap(), before_exclude);
-    assert!(!record_path(&repository).exists());
-    assert!(!scratch.join(ENTRY_PATH).exists());
+        let error = plan(&repository, None).unwrap_err();
+        assert!(matches!(
+            &error,
+            InstallError::LegacyRecord { path, owner: observed }
+                if path == &legacy && observed == &owner
+        ));
+        assert!(error.to_string().contains(owner));
+        assert_eq!(fs::read(scratch.exclude()).unwrap(), before_exclude);
+        assert!(!record_path(&repository).exists());
+        assert!(!scratch.join(ENTRY_PATH).exists());
+    }
 }
 
 #[test]

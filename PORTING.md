@@ -88,7 +88,9 @@ above: plain `install` is a side-effect-free plan, and only an exact
 `--apply=<digest>` crosses its fixed authored mutation plan. Rust binaries and
 hook stages remain namespaced below worktree `.spice/rust`, while the install
 receipt lives below Git-common `.spice-rust`. The plan does not replace the
-ambient command or active `core.hooksPath`.
+ambient command or active `core.hooksPath`. Durable receipts at the retired
+`.spice/install` and `.spice/rust/install.json` locations are refused with
+their owning installer task named; they are never read as a fallback.
 
 `doctor`, `version`, and `up` are executable but not yet usable against the
 current worktree state; the configuration and bootstrap tasks above own those

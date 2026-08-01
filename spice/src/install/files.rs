@@ -21,6 +21,16 @@ pub(super) fn publish_operation(
     publish_image(&operation.destination(repository), image, false)
 }
 
+pub(super) fn publish_record(
+    repository: &Repository,
+    relative: &str,
+    bytes: Vec<u8>,
+) -> Result<(), InstallError> {
+    ensure_directory(repository.common_dir(), crate::repository::STATE_DIRECTORY)?;
+    let path = repository.state_root().join(validate_relative(relative)?);
+    publish_image(&path, &FileImage::new(RECORD_MODE, bytes), true)
+}
+
 pub(super) fn materialize_generated(
     operation: &Operation,
     rust_binary: Option<&Path>,
