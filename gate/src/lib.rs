@@ -12,6 +12,7 @@
 //! otherwise.
 
 pub mod camp;
+pub mod input;
 pub mod jurisdiction;
 pub mod measure;
 pub mod message;
@@ -22,6 +23,11 @@ pub mod verdict;
 pub use camp::{
     BoundRelation, Camp, CampError, CampFinding, CampReport, CampStanding, DistributionReport,
     LocusDistance, SharedBound,
+};
+pub use input::{
+    BASELINE_PATH, BASELINE_VERSION, Baseline, BaselineError, Contract, ContractError, FieldError,
+    Floor, FloorDeclaration, FloorKind, GateSet, LONG_LINE_LIMIT, POLICY_PATH, PolicyError,
+    ToolError, ToolIdentity,
 };
 pub use jurisdiction::{
     Admission, Entry, Ignore, IgnoreError, Jurisdiction, Rule, Shape, WalkError,

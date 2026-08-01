@@ -11,6 +11,12 @@ atomic = { path = "../atomic" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sill = { path = "../sill" }
+toml = { version = "1.1.4", default-features = false, features = [
+    "parse",
+    "preserve_order",
+    "serde",
+    "std",
+] }
 wire = { path = "../wire" }
 
 [dev-dependencies]
