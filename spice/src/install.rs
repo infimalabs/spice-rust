@@ -62,6 +62,27 @@ const EXCLUDE_BLOCK: &str = concat!(
 );
 const SKILL: &str = include_str!("install/skill.md");
 
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub const TEST_PAUSE_CONTROL: &str = "SPICE_INSTALL_TEST_PAUSE_CONTROL"; // env-policy: allow
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub const TEST_PAUSE_ACTION: &str = "SPICE_INSTALL_TEST_PAUSE_ACTION"; // env-policy: allow
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub const TEST_PAUSE_PATH: &str = "SPICE_INSTALL_TEST_PAUSE_PATH"; // env-policy: allow
+
+/// Configures the process-test mutation rendezvous before installation starts.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn configure_test_mutation_rendezvous(
+    control: Option<std::ffi::OsString>,
+    action: Option<std::ffi::OsString>,
+    path: Option<std::ffi::OsString>,
+) {
+    handle::configure_mutation_rendezvous(control, action, path);
+}
+
 /// One Rust-owned asset in canonical installation order.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
