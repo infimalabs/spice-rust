@@ -37,6 +37,9 @@ pub(crate) enum SelectedCommand<'a> {
 }
 
 /// Submit one contract-bound command to the current repository resident.
+///
+/// `discovery_path` must be the canvas path returned by the caller's single
+/// [`spice::repository::Repository::admit_state`] admission.
 pub(crate) fn execute(
     discovery_path: &Path,
     contract: &Contract,
