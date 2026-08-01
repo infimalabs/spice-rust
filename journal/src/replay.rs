@@ -222,16 +222,13 @@ struct FactRow {
 
 fn verify_fact_row(row: &FactRow, violations: &mut Vec<Violation>) {
     let subject = row.seq.to_string();
-    let envelope = match decode_canonical::<wire::Envelope<serde_json::Value>>(&row.envelope) {
+    let envelope = match decode_canonical::<wire::Envelope<wire::AnyFact>>(&row.envelope) {
         Ok(envelope) => envelope,
         Err(detail) => {
             violations.push(Violation::new(ViolationClass::Envelope, subject, detail));
             return;
         }
     };
-    let kind = serde_json::from_slice::<serde_json::Value>(&row.envelope)
-        .ok()
-        .and_then(|value| value["fact"]["kind"].as_str().map(str::to_owned));
     let cause = row.cause.and_then(|cause| u64::try_from(cause).ok());
     let agreed = envelope.seq.get() == u64::try_from(row.seq).unwrap_or_default()
         && i64::from(envelope.v.0) == row.version
@@ -239,7 +236,7 @@ fn verify_fact_row(row: &FactRow, violations: &mut Vec<Violation>) {
         && envelope.actor.to_string() == row.actor
         && envelope.origin.as_str() == row.origin
         && envelope.cause.map(wire::Seq::get) == cause
-        && kind.as_deref() == Some(row.kind.as_str());
+        && envelope.fact.kind.as_str() == row.kind;
     if !envelope.v.is_current() || !agreed {
         violations.push(Violation::new(
             ViolationClass::Envelope,

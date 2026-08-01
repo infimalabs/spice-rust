@@ -8,7 +8,6 @@ use serde::de::{Deserializer, Error as DeError};
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 
-use crate::fact::Fact;
 use crate::ident::{CanonicalUuid, Instant};
 
 /// The wire schema version writers emit and readers admit.
@@ -189,8 +188,15 @@ impl<'de> Deserialize<'de> for Origin {
 /// `seq`, `at`, `actor`, and any inherited `origin` are assigned inside the
 /// commit door. A client may propose domain data but cannot mint journal
 /// position, time, attribution, or causality.
+///
+/// The parameter is the fact, not the body, because the two readers of a stored
+/// row want different things from it. A consumer that knows which kind it asked
+/// for names [`crate::Fact`] and gets the body typed and the discriminant checked
+/// against it. A consumer sweeping rows it did not write learns the kind at
+/// runtime and names [`crate::AnyFact`], which keeps the header meaningful without
+/// pretending to a body type it cannot know. Both spell the same header once.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Envelope<F> {
+pub struct Envelope<T> {
     /// Current wire version.
     pub v: WireVersion,
     /// Durable observation cursor for this fact.
@@ -208,8 +214,8 @@ pub struct Envelope<F> {
         deserialize_with = "present_cause"
     )]
     pub cause: Option<Seq>,
-    /// Discriminant and kind-specific body.
-    pub fact: Fact<F>,
+    /// Discriminant and body, typed or opaque per the parameter.
+    pub fact: T,
 }
 
 /// Decode a `cause` that is present, refusing the null sentinel.
@@ -222,7 +228,7 @@ fn present_cause<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Se
     Seq::deserialize(deserializer).map(Some)
 }
 
-impl<F> Envelope<F> {
+impl<T> Envelope<T> {
     /// True when this envelope begins a causal chain.
     #[must_use]
     pub const fn is_root(&self) -> bool {

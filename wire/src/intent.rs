@@ -453,6 +453,71 @@ pub enum AnswerShape {
     Recognition,
 }
 
+/// One decoded successful reply body, tagged by the shape its command selected.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum CommandAnswer {
+    /// [`AnswerShape::Task`]
+    Task(TaskAnswer),
+    /// [`AnswerShape::Claim`]
+    Claim(ClaimAnswer),
+    /// [`AnswerShape::Doc`]
+    Doc(DocAnswer),
+    /// [`AnswerShape::Directive`]
+    Directive(DirectiveAnswer),
+    /// [`AnswerShape::Consent`]
+    Consent(ConsentAnswer),
+    /// [`AnswerShape::Trust`]
+    Trust(TrustAnswer),
+    /// [`AnswerShape::State`]
+    State(StateAnswer),
+    /// [`AnswerShape::Taste`]
+    Taste(TasteAnswer),
+    /// [`AnswerShape::Recognition`]
+    Recognition(RecognitionAnswer),
+}
+
+impl CommandAnswer {
+    /// The shape this decoded answer carries.
+    #[must_use]
+    pub const fn shape(&self) -> AnswerShape {
+        match self {
+            Self::Task(_) => AnswerShape::Task,
+            Self::Claim(_) => AnswerShape::Claim,
+            Self::Doc(_) => AnswerShape::Doc,
+            Self::Directive(_) => AnswerShape::Directive,
+            Self::Consent(_) => AnswerShape::Consent,
+            Self::Trust(_) => AnswerShape::Trust,
+            Self::State(_) => AnswerShape::State,
+            Self::Taste(_) => AnswerShape::Taste,
+            Self::Recognition(_) => AnswerShape::Recognition,
+        }
+    }
+}
+
+impl AnswerShape {
+    /// Decode a successful reply body into the answer this shape names.
+    ///
+    /// # Errors
+    ///
+    /// Returns the decoder error when the bytes are not that shape. Answers
+    /// refuse unknown fields, so a body spelled for the wrong command is a
+    /// decode failure rather than a silently truncated value.
+    pub fn decode(self, bytes: &[u8]) -> Result<CommandAnswer, serde_json::Error> {
+        Ok(match self {
+            Self::Task => CommandAnswer::Task(crate::decode(bytes)?),
+            Self::Claim => CommandAnswer::Claim(crate::decode(bytes)?),
+            Self::Doc => CommandAnswer::Doc(crate::decode(bytes)?),
+            Self::Directive => CommandAnswer::Directive(crate::decode(bytes)?),
+            Self::Consent => CommandAnswer::Consent(crate::decode(bytes)?),
+            Self::Trust => CommandAnswer::Trust(crate::decode(bytes)?),
+            Self::State => CommandAnswer::State(crate::decode(bytes)?),
+            Self::Taste => CommandAnswer::Taste(crate::decode(bytes)?),
+            Self::Recognition => CommandAnswer::Recognition(crate::decode(bytes)?),
+        })
+    }
+}
+
 /// The body and answer a command kind selects.
 ///
 /// WIRE binds these together with the witness schema and the transition, so

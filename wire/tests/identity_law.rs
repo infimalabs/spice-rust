@@ -31,12 +31,12 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use wire::{
-    Actor, Answer, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind, CursorHead,
-    Derived, Digest, Disposition, Envelope, Fact, FactKind, Fault, FaultClass, FindingHead,
+    Actor, Answer, AnyFact, CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind,
+    CursorHead, Derived, Digest, Disposition, Envelope, Fact, Fault, FaultClass, FindingHead,
     FindingState, FoldName, Hello, Instant, LaneResidency, LeaseHead, Name, Origin, Outcome,
-    Overflow, Packed, Phase, Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState, Response,
-    Seq, SeqRange, TaskHandle, TaskHead, TrustHead, TrustState, WireVersion, Witness, WitnessClass,
-    WitnessHead, WitnessKind, WorkflowHead,
+    Overflow, Packed, Phase, Producer, Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState,
+    Response, Seq, SeqRange, TaskHandle, TaskHead, TrustHead, TrustState, WireVersion, Witness,
+    WitnessClass, WitnessHead, WitnessKind, WorkflowHead, body,
 };
 
 /// Names `wire` re-exports that never cross as values, each with its reason.
@@ -50,6 +50,24 @@ const NOT_CROSSING: &[(&str, &str)] = &[
         "parse refusal; returned to a caller, never encoded",
     ),
     (
+        "Body",
+        "a trait naming which bodies the vocabulary registers; a bound is not \
+         a value and has no bytes",
+    ),
+    (
+        "Law",
+        "a registry row held in the binary as static slices; the command it \
+         governs crosses, the row itself never leaves the process",
+    ),
+    (
+        "LawError",
+        "witness-law refusal; returned to a caller, never encoded",
+    ),
+    (
+        "NameError",
+        "parse refusal; returned to a caller, never encoded",
+    ),
+    (
         "CommandKindError",
         "parse refusal; returned to a caller, never encoded",
     ),
@@ -59,18 +77,6 @@ const NOT_CROSSING: &[(&str, &str)] = &[
     ),
     (
         "IdentError",
-        "parse refusal; returned to a caller, never encoded",
-    ),
-    (
-        "Law",
-        "compile-time command registry metadata; concrete Witness values cross instead",
-    ),
-    (
-        "LawError",
-        "command validation refusal; returned to a caller, never encoded",
-    ),
-    (
-        "NameError",
         "parse refusal; returned to a caller, never encoded",
     ),
     (
@@ -119,13 +125,6 @@ const NOT_CROSSING: &[(&str, &str)] = &[
         "exercised through Hello and Envelope, whose version fields are this type",
     ),
 ];
-
-/// Body used wherever a crossing type is generic over one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct Body {
-    task: TaskHandle,
-    validation: String,
-}
 
 /// Row used by the packed frames.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -233,11 +232,28 @@ where
 }
 
 /// The body every crossing type generic over one carries in these samples.
-fn body() -> Body {
-    Body {
+///
+/// This is a registered fact body rather than a shape declared here, because
+/// [`Fact`] admits only bodies the vocabulary binds. It serves the command
+/// samples too, whose bodies are unconstrained.
+fn body(validation: &str) -> body::TaskDone {
+    body::TaskDone {
         task: handle("SPICE-aBcD"),
-        validation: "checked".to_owned(),
+        validation: validation.to_owned(),
     }
+}
+
+/// A digest fixture, spelled the one way a digest is spelled.
+const DIGEST: &str = "9f2b4c7d1e6a08b35c4f9d2e7a1b8c05d6e3f4a291b7c8d0e5f6a3b2c1d4e7f8";
+
+/// Parse a phase fixture, which is one lower-case word by construction.
+fn phase(text: &str) -> Phase {
+    text.parse().expect("phase")
+}
+
+/// Parse a name fixture, which is one lower-case word by construction.
+fn name(text: &str) -> Name {
+    text.parse().expect("name")
 }
 
 fn at(text: &str) -> Instant {
@@ -289,6 +305,8 @@ fn every_crossing_type_obeys_the_identity_law() {
     cover_packed_frames(&mut covered);
     cover_refusal_frames(&mut covered);
     cover_reply_frames(&mut covered);
+    cover_witness_values(&mut covered);
+    cover_vocabularies(&mut covered);
 
     assert_coverage_is_complete(&covered);
 }
@@ -321,14 +339,7 @@ fn cover_spellings(covered: &mut BTreeSet<String>) {
         "TaskHandle",
         &[handle("SPICE-aBcD"), handle("WIRE-1kJJP2Qc")],
     );
-    spelling_law(
-        covered,
-        "Phase",
-        &[
-            "todo".parse::<Phase>().expect("phase"),
-            "review".parse::<Phase>().expect("phase"),
-        ],
-    );
+    spelling_law(covered, "Phase", &[phase("todo"), phase("review")]);
     spelling_law(
         covered,
         "Origin",
@@ -381,7 +392,7 @@ fn cover_journal_frames(covered: &mut BTreeSet<String>) {
                 actor: Actor::Operator,
                 origin: "task:SPICE-aBcD".parse().expect("origin"),
                 cause: Some(seq(48190)),
-                fact: Fact::new(FactKind::TaskPhased, body()),
+                fact: Fact::new(body("checked")),
             },
             Envelope {
                 v: WireVersion(1),
@@ -390,7 +401,7 @@ fn cover_journal_frames(covered: &mut BTreeSet<String>) {
                 actor: Actor::Operator,
                 origin: "task:SPICE-aBcD".parse().expect("origin"),
                 cause: None,
-                fact: Fact::new(FactKind::TaskDone, body()),
+                fact: Fact::new(body("cargo test --workspace")),
             },
         ],
     );
@@ -398,10 +409,29 @@ fn cover_journal_frames(covered: &mut BTreeSet<String>) {
         covered,
         "Fact",
         &[
-            Fact::new(FactKind::TaskPhased, body()),
-            Fact::new(FactKind::TaskDone, body()),
+            Fact::new(body("checked")),
+            Fact::new(body("cargo test --workspace")),
         ],
     );
+
+    // The opaque read of the same fact. It obeys the identity law for the same
+    // reason the typed one does — a verifier that re-encodes a row it read must
+    // get the row back — and the samples are the typed bodies above so a drift
+    // between the two readings would show up here as a byte difference.
+    law(
+        covered,
+        "AnyFact",
+        &[
+            any_fact(Fact::new(body("checked"))),
+            any_fact(Fact::new(body("cargo test --workspace"))),
+        ],
+    );
+}
+
+/// Read a typed fact back the way a journal verifier reads a stored row.
+fn any_fact<F: wire::Body>(fact: Fact<F>) -> AnyFact {
+    let bytes = wire::encode(&fact).expect("a typed fact encodes");
+    wire::decode(&bytes).expect("a stored fact reads back without its body type")
 }
 
 /// Task statement and workflow heads.
@@ -639,27 +669,10 @@ fn cover_head_enums(covered: &mut BTreeSet<String>) {
         "FindingState",
         &[FindingState::Open, FindingState::Cleared],
     );
-    spelling_law(
-        covered,
-        "ResidentState",
-        &[ResidentState::Seated, ResidentState::Dark],
-    );
-    spelling_law(
-        covered,
-        "TrustState",
-        &[TrustState::Pended, TrustState::Revoked],
-    );
     law(
         covered,
         "WitnessClass",
         &[WitnessClass::Assignment, WitnessClass::Transition],
-    );
-    // The predicate classes a command registry row cites. Distinct from
-    // `WitnessClass`, which classifies what a stored witness head carries.
-    law(
-        covered,
-        "WitnessKind",
-        &[WitnessKind::Task, WitnessKind::Transition],
     );
 }
 
@@ -677,14 +690,14 @@ fn cover_command_frames(covered: &mut BTreeSet<String>) {
                     task: handle("SPICE-aBcD"),
                     head: seq(48190),
                 }],
-                body: body(),
+                body: body("checked"),
             },
             Command {
                 v: WireVersion(1),
                 id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
                 kind: "task::note".parse::<CommandKind>().expect("command kind"),
                 expected: Vec::new(),
-                body: body(),
+                body: body("checked"),
             },
         ],
     );
@@ -739,21 +752,6 @@ fn cover_witness_values(covered: &mut BTreeSet<String>) {
                 to: ResidentState::Quiescing,
             },
         ],
-    );
-    // These three derive Ord and Hash, so they owe the same rank-and-spelling
-    // agreement the newtypes owe. `Law` stores `WitnessKind` in static slices
-    // and asks `contains`, and every one of them can key a map or sort a
-    // rendered column, so the weaker helper would leave that unchecked.
-    spelling_law(
-        covered,
-        "Disposition",
-        &[Disposition::Live, Disposition::Declined],
-    );
-    spelling_law(covered, "Answer", &[Answer::Asked, Answer::Denied]);
-    spelling_law(
-        covered,
-        "WitnessKind",
-        &[WitnessKind::Task, WitnessKind::Transition],
     );
 }
 
@@ -849,11 +847,11 @@ fn cover_reply_frames(covered: &mut BTreeSet<String>) {
         &[
             Reply {
                 position: committed(48213),
-                body: body(),
+                body: body("checked"),
             },
             Reply {
                 position: ReplyPosition::Snapshot(seq(48213)),
-                body: body(),
+                body: body("checked"),
             },
         ],
     );
@@ -863,7 +861,7 @@ fn cover_reply_frames(covered: &mut BTreeSet<String>) {
         &[
             Outcome::Reply(Reply {
                 position: committed(48213),
-                body: body(),
+                body: body("checked"),
             }),
             Outcome::Refusal(stale_witness()),
         ],
@@ -878,7 +876,7 @@ fn cover_reply_frames(covered: &mut BTreeSet<String>) {
                 epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
                 outcome: Outcome::Reply(Reply {
                     position: committed(48213),
-                    body: body(),
+                    body: body("checked"),
                 }),
             },
             Response {
@@ -993,6 +991,21 @@ fn the_excuse_list_stays_anchored_to_the_source() {
             "{name} is excused without a reason",
         );
     }
+
+    // Two rows for one name is how a merge leaves this list: both sides excuse
+    // the same type and only the first reason is ever read, so the second is a
+    // claim about the crate that nothing checks.
+    let mut seen = BTreeSet::new();
+    let repeated: Vec<&str> = NOT_CROSSING
+        .iter()
+        .filter(|(name, _)| !seen.insert(*name))
+        .map(|(name, _)| *name)
+        .collect();
+    assert!(
+        repeated.is_empty(),
+        "NOT_CROSSING excuses these names more than once, so a reason is going \
+         unread: {repeated:?}",
+    );
 }
 
 #[test]
@@ -1004,4 +1017,76 @@ fn a_seq_cannot_encode_a_zero_position() {
 
     let admitted: Seq = wire::decode(b"1".as_slice()).expect("one is a position");
     assert_eq!(admitted.get(), NonZeroU64::new(1).expect("non-zero").get());
+}
+
+/// The closed sets a frame names rather than spells out.
+///
+/// Each is a fixed vocabulary, so the law that matters is that one variant has
+/// exactly one spelling and two variants never share one. Every set here goes
+/// through `spelling_law` rather than the weaker helper: these types derive
+/// `Ord` and `Hash`, so they owe rank-and-spelling agreement too. `Law` holds
+/// `WitnessKind` in static slices and asks `contains`, and any of them can key
+/// a map or sort a rendered column.
+///
+/// The sweep is over the whole variant set rather than a sample, because a
+/// closed set is exactly the case where the whole set is nameable: `ALL` and
+/// the enumerated arms cost the same to write as two values and catch the
+/// variant a sample would skip.
+fn cover_vocabularies(covered: &mut BTreeSet<String>) {
+    spelling_law(covered, "Producer", Producer::ALL);
+    spelling_law(covered, "WitnessKind", WitnessKind::ALL);
+    spelling_law(
+        covered,
+        "Disposition",
+        &[
+            Disposition::Live,
+            Disposition::Acked,
+            Disposition::Declined,
+            Disposition::Lapsed,
+            Disposition::Canceled,
+        ],
+    );
+    spelling_law(
+        covered,
+        "Answer",
+        &[
+            Answer::Asked,
+            Answer::Granted,
+            Answer::Denied,
+            Answer::Queued,
+        ],
+    );
+    spelling_law(
+        covered,
+        "TrustState",
+        &[TrustState::Pended, TrustState::Granted, TrustState::Revoked],
+    );
+    spelling_law(
+        covered,
+        "ResidentState",
+        &[
+            ResidentState::Seated,
+            ResidentState::Quiescing,
+            ResidentState::Draining,
+            ResidentState::Terminating,
+            ResidentState::Killing,
+            ResidentState::Verifying,
+            ResidentState::Dark,
+        ],
+    );
+    spelling_law(
+        covered,
+        "Name",
+        &[name("polling"), name("aliases"), name("legacy")],
+    );
+    spelling_law(
+        covered,
+        "Digest",
+        &[
+            DIGEST.parse::<Digest>().expect("digest"),
+            "0000000000000000000000000000000000000000000000000000000000000000"
+                .parse::<Digest>()
+                .expect("digest"),
+        ],
+    );
 }
