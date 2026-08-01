@@ -79,6 +79,9 @@ const RESIDENCY: &str = r#"{
   "state": "seated",
   "lanes": [{
     "lane": "018f82d4-6f59-7d06-92e3-bce913116302",
+    "worktree": "/worktrees/lane-a",
+    "life": "drive",
+    "vendor": "claude",
     "occupant": "018f82d4-6f59-7d06-92e3-bce913116303",
     "lineage": ["018f82d4-6f59-7d06-92e3-bce913116305"],
     "capabilities": ["018f82d4-6f59-7d06-92e3-bce913116306"],
@@ -135,7 +138,16 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
         serde_json::from_str(RESIDENCY).expect("residency fixture is JSON");
     assert_value_fields(
         &residency["lanes"][0],
-        &["capabilities", "disposition", "lane", "lineage", "occupant"],
+        &[
+            "capabilities",
+            "disposition",
+            "lane",
+            "life",
+            "lineage",
+            "occupant",
+            "vendor",
+            "worktree",
+        ],
     );
 }
 

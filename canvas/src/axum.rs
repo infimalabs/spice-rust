@@ -8,6 +8,7 @@ use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::RwLock;
 use std::task::{Context, Poll};
 
 use ::axum::Router;
@@ -28,14 +29,20 @@ use crate::{Discovery, EMBEDDED_APP};
 /// Closed capability-to-principal map for one resident generation.
 #[derive(Clone, Default)]
 pub struct Capabilities {
-    principals: BTreeMap<wire::CanonicalUuid, wire::Actor>,
+    principals: Arc<RwLock<BTreeMap<wire::CanonicalUuid, wire::Actor>>>,
 }
 
 impl fmt::Debug for Capabilities {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("Capabilities")
-            .field("principals", &self.principals.len())
+            .field(
+                "principals",
+                &self
+                    .principals
+                    .read()
+                    .map_or(0, |principals| principals.len()),
+            )
             .finish()
     }
 }
@@ -43,20 +50,36 @@ impl fmt::Debug for Capabilities {
 impl Capabilities {
     /// Register an operator or lane capability exactly once.
     pub fn insert(
-        &mut self,
+        &self,
         capability: wire::CanonicalUuid,
         actor: wire::Actor,
     ) -> Result<(), CapabilityError> {
         if matches!(actor, wire::Actor::Spice) {
             return Err(CapabilityError::ResidentIsNotInteractive);
         }
-        match self.principals.entry(capability) {
+        let mut principals = self
+            .principals
+            .write()
+            .map_err(|_| CapabilityError::Unavailable)?;
+        match principals.entry(capability) {
             Entry::Vacant(entry) => {
                 entry.insert(actor);
                 Ok(())
             }
             Entry::Occupied(_) => Err(CapabilityError::Duplicate),
         }
+    }
+
+    /// Remove one exact capability mapping during a failed or retired seat.
+    pub fn remove(&self, capability: wire::CanonicalUuid, actor: &wire::Actor) -> bool {
+        let Ok(mut principals) = self.principals.write() else {
+            return false;
+        };
+        if principals.get(&capability) != Some(actor) {
+            return false;
+        }
+        principals.remove(&capability);
+        true
     }
 
     /// Admit a current hello and derive its principal server-side.
@@ -71,6 +94,14 @@ impl Capabilities {
         })?;
         let actor = self
             .principals
+            .read()
+            .map_err(|_| {
+                OpeningError::Fault(wire::Fault {
+                    class: wire::FaultClass::Environment,
+                    reason: "canvas::capability-unavailable".to_owned(),
+                    detail: "resident capability registry is unavailable".to_owned(),
+                })
+            })?
             .get(&hello.capability)
             .cloned()
             .ok_or_else(|| {
@@ -92,9 +123,11 @@ impl Capabilities {
     }
 
     fn is_operator(&self, capability: wire::CanonicalUuid) -> bool {
-        self.principals
-            .get(&capability)
-            .is_some_and(|actor| matches!(actor, wire::Actor::Operator))
+        self.principals.read().ok().is_some_and(|principals| {
+            principals
+                .get(&capability)
+                .is_some_and(|actor| matches!(actor, wire::Actor::Operator))
+        })
     }
 }
 
@@ -104,6 +137,8 @@ pub enum CapabilityError {
     Duplicate,
     ResidentIsNotInteractive,
     NotOperator,
+    /// The shared registry could not be acquired.
+    Unavailable,
 }
 
 impl fmt::Display for CapabilityError {
@@ -112,6 +147,7 @@ impl fmt::Display for CapabilityError {
             Self::Duplicate => "canvas capability is already registered",
             Self::ResidentIsNotInteractive => "resident actor cannot own an interactive capability",
             Self::NotOperator => "canvas discovery requires an operator capability",
+            Self::Unavailable => "canvas capability registry is unavailable",
         })
     }
 }
@@ -860,7 +896,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn server_binds_ipv4_loopback_and_publishes_that_endpoint() {
-        let mut capabilities = Capabilities::default();
+        let capabilities = Capabilities::default();
         capabilities
             .insert(operator(), wire::Actor::Operator)
             .expect("operator capability");
@@ -917,7 +953,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn authenticated_session_routes_multiple_typed_commands_and_correlates_answers() {
-        let mut capabilities = Capabilities::default();
+        let capabilities = Capabilities::default();
         capabilities
             .insert(operator(), wire::Actor::Operator)
             .expect("operator capability");
@@ -939,7 +975,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn shutdown_closes_partial_upgrade_pre_hello_and_active_sockets() {
-        let mut capabilities = Capabilities::default();
+        let capabilities = Capabilities::default();
         capabilities
             .insert(operator(), wire::Actor::Operator)
             .expect("operator capability");
@@ -984,7 +1020,7 @@ mod tests {
     async fn operator_lane_replacement_and_reconnect_cross_the_live_door() {
         let lane = identity(0xd0);
         let lane_capability = identity(0xd1);
-        let mut capabilities = Capabilities::default();
+        let capabilities = Capabilities::default();
         capabilities
             .insert(operator(), wire::Actor::Operator)
             .expect("operator capability");
@@ -1046,7 +1082,7 @@ mod tests {
             .expect("server stops");
 
         let replacement_epoch = identity(0xd4);
-        let mut replacement = Capabilities::default();
+        let replacement = Capabilities::default();
         replacement
             .insert(operator(), wire::Actor::Lane(lane))
             .expect("replacement generation capability");
@@ -1100,7 +1136,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn saturated_queue_orders_concurrent_work_before_dark_and_refuses_later_work() {
-        let mut capabilities = Capabilities::default();
+        let capabilities = Capabilities::default();
         capabilities
             .insert(operator(), wire::Actor::Operator)
             .expect("operator capability");
@@ -1180,7 +1216,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn shutdown_interrupts_a_queue_reservation_blocked_by_saturation() {
-        let mut capabilities = Capabilities::default();
+        let capabilities = Capabilities::default();
         capabilities
             .insert(operator(), wire::Actor::Operator)
             .expect("operator capability");
@@ -1334,7 +1370,7 @@ mod tests {
 
     #[test]
     fn duplicate_capability_refuses_without_replacing_its_principal() {
-        let mut capabilities = Capabilities::default();
+        let capabilities = Capabilities::default();
         capabilities
             .insert(operator(), wire::Actor::Operator)
             .expect("first registration");

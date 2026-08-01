@@ -66,13 +66,16 @@ fn every_command_names_the_witnesses_it_requires() {
     for kind in CommandKind::ALL {
         let law = kind.law();
         let scanner_disposition = matches!(kind, CommandKind::SteerDispose);
+        let lane_lifecycle = matches!(kind, CommandKind::LaneSeat | CommandKind::LaneState);
         assert_eq!(
             law.required.is_empty(),
-            kind.is_read() || scanner_disposition,
-            "only reads and scanner dispositions may omit a required witness",
+            kind.is_read() || scanner_disposition || lane_lifecycle,
+            "only reads, lane lifecycle, and scanner dispositions may omit required witnesses",
         );
         if scanner_disposition {
             assert_eq!(law.optional, &[WitnessKind::Directive]);
+        } else if law.required.is_empty() {
+            assert!(law.optional.is_empty());
         }
         for optional in law.optional {
             assert!(

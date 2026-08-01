@@ -63,6 +63,9 @@ fn residency() -> ResidencyHead {
         state: ResidentState::Seated,
         lanes: vec![LaneResidency {
             lane: uuid(20),
+            worktree: "/worktrees/lane-a".to_owned(),
+            life: "drive".to_owned(),
+            vendor: "claude".parse().expect("fixture vendor"),
             occupant: Some(uuid(21)),
             lineage: Vec::new(),
             capabilities: Vec::new(),

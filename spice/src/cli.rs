@@ -132,7 +132,6 @@ pub(crate) struct Contract {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Landing {
     Landed,
-    Gap(&'static str),
     Unaccounted,
 }
 
@@ -557,7 +556,7 @@ const CONTRACTS: &[Contract] = &[
         "lane wake ID",
         Operator,
         Command,
-        [LaneResumed],
+        [LaneStarted],
         [Resident, OperatorCapability],
         Reply,
         "lane::wake"
@@ -883,6 +882,11 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["canvas"]
         | ["release", "publish"]
         | ["restore", "verify"]
+        | ["lane"]
+        | ["lane", "add"]
+        | ["lane", "drain"]
+        | ["lane", "wake"]
+        | ["recall"]
         | ["steer"]
         | ["steer", "cancel"]
         | ["inbox"]
@@ -909,9 +913,6 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["taste"]
         | ["taste", "add"]
         | ["taste", "drop"] => Landing::Landed,
-        ["lane"] | ["lane", "add"] | ["lane", "drain"] | ["lane", "wake"] | ["recall"] => {
-            Landing::Gap("COORDIN-1kJQlDjc")
-        }
         _ => Landing::Unaccounted,
     }
 }

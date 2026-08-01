@@ -463,7 +463,10 @@ fn commit_transition(
     commit(bus, write)
 }
 
-fn guard_residency(write: &mut JournalWrite, observed: &journal::JournalHead<ResidencyHead>) {
+pub(super) fn guard_residency(
+    write: &mut JournalWrite,
+    observed: &journal::JournalHead<ResidencyHead>,
+) {
     let expected = observed.clone();
     write.guard(JournalGuard::new(move |read| {
         let Some(current) = read.residency_head()? else {

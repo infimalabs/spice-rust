@@ -10,6 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::Name;
 use crate::envelope::{Actor, Seq};
 use crate::ident::{CanonicalUuid, Digest, Instant};
 use crate::witness::{Phase, TaskHandle};
@@ -453,6 +454,10 @@ pub struct LaneSeated {
     pub capability: CanonicalUuid,
     /// Worktree the lane is bound to.
     pub worktree: String,
+    /// Closed lane-life spelling selected for the seat.
+    pub life: String,
+    /// Vendor selected for occupants of this seat.
+    pub vendor: Name,
 }
 
 /// An occupant became live under the lane.
@@ -464,6 +469,8 @@ pub struct LaneStarted {
     pub occupant: CanonicalUuid,
     /// Resident epoch that observed the start.
     pub epoch: CanonicalUuid,
+    /// Process-group identity returned by the sole process door.
+    pub group: u32,
 }
 
 /// The resident observed the occupant end.
@@ -495,6 +502,10 @@ pub struct LaneRenewed {
     pub occupant: CanonicalUuid,
     /// Occupant the successor descends from.
     pub ancestor: CanonicalUuid,
+    /// Resident epoch that observed the successor start.
+    pub epoch: CanonicalUuid,
+    /// Process-group identity returned by the sole process door.
+    pub group: u32,
 }
 
 /// A graceful occupant end completed.
