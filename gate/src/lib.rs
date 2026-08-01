@@ -32,8 +32,8 @@ pub use camp::{
 pub use config::{Config, WalkConfig};
 pub use input::{
     BASELINE_PATH, BASELINE_VERSION, Baseline, BaselineError, Contract, ContractError, FieldError,
-    Floor, FloorDeclaration, FloorKind, GateSet, LONG_LINE_LIMIT, POLICY_PATH, PolicyError,
-    ToolError, ToolIdentity,
+    Floor, FloorDeclaration, FloorKind, GateSet, GateSetError, LONG_LINE_LIMIT, POLICY_PATH,
+    PolicyError, ToolError, ToolIdentity,
 };
 pub use jurisdiction::{
     Admission, Entry, Ignore, IgnoreError, Jurisdiction, Rule, Shape, WalkError,
