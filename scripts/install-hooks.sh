@@ -12,6 +12,12 @@ for hook in pre-commit commit-msg reference-transaction; do
     fi
 done
 
+git_dir=$(git rev-parse --git-dir)
+common_dir=$(git rev-parse --git-common-dir)
+if [ "$git_dir" != "$common_dir" ]; then # env-policy: allow
+    git config --local extensions.worktreeConfig true
+fi
+
 git config --worktree core.hooksPath .githooks
 
 configured=$(git config --worktree --get core.hooksPath)
