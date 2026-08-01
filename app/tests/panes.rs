@@ -270,6 +270,20 @@ fn an_acceptance_carrying_a_capability_does_not_decode() {
 }
 
 #[test]
+fn principal_debug_renders_the_epoch_but_not_the_capability() {
+    let rendered = format!("{:?}", lane());
+
+    assert!(
+        rendered.contains(EPOCH),
+        "principal debug omitted its generation: {rendered}"
+    );
+    assert!(
+        !rendered.contains(LANE_CAPABILITY),
+        "principal debug rendered its session capability: {rendered}"
+    );
+}
+
+#[test]
 fn a_read_pane_shows_the_answer_it_was_given() {
     let lane = lane();
     let state = answered();
