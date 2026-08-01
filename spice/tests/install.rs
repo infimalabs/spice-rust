@@ -276,6 +276,7 @@ fn cli_preview_apply_and_unapply_are_typed_idempotent_and_python_first() {
     };
     assert_eq!(json_plan.position, ReplyPosition::Direct {});
     assert_eq!(json_plan.body, text_plan);
+    assert_eq!(text_plan.digest(), &text_plan.plan().digest().unwrap());
     assert!(!scratch.join(".spice/rust").exists());
 
     let apply_argument = format!("--apply={}", text_plan.digest());

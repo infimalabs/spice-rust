@@ -331,6 +331,68 @@ fn drift_refuses_reversal_without_overwriting_the_changed_target() {
 }
 
 #[test]
+#[ignore = "workstation acceptance: requires the installed Python entrypoint"]
+fn ambient_python_default_coexists_with_the_explicit_installed_rust_binary() {
+    let python = PathBuf::from(std::path::MAIN_SEPARATOR.to_string())
+        .join("Users")
+        .join("c")
+        .join(".local/bin/spice");
+    assert!(
+        python.is_file(),
+        "{} is the Python entrypoint",
+        python.display()
+    );
+    let python_link = fs::read_link(&python).expect("ambient Python entrypoint is a symlink");
+    let python_bytes = fs::read(&python).expect("snapshot ambient Python entrypoint");
+    let fixture = Fixture::new("ambient-coexistence");
+
+    let before = Command::new(&python)
+        .arg("--help")
+        .current_dir(&fixture.root)
+        .output()
+        .expect("ambient Python entrypoint launches before Rust installation");
+    assert!(before.status.success());
+    assert!(before.stderr.is_empty());
+
+    let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
+    let applied: InstallReceipt = reply_body(fixture.invoke(&[
+        "--json",
+        "install",
+        &format!("--apply={}", preview.digest()),
+    ]));
+    assert_eq!(applied.status(), InstallStatus::Complete);
+
+    let rust = fixture.installed_binary();
+    let explicit = Command::new(&rust)
+        .arg("--help")
+        .current_dir(&fixture.root)
+        .output()
+        .expect("explicit installed Rust binary launches");
+    assert!(explicit.status.success());
+    assert!(explicit.stderr.is_empty());
+    assert_ne!(
+        fs::canonicalize(&python).unwrap(),
+        fs::canonicalize(&rust).unwrap()
+    );
+
+    let after = Command::new(&python)
+        .arg("--help")
+        .current_dir(&fixture.root)
+        .output()
+        .expect("ambient Python entrypoint launches after Rust installation");
+    assert!(after.status.success());
+    assert!(after.stderr.is_empty());
+    assert_eq!(fs::read_link(&python).unwrap(), python_link);
+    assert_eq!(fs::read(&python).unwrap(), python_bytes);
+    fixture.assert_python_authority_unchanged();
+
+    let unapplied: InstallReceipt = reply_body(fixture.invoke(&["--json", "install", "--unapply"]));
+    assert_eq!(unapplied.status(), InstallStatus::Uninstalled);
+    assert_eq!(fs::read_link(&python).unwrap(), python_link);
+    assert_eq!(fs::read(&python).unwrap(), python_bytes);
+}
+
+#[test]
 fn apply_destination_replacement_at_publication_preserves_both_images() {
     let fixture = Fixture::new("apply-target-race");
     let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
