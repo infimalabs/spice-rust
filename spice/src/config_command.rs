@@ -1,10 +1,16 @@
+#[cfg(unix)]
+use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use clap::ArgMatches;
+#[cfg(unix)]
+use rustix::fs::{self as unix_fs, AtFlags, Mode, OFlags};
 use serde::Serialize;
 use sill::{Acquisition, LockFile, LockName};
 use spice::config::{
@@ -17,6 +23,10 @@ use wire::{
 
 const IGNORED_TRACKED_ROOTS: &[&str] = &["policy", "tasks"];
 const CONFIG_PLAN_VERSION: u16 = 1;
+#[cfg(unix)]
+const PUBLICATION_ATTEMPTS: usize = 128;
+#[cfg(unix)]
+static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub(crate) struct ConfigReport {
@@ -94,15 +104,6 @@ enum ParentWitness {
         #[cfg(unix)]
         inode: u64,
     },
-}
-
-impl ParentWitness {
-    fn directory(&self) -> Option<&Path> {
-        match self {
-            Self::Absent => None,
-            Self::Directory { canonical, .. } => Some(canonical),
-        }
-    }
 }
 
 pub(crate) fn run(matches: &ArgMatches) -> Outcome<ConfigReport> {
@@ -322,56 +323,332 @@ fn admit_repository_owner(repository: &Repository) -> Result<(), Outcome<()>> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn publish(
     documents: &Documents,
     plan: &MutationPlan,
     candidate: &[u8],
 ) -> Result<MutationReceipt, Outcome<()>> {
     let parent = materialize_parent(documents)?;
-    let parent_path = parent
-        .directory()
-        .expect("publication materializes one real directory");
-    let lock = LockFile::new(
-        LockName::new("config").expect("config is a valid lock name"),
-        parent_path.join("config.lock"),
-    );
-    let possession = match lock.try_acquire() {
-        Ok(Acquisition::Acquired(possession)) => possession,
-        Ok(Acquisition::Contended) => {
-            return Err(refusal(
-                "config::busy",
-                Some(lock.path().display().to_string()),
-                "retry after the current local configuration writer exits",
-            ));
+    let admitted = AdmittedParent::open(&documents.local_path, &parent)?;
+    let changed = admitted.commit(documents, plan, candidate)?;
+    Ok(receipt(plan, changed))
+}
+
+#[cfg(not(unix))]
+fn publish(
+    _documents: &Documents,
+    _plan: &MutationPlan,
+    _candidate: &[u8],
+) -> Result<MutationReceipt, Outcome<()>> {
+    Err(environment_fault(
+        "config::publication-unavailable",
+        "handle-bound config publication requires a Unix filesystem",
+    ))
+}
+
+#[cfg(unix)]
+struct AdmittedParent {
+    directory: fs::File,
+    path: PathBuf,
+    local_name: OsString,
+}
+
+#[cfg(unix)]
+impl AdmittedParent {
+    fn open(local: &Path, witness: &ParentWitness) -> Result<Self, Outcome<()>> {
+        let ParentWitness::Directory {
+            canonical,
+            device,
+            inode,
+        } = witness
+        else {
+            unreachable!("publication materializes one real directory")
+        };
+        let parent = local_parent(local)?;
+        if parent != canonical {
+            return Err(source_moved(parent));
         }
-        Err(error) => {
-            return Err(environment_fault(
-                "config::lock-unavailable",
-                &error.to_string(),
-            ));
+        let local_name = local.file_name().ok_or_else(|| {
+            environment_fault("config::local-path-invalid", &local.display().to_string())
+        })?;
+        let directory = unix_fs::open(
+            canonical,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::empty(),
+        )
+        .map(fs::File::from)
+        .map_err(|source| source_moved_with(canonical, source.into()))?;
+        let metadata = directory.metadata().map_err(|error| {
+            environment_fault(
+                "config::local-parent-unavailable",
+                &format!("{}: {error}", canonical.display()),
+            )
+        })?;
+        if !metadata.is_dir() || metadata.dev() != *device || metadata.ino() != *inode {
+            return Err(source_moved(canonical));
         }
-    };
-    ensure_unchanged(documents, &parent)?;
-    if plan.before == plan.after {
+        let admitted = Self {
+            directory,
+            path: canonical.clone(),
+            local_name: local_name.to_os_string(),
+        };
+        admitted.verify_named()?;
+        Ok(admitted)
+    }
+
+    fn commit(
+        &self,
+        documents: &Documents,
+        plan: &MutationPlan,
+        candidate: &[u8],
+    ) -> Result<bool, Outcome<()>> {
+        self.verify_named()?;
+        let lock = LockFile::new(
+            LockName::new("config").expect("config is a valid lock name"),
+            self.path.join("config.lock"),
+        );
+        let (lock_file, created) = self.open_lock()?;
+        let possession = match lock.try_acquire_opened(lock_file) {
+            Ok(Acquisition::Acquired(possession)) => possession,
+            Ok(Acquisition::Contended) => {
+                return Err(refusal(
+                    "config::busy",
+                    Some(lock.path().display().to_string()),
+                    "retry after the current local configuration writer exits",
+                ));
+            }
+            Err(error) => {
+                if created {
+                    self.remove_created_lock()?;
+                }
+                return Err(environment_fault(
+                    "config::lock-unavailable",
+                    &error.to_string(),
+                ));
+            }
+        };
+        let result = (|| {
+            self.ensure_unchanged(documents)?;
+            if plan.before == plan.after {
+                return Ok(false);
+            }
+            self.publish_candidate(documents, candidate)?;
+            Ok(true)
+        })();
         drop(possession);
-        return Ok(receipt(plan, false));
+        if result.is_err() && created {
+            self.remove_created_lock()?;
+        }
+        result
     }
-    let destination = atomic::Destination::new(&documents.local_path).map_err(|error| {
-        environment_fault("config::publication-unavailable", &error.to_string())
-    })?;
-    if destination.path() != documents.local_path {
-        return Err(refusal(
-            "config::parent-refused",
-            Some(destination.path().display().to_string()),
-            "restore the exact unlinked Git-common local configuration parent",
-        ));
+
+    fn verify_named(&self) -> Result<(), Outcome<()>> {
+        let reopened = unix_fs::open(
+            &self.path,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::empty(),
+        )
+        .map(fs::File::from)
+        .map_err(|source| source_moved_with(&self.path, source.into()))?;
+        let held = self.directory.metadata().map_err(|error| {
+            environment_fault(
+                "config::local-parent-unavailable",
+                &format!("{}: {error}", self.path.display()),
+            )
+        })?;
+        let observed = reopened
+            .metadata()
+            .map_err(|error| source_moved_with(&self.path, error))?;
+        if same_file(&held, &observed) {
+            Ok(())
+        } else {
+            Err(source_moved(&self.path))
+        }
     }
-    ensure_parent(&documents.local_path, &parent)?;
-    destination
-        .publish(|staged| staged.write_all(candidate))
-        .map_err(|error| environment_fault("config::publication-failed", &error.to_string()))?;
-    drop(possession);
-    Ok(receipt(plan, true))
+
+    fn open_lock(&self) -> Result<(fs::File, bool), Outcome<()>> {
+        self.verify_named()?;
+        let create =
+            OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC | OFlags::NOFOLLOW;
+        match unix_fs::openat(
+            &self.directory,
+            "config.lock",
+            create,
+            Mode::from_raw_mode(0o600),
+        ) {
+            Ok(descriptor) => Ok((fs::File::from(descriptor), true)),
+            Err(rustix::io::Errno::EXIST) => unix_fs::openat(
+                &self.directory,
+                "config.lock",
+                OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+                Mode::empty(),
+            )
+            .map(|descriptor| (fs::File::from(descriptor), false))
+            .map_err(|source| environment_fault("config::lock-unavailable", &source.to_string())),
+            Err(source) => Err(environment_fault(
+                "config::lock-unavailable",
+                &source.to_string(),
+            )),
+        }
+    }
+
+    fn ensure_unchanged(&self, documents: &Documents) -> Result<(), Outcome<()>> {
+        self.verify_named()?;
+        let tracked = read_optional(&documents.tracked_path)?;
+        let local = self.read_local()?;
+        self.verify_named()?;
+        if tracked == documents.tracked && local == documents.local {
+            Ok(())
+        } else {
+            Err(refusal(
+                "config::source-moved",
+                Some(documents.local_path.display().to_string()),
+                "reload the changed tracked or local configuration and retry",
+            ))
+        }
+    }
+
+    fn read_local(&self) -> Result<Option<Vec<u8>>, Outcome<()>> {
+        let descriptor = match unix_fs::openat(
+            &self.directory,
+            &self.local_name,
+            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::empty(),
+        ) {
+            Ok(descriptor) => descriptor,
+            Err(rustix::io::Errno::NOENT) => return Ok(None),
+            Err(rustix::io::Errno::LOOP) => {
+                return Err(refusal(
+                    "config::source-not-regular",
+                    Some(self.path.join(&self.local_name).display().to_string()),
+                    "replace the source with one regular file",
+                ));
+            }
+            Err(source) => {
+                return Err(environment_fault(
+                    "config::source-unreadable",
+                    &format!("{}: {source}", self.path.join(&self.local_name).display()),
+                ));
+            }
+        };
+        let mut file = fs::File::from(descriptor);
+        let opened = file.metadata().map_err(|error| {
+            environment_fault(
+                "config::source-unreadable",
+                &format!("{}: {error}", self.path.join(&self.local_name).display()),
+            )
+        })?;
+        if !opened.is_file() {
+            return Err(refusal(
+                "config::source-not-regular",
+                Some(self.path.join(&self.local_name).display().to_string()),
+                "replace the source with one regular file",
+            ));
+        }
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).map_err(|error| {
+            environment_fault(
+                "config::source-unreadable",
+                &format!("{}: {error}", self.path.join(&self.local_name).display()),
+            )
+        })?;
+        let finished = file.metadata().map_err(|error| {
+            environment_fault(
+                "config::source-unreadable",
+                &format!("{}: {error}", self.path.join(&self.local_name).display()),
+            )
+        })?;
+        if same_generation(&opened, &finished) {
+            Ok(Some(bytes))
+        } else {
+            Err(source_moved(&self.path.join(&self.local_name)))
+        }
+    }
+
+    fn publish_candidate(
+        &self,
+        documents: &Documents,
+        candidate: &[u8],
+    ) -> Result<(), Outcome<()>> {
+        let temporary = self.create_temporary()?;
+        let temporary_name = temporary.0;
+        let mut staged = temporary.1;
+        let result = (|| {
+            staged.write_all(candidate).map_err(|error| {
+                environment_fault("config::publication-failed", &error.to_string())
+            })?;
+            staged.sync_all().map_err(|error| {
+                environment_fault("config::publication-failed", &error.to_string())
+            })?;
+            self.ensure_unchanged(documents)?;
+            unix_fs::renameat(
+                &self.directory,
+                &temporary_name,
+                &self.directory,
+                &self.local_name,
+            )
+            .map_err(|source| {
+                environment_fault("config::publication-failed", &source.to_string())
+            })?;
+            self.directory.sync_all().map_err(|error| {
+                environment_fault("config::publication-failed", &error.to_string())
+            })
+        })();
+        drop(staged);
+        if result.is_err() {
+            let _ = unix_fs::unlinkat(&self.directory, &temporary_name, AtFlags::empty());
+        }
+        result
+    }
+
+    fn create_temporary(&self) -> Result<(OsString, fs::File), Outcome<()>> {
+        self.verify_named()?;
+        for _ in 0..PUBLICATION_ATTEMPTS {
+            let name = temporary_name();
+            match unix_fs::openat(
+                &self.directory,
+                &name,
+                OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+                Mode::from_raw_mode(0o600),
+            ) {
+                Ok(descriptor) => return Ok((name, fs::File::from(descriptor))),
+                Err(rustix::io::Errno::EXIST) => {}
+                Err(source) => {
+                    return Err(environment_fault(
+                        "config::publication-failed",
+                        &source.to_string(),
+                    ));
+                }
+            }
+        }
+        Err(environment_fault(
+            "config::publication-failed",
+            "temporary filename attempts exhausted",
+        ))
+    }
+
+    fn remove_created_lock(&self) -> Result<(), Outcome<()>> {
+        unix_fs::unlinkat(&self.directory, "config.lock", AtFlags::empty())
+            .map_err(|source| environment_fault("config::lock-unavailable", &source.to_string()))?;
+        self.directory
+            .sync_all()
+            .map_err(|error| environment_fault("config::lock-unavailable", &error.to_string()))
+    }
+}
+
+#[cfg(unix)]
+fn temporary_name() -> OsString {
+    OsString::from(format!(
+        ".spice-config-{}-{}.tmp",
+        std::process::id(),
+        NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+#[cfg(unix)]
+fn source_moved_with(path: &Path, _error: io::Error) -> Outcome<()> {
+    source_moved(path)
 }
 
 fn receipt(plan: &MutationPlan, changed: bool) -> MutationReceipt {
@@ -383,23 +660,6 @@ fn receipt(plan: &MutationPlan, changed: bool) -> MutationReceipt {
         after: plan.after.clone(),
         changed,
     }
-}
-
-fn ensure_unchanged(
-    documents: &Documents,
-    expected_parent: &ParentWitness,
-) -> Result<(), Outcome<()>> {
-    ensure_parent(&documents.local_path, expected_parent)?;
-    let tracked = read_optional(&documents.tracked_path)?;
-    let local = read_optional(&documents.local_path)?;
-    if tracked == documents.tracked && local == documents.local {
-        return Ok(());
-    }
-    Err(refusal(
-        "config::source-moved",
-        Some(documents.local_path.display().to_string()),
-        "reload the changed tracked or local configuration and retry",
-    ))
 }
 
 fn materialize_parent(documents: &Documents) -> Result<ParentWitness, Outcome<()>> {
@@ -436,15 +696,6 @@ fn materialize_parent(documents: &Documents) -> Result<ParentWitness, Outcome<()
                 Err(source_moved(parent))
             }
         }
-    }
-}
-
-fn ensure_parent(local: &Path, expected: &ParentWitness) -> Result<(), Outcome<()>> {
-    let observed = admit_parent(local)?;
-    if &observed == expected {
-        Ok(())
-    } else {
-        Err(source_moved(local_parent(local)?))
     }
 }
 
@@ -804,4 +1055,54 @@ fn protocol_fault(reason: &str, detail: &str) -> Outcome<()> {
         reason: reason.to_owned(),
         detail: detail.to_owned(),
     })
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::unix::fs::symlink;
+
+    use super::*;
+
+    #[test]
+    fn renamed_parent_after_admission_refuses_before_lock_or_staging() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-config-admitted-parent-{}-{}",
+            std::process::id(),
+            NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed),
+        ));
+        fs::create_dir_all(root.join("parent")).unwrap();
+        let root = fs::canonicalize(root).unwrap();
+        let parent = root.join("parent");
+        let parked = root.join("parked");
+        let outside = root.join("outside");
+        let tracked_path = root.join("spice.toml");
+        let local_path = parent.join("config.toml");
+        fs::create_dir(&outside).unwrap();
+        let tracked = b"[taste.polling]\nwords = ['poll*']\nmessage = 'use events'\n".to_vec();
+        fs::write(&tracked_path, &tracked).unwrap();
+        let witness = admit_parent(&local_path).unwrap();
+        let documents = Documents {
+            tracked: Some(tracked),
+            local: None,
+            tracked_path,
+            local_path: local_path.clone(),
+            parent: witness.clone(),
+        };
+        let candidate = b"[lock.worker]\nshards = 2\n";
+        let plan = MutationPlan::new(&documents, "lock.worker.shards", candidate).unwrap();
+        let admitted = AdmittedParent::open(&local_path, &witness).unwrap();
+
+        fs::rename(&parent, &parked).unwrap();
+        symlink(&outside, &parent).unwrap();
+        let error = admitted.commit(&documents, &plan, candidate).unwrap_err();
+
+        assert!(matches!(
+            error,
+            Outcome::Refusal(Refusal { reason, .. }) if reason == "config::source-moved"
+        ));
+        assert!(fs::read_dir(&parked).unwrap().next().is_none());
+        assert!(fs::read_dir(&outside).unwrap().next().is_none());
+        drop(admitted);
+        fs::remove_dir_all(root).unwrap();
+    }
 }
