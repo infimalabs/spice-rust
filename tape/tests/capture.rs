@@ -1,0 +1,343 @@
+//! Capture fixtures: append, rotation, interrupted sealing, indexed reads, and
+//! concurrent reader visibility.
+//!
+//! Interrupted sealing is exercised by reconstructing the on-disk states a
+//! crash leaves behind rather than by mocking the filesystem. A crash between
+//! two publications is precisely a directory holding one of them, so the
+//! fixture builds that directory and then asks tape to carry on.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Barrier};
+use std::thread;
+
+use tape::{Index, Locus, Refusal, Seal, Tape};
+
+/// Bytes chosen to contain a NUL, a newline, and invalid UTF-8, so that any
+/// layer tempted to treat capture as text is caught by the fixture.
+const VERBATIM: &[u8] = b"prose\x00\xff\xfe line\ntool call\r\n{\"partial\": ";
+
+#[test]
+fn an_append_is_readable_before_anything_interprets_it() {
+    let scratch = Scratch::new("append");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+
+    let locus = tape.tee(VERBATIM).expect("bytes are captured");
+
+    assert_eq!(locus.member, 1, "capture begins at member one");
+    assert_eq!(locus.offset, 0);
+    assert_eq!(locus.length, VERBATIM.len() as u64);
+    assert_eq!(tape.read(locus).expect("locus resolves"), VERBATIM);
+}
+
+#[test]
+fn each_append_names_only_its_own_bytes() {
+    let scratch = Scratch::new("ranges");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    let chunks: [&[u8]; 4] = [b"alpha", b"", b"gamma-gamma", b"d"];
+
+    let loci: Vec<Locus> = chunks
+        .iter()
+        .map(|chunk| tape.tee(chunk).expect("bytes are captured"))
+        .collect();
+
+    let mut expected_offset = 0;
+    for (locus, chunk) in loci.iter().zip(chunks) {
+        assert_eq!(locus.offset, expected_offset, "appends do not overlap");
+        assert_eq!(tape.read(*locus).expect("locus resolves"), chunk);
+        expected_offset += chunk.len() as u64;
+    }
+}
+
+#[test]
+fn a_locus_survives_the_rotation_of_its_member() {
+    let scratch = Scratch::new("rotation");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    let first = tape.tee(VERBATIM).expect("bytes are captured");
+    let second = tape.tee(b"after").expect("bytes are captured");
+
+    let sealed = tape.seal().expect("the member seals");
+
+    assert!(
+        matches!(sealed, Seal::Sealed { member: 1, .. }),
+        "the active member rotated, got {sealed:?}"
+    );
+    assert_eq!(
+        tape.read(first).expect("the locus still resolves"),
+        VERBATIM,
+        "a locus means the same bytes after its member is sealed"
+    );
+    assert_eq!(
+        tape.read(second).expect("the locus still resolves"),
+        b"after"
+    );
+}
+
+#[test]
+fn sealing_publishes_an_indexed_private_gzip_member() {
+    let scratch = Scratch::new("sealed");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    tape.tee(VERBATIM).expect("bytes are captured");
+
+    tape.seal().expect("the member seals");
+
+    let member = scratch.path().join("000000000001.gz");
+    let bytes = fs::read(&member).expect("the sealed member is published");
+    assert_eq!(&bytes[..2], b"\x1f\x8b", "a sealed member is a gzip member");
+    assert!(
+        !scratch.path().join("000000000001.plain").exists(),
+        "plaintext is removed once its bytes are readable elsewhere"
+    );
+
+    let index = tape.index().expect("the index parses");
+    assert_eq!(index.members().len(), 1);
+    assert_eq!(index.members()[0].member, 1);
+    assert_eq!(
+        index.members()[0].length,
+        VERBATIM.len() as u64,
+        "the index records plaintext length, not storage length"
+    );
+
+    assert_private(&member);
+    assert_private(&scratch.path().join("index"));
+}
+
+#[test]
+fn a_seal_interrupted_before_its_index_republishes_identical_bytes() {
+    let scratch = Scratch::new("interrupted-index");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    let locus = tape.tee(VERBATIM).expect("bytes are captured");
+    tape.seal().expect("the member seals");
+    let published = fs::read(scratch.path().join("000000000001.gz")).expect("member readable");
+
+    // A crash after the member was published and before the index named it:
+    // the member is on disk, unreferenced, and the plaintext never went away.
+    fs::remove_file(scratch.path().join("index")).expect("index removed");
+    fs::write(scratch.path().join("000000000001.plain"), VERBATIM).expect("plaintext restored");
+
+    let resumed = tape.seal().expect("the interrupted seal completes");
+
+    assert!(matches!(resumed, Seal::Sealed { member: 1, .. }));
+    assert_eq!(
+        fs::read(scratch.path().join("000000000001.gz")).expect("member readable"),
+        published,
+        "re-sealing the same plaintext republishes byte-identical bytes"
+    );
+    assert_eq!(tape.read(locus).expect("locus resolves"), VERBATIM);
+}
+
+#[test]
+fn a_seal_interrupted_before_cleanup_loses_no_bytes() {
+    let scratch = Scratch::new("interrupted-cleanup");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    let locus = tape.tee(VERBATIM).expect("bytes are captured");
+    tape.seal().expect("the member seals");
+
+    // A crash after the index named the member and before the plaintext was
+    // removed: both copies exist at once.
+    fs::write(scratch.path().join("000000000001.plain"), VERBATIM).expect("plaintext restored");
+
+    let next = tape.tee(b"later").expect("capture continues");
+
+    assert_eq!(
+        next.member, 2,
+        "residue of a completed seal does not reopen its member"
+    );
+    assert_eq!(next.offset, 0, "the new member starts empty");
+    assert!(
+        !scratch.path().join("000000000001.plain").exists(),
+        "the interrupted seal was completed rather than left behind"
+    );
+    assert_eq!(
+        tape.read(locus).expect("the sealed locus resolves"),
+        VERBATIM,
+        "no captured byte was lost by finishing the seal"
+    );
+    assert_eq!(tape.read(next).expect("the new locus resolves"), b"later");
+}
+
+#[test]
+fn an_empty_member_seals_nothing() {
+    let scratch = Scratch::new("empty");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+
+    assert_eq!(tape.seal().expect("sealing is attempted"), Seal::Empty);
+
+    tape.tee(b"").expect("an empty append is accepted");
+    assert_eq!(
+        tape.seal().expect("sealing is attempted"),
+        Seal::Empty,
+        "a member holding no bytes is not worth a gzip member"
+    );
+}
+
+#[test]
+fn a_locus_past_the_end_of_its_member_is_refused() {
+    let scratch = Scratch::new("range");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    let locus = tape.tee(b"eight!!!").expect("bytes are captured");
+    let past = Locus::new(locus.member, locus.offset, locus.length + 1);
+
+    let active = tape.read(past).expect_err("an overlong locus is refused");
+    assert!(
+        matches!(active.refusal(), Some(Refusal::OutOfRange { .. })),
+        "got {active}"
+    );
+
+    tape.seal().expect("the member seals");
+    let sealed = tape.read(past).expect_err("an overlong locus is refused");
+    assert!(
+        matches!(sealed.refusal(), Some(Refusal::OutOfRange { .. })),
+        "the same locus is refused once sealed, got {sealed}"
+    );
+
+    let overflowing = Locus::new(locus.member, u64::MAX, 1);
+    assert!(
+        matches!(
+            tape.read(overflowing).expect_err("refused").refusal(),
+            Some(Refusal::OutOfRange { .. })
+        ),
+        "a locus whose end overflows is refused rather than wrapping"
+    );
+}
+
+#[test]
+fn a_locus_naming_an_unissued_member_is_refused() {
+    let scratch = Scratch::new("unissued");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    tape.tee(b"present").expect("bytes are captured");
+
+    for member in [2, 9_999] {
+        let error = tape
+            .read(Locus::new(member, 0, 1))
+            .expect_err("an unissued member is refused");
+        assert!(
+            matches!(error.refusal(), Some(Refusal::UnknownMember { .. })),
+            "got {error}"
+        );
+    }
+}
+
+#[test]
+fn the_index_round_trips_through_its_byte_stable_form() {
+    let scratch = Scratch::new("index-form");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    for chunk in [b"one".as_slice(), b"two", b"three"] {
+        tape.tee(chunk).expect("bytes are captured");
+        tape.seal().expect("the member seals");
+    }
+
+    let text = fs::read_to_string(scratch.path().join("index")).expect("index readable");
+    let parsed = Index::parse(&text).expect("the index parses");
+
+    assert_eq!(parsed.render(), text, "the index has one spelling");
+    assert_eq!(parsed.members().len(), 3);
+    assert_eq!(parsed.next_member(), 4);
+    assert_eq!(
+        text.lines().next(),
+        Some("tape 1"),
+        "the index names its own format first"
+    );
+}
+
+#[test]
+fn an_index_that_is_not_the_current_form_is_refused_by_line() {
+    for broken in [
+        "",
+        "tape 2\n",
+        "tape 1\nmember 1 5\n",
+        "tape 1\nmember 000000000001\n",
+        "tape 1\nmember 000000000001 five\n",
+        "tape 1\nmember 000000000002 5\nmember 000000000001 5\n",
+        "tape 1\nmembers 000000000001 5\n",
+    ] {
+        let error = Index::parse(broken).expect_err("a non-current index is refused");
+        assert!(
+            matches!(error.refusal(), Some(Refusal::MalformedIndex { .. })),
+            "{broken:?} produced {error}"
+        );
+    }
+}
+
+#[test]
+fn readers_resolve_loci_while_a_sealer_publishes_underneath_them() {
+    let scratch = Scratch::new("concurrent");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+
+    let mut loci = Vec::new();
+    let mut expected = Vec::new();
+    for index in 0..64_u32 {
+        let chunk = format!("chunk-{index:04}\n").into_bytes();
+        loci.push(tape.tee(&chunk).expect("bytes are captured"));
+        expected.push(chunk);
+    }
+
+    let barrier = Arc::new(Barrier::new(2));
+    let reader = {
+        let tape = tape.clone();
+        let barrier = Arc::clone(&barrier);
+        thread::spawn(move || {
+            barrier.wait();
+            for _ in 0..64 {
+                for (locus, want) in loci.iter().zip(&expected) {
+                    let got = tape
+                        .read(*locus)
+                        .expect("a locus resolves while a sealer runs");
+                    assert_eq!(&got, want, "a reader never observes a partial member");
+                }
+            }
+        })
+    };
+
+    barrier.wait();
+    tape.seal().expect("the member seals beneath the reader");
+    reader
+        .join()
+        .expect("no reader observed a torn or missing member");
+}
+
+/// Assert a published file is readable and writable only by its owner.
+fn assert_private(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode = fs::metadata(path)
+            .expect("published file is readable")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600, "{} is not owner-only", path.display());
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
+/// A scratch directory removed when the fixture ends.
+struct Scratch(PathBuf);
+
+static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
+
+impl Scratch {
+    fn new(label: &str) -> Self {
+        let sequence = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "spice-tape-{label}-{}-{sequence}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("scratch directory is created");
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
