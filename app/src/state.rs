@@ -8,7 +8,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use wire::{Body, CanonicalUuid, Derived, Envelope, Fact, FoldName, Origin, Overflow, Packed, Seq};
+use wire::{
+    Body, CanonicalUuid, Derived, Envelope, Fact, FoldName, Origin, Outcome, Overflow, Packed,
+    Response, Seq,
+};
 
 use crate::socket::Admitted;
 
@@ -106,12 +109,50 @@ impl ChainWalk {
 /// A head-direct read cannot, and this enum gives it nowhere to claim
 /// otherwise, so "never invent that provenance" holds by shape rather than by a
 /// rule a renderer has to remember.
+///
+/// The arm is chosen by the wire shape the reply carried rather than by a
+/// caller's argument. `From` is implemented for [`Packed`] and [`Derived`] and
+/// for nothing else, so a head-direct read has no expression that produces
+/// [`Answer::Derived`].
+///
+/// A wire shape crosses the door and becomes an answer on the way in:
+///
+/// ```no_run
+/// let id: wire::CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163c1".parse().unwrap();
+/// let session = app::Session::open(id, id);
+/// let admitted: app::Admitted<wire::Response<wire::Packed<String>>> =
+///     session.admit_frame(b"").unwrap();
+/// ```
+///
+/// An `Answer` cannot make that crossing as itself, because it is not a wire
+/// shape and holds no `Deserialize`. Deriving one would let a hand-written
+/// frame name the `Derived` arm directly and mint the provenance this enum
+/// exists to keep a head-direct read from claiming:
+///
+/// ```compile_fail
+/// let id: wire::CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163c1".parse().unwrap();
+/// let session = app::Session::open(id, id);
+/// let admitted: app::Admitted<wire::Response<app::Answer<String>>> =
+///     session.admit_frame(b"").unwrap();
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer<T> {
     /// A fold-backed answer, carrying the provenance the fold stamped on it.
     Derived(Derived<T>),
     /// A head-direct answer, read straight off the authoritative heads.
     HeadDirect(Packed<T>),
+}
+
+impl<T> From<Derived<T>> for Answer<T> {
+    fn from(derived: Derived<T>) -> Self {
+        Self::Derived(derived)
+    }
+}
+
+impl<T> From<Packed<T>> for Answer<T> {
+    fn from(packed: Packed<T>) -> Self {
+        Self::HeadDirect(packed)
+    }
 }
 
 impl<T> Answer<T> {
@@ -278,19 +319,39 @@ impl<T> BrowserState<T> {
         }
     }
 
-    /// Replace the current answer with a newly received one.
+    /// Replace the current answer with an admitted reply.
     ///
     /// An answer carries its own rank, overflow, and horizon, so a later one
     /// replaces the earlier one whole. Merging two answers would produce a list
     /// no producer ever ranked and a horizon no source ever declared.
     ///
-    /// The parameter is [`Answer`] rather than a bare [`Packed`] so that a
-    /// fold-backed read arrives with its provenance attached instead of being
-    /// flattened on the way in. A state that accepted only the rows would have
-    /// discarded the fold and generation at the door, leaving every pane above
-    /// it with nothing honest to show.
-    pub fn replace(&mut self, answer: Answer<T>) {
-        self.answer = Some(answer);
+    /// The response must carry the socket door's [`Admitted`] receipt. A bare
+    /// value has no path into state, so rows, overflow, horizon, and fold
+    /// provenance cannot be populated by bytes that bypassed
+    /// [`crate::Session`]. A refusal, fault, or answer from another state
+    /// generation changes nothing and remains available to the caller through
+    /// `admitted`.
+    ///
+    /// The reply body is whichever wire shape the read returned, and the
+    /// [`Answer`] arm follows from it rather than from an argument. A
+    /// [`Derived`] reply keeps the fold, generation, and cursor it arrived
+    /// with; a [`Packed`] reply has nowhere to put them and so claims none.
+    /// Flattening both to rows here is what would have forced every pane above
+    /// to either invent provenance or drop it silently.
+    #[must_use]
+    pub fn replace<B>(&mut self, admitted: &Admitted<Response<B>>) -> bool
+    where
+        B: Clone + Into<Answer<T>>,
+    {
+        let response = admitted.get();
+        let Outcome::Reply(reply) = &response.outcome else {
+            return false;
+        };
+        if response.epoch != self.epoch {
+            return false;
+        }
+        self.answer = Some(reply.body.clone().into());
+        true
     }
 
     /// The current answer, or `None` before one arrives.

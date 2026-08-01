@@ -197,22 +197,22 @@ fn every_domain_digest_is_frozen_at_its_published_spelling() {
 
     for (class, computed, frozen) in [
         (
-            Domain::TargetPayload,
+            Domain::DistTargetPayload,
             &run.staged.payload_digest,
             "5ee967e0354678e62a3a659a1a30ed03dbc1cc29471137325de51b5d79fd0222",
         ),
         (
-            Domain::Artifact,
+            Domain::DistArtifact,
             &payload.app,
             "5e76593b47a13fefa0febcf111adc0eae5529e489946c120cd2a65f0122c349a",
         ),
         (
-            Domain::Pins,
+            Domain::DistPins,
             &payload.pins_digest,
             "68678864490d2f47da44311d8b97bf9a0d73919388417296f20c7f4e703bba4d",
         ),
         (
-            Domain::Inventory,
+            Domain::DistInventory,
             &payload.inventory_digest,
             "63123aa2330474002ad2693b421dea9378c2d34246dfacac54d9f0756bcaf91d",
         ),

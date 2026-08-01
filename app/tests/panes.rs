@@ -16,8 +16,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use app::{
-    Admitted, Answer, BrowserState, Declined, GrantPane, Principal, ReadPane, Session, SteerPane,
-    settled,
+    Admitted, BrowserState, Declined, GrantPane, Principal, ReadPane, Session, SteerPane, settled,
 };
 use serde::{Deserialize, Serialize};
 use wire::{
@@ -54,8 +53,8 @@ fn session() -> Session {
 }
 
 /// A ranked row, standing in for whatever a pane lists.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Row(&'static str);
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Row(String);
 
 /// The body of a command and of the reply that answers it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,14 +89,11 @@ fn lane() -> Principal {
 /// State holding one complete answer from this generation.
 fn answered() -> BrowserState<Row> {
     let mut state = BrowserState::new(uuid(EPOCH));
-    state.replace(Answer::HeadDirect(Packed {
-        rows: vec![Row("SPICE-aBcD"), Row("SPICE-eFgH")],
-        overflow: Some(Overflow {
-            omitted: 41,
-            continuation: seq(48250),
-        }),
-        horizon: seq(48213),
-    }));
+    assert!(state.replace(&packed_answer(
+        &["SPICE-aBcD", "SPICE-eFgH"],
+        Some((41, 48250)),
+        48213,
+    )));
     state
 }
 
@@ -142,6 +138,37 @@ fn response(id: &str, outcome: &str) -> Admitted<Response<Note>> {
     session()
         .admit_frame::<Note>(&response_bytes(id, outcome))
         .expect("the fixture answer is admitted")
+}
+
+/// One packed reply admitted through the session before browser state sees it.
+fn packed_answer(
+    rows: &[&str],
+    overflow: Option<(u64, u64)>,
+    horizon: u64,
+) -> Admitted<Response<Packed<Row>>> {
+    let rows = rows
+        .iter()
+        .map(|row| format!(r#""{row}""#))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let overflow = overflow.map_or_else(String::new, |(omitted, continuation)| {
+        format!(r#""overflow": {{ "omitted": {omitted}, "continuation": {continuation} }},"#)
+    });
+    let bytes = format!(
+        r#"{{
+  "v": 1,
+  "id": "{COMMAND}",
+  "epoch": "{EPOCH}",
+  "outcome": {{
+    "kind": "reply",
+    "cursor": {horizon},
+    "body": {{ "rows": [{rows}], {overflow} "horizon": {horizon} }}
+  }}
+}}"#
+    );
+    session()
+        .admit_frame(&bytes.into_bytes())
+        .expect("the packed fixture answer is admitted")
 }
 
 /// A command a lane is offered, built through the pane that offers it.
@@ -217,7 +244,7 @@ fn a_read_pane_shows_the_answer_it_was_given() {
 
     assert_eq!(
         pane.rows(),
-        [Row("SPICE-aBcD"), Row("SPICE-eFgH")].as_slice()
+        [Row("SPICE-aBcD".to_owned()), Row("SPICE-eFgH".to_owned())].as_slice()
     );
     assert_eq!(pane.horizon(), Some(seq(48213)));
     assert_eq!(
@@ -265,15 +292,15 @@ fn no_rendered_row_promotes_a_lane_principal() {
     // Rows an occupant can cause to exist: text naming the operator, the
     // operator actor spelled exactly as the wire spells it, and the session
     // capability itself.
-    state.replace(Answer::HeadDirect(Packed {
-        rows: vec![
-            Row("operator"),
-            Row("actor: operator"),
-            Row("018f82d4-6f59-7d06-92e3-bce9131163c1"),
+    assert!(state.replace(&packed_answer(
+        &[
+            "operator",
+            "actor: operator",
+            "018f82d4-6f59-7d06-92e3-bce9131163c1",
         ],
-        overflow: None,
-        horizon: seq(48213),
-    }));
+        None,
+        48213,
+    )));
 
     let read = ReadPane::over(&lane, &state).expect("state is from this generation");
     assert_eq!(read.rows().len(), 3, "the rows are rendered, not hidden");
@@ -543,31 +570,64 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// A fold-backed answer, as the server wraps one for the wire.
+/// One fold-backed reply admitted through the same response door.
 ///
-/// The three positions are deliberately three different numbers. A test whose
-/// fold cursor, horizon, and stream cursor all agreed would pass while the pane
-/// read any one of them for any other.
-fn derived() -> Derived<Row> {
-    Derived {
-        fold: "task::backlog".parse::<FoldName>().expect("fixture fold"),
-        r#gen: 7,
-        cursor: seq(48200),
-        packed: Packed {
-            rows: vec![Row("SPICE-aBcD"), Row("SPICE-eFgH")],
-            overflow: Some(Overflow {
-                omitted: 41,
-                continuation: seq(48250),
-            }),
-            horizon: seq(48213),
-        },
-    }
+/// The fold cursor and the horizon are separate parameters because they are
+/// separate claims. A fixture that derived one from the other could not tell a
+/// pane reading the wrong field from a pane reading the right one.
+fn derived_answer(
+    fold: &str,
+    generation: u64,
+    cursor: u64,
+    rows: &[&str],
+    overflow: Option<(u64, u64)>,
+    horizon: u64,
+) -> Admitted<Response<Derived<Row>>> {
+    let rows = rows
+        .iter()
+        .map(|row| format!(r#""{row}""#))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let overflow = overflow.map_or_else(String::new, |(omitted, continuation)| {
+        format!(r#""overflow": {{ "omitted": {omitted}, "continuation": {continuation} }},"#)
+    });
+    let bytes = format!(
+        r#"{{
+  "v": 1,
+  "id": "{COMMAND}",
+  "epoch": "{EPOCH}",
+  "outcome": {{
+    "kind": "reply",
+    "cursor": {horizon},
+    "body": {{
+      "fold": "{fold}",
+      "gen": {generation},
+      "cursor": {cursor},
+      "packed": {{ "rows": [{rows}], {overflow} "horizon": {horizon} }}
+    }}
+  }}
+}}"#
+    );
+    session()
+        .admit_frame(&bytes.into_bytes())
+        .expect("the derived fixture answer is admitted")
 }
 
 /// State holding one fold-backed answer from this generation.
+///
+/// The three positions are deliberately three different numbers: the fold had
+/// applied through 48200, the sources are complete through 48213, and no frame
+/// has moved the stream cursor at all.
 fn fold_backed() -> BrowserState<Row> {
     let mut state = BrowserState::new(uuid(EPOCH));
-    state.replace(Answer::Derived(derived()));
+    assert!(state.replace(&derived_answer(
+        "task::backlog",
+        7,
+        48200,
+        &["SPICE-aBcD", "SPICE-eFgH"],
+        Some((41, 48250)),
+        48213,
+    )));
     state
 }
 
@@ -621,21 +681,39 @@ fn the_generation_cursor_is_neither_the_horizon_nor_the_stream_cursor() {
 fn replacing_a_derived_answer_with_a_head_direct_one_drops_its_provenance() {
     let operator = operator();
     let mut state = fold_backed();
-    state.replace(Answer::HeadDirect(Packed {
-        rows: vec![Row("SPICE-iJkL")],
-        overflow: None,
-        horizon: seq(48214),
-    }));
+    assert!(state.replace(&packed_answer(&["SPICE-iJkL"], None, 48214)));
 
     let read = ReadPane::over(&operator, &state).expect("state is from this generation");
 
     // The fold that answered a moment ago did not answer this one. Retaining
     // its name would attribute the current rows to a generation that never
     // produced them.
-    assert_eq!(read.rows(), [Row("SPICE-iJkL")].as_slice());
+    assert_eq!(read.rows(), [Row("SPICE-iJkL".to_owned())].as_slice());
     assert_eq!(read.fold(), None);
     assert_eq!(read.generation(), None);
     assert_eq!(read.generation_cursor(), None);
+}
+
+#[test]
+fn a_refused_answer_leaves_the_provenance_the_pane_already_had() {
+    let operator = operator();
+    let mut state = fold_backed();
+
+    // A refusal is an answer about an event that did not occur. Letting it
+    // clear the fold would report "no generation answered" when one had.
+    let refusal: Admitted<Response<Derived<Row>>> = session()
+        .admit_frame(&response_bytes(
+            COMMAND,
+            r#"{ "kind": "refusal", "reason": "fold::rebuilding",
+             "remedy": "read again once the generation settles" }"#,
+        ))
+        .expect("the fixture refusal is admitted");
+    assert!(!state.replace(&refusal));
+
+    let read = ReadPane::over(&operator, &state).expect("state is from this generation");
+    assert_eq!(read.fold().map(FoldName::as_str), Some("task::backlog"));
+    assert_eq!(read.generation(), Some(7));
+    assert_eq!(read.rows().len(), 2);
 }
 
 #[test]
@@ -645,21 +723,10 @@ fn truncation_is_read_from_the_answer_rather_than_counted_from_the_rows() {
     // The truncated answer carries fewer rows than the complete one, so any
     // rule comparing row count against a page size gets these two backwards.
     let mut truncated = BrowserState::new(uuid(EPOCH));
-    truncated.replace(Answer::HeadDirect(Packed {
-        rows: vec![Row("SPICE-aBcD")],
-        overflow: Some(Overflow {
-            omitted: 41,
-            continuation: seq(48250),
-        }),
-        horizon: seq(48213),
-    }));
+    assert!(truncated.replace(&packed_answer(&["SPICE-aBcD"], Some((41, 48250)), 48213)));
 
     let mut complete = BrowserState::new(uuid(EPOCH));
-    complete.replace(Answer::HeadDirect(Packed {
-        rows: vec![Row("SPICE-aBcD"), Row("SPICE-eFgH")],
-        overflow: None,
-        horizon: seq(48213),
-    }));
+    assert!(complete.replace(&packed_answer(&["SPICE-aBcD", "SPICE-eFgH"], None, 48213)));
 
     let short = ReadPane::over(&operator, &truncated).expect("state is from this generation");
     let long = ReadPane::over(&operator, &complete).expect("state is from this generation");

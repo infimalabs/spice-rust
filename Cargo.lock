@@ -255,6 +255,8 @@ name = "gate"
 version = "0.0.0"
 dependencies = [
  "atomic",
+ "serde",
+ "serde_json",
  "sill",
  "syn 3.0.3",
  "wire",
@@ -745,6 +747,7 @@ dependencies = [
  "jiff",
  "serde",
  "serde_json",
+ "syn 3.0.3",
  "thiserror",
  "uuid",
 ]

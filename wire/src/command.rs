@@ -106,6 +106,8 @@ pub struct CommandKindError(String);
 
 /// The witness law one command carries.
 ///
+/// identity-law: non-crossing - registry metadata held in static process memory.
+///
 /// `required` must all appear in a command's `expected` list. `optional`
 /// names predicates the row admits conditionally — an assignment witness on
 /// the review path, a budget predicate when a rule spends one. Anything

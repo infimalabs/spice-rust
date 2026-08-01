@@ -1,35 +1,52 @@
 use std::fmt;
 
-/// One registered disposable materialization.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum FoldId {
-    SteerInbox,
-    ConsentQueue,
-    LaneCanary,
-    TasteActive,
-    CanvasVerdicts,
-    CanvasMagnitude,
-    CanvasFlow,
-    CanvasTopology,
-    CanvasChronology,
-    ReleaseHistory,
+/// Declare a closed vocabulary and the slice that enumerates it.
+///
+/// The variants are written once and `ALL` is generated from that list, so a
+/// variant cannot be declared without joining the enumeration and the two can
+/// never disagree. Only the enumeration needed generating: every `match` over
+/// one of these enums is already exhaustive by the compiler, so a hand-written
+/// `ALL` was the crate's one unlinked copy of the variant list.
+macro_rules! closed_vocabulary {
+    (
+        $(#[$vocabulary_doc:meta])*
+        pub enum $name:ident {
+            $($(#[$variant_doc:meta])* $variant:ident,)+
+        }
+    ) => {
+        $(#[$vocabulary_doc])*
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        pub enum $name {
+            $($(#[$variant_doc])* $variant,)+
+        }
+
+        impl $name {
+            /// Every variant, in declaration order.
+            pub const ALL: &[Self] = &[$(Self::$variant),+];
+        }
+    };
+}
+
+closed_vocabulary! {
+    /// One registered disposable materialization.
+    ///
+    /// Declaration order is dependency-safe rebuild order: a fold appears after
+    /// every fold it names as a source.
+    pub enum FoldId {
+        SteerInbox,
+        ConsentQueue,
+        LaneCanary,
+        TasteActive,
+        CanvasVerdicts,
+        CanvasMagnitude,
+        CanvasFlow,
+        CanvasTopology,
+        CanvasChronology,
+        ReleaseHistory,
+    }
 }
 
 impl FoldId {
-    /// Every fold in dependency-safe inventory order.
-    pub const ALL: &[Self] = &[
-        Self::SteerInbox,
-        Self::ConsentQueue,
-        Self::LaneCanary,
-        Self::TasteActive,
-        Self::CanvasVerdicts,
-        Self::CanvasMagnitude,
-        Self::CanvasFlow,
-        Self::CanvasTopology,
-        Self::CanvasChronology,
-        Self::ReleaseHistory,
-    ];
-
     /// The fold's wire name.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -54,25 +71,26 @@ impl fmt::Display for FoldId {
     }
 }
 
-/// A closed fact-plane source.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum FactPlane {
-    Task,
-    Claim,
-    Document,
-    Steering,
-    Consent,
-    Lane,
-    Taste,
-    Canary,
-    Vendor,
-    Trust,
-    Commit,
-    Gate,
-    Journal,
-    Resident,
-    Proof,
-    Release,
+closed_vocabulary! {
+    /// A closed fact-plane source.
+    pub enum FactPlane {
+        Task,
+        Claim,
+        Document,
+        Steering,
+        Consent,
+        Lane,
+        Taste,
+        Canary,
+        Vendor,
+        Trust,
+        Commit,
+        Gate,
+        Journal,
+        Resident,
+        Proof,
+        Release,
+    }
 }
 
 impl FactPlane {
@@ -215,39 +233,28 @@ const fn is_resident(kind: wire::FactKind) -> bool {
     )
 }
 
-/// One authoritative head table admitted as a fold source.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum HeadSource {
-    Task,
-    Workflow,
-    Claim,
-    Lease,
-    Witness,
-    Finding,
-    Residency,
+closed_vocabulary! {
+    /// One authoritative head table admitted as a fold source.
+    pub enum HeadSource {
+        Task,
+        Workflow,
+        Claim,
+        Lease,
+        Witness,
+        Finding,
+        Residency,
+    }
 }
 
-impl HeadSource {
-    pub const ALL: &[Self] = &[
-        Self::Task,
-        Self::Workflow,
-        Self::Claim,
-        Self::Lease,
-        Self::Witness,
-        Self::Finding,
-        Self::Residency,
-    ];
-}
-
-/// One bounded non-replayable ring source.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum RingId {
-    BusRefusals,
+closed_vocabulary! {
+    /// One bounded non-replayable ring source.
+    pub enum RingId {
+        BusRefusals,
+    }
 }
 
 impl RingId {
-    pub const ALL: &[Self] = &[Self::BusRefusals];
-
+    /// The ring's wire name.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -256,17 +263,19 @@ impl RingId {
     }
 }
 
-/// Tracked configuration whose digest is an explicit fold input.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum ConfigSource {
-    Consent,
-    Taste,
+closed_vocabulary! {
+    /// Tracked configuration whose digest is an explicit fold input.
+    pub enum ConfigSource {
+        Consent,
+        Taste,
+    }
 }
 
-/// A bounded tape input.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum TapeSource {
-    DeclaredExtents,
+closed_vocabulary! {
+    /// A bounded tape input.
+    pub enum TapeSource {
+        DeclaredExtents,
+    }
 }
 
 /// One complete, typed input declaration.

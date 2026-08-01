@@ -4,7 +4,7 @@ use std::fmt;
 use std::io::{self, Write};
 use std::process::Command;
 
-const VERIFY_STEPS: [Step; 3] = [
+const VERIFY_STEPS: [Step; 4] = [
     Step::new(
         "cargo fmt --all -- --check",
         &["fmt", "--all", "--", "--check"],
@@ -24,6 +24,10 @@ const VERIFY_STEPS: [Step; 3] = [
     Step::new(
         "cargo test --locked --workspace --all-targets",
         &["test", "--locked", "--workspace", "--all-targets"],
+    ),
+    Step::new(
+        "cargo test --locked --workspace --doc",
+        &["test", "--locked", "--workspace", "--doc"],
     ),
 ];
 
@@ -165,7 +169,12 @@ mod tests {
 
     #[test]
     fn success_runs_every_step_in_order_and_prints_exact_labels() {
-        let mut runner = runner([Outcome::Success, Outcome::Success, Outcome::Success]);
+        let mut runner = runner([
+            Outcome::Success,
+            Outcome::Success,
+            Outcome::Success,
+            Outcome::Success,
+        ]);
         let mut output = Vec::new();
 
         verify_with(&mut runner, &mut output).expect("verification succeeds");
@@ -178,6 +187,17 @@ mod tests {
                 .map(|label| format!("[verify] {label}\n"))
                 .collect::<String>()
         );
+    }
+
+    #[test]
+    fn verifier_explicitly_runs_workspace_doctests() {
+        let step = VERIFY_STEPS
+            .iter()
+            .find(|step| step.label == "cargo test --locked --workspace --doc")
+            .expect("the verifier has a doctest step");
+
+        assert_eq!(step.arguments, ["test", "--locked", "--workspace", "--doc"]);
+        assert_eq!(VERIFY_STEPS.last(), Some(step));
     }
 
     #[test]
