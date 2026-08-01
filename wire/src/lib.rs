@@ -15,6 +15,7 @@ pub mod fact;
 pub mod head;
 pub mod hello;
 pub mod ident;
+pub mod manifest;
 pub mod packed;
 pub mod reply;
 pub mod witness;
@@ -29,6 +30,7 @@ pub use head::{
 };
 pub use hello::{Hello, Rejected};
 pub use ident::{CanonicalUuid, Digest, IdentError, Instant};
+pub use manifest::{BuildPins, InventoryEntry, ReleaseTarget, TargetPayload};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
     Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, Response, SeqRange, SeqRangeError,
