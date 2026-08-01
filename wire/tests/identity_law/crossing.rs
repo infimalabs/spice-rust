@@ -64,10 +64,15 @@ fn cover_spellings(covered: &mut BTreeSet<String>) {
         covered,
         "Instant",
         &[
-            Instant::new("2030-04-12T18:44:09.271828Z".parse().expect("timestamp")),
-            Instant::new("2030-04-12T18:44:09.271Z".parse().expect("timestamp")),
-            Instant::new("1969-12-31T23:59:59.999999Z".parse().expect("timestamp")),
-            Instant::new(jiff::Timestamp::MAX),
+            Instant::new("0000-01-01T00:00:00Z".parse().expect("minimum wire year"))
+                .expect("minimum wire instant"),
+            Instant::new("2030-04-12T18:44:09.271828Z".parse().expect("timestamp"))
+                .expect("reading is in the wire year range"),
+            Instant::new("2030-04-12T18:44:09.271Z".parse().expect("timestamp"))
+                .expect("reading is in the wire year range"),
+            Instant::new("1969-12-31T23:59:59.999999Z".parse().expect("timestamp"))
+                .expect("reading is in the wire year range"),
+            Instant::new(jiff::Timestamp::MAX).expect("maximum wire instant"),
         ],
     );
     spelling_law(
