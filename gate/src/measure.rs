@@ -256,6 +256,15 @@ impl Metric {
             .stdout()
             .ok_or_else(|| refuse("no stdout".to_owned()))?;
         let printed = String::from_utf8_lossy(captured.bytes()).trim().to_owned();
+        let capture_failure = match (captured.truncated(), captured.complete()) {
+            (true, false) => Some("truncated and incomplete stdout capture"),
+            (true, true) => Some("truncated stdout capture"),
+            (false, false) => Some("incomplete stdout capture"),
+            (false, true) => None,
+        };
+        if let Some(evidence) = capture_failure {
+            return Err(refuse(format!("{evidence}: {printed}")));
+        }
         let value = printed.parse().map_err(|_| refuse(printed))?;
 
         Ok(Measurement {
