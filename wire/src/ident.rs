@@ -71,6 +71,8 @@ pub enum Domain {
     BoardDocument,
     /// One complete machine-local configuration document.
     ConfigLocal,
+    /// One complete observed machine-local configuration mutation plan.
+    ConfigPlan,
     /// The canonical inventory document for one journal backup bundle.
     JournalBackupManifest,
     /// The exact bytes of one member in a journal backup bundle.
@@ -136,6 +138,7 @@ impl Domain {
         match self {
             Self::BoardDocument => "spice.board.document.v1",
             Self::ConfigLocal => "spice.config.local.v1",
+            Self::ConfigPlan => "spice.config.plan.v1",
             Self::JournalBackupManifest => "spice.journal.backup-manifest.v1",
             Self::JournalBackupMember => "spice.journal.backup-member.v1",
             Self::DistTargetPayload => "spice.dist.target-payload.v1",

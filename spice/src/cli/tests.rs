@@ -409,6 +409,7 @@ fn contract_syntax_drives_argument_registration() {
         &["spice", "restore", "verify", "bundle"],
         &["spice", "run", "--", "cargo", "test", "--locked"],
         &["spice", "config", "key", "value"],
+        &["spice", "config", "key", "value", "--apply=digest"],
     ] {
         parser
             .clone()
