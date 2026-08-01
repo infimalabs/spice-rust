@@ -83,17 +83,20 @@ impl Pending {
         self.held.contains_key(&request)
     }
 
-    /// Whether work of this reversibility proceeds while requests are held.
+    /// Whether this request's action proceeds while requests are held.
     ///
     /// Reversible work always proceeds, including while the queue is full,
     /// which is the whole point of queueing rather than denying. An
-    /// irreversible action proceeds only once nothing is held, because there
-    /// is no undo to fall back on if the operator later refuses.
+    /// irreversible action waits on its own held request and on no other,
+    /// because there is no undo to fall back on if the operator later refuses
+    /// this one. A decision pending about some other operation is not an answer
+    /// about this one, and treating it as one would make the first queued
+    /// request a global halt on every lane.
     #[must_use]
-    pub fn proceeds(&self, reversibility: Reversibility) -> bool {
+    pub fn proceeds(&self, request: CanonicalUuid, reversibility: Reversibility) -> bool {
         match reversibility {
             Reversibility::Reversible => true,
-            Reversibility::Irreversible => self.held.is_empty(),
+            Reversibility::Irreversible => !self.holds(request),
         }
     }
 
