@@ -240,7 +240,9 @@ fn kind_for(path: &[&str]) -> Option<CommandKind> {
         ["board", "graph"] => CommandKind::BoardGraph,
         ["board", "handout"] => CommandKind::BoardHandout,
         ["task", "next"] => CommandKind::ClaimWin,
-        ["task", "add"] | ["task", "oops"] => CommandKind::TaskAdd,
+        ["task", "add"] | ["task", "oops"] | ["taste", "add"] | ["taste", "drop"] => {
+            CommandKind::TaskAdd
+        }
         ["task", "done"] => CommandKind::TaskDone,
         ["task", "review"] => CommandKind::TaskReview,
         ["task", "note"] => CommandKind::TaskNote,
@@ -1360,7 +1362,7 @@ mod tests {
     }
 
     #[test]
-    fn every_landed_board_family_leaf_uses_one_current_command_kind() {
+    fn every_landed_task_mutation_leaf_uses_one_current_command_kind() {
         let expected = [
             (&["board"][..], CommandKind::BoardRead),
             (&["board", "graph"][..], CommandKind::BoardGraph),
@@ -1377,6 +1379,8 @@ mod tests {
             (&["task", "depends"][..], CommandKind::TaskDepends),
             (&["doc"][..], CommandKind::DocApply),
             (&["doc", "ledger"][..], CommandKind::DocLedger),
+            (&["taste", "add"][..], CommandKind::TaskAdd),
+            (&["taste", "drop"][..], CommandKind::TaskAdd),
         ];
 
         for (path, kind) in expected {
@@ -1393,7 +1397,7 @@ mod tests {
         }
         let mapped_family_leaves = crate::cli::contracts()
             .iter()
-            .filter(|contract| matches!(contract.path[0], "board" | "task" | "doc"))
+            .filter(|contract| matches!(contract.path[0], "board" | "task" | "doc" | "taste"))
             .filter(|contract| kind_for(contract.path).is_some())
             .count();
         assert_eq!(mapped_family_leaves, expected.len());

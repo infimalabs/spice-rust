@@ -93,6 +93,9 @@ libraries do not count as landed command surfaces.
 - `consent allow`
 - `consent deny`
 - `consent policy`
+- `taste`
+- `taste add`
+- `taste drop`
 - `trust`
 - `trust grant`
 - `trust revoke`
@@ -143,12 +146,6 @@ read the Python authority under `<git-common>/.spice`.
 - `lane drain`
 - `lane wake`
 - `recall`
-
-### `POLICY-1kJQlFB6`
-
-- `taste`
-- `taste add`
-- `taste drop`
 
 `spice/src/cli.rs::landing` carries the same classification. Its closure test
 fails for any registered Rust leaf without a disposition. A leaf classified

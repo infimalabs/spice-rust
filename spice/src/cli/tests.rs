@@ -117,7 +117,7 @@ fn every_contract_has_an_executable_succession_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 55);
+    assert_eq!(landed, 58);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
     assert_eq!(landing(&["lock", "run"]), Landing::Landed);
@@ -134,6 +134,9 @@ fn every_contract_has_an_executable_succession_disposition() {
     assert_eq!(landing(&["trust"]), Landing::Landed);
     assert_eq!(landing(&["trust", "grant"]), Landing::Landed);
     assert_eq!(landing(&["trust", "revoke"]), Landing::Landed);
+    assert_eq!(landing(&["taste"]), Landing::Landed);
+    assert_eq!(landing(&["taste", "add"]), Landing::Landed);
+    assert_eq!(landing(&["taste", "drop"]), Landing::Landed);
     for path in [
         &["backup"][..],
         &["restore"][..],
@@ -155,10 +158,7 @@ fn every_contract_has_an_executable_succession_disposition() {
             Landing::Landed | Landing::Unaccounted => None,
         })
         .collect::<BTreeSet<_>>();
-    assert_eq!(
-        owning_tasks,
-        BTreeSet::from(["COORDIN-1kJQlDjc", "POLICY-1kJQlFB6"])
-    );
+    assert_eq!(owning_tasks, BTreeSet::from(["COORDIN-1kJQlDjc"]));
 
     let (rust_ledger, _) = include_str!("../../../PORTING.md")
         .split_once("## Installed Python paths")
