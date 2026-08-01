@@ -53,7 +53,7 @@ pub(super) const GATE_POLICY_TOOLS: &[ExternalTool] = &[ExternalTool {
     owner: "gate::Contract",
     mode: ToolMode::Launch,
     requirement: ToolRequirement::Required,
-    source: ToolSource::GateContract,
+    source: ToolSource::GatePolicyContract,
     bounds: ToolBounds::GateContract,
     cancellation: ToolCancellation::Deadline,
     network: ToolNetwork::Permitted,
@@ -64,7 +64,7 @@ pub(super) const GATE_MUTATION_TOOLS: &[ExternalTool] = &[ExternalTool {
     owner: "gate::kill",
     mode: ToolMode::Launch,
     requirement: ToolRequirement::Required,
-    source: ToolSource::GateContract,
+    source: ToolSource::GateMutationContract,
     bounds: ToolBounds::GateContract,
     cancellation: ToolCancellation::Deadline,
     network: ToolNetwork::Permitted,
@@ -168,7 +168,7 @@ pub(super) fn posture_violations(contracts: &[Contract]) -> Vec<String> {
                         ));
                     }
                 }
-                ToolSource::GateContract => {
+                ToolSource::GatePolicyContract | ToolSource::GateMutationContract => {
                     let expected = (
                         ToolMode::Launch,
                         ToolBounds::GateContract,

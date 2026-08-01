@@ -165,6 +165,8 @@ fn an_empty_tree_is_the_complete_compiled_policy() {
     );
     assert!(root.vendor().entries().is_empty());
     assert_eq!(root.proof().image().as_str(), proof::DEFAULT_IMAGE);
+    assert!(root.proof().container().is_none());
+    assert!(root.proof().runner().is_none());
 
     let rendered = toml::to_string_pretty(&root).expect("compiled policy renders as TOML");
     assert_eq!(
@@ -192,6 +194,8 @@ fn malformed_policy_values_are_refused_under_their_domain_paths() {
         ("[lane]\nvendor = \"Claude\"\n", "lane.vendor"),
         ("[gate.walk]\nskip = [\"\"]\n", "gate.walk.skip[0]"),
         ("[proof]\nimage = \"proof:latest\"\n", "proof.image"),
+        ("[proof]\ncontainer = \"docker\"\n", "proof.container"),
+        ("[proof]\nrunner = \"\"\n", "proof.runner"),
         ("[vendor.Claude]\nbinary = \"claude\"\n", "vendor.Claude"),
     ] {
         let error = decode(document).expect_err("malformed policy must refuse");

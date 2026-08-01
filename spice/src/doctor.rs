@@ -62,6 +62,11 @@ fn report(
             source: row.source(),
         })
         .collect();
+    let configuration = resolved.into_root();
+    let commands = cli::contracts()
+        .iter()
+        .map(|contract| command_report(contract, &configuration, probe))
+        .collect();
 
     DoctorReport {
         target: DoctorTarget {
@@ -91,16 +96,17 @@ fn report(
                 },
             })
             .collect(),
-        configuration: resolved.into_root(),
+        configuration,
         provenance,
-        commands: cli::contracts()
-            .iter()
-            .map(|contract| command_report(contract, probe))
-            .collect(),
+        commands,
     }
 }
 
-fn command_report(contract: &cli::Contract, probe: &impl ExecutableProbe) -> DoctorCommand {
+fn command_report(
+    contract: &cli::Contract,
+    configuration: &Root,
+    probe: &impl ExecutableProbe,
+) -> DoctorCommand {
     let tools: Vec<DoctorTool> = contract
         .tools
         .iter()
@@ -113,7 +119,7 @@ fn command_report(contract: &cli::Contract, probe: &impl ExecutableProbe) -> Doc
             bounds: tool.bounds,
             cancellation: tool.cancellation,
             network: tool.network,
-            observation: tool_observation(tool, probe),
+            observation: tool_observation(tool, configuration, probe),
         })
         .collect();
     let observation = tools
@@ -139,15 +145,32 @@ fn command_report(contract: &cli::Contract, probe: &impl ExecutableProbe) -> Doc
     }
 }
 
-fn tool_observation(tool: &ExternalTool, probe: &impl ExecutableProbe) -> DoctorObservation {
+fn tool_observation(
+    tool: &ExternalTool,
+    configuration: &Root,
+    probe: &impl ExecutableProbe,
+) -> DoctorObservation {
     match tool.source {
         DoctorToolSource::CommandOperand => DoctorObservation::InputRequired {
             reason: "the caller supplies this executable at invocation".to_owned(),
         },
-        DoctorToolSource::GateContract => gate_observation(probe),
-        DoctorToolSource::ProofRuntime => DoctorObservation::InputRequired {
-            reason: "the sealed Proof surface must resolve its configured runtime".to_owned(),
-        },
+        DoctorToolSource::GatePolicyContract => {
+            gate_observation("policy", gate::declared_tools(), probe)
+        }
+        DoctorToolSource::GateMutationContract => {
+            gate_observation("mutation", gate::declared_mutation_tools(), probe)
+        }
+        DoctorToolSource::ProofRuntime => configuration.proof().container().map_or_else(
+            || DoctorObservation::InputRequired {
+                reason: "local proof.container must name the sealed Proof runtime".to_owned(),
+            },
+            |runtime| match probe.exact(runtime.as_path()) {
+                Ok(()) => DoctorObservation::Ready {},
+                Err(reason) => DoctorObservation::Unavailable {
+                    reason: format!("configured Proof runtime is unavailable: {reason}"),
+                },
+            },
+        ),
         DoctorToolSource::ProofBattery => DoctorObservation::Unsupported {
             reason: concat!(
                 "container-internal battery programs cannot be inspected without ",
@@ -162,18 +185,22 @@ fn tool_observation(tool: &ExternalTool, probe: &impl ExecutableProbe) -> Doctor
     }
 }
 
-fn gate_observation(probe: &impl ExecutableProbe) -> DoctorObservation {
-    let declarations = match gate::declared_tools() {
+fn gate_observation(
+    profile: &str,
+    declarations: Result<Vec<gate::ToolDeclaration>, gate::GateSetError>,
+    probe: &impl ExecutableProbe,
+) -> DoctorObservation {
+    let declarations = match declarations {
         Ok(declarations) => declarations,
         Err(error) => {
             return DoctorObservation::Unsupported {
-                reason: format!("the compiled Gate tool registry is incoherent: {error}"),
+                reason: format!("the compiled Gate {profile} tool registry is incoherent: {error}"),
             };
         }
     };
     if declarations.is_empty() {
         return DoctorObservation::Unsupported {
-            reason: "the compiled Gate tool registry declares no executable".to_owned(),
+            reason: format!("the compiled Gate {profile} tool registry declares no executable"),
         };
     }
     for declaration in declarations {
@@ -322,15 +349,19 @@ mod tests {
         }
     }
 
+    fn default_command_report(contract: &cli::Contract, probe: &Probe) -> DoctorCommand {
+        command_report(contract, &Root::default(), probe)
+    }
+
     #[test]
     fn every_generated_contract_has_one_deterministic_report_row() {
         let first: Vec<_> = cli::contracts()
             .iter()
-            .map(|contract| command_report(contract, &probe(Ok(()))))
+            .map(|contract| default_command_report(contract, &probe(Ok(()))))
             .collect();
         let second: Vec<_> = cli::contracts()
             .iter()
-            .map(|contract| command_report(contract, &probe(Ok(()))))
+            .map(|contract| default_command_report(contract, &probe(Ok(()))))
             .collect();
 
         assert_eq!(first, second);
@@ -346,12 +377,14 @@ mod tests {
     fn missing_required_executables_and_dynamic_commands_are_not_ready() {
         let missing = probe(Err("fixture executable is absent".to_owned()));
         for command in cli::contracts().iter().filter(|contract| {
-            contract
-                .tools
-                .iter()
-                .any(|tool| tool.source == DoctorToolSource::GateContract)
+            contract.tools.iter().any(|tool| {
+                matches!(
+                    tool.source,
+                    DoctorToolSource::GatePolicyContract | DoctorToolSource::GateMutationContract
+                )
+            })
         }) {
-            let row = command_report(command, &missing);
+            let row = default_command_report(command, &missing);
             assert!(matches!(
                 row.observation,
                 DoctorObservation::Unavailable { ref reason }
@@ -368,7 +401,7 @@ mod tests {
             .find(|contract| contract.path == ["run"])
             .expect("run contract exists");
         assert!(matches!(
-            command_report(dynamic, &missing).observation,
+            default_command_report(dynamic, &missing).observation,
             DoctorObservation::InputRequired { .. }
         ));
     }
@@ -381,7 +414,7 @@ mod tests {
                 .iter()
                 .any(|tool| tool.source == DoctorToolSource::ProofBattery)
         }) {
-            let row = command_report(command, &probe(Ok(())));
+            let row = default_command_report(command, &probe(Ok(())));
             assert!(!matches!(row.observation, DoctorObservation::Ready {}));
             assert!(
                 row.tools.iter().any(|tool| {

@@ -122,7 +122,6 @@ fn healthy_fixture() -> HealthyFixture {
 
     let repository = Scratch::repository("healthy");
     repository.tracked("[lane]\nlease = \"20m\"\n");
-    repository.local("[listen]\nwindow = \"45s\"\n");
     let journal = repository
         .path()
         .join(".git/.spice/data/spicejournal.sqlite3");
@@ -139,6 +138,10 @@ fn healthy_fixture() -> HealthyFixture {
     .expect("write mutation-probe executable");
     fs::set_permissions(&rtk, fs::Permissions::from_mode(0o755))
         .expect("make mutation-probe executable");
+    repository.local(&format!(
+        "[listen]\nwindow = \"45s\"\n[proof]\ncontainer = \"{}\"\n",
+        rtk.display()
+    ));
     let before = directory_state(repository.path());
 
     HealthyFixture {
@@ -199,6 +202,12 @@ fn assert_locations_configuration_and_provenance(report: &DoctorReport<Root>, re
         report
             .provenance
             .iter()
+            .any(|row| { row.path == "proof.container" && row.source == ConfigSource::Local })
+    );
+    assert!(
+        report
+            .provenance
+            .iter()
             .any(|row| row.source == ConfigSource::Builtin)
     );
     assert_eq!(report.configuration.lane().lease().to_string(), "20m");
@@ -206,6 +215,7 @@ fn assert_locations_configuration_and_provenance(report: &DoctorReport<Root>, re
         report.configuration.listen().window_word().to_string(),
         "45s"
     );
+    assert!(report.configuration.proof().container().is_some());
 }
 
 fn assert_environment_presence(report: &DoctorReport<Root>) {
@@ -240,6 +250,10 @@ fn assert_tool_posture_and_text(report: &DoctorReport<Root>, text: &[u8]) {
             .iter()
             .any(|tool| { matches!(tool.observation, DoctorObservation::Unsupported { .. }) })
     );
+    assert!(command(report, "proof").tools.iter().any(|tool| {
+        tool.source == DoctorToolSource::ProofRuntime
+            && matches!(tool.observation, DoctorObservation::Ready {})
+    }));
 
     let text = std::str::from_utf8(text).expect("Doctor text is UTF-8");
     assert!(text.contains("\"source\":\"tracked\""));
@@ -336,6 +350,35 @@ fn missing_optional_rtk_is_an_unhealthy_row_inside_a_direct_reply() {
         tool.requirement == wire::DoctorToolRequirement::Optional
             && matches!(tool.observation, DoctorObservation::Unavailable { .. })
     }));
+}
+
+#[test]
+fn missing_required_proof_runtime_is_an_unhealthy_row_inside_a_direct_reply() {
+    let repository = Scratch::repository("missing-proof-runtime");
+    repository.tracked("");
+    let missing = repository.path().join("missing-container-runtime");
+    repository.local(&format!("[proof]\ncontainer = \"{}\"\n", missing.display()));
+    let empty_path = repository.path().join("empty-path");
+    fs::create_dir(&empty_path).expect("create empty executable search path");
+
+    let spoken = invoke(
+        repository.path(),
+        &["doctor", "--json"],
+        empty_path.as_os_str(),
+        &[],
+    );
+    let report = reply(&spoken).body;
+    let runtime = command(&report, "proof")
+        .tools
+        .iter()
+        .find(|tool| tool.source == DoctorToolSource::ProofRuntime)
+        .expect("Proof runtime declaration");
+
+    assert!(matches!(
+        runtime.observation,
+        DoctorObservation::Unavailable { ref reason }
+            if reason.contains("missing-container-runtime")
+    ));
 }
 
 #[test]

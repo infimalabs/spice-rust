@@ -119,8 +119,10 @@ impl DoctorToolRequirement {
 pub enum DoctorToolSource {
     /// The caller supplies the executable after the command delimiter.
     CommandOperand,
-    /// The compiled current Gate contract supplies the executable.
-    GateContract,
+    /// The compiled current Gate policy contract supplies the executable.
+    GatePolicyContract,
+    /// The compiled current Gate mutation profile supplies the executable.
+    GateMutationContract,
     /// The sealed Proof contract supplies the OCI runtime.
     ProofRuntime,
     /// The sealed Proof battery supplies a program inside the container.
@@ -133,7 +135,8 @@ impl DoctorToolSource {
     /// The complete closed vocabulary.
     pub const ALL: &[Self] = &[
         Self::CommandOperand,
-        Self::GateContract,
+        Self::GatePolicyContract,
+        Self::GateMutationContract,
         Self::ProofRuntime,
         Self::ProofBattery,
         Self::WorktreeConfiguration,

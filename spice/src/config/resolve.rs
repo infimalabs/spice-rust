@@ -409,7 +409,7 @@ impl Provenance {
         self.source
     }
 
-    /// Compiled value shadowed by authored intent, when one exists.
+    /// Compiled default shadowed by authored intent, when one exists.
     #[must_use]
     pub const fn builtin(&self) -> Option<Builtin> {
         self.builtin
@@ -560,15 +560,23 @@ fn sanitize(
     let borrowed = path.borrowed();
     if let Some(entry) = descriptor(&borrowed) {
         if !entry.layers().contains(&source) {
+            let message = if entry.layers().contains(&ConfigSource::Tracked) {
+                format!(
+                    "{} is tracked policy; set it in tracked spice.toml",
+                    entry.template().as_str()
+                )
+            } else {
+                format!(
+                    "{} is machine-local; set it in Git-common .spice/config.toml",
+                    entry.template().as_str()
+                )
+            };
             issues.push(Issue::at(
                 IssueKind::Policy,
                 source,
                 document,
                 path.clone(),
-                format!(
-                    "{} is tracked policy; set it in tracked spice.toml",
-                    entry.template().as_str()
-                ),
+                message,
             ));
             return false;
         }
@@ -879,6 +887,20 @@ fn provenance(root: &Root, layers: &[Layer]) -> Vec<Provenance> {
     let value = Value::try_from(root).expect("an admitted root must serialize to TOML");
     let mut leaves = Vec::new();
     collect_leaves(&value, &mut ConcretePath::root(), &mut leaves);
+    for entry in descriptors() {
+        if entry.builtin() == Some(Builtin::Absent)
+            && let Some(path) = concrete_fixed(entry)
+            && !leaves.contains(&path)
+        {
+            leaves.push(path);
+        }
+    }
+    leaves.sort_by_key(|path| {
+        descriptors()
+            .iter()
+            .position(|entry| entry.template().matches(&path.borrowed()))
+            .expect("every admitted or absent fixed leaf is registered")
+    });
     leaves
         .into_iter()
         .map(|path| {

@@ -1,9 +1,21 @@
+use std::path::Path;
+
 use lane::life::Life;
 use spice::config::{
     Builtin, Document, FlagError, FlagOverride, FlagValue, Inputs, IssueKind, PathSegment,
-    Resolved, descriptor, resolve,
+    Resolved, Root, descriptor, resolve,
 };
 use wire::{ConfigSource, Name};
+
+#[cfg(not(windows))]
+fn absolute(name: &str) -> String {
+    format!("/opt/spice/{name}")
+}
+
+#[cfg(windows)]
+fn absolute(name: &str) -> String {
+    format!("C:/spice/{name}")
+}
 
 fn documents<'a>(tracked: Option<&'a str>, local: Option<&'a str>) -> Inputs<'a> {
     Inputs::new(
@@ -45,13 +57,31 @@ fn missing_and_empty_documents_are_empty_intent() {
 
     assert_eq!(missing, empty);
     assert_eq!(missing.root(), &spice::config::Root::default());
-    assert_eq!(missing.provenance().len(), 18);
+    assert!(missing.root().proof().container().is_none());
+    assert!(missing.root().proof().runner().is_none());
+    assert_eq!(missing.provenance().len(), 20);
     assert!(
         missing
             .provenance()
             .iter()
             .all(|row| row.source() == ConfigSource::Builtin && row.builtin().is_none())
     );
+    assert_eq!(
+        missing
+            .provenance()
+            .iter()
+            .rev()
+            .take(3)
+            .map(|row| row.path().to_string())
+            .collect::<Vec<_>>(),
+        ["proof.runner", "proof.container", "proof.image"]
+    );
+    let default_toml = toml::to_string(missing.root()).expect("default TOML renders");
+    assert!(!default_toml.contains("container"));
+    assert!(!default_toml.contains("runner"));
+    let default_json = serde_json::to_value(missing.root()).expect("default JSON renders");
+    assert!(default_json["proof"].get("container").is_none());
+    assert!(default_json["proof"].get("runner").is_none());
 }
 
 #[test]
@@ -129,7 +159,151 @@ fn every_two_layer_precedence_pair_is_deterministic() {
 }
 
 #[test]
+fn proof_executable_paths_are_optional_local_values_with_exact_rendering() {
+    let container = absolute("bin/../container");
+    let runner = absolute("runner");
+
+    for (include_container, include_runner) in [(true, false), (false, true), (true, true)] {
+        let mut local = String::from("[proof]\n");
+        if include_container {
+            local.push_str(&format!("container = \"{container}\"\n"));
+        }
+        if include_runner {
+            local.push_str(&format!("runner = \"{runner}\"\n"));
+        }
+        let resolved =
+            resolve(documents(None, Some(&local))).expect("absolute local paths resolve");
+
+        assert_eq!(
+            resolved.root().proof().container().map(AsRef::as_ref),
+            include_container.then_some(Path::new(&container))
+        );
+        assert_eq!(
+            resolved.root().proof().runner().map(AsRef::as_ref),
+            include_runner.then_some(Path::new(&runner))
+        );
+        for (path, present) in [
+            ("proof.container", include_container),
+            ("proof.runner", include_runner),
+        ] {
+            assert_eq!(
+                path_source(&resolved, path),
+                if present {
+                    ConfigSource::Local
+                } else {
+                    ConfigSource::Builtin
+                }
+            );
+            assert_eq!(
+                path_builtin(&resolved, path),
+                present.then_some(Builtin::Absent)
+            );
+        }
+
+        let rendered = toml::to_string_pretty(resolved.root()).expect("effective TOML renders");
+        let toml_round_trip: Root = toml::from_str(&rendered).expect("effective TOML decodes");
+        assert_eq!(&toml_round_trip, resolved.root());
+        let json = serde_json::to_value(resolved.root()).expect("effective JSON renders");
+        assert_eq!(
+            json["proof"]
+                .get("container")
+                .and_then(|value| value.as_str()),
+            include_container.then_some(container.as_str())
+        );
+        assert_eq!(
+            json["proof"].get("runner").and_then(|value| value.as_str()),
+            include_runner.then_some(runner.as_str())
+        );
+        let json_round_trip: Root =
+            serde_json::from_value(json).expect("effective JSON decodes without null paths");
+        assert_eq!(&json_round_trip, resolved.root());
+    }
+
+    let source = include_str!("../../proof/src/config.rs");
+    for forbidden in [
+        "std::fs",
+        "std::env",
+        "std::process",
+        "canonicalize",
+        "metadata(",
+        "Command::",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "proof configuration unexpectedly references {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn proof_executable_paths_refuse_every_non_local_or_non_absolute_route() {
+    let container = absolute("container");
+    let runner = absolute("runner");
+    let tracked = format!("[proof]\ncontainer = \"{container}\"\nrunner = \"{runner}\"\n");
+    let local = "[proof]\ncontainer = \"container\"\nrunner = \"\"\nextra = \"ignored\"\n";
+    let error = resolve(documents(Some(&tracked), Some(local)))
+        .expect_err("tracked, relative, empty, and unknown proof paths refuse together");
+
+    assert_eq!(
+        error
+            .issues()
+            .iter()
+            .map(|issue| (
+                issue.path().map(ToString::to_string),
+                issue.source(),
+                issue.kind()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (
+                Some("proof.container".to_owned()),
+                ConfigSource::Tracked,
+                IssueKind::Policy,
+            ),
+            (
+                Some("proof.container".to_owned()),
+                ConfigSource::Local,
+                IssueKind::Malformed,
+            ),
+            (
+                Some("proof.extra".to_owned()),
+                ConfigSource::Local,
+                IssueKind::Unknown,
+            ),
+            (
+                Some("proof.runner".to_owned()),
+                ConfigSource::Tracked,
+                IssueKind::Policy,
+            ),
+            (
+                Some("proof.runner".to_owned()),
+                ConfigSource::Local,
+                IssueKind::Malformed,
+            ),
+        ]
+    );
+    assert!(
+        error
+            .issues()
+            .iter()
+            .filter(|issue| issue.kind() == IssueKind::Policy)
+            .all(|issue| issue.message().contains("Git-common .spice/config.toml"))
+    );
+    for leaf in ["container", "runner"] {
+        let entry = descriptor(&[PathSegment::Key("proof"), PathSegment::Key(leaf)])
+            .expect("proof executable descriptor");
+        assert_eq!(entry.layers(), [ConfigSource::Local]);
+        assert!(entry.flag().is_none());
+    }
+}
+
+#[test]
 fn tracked_document_can_address_every_registry_descriptor() {
+    let local = format!(
+        "[proof]\ncontainer = \"{}\"\nrunner = \"{}\"\n",
+        absolute("container"),
+        absolute("runner")
+    );
     let resolved = resolve(documents(
         Some(
             r#"
@@ -186,16 +360,19 @@ rows = 50
 image = "sha256:4444444444444444444444444444444444444444444444444444444444444444"
 "#,
         ),
-        None,
+        Some(&local),
     ))
-    .expect("all tracked descriptors resolve together");
+    .expect("tracked and local descriptors resolve together");
 
-    assert!(
-        resolved
-            .provenance()
-            .iter()
-            .all(|row| row.source() == ConfigSource::Tracked)
-    );
+    for row in resolved.provenance() {
+        let path = row.path().to_string();
+        let expected = if matches!(path.as_str(), "proof.container" | "proof.runner") {
+            ConfigSource::Local
+        } else {
+            ConfigSource::Tracked
+        };
+        assert_eq!(row.source(), expected, "{path}");
+    }
     for template in spice::config::descriptors() {
         assert!(
             resolved.provenance().iter().any(|row| {

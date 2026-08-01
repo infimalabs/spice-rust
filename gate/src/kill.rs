@@ -32,15 +32,14 @@ mod fixtures;
 /// Exact build-tool identity already carried by the distribution pin set.
 pub const PINNED_CARGO_MUTANTS: &str = "cargo-mutants 27.1.0";
 
-const SEED_ENVIRONMENT: &str = wire::SpiceVariable::MutationSeed.as_str();
-const ATTEMPT_ENVIRONMENT: &str = wire::SpiceVariable::MutationAttempt.as_str();
+pub(crate) const SEED_ENVIRONMENT: &str = wire::SpiceVariable::MutationSeed.as_str();
+pub(crate) const ATTEMPT_ENVIRONMENT: &str = wire::SpiceVariable::MutationAttempt.as_str();
+const CARGO_ENVIRONMENT: &str = "CARGO";
 const OUTPUT_DIRECTORY: &str = ".spice-gate-mutants";
-const VERSION_ARGUMENTS: [&str; 2] = ["mutants", "--version"];
+const VERSION_ARGUMENTS: [&str; 1] = ["--version"];
 const BASELINE_ARGUMENTS: [&str; 4] = ["test", "--locked", "--workspace", "--all-targets"];
-const INVENTORY_ARGUMENTS: [&str; 5] =
-    ["mutants", "--no-config", "--no-shuffle", "--list", "--json"];
-const ATTEMPT_ARGUMENTS: [&str; 10] = [
-    "mutants",
+const INVENTORY_ARGUMENTS: [&str; 4] = ["--no-config", "--no-shuffle", "--list", "--json"];
+const ATTEMPT_ARGUMENTS: [&str; 9] = [
     "--no-config",
     "--no-shuffle",
     "--jobs=1",
@@ -52,173 +51,7 @@ const ATTEMPT_ARGUMENTS: [&str; 10] = [
     "--cargo-test-arg=--all-targets",
 ];
 
-/// The pinned mutation executable and its complete explicit environment.
-#[derive(Clone, Debug)]
-pub struct MutationTool {
-    program: PathBuf,
-    environment: Environment,
-}
-
-impl MutationTool {
-    /// Declare where the pinned `cargo` executable lives and what environment
-    /// it receives.
-    ///
-    /// # Errors
-    ///
-    /// Refuses an empty executable or either environment key the gate owns.
-    pub fn new(program: impl Into<PathBuf>, environment: Environment) -> Result<Self, RateError> {
-        let program = program.into();
-        if program.as_os_str().is_empty() {
-            return Err(RateError::EmptyProgram);
-        }
-        for (key, _) in environment.entries() {
-            if key == OsStr::new(SEED_ENVIRONMENT) || key == OsStr::new(ATTEMPT_ENVIRONMENT) {
-                return Err(RateError::ReservedEnvironment {
-                    key: key.to_string_lossy().into_owned(),
-                });
-            }
-        }
-        Ok(Self {
-            program,
-            environment,
-        })
-    }
-
-    /// Executable used for both ordinary Cargo and its mutation subcommand.
-    #[must_use]
-    pub fn program(&self) -> &Path {
-        &self.program
-    }
-
-    fn environment(&self, seed: u64, attempt: Option<usize>) -> Result<Environment, SpecError> {
-        let mut entries = self.environment.entries().to_vec();
-        entries.push((
-            OsString::from(SEED_ENVIRONMENT),
-            OsString::from(seed.to_string()),
-        ));
-        if let Some(attempt) = attempt {
-            entries.push((
-                OsString::from(ATTEMPT_ENVIRONMENT),
-                OsString::from(attempt.to_string()),
-            ));
-        }
-        Environment::new(entries)
-    }
-}
-
-/// Stable target selection, retry count, and seed for one mutation battery.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MutationBattery {
-    targets: Vec<String>,
-    attempts: usize,
-    seed: u64,
-}
-
-impl MutationBattery {
-    /// Declare a non-empty target set and positive attempt count.
-    ///
-    /// Target and input order do not influence the stored selection: targets
-    /// are sorted, and duplicates are refused rather than silently collapsed.
-    ///
-    /// # Errors
-    ///
-    /// Refuses empty, line-breaking, repeated targets and zero attempts.
-    pub fn new(
-        targets: impl IntoIterator<Item = impl Into<String>>,
-        attempts: usize,
-        seed: u64,
-    ) -> Result<Self, RateError> {
-        if attempts == 0 {
-            return Err(RateError::ZeroAttempts);
-        }
-        let mut targets: Vec<String> = targets.into_iter().map(Into::into).collect();
-        if targets.is_empty() {
-            return Err(RateError::EmptyTargets);
-        }
-        for target in &targets {
-            if target.is_empty() || target.contains(['\n', '\r']) {
-                return Err(RateError::InvalidTarget {
-                    target: target.clone(),
-                });
-            }
-        }
-        targets.sort();
-        if let Some(pair) = targets.windows(2).find(|pair| pair[0] == pair[1]) {
-            return Err(RateError::DuplicateTarget {
-                target: pair[0].clone(),
-            });
-        }
-        Ok(Self {
-            targets,
-            attempts,
-            seed,
-        })
-    }
-
-    /// Selected file targets in canonical order.
-    #[must_use]
-    pub fn targets(&self) -> &[String] {
-        &self.targets
-    }
-
-    /// Attempts required for every mutant.
-    #[must_use]
-    pub const fn attempts(&self) -> usize {
-        self.attempts
-    }
-
-    /// Seed repeated into every bounded process environment.
-    #[must_use]
-    pub const fn seed(&self) -> u64 {
-        self.seed
-    }
-}
-
-/// Sill bounds shared by tool attestation, inventory, baseline, and attempts.
-#[derive(Clone, Debug)]
-pub struct KillBounds {
-    deadlines: Deadlines,
-    wait: WaitPolicy,
-    grace: Duration,
-    capture: usize,
-}
-
-impl KillBounds {
-    /// Declare positive runtime and capture bounds.
-    ///
-    /// # Errors
-    ///
-    /// Refuses zero runtime or capture, and forwards invalid wait ownership.
-    pub fn new(
-        owner: impl Into<String>,
-        deadlines: Deadlines,
-        grace: Duration,
-        capture: usize,
-    ) -> Result<Self, RateError> {
-        if deadlines.runtime().is_zero() {
-            return Err(RateError::ZeroRuntime);
-        }
-        if capture == 0 {
-            return Err(RateError::ZeroCapture);
-        }
-        let wait = WaitPolicy::new(owner, Cancellation::Never, RestartDisposition::Never)
-            .map_err(RateError::Spec)?;
-        Ok(Self {
-            deadlines,
-            wait,
-            grace,
-            capture,
-        })
-    }
-
-    fn timeout_seconds(&self) -> u64 {
-        let runtime = self.deadlines.runtime();
-        runtime
-            .as_secs()
-            .saturating_add(u64::from(runtime.subsec_nanos() != 0))
-            .max(1)
-    }
-}
+include!("kill/profile.rs");
 
 /// One exact rational survivor rate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -278,6 +111,7 @@ fn greatest_common_divisor(mut left: u64, mut right: u64) -> u64 {
 /// Canonical tool, target, argument, seed, and mutant inventory.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MutationInventory {
+    tool: String,
     targets: Vec<String>,
     mutants: Vec<String>,
     attempts: usize,
@@ -286,6 +120,12 @@ pub struct MutationInventory {
 }
 
 impl MutationInventory {
+    /// Version identity attested before inventory.
+    #[must_use]
+    pub fn tool(&self) -> &str {
+        &self.tool
+    }
+
     /// Selected targets in canonical order.
     #[must_use]
     pub fn targets(&self) -> &[String] {
@@ -322,7 +162,7 @@ impl MutationInventory {
         use std::fmt::Write as _;
 
         let mut rendered = String::new();
-        let _ = writeln!(rendered, "tool {PINNED_CARGO_MUTANTS}");
+        let _ = writeln!(rendered, "tool {}", self.tool);
         for argument in VERSION_ARGUMENTS {
             let _ = writeln!(rendered, "version-argument {argument}");
         }
@@ -584,6 +424,24 @@ impl Kill {
         }
     }
 
+    /// Direct pinned executables and complete explicit environment.
+    #[must_use]
+    pub const fn tool(&self) -> &MutationTool {
+        &self.tool
+    }
+
+    /// Compiled mutation targets, retry count, and seed.
+    #[must_use]
+    pub const fn battery(&self) -> &MutationBattery {
+        &self.battery
+    }
+
+    /// Compiled mutation process deadlines, grace, and capture.
+    #[must_use]
+    pub const fn bounds(&self) -> &KillBounds {
+        &self.bounds
+    }
+
     /// Run the full preflight and deflaked mutation battery.
     ///
     /// # Errors
@@ -697,7 +555,7 @@ impl Kill {
     }
 
     fn attest_tool(&self, root: &Path) -> Result<(), KillError> {
-        let evidence = self.process(root, VERSION_ARGUMENTS, None);
+        let evidence = self.process(self.tool.mutants_program(), root, VERSION_ARGUMENTS, None);
         if !evidence.exited(0) || !evidence.outputs_complete() {
             return Err(KillError::ToolUnavailable(Box::new(evidence)));
         }
@@ -708,9 +566,9 @@ impl Kill {
         let observed = std::str::from_utf8(&stdout.bytes)
             .map(str::trim)
             .unwrap_or("<non-utf8>");
-        if observed != PINNED_CARGO_MUTANTS {
+        if observed != self.tool.identity() {
             return Err(KillError::ToolDrift {
-                expected: PINNED_CARGO_MUTANTS,
+                expected: self.tool.identity().to_owned(),
                 observed: observed.to_owned(),
             });
         }
@@ -719,7 +577,7 @@ impl Kill {
 
     fn inventory(&self, root: &Path) -> Result<MutationInventory, KillError> {
         let arguments = inventory_arguments(&self.battery.targets);
-        let evidence = self.process(root, arguments, None);
+        let evidence = self.process(self.tool.mutants_program(), root, arguments, None);
         if !evidence.exited(0) || !evidence.outputs_complete() {
             return Err(KillError::InventoryUnavailable(Box::new(evidence)));
         }
@@ -740,6 +598,7 @@ impl Kill {
             return Err(KillError::DuplicateMutant(pair[0].clone()));
         }
         Ok(MutationInventory {
+            tool: self.tool.identity.clone(),
             targets: self.battery.targets.clone(),
             mutants,
             attempts: self.battery.attempts,
@@ -749,7 +608,7 @@ impl Kill {
     }
 
     fn baseline(&self, root: &Path) -> Result<ProcessEvidence, KillError> {
-        let evidence = self.process(root, BASELINE_ARGUMENTS, None);
+        let evidence = self.process(self.tool.cargo_program(), root, BASELINE_ARGUMENTS, None);
         if evidence.exited(0) && evidence.outputs_complete() {
             Ok(evidence)
         } else {
@@ -781,7 +640,7 @@ impl Kill {
             self.bounds.timeout_seconds(),
             Path::new(OUTPUT_DIRECTORY),
         );
-        let process = self.process(root, arguments, Some(number));
+        let process = self.process(self.tool.mutants_program(), root, arguments, Some(number));
         let outcome = match fs::read(output.join("outcomes.json")) {
             Ok(bytes) => OutcomeEvidence::Present(bytes),
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => OutcomeEvidence::Absent,
@@ -799,11 +658,12 @@ impl Kill {
 
     fn process(
         &self,
+        program: &Path,
         root: &Path,
         arguments: impl IntoIterator<Item = impl Into<OsString>>,
         attempt: Option<usize>,
     ) -> ProcessEvidence {
-        let spec = self.spec(root, arguments, attempt);
+        let spec = self.spec(program, root, arguments, attempt);
         let spec = match spec {
             Ok(spec) => spec,
             Err(source) => {
@@ -836,12 +696,13 @@ impl Kill {
 
     fn spec(
         &self,
+        program: &Path,
         root: &Path,
         arguments: impl IntoIterator<Item = impl Into<OsString>>,
         attempt: Option<usize>,
     ) -> Result<Spec, SpecError> {
         Ok(Spec {
-            argv: Argv::new(self.tool.program.as_os_str(), arguments)?,
+            argv: Argv::new(program.as_os_str(), arguments)?,
             cwd: root.to_path_buf(),
             environment: self.tool.environment(self.battery.seed, attempt)?,
             group: ProcessGroup::New,

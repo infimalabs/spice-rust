@@ -96,7 +96,7 @@ impl Root {
         &self.canvas
     }
 
-    /// Proof environment identity.
+    /// Proof image policy and machine-local executable locations.
     #[must_use]
     pub const fn proof(&self) -> &proof::Config {
         &self.proof
@@ -143,9 +143,11 @@ impl ValueKind {
     }
 }
 
-/// A compiled value represented in the same scalar shape serde exposes.
+/// A compiled default represented as explicit absence or a serde scalar.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Builtin {
+    /// An optional fixed leaf has no compiled value.
+    Absent,
     /// One string-shaped value.
     String(&'static str),
     /// One ordered string-shaped list.
@@ -161,7 +163,7 @@ pub enum Builtin {
 pub enum PolicyClass {
     /// Behavior that is owned by tracked policy except for an explicit flag.
     Policy,
-    /// Machine-specific operation that may also be overridden locally.
+    /// Machine-specific operation that admits a local value.
     MachineLocal,
 }
 
@@ -329,7 +331,7 @@ impl Descriptor {
         self.kind
     }
 
-    /// Compiled value, absent for operator-created rows.
+    /// Compiled default; `None` is reserved for operator-created dynamic rows.
     #[must_use]
     pub const fn builtin(self) -> Option<Builtin> {
         self.builtin
@@ -357,6 +359,7 @@ impl Descriptor {
 const TRACKED: &[ConfigSource] = &[ConfigSource::Tracked];
 const TRACKED_LOCAL: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Local];
 const TRACKED_FLAG: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Flag];
+const LOCAL: &[ConfigSource] = &[ConfigSource::Local];
 
 macro_rules! registry {
     ($(
@@ -562,6 +565,20 @@ registry! {
         builtin: Some(Builtin::String(proof::DEFAULT_IMAGE)),
         layers: TRACKED,
         class: Policy,
+        flag: None,
+    }
+    fixed "proof.container" {
+        kind: String,
+        builtin: Some(Builtin::Absent),
+        layers: LOCAL,
+        class: MachineLocal,
+        flag: None,
+    }
+    fixed "proof.runner" {
+        kind: String,
+        builtin: Some(Builtin::Absent),
+        layers: LOCAL,
+        class: MachineLocal,
         flag: None,
     }
 }
