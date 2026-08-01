@@ -194,10 +194,13 @@ impl Actuator {
 
         let rule = held.rule().to_owned();
         self.budgets.renew(&rule);
+        // Renewing is the operator granting the renewal the exhausted budget
+        // queued for, so the request leaves the queue allowed rather than
+        // refused and its action proceeds.
         Ok(self
             .pending
-            .withdraw(request)
-            .expect("the inspected request remains held until this withdrawal"))
+            .release(request, Ruling::Allow)
+            .expect("the inspected request remains held until this release"))
     }
 
     /// Record the operator's answer to a held request and state the fact.

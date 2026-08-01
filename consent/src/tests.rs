@@ -252,6 +252,8 @@ fn renewal_uses_the_exact_held_request_and_changes_no_other_budget_or_hold() {
     assert_eq!(actuator.budgets().remaining("writes", 1), 1);
     assert_eq!(actuator.budgets().remaining("reads", 1), 0);
     assert!(!actuator.pending().holds(exhausted_write.request));
+    assert!(!actuator.pending().refuses(exhausted_write.request));
+    assert!(actuator.proceeds(exhausted_write.request, Reversibility::Irreversible));
     assert!(actuator.pending().holds(exhausted_read.request));
     assert_eq!(actuator.pending().len(), 1);
 
@@ -313,7 +315,7 @@ fn a_held_request_lets_reversible_work_continue_while_the_irreversible_waits() {
 
     let held = actuator
         .pending()
-        .held(request.request)
+        .get(request.request)
         .expect("held request");
 
     assert_eq!(held.operation(), "git push --force");
