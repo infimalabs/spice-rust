@@ -200,35 +200,68 @@ fn an_exhausted_budget_is_not_pushed_further_past_its_bound_by_asking_again() {
 }
 
 #[test]
-fn renewal_restores_the_bound_rather_than_extending_it() {
-    let mut actuator = Actuator::new(table(vec![rule("reads", "read", Answer::Allow, Some(1))]));
+fn renewal_uses_the_exact_held_request_and_changes_no_other_budget_or_hold() {
+    let mut actuator = Actuator::new(table(vec![
+        rule("reads", "read", Answer::Allow, Some(1)),
+        rule("writes", "write", Answer::Allow, Some(1)),
+    ]));
 
+    assert_eq!(
+        granted_budget(&actuator.decide(&asked("read"), Reversibility::Reversible)),
+        Some(Some(0)),
+    );
+    assert_eq!(
+        granted_budget(&actuator.decide(&asked("write"), Reversibility::Reversible)),
+        Some(Some(0)),
+    );
+
+    let exhausted_read = asked("read");
+    let exhausted_write = asked("write");
     assert!(matches!(
-        actuator.decide(&asked("read"), Reversibility::Reversible),
-        Outcome::Granted(_)
-    ));
-    let exhausted = asked("read");
-    assert!(matches!(
-        actuator.decide(&exhausted, Reversibility::Reversible),
+        actuator.decide(&exhausted_read, Reversibility::Reversible),
         Outcome::Queued(_)
     ));
+    assert!(matches!(
+        actuator.decide(&exhausted_write, Reversibility::Reversible),
+        Outcome::Queued(_)
+    ));
+    assert_eq!(actuator.pending().len(), 2);
+    assert_eq!(actuator.budgets().remaining("reads", 1), 0);
+    assert_eq!(actuator.budgets().remaining("writes", 1), 0);
 
-    let renewed = actuator
-        .renew(exhausted.request)
-        .expect("the exhausted request names the budget to renew");
-    assert_eq!(renewed.rule(), "reads");
+    let unknown = asked("read").request;
+    let before_unknown = actuator.clone();
+    let refused = actuator
+        .renew(unknown)
+        .expect_err("an unheld request cannot name a budget to renew");
+    assert_eq!(refused.reason, "consent::request-not-held");
     assert_eq!(
-        renewed.cause(),
+        refused.witness.as_deref(),
+        Some(unknown.to_string().as_str())
+    );
+    assert_eq!(actuator, before_unknown, "a refusal changes no seat state");
+
+    let renewed_write = actuator
+        .renew(exhausted_write.request)
+        .expect("the write request names the writes budget");
+    assert_eq!(renewed_write.rule(), "writes");
+    assert_eq!(
+        renewed_write.cause(),
         ConsentQueueCause::BudgetExhausted { bound: 1 }
     );
-    assert!(!actuator.pending().holds(exhausted.request));
-    let after = actuator.decide(&asked("read"), Reversibility::Reversible);
+    assert_eq!(actuator.budgets().remaining("writes", 1), 1);
+    assert_eq!(actuator.budgets().remaining("reads", 1), 0);
+    assert!(!actuator.pending().holds(exhausted_write.request));
+    assert!(actuator.pending().holds(exhausted_read.request));
+    assert_eq!(actuator.pending().len(), 1);
 
-    assert_eq!(
-        granted_budget(&after),
-        Some(Some(0)),
-        "renewal restores exactly the bound, so one grant leaves none",
-    );
+    let renewed_read = actuator
+        .renew(exhausted_read.request)
+        .expect("the read request names the reads budget");
+    assert_eq!(renewed_read.rule(), "reads");
+    assert_eq!(actuator.budgets().remaining("reads", 1), 1);
+    assert_eq!(actuator.budgets().remaining("writes", 1), 1);
+    assert!(actuator.pending().is_empty());
 }
 
 #[test]
