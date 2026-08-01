@@ -298,11 +298,11 @@ pub enum Beyond {
     Answer,
 }
 
-/// Whether a requested position is complete, marked, or must wait.
+/// Whether an answer is complete, marked with its horizon, or must wait.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Availability {
-    Complete,
-    Marked(Horizon),
+pub enum Availability<T> {
+    Complete(T),
+    Marked { answer: T, horizon: Horizon },
     Wait,
 }
 
@@ -347,14 +347,22 @@ impl Horizon {
         self.0
     }
 
-    #[must_use]
-    pub fn availability(self, requested: wire::Seq, beyond: Beyond) -> Availability {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn availability<T>(
+        self,
+        requested: wire::Seq,
+        beyond: Beyond,
+        answer: T,
+    ) -> Availability<T> {
         if self.0.is_some_and(|horizon| requested <= horizon) {
-            Availability::Complete
+            Availability::Complete(answer)
         } else {
             match beyond {
                 Beyond::Wait => Availability::Wait,
-                Beyond::Answer => Availability::Marked(self),
+                Beyond::Answer => Availability::Marked {
+                    answer,
+                    horizon: self,
+                },
             }
         }
     }

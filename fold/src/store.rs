@@ -4,7 +4,7 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-use crate::{Cursor, FoldId, Horizon};
+use crate::{Availability, Cursor, FoldId, Horizon, INVENTORY};
 
 pub(crate) const STORE_SCHEMA_VERSION: u32 = 1;
 
@@ -47,7 +47,7 @@ impl Reduction {
     /// tape, a config digest, another fold. When one of those lags, the reducer
     /// still applies every fact it was handed, so the cursor keeps up while the
     /// answer is only settled through an earlier position. Readers meet that gap
-    /// through [`Horizon::availability`] and the fold's [`Beyond`] policy.
+    /// through [`Store::read`] and the fold's [`Beyond`] policy.
     ///
     /// [`Beyond`]: crate::Beyond
     pub fn bounded(
@@ -100,7 +100,7 @@ pub enum RebuildCause {
     Stale,
 }
 
-/// A fold read and whether it healed storage first.
+/// A fold rebuild and whether it healed storage first.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReadOutcome {
     pub materialization: Materialization,
@@ -124,12 +124,28 @@ impl Store {
         Self::from_connection(Connection::open_in_memory().map_err(StoreError::Sqlite)?)
     }
 
-    /// Reads the current complete generation, if one exists.
-    pub fn read(&self, fold: FoldId) -> Result<Option<Materialization>, StoreError> {
+    /// Reads the current generation at one requested journal position.
+    ///
+    /// The fold inventory owns whether a request beyond the generation's
+    /// horizon waits or returns an answer marked with that horizon. A waiting
+    /// read carries no materialization, so callers cannot bypass the policy.
+    pub fn read(
+        &self,
+        fold: FoldId,
+        requested: wire::Seq,
+    ) -> Result<Option<Availability<Materialization>>, StoreError> {
         match inspect(&self.connection, fold)? {
             Inspection::Missing => Ok(None),
             Inspection::Corrupt(detail) => Err(StoreError::Corrupt { fold, detail }),
-            Inspection::Present(materialization) => Ok(Some(materialization)),
+            Inspection::Present(materialization) => {
+                let horizon = materialization.horizon;
+                let beyond = INVENTORY.definition(fold).beyond;
+                Ok(Some(horizon.availability(
+                    requested,
+                    beyond,
+                    materialization,
+                )))
+            }
         }
     }
 
