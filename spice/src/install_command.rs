@@ -114,6 +114,8 @@ fn failure<B>(error: InstallError) -> Outcome<B> {
     let refusal_reason = install_refusal_reason(&error);
     match error {
         InstallError::PathShape(_)
+        | InstallError::PathOutsideRoot(_)
+        | InstallError::ParentChanged(_)
         | InstallError::ExclusionsNotUtf8
         | InstallError::DivergentExclusions
         | InstallError::BinaryNotRegular(_)
@@ -158,6 +160,8 @@ fn install_refusal_reason(error: &InstallError) -> &'static str {
             "install::transition-incomplete"
         }
         InstallError::Drift { .. } => "install::drift",
+        InstallError::PathOutsideRoot(_) => "install::path-outside-root",
+        InstallError::ParentChanged(_) => "install::parent-changed",
         _ => "install::input-refused",
     }
 }

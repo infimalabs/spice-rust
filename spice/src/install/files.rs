@@ -6,15 +6,15 @@ use crate::repository::Repository;
 
 use super::path::validate_relative;
 use super::{
-    Asset, DIRECTORY_MODE, FileImage, InstallError, Operation, RECORD_MODE, SKILL, STARTER_CONFIG,
-    exclusions, read_binary,
+    Asset, DIRECTORY_MODE, FileImage, Generation, InstallError, ObservedFile, Operation,
+    RECORD_MODE, SKILL, STARTER_CONFIG, exclusions, read_binary,
 };
 
 pub(super) fn publish_operation(
     repository: &Repository,
     operation: &Operation,
     image: &FileImage,
-) -> Result<(), InstallError> {
+) -> Result<Generation, InstallError> {
     for relative in &operation.introduced_parents {
         ensure_directory(operation.location.root(repository), relative)?;
     }
@@ -26,10 +26,15 @@ pub(super) fn materialize_generated(
     rust_binary: Option<&Path>,
 ) -> Result<FileImage, InstallError> {
     let bytes = match operation.asset {
-        Asset::Exclusions => exclusions(operation.previous.as_ref().map(FileImage::bytes))?,
+        Asset::Exclusions => exclusions(
+            operation
+                .previous
+                .as_ref()
+                .map(|previous| previous.image.bytes()),
+        )?,
         Asset::Configuration => operation.previous.as_ref().map_or_else(
             || STARTER_CONFIG.as_bytes().to_vec(),
-            |previous| previous.bytes.clone(),
+            |previous| previous.image.bytes.clone(),
         ),
         Asset::HookEntry => steer::hook::STAGES[0].bytes().as_bytes().to_vec(),
         Asset::HookStatic => steer::hook::STAGES[1].bytes().as_bytes().to_vec(),
@@ -43,22 +48,23 @@ pub(super) fn materialize_generated(
     Ok(image)
 }
 
-pub(super) fn matches_generated(observed: Option<&FileImage>, operation: &Operation) -> bool {
+pub(super) fn matches_generated(observed: Option<&ObservedFile>, operation: &Operation) -> bool {
     observed.is_some_and(|image| image.generated() == operation.generated)
 }
 
 pub(super) fn restore_operation(
     repository: &Repository,
     operation: &Operation,
-) -> Result<(), InstallError> {
+) -> Result<Option<Generation>, InstallError> {
     let destination = operation.destination(repository);
     match &operation.previous {
-        Some(previous) => publish_image(&destination, previous, false),
+        Some(previous) => publish_image(&destination, &previous.image, false).map(Some),
         None => {
             fs::remove_file(&destination).map_err(|source| {
                 InstallError::io("remove installed file", &destination, source)
             })?;
-            sync_parent(&destination)
+            sync_parent(&destination)?;
+            Ok(None)
         }
     }
 }
@@ -67,7 +73,7 @@ pub(super) fn publish_image(
     path: &Path,
     image: &FileImage,
     private: bool,
-) -> Result<(), InstallError> {
+) -> Result<Generation, InstallError> {
     let destination = atomic::Destination::new(path).map_err(InstallError::Atomic)?;
     let mut staged = destination.stage().map_err(InstallError::Atomic)?;
     staged
@@ -77,7 +83,10 @@ pub(super) fn publish_image(
         staged.temporary_path(),
         if private { RECORD_MODE } else { image.mode },
     )?;
-    staged.commit().map_err(InstallError::Atomic)
+    staged.commit().map_err(InstallError::Atomic)?;
+    let metadata = fs::metadata(path)
+        .map_err(|source| InstallError::io("inspect published file", path, source))?;
+    Ok(Generation::observe(&metadata))
 }
 
 pub(super) fn cleanup_parents(
@@ -109,23 +118,38 @@ pub(super) fn ensure_directory(root: &Path, relative: &str) -> Result<(), Instal
         Ok(metadata) if metadata.is_dir() => Ok(()),
         Ok(_) => Err(InstallError::PathShape(path)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let parent = path
-                .parent()
-                .expect("a relative directory below a root has a parent");
-            let metadata = fs::symlink_metadata(parent)
-                .map_err(|source| InstallError::io("inspect directory parent", parent, source))?;
-            if !metadata.is_dir() {
-                return Err(InstallError::PathShape(parent.to_path_buf()));
-            }
-            fs::create_dir(&path)
-                .map_err(|source| InstallError::io("create directory", &path, source))?;
-            set_mode(&path, DIRECTORY_MODE)
+            create_directory_path(root, relative)
         }
         Err(source) => Err(InstallError::io("inspect directory", path, source)),
     }
 }
 
-pub(super) fn observe(path: &Path) -> Result<Option<FileImage>, InstallError> {
+pub(super) fn create_directory(root: &Path, relative: &str) -> Result<(), InstallError> {
+    let relative = validate_relative(relative)?;
+    create_directory_path(root, relative)
+}
+
+fn create_directory_path(root: &Path, relative: &Path) -> Result<(), InstallError> {
+    let path = root.join(relative);
+    let parent = path
+        .parent()
+        .expect("a relative directory below a root has a parent");
+    let metadata = fs::symlink_metadata(parent)
+        .map_err(|source| InstallError::io("inspect directory parent", parent, source))?;
+    if !metadata.is_dir() {
+        return Err(InstallError::PathShape(parent.to_path_buf()));
+    }
+    fs::create_dir(&path).map_err(|source| {
+        if source.kind() == io::ErrorKind::AlreadyExists {
+            InstallError::ParentChanged(path.clone())
+        } else {
+            InstallError::io("create directory", &path, source)
+        }
+    })?;
+    set_mode(&path, DIRECTORY_MODE)
+}
+
+pub(super) fn observe(path: &Path) -> Result<Option<ObservedFile>, InstallError> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -135,7 +159,10 @@ pub(super) fn observe(path: &Path) -> Result<Option<FileImage>, InstallError> {
         return Err(InstallError::PathShape(path.to_path_buf()));
     }
     let bytes = fs::read(path).map_err(|source| InstallError::io("read file", path, source))?;
-    Ok(Some(FileImage::new(file_mode(&metadata), bytes)))
+    Ok(Some(ObservedFile {
+        image: FileImage::new(file_mode(&metadata), bytes),
+        generation: Generation::observe(&metadata),
+    }))
 }
 
 fn sync_parent(path: &Path) -> Result<(), InstallError> {
