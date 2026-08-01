@@ -1,8 +1,8 @@
 use wire::body::{ConsentAsked, ConsentQueueCause};
 
 use crate::{
-    Actuator, Answer, Authority, Budgets, Outcome, POSTURE, Pending, Policy, PolicyError,
-    Reversibility, Rule, Spend,
+    Actuator, Answer, Authority, Budgets, OPERATOR, Outcome, POSTURE, Pending, Policy, PolicyError,
+    Reversibility, Rule, Ruling, Spend,
 };
 
 #[test]
@@ -46,6 +46,20 @@ fn a_rule_cannot_take_the_name_the_posture_answers_to() {
         Rule::new(POSTURE, "read", Answer::Allow, None),
         Err(PolicyError::ReservedName),
     );
+}
+
+/// A rule cannot sign a fact as the operator.
+///
+/// A released request cites `operator` as the authority that answered it. If a
+/// rule could take that spelling, a table entry would be indistinguishable in
+/// the journal from the operator deciding a held request by hand.
+#[test]
+fn a_rule_cannot_take_the_name_the_operator_answers_to() {
+    assert_eq!(
+        Rule::new(OPERATOR, "read", Answer::Allow, None),
+        Err(PolicyError::ReservedName),
+    );
+    assert_eq!(Authority::Operator.name(), OPERATOR);
 }
 
 #[test]
@@ -186,35 +200,70 @@ fn an_exhausted_budget_is_not_pushed_further_past_its_bound_by_asking_again() {
 }
 
 #[test]
-fn renewal_restores_the_bound_rather_than_extending_it() {
-    let mut actuator = Actuator::new(table(vec![rule("reads", "read", Answer::Allow, Some(1))]));
+fn renewal_uses_the_exact_held_request_and_changes_no_other_budget_or_hold() {
+    let mut actuator = Actuator::new(table(vec![
+        rule("reads", "read", Answer::Allow, Some(1)),
+        rule("writes", "write", Answer::Allow, Some(1)),
+    ]));
 
+    assert_eq!(
+        granted_budget(&actuator.decide(&asked("read"), Reversibility::Reversible)),
+        Some(Some(0)),
+    );
+    assert_eq!(
+        granted_budget(&actuator.decide(&asked("write"), Reversibility::Reversible)),
+        Some(Some(0)),
+    );
+
+    let exhausted_read = asked("read");
+    let exhausted_write = asked("write");
     assert!(matches!(
-        actuator.decide(&asked("read"), Reversibility::Reversible),
-        Outcome::Granted(_)
-    ));
-    let exhausted = asked("read");
-    assert!(matches!(
-        actuator.decide(&exhausted, Reversibility::Reversible),
+        actuator.decide(&exhausted_read, Reversibility::Reversible),
         Outcome::Queued(_)
     ));
+    assert!(matches!(
+        actuator.decide(&exhausted_write, Reversibility::Reversible),
+        Outcome::Queued(_)
+    ));
+    assert_eq!(actuator.pending().len(), 2);
+    assert_eq!(actuator.budgets().remaining("reads", 1), 0);
+    assert_eq!(actuator.budgets().remaining("writes", 1), 0);
 
-    let renewed = actuator
-        .renew(exhausted.request)
-        .expect("the exhausted request names the budget to renew");
-    assert_eq!(renewed.rule(), "reads");
+    let unknown = asked("read").request;
+    let before_unknown = actuator.clone();
+    let refused = actuator
+        .renew(unknown)
+        .expect_err("an unheld request cannot name a budget to renew");
+    assert_eq!(refused.reason, "consent::request-not-held");
     assert_eq!(
-        renewed.cause(),
+        refused.witness.as_deref(),
+        Some(unknown.to_string().as_str())
+    );
+    assert_eq!(actuator, before_unknown, "a refusal changes no seat state");
+
+    let renewed_write = actuator
+        .renew(exhausted_write.request)
+        .expect("the write request names the writes budget");
+    assert_eq!(renewed_write.rule(), "writes");
+    assert_eq!(
+        renewed_write.cause(),
         ConsentQueueCause::BudgetExhausted { bound: 1 }
     );
-    assert!(!actuator.pending().holds(exhausted.request));
-    let after = actuator.decide(&asked("read"), Reversibility::Reversible);
+    assert_eq!(actuator.budgets().remaining("writes", 1), 1);
+    assert_eq!(actuator.budgets().remaining("reads", 1), 0);
+    assert!(!actuator.pending().holds(exhausted_write.request));
+    assert!(!actuator.pending().refuses(exhausted_write.request));
+    assert!(actuator.proceeds(exhausted_write.request, Reversibility::Irreversible));
+    assert!(actuator.pending().holds(exhausted_read.request));
+    assert_eq!(actuator.pending().len(), 1);
 
-    assert_eq!(
-        granted_budget(&after),
-        Some(Some(0)),
-        "renewal restores exactly the bound, so one grant leaves none",
-    );
+    let renewed_read = actuator
+        .renew(exhausted_read.request)
+        .expect("the read request names the reads budget");
+    assert_eq!(renewed_read.rule(), "reads");
+    assert_eq!(actuator.budgets().remaining("reads", 1), 1);
+    assert_eq!(actuator.budgets().remaining("writes", 1), 1);
+    assert!(actuator.pending().is_empty());
 }
 
 #[test]
@@ -264,10 +313,19 @@ fn a_held_request_lets_reversible_work_continue_while_the_irreversible_waits() {
     assert_eq!(refused.witness.as_deref(), Some("pushes"));
     assert!(actuator.pending().holds(request.request));
 
-    let released = actuator.release(request.request).expect("held request");
+    let held = actuator
+        .pending()
+        .get(request.request)
+        .expect("held request");
 
-    assert_eq!(released.operation(), "git push --force");
-    assert_eq!(released.reversibility(), Reversibility::Irreversible);
+    assert_eq!(held.operation(), "git push --force");
+    assert_eq!(held.reversibility(), Reversibility::Irreversible);
+
+    let released = actuator
+        .release(request.request, Ruling::Allow)
+        .expect("held request");
+
+    assert!(matches!(released, Outcome::Granted(_)));
     assert!(actuator.proceeds(request.request, Reversibility::Irreversible));
 }
 
@@ -342,9 +400,9 @@ fn releasing_one_held_request_leaves_every_other_request_held() {
 
     assert_eq!(
         actuator
-            .release(first.request)
-            .map(|held| held.operation().to_owned()),
-        Some("git push --force".to_owned()),
+            .release(first.request, Ruling::Allow)
+            .map(|outcome| outcome.kind()),
+        Some(wire::FactKind::ConsentGranted),
     );
 
     assert!(
@@ -357,6 +415,144 @@ fn releasing_one_held_request_leaves_every_other_request_held() {
     );
     assert!(actuator.pending().holds(second.request));
     assert_eq!(actuator.pending().len(), 1);
+}
+
+/// The answer that ends the wait also decides whether the action may be taken.
+///
+/// Releasing is not permission. A refused request leaves the queue exactly as a
+/// granted one does, so a gate that only asked whether anything still held it
+/// would let the operator's refusal open the very action it closed.
+#[test]
+fn a_request_the_operator_refused_never_proceeds_and_owes_its_refusal() {
+    let mut actuator = Actuator::new(table(vec![rule(
+        "pushes",
+        "git push*",
+        Answer::Queue,
+        None,
+    )]));
+    let request = asked("git push --force");
+
+    assert!(matches!(
+        actuator.decide(&request, Reversibility::Irreversible),
+        Outcome::Queued(_)
+    ));
+
+    let refused = actuator
+        .release(request.request, Ruling::Deny)
+        .expect("held request");
+
+    assert_eq!(refused.kind(), wire::FactKind::ConsentDenied);
+    assert!(
+        matches!(&refused, Outcome::Denied(denied) if denied.rule == OPERATOR),
+        "the operator answered, so the operator is the authority the fact cites",
+    );
+    assert!(
+        refused.refusal().is_some_and(|refusal| {
+            refusal.witness.as_deref() == Some(OPERATOR)
+                && !refusal.remedy.contains("change that rule")
+        }),
+        "a refusal the operator made cannot advise changing a rule that did not make it",
+    );
+
+    assert!(
+        !actuator.pending().holds(request.request),
+        "a refused request is answered, so it is no longer waiting",
+    );
+    assert!(
+        actuator.pending().refuses(request.request),
+        "the refusal outlives the wait",
+    );
+    assert!(
+        !actuator.proceeds(request.request, Reversibility::Irreversible),
+        "releasing a refusal must not open the action the operator closed",
+    );
+    assert!(
+        actuator.proceeds(request.request, Reversibility::Reversible),
+        "a refusal about one irreversible action does not stop reversible work",
+    );
+}
+
+/// A granted request reaches its own terminal disposition.
+#[test]
+fn a_request_the_operator_granted_proceeds_and_mints_its_grant() {
+    let mut actuator = Actuator::new(table(vec![rule(
+        "pushes",
+        "git push*",
+        Answer::Queue,
+        None,
+    )]));
+    let request = asked("git push --force");
+
+    assert!(matches!(
+        actuator.decide(&request, Reversibility::Irreversible),
+        Outcome::Queued(_)
+    ));
+
+    let granted = actuator
+        .release(request.request, Ruling::Allow)
+        .expect("held request");
+
+    assert!(
+        matches!(&granted, Outcome::Granted(grant)
+            if grant.rule == OPERATOR && grant.lane == request.lane && grant.budget.is_none()),
+        "an operator grant spends no rule budget and cites the operator",
+    );
+    assert!(granted.refusal().is_none(), "a grant is not a refusal");
+    assert!(
+        !actuator.pending().refuses(request.request),
+        "granting is not refusing",
+    );
+    assert!(actuator.proceeds(request.request, Reversibility::Irreversible));
+}
+
+/// Answering one request answers only that request.
+#[test]
+fn a_refusal_stops_its_own_request_and_leaves_another_decidable() {
+    let mut actuator = Actuator::new(table(vec![
+        rule("pushes", "git push*", Answer::Queue, None),
+        rule("tags", "git tag*", Answer::Allow, None),
+    ]));
+    let push = asked("git push --force");
+    let tag = asked("git tag v1.0.0");
+
+    assert!(matches!(
+        actuator.decide(&push, Reversibility::Irreversible),
+        Outcome::Queued(_)
+    ));
+    assert!(
+        actuator
+            .release(push.request, Ruling::Deny)
+            .is_some_and(|outcome| outcome.kind() == wire::FactKind::ConsentDenied)
+    );
+
+    assert!(
+        matches!(
+            actuator.decide(&tag, Reversibility::Irreversible),
+            Outcome::Granted(_)
+        ),
+        "one refused request does not answer an unrelated operation",
+    );
+    assert!(actuator.proceeds(tag.request, Reversibility::Irreversible));
+    assert!(!actuator.proceeds(push.request, Reversibility::Irreversible));
+}
+
+/// Nothing is answered that was never asked.
+#[test]
+fn releasing_a_request_no_queue_holds_records_no_answer() {
+    let mut actuator = Actuator::new(table(vec![rule(
+        "pushes",
+        "git push*",
+        Answer::Queue,
+        None,
+    )]));
+    let stranger = asked("git push --force");
+
+    assert!(actuator.release(stranger.request, Ruling::Deny).is_none());
+    assert!(
+        !actuator.pending().refuses(stranger.request),
+        "a refusal must answer a request that was actually held",
+    );
+    assert!(actuator.proceeds(stranger.request, Reversibility::Irreversible));
 }
 
 #[test]
@@ -388,7 +584,9 @@ fn a_queue_holds_each_request_under_its_own_identity() {
         ConsentQueueCause::BudgetExhausted { bound: 4 }
     );
     assert_eq!(
-        pending.release(first.request).map(|held| held.lane()),
+        pending
+            .release(first.request, Ruling::Allow)
+            .map(|held| held.lane()),
         Some(first.lane)
     );
     assert!(!pending.holds(first.request));

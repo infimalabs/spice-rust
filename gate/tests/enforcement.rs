@@ -12,7 +12,9 @@ use std::time::Duration;
 use gate::jurisdiction::{Admission, Shape};
 use gate::measure::{Bounds, MeasureError, Measurement};
 use gate::ratchet::{Malady, Movement};
-use gate::{Ignore, Jurisdiction, Metric, Parser, Policy, Ratchet, Run, Standing, Verdict};
+use gate::{
+    Ignore, Jurisdiction, Metric, Parser, Policy, Ratchet, Run, RunError, Standing, Verdict,
+};
 use sill::Deadlines;
 
 /// A line counter written entirely in shell builtins.
@@ -26,6 +28,11 @@ use sill::Deadlines;
 const COUNTER: &str = "count=0; for file in \"$@\"; do \
      while IFS= read -r line || [ -n \"$line\" ]; do count=$((count + 1)); done < \"$file\"; \
      done; printf '%s\\n' \"$count\"";
+
+/// Count the selected state, then alter one selected file before returning it.
+const MUTATING_COUNTER: &str = "count=0; for file in \"$@\"; do \
+     while IFS= read -r line || [ -n \"$line\" ]; do count=$((count + 1)); done < \"$file\"; \
+     done; printf 'added by parser\\n' >> \"$1\"; printf '%s\\n' \"$count\"";
 
 /// A foreign repository that removes itself when the fixture ends.
 struct Tree {
@@ -62,16 +69,20 @@ impl Drop for Tree {
 }
 
 fn bounds() -> Bounds {
+    bounds_with(64 * 1024, Duration::from_secs(5))
+}
+
+fn bounds_with(capture: usize, output_drain: Duration) -> Bounds {
     Bounds::new(
         "gate-fixture",
         Deadlines::new(
             Duration::from_secs(30),
-            Duration::from_secs(5),
+            output_drain,
             Duration::from_secs(5),
         )
         .expect("declare deadlines"),
         Duration::from_millis(100),
-        64 * 1024,
+        capture,
     )
     .expect("declare bounds")
 }
@@ -427,6 +438,105 @@ fn a_parser_that_outruns_its_deadline_yields_no_number() {
     assert!(
         matches!(refused, MeasureError::Unreadable { .. }),
         "expected no number at all, got {refused:?}"
+    );
+}
+
+#[test]
+fn a_numeric_prefix_from_truncated_stdout_yields_no_number() {
+    let tree = Tree::new("truncated");
+    tree.write("src/lib.rs", "one\n");
+    let metric = Metric::new(
+        "rust.lines",
+        "rust",
+        "a count whose retained prefix is still numeric",
+        Parser::new("/bin/sh", ["-c", "printf '1junk'", "sh"]).expect("declare a parser"),
+        "*.rs\n",
+        "",
+    )
+    .expect("declare a metric");
+    let walked = Jurisdiction::walk(&tree.root, &Ignore::parse("").expect("parse ignore"))
+        .expect("walk the fixture");
+
+    let refused = metric
+        .measure(&walked, &bounds_with(1, Duration::from_secs(5)))
+        .expect_err("a truncated count is not a measurement");
+
+    assert!(
+        matches!(
+            &refused,
+            MeasureError::Unreadable { evidence, .. }
+                if evidence == "truncated stdout capture: 1"
+        ),
+        "the retained numeric prefix was not refused by capture state: {refused:?}",
+    );
+}
+
+#[test]
+fn a_numeric_prefix_from_incomplete_stdout_yields_no_number() {
+    let tree = Tree::new("incomplete");
+    tree.write("src/lib.rs", "one\n");
+    let metric = Metric::new(
+        "rust.lines",
+        "rust",
+        "a count whose output pipe remains open",
+        Parser::new("/bin/sh", ["-c", "/bin/sleep 1 & printf '1'", "sh"])
+            .expect("declare a parser"),
+        "*.rs\n",
+        "",
+    )
+    .expect("declare a metric");
+    let walked = Jurisdiction::walk(&tree.root, &Ignore::parse("").expect("parse ignore"))
+        .expect("walk the fixture");
+
+    let refused = metric
+        .measure(&walked, &bounds_with(1024, Duration::from_millis(10)))
+        .expect_err("an incompletely drained count is not a measurement");
+
+    assert!(
+        matches!(
+            &refused,
+            MeasureError::Unreadable { evidence, .. }
+                if evidence == "incomplete stdout capture: 1"
+        ),
+        "the retained numeric prefix was not refused by drain state: {refused:?}",
+    );
+}
+
+#[test]
+fn a_parser_cannot_move_the_tree_behind_its_measurement() {
+    let tree = Tree::new("mutating-parser");
+    tree.write("src/lib.rs", "one\n");
+    let mutating_metric = Metric::new(
+        "rust.lines",
+        "rust",
+        "lines before the parser mutates its input",
+        Parser::new("/bin/sh", ["-c", MUTATING_COUNTER, "sh"]).expect("declare a parser"),
+        "*.rs\n",
+        "",
+    )
+    .expect("declare a metric");
+    let policy = Policy::new(Ignore::parse("").expect("parse ignore"), [mutating_metric])
+        .expect("declare a policy");
+
+    let refused = Run::adjudicate(&policy, &tree.root, &ratchet("rust.lines 1\n"), &bounds())
+        .expect_err("a run over two tree states cannot produce a receipt");
+
+    assert!(
+        matches!(
+            &refused,
+            RunError::JurisdictionChanged {
+                inventory,
+                observed_inventory,
+                tree,
+                observed_tree,
+            } if inventory == observed_inventory && tree != observed_tree
+        ),
+        "the mutating parser was not refused by its before/after witnesses: {refused:?}",
+    );
+    assert_eq!(
+        fs::read_to_string(tree.path("src/lib.rs")).expect("read the mutated source"),
+        "one\nadded by parser\n",
+        "the fixture must prove the parser actually moved an admitted file",
     );
 }
 

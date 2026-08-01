@@ -84,19 +84,12 @@ fn every_pane_maps_to_one_of_the_four_axes() {
 }
 
 #[test]
-fn the_axes_partition_the_panes_without_overlap_or_remainder() {
+fn every_axis_carries_at_least_one_pane() {
     let mut byaxis: BTreeMap<Axis, Vec<Pane>> = BTreeMap::new();
     for pane in descend_panes() {
         byaxis.entry(pane.axis()).or_default().push(pane);
     }
 
-    // Total: every pane landed in exactly one bucket, because `axis` returns
-    // one axis and the loop visited each pane once.
-    let placed: usize = byaxis.values().map(Vec::len).sum();
-    assert_eq!(placed, descend_panes().len());
-
-    // No remainder: an axis with no pane is a heading with nothing under it,
-    // which would mean the vocabulary is wider than the surface it describes.
     for axis in descend_axes() {
         assert!(
             byaxis.get(&axis).is_some_and(|panes| !panes.is_empty()),

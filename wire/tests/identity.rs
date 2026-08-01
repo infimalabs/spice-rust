@@ -62,18 +62,19 @@ fn a_non_canonical_uuid_is_refused_by_the_decoder_too() {
 /// index the sweep then has to fill.
 const fn position(domain: Domain) -> usize {
     match domain {
-        Domain::DistTargetPayload => 0,
-        Domain::DistArtifact => 1,
-        Domain::DistPins => 2,
-        Domain::DistInventory => 3,
-        Domain::ProofBattery => 4,
-        Domain::ProofReplay => 5,
-        Domain::ProofReceipt => 6,
-        Domain::GateFile => 7,
-        Domain::GateTree => 8,
-        Domain::GatePolicy => 9,
-        Domain::GateInventory => 10,
-        Domain::GateMeasurement => 11,
+        Domain::BoardDocument => 0,
+        Domain::DistTargetPayload => 1,
+        Domain::DistArtifact => 2,
+        Domain::DistPins => 3,
+        Domain::DistInventory => 4,
+        Domain::ProofBattery => 5,
+        Domain::ProofReplay => 6,
+        Domain::ProofReceipt => 7,
+        Domain::GateFile => 8,
+        Domain::GateTree => 9,
+        Domain::GatePolicy => 10,
+        Domain::GateInventory => 11,
+        Domain::GateMeasurement => 12,
     }
 }
 
@@ -89,7 +90,8 @@ fn the_sweep_names_every_domain_exactly_once() {
 }
 
 /// Every domain, so a new class cannot be added without being swept here.
-const DOMAINS: [Domain; 12] = [
+const DOMAINS: [Domain; 13] = [
+    Domain::BoardDocument,
     Domain::DistTargetPayload,
     Domain::DistArtifact,
     Domain::DistPins,
@@ -153,6 +155,7 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
     assert_eq!(
         tags,
         [
+            "spice.board.document.v1",
             "spice.dist.target-payload.v1",
             "spice.dist.artifact.v1",
             "spice.dist.pins.v1",

@@ -67,6 +67,8 @@ pub enum IdentError {
 /// first arrival nothing and means no later one has to be spelled around it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Domain {
+    /// The exact authored bytes of one board document.
+    BoardDocument,
     /// The payload manifest of one release target.
     DistTargetPayload,
     /// The bytes of one staged artifact.
@@ -102,6 +104,7 @@ impl Domain {
     #[must_use]
     pub const fn tag(self) -> &'static str {
         match self {
+            Self::BoardDocument => "spice.board.document.v1",
             Self::DistTargetPayload => "spice.dist.target-payload.v1",
             Self::DistArtifact => "spice.dist.artifact.v1",
             Self::DistPins => "spice.dist.pins.v1",

@@ -289,6 +289,13 @@ pub struct Span {
 }
 
 /// One prose candidate requiring judgment.
+///
+/// A hit cannot mint either taste fact before an explicit judgment:
+///
+/// ```compile_fail
+/// # fn hit() -> taste::Hit { panic!() }
+/// let _ = hit().into_fact();
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Hit {
     taste: Name,

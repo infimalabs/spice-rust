@@ -5,6 +5,9 @@ use std::fmt;
 /// Name the posture answers to, which no rule may take.
 pub const POSTURE: &str = "posture";
 
+/// Name the operator answers to, which no rule may take.
+pub const OPERATOR: &str = "operator";
+
 /// What an authority answers for a request it decides.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Answer {
@@ -18,16 +21,18 @@ pub enum Answer {
 
 /// The named authority that answered a request.
 ///
-/// The posture is its own variant rather than a rule spelled `posture`, so a
-/// configured rule cannot impersonate the fallback an operator reads in a fact.
-/// [`Policy::new`] refuses that spelling for the same reason: exactly one thing
-/// answers to the name.
+/// The posture and the operator are their own variants rather than rules
+/// spelled `posture` and `operator`, so a configured rule cannot impersonate
+/// either one in a fact an operator reads. [`Policy::new`] refuses both
+/// spellings for the same reason: exactly one thing answers to each name.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Authority {
     /// The first rule whose tool pattern matched the operation.
     Rule(String),
     /// No rule matched, so the configured posture answered.
     Posture,
+    /// The operator answered a held request directly.
+    Operator,
 }
 
 impl Authority {
@@ -37,6 +42,7 @@ impl Authority {
         match self {
             Self::Rule(name) => name,
             Self::Posture => POSTURE,
+            Self::Operator => OPERATOR,
         }
     }
 }
@@ -73,7 +79,7 @@ impl Rule {
         if name.trim().is_empty() {
             return Err(PolicyError::UnnamedRule);
         }
-        if name == POSTURE {
+        if name == POSTURE || name == OPERATOR {
             return Err(PolicyError::ReservedName);
         }
         if tool.is_empty() {
@@ -251,7 +257,7 @@ impl Decision {
 pub enum PolicyError {
     /// A rule carried no name for facts to cite.
     UnnamedRule,
-    /// A rule took the name the posture answers to.
+    /// A rule took a name an authority other than a rule answers to.
     ReservedName,
     /// A rule matched nothing because its pattern was empty.
     EmptyPattern { rule: String },
@@ -269,7 +275,7 @@ impl PolicyError {
     pub const fn reason(&self) -> &'static str {
         match self {
             Self::UnnamedRule => "consent rule is unnamed",
-            Self::ReservedName => "consent rule takes the posture's name",
+            Self::ReservedName => "consent rule takes a reserved authority name",
             Self::EmptyPattern { .. } => "consent rule matches nothing",
             Self::UngrantableBudget { .. } => "consent rule cannot spend a budget",
             Self::ZeroBudget { .. } => "consent budget grants nothing",
@@ -285,7 +291,7 @@ impl PolicyError {
                 "give the rule a name; every consent fact cites the rule that decided".to_owned()
             }
             Self::ReservedName => format!(
-                "rename the rule; `{POSTURE}` names the disposition unmatched requests take"
+                "rename the rule; `{POSTURE}` names the disposition unmatched requests take and `{OPERATOR}` names the operator answering a held request"
             ),
             Self::EmptyPattern { rule } => {
                 format!("give `{rule}` an exact operation or a glob such as `git push*`")

@@ -31,31 +31,8 @@ fn inventory_accounts_for_every_fold_fact_head_and_ring() {
         );
     }
 
-    for kind in wire::FactKind::ALL {
-        assert!(
-            definitions.iter().any(|definition| definition
-                .sources
-                .iter()
-                .any(|source| source_contains(*source, *kind))),
-            "fact kind {kind} has no consuming fold",
-        );
-    }
     assert_source_sets(definitions);
-    assert_fold_order(definitions);
     assert_beyond_policies(definitions);
-}
-
-fn source_contains(source: Source, kind: wire::FactKind) -> bool {
-    match source {
-        Source::Fact(source) => source == kind,
-        Source::Facts(plane) => plane.contains(kind),
-        Source::Fold(_)
-        | Source::Head(_)
-        | Source::Ring(_)
-        | Source::Config(_)
-        | Source::Tape(_)
-        | Source::CommandResults => false,
-    }
 }
 
 fn assert_source_sets(definitions: &[crate::Definition]) {
@@ -123,18 +100,22 @@ fn assert_every_variant_consumed<T: Copy + Eq + std::fmt::Debug>(
     }
 }
 
-fn assert_fold_order(definitions: &[crate::Definition]) {
-    let positions = definitions
+#[test]
+fn fold_id_all_is_dependency_safe_rebuild_order() {
+    let positions = FoldId::ALL
         .iter()
         .enumerate()
-        .map(|(position, definition)| (definition.fold, position))
+        .map(|(position, fold)| (*fold, position))
         .collect::<BTreeMap<_, _>>();
-    for (position, definition) in definitions.iter().enumerate() {
+    for definition in INVENTORY.definitions() {
+        let dependent_position = positions[&definition.fold];
         for source in definition.sources {
             if let Source::Fold(source) = source {
+                let source_position = positions[source];
                 assert!(
-                    positions[source] < position,
-                    "{} must follow source fold {source}",
+                    source_position < dependent_position,
+                    "dependent fold {} at position {dependent_position} must follow source fold \
+                     {source} at position {source_position}",
                     definition.fold,
                 );
             }
