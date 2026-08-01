@@ -352,6 +352,31 @@ fn direct_absence_has_no_null_unknown_or_sequence_shaped_alias() {
 }
 
 #[test]
+fn one_reply_cannot_carry_two_position_keys() {
+    for mixed in [
+        serde_json::json!({"direct": {}, "cursor": 1}),
+        serde_json::json!({"direct": {}, "seq": {"first": 1, "last": 1}}),
+        serde_json::json!({"cursor": 1, "seq": {"first": 1, "last": 1}}),
+    ] {
+        let mut outcome = mixed;
+        let object = outcome
+            .as_object_mut()
+            .expect("position fixture is an object");
+        object.insert("kind".to_owned(), serde_json::json!("reply"));
+        object.insert(
+            "body".to_owned(),
+            serde_json::json!({"task": "SPICE-aBcD", "status": "checked"}),
+        );
+        let bytes = serde_json::to_vec(&outcome).expect("mixed fixture is json");
+
+        assert!(
+            wire::decode::<Outcome<DoneResult>>(&bytes).is_err(),
+            "two position keys must not decode by silently choosing one: {outcome}",
+        );
+    }
+}
+
+#[test]
 fn a_refusal_round_trips() {
     let response: Response<DoneResult> = Response {
         v: WireVersion::CURRENT,

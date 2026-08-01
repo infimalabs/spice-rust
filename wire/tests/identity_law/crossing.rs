@@ -622,6 +622,15 @@ fn cover_refusal_frames(covered: &mut BTreeSet<String>) {
 fn cover_reply_frames(covered: &mut BTreeSet<String>) {
     law(
         covered,
+        "ReplyPosition",
+        &[
+            committed(48213),
+            ReplyPosition::Snapshot(seq(48213)),
+            ReplyPosition::Direct {},
+        ],
+    );
+    law(
+        covered,
         "Reply",
         &[
             Reply {
