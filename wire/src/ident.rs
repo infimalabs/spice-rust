@@ -48,6 +48,63 @@ pub enum IdentError {
     /// The text is not RFC3339 UTC with millisecond precision and a `Z` suffix.
     #[error("instant must be RFC3339 UTC with millisecond precision and a trailing Z: {0:?}")]
     Instant(String),
+    /// The text is not 64 lower-case hex characters.
+    #[error("digest must be 64 lower-case hex characters: {0:?}")]
+    Digest(String),
+}
+
+/// A durable content digest with exactly one admitted spelling.
+///
+/// Every digest WIRE names is BLAKE3 over domain-tagged input, so the same
+/// bytes under two domains never collide. This newtype owns only the
+/// spelling; the domain-tagged computation that mints one is separate.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Digest(String);
+
+impl Digest {
+    /// Character length of the one admitted spelling.
+    const SPELLING_LEN: usize = 64;
+
+    /// The digest as written.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl FromStr for Digest {
+    type Err = IdentError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let canonical = text.len() == Self::SPELLING_LEN
+            && text.bytes().all(|byte| {
+                byte.is_ascii_digit() || (byte.is_ascii_lowercase() && byte.is_ascii_hexdigit())
+            });
+        if canonical {
+            Ok(Self(text.to_owned()))
+        } else {
+            Err(IdentError::Digest(text.to_owned()))
+        }
+    }
+}
+
+impl fmt::Display for Digest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl Serialize for Digest {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for Digest {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        text.parse().map_err(D::Error::custom)
+    }
 }
 
 /// A UUID with exactly one admitted spelling.
