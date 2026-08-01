@@ -74,6 +74,18 @@ pub(crate) struct SessionScope {
     epoch: CanonicalUuid,
 }
 
+impl SessionScope {
+    /// The generation this scope is bound to.
+    ///
+    /// The scope already carries the generation, so state that is scoped to a
+    /// principal has no reason to spell the generation a second time of its
+    /// own. Reading it back through here is what keeps the two from being
+    /// kept in agreement by hand.
+    pub(crate) const fn epoch(&self) -> CanonicalUuid {
+        self.epoch
+    }
+}
+
 impl fmt::Debug for SessionScope {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("SessionScope([redacted])")

@@ -249,7 +249,9 @@ impl<T> Answer<T> {
 ///
 /// Capability scope and generation travel together because a same-epoch peer
 /// is not this principal, and a reconnect against a new epoch is a different
-/// authority rather than a continuation of this one.
+/// authority rather than a continuation of this one. They travel together by
+/// construction: the scope already names the generation, so this state keeps
+/// no second copy that could be left disagreeing with it.
 ///
 /// An epoch without an admitted principal cannot create browser state:
 ///
@@ -262,7 +264,6 @@ impl<T> Answer<T> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrowserState<T> {
     scope: SessionScope,
-    epoch: CanonicalUuid,
     cursor: Option<Seq>,
     answer: Option<Answer<T>>,
     causal: BTreeMap<Seq, CausalLink>,
@@ -274,7 +275,6 @@ impl<T> BrowserState<T> {
     pub fn new(accepted: &Admitted<Accepted>) -> Self {
         Self {
             scope: accepted.scope(),
-            epoch: accepted.get().epoch,
             cursor: None,
             answer: None,
             causal: BTreeMap::new(),
@@ -288,7 +288,7 @@ impl<T> BrowserState<T> {
     /// The generation this state belongs to.
     #[must_use]
     pub const fn epoch(&self) -> CanonicalUuid {
-        self.epoch
+        self.scope.epoch()
     }
 
     /// The highest position applied, or `None` before the first frame.
@@ -417,7 +417,7 @@ impl<T> BrowserState<T> {
         let Outcome::Reply(reply) = &response.outcome else {
             return false;
         };
-        if admitted.scope() != self.scope || response.epoch != self.epoch {
+        if admitted.scope() != self.scope {
             return false;
         }
         self.answer = Some(reply.body.clone().into());
@@ -467,11 +467,9 @@ impl<T> BrowserState<T> {
     /// the fold provenance an answer wore was stamped by the generation that
     /// produced it rather than by the one now answering.
     pub fn reconnect(&mut self, accepted: &Admitted<Accepted>) {
-        let epoch = accepted.get().epoch;
         let scope = accepted.scope();
-        if self.epoch != epoch || self.scope != scope {
+        if self.scope != scope {
             self.scope = scope;
-            self.epoch = epoch;
             self.cursor = None;
             self.answer = None;
             self.causal.clear();
