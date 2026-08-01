@@ -297,6 +297,9 @@ fn every_crossing_type_obeys_the_identity_law() {
     cover_refusal_frames(&mut covered);
     cover_reply_frames(&mut covered);
     cover_board_heads(&mut covered);
+    cover_claim_heads(&mut covered);
+    cover_authority_heads(&mut covered);
+    cover_residency_heads(&mut covered);
     cover_vocabularies(&mut covered);
 
     assert_coverage_is_complete(&covered);
@@ -711,10 +714,11 @@ fn a_seq_cannot_encode_a_zero_position() {
     assert_eq!(admitted.get(), NonZeroU64::new(1).expect("non-zero").get());
 }
 
-/// The heads a pane reads off the board.
+/// The heads that state what a task is and where its workflow stands.
 ///
 /// A head is a projection the resident publishes, so it crosses as a value the
-/// same way a frame does and owes the same law.
+/// same way a frame does and owes the same law. The heads are split across the
+/// four functions below by what they are a head of, not by convenience.
 fn cover_board_heads(covered: &mut BTreeSet<String>) {
     law(
         covered,
@@ -766,6 +770,10 @@ fn cover_board_heads(covered: &mut BTreeSet<String>) {
             },
         ],
     );
+}
+
+/// The heads that record who holds a task and for how long.
+fn cover_claim_heads(covered: &mut BTreeSet<String>) {
     law(
         covered,
         "ClaimDisposition",
@@ -817,6 +825,10 @@ fn cover_board_heads(covered: &mut BTreeSet<String>) {
             },
         ],
     );
+}
+
+/// The heads that record what a command must re-prove and what a gate found.
+fn cover_authority_heads(covered: &mut BTreeSet<String>) {
     law(
         covered,
         "WitnessHead",
@@ -881,6 +893,10 @@ fn cover_board_heads(covered: &mut BTreeSet<String>) {
             },
         ],
     );
+}
+
+/// The heads that record where the resident and its lanes stand.
+fn cover_residency_heads(covered: &mut BTreeSet<String>) {
     law(
         covered,
         "ResidentState",
