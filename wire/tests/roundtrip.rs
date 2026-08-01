@@ -308,6 +308,50 @@ fn a_read_only_reply_carries_a_snapshot_cursor_instead_of_a_range() {
 }
 
 #[test]
+fn a_daemonless_reply_states_that_its_journal_position_is_directly_absent() {
+    let outcome = Outcome::Reply(Reply {
+        position: ReplyPosition::Direct {},
+        body: DoneResult {
+            task: "SPICE-aBcD".parse().expect("handle"),
+            status: "checked".to_owned(),
+        },
+    });
+
+    let encoded = wire::encode(&outcome).expect("direct reply encodes");
+    let value: serde_json::Value = serde_json::from_slice(&encoded).expect("wire bytes are json");
+    assert_eq!(value["direct"], serde_json::json!({}));
+    assert!(value.get("seq").is_none() && value.get("cursor").is_none());
+
+    let decoded: Outcome<DoneResult> = wire::decode(&encoded).expect("direct reply decodes");
+    assert_eq!(decoded, outcome);
+}
+
+#[test]
+fn direct_absence_has_no_null_unknown_or_sequence_shaped_alias() {
+    for (name, direct) in [
+        ("null", serde_json::Value::Null),
+        ("unknown", serde_json::json!({"unknown": true})),
+        (
+            "committed range",
+            serde_json::json!({"first": 1, "last": 1}),
+        ),
+        ("snapshot cursor", serde_json::json!(1)),
+    ] {
+        let alternate = serde_json::json!({
+            "kind": "reply",
+            "direct": direct,
+            "body": {"task": "SPICE-aBcD", "status": "checked"}
+        });
+        let bytes = serde_json::to_vec(&alternate).expect("alternate is json");
+
+        assert!(
+            wire::decode::<Outcome<DoneResult>>(&bytes).is_err(),
+            "the {name} spelling must not alias direct absence",
+        );
+    }
+}
+
+#[test]
 fn a_refusal_round_trips() {
     let response: Response<DoneResult> = Response {
         v: WireVersion::CURRENT,

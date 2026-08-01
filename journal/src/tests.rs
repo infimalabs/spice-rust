@@ -149,6 +149,33 @@ fn coherent_authority_verifies_every_required_plane() {
 }
 
 #[test]
+fn an_authoritative_receipt_cannot_claim_a_daemonless_direct_position() {
+    let journal = authority_fixture();
+    let response = Response {
+        v: WireVersion::CURRENT,
+        id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c4"),
+        epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
+        outcome: Outcome::Reply(Reply {
+            position: ReplyPosition::Direct {},
+            body: json!({"task": "JOURNAL-a1", "status": "review"}),
+        }),
+    };
+    journal
+        .connection
+        .execute(
+            "UPDATE command_receipts SET response = ?1",
+            params![wire::encode(&response).expect("encode direct response")],
+        )
+        .expect("plant direct response in authoritative receipt");
+
+    let violation = refused_violations(&journal)
+        .into_iter()
+        .find(|violation| violation.class == ViolationClass::Receipt)
+        .expect("direct response disagrees with authoritative receipt columns");
+    assert!(violation.detail.contains("position disagrees"));
+}
+
+#[test]
 fn fact_snapshot_reads_the_canonical_authority_stream() {
     let journal = authority_fixture();
     let snapshot = journal.fact_snapshot().expect("fact snapshot");
