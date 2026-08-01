@@ -50,7 +50,7 @@ impl Budgets {
     }
 
     /// Restore this rule's full bound after an operator renews it.
-    pub fn renew(&mut self, rule: &str) {
+    pub(crate) fn renew(&mut self, rule: &str) {
         self.spent.remove(rule);
     }
 }
