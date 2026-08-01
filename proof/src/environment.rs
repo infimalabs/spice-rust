@@ -41,7 +41,7 @@ impl SealedEnvironment {
         workspace: impl AsRef<Path>,
         limits: Limits,
     ) -> Result<Self, EnvironmentError> {
-        let target = select_host(Host::compiled()).map_err(EnvironmentError::UnsupportedHost)?;
+        let target = compiled_target().map_err(EnvironmentError::UnsupportedHost)?;
         validate_payload_environment(
             target,
             payload.value().target,
@@ -124,6 +124,16 @@ impl SealedEnvironment {
             kind: EnvironmentKind::Native(runner),
         }
     }
+}
+
+/// Select the sole release target admitted for the compiled host tuple.
+///
+/// # Errors
+///
+/// Refuses every host except exact `aarch64-apple-darwin` and
+/// `x86_64-unknown-linux-musl`.
+pub fn compiled_target() -> Result<ReleaseTarget, UnsupportedHost> {
+    select_host(Host::compiled())
 }
 
 fn validate_payload_environment(
