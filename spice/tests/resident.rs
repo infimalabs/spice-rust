@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::Write;
-use std::net::{SocketAddr, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -171,8 +171,16 @@ impl Drop for RunningResident {
 }
 
 fn invoke(fixture: &Fixture, command: &str) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_spice"))
-        .args(["--json", command])
+    invoke_form(fixture, command, true)
+}
+
+fn invoke_form(fixture: &Fixture, command: &str, json: bool) -> Output {
+    let mut process = Command::new(env!("CARGO_BIN_EXE_spice"));
+    if json {
+        process.arg("--json");
+    }
+    process
+        .arg(command)
         .current_dir(&fixture.root)
         .output()
         .expect("spice launches")
@@ -185,6 +193,188 @@ fn outcome(output: &Output) -> Outcome<()> {
         &output.stderr
     };
     wire::decode(bytes).expect("process speaks one outcome")
+}
+
+#[derive(Clone, Copy)]
+enum FakeBehavior {
+    Success,
+    Replay,
+    EchoCapability,
+    ResidentLoss,
+    ReadTimeout,
+}
+
+fn fake_down(fixture: &Fixture, behavior: FakeBehavior, json: bool) -> (Output, Duration) {
+    fs::create_dir_all(&fixture.runtime).expect("fixture runtime directory");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("fake resident binds");
+    let discovery = canvas::Discovery {
+        endpoint: format!(
+            "http://{}",
+            listener.local_addr().expect("fake resident address")
+        ),
+        capability: uuid("00000000-0000-4000-8000-000000000031"),
+        epoch: uuid("00000000-0000-4000-8000-000000000032"),
+    };
+    discovery
+        .publish(fixture.canvas())
+        .expect("fake discovery publishes");
+    let canvas = fixture.canvas();
+    let server_discovery = discovery.clone();
+    let server = std::thread::spawn(move || {
+        run_fake_resident(listener, server_discovery, canvas, behavior);
+    });
+    let started = Monotonic::now();
+    let output = invoke_form(fixture, "down", json);
+    let elapsed = started.elapsed();
+    server.join().expect("fake resident completes");
+    (output, elapsed)
+}
+
+fn run_fake_resident(
+    listener: TcpListener,
+    discovery: canvas::Discovery,
+    canvas: PathBuf,
+    behavior: FakeBehavior,
+) {
+    let mut socket = accept_fake(listener);
+    assert_fake_hello(&mut socket, &discovery);
+    if matches!(behavior, FakeBehavior::EchoCapability) {
+        send_capability_echo(&mut socket, discovery.capability);
+        return;
+    }
+    send_server(
+        &mut socket,
+        &wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor: Actor::Operator,
+            epoch: discovery.epoch,
+        },
+    );
+    if matches!(behavior, FakeBehavior::ResidentLoss) {
+        socket
+            .get_mut()
+            .shutdown(Shutdown::Both)
+            .expect("fake resident socket shuts down");
+        return;
+    }
+    let command = read_fake_dark_command(&mut socket, discovery.epoch);
+    if matches!(behavior, FakeBehavior::ReadTimeout) {
+        std::thread::sleep(Duration::from_secs(4));
+        return;
+    }
+    if matches!(behavior, FakeBehavior::Success) {
+        fs::remove_file(canvas).expect("fake resident withdraws discovery");
+    }
+    send_dark_response(&mut socket, &discovery, &command, behavior);
+}
+
+fn accept_fake(listener: TcpListener) -> WebSocket<TcpStream> {
+    let (stream, _) = listener.accept().expect("fake resident accepts");
+    stream
+        .set_read_timeout(Some(READINESS_DEADLINE))
+        .expect("fake resident read timeout");
+    stream
+        .set_write_timeout(Some(READINESS_DEADLINE))
+        .expect("fake resident write timeout");
+    tungstenite::accept(stream).expect("fake WebSocket accepts")
+}
+
+fn assert_fake_hello(socket: &mut WebSocket<TcpStream>, discovery: &canvas::Discovery) {
+    let opening = socket
+        .read()
+        .expect("fake resident reads Hello")
+        .into_data();
+    let hello: wire::Hello = wire::decode(&opening).expect("client Hello decodes");
+    assert_eq!(hello.wire, wire::WireVersion::CURRENT);
+    assert_eq!(hello.capability, discovery.capability);
+    assert_eq!(hello.epoch, discovery.epoch);
+}
+
+fn send_capability_echo(socket: &mut WebSocket<TcpStream>, capability: wire::CanonicalUuid) {
+    send_server(
+        socket,
+        &wire::Refusal {
+            reason: "hello::fixture".to_owned(),
+            witness: None,
+            expected: None,
+            observed: Some(capability.to_string()),
+            remedy: "read current discovery".to_owned(),
+        },
+    );
+}
+
+fn read_fake_dark_command(
+    socket: &mut WebSocket<TcpStream>,
+    epoch: wire::CanonicalUuid,
+) -> wire::Command<serde_json::Value> {
+    let frame = socket
+        .read()
+        .expect("fake resident reads one command")
+        .into_data();
+    let command: wire::Command<serde_json::Value> =
+        wire::decode(&frame).expect("client command decodes");
+    assert_eq!(command.v, wire::WireVersion::CURRENT);
+    assert_eq!(command.epoch, epoch);
+    assert_eq!(command.kind, wire::CommandKind::UpChange);
+    assert_eq!(
+        command.expected,
+        [wire::Witness::Transition {
+            from: wire::ResidentState::Seated,
+            to: wire::ResidentState::Dark,
+        }]
+    );
+    let body = command
+        .kind
+        .binding()
+        .body
+        .decode(&wire::encode(&command.body).expect("command body encodes"))
+        .expect("command body follows its binding");
+    assert!(matches!(
+        body,
+        wire::intent::Intent::UpChange(wire::intent::UpChange {
+            state: wire::ResidentState::Dark
+        })
+    ));
+    command
+}
+
+fn send_dark_response(
+    socket: &mut WebSocket<TcpStream>,
+    discovery: &canvas::Discovery,
+    command: &wire::Command<serde_json::Value>,
+    behavior: FakeBehavior,
+) {
+    let id = if matches!(behavior, FakeBehavior::Replay) {
+        uuid("00000000-0000-4000-8000-000000000033")
+    } else {
+        command.id
+    };
+    send_server(
+        socket,
+        &wire::Response {
+            v: wire::WireVersion::CURRENT,
+            id,
+            epoch: discovery.epoch,
+            outcome: Outcome::Reply(wire::Reply {
+                position: ReplyPosition::Committed(wire::SeqRange {
+                    first: wire::Seq::new(1).expect("fixture position"),
+                    last: wire::Seq::new(2).expect("fixture position"),
+                }),
+                body: wire::intent::StateAnswer {
+                    from: wire::ResidentState::Seated,
+                    to: wire::ResidentState::Dark,
+                },
+            }),
+        },
+    );
+}
+
+fn send_server<T: serde::Serialize>(socket: &mut WebSocket<TcpStream>, value: &T) {
+    socket
+        .send(Message::Binary(
+            wire::encode(value).expect("fake response encodes").into(),
+        ))
+        .expect("fake response sends");
 }
 
 fn open_socket(discovery: &canvas::Discovery) -> WebSocket<TcpStream> {
@@ -488,6 +678,163 @@ fn failed_migration_removes_discovery_and_releases_the_lock() {
     assert!(!fixture.canvas().exists(), "stale discovery was removed");
     let possession = hold(&fixture.resident(), "replacement holder\n");
     drop(possession);
+}
+
+#[test]
+fn command_client_process_renders_one_success_across_reconnects() {
+    let fixture = Fixture::new("client-success");
+
+    let (text, text_elapsed) = fake_down(&fixture, FakeBehavior::Success, false);
+    assert!(text.status.success(), "text down failed: {:?}", text.stderr);
+    assert_eq!(text.stdout, b"null\n");
+    assert!(text.stderr.is_empty());
+    assert!(text_elapsed < READINESS_DEADLINE);
+
+    let (json, json_elapsed) = fake_down(&fixture, FakeBehavior::Success, true);
+    assert!(json.status.success(), "JSON down failed: {:?}", json.stderr);
+    let Outcome::Reply(reply) = outcome(&json) else {
+        panic!("JSON down must carry the same successful outcome");
+    };
+    assert!(matches!(reply.position, ReplyPosition::Committed(_)));
+    assert!(json_elapsed < READINESS_DEADLINE);
+}
+
+#[test]
+fn command_client_process_fences_replay_loss_and_capability_echo() {
+    let fixture = Fixture::new("client-fencing");
+    let capability = uuid("00000000-0000-4000-8000-000000000031").to_string();
+
+    let (replay, _) = fake_down(&fixture, FakeBehavior::Replay, true);
+    assert_eq!(replay.status.code(), Some(FAULT_EXIT));
+    let Outcome::Fault(fault) = outcome(&replay) else {
+        panic!("replayed response must fault");
+    };
+    assert_eq!(fault.reason, "command::answer-mismatch");
+
+    let (lost, elapsed) = fake_down(&fixture, FakeBehavior::ResidentLoss, true);
+    assert_eq!(lost.status.code(), Some(FAULT_EXIT));
+    let Outcome::Fault(fault) = outcome(&lost) else {
+        panic!("resident loss must fault");
+    };
+    assert!(matches!(
+        fault.reason.as_str(),
+        "canvas::send-failed" | "canvas::receive-failed" | "canvas::closed-without-answer"
+    ));
+    assert!(elapsed < READINESS_DEADLINE);
+
+    let (echo, _) = fake_down(&fixture, FakeBehavior::EchoCapability, true);
+    assert_eq!(echo.status.code(), Some(FAULT_EXIT));
+    let Outcome::Fault(fault) = outcome(&echo) else {
+        panic!("capability echo must fault");
+    };
+    assert_eq!(fault.reason, "canvas::capability-disclosed");
+    assert!(
+        !echo
+            .stdout
+            .windows(capability.len())
+            .any(|w| w == capability.as_bytes())
+    );
+    assert!(
+        !echo
+            .stderr
+            .windows(capability.len())
+            .any(|w| w == capability.as_bytes())
+    );
+}
+
+#[test]
+fn command_client_process_bounds_an_unanswered_request() {
+    let fixture = Fixture::new("client-timeout");
+    let (output, elapsed) = fake_down(&fixture, FakeBehavior::ReadTimeout, true);
+
+    assert_eq!(output.status.code(), Some(FAULT_EXIT));
+    let Outcome::Fault(fault) = outcome(&output) else {
+        panic!("unanswered request must fault");
+    };
+    assert_eq!(fault.reason, "canvas::receive-failed");
+    assert!(
+        elapsed < Duration::from_secs(6),
+        "read deadline was not bounded: {elapsed:?}"
+    );
+}
+
+#[test]
+fn command_client_process_refuses_untrusted_discovery_before_connecting() {
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let fixture = Fixture::new("client-discovery");
+    let missing = invoke(&fixture, "down");
+    assert_eq!(missing.status.code(), Some(FAULT_EXIT));
+    let Outcome::Fault(fault) = outcome(&missing) else {
+        panic!("missing discovery must fault");
+    };
+    assert_eq!(fault.reason, "canvas::discovery-unavailable");
+
+    fs::create_dir_all(&fixture.runtime).expect("fixture runtime directory");
+    fs::write(fixture.canvas(), b"not current discovery").expect("malformed discovery writes");
+    #[cfg(unix)]
+    fs::set_permissions(fixture.canvas(), fs::Permissions::from_mode(0o600))
+        .expect("malformed discovery is owner-only");
+    let malformed = invoke(&fixture, "down");
+    assert_eq!(malformed.status.code(), Some(FAULT_EXIT));
+    let Outcome::Fault(fault) = outcome(&malformed) else {
+        panic!("malformed discovery must fault");
+    };
+    assert_eq!(fault.reason, "canvas::discovery-malformed");
+
+    let capability = uuid("00000000-0000-4000-8000-000000000041");
+    let mut discovery = canvas::Discovery {
+        endpoint: "http://192.0.2.1:48123".to_owned(),
+        capability,
+        epoch: uuid("00000000-0000-4000-8000-000000000042"),
+    };
+    discovery
+        .publish(fixture.canvas())
+        .expect("non-loopback discovery publishes");
+    let non_loopback = invoke(&fixture, "down");
+    assert_eq!(non_loopback.status.code(), Some(FAULT_EXIT));
+    let Outcome::Fault(fault) = outcome(&non_loopback) else {
+        panic!("non-loopback discovery must fault");
+    };
+    assert_eq!(fault.reason, "canvas::endpoint-not-loopback");
+
+    #[cfg(unix)]
+    {
+        fs::set_permissions(fixture.canvas(), fs::Permissions::from_mode(0o644))
+            .expect("fixture discovery becomes public");
+        let insecure = invoke(&fixture, "down");
+        assert_eq!(insecure.status.code(), Some(FAULT_EXIT));
+        let Outcome::Fault(fault) = outcome(&insecure) else {
+            panic!("public discovery must fault");
+        };
+        assert_eq!(fault.reason, "canvas::discovery-insecure");
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("unused endpoint binds");
+    discovery.endpoint = format!(
+        "http://{}",
+        listener.local_addr().expect("unused endpoint address")
+    );
+    drop(listener);
+    discovery
+        .publish(fixture.canvas())
+        .expect("unavailable discovery publishes");
+    let started = Monotonic::now();
+    let unavailable = invoke(&fixture, "down");
+    assert!(started.elapsed() < Duration::from_secs(4));
+    assert_eq!(unavailable.status.code(), Some(FAULT_EXIT));
+    let Outcome::Fault(fault) = outcome(&unavailable) else {
+        panic!("unavailable endpoint must fault");
+    };
+    assert_eq!(fault.reason, "canvas::connect-failed");
+    let capability = capability.to_string();
+    assert!(
+        !unavailable
+            .stderr
+            .windows(capability.len())
+            .any(|w| w == capability.as_bytes())
+    );
 }
 
 #[test]

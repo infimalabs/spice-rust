@@ -13,8 +13,6 @@ use wire::{
     Reply, ReplyPosition, Seq,
 };
 
-use crate::resident;
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AdmittedRelease {
     published: proof::PublishedManifest,
@@ -72,14 +70,10 @@ pub(crate) enum RunResult {
     Published(Outcome<wire::intent::RecognitionAnswer>),
 }
 
-pub(crate) fn run(matches: &ArgMatches) -> RunResult {
+pub(crate) fn run(matches: &ArgMatches, contract: &crate::cli::Contract) -> RunResult {
     let prepared = match prepare() {
         Ok(prepared) => prepared,
         Err(outcome) => return RunResult::Plan(*outcome),
-    };
-    let connection = match resident::connect_operator(&prepared.discovery) {
-        Ok(connection) => connection,
-        Err(outcome) => return RunResult::Plan(map_outcome(outcome, |_| unreachable!())),
     };
     let Some(apply) = matches.get_one::<String>("apply") else {
         return RunResult::Plan(Outcome::Reply(Reply {
@@ -108,17 +102,21 @@ pub(crate) fn run(matches: &ArgMatches) -> RunResult {
             remedy: "preview the current sealed manifest and apply its new key".to_owned(),
         }));
     }
-    RunResult::Published(resident::request_release(
-        connection,
-        &prepared.release,
-        prepared.state,
-    ))
+    let outcome = crate::command_client::execute(
+        &prepared.repository,
+        contract,
+        crate::command_client::SelectedCommand::ReleasePublish {
+            release: &prepared.release,
+            state: prepared.state,
+        },
+    );
+    RunResult::Published(recognition_outcome(outcome))
 }
 
 struct Prepared {
     release: AdmittedRelease,
     state: PublicationState,
-    discovery: canvas::Discovery,
+    repository: spice::repository::Repository,
 }
 
 fn prepare() -> Result<Prepared, Box<Outcome<ReleasePlan>>> {
@@ -150,14 +148,31 @@ fn prepare() -> Result<Prepared, Box<Outcome<ReleasePlan>>> {
     })?;
     let state = observe(&snapshot, &release)
         .map_err(|error| Box::new(refusal::<ReleasePlan>("release::evidence-refused", &error)))?;
-    let canvas = repository.state_root().join("canvas");
-    let discovery = resident::read_operator_discovery(&canvas)
-        .map_err(|outcome| Box::new(map_outcome(outcome, |_| unreachable!())))?;
     Ok(Prepared {
         release,
         state,
-        discovery,
+        repository,
     })
+}
+
+fn recognition_outcome(
+    outcome: Outcome<wire::intent::CommandAnswer>,
+) -> Outcome<wire::intent::RecognitionAnswer> {
+    match outcome {
+        Outcome::Reply(reply) => match reply.body {
+            wire::intent::CommandAnswer::Recognition(body) => Outcome::Reply(Reply {
+                position: reply.position,
+                body,
+            }),
+            _ => Outcome::Fault(Fault {
+                class: FaultClass::Protocol,
+                reason: "release::answer-shape".to_owned(),
+                detail: "resident returned a non-recognition release answer".to_owned(),
+            }),
+        },
+        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => Outcome::Fault(fault),
+    }
 }
 
 pub(crate) fn admit_stage(root: &Path) -> Result<AdmittedRelease, ReleaseError> {
@@ -322,17 +337,6 @@ fn environment<B>(reason: &str, detail: &str) -> Outcome<B> {
         reason: reason.to_owned(),
         detail: detail.to_owned(),
     })
-}
-
-fn map_outcome<A, B>(outcome: Outcome<A>, map: impl FnOnce(A) -> B) -> Outcome<B> {
-    match outcome {
-        Outcome::Reply(reply) => Outcome::Reply(Reply {
-            position: reply.position,
-            body: map(reply.body),
-        }),
-        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
-        Outcome::Fault(fault) => Outcome::Fault(fault),
-    }
 }
 
 pub(crate) fn notes(matches: &clap::ArgMatches) -> Outcome<ReleaseNotes> {
