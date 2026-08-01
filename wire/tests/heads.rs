@@ -196,7 +196,9 @@ fn both_witness_vocabularies_coexist_unqualified() {
     let head: WitnessHead = wire::decode(WITNESS.as_bytes()).expect("witness head decodes");
     assert_eq!(head.class, PredicateClass::Review);
 
-    let task: TaskHandle = "WIRE-aBcD".parse().expect("fixture handle spells correctly");
+    let task: TaskHandle = "WIRE-aBcD"
+        .parse()
+        .expect("fixture handle spells correctly");
     let command = Command {
         v: wire::WireVersion::CURRENT,
         id: "018f82d4-6f59-7d06-92e3-bce913116307"
