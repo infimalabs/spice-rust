@@ -5,7 +5,8 @@ use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 
 use atomic::Destination;
-use wire::{BuildPins, Digest, InventoryEntry, ReleaseTarget, TargetPayload};
+use wire::Digest;
+use wire::manifest::{BuildPins, InventoryEntry, ReleaseTarget, TargetPayload};
 
 use crate::pins::{PinError, RequiredPins};
 

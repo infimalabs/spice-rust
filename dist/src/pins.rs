@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use wire::BuildPins;
+use wire::manifest::BuildPins;
 
 const SHA256_HEX_LEN: usize = 64;
 

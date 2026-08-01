@@ -7,7 +7,8 @@ use dist::{
     BuildError, Builder, PinError, PinName, Pipeline, PublishError, Publisher, RequiredPins,
     StageError,
 };
-use wire::{BuildPins, Digest, ReleaseTarget, TargetPayload};
+use wire::Digest;
+use wire::manifest::{BuildPins, ReleaseTarget, TargetPayload};
 
 const OLD_PAYLOAD: &[u8] = b"old-payload";
 

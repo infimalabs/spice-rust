@@ -30,7 +30,6 @@ pub use head::{
 };
 pub use hello::{Hello, Rejected};
 pub use ident::{CanonicalUuid, Digest, IdentError, Instant};
-pub use manifest::{BuildPins, InventoryEntry, ReleaseTarget, TargetPayload};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
     Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, Response, SeqRange, SeqRangeError,
