@@ -44,9 +44,8 @@ impl FloorDeclaration {
     }
 }
 
-/// One compiled Gate executable declaration before operational probing.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolDeclaration {
+struct ToolDeclaration {
     name: String,
     program: String,
     probe_arguments: Vec<String>,
@@ -74,6 +73,22 @@ impl ToolDeclaration {
             self.name, self.probe_output
         );
     }
+}
+
+/// One compiled Gate executable declaration without execution authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutableDeclaration {
+    name: String,
+    program: PathBuf,
+}
+
+impl ExecutableDeclaration {
+    fn new(name: impl Into<String>, program: impl Into<PathBuf>) -> Self {
+        Self {
+            name: name.into(),
+            program: program.into(),
+        }
+    }
 
     /// Stable compiled tool name.
     #[must_use]
@@ -84,7 +99,7 @@ impl ToolDeclaration {
     /// Exact compiled executable path.
     #[must_use]
     pub fn program(&self) -> &Path {
-        Path::new(&self.program)
+        &self.program
     }
 }
 
@@ -94,8 +109,14 @@ impl ToolDeclaration {
 ///
 /// Returns a specification error if this build's own declaration set is not
 /// internally coherent.
-pub fn declared_tools() -> Result<Vec<ToolDeclaration>, GateSetError> {
-    GateSet::current().map(|gate_set| gate_set.tools)
+pub fn declared_tools() -> Result<Vec<ExecutableDeclaration>, GateSetError> {
+    GateSet::current().map(|gate_set| {
+        gate_set
+            .tools
+            .into_iter()
+            .map(|tool| ExecutableDeclaration::new(tool.name, tool.program))
+            .collect()
+    })
 }
 
 /// Return every compiled Gate mutation executable without reading or starting it.
@@ -104,7 +125,7 @@ pub fn declared_tools() -> Result<Vec<ToolDeclaration>, GateSetError> {
 ///
 /// Returns a specification error if this build's own declaration set is not
 /// internally coherent.
-pub fn declared_mutation_tools() -> Result<Vec<ToolDeclaration>, GateSetError> {
+pub fn declared_mutation_tools() -> Result<Vec<ExecutableDeclaration>, GateSetError> {
     GateSet::current().map(|gate_set| {
         let tool = gate_set.kill.tool;
         [
@@ -112,12 +133,7 @@ pub fn declared_mutation_tools() -> Result<Vec<ToolDeclaration>, GateSetError> {
             ("cargo-mutants", tool.mutants_program()),
         ]
         .into_iter()
-        .map(|(name, program)| ToolDeclaration {
-            name: name.to_owned(),
-            program: program.display().to_string(),
-            probe_arguments: Vec::new(),
-            probe_output: String::new(),
-        })
+        .map(|(name, program)| ExecutableDeclaration::new(name, program))
         .collect()
     })
 }

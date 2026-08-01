@@ -187,7 +187,7 @@ fn tool_observation(
 
 fn gate_observation(
     profile: &str,
-    declarations: Result<Vec<gate::ToolDeclaration>, gate::GateSetError>,
+    declarations: Result<Vec<gate::ExecutableDeclaration>, gate::GateSetError>,
     probe: &impl ExecutableProbe,
 ) -> DoctorObservation {
     let declarations = match declarations {

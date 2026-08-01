@@ -6,8 +6,16 @@ mod tests {
     fn doctor_declarations_are_exact_views_of_both_current_tool_profiles() {
         let current = GateSet::current().expect("compiled gate set");
         assert_eq!(
-            declared_tools().expect("policy declarations"),
-            current.tools
+            declared_tools()
+                .expect("policy declarations")
+                .iter()
+                .map(|declaration| (declaration.name(), declaration.program()))
+                .collect::<Vec<_>>(),
+            current
+                .tools
+                .iter()
+                .map(|declaration| (declaration.name.as_str(), Path::new(&declaration.program)))
+                .collect::<Vec<_>>()
         );
 
         let mutation = declared_mutation_tools().expect("mutation declarations");
@@ -20,6 +28,13 @@ mod tests {
                 ("cargo", current.kill.tool.cargo_program()),
                 ("cargo-mutants", current.kill.tool.mutants_program()),
             ]
+        );
+        assert!(
+            declared_tools()
+                .expect("policy declarations")
+                .into_iter()
+                .chain(mutation)
+                .all(|declaration| declaration.program().is_absolute())
         );
     }
 
