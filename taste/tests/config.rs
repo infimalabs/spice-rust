@@ -124,30 +124,14 @@ fn every_documented_seed_selects_prose_containing_its_own_tracked_words() {
 }
 
 #[test]
-fn the_seeds_decode_unchanged_beside_the_tracked_root_configuration() {
-    // `spice.toml` carries root sections this crate has no opinion about,
-    // including arrays and integers under `[tasks]`. Composing the real
-    // document with the published seeds proves those sections are ignored
-    // rather than merely absent from a fixture written to avoid them.
-    let composed = format!("{TRACKED}\n{}", documented_seeds());
-
+fn the_tracked_root_configuration_installs_the_documented_seed_set() {
+    // Decoding the complete document also proves unrelated root sections are
+    // ignored. Equality covers identities, selectors, messages, and order
+    // without repeating any of those configured values in Rust.
     assert_eq!(
-        configured(&composed).expect("unrelated root sections are ignored"),
+        configured(TRACKED).expect("the tracked taste set decodes"),
         configured(documented_seeds()).expect("the published seeds decode"),
-        "an unrelated root section must not change the active set",
-    );
-}
-
-#[test]
-fn the_tracked_root_configuration_carries_no_taste_section_today() {
-    // The seeds are not installed in `spice.toml` yet: the Python scaffold
-    // harness governs that document during the interregnum and refuses a root
-    // key its schema does not name. This asserts the current tracked state so
-    // that installing the seeds is a deliberate edit here rather than a
-    // silent one, and so the refusal is exercised against real bytes.
-    assert!(
-        matches!(refusal(TRACKED), ConfigError::Absent),
-        "spice.toml must parse and reach the taste question",
+        "spice.toml must install exactly the seed behavior TASTES.md publishes",
     );
 }
 
