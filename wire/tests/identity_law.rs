@@ -576,11 +576,11 @@ fn cover_policy_heads(covered: &mut BTreeSet<String>) {
         "TrustHead",
         &[
             TrustHead {
-                digest: digest("a").to_string(),
+                digest: digest("a"),
                 state: TrustState::Pended,
             },
             TrustHead {
-                digest: digest("b").to_string(),
+                digest: digest("b"),
                 state: TrustState::Granted,
             },
         ],
@@ -594,7 +594,7 @@ fn cover_policy_heads(covered: &mut BTreeSet<String>) {
                 severity: "high".to_owned(),
                 locus: "wire/src/lib.rs".to_owned(),
                 owner: "wire".to_owned(),
-                receipt: digest("c").to_string(),
+                receipt: digest("c"),
                 state: FindingState::Open,
             },
             FindingHead {
@@ -602,7 +602,7 @@ fn cover_policy_heads(covered: &mut BTreeSet<String>) {
                 severity: "low".to_owned(),
                 locus: "wire/src/head.rs".to_owned(),
                 owner: "gate".to_owned(),
-                receipt: digest("d").to_string(),
+                receipt: digest("d"),
                 state: FindingState::Cleared,
             },
         ],
