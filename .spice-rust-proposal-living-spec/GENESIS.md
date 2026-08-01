@@ -1416,7 +1416,7 @@ Publication consumes the exact manifest, supply evidence, app, and replay proof.
 - Write release notes
   After: refuse-unproved-publication, add-the-version-verb
   Acceptance: Notes name build identity, schema movement, supported targets, operator actions, fixed refusals, and receipt digests
-  Acceptance: The sealed manifest, its receipts, and the Git range populate the factual sections — no journal read — and unresolved placeholders fail the release
+  Acceptance: One canonical ordered release INPUT carrying the source, both target payloads, and their proof and gate receipts populates the factual sections — no journal read — and unresolved placeholders fail the release
   Flow: todo, verify, review
   Priority: medium
   Tags: genesis, release

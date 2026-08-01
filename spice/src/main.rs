@@ -102,7 +102,8 @@ fn main() {
             Fault {
                 class: FaultClass::Environment,
                 reason: "release::target-unsupported".to_owned(),
-                detail: "immutable Git object inspection is unavailable on wasm32".to_owned(),
+                detail: "reading the explicit release notes INPUT file is unavailable on wasm32"
+                    .to_owned(),
             },
             form,
         );
