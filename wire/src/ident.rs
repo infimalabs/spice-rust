@@ -72,6 +72,16 @@ pub enum Domain {
     Pins,
     /// The inventory of what a staging run published.
     Inventory,
+    /// The bytes of one file inside a gate's jurisdiction.
+    GateFile,
+    /// The admitted file set of one gate jurisdiction, by content.
+    GateTree,
+    /// The enforcement policy one gate run read.
+    GatePolicy,
+    /// Every path one gate walk reached, admitted or not, with its reason.
+    GateInventory,
+    /// The quantities one gate run measured.
+    GateMeasurement,
 }
 
 impl Domain {
@@ -87,6 +97,11 @@ impl Domain {
             Self::Artifact => "spice.dist.artifact.v1",
             Self::Pins => "spice.dist.pins.v1",
             Self::Inventory => "spice.dist.inventory.v1",
+            Self::GateFile => "spice.gate.file.v1",
+            Self::GateTree => "spice.gate.tree.v1",
+            Self::GatePolicy => "spice.gate.policy.v1",
+            Self::GateInventory => "spice.gate.inventory.v1",
+            Self::GateMeasurement => "spice.gate.measurement.v1",
         }
     }
 }
