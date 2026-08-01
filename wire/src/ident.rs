@@ -69,6 +69,8 @@ pub enum IdentError {
 pub enum Domain {
     /// The exact authored bytes of one board document.
     BoardDocument,
+    /// The ordered repository-local Rust coexistence installation plan.
+    SpiceInstallPlan,
     /// The payload manifest of one release target.
     DistTargetPayload,
     /// The bytes of one staged artifact.
@@ -117,6 +119,7 @@ impl Domain {
     pub const fn tag(self) -> &'static str {
         match self {
             Self::BoardDocument => "spice.board.document.v1",
+            Self::SpiceInstallPlan => "spice.spice.install-plan.v1",
             Self::DistTargetPayload => "spice.dist.target-payload.v1",
             Self::DistArtifact => "spice.dist.artifact.v1",
             Self::DistPins => "spice.dist.pins.v1",
