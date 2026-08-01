@@ -12,7 +12,10 @@ pub struct LockName(String);
 impl LockName {
     pub fn new(name: impl Into<String>) -> Result<Self, LockNameError> {
         let name = name.into();
-        if name.is_empty() || !name.bytes().all(|byte| byte.is_ascii_lowercase()) {
+        if name.is_empty()
+            || matches!(name.as_str(), "." | "..")
+            || name.bytes().any(|byte| matches!(byte, b'/' | b'\0'))
+        {
             return Err(LockNameError);
         }
         Ok(Self(name))
@@ -28,7 +31,7 @@ pub struct LockNameError;
 
 impl fmt::Display for LockNameError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("lock name must be one lower-case word")
+        formatter.write_str("lock name must be one normal path component")
     }
 }
 
@@ -218,15 +221,15 @@ pub(crate) mod tests {
 
     #[test]
     fn lock_names_cannot_escape_the_fixed_topology() {
-        for name in ["", "UPPER", "two-words", "../outside", "with/slash", "9"] {
+        for name in ["", ".", "..", "../outside", "with/slash", "nul\0byte"] {
             assert!(LockName::new(name).is_err(), "{name:?} must be refused");
         }
-        assert_eq!(
-            LockName::new("worker")
-                .expect("one lower-case word")
-                .as_str(),
-            "worker"
-        );
+        for name in ["worker", "a.b", "two-words", "UPPER", "9"] {
+            assert_eq!(
+                LockName::new(name).expect("normal path component").as_str(),
+                name
+            );
+        }
     }
 
     fn acquired(acquisition: Acquisition) -> super::Possession {

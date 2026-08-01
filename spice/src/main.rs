@@ -14,6 +14,8 @@ use wire::{Fault, FaultClass, Outcome, Refusal};
 
 mod cli;
 #[cfg(not(target_arch = "wasm32"))]
+mod config_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod doctor;
 #[cfg(not(target_arch = "wasm32"))]
 mod gate_command;
@@ -72,6 +74,7 @@ fn main() {
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
         ["gate", "receipt"] => deliver(&gate_command::receipt(), form),
+        ["config"] => deliver_config(&config_command::run(leaf), form),
         ["lock"] => deliver(&lock_command::status(), form),
         ["version"] => deliver(&version_outcome(), form),
         _ => {}
@@ -495,6 +498,24 @@ fn deliver_with_code<B: serde::Serialize>(outcome: &Outcome<B>, form: Form, code
         }
         Err(error) => deliver_fault(render_fault(error), Form::Text),
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn deliver_config(outcome: &Outcome<config_command::ConfigReport>, form: Form) -> ! {
+    if form == Form::Text
+        && let Outcome::Reply(reply) = outcome
+    {
+        match reply.body.text() {
+            Ok(document) => {
+                let mut stdout = io::stdout().lock();
+                let _ = stdout.write_all(&document);
+                let _ = stdout.flush();
+                terminate_code(REPLY_EXIT);
+            }
+            Err(error) => deliver_fault(render_fault(error.to_string()), Form::Text),
+        }
+    }
+    deliver(outcome, form)
 }
 
 const fn exit_status<B>(outcome: &Outcome<B>) -> i32 {

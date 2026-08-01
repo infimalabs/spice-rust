@@ -11,7 +11,8 @@ mod load;
 mod resolve;
 
 pub use load::{
-    AcquisitionIssue, AcquisitionKind, LoadError, Locations, load, load_repository, locations,
+    AcquisitionIssue, AcquisitionKind, LoadError, Locations, load, load_coexisting_repository,
+    load_repository, locations,
 };
 pub use resolve::{
     ConcretePath, Document, FlagError, FlagOverride, FlagValue, Inputs, Issue, IssueKind,
@@ -144,7 +145,8 @@ impl ValueKind {
 }
 
 /// A compiled default represented as explicit absence or a serde scalar.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case", tag = "kind", content = "value")]
 pub enum Builtin {
     /// An optional fixed leaf has no compiled value.
     Absent,

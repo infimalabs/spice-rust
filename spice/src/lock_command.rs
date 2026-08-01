@@ -293,7 +293,7 @@ fn context() -> Result<Context, Outcome<()>> {
     let current = crate::working_directory()?;
     let repository = Repository::discover(&current)
         .map_err(|error| environment_fault("lock::repository-unresolved", &error.to_string()))?;
-    let resolved = spice::config::load_repository(&repository, &[])
+    let resolved = spice::config::load_coexisting_repository(&repository, &[])
         .map_err(|error| configuration_refusal(&error))?;
     Ok(Context {
         repository,

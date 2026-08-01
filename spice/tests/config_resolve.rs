@@ -25,6 +25,14 @@ fn documents<'a>(tracked: Option<&'a str>, local: Option<&'a str>) -> Inputs<'a>
     )
 }
 
+fn coexisting_documents<'a>(tracked: Option<&'a str>, local: Option<&'a str>) -> Inputs<'a> {
+    Inputs::coexisting(
+        tracked.map(|text| Document::new("spice.toml", text)),
+        local.map(|text| Document::new(".spice/local.toml", text)),
+        &[],
+    )
+}
+
 fn path_source(resolved: &Resolved, expected: &str) -> ConfigSource {
     resolved
         .provenance()
@@ -82,6 +90,54 @@ fn missing_and_empty_documents_are_empty_intent() {
     let default_json = serde_json::to_value(missing.root()).expect("default JSON renders");
     assert!(default_json["proof"].get("container").is_none());
     assert!(default_json["proof"].get("runner").is_none());
+}
+
+#[test]
+fn coexistence_ignores_only_the_two_tracked_scaffold_roots() {
+    let tracked = concat!(
+        "[tasks]\nstems = ['rim']\n",
+        "[policy]\nenv_names = []\n",
+        "[taste.polling]\nwords = ['poll*']\nmessage = 'use events'\n",
+    );
+    let local = "[lock.worker]\nshards = 2\n";
+
+    let strict = resolve(documents(Some(tracked), Some(local)))
+        .expect_err("release-one admission still rejects scaffold roots");
+    assert_eq!(
+        strict
+            .issues()
+            .iter()
+            .filter_map(|issue| issue.path().map(ToString::to_string))
+            .filter(|path| matches!(path.as_str(), "tasks" | "policy"))
+            .collect::<Vec<_>>(),
+        ["policy", "tasks"]
+    );
+
+    let coexisting = resolve(coexisting_documents(Some(tracked), Some(local)))
+        .expect("coexistence projects out only predecessor roots");
+    assert_eq!(coexisting.root().taste().bag().tastes().len(), 1);
+    assert_eq!(coexisting.root().lock().named().len(), 1);
+    assert_eq!(
+        path_source(&coexisting, "taste.polling.words"),
+        ConfigSource::Tracked
+    );
+    assert_eq!(
+        path_source(&coexisting, "lock.worker.shards"),
+        ConfigSource::Local
+    );
+
+    for (tracked, local, path) in [
+        (Some("[unknown]\nvalue = 1\n"), None, "unknown"),
+        (None, Some("[tasks]\nvalue = 1\n"), "tasks"),
+        (None, Some("[policy]\nvalue = 1\n"), "policy"),
+    ] {
+        let error = resolve(coexisting_documents(tracked, local))
+            .expect_err("coexistence must not widen another source or root");
+        assert!(error.issues().iter().any(|issue| {
+            issue.kind() == IssueKind::Unknown
+                && issue.path().is_some_and(|found| found.to_string() == path)
+        }));
+    }
 }
 
 #[test]
