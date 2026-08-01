@@ -77,8 +77,8 @@ fn release_targets_encode_as_canonical_rust_triples() {
 
 #[test]
 fn payloads_refuse_unknown_fields_at_every_structured_level() {
-    let encoded =
-        wire::encode(&payload(ReleaseTarget::Aarch64AppleDarwin, 'a')).expect("payload encodes");
+    let encoded = wire::encode(&payload(ReleaseTarget::Aarch64AppleDarwin, "darwin"))
+        .expect("payload encodes");
     let original: serde_json::Value = serde_json::from_slice(&encoded).expect("payload is JSON");
 
     for path in [Vec::new(), vec!["pins"], vec!["inventory", "0"]] {
