@@ -115,20 +115,21 @@ mod native {
             ))
         }
 
-        /// Arm one action. `after` is computed once from the durable deadline
-        /// and current wall reading; the actual wait then runs monotonically.
+        /// Arm one action from its durable deadline and one clock reading.
+        ///
+        /// The wall-to-monotonic conversion happens exactly once here. The
+        /// worker then waits only on the resulting monotonic instant.
         pub fn arm(
             &self,
             owner: impl Into<String>,
             kind: TimerKind,
             deadline: Deadline,
-            after: Duration,
         ) -> Result<TimerId, TimerError> {
             let owner = owner.into();
             if owner.trim().is_empty() {
                 return Err(TimerError::EmptyOwner);
             }
-            let due = Instant::now().checked_add(after).ok_or(TimerError::Range)?;
+            let due = due_at(deadline, read_clock())?;
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
                 .send(Request::Arm {
@@ -148,9 +149,8 @@ mod native {
             &self,
             owner: impl Into<String>,
             lease: &journal::crossing::LeaseHead,
-            after: Duration,
         ) -> Result<TimerId, TimerError> {
-            self.arm(owner, TimerKind::ClaimLapse, lease.expiry, after)
+            self.arm(owner, TimerKind::ClaimLapse, lease.expiry)
         }
 
         /// Cancel an armed wait before it emits an event.
@@ -183,6 +183,29 @@ mod native {
         fn drop(&mut self) {
             let _ = self.stop();
         }
+    }
+
+    #[derive(Clone, Copy)]
+    struct ClockReading {
+        wall: jiff::Timestamp,
+        monotonic: Instant,
+    }
+
+    fn read_clock() -> ClockReading {
+        ClockReading {
+            wall: jiff::Timestamp::now(),
+            monotonic: Instant::now(),
+        }
+    }
+
+    fn due_at(deadline: Deadline, reading: ClockReading) -> Result<Instant, TimerError> {
+        let remaining = deadline.get().duration_since(reading.wall);
+        let wait = if remaining.is_negative() {
+            Duration::ZERO
+        } else {
+            Duration::try_from(remaining).map_err(|_| TimerError::Range)?
+        };
+        reading.monotonic.checked_add(wait).ok_or(TimerError::Range)
     }
 
     enum Request {
@@ -330,8 +353,29 @@ mod native {
         use std::sync::mpsc::{self, TryRecvError};
         use std::time::{Duration, Instant};
 
-        use super::Schedule;
+        use super::{ClockReading, Schedule, due_at};
         use crate::timer::{Deadline, TimerKind};
+
+        #[test]
+        fn durable_deadline_derives_the_wait_and_past_deadlines_clamp_to_now() {
+            let monotonic = Instant::now();
+            let reading = ClockReading {
+                wall: deadline("2030-04-12T18:44:10.000Z").get(),
+                monotonic,
+            };
+
+            assert_eq!(
+                due_at(deadline("2030-04-12T18:44:10.250Z"), reading)
+                    .expect("future deadline is in range")
+                    .duration_since(monotonic),
+                Duration::from_millis(250),
+            );
+            assert_eq!(
+                due_at(deadline("2030-04-12T18:44:09.000Z"), reading)
+                    .expect("past deadline arms promptly"),
+                monotonic,
+            );
+        }
 
         #[test]
         fn schedule_waits_for_the_earliest_deadline_not_arm_order() {
@@ -421,7 +465,7 @@ impl fmt::Display for TimerError {
         match self {
             Self::EmptyOwner => formatter.write_str("timer owner must not be empty"),
             Self::Exhausted => formatter.write_str("timer identity range exhausted"),
-            Self::Range => formatter.write_str("timer delay exceeds the monotonic clock range"),
+            Self::Range => formatter.write_str("timer interval exceeds the monotonic clock range"),
             Self::Closed => formatter.write_str("timer worker is closed"),
             Self::Panicked => formatter.write_str("timer worker panicked"),
             #[cfg(not(target_arch = "wasm32"))]
