@@ -844,13 +844,11 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["proof", "replay"]
         | ["up"]
         | ["down"]
-        | ["run"] => Landing::Landed,
-        ["install"]
-        | ["lock"]
-        | ["lock", "run"]
-        | ["restore", "verify"]
-        | ["release", "notes"]
-        | ["config"] => Landing::Gap("LOCAL-1kJQlG6b"),
+        | ["run"]
+        | ["config"] => Landing::Landed,
+        ["install"] | ["lock"] | ["lock", "run"] | ["restore", "verify"] | ["release", "notes"] => {
+            Landing::Gap("LOCAL-1kJQlG6b")
+        }
         ["board"]
         | ["board", "graph"]
         | ["board", "handout"]

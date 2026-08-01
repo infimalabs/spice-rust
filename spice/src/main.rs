@@ -14,6 +14,8 @@ use wire::{Fault, FaultClass, Outcome, Refusal};
 
 mod cli;
 #[cfg(not(target_arch = "wasm32"))]
+mod config_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod doctor;
 #[cfg(not(target_arch = "wasm32"))]
 mod gate_command;
@@ -60,6 +62,7 @@ fn main() {
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
         ["gate", "receipt"] => deliver(&gate_command::receipt(), form),
+        ["config"] => deliver(&config_command::run(leaf), form),
         ["version"] => deliver(&version_outcome(), form),
         _ => {}
     }
