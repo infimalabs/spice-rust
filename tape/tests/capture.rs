@@ -7,6 +7,7 @@
 //! fixture builds that directory and then asks tape to carry on.
 
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
@@ -29,6 +30,7 @@ fn an_append_is_readable_before_anything_interprets_it() {
     assert_eq!(locus.offset, 0);
     assert_eq!(locus.length, VERBATIM.len() as u64);
     assert_eq!(tape.read(locus).expect("locus resolves"), VERBATIM);
+    scratch.remove();
 }
 
 #[test]
@@ -48,6 +50,7 @@ fn each_append_names_only_its_own_bytes() {
         assert_eq!(tape.read(*locus).expect("locus resolves"), chunk);
         expected_offset += chunk.len() as u64;
     }
+    scratch.remove();
 }
 
 #[test]
@@ -72,6 +75,7 @@ fn a_locus_survives_the_rotation_of_its_member() {
         tape.read(second).expect("the locus still resolves"),
         b"after"
     );
+    scratch.remove();
 }
 
 #[test]
@@ -101,6 +105,7 @@ fn sealing_publishes_an_indexed_private_gzip_member() {
 
     assert_private(&member);
     assert_private(&scratch.path().join("index"));
+    scratch.remove();
 }
 
 #[test]
@@ -125,6 +130,7 @@ fn a_seal_interrupted_before_its_index_republishes_identical_bytes() {
         "re-sealing the same plaintext republishes byte-identical bytes"
     );
     assert_eq!(tape.read(locus).expect("locus resolves"), VERBATIM);
+    scratch.remove();
 }
 
 #[test]
@@ -155,6 +161,7 @@ fn a_seal_interrupted_before_cleanup_loses_no_bytes() {
         "no captured byte was lost by finishing the seal"
     );
     assert_eq!(tape.read(next).expect("the new locus resolves"), b"later");
+    scratch.remove();
 }
 
 #[test]
@@ -170,6 +177,7 @@ fn an_empty_member_seals_nothing() {
         Seal::Empty,
         "a member holding no bytes is not worth a gzip member"
     );
+    scratch.remove();
 }
 
 #[test]
@@ -200,6 +208,7 @@ fn a_locus_past_the_end_of_its_member_is_refused() {
         ),
         "a locus whose end overflows is refused rather than wrapping"
     );
+    scratch.remove();
 }
 
 #[test]
@@ -217,6 +226,7 @@ fn a_locus_naming_an_unissued_member_is_refused() {
             "got {error}"
         );
     }
+    scratch.remove();
 }
 
 #[test]
@@ -239,6 +249,7 @@ fn the_index_round_trips_through_its_byte_stable_form() {
         Some("tape 1"),
         "the index names its own format first"
     );
+    scratch.remove();
 }
 
 /// The accept half of "parse admits exactly what render emits".
@@ -379,6 +390,7 @@ fn readers_resolve_loci_while_a_sealer_publishes_underneath_them() {
     reader
         .join()
         .expect("no reader observed a torn or missing member");
+    scratch.remove();
 }
 
 /// Assert a published file is readable and writable only by its owner.
@@ -398,30 +410,95 @@ fn assert_private(path: &Path) {
     let _ = path;
 }
 
-/// A scratch directory removed when the fixture ends.
-struct Scratch(PathBuf);
+/// Names tried before a scratch root is declared unobtainable.
+const CREATE_ATTEMPTS: usize = 128;
+
+/// The first candidate this call creates, never one it merely found.
+fn create_scratch_root(candidates: impl Iterator<Item = PathBuf>) -> PathBuf {
+    for root in candidates.take(CREATE_ATTEMPTS) {
+        match fs::create_dir(&root) {
+            Ok(()) => return root,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => panic!("create a scratch root at {}: {error}", root.display()),
+        }
+    }
+    panic!("no scratch root was free within {CREATE_ATTEMPTS} attempts");
+}
+
+/// A scratch directory explicitly removed when the fixture ends.
+struct Scratch {
+    root: PathBuf,
+    removed: bool,
+}
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
 impl Scratch {
     fn new(label: &str) -> Self {
-        let sequence = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "spice-tape-{label}-{}-{sequence}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&path);
-        fs::create_dir_all(&path).expect("scratch directory is created");
-        Self(path)
+        let directory = std::env::temp_dir();
+        let process = std::process::id();
+        let root = create_scratch_root(std::iter::repeat_with(|| {
+            let sequence = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
+            directory.join(format!("spice-tape-{label}-{process}-{sequence}"))
+        }));
+        Self {
+            root,
+            removed: false,
+        }
     }
 
     fn path(&self) -> &Path {
-        &self.0
+        &self.root
+    }
+
+    fn remove(mut self) {
+        fs::remove_dir_all(&self.root).unwrap_or_else(|error| {
+            panic!(
+                "remove the scratch root at {}: {error}",
+                self.root.display()
+            )
+        });
+        assert!(
+            !self.root.exists(),
+            "the scratch root outlived its removal at {}",
+            self.root.display()
+        );
+        self.removed = true;
     }
 }
 
 impl Drop for Scratch {
+    /// Attempt cleanup during unwinding without replacing the first panic.
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        if !self.removed {
+            let _ = fs::remove_dir_all(&self.root);
+        }
     }
+}
+
+#[test]
+fn scratch_setup_skips_a_root_that_an_earlier_run_already_owns() {
+    let owner = Scratch::new("collision-owner");
+    let taken = owner.path().join("taken");
+    let free = owner.path().join("free");
+    fs::create_dir(&taken).expect("plant a taken scratch root");
+    fs::write(taken.join("left-behind"), b"earlier run").expect("plant stale content");
+
+    let created = create_scratch_root([taken.clone(), free.clone()].into_iter());
+
+    assert_eq!(created, free, "a taken scratch root was adopted");
+    assert_eq!(
+        fs::read(taken.join("left-behind")).expect("stale content remains readable"),
+        b"earlier run",
+        "the taken scratch root was disturbed"
+    );
+    assert_eq!(
+        fs::read_dir(&created)
+            .expect("the created scratch root is readable")
+            .count(),
+        0,
+        "the created scratch root carried content it did not write"
+    );
+
+    owner.remove();
 }

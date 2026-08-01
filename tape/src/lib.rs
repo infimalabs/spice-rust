@@ -442,15 +442,84 @@ impl std::error::Error for Error {
 mod tests {
     use super::*;
 
+    const CREATE_ATTEMPTS: usize = 128;
+
+    fn create_scratch_root(candidates: impl Iterator<Item = PathBuf>) -> PathBuf {
+        for root in candidates.take(CREATE_ATTEMPTS) {
+            match fs::create_dir(&root) {
+                Ok(()) => return root,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => panic!("create a scratch root at {}: {error}", root.display()),
+            }
+        }
+        panic!("no scratch root was free within {CREATE_ATTEMPTS} attempts");
+    }
+
+    struct Scratch {
+        root: PathBuf,
+        removed: bool,
+    }
+
+    impl Scratch {
+        fn new(label: &str) -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let directory = std::env::temp_dir();
+            let process = std::process::id();
+            let root = create_scratch_root(std::iter::repeat_with(|| {
+                let unique = NEXT.fetch_add(1, Ordering::Relaxed);
+                directory.join(format!("spice-tape-{label}-{process}-{unique}"))
+            }));
+            Self {
+                root,
+                removed: false,
+            }
+        }
+
+        fn path(&self) -> &Path {
+            &self.root
+        }
+
+        fn remove(mut self) {
+            fs::remove_dir_all(&self.root).unwrap_or_else(|error| {
+                panic!(
+                    "remove the scratch root at {}: {error}",
+                    self.root.display()
+                )
+            });
+            self.assert_gone();
+            self.removed = true;
+        }
+
+        fn assert_removed(mut self) {
+            self.assert_gone();
+            self.removed = true;
+        }
+
+        fn assert_gone(&self) {
+            assert!(
+                !self.root.exists(),
+                "the scratch root outlived its removal at {}",
+                self.root.display()
+            );
+        }
+    }
+
+    impl Drop for Scratch {
+        /// Attempt cleanup during unwinding without replacing the first panic.
+        fn drop(&mut self) {
+            if !self.removed {
+                let _ = fs::remove_dir_all(&self.root);
+            }
+        }
+    }
+
     /// Contention is tested here rather than beside the other fixtures because
     /// holding the writer lock without appending requires [`Tape::possess`],
     /// which is deliberately not part of the public surface.
     #[test]
     fn a_second_writer_is_refused_rather_than_left_to_wait() {
-        let root =
-            std::env::temp_dir().join(format!("spice-tape-contended-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let tape = Tape::open(&root).expect("tape opens");
+        let scratch = Scratch::new("contended");
+        let tape = Tape::open(scratch.path()).expect("tape opens");
 
         let held = tape.possess().expect("the first writer takes the lock");
 
@@ -469,27 +538,47 @@ mod tests {
         tape.tee(b"admitted")
             .expect("the lock is released with its possession");
 
-        let _ = fs::remove_dir_all(&root);
+        scratch.remove();
     }
 
-    /// Scratch root for one unit fixture, distinct per test and per process.
-    fn scratch(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("spice-tape-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        root
+    #[test]
+    fn scratch_setup_skips_a_root_that_an_earlier_run_already_owns() {
+        let owner = Scratch::new("collision-owner");
+        let taken = owner.path().join("taken");
+        let free = owner.path().join("free");
+        fs::create_dir(&taken).expect("plant a taken scratch root");
+        fs::write(taken.join("left-behind"), b"earlier run").expect("plant stale content");
+
+        let created = create_scratch_root([taken.clone(), free.clone()].into_iter());
+
+        assert_eq!(created, free, "a taken scratch root was adopted");
+        assert_eq!(
+            fs::read(taken.join("left-behind")).expect("stale content remains readable"),
+            b"earlier run",
+            "the taken scratch root was disturbed"
+        );
+        assert_eq!(
+            fs::read_dir(&created)
+                .expect("the created scratch root is readable")
+                .count(),
+            0,
+            "the created scratch root carried content it did not write"
+        );
+
+        owner.remove();
     }
 
     /// A tee that cannot commit the member's name has not captured anything a
     /// locus could promise, so the failure is returned rather than assumed.
     #[test]
     fn a_directory_synchronization_failure_is_surfaced() {
-        let root = scratch("unsyncable");
-        let tape = Tape::open(&root).expect("tape opens");
+        let scratch = Scratch::new("unsyncable");
+        let tape = Tape::open(scratch.path()).expect("tape opens");
         tape.tee(b"captured").expect("the first append is captured");
         tape.sync_directory()
             .expect("an intact directory synchronizes");
 
-        fs::remove_dir_all(&root).expect("the directory is removed underneath the tape");
+        fs::remove_dir_all(scratch.path()).expect("the directory is removed underneath the tape");
 
         let error = tape
             .sync_directory()
@@ -504,6 +593,7 @@ mod tests {
             ),
             "got {error}",
         );
+        scratch.assert_removed();
     }
 
     #[test]
