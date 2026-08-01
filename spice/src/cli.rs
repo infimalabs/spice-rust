@@ -5,6 +5,10 @@ use std::collections::BTreeSet;
 use clap::{Arg, ArgAction, ArgMatches, Command, builder::PossibleValuesParser};
 use wire::FactKind;
 
+/// The renderer flag, spelled once so its registration and its reader cannot
+/// drift into naming two different arguments that merely agree today.
+const JSON: &str = "json";
+
 /// Principal admitted to a command leaf.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Principal {
@@ -752,8 +756,8 @@ fn command_from(contracts: &[Contract]) -> Command {
         .arg_required_else_help(true)
         .disable_help_subcommand(true)
         .arg(
-            Arg::new("json")
-                .long("json")
+            Arg::new(JSON)
+                .long(JSON)
                 .global(true)
                 .action(ArgAction::SetTrue),
         );
@@ -997,6 +1001,17 @@ pub(crate) fn selected_contract(matches: &ArgMatches) -> Option<&'static Contrac
     contract_at(CONTRACTS, &path)
 }
 
+/// Whether the caller asked for the JSON rendering.
+///
+/// The flag is global, so clap admits it anywhere a renderer flag can be
+/// meant and reports it from the root regardless of where it was written. The
+/// one place it is not a renderer flag is after a trailing `--`, where the
+/// operand is the caller's own command and its flags are that command's, not
+/// spice's.
+pub(crate) fn json_selected(matches: &ArgMatches) -> bool {
+    matches.get_flag(JSON)
+}
+
 #[cfg(test)]
 #[derive(Debug, Default, Eq, PartialEq)]
 struct ClosureGaps {
@@ -1219,5 +1234,101 @@ mod tests {
             selected_contract(&matches),
             contract_at(CONTRACTS, &["doctor"])
         );
+    }
+
+    /// The renderer flag is recognised wherever spice's own words are.
+    ///
+    /// A position spice fails to recognise silently renders a sentence to a
+    /// caller who asked for a document, and that caller learns of it by
+    /// failing to parse what arrived.
+    #[test]
+    fn the_renderer_flag_is_read_wherever_spice_owns_the_word() {
+        for argv in [
+            &["spice", "--json", "task", "next"][..],
+            &["spice", "task", "--json", "next"][..],
+            &["spice", "task", "next", "--json"][..],
+            &["spice", "--json", "doctor"][..],
+            &["spice", "doctor", "--json"][..],
+        ] {
+            let matches = command()
+                .try_get_matches_from(argv)
+                .unwrap_or_else(|error| panic!("{argv:?} must parse: {error}"));
+            assert!(json_selected(&matches), "{argv:?} asked for JSON");
+        }
+
+        let matches = command()
+            .try_get_matches_from(["spice", "task", "next"])
+            .expect("an unflagged leaf parses");
+        assert!(!json_selected(&matches), "nobody asked for JSON");
+    }
+
+    /// A placeholder for each operand a contract requires before its command
+    /// delimiter, or nothing when it admits no child command.
+    ///
+    /// The delimiter is found through the same tokeniser registration reads
+    /// the row with, so a test cannot come to a different conclusion about
+    /// where one leaf's words end from the one the parser was built on.
+    fn operands_before_delimiter(contract: &Contract) -> Option<Vec<&'static str>> {
+        let tail = contract
+            .syntax
+            .strip_prefix(contract.path.join(" ").as_str())
+            .expect("syntax begins with its registered path");
+        let tokens = syntax_tokens(tail.trim()).expect("registered syntax tokenises");
+        let delimiter = tokens.iter().position(|token| *token == "--")?;
+        Some(
+            tokens[..delimiter]
+                .iter()
+                .filter(|token| !is_optional(token))
+                .map(|_| "OPERAND")
+                .collect(),
+        )
+    }
+
+    /// Every command delimiter in the registry ends spice's words and begins
+    /// the caller's.
+    ///
+    /// This walks the rows rather than naming `run`, because the property
+    /// belongs to the delimiter and a second leaf that admits a child command
+    /// would otherwise inherit the claim without ever being asked. It fails in
+    /// the opposite direction from the placement law above: a delimiter spice
+    /// reads past both silently changes its own rendering and hands the child
+    /// a shorter command than the operator typed, and the child is an
+    /// arbitrary tool that is as likely as spice to have a flag by that name.
+    #[test]
+    fn a_child_commands_words_begin_at_the_delimiter() {
+        let delimited = CONTRACTS
+            .iter()
+            .filter_map(|contract| Some((contract, operands_before_delimiter(contract)?)))
+            .collect::<Vec<_>>();
+        assert!(
+            !delimited.is_empty(),
+            "the registry admits at least one child command",
+        );
+
+        for (contract, operands) in delimited {
+            let mut argv = vec!["spice"];
+            argv.extend(contract.path.iter().copied());
+            argv.extend(operands);
+
+            let mut renderer = argv.clone();
+            renderer.extend(["--json", "--", "echo"]);
+            let matches = command()
+                .try_get_matches_from(&renderer)
+                .unwrap_or_else(|error| panic!("{renderer:?} must parse: {error}"));
+            assert!(
+                json_selected(&matches),
+                "{renderer:?} asked for JSON before the delimiter",
+            );
+
+            let mut child = argv;
+            child.extend(["--", "echo", "--json"]);
+            let matches = command()
+                .try_get_matches_from(&child)
+                .unwrap_or_else(|error| panic!("{child:?} must parse: {error}"));
+            assert!(
+                !json_selected(&matches),
+                "{child:?} spelled the child's flag, not the renderer's",
+            );
+        }
     }
 }

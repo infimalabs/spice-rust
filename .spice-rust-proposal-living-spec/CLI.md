@@ -23,7 +23,10 @@ preview, and only the matching apply form may commit it. A changed plan
 refuses as stale instead of applying different bytes. Document apply is
 stricter still: `--apply=<digest>` must name the exact digest printed by
 the preview. Text and JSON are renderings of the same reply DTO; flags do
-not create a second behavior.
+not create a second behavior. The stream is a property of the outcome and
+not of the rendering: a `Reply` answers on stdout, a `Refusal` and a
+`Fault` speak on stderr, and `--json` changes the bytes on that stream
+without moving them to the other one.
 
 Three independent labels state hermetic posture:
 
