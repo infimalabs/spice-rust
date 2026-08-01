@@ -46,6 +46,8 @@ mod restore_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod steering_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod taste_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod trust_command;
 
 use render::Form;
@@ -186,6 +188,9 @@ fn main() {
         ["trust"] => deliver(&trust_command::report(contract), form),
         ["trust", "grant"] => deliver(&trust_command::rule(leaf, contract, true), form),
         ["trust", "revoke"] => deliver(&trust_command::rule(leaf, contract, false), form),
+        ["taste"] => deliver(&taste_command::report(contract), form),
+        ["taste", "add"] => deliver(&taste_command::add(leaf, contract), form),
+        ["taste", "drop"] => deliver(&taste_command::drop(leaf, contract), form),
         _ => {}
     }
     #[cfg(target_arch = "wasm32")]
