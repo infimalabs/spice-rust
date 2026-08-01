@@ -861,6 +861,7 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["journal", "verify"]
         | ["fold"]
         | ["thread"]
+        | ["canvas"]
         | ["release", "publish"]
         | ["consent"]
         | ["consent", "allow"]
@@ -892,7 +893,6 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["recall"]
         | ["ack"] => Landing::Gap("COORDIN-1kJQlDjc"),
         ["taste"] | ["taste", "add"] | ["taste", "drop"] => Landing::Gap("POLICY-1kJQlFB6"),
-        ["canvas"] => Landing::Gap("PUBLISH-1kJQlGb0"),
         _ => Landing::Unaccounted,
     }
 }

@@ -12,6 +12,8 @@ use std::{
 use listen::{RetroSelector, StreamOutcome, SurfaceError, Watch};
 use wire::{Fault, FaultClass, Outcome, Refusal};
 
+#[cfg(not(target_arch = "wasm32"))]
+mod canvas_command;
 mod cli;
 #[cfg(not(target_arch = "wasm32"))]
 mod command_client;
@@ -150,6 +152,7 @@ fn main() {
         ["journal", "verify"] => deliver(&journal_command::verify(), form),
         ["fold"] => deliver(&journal_command::folds(), form),
         ["thread"] => deliver(&journal_command::thread(leaf), form),
+        ["canvas"] => deliver(&canvas_command::open(), form),
         ["version"] => deliver(&version_outcome(), form),
         ["release", "notes"] => deliver(&release_command::notes(leaf), form),
         ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
@@ -163,39 +166,7 @@ fn main() {
         _ => {}
     }
     #[cfg(target_arch = "wasm32")]
-    if contract.path.first() == Some(&"gate") {
-        deliver_fault(
-            Fault {
-                class: FaultClass::Environment,
-                reason: "gate::target-unsupported".to_owned(),
-                detail: "immutable Git tree selection is unavailable on wasm32".to_owned(),
-            },
-            form,
-        );
-    }
-    #[cfg(target_arch = "wasm32")]
-    if contract.path == ["release", "notes"] {
-        deliver_fault(
-            Fault {
-                class: FaultClass::Environment,
-                reason: "release::target-unsupported".to_owned(),
-                detail: "reading the explicit release notes INPUT file is unavailable on wasm32"
-                    .to_owned(),
-            },
-            form,
-        );
-    }
-    #[cfg(target_arch = "wasm32")]
-    if contract.path == ["install"] {
-        deliver_fault(
-            Fault {
-                class: FaultClass::Environment,
-                reason: "install::target-unsupported".to_owned(),
-                detail: "filesystem installation is unavailable on wasm32".to_owned(),
-            },
-            form,
-        );
-    }
+    deliver_target_refusal(contract.path, form);
     #[cfg(not(target_arch = "wasm32"))]
     let outcome = match contract.path {
         ["up"] => resident::up(),
@@ -205,6 +176,37 @@ fn main() {
     #[cfg(target_arch = "wasm32")]
     let outcome = not_landed(contract);
     deliver(&outcome, form);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn deliver_target_refusal(path: &[&str], form: Form) {
+    let (reason, detail) = match path {
+        ["gate", ..] => (
+            "gate::target-unsupported",
+            "immutable Git tree selection is unavailable on wasm32",
+        ),
+        ["release", "notes"] => (
+            "release::target-unsupported",
+            "reading the explicit release notes INPUT file is unavailable on wasm32",
+        ),
+        ["install"] => (
+            "install::target-unsupported",
+            "filesystem installation is unavailable on wasm32",
+        ),
+        ["canvas"] => (
+            "canvas::target-unsupported",
+            "repository discovery and platform browser launch are unavailable on wasm32",
+        ),
+        _ => return,
+    };
+    deliver_fault(
+        Fault {
+            class: FaultClass::Environment,
+            reason: reason.to_owned(),
+            detail: detail.to_owned(),
+        },
+        form,
+    );
 }
 
 fn not_landed(contract: &cli::Contract) -> Outcome<()> {

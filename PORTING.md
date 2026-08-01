@@ -59,8 +59,8 @@ operator authorizes cutover.
 
 ## Rust contracts
 
-The registry contains 63 command leaves. Thirty-five have executable dispatch,
-so current executable coverage is 35/63, or 55.6 percent. Completed domain
+The registry contains 63 command leaves. Thirty-six have executable dispatch,
+so current executable coverage is 36/63, or 57.1 percent. Completed domain
 libraries do not count as landed command surfaces.
 
 ### Landed
@@ -100,6 +100,7 @@ libraries do not count as landed command surfaces.
 - `journal verify`
 - `fold`
 - `thread`
+- `canvas`
 
 The local command group retains the Python-first ownership boundary described
 above: plain `install` is a side-effect-free plan, and only an exact
@@ -151,10 +152,6 @@ read the Python authority under `<git-common>/.spice`.
 - `taste`
 - `taste add`
 - `taste drop`
-
-### `PUBLISH-1kJQlGb0`
-
-- `canvas`
 
 `spice/src/cli.rs::landing` carries the same classification. Its closure test
 fails for any registered Rust leaf without a disposition. A leaf classified
@@ -269,9 +266,9 @@ not a shipped one-for-one product verb. `VERIFY-1kJQlH5b` owns policy parity.
 
 ### Operator canvas
 
-- `serve`: Rust `canvas`; `PUBLISH-1kJQlGb0`.
+- `serve`: landed Rust `canvas`.
 - `serve browser-artifact-path`: embedded canvas discovery;
-  `PUBLISH-1kJQlGb0`.
+  landed Rust `canvas`.
 - `serve rebuild-projections`: `journal replay` and `fold`;
   `JOURNAL-1kJQlFfS`.
 - `serve teams`: `lane` and `board`; coordination and board tasks.

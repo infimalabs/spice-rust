@@ -78,10 +78,10 @@ pub use hello::{Accepted, Hello, Rejected};
 pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
-    Fault, FaultClass, FoldReport, FoldState, JournalBackup, JournalReindex, JournalReport,
-    JournalRestore, JournalVerification, Outcome, ProofEvidence, Refusal, ReleaseNotes,
-    ReleaseNotesTarget, ReleasePlan, Reply, ReplyPosition, Response, RestoreVerification, SeqRange,
-    SeqRangeError, ThreadReport, Version,
+    CanvasOpen, Fault, FaultClass, FoldReport, FoldState, JournalBackup, JournalReindex,
+    JournalReport, JournalRestore, JournalVerification, Outcome, ProofEvidence, Refusal,
+    ReleaseNotes, ReleaseNotesTarget, ReleasePlan, Reply, ReplyPosition, Response,
+    RestoreVerification, SeqRange, SeqRangeError, ThreadReport, Version,
 };
 pub use witness::{
     Answer, Disposition, Name, NameError, Phase, PhaseError, TaskHandle, TaskHandleError, Witness,
