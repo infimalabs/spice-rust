@@ -39,10 +39,10 @@ pub mod witness;
 pub use command::{Command, CommandKind, CommandKindError, Law, LawError};
 pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVersion};
 pub use fact::{Fact, FactKind};
+pub use head::WitnessClass;
 pub use head::{
     ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency, LeaseHead,
-    ResidencyHead, ResidentState, TaskHead, TrustHead, TrustState, WitnessHead, WitnessKind,
-    WorkflowHead,
+    ResidencyHead, ResidentState, TaskHead, TrustHead, TrustState, WitnessHead, WorkflowHead,
 };
 pub use hello::{Hello, Rejected};
 pub use ident::{CanonicalUuid, Digest, IdentError, Instant};
