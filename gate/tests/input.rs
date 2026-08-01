@@ -7,6 +7,7 @@ use gate::{
 
 const TRACKED_POLICY: &str = include_str!("../../spice.toml");
 const TRACKED_BASELINE: &str = include_str!("../../baseline.toml");
+const TRACKED_LONG_LINE_FLOOR: u64 = 70;
 
 #[test]
 fn tracked_inputs_load_one_operational_current_contract() {
@@ -31,11 +32,14 @@ fn tracked_inputs_load_one_operational_current_contract() {
             .iter()
             .map(|floor| (floor.name(), floor.value()))
             .collect::<Vec<_>>(),
-        [("rust.long-lines", 61), ("rust.mutation-survivors", 0)]
+        [
+            ("rust.long-lines", TRACKED_LONG_LINE_FLOOR),
+            ("rust.mutation-survivors", 0),
+        ]
     );
     assert_eq!(
         contract.ratchet().baselines().collect::<Vec<_>>(),
-        [("rust.long-lines", 61)],
+        [("rust.long-lines", TRACKED_LONG_LINE_FLOOR)],
         "mutation debt is current baseline state but not a retired parser metric"
     );
     assert_eq!(contract.tools().len(), 1);

@@ -12,6 +12,7 @@ mod claude;
 mod codex;
 mod event;
 mod residue;
+mod surface;
 
 pub use canary::{Alarm, Canary};
 pub use event::{
@@ -19,17 +20,31 @@ pub use event::{
     ToolResult, Usage,
 };
 pub use residue::{Decoded, LocusLengthError, Residue, ResidueKind};
+pub use surface::{
+    Mode, Observation, RetroSelector, Span, StreamOutcome, SurfaceError, Watch, retro,
+};
 pub use tape::Locus;
 
 use serde_json::{Map, Value};
 
 /// The installed vendor stream grammar to apply.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub enum Dialect {
     /// Claude Code JSONL records.
     Claude,
     /// Codex rollout JSONL records.
     Codex,
+}
+
+impl Dialect {
+    /// Stable surface spelling of this decoder.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+        }
+    }
 }
 
 /// Decode one complete vendor record already committed to tape.

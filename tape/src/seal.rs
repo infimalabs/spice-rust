@@ -40,6 +40,21 @@ pub struct Member {
     pub length: u64,
 }
 
+/// Observable bounds of one durable tape member.
+///
+/// A sealed extent cannot grow. An active extent may be longer on the next
+/// observation, which is the cursor comparison a daemonless listener uses to
+/// heal notifications it never received.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Extent {
+    /// Member number.
+    pub member: u64,
+    /// Plaintext bytes currently readable from the member.
+    pub length: u64,
+    /// Whether the member has crossed the immutable index boundary.
+    pub sealed: bool,
+}
+
 /// Every sealed member of one tape, in ascending member order.
 ///
 /// The index records plaintext lengths rather than compressed lengths because
@@ -221,6 +236,54 @@ impl Tape {
     /// I/O failure when it cannot be read.
     pub fn index(&self) -> Result<Index, Error> {
         self.read_index()
+    }
+
+    /// Snapshot every currently readable member bound in ascending order.
+    ///
+    /// The snapshot reads only metadata and the index. A seal racing this read
+    /// may make the active member disappear after an older index was read; in
+    /// that case the next snapshot observes the published index and the
+    /// caller's durable cursor heals the missed transition.
+    ///
+    /// # Errors
+    ///
+    /// Returns a refusal when the index is not current, or an I/O failure when
+    /// the index or active member metadata cannot be read.
+    pub fn extents(&self) -> Result<Vec<Extent>, Error> {
+        let index = self.read_index()?;
+        let mut extents = index
+            .members()
+            .iter()
+            .map(|member| Extent {
+                member: member.member,
+                length: member.length,
+                sealed: true,
+            })
+            .collect::<Vec<_>>();
+
+        let active = index.next_member();
+        let path = self.plain_path(active);
+        match fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() => extents.push(Extent {
+                member: active,
+                length: metadata.len(),
+                sealed: false,
+            }),
+            Ok(_) => {
+                return Err(Error::io(
+                    Operation::InspectExtents,
+                    path,
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "active tape member is not a regular file",
+                    ),
+                ));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(Error::io(Operation::InspectExtents, path, error)),
+        }
+
+        Ok(extents)
     }
 
     /// Read the index, treating an absent one as an empty tape.
