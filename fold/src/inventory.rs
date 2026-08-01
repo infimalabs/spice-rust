@@ -1,11 +1,15 @@
+use std::fmt;
+
 use crate::{
-    Beyond, ConfigSource, FactPlane, FoldId, HeadSource, Recovery, RingId, Source, TapeSource,
+    AnswerContent, Beyond, ConfigSource, FactPlane, HeadSource, Recovery, Source, TapeSource,
 };
 
 /// One fold's static contract.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Definition {
     pub fold: FoldId,
+    pub answer: &'static str,
+    pub answer_content: &'static [AnswerContent],
     pub sources: &'static [Source],
     pub beyond: Beyond,
     pub recovery: Recovery,
@@ -28,6 +32,135 @@ pub struct RingDefinition {
     pub ring: RingId,
     pub recovery: Recovery,
 }
+
+macro_rules! source {
+    (Fact($variant:ident => $name:literal)) => {
+        Source::Fact(wire::FactKind::$variant)
+    };
+    (Facts($variant:ident => $name:literal)) => {
+        Source::Facts(FactPlane::$variant)
+    };
+    (Fold($variant:ident => $name:literal)) => {
+        Source::Fold(FoldId::$variant)
+    };
+    (Head($variant:ident => $name:literal)) => {
+        Source::Head(HeadSource::$variant)
+    };
+    (Ring($variant:ident => $name:literal)) => {
+        Source::Ring(RingId::$variant)
+    };
+    (Config($variant:ident => $name:literal)) => {
+        Source::Config(ConfigSource::$variant)
+    };
+    (Tape($variant:ident => $name:literal)) => {
+        Source::Tape(TapeSource::$variant)
+    };
+    (CommandResults($variant:ident => $name:literal)) => {
+        Source::CommandResults
+    };
+}
+
+macro_rules! answer_content {
+    (Fact($variant:ident => $name:literal)) => {
+        AnswerContent::Fact(wire::FactKind::$variant)
+    };
+    (Facts($variant:ident => $name:literal)) => {
+        AnswerContent::Facts(FactPlane::$variant)
+    };
+    (Head($variant:ident => $name:literal)) => {
+        AnswerContent::Head(HeadSource::$variant)
+    };
+}
+
+macro_rules! fold_registry {
+    ($(
+        $variant:ident => $name:literal {
+            answer: $answer:literal;
+            content: [$($content_kind:ident($content_variant:ident => $content_name:literal)),* $(,)?];
+            sources: [$($source_kind:ident($source_variant:ident => $source_name:literal)),* $(,)?];
+            beyond: $beyond:ident;
+        }
+    )+) => {
+        /// One registered disposable materialization.
+        ///
+        /// Declaration order is dependency-safe rebuild order: a fold appears
+        /// after every fold it names as a source.
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        pub enum FoldId {
+            $($variant),+
+        }
+
+        impl FoldId {
+            /// Every fold in dependency-safe rebuild order.
+            pub const ALL: &[Self] = &[$(Self::$variant),+];
+
+            /// The fold's wire name.
+            #[must_use]
+            pub const fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name),+
+                }
+            }
+        }
+
+        impl fmt::Display for FoldId {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str(self.as_str())
+            }
+        }
+
+        const DEFINITIONS: &[Definition] = &[
+            $(Definition {
+                fold: FoldId::$variant,
+                answer: $answer,
+                answer_content: &[
+                    $(answer_content!($content_kind($content_variant => $content_name))),*
+                ],
+                sources: &[
+                    $(source!($source_kind($source_variant => $source_name))),*
+                ],
+                beyond: Beyond::$beyond,
+                recovery: Recovery::Replay,
+            }),+
+        ];
+    };
+}
+
+macro_rules! ring_registry {
+    ($(
+        $variant:ident => $name:literal {
+            recovery: $recovery:ident;
+        }
+    )+) => {
+        /// One bounded non-replayable ring source.
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        pub enum RingId {
+            $($variant),+
+        }
+
+        impl RingId {
+            /// Every bounded ring in registry order.
+            pub const ALL: &[Self] = &[$(Self::$variant),+];
+
+            /// The ring's wire name.
+            #[must_use]
+            pub const fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name),+
+                }
+            }
+        }
+
+        const RINGS: &[RingDefinition] = &[
+            $(RingDefinition {
+                ring: RingId::$variant,
+                recovery: Recovery::$recovery,
+            }),+
+        ];
+    };
+}
+
+include!("registry.rs");
 
 /// The closed fold and ring registry.
 #[derive(Clone, Copy, Debug)]
@@ -55,120 +188,6 @@ impl Inventory {
         DEFINITIONS
             .iter()
             .find(|definition| definition.fold == fold)
-            .expect("FoldId::ALL and the fold inventory are one closed set")
-    }
-}
-
-const STEER_INBOX: &[Source] = &[
-    Source::Facts(FactPlane::Steering),
-    Source::Head(HeadSource::Witness),
-    Source::Head(HeadSource::Residency),
-];
-
-const CONSENT_QUEUE: &[Source] = &[
-    Source::Facts(FactPlane::Consent),
-    Source::Head(HeadSource::Witness),
-    Source::Head(HeadSource::Residency),
-    Source::Config(ConfigSource::Consent),
-];
-
-const LANE_CANARY: &[Source] = &[
-    Source::Facts(FactPlane::Canary),
-    Source::Facts(FactPlane::Vendor),
-    Source::Head(HeadSource::Residency),
-    Source::Tape(TapeSource::DeclaredExtents),
-];
-
-const TASTE_ACTIVE: &[Source] = &[
-    Source::Facts(FactPlane::Taste),
-    Source::Config(ConfigSource::Taste),
-];
-
-const CANVAS_VERDICTS: &[Source] = &[
-    Source::Facts(FactPlane::Commit),
-    Source::Facts(FactPlane::Gate),
-    Source::Head(HeadSource::Finding),
-];
-
-const CANVAS_MAGNITUDE: &[Source] = &[
-    Source::Facts(FactPlane::Claim),
-    Source::Facts(FactPlane::Consent),
-    Source::Facts(FactPlane::Canary),
-    Source::Facts(FactPlane::Vendor),
-    Source::Fold(FoldId::LaneCanary),
-    Source::Head(HeadSource::Task),
-    Source::Head(HeadSource::Claim),
-    Source::Head(HeadSource::Lease),
-    Source::Head(HeadSource::Residency),
-];
-
-const CANVAS_FLOW: &[Source] = &[
-    Source::Facts(FactPlane::Task),
-    Source::Facts(FactPlane::Claim),
-    Source::Facts(FactPlane::Document),
-    Source::Head(HeadSource::Task),
-    Source::Head(HeadSource::Workflow),
-    Source::Head(HeadSource::Claim),
-    Source::Head(HeadSource::Lease),
-];
-
-const CANVAS_TOPOLOGY: &[Source] = &[
-    Source::Facts(FactPlane::Lane),
-    Source::Fact(wire::FactKind::ClaimCarried),
-    Source::Fact(wire::FactKind::ClaimRenewed),
-    Source::Facts(FactPlane::Resident),
-    Source::Head(HeadSource::Claim),
-    Source::Head(HeadSource::Residency),
-];
-
-const CANVAS_CHRONOLOGY: &[Source] = &[
-    Source::Facts(FactPlane::Lane),
-    Source::Facts(FactPlane::Steering),
-    Source::Facts(FactPlane::Consent),
-    Source::Facts(FactPlane::Canary),
-    Source::Facts(FactPlane::Document),
-    Source::Facts(FactPlane::Trust),
-    Source::Facts(FactPlane::Resident),
-    Source::Facts(FactPlane::Journal),
-    Source::Facts(FactPlane::Gate),
-    Source::CommandResults,
-    Source::Fold(FoldId::SteerInbox),
-    Source::Fold(FoldId::ConsentQueue),
-    Source::Fold(FoldId::LaneCanary),
-    Source::Fold(FoldId::CanvasVerdicts),
-    Source::Ring(RingId::BusRefusals),
-    Source::Head(HeadSource::Witness),
-    Source::Head(HeadSource::Residency),
-];
-
-const RELEASE_HISTORY: &[Source] = &[
-    Source::Facts(FactPlane::Proof),
-    Source::Facts(FactPlane::Release),
-];
-
-const DEFINITIONS: &[Definition] = &[
-    definition(FoldId::SteerInbox, STEER_INBOX, Beyond::Wait),
-    definition(FoldId::ConsentQueue, CONSENT_QUEUE, Beyond::Wait),
-    definition(FoldId::LaneCanary, LANE_CANARY, Beyond::Wait),
-    definition(FoldId::TasteActive, TASTE_ACTIVE, Beyond::Answer),
-    definition(FoldId::CanvasVerdicts, CANVAS_VERDICTS, Beyond::Answer),
-    definition(FoldId::CanvasMagnitude, CANVAS_MAGNITUDE, Beyond::Answer),
-    definition(FoldId::CanvasFlow, CANVAS_FLOW, Beyond::Answer),
-    definition(FoldId::CanvasTopology, CANVAS_TOPOLOGY, Beyond::Answer),
-    definition(FoldId::CanvasChronology, CANVAS_CHRONOLOGY, Beyond::Answer),
-    definition(FoldId::ReleaseHistory, RELEASE_HISTORY, Beyond::Answer),
-];
-
-const RINGS: &[RingDefinition] = &[RingDefinition {
-    ring: RingId::BusRefusals,
-    recovery: Recovery::None,
-}];
-
-const fn definition(fold: FoldId, sources: &'static [Source], beyond: Beyond) -> Definition {
-    Definition {
-        fold,
-        sources,
-        beyond,
-        recovery: Recovery::Replay,
+            .expect("FoldId::ALL and the fold inventory are generated together")
     }
 }

@@ -306,6 +306,7 @@ dependencies = [
  "journal",
  "rusqlite",
  "serde_json",
+ "syn 3.0.3",
  "wire",
 ]
 

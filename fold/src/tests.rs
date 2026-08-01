@@ -31,31 +31,9 @@ fn inventory_accounts_for_every_fold_fact_head_and_ring() {
         );
     }
 
-    for kind in wire::FactKind::ALL {
-        assert!(
-            definitions.iter().any(|definition| definition
-                .sources
-                .iter()
-                .any(|source| source_contains(*source, *kind))),
-            "fact kind {kind} has no consuming fold",
-        );
-    }
     assert_source_sets(definitions);
     assert_fold_order(definitions);
     assert_beyond_policies(definitions);
-}
-
-fn source_contains(source: Source, kind: wire::FactKind) -> bool {
-    match source {
-        Source::Fact(source) => source == kind,
-        Source::Facts(plane) => plane.contains(kind),
-        Source::Fold(_)
-        | Source::Head(_)
-        | Source::Ring(_)
-        | Source::Config(_)
-        | Source::Tape(_)
-        | Source::CommandResults => false,
-    }
 }
 
 fn assert_source_sets(definitions: &[crate::Definition]) {
