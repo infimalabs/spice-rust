@@ -4,6 +4,7 @@ use std::ffi::OsString;
 use std::io;
 use std::path::PathBuf;
 use std::process::ExitStatus;
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use sill::{
@@ -15,13 +16,48 @@ use spice::config::LoadError;
 use spice::repository::Repository;
 use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
-const CLEANUP_HORIZON: Duration = Duration::from_secs(1);
-const TERMINATION_GRACE: Duration = Duration::from_secs(1);
+const OUTPUT_DRAIN: Duration = Duration::from_secs(1);
+const REAP_DEADLINE: Duration = Duration::from_secs(5);
+const TERMINATION_GRACE: Duration = Duration::from_secs(5);
 
 /// Result of a lock-held caller command at the process boundary.
 pub(crate) enum RunResult {
     Child(ExitStatus),
     Rejected { outcome: Outcome<()>, code: i32 },
+}
+
+struct SignalRelay {
+    handle: signal_hook::iterator::Handle,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl SignalRelay {
+    fn install(token: sill::CancellationToken) -> io::Result<Self> {
+        use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGTERM};
+
+        let mut signals = signal_hook::iterator::Signals::new([SIGHUP, SIGINT, SIGTERM])?;
+        let handle = signals.handle();
+        let worker = std::thread::Builder::new()
+            .name("spice-lock-signals".to_owned())
+            .spawn(move || {
+                for _signal in signals.forever() {
+                    token.cancel();
+                }
+            })?;
+        Ok(Self {
+            handle,
+            worker: Some(worker),
+        })
+    }
+}
+
+impl Drop for SignalRelay {
+    fn drop(&mut self) {
+        self.handle.close();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
 }
 
 /// Report the effective fixed topology without opening or creating it.
@@ -57,12 +93,12 @@ fn run_inner(matches: &clap::ArgMatches) -> Result<ExitStatus, Box<Rejection>> {
     let requested = matches
         .get_one::<String>("shard")
         .map(|value| {
-            value.parse::<u32>().map_err(|_| {
+            value.parse::<u32>().map_err(|error| {
                 Failure::refusal(
-                    "lock::selection-refused",
+                    "lock::shard-refused",
                     "one zero-based configured shard number",
                     value,
-                    "select a shard from the capacity reported by `spice lock`",
+                    format!("supply a configured shard number: {error}"),
                 )
                 .rejection(2)
             })
@@ -87,6 +123,15 @@ fn run_inner(matches: &clap::ArgMatches) -> Result<ExitStatus, Box<Rejection>> {
     let (program, arguments) = command
         .split_first()
         .expect("the generated parser requires a nonempty command");
+    let cancellation = sill::CancellationToken::new();
+    let relay = SignalRelay::install(cancellation.clone()).map_err(|error| {
+        Failure::fault(
+            FaultClass::Environment,
+            "lock::signals-unavailable",
+            error.to_string(),
+        )
+        .rejection(1)
+    })?;
     let spec = child_spec(
         invocation.working,
         ambient_environment().map_err(|error| {
@@ -97,6 +142,7 @@ fn run_inner(matches: &clap::ArgMatches) -> Result<ExitStatus, Box<Rejection>> {
             )
             .rejection(1)
         })?,
+        cancellation,
         program,
         arguments,
     )
@@ -109,7 +155,7 @@ fn run_inner(matches: &clap::ArgMatches) -> Result<ExitStatus, Box<Rejection>> {
         .rejection(1)
     })?;
     let running = sill::spawn(spec).map_err(|error| launch_failure(program, error))?;
-    let outcome = running.wait().map_err(|error| {
+    let waited = running.wait().map_err(|error| {
         Failure::fault(
             FaultClass::Environment,
             "lock::child-wait-failed",
@@ -117,7 +163,8 @@ fn run_inner(matches: &clap::ArgMatches) -> Result<ExitStatus, Box<Rejection>> {
         )
         .rejection(1)
     })?;
-    let status = match outcome.completion() {
+    drop(relay);
+    let status = match waited.completion() {
         Completion::Exited(status)
         | Completion::TimedOut(status)
         | Completion::Cancelled(status) => *status,
@@ -129,6 +176,7 @@ fn run_inner(matches: &clap::ArgMatches) -> Result<ExitStatus, Box<Rejection>> {
 fn child_spec(
     working: PathBuf,
     environment: Environment,
+    cancellation: sill::CancellationToken,
     program: &OsString,
     arguments: &[OsString],
 ) -> Result<Spec, sill::SpecError> {
@@ -136,11 +184,11 @@ fn child_spec(
         argv: Argv::new(program, arguments.iter().cloned())?,
         cwd: working,
         environment,
-        group: ProcessGroup::Inherit,
-        deadlines: Deadlines::new(Duration::MAX, CLEANUP_HORIZON, CLEANUP_HORIZON)?,
+        group: ProcessGroup::New,
+        deadlines: Deadlines::new(Duration::MAX, OUTPUT_DRAIN, REAP_DEADLINE)?,
         wait: WaitPolicy::new(
-            "spice lock run",
-            Cancellation::Never,
+            "spice lock run child",
+            Cancellation::Token(cancellation),
             RestartDisposition::Never,
         )?,
         output: Output::new(
@@ -209,8 +257,8 @@ impl Invocation {
                 error.to_string(),
             )
         })?;
-        let resolved =
-            spice::config::load_repository(&repository, &[]).map_err(Failure::configuration)?;
+        let resolved = spice::config::load_coexisting_repository(&repository, &[])
+            .map_err(Failure::configuration)?;
         let state =
             repository
                 .admit_state()
@@ -259,13 +307,23 @@ impl Failure {
 
     fn surface(error: LockSurfaceError) -> Self {
         match error {
-            error @ (LockSurfaceError::InvalidName(_)
-            | LockSurfaceError::UnknownName(_)
-            | LockSurfaceError::ShardOutOfRange { .. }) => Self::refusal(
-                "lock::selection-refused",
-                "one configured lock name and in-range shard",
+            LockSurfaceError::InvalidName(name) => Self::refusal(
+                "lock::name-refused",
+                "one configured normal path component",
+                name,
+                "select a lock name from the topology reported by `spice lock`",
+            ),
+            LockSurfaceError::UnknownName(name) => Self::refusal(
+                "lock::unknown",
+                "one configured lock name",
+                name,
+                "select a lock name from the topology reported by `spice lock`",
+            ),
+            error @ LockSurfaceError::ShardOutOfRange { .. } => Self::refusal(
+                "lock::shard-refused",
+                "one in-range configured shard",
                 error.to_string(),
-                "select a name and shard from the topology reported by `spice lock`",
+                "select a shard from the topology reported by `spice lock`",
             ),
             error @ (LockSurfaceError::Prepare { .. }
             | LockSurfaceError::Acquire { .. }

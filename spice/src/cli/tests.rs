@@ -406,6 +406,7 @@ fn contract_syntax_drives_argument_registration() {
         &["spice", "task", "depends", "TASK", "FIRST", "SECOND"],
         &["spice", "lane", "add", "--life", "Drive"],
         &["spice", "install", "--apply=digest"],
+        &["spice", "restore", "verify", "bundle"],
         &["spice", "run", "--", "cargo", "test", "--locked"],
         &["spice", "config", "key", "value"],
     ] {

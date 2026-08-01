@@ -69,6 +69,8 @@ pub enum IdentError {
 pub enum Domain {
     /// The exact authored bytes of one board document.
     BoardDocument,
+    /// One complete machine-local configuration document.
+    ConfigLocal,
     /// The canonical inventory document for one journal backup bundle.
     JournalBackupManifest,
     /// The exact bytes of one member in a journal backup bundle.
@@ -133,6 +135,7 @@ impl Domain {
     pub const fn tag(self) -> &'static str {
         match self {
             Self::BoardDocument => "spice.board.document.v1",
+            Self::ConfigLocal => "spice.config.local.v1",
             Self::JournalBackupManifest => "spice.journal.backup-manifest.v1",
             Self::JournalBackupMember => "spice.journal.backup-member.v1",
             Self::DistTargetPayload => "spice.dist.target-payload.v1",
