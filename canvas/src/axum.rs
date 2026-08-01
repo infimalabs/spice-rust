@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 use std::error::Error;
 use std::fmt;
+use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
@@ -15,6 +16,7 @@ use ::axum::http::header::{CONTENT_TYPE, HOST, ORIGIN};
 use ::axum::http::{HeaderMap, HeaderValue, StatusCode};
 use ::axum::response::{IntoResponse, Response};
 use ::axum::routing::get;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::{Discovery, EMBEDDED_APP};
 
@@ -137,6 +139,40 @@ struct SurfaceState {
     origin: String,
     epoch: wire::CanonicalUuid,
     capabilities: Capabilities,
+    control: mpsc::Sender<ControlRequest>,
+}
+
+/// Resident control received from one authenticated operator session.
+#[derive(Debug)]
+pub struct ControlRequest {
+    change: wire::intent::UpChange,
+    answer: oneshot::Sender<wire::Outcome<()>>,
+}
+
+impl ControlRequest {
+    /// Lifecycle state the operator asked the resident to reach.
+    #[must_use]
+    pub const fn state(&self) -> wire::ResidentState {
+        self.change.state
+    }
+
+    /// Return the resident's terminal outcome to the authenticated session.
+    pub fn respond(self, outcome: wire::Outcome<()>) -> Result<(), wire::Outcome<()>> {
+        self.answer.send(outcome)
+    }
+}
+
+/// Bounded receiver for authenticated resident-control requests.
+#[derive(Debug)]
+pub struct Control {
+    receiver: mpsc::Receiver<ControlRequest>,
+}
+
+impl Control {
+    /// Wait for the next authenticated operator request.
+    pub async fn recv(&mut self) -> Option<ControlRequest> {
+        self.receiver.recv().await
+    }
 }
 
 /// One loopback-only listener and its generation-scoped router.
@@ -151,20 +187,25 @@ impl Server {
     pub async fn bind(
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
-    ) -> Result<Self, std::io::Error> {
+    ) -> Result<(Self, Control), std::io::Error> {
         let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
         let address = listener.local_addr()?;
         let authority = address.to_string();
         let origin = format!("http://{authority}");
-        Ok(Self {
-            listener,
-            state: Arc::new(SurfaceState {
-                authority,
-                origin,
-                epoch,
-                capabilities,
-            }),
-        })
+        let (control, receiver) = mpsc::channel(1);
+        Ok((
+            Self {
+                listener,
+                state: Arc::new(SurfaceState {
+                    authority,
+                    origin,
+                    epoch,
+                    capabilities,
+                    control,
+                }),
+            },
+            Control { receiver },
+        ))
     }
 
     /// Bound address, always IPv4 loopback.
@@ -186,11 +227,21 @@ impl Server {
 
     /// Serve the embedded app and current-wire socket until the task is cancelled.
     pub async fn up(self) -> Result<(), std::io::Error> {
+        self.up_until(std::future::pending()).await
+    }
+
+    /// Serve until shutdown is requested, then finish admitted connections.
+    pub async fn up_until<F>(self, shutdown: F) -> Result<(), std::io::Error>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
         let router = Router::new()
             .route("/socket", get(socket))
             .fallback(app)
             .with_state(self.state);
-        ::axum::serve(self.listener, router).await
+        ::axum::serve(self.listener, router)
+            .with_graceful_shutdown(shutdown)
+            .await
     }
 }
 
@@ -247,19 +298,84 @@ async fn socket_session(mut socket: WebSocket, state: Arc<SurfaceState>) {
         Message::Text(text) => text.as_bytes().to_vec(),
         Message::Close(_) | Message::Ping(_) | Message::Pong(_) => return,
     };
-    let encoded = match wire::decode::<wire::Hello>(&bytes) {
+    let accepted = match wire::decode::<wire::Hello>(&bytes) {
         Ok(hello) => match state.capabilities.admit(&hello, state.epoch) {
-            Ok(accepted) => wire::encode(&accepted),
-            Err(OpeningError::Refused(refusal)) => wire::encode(&refusal),
-            Err(OpeningError::Fault(fault)) => wire::encode(&fault),
+            Ok(accepted) => accepted,
+            Err(OpeningError::Refused(refusal)) => {
+                send_encoded(&mut socket, &refusal).await;
+                return;
+            }
+            Err(OpeningError::Fault(fault)) => {
+                send_encoded(&mut socket, &fault).await;
+                return;
+            }
         },
-        Err(error) => wire::encode(&wire::Fault {
-            class: wire::FaultClass::Protocol,
-            reason: "hello::undecodable".to_owned(),
-            detail: error.to_string(),
-        }),
+        Err(error) => {
+            send_encoded(
+                &mut socket,
+                &wire::Fault {
+                    class: wire::FaultClass::Protocol,
+                    reason: "hello::undecodable".to_owned(),
+                    detail: error.to_string(),
+                },
+            )
+            .await;
+            return;
+        }
     };
-    if let Ok(bytes) = encoded {
+    send_encoded(&mut socket, &accepted).await;
+    if !matches!(accepted.actor, wire::Actor::Operator) {
+        return;
+    }
+
+    let Some(Ok(Message::Binary(bytes))) = socket.recv().await else {
+        return;
+    };
+    let change = match wire::decode::<wire::intent::UpChange>(&bytes) {
+        Ok(change) if matches!(change.state, wire::ResidentState::Dark) => change,
+        Ok(change) => {
+            send_encoded(
+                &mut socket,
+                &wire::Outcome::<()>::Refusal(wire::Refusal {
+                    reason: "down::target-not-dark".to_owned(),
+                    witness: None,
+                    expected: Some("dark".to_owned()),
+                    observed: Some(format!("{:?}", change.state).to_lowercase()),
+                    remedy: "request Dark and let the resident drive every bounded edge".to_owned(),
+                }),
+            )
+            .await;
+            return;
+        }
+        Err(error) => {
+            send_encoded(
+                &mut socket,
+                &wire::Outcome::<()>::Fault(wire::Fault {
+                    class: wire::FaultClass::Protocol,
+                    reason: "down::undecodable".to_owned(),
+                    detail: error.to_string(),
+                }),
+            )
+            .await;
+            return;
+        }
+    };
+    let (answer, returned) = oneshot::channel();
+    if state
+        .control
+        .send(ControlRequest { change, answer })
+        .await
+        .is_err()
+    {
+        return;
+    }
+    if let Ok(outcome) = returned.await {
+        send_encoded(&mut socket, &outcome).await;
+    }
+}
+
+async fn send_encoded<T: serde::Serialize>(socket: &mut WebSocket, value: &T) {
+    if let Ok(bytes) = wire::encode(value) {
         let _ = socket.send(Message::Binary(bytes.into())).await;
     }
 }
@@ -294,7 +410,7 @@ mod tests {
         capabilities
             .insert(operator(), wire::Actor::Operator)
             .expect("operator capability");
-        let server = Server::bind(epoch(), capabilities).await.expect("binds");
+        let (server, _control) = Server::bind(epoch(), capabilities).await.expect("binds");
         let address = server.local_addr().expect("local address");
         let discovery = server.discovery(operator()).expect("operator discovery");
 
@@ -323,7 +439,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn live_server_serves_exact_embedded_bytes_and_refuses_another_host() {
-        let server = Server::bind(epoch(), Capabilities::default())
+        let (server, _control) = Server::bind(epoch(), Capabilities::default())
             .await
             .expect("binds");
         let address = server.local_addr().expect("local address");
@@ -399,6 +515,7 @@ mod tests {
             origin: "http://127.0.0.1:48123".to_owned(),
             epoch: epoch(),
             capabilities: Capabilities::default(),
+            control: mpsc::channel(1).0,
         };
         let mut headers = HeaderMap::new();
         headers.insert(HOST, HeaderValue::from_static("attacker.example"));
