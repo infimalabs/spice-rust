@@ -23,6 +23,8 @@ pub struct Hello {
 
 /// Why an opening did not begin a session.
 ///
+/// identity-law: non-crossing - caller-local rejection before a session opens.
+///
 /// The two failures are deliberately different outcomes: a version the
 /// resident does not speak is a refusal the client can act on, while an epoch
 /// that has moved is a fault about a resident generation that no longer
