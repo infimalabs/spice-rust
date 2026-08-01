@@ -34,7 +34,7 @@ pub struct RingDefinition {
 }
 
 macro_rules! source {
-    (Fact($variant:ident => $name:literal)) => {
+    (Fact($variant:ident)) => {
         Source::Fact(wire::FactKind::$variant)
     };
     (Facts($variant:ident => $name:literal)) => {
@@ -61,7 +61,7 @@ macro_rules! source {
 }
 
 macro_rules! answer_content {
-    (Fact($variant:ident => $name:literal)) => {
+    (Fact($variant:ident)) => {
         AnswerContent::Fact(wire::FactKind::$variant)
     };
     (Facts($variant:ident => $name:literal)) => {
@@ -76,8 +76,8 @@ macro_rules! fold_registry {
     ($(
         $variant:ident => $name:literal {
             answer: $answer:literal;
-            content: [$($content_kind:ident($content_variant:ident => $content_name:literal)),* $(,)?];
-            sources: [$($source_kind:ident($source_variant:ident => $source_name:literal)),* $(,)?];
+            content: [$($content_kind:ident $content_args:tt),* $(,)?];
+            sources: [$($source_kind:ident $source_args:tt),* $(,)?];
             beyond: $beyond:ident;
         }
     )+) => {
@@ -114,10 +114,10 @@ macro_rules! fold_registry {
                 fold: FoldId::$variant,
                 answer: $answer,
                 answer_content: &[
-                    $(answer_content!($content_kind($content_variant => $content_name))),*
+                    $(answer_content!($content_kind $content_args)),*
                 ],
                 sources: &[
-                    $(source!($source_kind($source_variant => $source_name))),*
+                    $(source!($source_kind $source_args)),*
                 ],
                 beyond: Beyond::$beyond,
                 recovery: Recovery::Replay,

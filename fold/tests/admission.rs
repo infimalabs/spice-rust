@@ -1,173 +1,341 @@
 #[allow(dead_code)]
 #[path = "../build/admission.rs"]
 mod admission;
+#[allow(dead_code)]
+#[path = "../build/registry.rs"]
+mod registry;
 
-use admission::{AnswerContent, FactRegistration, FoldRegistration, RingRegistration, Source};
+use admission::{AnswerContent, FoldRegistration, RingRegistration, Source};
+use wire::FactKind;
 
-const ROWS: &[(&str, &str, &str)] = &[
-    ("SteerInbox", "steer::inbox", "Pending directives per lane."),
-    (
-        "ConsentQueue",
-        "consent::queue",
-        "Pending consent and remaining budgets.",
-    ),
-    (
-        "LaneCanary",
-        "lane::canary",
-        "Armed windows, listening meters, and alarms.",
-    ),
-    (
-        "TasteActive",
-        "taste::active",
-        "Active tastes and evidence ages.",
-    ),
-    (
-        "CanvasVerdicts",
-        "canvas::verdicts",
-        "Commit and finding verdict history.",
-    ),
-    (
-        "CanvasMagnitude",
-        "canvas::magnitude",
-        "Effort, pressure, residue, and consent rates.",
-    ),
-    ("CanvasFlow", "canvas::flow", "Tasks moving through phases."),
-    (
-        "CanvasTopology",
-        "canvas::topology",
-        "Lanes, worktrees, occupant lineage, and possession.",
-    ),
-    (
-        "CanvasChronology",
-        "canvas::chronology",
-        "Compaction, queues, human delay, trust, recovery, and lifecycle transitions in time.",
-    ),
-    (
-        "ReleaseHistory",
-        "release::history",
-        "Sealed and published artifacts.",
-    ),
-];
+const WITNESS_SOURCE: &[Source] = &[Source::Head {
+    variant: "Witness",
+    name: "witness",
+}];
+const UNKNOWN_FACT_FAMILY_SOURCE: &[Source] = &[Source::Facts {
+    plane: "Fixture",
+    pattern: "fixture::*",
+}];
+const UNKNOWN_HEAD_SOURCE: &[Source] = &[Source::Head {
+    variant: "Fixture",
+    name: "fixture",
+}];
+const UNKNOWN_FOLD_SOURCE: &[Source] = &[Source::Fold {
+    variant: "FixtureFold",
+    name: "fixture::fold",
+}];
+const LATER_FOLD_SOURCE: &[Source] = &[Source::Fold {
+    variant: "ConsentQueue",
+    name: "consent::queue",
+}];
+const UNKNOWN_RING_SOURCE: &[Source] = &[Source::Ring {
+    variant: "FixtureRing",
+    name: "fixture::ring",
+}];
+const UNKNOWN_CONFIG_SOURCE: &[Source] = &[Source::Config {
+    variant: "Fixture",
+    name: "fixture",
+}];
+const UNKNOWN_TAPE_SOURCE: &[Source] = &[Source::Tape {
+    variant: "Fixture",
+    name: "fixture",
+}];
+const UNKNOWN_COMMAND_RESULTS_SOURCE: &[Source] = &[Source::CommandResults("fixture-results")];
 
-const FIXTURE_SOURCE: Source = Source::Fact {
-    variant: "FixtureKind",
-    kind: "fixture::kind",
-};
-const FIXTURE_CONTENT: AnswerContent = AnswerContent::Fact {
-    variant: "FixtureKind",
-    kind: "fixture::kind",
-};
+const UNKNOWN_FACT_FAMILY_CONTENT: &[AnswerContent] = &[AnswerContent::Facts {
+    plane: "Fixture",
+    pattern: "fixture::*",
+}];
+const UNKNOWN_HEAD_CONTENT: &[AnswerContent] = &[AnswerContent::Head {
+    variant: "Fixture",
+    name: "fixture",
+}];
+const UNSUPPLIED_FACT_CONTENT: &[AnswerContent] = &[AnswerContent::Fact(FactKind::TaskAdded)];
+const UNSUPPLIED_FACTS_CONTENT: &[AnswerContent] = &[AnswerContent::Facts {
+    plane: "Task",
+    pattern: "task::*",
+}];
+const UNSUPPLIED_HEAD_CONTENT: &[AnswerContent] = &[AnswerContent::Head {
+    variant: "Task",
+    name: "task",
+}];
 
-fn complete_folds(
-    target_sources: &'static [Source],
-    target_content: &'static [AnswerContent],
-) -> Vec<FoldRegistration> {
-    ROWS.iter()
-        .map(|(variant, name, answer)| FoldRegistration {
-            variant,
-            name,
-            answer,
-            content: if *name == "steer::inbox" {
-                target_content
-            } else {
-                &[FIXTURE_CONTENT]
-            },
-            sources: if *name == "steer::inbox" {
-                target_sources
-            } else {
-                &[FIXTURE_SOURCE]
-            },
-            beyond: "Answer",
-        })
-        .collect()
+fn folds() -> Vec<FoldRegistration> {
+    registry::FOLDS.to_vec()
 }
 
-fn ring() -> [RingRegistration; 1] {
-    [RingRegistration {
-        variant: "BusRefusals",
-        name: "bus::refusals",
-        recovery: "None",
-    }]
+fn rings() -> Vec<RingRegistration> {
+    registry::RINGS.to_vec()
+}
+
+fn fold_mut<'a>(folds: &'a mut [FoldRegistration], name: &str) -> &'a mut FoldRegistration {
+    folds
+        .iter_mut()
+        .find(|fold| fold.name == name)
+        .expect("fixture mutates a shipped registry row")
+}
+
+fn assert_refusal(folds: &[FoldRegistration], rings: &[RingRegistration], expected: &str) {
+    let refusal = admission::validate(FactKind::ALL, folds, rings)
+        .expect_err("mutated registry must be refused");
+    assert_eq!(refusal.to_string(), expected);
 }
 
 #[test]
-fn generation_refuses_an_unconsumed_fact_and_names_it() {
-    let facts = [
-        FactRegistration {
-            variant: "FixtureKind".to_owned(),
-            kind: "fixture::kind".to_owned(),
-            producer: Some("CommandDoor".to_owned()),
-        },
-        FactRegistration {
-            variant: "OrphanKind".to_owned(),
-            kind: "orphan::kind".to_owned(),
-            producer: Some("CommandDoor".to_owned()),
-        },
-    ];
-    let folds = complete_folds(
-        &[],
-        &[AnswerContent::Head {
-            variant: "Witness",
-            name: "witness",
-        }],
-    );
+fn the_shipped_registry_is_admitted() {
+    admission::validate(FactKind::ALL, registry::FOLDS, registry::RINGS).expect("shipped registry");
+}
 
-    let refusal = admission::validate(&facts, &folds, &ring())
-        .expect_err("a fact no fold consumes must stop generation");
+#[test]
+fn a_duplicate_contract_row_is_refused_by_name() {
+    let mut folds = folds();
+    folds.push(folds[0]);
 
-    assert_eq!(
-        refusal.to_string(),
-        "fact kind orphan::kind has no consuming fold"
+    assert_refusal(
+        &folds,
+        &rings(),
+        "fold registry row steer::inbox is declared more than once",
     );
 }
 
 #[test]
-fn generation_refuses_a_fact_without_a_producer_and_names_it() {
-    let facts = [FactRegistration {
-        variant: "OrphanKind".to_owned(),
-        kind: "orphan::kind".to_owned(),
-        producer: None,
-    }];
-    let folds = complete_folds(
-        &[Source::Fact {
-            variant: "OrphanKind",
-            kind: "orphan::kind",
-        }],
-        &[AnswerContent::Fact {
-            variant: "OrphanKind",
-            kind: "orphan::kind",
-        }],
-    );
+fn a_missing_contract_row_is_refused_by_name() {
+    let mut folds = folds();
+    folds.remove(0);
 
-    let refusal = admission::validate(&facts, &folds, &ring())
-        .expect_err("a fact no producer can mint must stop generation");
-
-    assert_eq!(
-        refusal.to_string(),
-        "fact kind orphan::kind has no registered producer class"
+    assert_refusal(
+        &folds,
+        &rings(),
+        "fold registry is missing contract row steer::inbox",
     );
 }
 
 #[test]
-fn generation_refuses_answer_content_no_admitted_kind_can_supply() {
-    let facts = [FactRegistration {
-        variant: "FixtureKind".to_owned(),
-        kind: "fixture::kind".to_owned(),
-        producer: Some("CommandDoor".to_owned()),
-    }];
-    let folds = complete_folds(
-        &[FIXTURE_SOURCE],
-        &[AnswerContent::Fact {
-            variant: "OrphanContent",
-            kind: "orphan::content",
-        }],
+fn an_unknown_contract_row_is_refused_by_name() {
+    let mut folds = folds();
+    let mut extra = folds[0];
+    extra.variant = "FixtureFold";
+    extra.name = "fixture::fold";
+    folds.push(extra);
+
+    assert_refusal(
+        &folds,
+        &rings(),
+        "fold registry contains unknown contract row fixture::fold",
     );
+}
 
-    let refusal = admission::validate(&facts, &folds, &ring())
-        .expect_err("unsupplied answer content must stop generation");
+#[test]
+fn a_fold_without_an_answer_is_refused_by_name() {
+    let mut folds = folds();
+    fold_mut(&mut folds, "steer::inbox").answer = "";
 
-    assert_eq!(
-        refusal.to_string(),
-        "fold steer::inbox answer names fact content orphan::content, but no admitted kind can supply it"
+    assert_refusal(&folds, &rings(), "fold steer::inbox has no declared answer");
+}
+
+#[test]
+fn a_fold_without_answer_content_is_refused_by_name() {
+    let mut folds = folds();
+    fold_mut(&mut folds, "steer::inbox").content = &[];
+
+    assert_refusal(
+        &folds,
+        &rings(),
+        "fold steer::inbox answer declares no content",
+    );
+}
+
+#[test]
+fn an_unknown_beyond_policy_is_refused_by_name() {
+    let mut folds = folds();
+    fold_mut(&mut folds, "steer::inbox").beyond = "Fixture";
+
+    assert_refusal(
+        &folds,
+        &rings(),
+        "fold steer::inbox has unknown beyond policy Fixture",
+    );
+}
+
+#[test]
+fn a_bounded_ring_with_recovery_is_refused_by_name() {
+    let folds = folds();
+    let mut rings = rings();
+    rings[0].recovery = "Replay";
+
+    assert_refusal(
+        &folds,
+        &rings,
+        "bounded ring bus::refusals must declare recovery None",
+    );
+}
+
+#[test]
+fn an_unknown_fact_family_source_is_refused_by_name() {
+    let mut folds = folds();
+    fold_mut(&mut folds, "steer::inbox").sources = UNKNOWN_FACT_FAMILY_SOURCE;
+
+    assert_refusal(
+        &folds,
+        &rings(),
+        "fold steer::inbox names unknown fact family Fixture => fixture::*",
+    );
+}
+
+#[test]
+fn an_unknown_head_source_is_refused_by_name() {
+    let mut folds = folds();
+    fold_mut(&mut folds, "steer::inbox").sources = UNKNOWN_HEAD_SOURCE;
+
+    assert_refusal(
+        &folds,
+        &rings(),
+        "fold steer::inbox names unknown head source fixture",
+    );
+}
+
+#[test]
+fn an_unknown_fold_source_is_refused_by_name() {
+    let mut folds = folds();
+    fold_mut(&mut folds, "steer::inbox").sources = UNKNOWN_FOLD_SOURCE;
+
+    assert_refusal(
+        &folds,
+        &rings(),
+        "fold steer::inbox names unknown source fold fixture::fold",
+    );
+}
+
+#[test]
+fn a_fold_before_its_source_fold_is_refused_by_name() {
+    let mut folds = folds();
+    fold_mut(&mut folds, "steer::inbox").sources = LATER_FOLD_SOURCE;
+
+    assert_refusal(
+        &folds,
+        &rings(),
+        "fold steer::inbox must follow source fold consent::queue",
+    );
+}
+
+#[test]
+fn an_unknown_ring_source_is_refused_by_name() {
+    let mut folds = folds();
+    fold_mut(&mut folds, "steer::inbox").sources = UNKNOWN_RING_SOURCE;
+
+    assert_refusal(
+        &folds,
+        &rings(),
+        "fold steer::inbox names unknown source ring fixture::ring",
+    );
+}
+
+#[test]
+fn an_unknown_config_source_is_refused_by_name() {
+    let mut folds = folds();
+    fold_mut(&mut folds, "steer::inbox").sources = UNKNOWN_CONFIG_SOURCE;
+
+    assert_refusal(
+        &folds,
+        &rings(),
+        "fold steer::inbox names unknown config source fixture",
+    );
+}
+
+#[test]
+fn an_unknown_tape_source_is_refused_by_name() {
+    let mut folds = folds();
+    fold_mut(&mut folds, "steer::inbox").sources = UNKNOWN_TAPE_SOURCE;
+
+    assert_refusal(
+        &folds,
+        &rings(),
+        "fold steer::inbox names unknown tape source fixture",
+    );
+}
+
+#[test]
+fn an_unknown_command_result_source_is_refused_by_name() {
+    let mut folds = folds();
+    fold_mut(&mut folds, "steer::inbox").sources = UNKNOWN_COMMAND_RESULTS_SOURCE;
+
+    assert_refusal(
+        &folds,
+        &rings(),
+        "fold steer::inbox names unknown command-result source fixture-results",
+    );
+}
+
+#[test]
+fn an_unconsumed_typed_fact_is_refused_with_its_producer() {
+    let mut folds = folds();
+    for fold in &mut folds {
+        fold.sources = WITNESS_SOURCE;
+    }
+
+    assert_refusal(
+        &folds,
+        &rings(),
+        "fact kind task::added from producer command-door has no consuming fold",
+    );
+}
+
+#[test]
+fn answer_content_from_an_unknown_fact_family_is_refused_by_name() {
+    let mut folds = folds();
+    fold_mut(&mut folds, "steer::inbox").content = UNKNOWN_FACT_FAMILY_CONTENT;
+
+    assert_refusal(
+        &folds,
+        &rings(),
+        "fold steer::inbox answer names fact content fixture::*, but no admitted kind can supply it",
+    );
+}
+
+#[test]
+fn answer_content_from_an_unknown_head_is_refused_by_name() {
+    let mut folds = folds();
+    fold_mut(&mut folds, "steer::inbox").content = UNKNOWN_HEAD_CONTENT;
+
+    assert_refusal(
+        &folds,
+        &rings(),
+        "fold steer::inbox answer names head content fixture, but no admitted head can supply it",
+    );
+}
+
+#[test]
+fn exact_fact_content_without_a_source_is_refused_by_name() {
+    let mut folds = folds();
+    fold_mut(&mut folds, "steer::inbox").content = UNSUPPLIED_FACT_CONTENT;
+
+    assert_refusal(
+        &folds,
+        &rings(),
+        "fold steer::inbox answer content task::added is not supplied by its admitted sources",
+    );
+}
+
+#[test]
+fn fact_family_content_without_a_source_is_refused_by_name() {
+    let mut folds = folds();
+    fold_mut(&mut folds, "steer::inbox").content = UNSUPPLIED_FACTS_CONTENT;
+
+    assert_refusal(
+        &folds,
+        &rings(),
+        "fold steer::inbox answer content task::* is not supplied by its admitted sources",
+    );
+}
+
+#[test]
+fn head_content_without_a_source_is_refused_by_name() {
+    let mut folds = folds();
+    fold_mut(&mut folds, "steer::inbox").content = UNSUPPLIED_HEAD_CONTENT;
+
+    assert_refusal(
+        &folds,
+        &rings(),
+        "fold steer::inbox answer content task is not supplied by its admitted sources",
     );
 }
