@@ -401,7 +401,7 @@ fn verify_heads(
         connection,
         "lease_heads",
         violations,
-        |_key, _seq, _head| Ok(()),
+        |_key, _seq, head| lease_agrees(head),
     )?;
     count += verify_keyed_heads::<wire::WitnessHead>(
         connection,
@@ -483,6 +483,29 @@ where
         }
     }
     Ok(count)
+}
+
+/// A lease's four instants are one ordered life, and that order is the
+/// agreement this row owes.
+///
+/// Every other head table proves agreement against its key: a task head names
+/// its own handle, a witness head names its own fact. A lease head carries
+/// neither, so checking it against the row would only compare the row to
+/// itself. What it does carry is the order its own fields declare: possession
+/// begins, is renewed, expires at the instant the latest renewal bought, and is
+/// never renewed past the maximum. A lease outside that order is not one this
+/// build could have written, whichever column it sits under.
+fn lease_agrees(head: &wire::LeaseHead) -> Result<(), String> {
+    if head.renewal < head.start {
+        return Err("lease renewal precedes the start of possession".to_owned());
+    }
+    if head.expiry < head.renewal {
+        return Err("lease expiry precedes its most recent renewal".to_owned());
+    }
+    if head.maximum < head.expiry {
+        return Err("lease expiry passes the maximum renewal may not extend beyond".to_owned());
+    }
+    Ok(())
 }
 
 fn head_key(table: &str) -> &'static str {
