@@ -158,6 +158,19 @@ pub struct Version {
     pub app: Digest,
 }
 
+/// Receipt for opening the current resident's published browser surface.
+///
+/// The operator capability is intentionally absent. It is a socket credential,
+/// not browser state, and must never cross the native command's output boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanvasOpen {
+    /// Exact loopback HTTP origin read from owner-only discovery.
+    pub endpoint: String,
+    /// Resident generation whose discovery was still current at launch.
+    pub epoch: CanonicalUuid,
+}
+
 /// Authenticated identities and replay counts for one offline restore bundle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

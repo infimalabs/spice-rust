@@ -861,6 +861,7 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["journal", "verify"]
         | ["fold"]
         | ["thread"]
+        | ["canvas"]
         | ["release", "publish"]
         | ["restore", "verify"] => Landing::Landed,
         ["board"]
@@ -894,7 +895,6 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["taste"]
         | ["taste", "add"]
         | ["taste", "drop"] => Landing::Gap("POLICY-1kJQlFB6"),
-        ["canvas"] => Landing::Gap("PUBLISH-1kJQlGb0"),
         _ => Landing::Unaccounted,
     }
 }
