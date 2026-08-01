@@ -21,6 +21,52 @@ pub struct Locations {
     local: PathBuf,
 }
 
+/// One admitted configuration load together with the exact documents that
+/// produced it.
+///
+/// Keeping the acquired text beside the resolved tree lets trust and other
+/// admission surfaces bind the same bytes that were parsed. Callers do not
+/// need to reopen either path and race a replacement after validation.
+#[derive(Debug)]
+pub struct Loaded {
+    resolved: Resolved,
+    locations: Locations,
+    tracked: Option<String>,
+    local: Option<String>,
+}
+
+impl Loaded {
+    /// Effective typed configuration resolved from the captured documents.
+    #[must_use]
+    pub const fn resolved(&self) -> &Resolved {
+        &self.resolved
+    }
+
+    /// Exact repository configuration locations used for this capture.
+    #[must_use]
+    pub const fn locations(&self) -> &Locations {
+        &self.locations
+    }
+
+    /// Exact tracked document text, absent when the path did not exist.
+    #[must_use]
+    pub fn tracked(&self) -> Option<&str> {
+        self.tracked.as_deref()
+    }
+
+    /// Exact machine-local document text, absent when the path did not exist.
+    #[must_use]
+    pub fn local(&self) -> Option<&str> {
+        self.local.as_deref()
+    }
+
+    /// Consume the capture and retain only the effective typed configuration.
+    #[must_use]
+    pub fn into_resolved(self) -> Resolved {
+        self.resolved
+    }
+}
+
 impl Locations {
     /// Tracked worktree policy document.
     #[must_use]
@@ -236,6 +282,46 @@ pub fn load_repository(
     repository: &Repository,
     flags: &[FlagOverride],
 ) -> Result<Resolved, LoadError> {
+    capture_repository(repository, flags).map(Loaded::into_resolved)
+}
+
+/// Capture the exact repository documents and their effective configuration.
+///
+/// # Errors
+///
+/// Returns every acquisition and resolution diagnostic found after both exact
+/// document paths have been inspected.
+pub fn capture_repository(
+    repository: &Repository,
+    flags: &[FlagOverride],
+) -> Result<Loaded, LoadError> {
+    capture_repository_with(repository, flags, false)
+}
+
+/// Load configuration while the Python scaffold still owns tracked task and
+/// gate-policy tables in the same `spice.toml`.
+///
+/// This mode ignores exactly the tracked root tables `tasks` and `policy`.
+/// Their bytes never enter the Rust typed tree, local configuration remains
+/// strict, and every other unknown path still refuses. Release-one admission
+/// stays available through [`load_repository`] without this interregnum rule.
+///
+/// # Errors
+///
+/// Returns every ordinary acquisition and resolution diagnostic, including
+/// unknown roots other than the two named scaffold tables.
+pub fn load_coexisting_repository(
+    repository: &Repository,
+    flags: &[FlagOverride],
+) -> Result<Resolved, LoadError> {
+    capture_repository_with(repository, flags, true).map(Loaded::into_resolved)
+}
+
+fn capture_repository_with(
+    repository: &Repository,
+    flags: &[FlagOverride],
+    coexist: bool,
+) -> Result<Loaded, LoadError> {
     let locations = locations(repository);
     let tracked_path = locations.tracked();
     let local_path = locations.local();
@@ -245,18 +331,26 @@ pub fn load_repository(
     let local = acquire(ConfigSource::Local, local_path, &mut acquisition);
     let tracked_location = tracked_path.display().to_string();
     let local_location = local_path.display().to_string();
-    let resolved = resolve(Inputs::new(
-        tracked
-            .as_deref()
-            .map(|text| Document::new(&tracked_location, text)),
-        local
-            .as_deref()
-            .map(|text| Document::new(&local_location, text)),
-        flags,
-    ));
+    let tracked_document = tracked
+        .as_deref()
+        .map(|text| Document::new(&tracked_location, text));
+    let local_document = local
+        .as_deref()
+        .map(|text| Document::new(&local_location, text));
+    let inputs = if coexist {
+        Inputs::coexisting(tracked_document, local_document, flags)
+    } else {
+        Inputs::new(tracked_document, local_document, flags)
+    };
+    let resolved = resolve(inputs);
 
     match (acquisition.is_empty(), resolved) {
-        (true, Ok(resolved)) => Ok(resolved),
+        (true, Ok(resolved)) => Ok(Loaded {
+            resolved,
+            locations,
+            tracked,
+            local,
+        }),
         (_, result) => Err(LoadError::configuration(acquisition, result.err())),
     }
 }

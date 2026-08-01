@@ -22,6 +22,10 @@ pub(crate) fn run(
         Ok(repository) => repository,
         Err(error) => return environment_fault("steer::git-unavailable", &error.to_string()),
     };
+    let state = match repository.admit_state() {
+        Ok(state) => state,
+        Err(error) => return crate::state_failure(&error).outcome(),
+    };
     let (selected, lane_context) = match contract.path {
         ["steer"] => {
             let lane = match uuid_operand(matches, "LANE", "steer::lane-invalid") {
@@ -71,7 +75,7 @@ pub(crate) fn run(
                 Err(outcome) => return outcome,
             };
             return execute(
-                &repository,
+                state.canvas(),
                 contract,
                 SelectedCommand::SteerAck {
                     key: &key,
@@ -87,7 +91,7 @@ pub(crate) fn run(
             );
         }
     };
-    execute(&repository, contract, selected, lane_context)
+    execute(state.canvas(), contract, selected, lane_context)
 }
 
 fn lane_context(value: Option<OsString>) -> Result<Option<CanonicalUuid>, Outcome<CommandAnswer>> {

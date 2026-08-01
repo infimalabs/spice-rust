@@ -138,6 +138,32 @@ fn rebuild_reads_journal_without_mutating_authority() {
 }
 
 #[test]
+fn read_only_open_preserves_existing_store_bytes() {
+    let path = store_path("read-only");
+    let mut writer = Store::open(&path).expect("fold store");
+    writer
+        .read_or_rebuild_snapshot(&snapshot(1), &KindReducer::new(FoldId::CanvasFlow, 1))
+        .expect("first generation");
+    drop(writer);
+    let before = fs::read(&path).expect("read store bytes before inspection");
+
+    let reader = Store::open_read_only(&path).expect("read-only fold store");
+    assert!(
+        reader
+            .current(FoldId::CanvasFlow)
+            .expect("current generation")
+            .is_some()
+    );
+    drop(reader);
+
+    assert_eq!(
+        fs::read(&path).expect("read store bytes after inspection"),
+        before
+    );
+    fs::remove_file(path).expect("remove fixture store");
+}
+
+#[test]
 fn stale_rebuild_advances_and_never_moves_the_cursor_backward() {
     let mut store = Store::in_memory().expect("fold store");
     let reducer = KindReducer::new(FoldId::CanvasFlow, 1);

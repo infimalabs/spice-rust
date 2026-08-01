@@ -24,7 +24,39 @@ const MANIFEST: &str = "manifest.json";
 pub fn verify_restore_bundle(
     root: impl AsRef<Path>,
 ) -> Result<RestoreVerification, BackupVerifyError> {
-    verify_restore_bundle_with_hooks(root.as_ref(), |_| {}, |_| {})
+    capture_restore_bundle(root).map(RestoreCapture::into_verification)
+}
+
+/// One fully authenticated restore bundle captured into process-owned bytes.
+#[derive(Debug)]
+pub struct RestoreCapture {
+    verification: RestoreVerification,
+    authority: Vec<u8>,
+}
+
+impl RestoreCapture {
+    /// Identities and replay counts proved for the captured generation.
+    #[must_use]
+    pub const fn verification(&self) -> &RestoreVerification {
+        &self.verification
+    }
+
+    /// Exact authenticated SQLite bytes named by the bundle manifest.
+    #[must_use]
+    pub fn authority_bytes(&self) -> &[u8] {
+        &self.authority
+    }
+
+    /// Consumes the capture and returns its public verification receipt.
+    #[must_use]
+    pub fn into_verification(self) -> RestoreVerification {
+        self.verification
+    }
+}
+
+/// Authenticates and captures one bundle before any caller mutates authority.
+pub fn capture_restore_bundle(root: impl AsRef<Path>) -> Result<RestoreCapture, BackupVerifyError> {
+    capture_restore_bundle_with_hooks(root.as_ref(), |_| {}, |_| {})
 }
 
 #[cfg(test)]
@@ -35,7 +67,8 @@ fn verify_restore_bundle_after_capture<F>(
 where
     F: FnOnce(&Path),
 {
-    verify_restore_bundle_with_hooks(root, |_| {}, after_capture)
+    capture_restore_bundle_with_hooks(root, |_| {}, after_capture)
+        .map(RestoreCapture::into_verification)
 }
 
 #[cfg(test)]
@@ -46,14 +79,15 @@ fn verify_restore_bundle_after_inventory<F>(
 where
     F: FnOnce(&Path),
 {
-    verify_restore_bundle_with_hooks(root, after_inventory, |_| {})
+    capture_restore_bundle_with_hooks(root, after_inventory, |_| {})
+        .map(RestoreCapture::into_verification)
 }
 
-fn verify_restore_bundle_with_hooks<I, C>(
+fn capture_restore_bundle_with_hooks<I, C>(
     root: &Path,
     after_inventory: I,
     after_capture: C,
-) -> Result<RestoreVerification, BackupVerifyError>
+) -> Result<RestoreCapture, BackupVerifyError>
 where
     I: FnOnce(&Path),
     C: FnOnce(&Path),
@@ -66,16 +100,19 @@ where
     after_capture(&root.join(&authority));
     let verified = verify_authority(&authority_capture.bytes, manifest.journal_schema)?;
 
-    Ok(RestoreVerification {
-        bundle: Digest::compute(Domain::JournalBackupManifest, &manifest_bytes),
-        wire: manifest.wire,
-        journal_schema: manifest.journal_schema,
-        authority: authority_capture.digest,
-        members: count(manifest.members.len(), "members")?,
-        facts: count(verified.facts, "facts")?,
-        receipts: count(verified.receipts, "receipts")?,
-        heads: count(verified.heads, "heads")?,
-        threads: count(verified.threads, "threads")?,
+    Ok(RestoreCapture {
+        verification: RestoreVerification {
+            bundle: Digest::compute(Domain::JournalBackupManifest, &manifest_bytes),
+            wire: manifest.wire,
+            journal_schema: manifest.journal_schema,
+            authority: authority_capture.digest,
+            members: count(manifest.members.len(), "members")?,
+            facts: count(verified.facts, "facts")?,
+            receipts: count(verified.receipts, "receipts")?,
+            heads: count(verified.heads, "heads")?,
+            threads: count(verified.threads, "threads")?,
+        },
+        authority: authority_capture.bytes,
     })
 }
 

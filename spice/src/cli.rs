@@ -806,12 +806,12 @@ const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["config"],
-        "config [KEY [VALUE]]",
+        "config [KEY [VALUE]] [--apply=<digest>]",
         Local,
         None,
         [],
-        [Daemonless, Offline],
-        Reply,
+        [Daemonless, Offline, DigestOnMutation],
+        Plan,
         "spice::config"
     ),
 ];
@@ -850,6 +850,18 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["down"]
         | ["run"]
         | ["config"]
+        | ["trust"]
+        | ["trust", "grant"]
+        | ["trust", "revoke"]
+        | ["backup"]
+        | ["restore"]
+        | ["journal"]
+        | ["journal", "replay"]
+        | ["journal", "reindex"]
+        | ["journal", "verify"]
+        | ["fold"]
+        | ["thread"]
+        | ["canvas"]
         | ["release", "publish"]
         | ["restore", "verify"]
         | ["steer"]
@@ -880,19 +892,7 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["consent", "policy"]
         | ["taste"]
         | ["taste", "add"]
-        | ["taste", "drop"]
-        | ["trust"]
-        | ["trust", "grant"]
-        | ["trust", "revoke"] => Landing::Gap("POLICY-1kJQlFB6"),
-        ["backup"]
-        | ["restore"]
-        | ["journal"]
-        | ["journal", "replay"]
-        | ["journal", "reindex"]
-        | ["journal", "verify"]
-        | ["fold"]
-        | ["thread"] => Landing::Gap("JOURNAL-1kJQlFfS"),
-        ["canvas"] => Landing::Gap("PUBLISH-1kJQlGb0"),
+        | ["taste", "drop"] => Landing::Gap("POLICY-1kJQlFB6"),
         _ => Landing::Unaccounted,
     }
 }
@@ -925,6 +925,9 @@ fn branch(contracts: &[Contract], name: &'static str, path: &[&'static str]) -> 
     let contract = contract_at(contracts, path);
     let children = child_names(contracts, path);
     let mut command = Command::new(name).disable_help_subcommand(true);
+    if !children.is_empty() {
+        command = command.subcommand_negates_reqs(true);
+    }
 
     if let Some(contract) = contract {
         command = command.override_usage(format!("spice {}", contract.syntax));
@@ -961,6 +964,7 @@ fn contract_at<'a>(contracts: &'a [Contract], path: &[&str]) -> Option<&'a Contr
 }
 
 /// Recover one registered contract by its complete command path.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn contract(path: &[&str]) -> Option<&'static Contract> {
     contract_at(contracts(), path)
 }

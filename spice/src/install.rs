@@ -34,15 +34,18 @@ use record::record_path;
 
 const PLAN_VERSION: u16 = 2;
 const RECORD_VERSION: u16 = 2;
-const LEGACY_RECORD_PATH: &str = ".spice/install";
-const RECORD_PATH: &str = ".spice/rust/install.json";
+const LEGACY_RECORDS: [(&str, &str); 2] = [
+    (".spice/install", "SURFACE-1kJQkpFs"),
+    (".spice/rust/install.json", "SURFACE-1kJRGpf2"),
+];
+const RECORD_NAME: &str = "install.json";
+const RECORD_PATH: &str = ".spice-rust/install.json";
 const RECORD_MODE: u32 = 0o600;
 const DIRECTORY_MODE: u32 = 0o700;
 const DATA_MODE: u32 = 0o644;
 const EXECUTABLE_MODE: u32 = 0o755;
 
 const EXCLUDE_PATH: &str = "info/exclude";
-const CONFIG_PATH: &str = ".spice/config.toml";
 const ENTRY_PATH: &str = ".spice/rust/hooks/entry.sh";
 const STATIC_PATH: &str = ".spice/rust/hooks/static/stage.sh";
 const SKILL_PATH: &str = ".agents/skills/spice-rust/SKILL.md";
@@ -56,10 +59,6 @@ const EXCLUDE_BLOCK: &str = concat!(
     "/.agents/skills/spice-rust/\n",
     "# END spice-rust coexistence\n",
 );
-const STARTER_CONFIG: &str = concat!(
-    "# Machine-local configuration for the explicit Rust Spice command.\n",
-    "# Tracked release-one policy remains repository-authored.\n",
-);
 const SKILL: &str = include_str!("install/skill.md");
 
 /// One Rust-owned asset in canonical installation order.
@@ -67,7 +66,6 @@ const SKILL: &str = include_str!("install/skill.md");
 #[serde(rename_all = "kebab-case")]
 pub enum Asset {
     Exclusions,
-    Configuration,
     HookEntry,
     HookStatic,
     Skill,
@@ -317,7 +315,6 @@ impl InstallPlan {
         }
         let expected = [
             Asset::Exclusions,
-            Asset::Configuration,
             Asset::HookEntry,
             Asset::HookStatic,
             Asset::Skill,
@@ -499,22 +496,6 @@ fn build_plan(
         GeneratedImage::new(exclude_mode, &exclude_bytes),
     )?);
 
-    let (config_bound, config_previous) =
-        destination_state(repository, Location::CommonGit, CONFIG_PATH)?;
-    let config_generated = config_previous.as_ref().map_or_else(
-        || GeneratedImage::new(DATA_MODE, STARTER_CONFIG.as_bytes()),
-        ObservedFile::generated,
-    );
-    operations.push(operation(
-        &mut virtual_directories,
-        Asset::Configuration,
-        Location::CommonGit,
-        CONFIG_PATH,
-        config_bound,
-        config_previous,
-        config_generated,
-    )?);
-
     for (asset, path, bytes, mode) in [
         (
             Asset::HookEntry,
@@ -667,7 +648,7 @@ fn validate_operation(
 ) -> Result<(), InstallError> {
     let (location, path, fixed_mode) = asset_contract(operation.asset);
     let expected_mode = match operation.asset {
-        Asset::Exclusions | Asset::Configuration => operation
+        Asset::Exclusions => operation
             .previous
             .as_ref()
             .map_or(DATA_MODE, |previous| previous.image.mode()),
@@ -730,17 +711,6 @@ fn validate_generated_content(
             if operation.generated != expected {
                 return Err(InstallError::InvalidRecord(
                     "exclusion operation is not the exact managed block edit".to_owned(),
-                ));
-            }
-        }
-        Asset::Configuration => {
-            let expected = operation.previous.as_ref().map_or_else(
-                || GeneratedImage::new(DATA_MODE, STARTER_CONFIG.as_bytes()),
-                ObservedFile::generated,
-            );
-            if operation.generated != expected {
-                return Err(InstallError::InvalidRecord(
-                    "configuration operation does not preserve or create the starter".to_owned(),
                 ));
             }
         }
@@ -817,7 +787,6 @@ fn validate_introduced_parents(
 fn asset_contract(asset: Asset) -> (Location, &'static str, u32) {
     match asset {
         Asset::Exclusions => (Location::CommonGit, EXCLUDE_PATH, DATA_MODE),
-        Asset::Configuration => (Location::CommonGit, CONFIG_PATH, DATA_MODE),
         Asset::HookEntry => (Location::Worktree, ENTRY_PATH, EXECUTABLE_MODE),
         Asset::HookStatic => (Location::Worktree, STATIC_PATH, EXECUTABLE_MODE),
         Asset::Skill => (Location::Worktree, SKILL_PATH, DATA_MODE),

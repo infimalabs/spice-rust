@@ -69,10 +69,16 @@ pub enum IdentError {
 pub enum Domain {
     /// The exact authored bytes of one board document.
     BoardDocument,
+    /// One complete machine-local configuration document.
+    ConfigLocal,
+    /// One complete observed machine-local configuration mutation plan.
+    ConfigPlan,
     /// The canonical inventory document for one journal backup bundle.
     JournalBackupManifest,
     /// The exact bytes of one member in a journal backup bundle.
     JournalBackupMember,
+    /// The exact restore action pinned before authority replacement.
+    JournalRestorePlan,
     /// The payload manifest of one release target.
     DistTargetPayload,
     /// The bytes of one staged artifact.
@@ -121,6 +127,8 @@ pub enum Domain {
     GateMeasurement,
     /// The complete current identity and ordered outcome of one gate run.
     GateReceipt,
+    /// The exact tracked and machine-local executable policy documents.
+    ConfigExecutableSurface,
 }
 
 impl Domain {
@@ -133,8 +141,11 @@ impl Domain {
     pub const fn tag(self) -> &'static str {
         match self {
             Self::BoardDocument => "spice.board.document.v1",
+            Self::ConfigLocal => "spice.config.local.v1",
+            Self::ConfigPlan => "spice.config.plan.v1",
             Self::JournalBackupManifest => "spice.journal.backup-manifest.v1",
             Self::JournalBackupMember => "spice.journal.backup-member.v1",
+            Self::JournalRestorePlan => "spice.journal.restore-plan.v1",
             Self::DistTargetPayload => "spice.dist.target-payload.v1",
             Self::DistArtifact => "spice.dist.artifact.v1",
             Self::InstallArtifact => "spice.install.artifact.v1",
@@ -159,6 +170,7 @@ impl Domain {
             Self::GateInventory => "spice.gate.inventory.v1",
             Self::GateMeasurement => "spice.gate.measurement.v1",
             Self::GateReceipt => "spice.gate.receipt.v1",
+            Self::ConfigExecutableSurface => "spice.config.executable-surface.v1",
         }
     }
 }

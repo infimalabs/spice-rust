@@ -20,6 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
+#[cfg(not(target_arch = "wasm32"))]
 use serde::de::DeserializeOwned;
 use wire::body::{
     SteerAcked, SteerCanceled, SteerDeclined, SteerLapsed, SteerMissed, SteerResent, SteerSent,
@@ -273,6 +274,7 @@ impl Ledger {
     ///
     /// Returns the exact fact position whose registered body or steering
     /// transition contradicts the durable stream.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_snapshot(snapshot: &journal::FactSnapshot) -> Result<Self, ReplayError> {
         let mut ledger = Self::new();
         for envelope in snapshot.facts() {
@@ -573,6 +575,7 @@ impl fmt::Display for ReplayError {
 
 impl Error for ReplayError {}
 
+#[cfg(not(target_arch = "wasm32"))]
 fn decode_body<T: DeserializeOwned>(
     envelope: &wire::Envelope<wire::AnyFact>,
 ) -> Result<T, ReplayError> {

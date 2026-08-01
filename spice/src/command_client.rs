@@ -6,10 +6,10 @@ use std::net::{SocketAddr, TcpStream};
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
+use std::process::{Command as ProcessCommand, Stdio};
 use std::time::Duration;
 
 use serde::Serialize;
-use spice::repository::Repository;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::header::ORIGIN;
 use tungstenite::{Message, WebSocket};
@@ -20,6 +20,10 @@ use wire::{
 };
 
 use crate::cli::{Contract, Guard, Principal, ReplyPositionLaw};
+
+mod steering;
+
+use steering::steering_refusal;
 
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_DISCOVERY_BYTES: u64 = 16 * 1024;
@@ -49,6 +53,10 @@ pub(crate) enum SelectedCommand<'a> {
         key: &'a steer::Key,
         disposition: Disposition,
     },
+    /// The operator approves one exact pended executable digest.
+    TrustGrant { digest: &'a wire::Digest },
+    /// The operator withdraws approval from one exact granted digest.
+    TrustRevoke { digest: &'a wire::Digest },
 }
 
 #[derive(Clone, Copy)]
@@ -58,15 +66,18 @@ enum Connection {
 }
 
 /// Submit one contract-bound command to the current repository resident.
+///
+/// `discovery_path` must be the canvas path returned by the caller's single
+/// [`spice::repository::Repository::admit_state`] admission.
 pub(crate) fn execute(
-    repository: &Repository,
+    discovery_path: &Path,
     contract: &Contract,
     selected: SelectedCommand<'_>,
     lane_context: Option<CanonicalUuid>,
 ) -> Outcome<CommandAnswer> {
     match selected {
         SelectedCommand::SteerSend { lane, message } => {
-            let inbox = match read_inbox(repository, Connection::Operator, Some(lane)) {
+            let inbox = match read_inbox(discovery_path, Connection::Operator, Some(lane)) {
                 Ok(inbox) => inbox.answer,
                 Err(outcome) => return outcome,
             };
@@ -98,7 +109,7 @@ pub(crate) fn execute(
                     message: message.to_owned(),
                 },
             );
-            execute_mapped(repository, contract, Connection::Operator, mapped)
+            execute_mapped(discovery_path, contract, Connection::Operator, mapped)
         }
         SelectedCommand::SteerAck { key, disposition } => {
             let Some(lane) = lane_context else {
@@ -107,7 +118,7 @@ pub(crate) fn execute(
                     "ack requires the SPICE_LANE identity of an activated lane shell",
                 );
             };
-            let inbox = match read_inbox(repository, Connection::Lane(lane), None) {
+            let inbox = match read_inbox(discovery_path, Connection::Lane(lane), None) {
                 Ok(inbox) => inbox.answer,
                 Err(outcome) => return outcome,
             };
@@ -137,11 +148,11 @@ pub(crate) fn execute(
                     disposition,
                 },
             );
-            execute_mapped(repository, contract, Connection::Lane(lane), mapped)
+            execute_mapped(discovery_path, contract, Connection::Lane(lane), mapped)
         }
         SelectedCommand::SteerInbox { lane } => {
             let connection = lane_context.map_or(Connection::Operator, Connection::Lane);
-            match read_inbox(repository, connection, lane) {
+            match read_inbox(discovery_path, connection, lane) {
                 Ok(inbox) => Outcome::Reply(Reply {
                     position: ReplyPosition::Snapshot(inbox.position),
                     body: CommandAnswer::Inbox(inbox.answer),
@@ -151,13 +162,13 @@ pub(crate) fn execute(
         }
         selected => {
             let mapped = MappedCommand::selected(contract, selected);
-            execute_mapped(repository, contract, Connection::Operator, mapped)
+            execute_mapped(discovery_path, contract, Connection::Operator, mapped)
         }
     }
 }
 
 fn execute_mapped(
-    repository: &Repository,
+    operator_discovery: &Path,
     contract: &Contract,
     connection: Connection,
     mapped: ClientResult<MappedCommand>,
@@ -166,12 +177,118 @@ fn execute_mapped(
         Ok(mapped) => mapped,
         Err(outcome) => return outcome,
     };
-    let discovery_path = discovery_path(repository, connection);
+    let discovery_path = discovery_path(operator_discovery, connection);
     let discovery = match DiscoveryRead::open(&discovery_path) {
         Ok(discovery) => discovery,
         Err(outcome) => return outcome,
     };
     request(contract, mapped, discovery)
+}
+
+/// Open the browser surface named by the current owner-only discovery file.
+///
+/// This deliberately shares [`DiscoveryRead`] with resident commands. Canvas
+/// acquisition therefore has one file-identity, ownership, mode, wire-shape,
+/// and loopback-origin admission path rather than a browser-specific reader.
+pub(crate) fn open_canvas(discovery_path: &Path) -> Outcome<wire::CanvasOpen> {
+    open_canvas_with(discovery_path, || {}, system_browser)
+}
+
+fn open_canvas_with(
+    discovery_path: &Path,
+    before_current_check: impl FnOnce(),
+    launch: impl FnOnce(&str) -> Result<(), String>,
+) -> Outcome<wire::CanvasOpen> {
+    let discovery = match DiscoveryRead::open(discovery_path) {
+        Ok(discovery) => discovery,
+        Err(outcome) => return rebody(outcome),
+    };
+    if let Err(outcome) = loopback_endpoint(&discovery.value.endpoint) {
+        return rebody(outcome);
+    }
+    before_current_check();
+    if let Err(outcome) = discovery.verify_current() {
+        return rebody(outcome);
+    }
+    if let Err(detail) = launch(&discovery.value.endpoint) {
+        return Outcome::Fault(Fault {
+            class: FaultClass::Environment,
+            reason: "canvas::launch-failed".to_owned(),
+            detail,
+        });
+    }
+    Outcome::Reply(Reply {
+        position: ReplyPosition::Direct {},
+        body: wire::CanvasOpen {
+            endpoint: discovery.value.endpoint,
+            epoch: discovery.value.epoch,
+        },
+    })
+}
+
+fn system_browser(endpoint: &str) -> Result<(), String> {
+    let mut command = browser_command(endpoint)?;
+    let status = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|error| format!("the platform browser launcher did not start: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "the platform browser launcher did not accept the current endpoint: {status}"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn browser_command(endpoint: &str) -> Result<ProcessCommand, String> {
+    let mut command = ProcessCommand::new("/usr/bin/open");
+    command.arg("-u").arg(endpoint);
+    Ok(command)
+}
+
+#[cfg(target_os = "linux")]
+fn browser_command(endpoint: &str) -> Result<ProcessCommand, String> {
+    let mut command = ProcessCommand::new("/usr/bin/xdg-open");
+    command.arg(endpoint);
+    Ok(command)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn browser_command(_endpoint: &str) -> Result<ProcessCommand, String> {
+    Err("canvas browser launch is unsupported on this build target".to_owned())
+}
+
+fn rebody<B>(outcome: Outcome<CommandAnswer>) -> Outcome<B> {
+    match outcome {
+        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => Outcome::Fault(fault),
+        Outcome::Reply(_) => Outcome::Fault(Fault {
+            class: FaultClass::Protocol,
+            reason: "canvas::admission-replied".to_owned(),
+            detail: "canvas discovery admission returned a reply instead of a failure".to_owned(),
+        }),
+    }
+}
+
+/// Prove the selected read contract through the resident's sole authenticated
+/// opening path and return the generation that accepted it.
+pub(crate) fn authenticate(
+    discovery_path: &Path,
+    contract: &Contract,
+) -> ClientResult<CanonicalUuid> {
+    if !contract.guards.contains(&Guard::Resident) || matches!(contract.principal, Principal::Local)
+    {
+        return Err(protocol_fault(
+            "command::mapping-unsupported",
+            "selected CLI contract has no authenticated resident read mapping",
+        ));
+    }
+    let discovery = DiscoveryRead::open(discovery_path)?;
+    let session = open_session(contract, discovery)?;
+    Ok(session.accepted.epoch)
 }
 
 struct MappedCommand {
@@ -187,7 +304,7 @@ struct InboxSnapshot {
 }
 
 fn read_inbox(
-    repository: &Repository,
+    operator_discovery: &Path,
     connection: Connection,
     lane: Option<CanonicalUuid>,
 ) -> Result<InboxSnapshot, Outcome<CommandAnswer>> {
@@ -200,7 +317,7 @@ fn read_inbox(
         Vec::new(),
         &wire::intent::SteerInbox { lane },
     )?;
-    let outcome = execute_mapped(repository, contract, connection, Ok(mapped));
+    let outcome = execute_mapped(operator_discovery, contract, connection, Ok(mapped));
     match outcome {
         Outcome::Reply(Reply {
             position: ReplyPosition::Snapshot(position),
@@ -215,12 +332,11 @@ fn read_inbox(
     }
 }
 
-fn discovery_path(repository: &Repository, connection: Connection) -> PathBuf {
+fn discovery_path(operator_discovery: &Path, connection: Connection) -> PathBuf {
     match connection {
-        Connection::Operator => repository.state_root().join("canvas"),
-        Connection::Lane(lane) => repository
-            .state_root()
-            .join("canvas-lanes")
+        Connection::Operator => operator_discovery.to_path_buf(),
+        Connection::Lane(lane) => operator_discovery
+            .with_file_name("canvas-lanes")
             .join(lane.to_string()),
     }
 }
@@ -270,6 +386,30 @@ impl MappedCommand {
                 }],
                 &wire::intent::DirectiveRef { directive },
             ),
+            (["trust", "grant"], SelectedCommand::TrustGrant { digest }) => Self::new(
+                contract,
+                &["trust", "grant"],
+                CommandKind::TrustGrant,
+                vec![Witness::Trust {
+                    digest: digest.clone(),
+                    standing: wire::TrustState::Pended,
+                }],
+                &wire::intent::TrustRef {
+                    digest: digest.clone(),
+                },
+            ),
+            (["trust", "revoke"], SelectedCommand::TrustRevoke { digest }) => Self::new(
+                contract,
+                &["trust", "revoke"],
+                CommandKind::TrustRevoke,
+                vec![Witness::Trust {
+                    digest: digest.clone(),
+                    standing: wire::TrustState::Granted,
+                }],
+                &wire::intent::TrustRef {
+                    digest: digest.clone(),
+                },
+            ),
             _ => Err(protocol_fault(
                 "command::mapping-unsupported",
                 "selected CLI contract has no resident command mapping",
@@ -312,12 +452,12 @@ impl MappedCommand {
             )
         })?;
         let mapped = Self {
-            id: new_uuid(),
+            id: CanonicalUuid::new(uuid::Uuid::new_v4()),
             kind,
             expected,
             body,
         };
-        let preflight = mapped.envelope(new_uuid());
+        let preflight = mapped.envelope(CanonicalUuid::new(uuid::Uuid::new_v4()));
         preflight
             .witnessed()
             .map_err(|error| protocol_fault("command::witness-law", &error.to_string()))?;
@@ -531,48 +671,69 @@ fn request(
     mapped: MappedCommand,
     discovery: DiscoveryRead,
 ) -> Outcome<CommandAnswer> {
-    let authority = match endpoint_authority(&discovery.value.endpoint) {
-        Ok(authority) => authority,
+    let mut session = match open_session(contract, discovery) {
+        Ok(session) => session,
         Err(outcome) => return outcome,
     };
-    let address = match authority.parse::<SocketAddr>() {
-        Ok(address) if address.ip().is_loopback() => address,
-        Ok(_) => {
-            return protocol_fault(
-                "canvas::endpoint-not-loopback",
-                "canvas discovery does not name a loopback socket",
-            );
-        }
-        Err(_) => {
-            return protocol_fault(
-                "canvas::endpoint-invalid",
-                "canvas discovery does not name one socket authority",
-            );
-        }
-    };
-    if let Err(outcome) = discovery.verify_current() {
+    let command = mapped.envelope(session.discovery.value.epoch);
+    if let Err(outcome) = send(&mut session.socket, &command) {
         return outcome;
     }
+    let response = match receive(&mut session.socket) {
+        Ok(response) => response,
+        Err(outcome) => return outcome,
+    };
+    decode_response(
+        &response,
+        contract,
+        mapped.id,
+        mapped.kind,
+        session.discovery.value.epoch,
+        session.discovery.value.capability,
+    )
+}
+
+struct AuthenticatedSession {
+    socket: WebSocket<TcpStream>,
+    discovery: DiscoveryRead,
+    accepted: wire::Accepted,
+}
+
+fn open_session(
+    contract: &Contract,
+    discovery: DiscoveryRead,
+) -> ClientResult<AuthenticatedSession> {
+    let (authority, address) = loopback_endpoint(&discovery.value.endpoint)?;
+    discovery.verify_current()?;
     let stream = match TcpStream::connect_timeout(&address, SOCKET_TIMEOUT) {
         Ok(stream) => stream,
-        Err(error) => return environment_fault("canvas::connect-failed", &error.to_string()),
+        Err(error) => {
+            return Err(environment_fault(
+                "canvas::connect-failed",
+                &error.to_string(),
+            ));
+        }
     };
     if let Err(error) = stream.set_read_timeout(Some(SOCKET_TIMEOUT)) {
-        return environment_fault("canvas::timeout-failed", &error.to_string());
+        return Err(environment_fault(
+            "canvas::timeout-failed",
+            &error.to_string(),
+        ));
     }
     if let Err(error) = stream.set_write_timeout(Some(SOCKET_TIMEOUT)) {
-        return environment_fault("canvas::timeout-failed", &error.to_string());
+        return Err(environment_fault(
+            "canvas::timeout-failed",
+            &error.to_string(),
+        ));
     }
-    if let Err(outcome) = discovery.verify_current() {
-        return outcome;
-    }
+    discovery.verify_current()?;
     let mut request = match format!("ws://{authority}/socket").into_client_request() {
         Ok(request) => request,
         Err(_) => {
-            return protocol_fault(
+            return Err(protocol_fault(
                 "canvas::request-invalid",
                 "canvas endpoint cannot form the current socket request",
-            );
+            ));
         }
     };
     let origin = match discovery
@@ -582,61 +743,43 @@ fn request(
     {
         Ok(origin) => origin,
         Err(_) => {
-            return protocol_fault(
+            return Err(protocol_fault(
                 "canvas::origin-invalid",
                 "canvas endpoint cannot form the current socket origin",
-            );
+            ));
         }
     };
     request.headers_mut().insert(ORIGIN, origin);
     let (mut socket, _) = match tungstenite::client(request, stream) {
         Ok(opened) => opened,
-        Err(error) => return environment_fault("canvas::opening-failed", &error.to_string()),
+        Err(error) => {
+            return Err(environment_fault(
+                "canvas::opening-failed",
+                &error.to_string(),
+            ));
+        }
     };
-    if let Err(outcome) = discovery.verify_current() {
-        return outcome;
-    }
+    discovery.verify_current()?;
     let hello = wire::Hello {
         wire: wire::WireVersion::CURRENT,
         capability: discovery.value.capability,
         epoch: discovery.value.epoch,
     };
-    if let Err(outcome) = send(&mut socket, &hello) {
-        return outcome;
-    }
-    let opening = match receive(&mut socket) {
-        Ok(opening) => opening,
-        Err(outcome) => return outcome,
-    };
-    let accepted = match decode_opening(&opening, &discovery.value) {
-        Ok(accepted) => accepted,
-        Err(outcome) => return outcome,
-    };
+    send(&mut socket, &hello)?;
+    let opening = receive(&mut socket)?;
+    let accepted = decode_opening(&opening, &discovery.value)?;
     if !principal_matches(contract.principal, &accepted.actor) {
-        return protocol_fault(
+        return Err(protocol_fault(
             "command::principal-mismatch",
             "resident capability resolved to a principal outside the selected CLI contract",
-        );
+        ));
     }
-    if let Err(outcome) = discovery.verify_current() {
-        return outcome;
-    }
-    let command = mapped.envelope(discovery.value.epoch);
-    if let Err(outcome) = send(&mut socket, &command) {
-        return outcome;
-    }
-    let response = match receive(&mut socket) {
-        Ok(response) => response,
-        Err(outcome) => return outcome,
-    };
-    decode_response(
-        &response,
-        contract,
-        mapped.id,
-        mapped.kind,
-        discovery.value.epoch,
-        discovery.value.capability,
-    )
+    discovery.verify_current()?;
+    Ok(AuthenticatedSession {
+        socket,
+        discovery,
+        accepted,
+    })
 }
 
 fn endpoint_authority(endpoint: &str) -> ClientResult<&str> {
@@ -653,6 +796,21 @@ fn endpoint_authority(endpoint: &str) -> ClientResult<&str> {
         ));
     }
     Ok(authority)
+}
+
+fn loopback_endpoint(endpoint: &str) -> ClientResult<(&str, SocketAddr)> {
+    let authority = endpoint_authority(endpoint)?;
+    match authority.parse::<SocketAddr>() {
+        Ok(address) if address.ip().is_loopback() => Ok((authority, address)),
+        Ok(_) => Err(protocol_fault(
+            "canvas::endpoint-not-loopback",
+            "canvas discovery does not name a loopback socket",
+        )),
+        Err(_) => Err(protocol_fault(
+            "canvas::endpoint-invalid",
+            "canvas discovery does not name one socket authority",
+        )),
+    }
 }
 
 fn decode_opening(bytes: &[u8], discovery: &canvas::Discovery) -> ClientResult<wire::Accepted> {
@@ -818,20 +976,6 @@ fn capability_disclosed() -> Outcome<CommandAnswer> {
     )
 }
 
-fn steering_refusal(
-    reason: &str,
-    observed: Option<String>,
-    remedy: &str,
-) -> Outcome<CommandAnswer> {
-    Outcome::Refusal(Refusal {
-        reason: reason.to_owned(),
-        witness: Some("steering-inbox".to_owned()),
-        expected: Some("one live directive in the authenticated lane".to_owned()),
-        observed,
-        remedy: remedy.to_owned(),
-    })
-}
-
 fn protocol_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
     Outcome::Fault(Fault {
         class: FaultClass::Protocol,
@@ -848,324 +992,6 @@ fn environment_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
     })
 }
 
-fn new_uuid() -> CanonicalUuid {
-    CanonicalUuid::new(uuid::Uuid::new_v4())
-}
-
 #[cfg(test)]
-mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    use wire::intent::{StateAnswer, UpChange};
-    use wire::{ResidentState, Seq, SeqRange};
-
-    use super::*;
-    use crate::cli::{ExitOutcome, JournalAccess, ResultClass};
-
-    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
-
-    const COMMAND_CONTRACT: Contract = Contract {
-        path: &["fixture", "command"],
-        syntax: "fixture command",
-        principal: Principal::Operator,
-        journal: JournalAccess::Command,
-        reply_position: ReplyPositionLaw::Committed,
-        facts: &[],
-        guards: &[Guard::Resident, Guard::OperatorCapability],
-        tools: &[],
-        result: ResultClass::Reply,
-        outcomes: ExitOutcome::ALL,
-        battery: "command-client::fixture",
-    };
-
-    struct Fixture {
-        root: PathBuf,
-        canvas: PathBuf,
-    }
-
-    impl Fixture {
-        fn new(name: &str) -> Self {
-            let root = std::env::temp_dir().join(format!(
-                "spice-command-client-{name}-{}-{}",
-                std::process::id(),
-                NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
-            ));
-            fs::create_dir(&root).expect("fixture runtime directory");
-            let canvas = root.join("canvas");
-            Self { root, canvas }
-        }
-
-        fn publish(&self) -> canvas::Discovery {
-            let discovery = canvas::Discovery {
-                endpoint: "http://127.0.0.1:48123".to_owned(),
-                capability: uuid(1),
-                epoch: uuid(2),
-            };
-            discovery
-                .publish(&self.canvas)
-                .expect("fixture discovery publishes");
-            discovery
-        }
-    }
-
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.root).expect("fixture cleanup");
-        }
-    }
-
-    fn uuid(last: u8) -> CanonicalUuid {
-        format!("00000000-0000-4000-8000-{last:012x}")
-            .parse()
-            .expect("canonical fixture UUID")
-    }
-
-    fn mapped() -> MappedCommand {
-        MappedCommand::new(
-            &COMMAND_CONTRACT,
-            &["fixture", "command"],
-            CommandKind::UpChange,
-            vec![Witness::Transition {
-                from: ResidentState::Seated,
-                to: ResidentState::Dark,
-            }],
-            &UpChange {
-                state: ResidentState::Dark,
-            },
-        )
-        .expect("fixture command maps")
-    }
-
-    fn response(
-        id: CanonicalUuid,
-        epoch: CanonicalUuid,
-        position: ReplyPosition,
-        body: serde_json::Value,
-    ) -> Vec<u8> {
-        wire::encode(&Response {
-            v: wire::WireVersion::CURRENT,
-            id,
-            epoch,
-            outcome: Outcome::Reply(Reply { position, body }),
-        })
-        .expect("fixture response encodes")
-    }
-
-    fn committed() -> ReplyPosition {
-        ReplyPosition::Committed(SeqRange {
-            first: Seq::new(1).expect("fixture position"),
-            last: Seq::new(2).expect("fixture position"),
-        })
-    }
-
-    fn state_body() -> serde_json::Value {
-        serde_json::to_value(StateAnswer {
-            from: ResidentState::Seated,
-            to: ResidentState::Dark,
-        })
-        .expect("fixture answer encodes")
-    }
-
-    #[test]
-    fn mapping_rejects_the_wrong_contract_and_incomplete_body_before_discovery() {
-        let wrong_path = MappedCommand::selected(&COMMAND_CONTRACT, SelectedCommand::Down);
-        let Err(Outcome::Fault(fault)) = wrong_path else {
-            panic!("wrong path must fail mapping");
-        };
-        assert_eq!(fault.reason, "command::mapping-unsupported");
-
-        let incomplete = MappedCommand::new(
-            &COMMAND_CONTRACT,
-            &["fixture", "command"],
-            CommandKind::UpChange,
-            vec![Witness::Transition {
-                from: ResidentState::Seated,
-                to: ResidentState::Dark,
-            }],
-            &serde_json::json!({}),
-        );
-        let Err(Outcome::Fault(fault)) = incomplete else {
-            panic!("incomplete body must fail mapping");
-        };
-        assert_eq!(fault.reason, "command::body-incomplete");
-    }
-
-    #[test]
-    fn mapping_enforces_the_wire_witness_law() {
-        let missing = MappedCommand::new(
-            &COMMAND_CONTRACT,
-            &["fixture", "command"],
-            CommandKind::UpChange,
-            Vec::new(),
-            &UpChange {
-                state: ResidentState::Dark,
-            },
-        );
-        let Err(Outcome::Fault(fault)) = missing else {
-            panic!("missing witness must fail mapping");
-        };
-        assert_eq!(fault.reason, "command::witness-law");
-    }
-
-    #[test]
-    fn discovery_replacement_is_detected_by_file_identity() {
-        let fixture = Fixture::new("replacement");
-        let original = fixture.publish();
-        let read = DiscoveryRead::open(&fixture.canvas).expect("discovery opens");
-        let replacement = canvas::Discovery {
-            capability: uuid(3),
-            epoch: uuid(4),
-            ..original
-        };
-        replacement
-            .publish(&fixture.canvas)
-            .expect("replacement publishes");
-
-        let Err(Outcome::Fault(fault)) = read.verify_current() else {
-            panic!("replacement must invalidate the captured discovery");
-        };
-        assert_eq!(fault.reason, "canvas::discovery-replaced");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn discovery_symlinks_and_public_modes_are_refused() {
-        use std::os::unix::fs::{PermissionsExt as _, symlink};
-
-        let fixture = Fixture::new("insecure");
-        let discovery = fixture.publish();
-        fs::set_permissions(&fixture.canvas, fs::Permissions::from_mode(0o644))
-            .expect("fixture mode changes");
-        let Err(Outcome::Fault(fault)) = DiscoveryRead::open(&fixture.canvas) else {
-            panic!("public discovery must be refused");
-        };
-        assert_eq!(fault.reason, "canvas::discovery-insecure");
-
-        fs::remove_file(&fixture.canvas).expect("public fixture removes");
-        let target = fixture.root.join("target");
-        discovery.publish(&target).expect("target publishes");
-        symlink(&target, &fixture.canvas).expect("fixture symlink");
-        let Err(Outcome::Fault(fault)) = DiscoveryRead::open(&fixture.canvas) else {
-            panic!("symlink discovery must be refused");
-        };
-        assert_eq!(fault.reason, "canvas::discovery-insecure");
-    }
-
-    #[test]
-    fn response_binds_identity_epoch_position_and_answer_shape() {
-        let mapped = mapped();
-        let epoch = uuid(5);
-        let bytes = response(mapped.id, epoch, committed(), state_body());
-        let outcome = decode_response(
-            &bytes,
-            &COMMAND_CONTRACT,
-            mapped.id,
-            mapped.kind,
-            epoch,
-            uuid(6),
-        );
-        assert!(matches!(
-            outcome,
-            Outcome::Reply(Reply {
-                position: ReplyPosition::Committed(_),
-                body: CommandAnswer::State(StateAnswer {
-                    to: ResidentState::Dark,
-                    ..
-                })
-            })
-        ));
-
-        let replay = decode_response(
-            &bytes,
-            &COMMAND_CONTRACT,
-            uuid(7),
-            mapped.kind,
-            epoch,
-            uuid(6),
-        );
-        let Outcome::Fault(fault) = replay else {
-            panic!("a replayed response cannot answer a different command");
-        };
-        assert_eq!(fault.reason, "command::answer-mismatch");
-
-        let snapshot = response(
-            mapped.id,
-            epoch,
-            ReplyPosition::Snapshot(Seq::new(1).expect("fixture position")),
-            state_body(),
-        );
-        let Outcome::Fault(fault) = decode_response(
-            &snapshot,
-            &COMMAND_CONTRACT,
-            mapped.id,
-            mapped.kind,
-            epoch,
-            uuid(6),
-        ) else {
-            panic!("snapshot cannot answer a mutating contract");
-        };
-        assert_eq!(fault.reason, "command::position-mismatch");
-
-        let malformed = response(
-            mapped.id,
-            epoch,
-            committed(),
-            serde_json::json!({ "from": "seated" }),
-        );
-        let Outcome::Fault(fault) = decode_response(
-            &malformed,
-            &COMMAND_CONTRACT,
-            mapped.id,
-            mapped.kind,
-            epoch,
-            uuid(6),
-        ) else {
-            panic!("wrong answer shape must fault");
-        };
-        assert_eq!(fault.reason, "command::answer-binding");
-    }
-
-    #[test]
-    fn remote_outcomes_cannot_echo_the_discovery_capability() {
-        let capability = uuid(8);
-        let discovery = canvas::Discovery {
-            endpoint: "http://127.0.0.1:48123".to_owned(),
-            capability,
-            epoch: uuid(9),
-        };
-        let refusal = Refusal {
-            reason: "hello::fixture".to_owned(),
-            witness: None,
-            expected: None,
-            observed: Some(capability.to_string()),
-            remedy: "use current discovery".to_owned(),
-        };
-        let opening = wire::encode(&refusal).expect("fixture refusal encodes");
-        let Err(Outcome::Fault(fault)) = decode_opening(&opening, &discovery) else {
-            panic!("opening capability echo must fault");
-        };
-        assert_eq!(fault.reason, "canvas::capability-disclosed");
-        assert!(!fault.detail.contains(&capability.to_string()));
-
-        let mapped = mapped();
-        let response = wire::encode(&Response {
-            v: wire::WireVersion::CURRENT,
-            id: mapped.id,
-            epoch: discovery.epoch,
-            outcome: Outcome::<serde_json::Value>::Refusal(refusal),
-        })
-        .expect("fixture response encodes");
-        let Outcome::Fault(fault) = decode_response(
-            &response,
-            &COMMAND_CONTRACT,
-            mapped.id,
-            mapped.kind,
-            discovery.epoch,
-            capability,
-        ) else {
-            panic!("response capability echo must fault");
-        };
-        assert_eq!(fault.reason, "canvas::capability-disclosed");
-        assert!(!fault.detail.contains(&capability.to_string()));
-    }
-}
+#[path = "command_client/tests.rs"]
+mod tests;
