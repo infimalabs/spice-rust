@@ -1,9 +1,9 @@
-//! Rendering one typed outcome at the binary rim.
+//! Rendering typed command results at the binary rim.
 //!
-//! A command produces one outcome. Text and `--json` are two renderings of
-//! that one value, not two behaviours: the same outcome speaks on the same
-//! stream and exits with the same code either way, and only the bytes differ.
-//! The flag therefore selects a form, never a destination and never a result.
+//! A command produces one result. Text and `--json` are two renderings of that
+//! one value, not two behaviours: the same result speaks on the same stream
+//! and exits with the same code either way, and only the bytes differ. The flag
+//! therefore selects a form, never a destination and never a result.
 //!
 //! Which stream an outcome speaks on is a property of the outcome, not of the
 //! form. A reply is the answer a caller pipes, so it goes to standard output;
@@ -20,6 +20,7 @@
 
 use std::io::{self, Write};
 
+use listen::StreamOutcome;
 use serde::Serialize;
 use wire::Outcome;
 
@@ -71,6 +72,8 @@ impl Rendering {
 /// replies retain the complete typed outcome. Refusals and faults keep their
 /// one-sentence text form. Both forms therefore carry the same value without
 /// inventing prose fields for a successful body.
+/// Transcript streams use [`render_stream`] because each successful wake is
+/// the stream document itself rather than a reply envelope.
 ///
 /// # Errors
 ///
@@ -85,6 +88,18 @@ pub fn render<B: Serialize>(outcome: &Outcome<B>, form: Form) -> Result<Renderin
     };
     Ok(Rendering {
         stream: stream(outcome),
+        document,
+    })
+}
+
+/// Renders one successful transcript report in the requested form.
+pub fn render_stream(outcome: &StreamOutcome, form: Form) -> Result<Rendering, String> {
+    let document = match form {
+        Form::Text => terminated(outcome.to_string().into_bytes()),
+        Form::Json => line(wire::encode(outcome).map_err(|error| error.to_string())?),
+    };
+    Ok(Rendering {
+        stream: Stream::Out,
         document,
     })
 }
@@ -105,6 +120,13 @@ pub const fn stream<B>(outcome: &Outcome<B>) -> Stream {
 /// One document, terminated once.
 fn line(mut document: Vec<u8>) -> Vec<u8> {
     document.push(b'\n');
+    document
+}
+
+fn terminated(mut document: Vec<u8>) -> Vec<u8> {
+    if document.last() != Some(&b'\n') {
+        document.push(b'\n');
+    }
     document
 }
 

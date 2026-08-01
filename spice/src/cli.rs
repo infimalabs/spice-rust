@@ -137,7 +137,7 @@ macro_rules! row {
 pub(crate) const CONTRACTS: &[Contract] = &[
     row!(
         ["watch"],
-        "watch [ROOT]",
+        "watch [ROOT] [--once]",
         Local,
         None,
         [],
@@ -1034,6 +1034,14 @@ pub(crate) fn selected_contract(matches: &ArgMatches) -> Option<&'static Contrac
     contract_at(CONTRACTS, &path)
 }
 
+/// Recover the leaf matches selected by the generated parser.
+pub(crate) fn selected_matches(mut matches: &ArgMatches) -> &ArgMatches {
+    while let Some((_, child)) = matches.subcommand() {
+        matches = child;
+    }
+    matches
+}
+
 /// Recover the command passed through the root `run` leaf.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn run_command(matches: &ArgMatches) -> Option<Vec<OsString>> {
@@ -1221,6 +1229,7 @@ mod tests {
         let parser = command();
         for argv in [
             &["spice", "doctor"][..],
+            &["spice", "watch", "root", "--once"],
             &["spice", "task", "add", "title", "--project", "rim.cli"],
             &["spice", "task", "depends", "TASK", "FIRST", "SECOND"],
             &["spice", "lane", "add", "--life", "Drive"],

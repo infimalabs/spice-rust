@@ -622,6 +622,26 @@ fn cover_refusal_frames(covered: &mut BTreeSet<String>) {
 fn cover_reply_frames(covered: &mut BTreeSet<String>) {
     law(
         covered,
+        "ProofEvidence",
+        &[
+            ProofEvidence {
+                target: ReleaseTarget::Aarch64AppleDarwin,
+                payload: digest("1"),
+                receipt: digest("2"),
+                battery: digest("3"),
+                replay: digest("4"),
+            },
+            ProofEvidence {
+                target: ReleaseTarget::X86_64UnknownLinuxMusl,
+                payload: digest("5"),
+                receipt: digest("6"),
+                battery: digest("7"),
+                replay: digest("8"),
+            },
+        ],
+    );
+    law(
+        covered,
         "ReplyPosition",
         &[
             committed(48213),
