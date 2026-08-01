@@ -8,16 +8,9 @@
 use serde::{Deserialize, Serialize};
 use wire::{
     Actor, CanonicalUuid, Command, Envelope, Fact, FactKind, Fault, FaultClass, Hello, Instant,
-    Origin, Outcome, Overflow, Packed, Phase, Refusal, Rejected, Reply, ReplyPosition, Response,
-    Seq, SeqRange, TaskHandle, WireVersion, Witness,
+    Origin, Outcome, Overflow, Packed, Refusal, Rejected, Reply, ReplyPosition, Response, Seq,
+    SeqRange, TaskHandle, WireVersion, Witness, body,
 };
-
-/// Body of a `task::phased` fact, as printed in the WIRE.md envelope.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct Phased {
-    task: TaskHandle,
-    phase: Phase,
-}
 
 /// Body of the `task::done` command printed in WIRE.md.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,7 +109,7 @@ const REPLY: &str = r#"{
 
 #[test]
 fn envelope_matches_the_specified_document() {
-    let envelope: Envelope<Phased> = round_trip(ENVELOPE);
+    let envelope: Envelope<Fact<body::TaskPhased>> = round_trip(ENVELOPE);
 
     assert_eq!(envelope.v, WireVersion::CURRENT);
     assert_eq!(envelope.seq, seq(48213));
@@ -143,13 +136,10 @@ fn envelope_omits_cause_at_a_chain_root() {
         actor: Actor::Spice,
         origin: "task:SPICE-aBcD".parse::<Origin>().expect("origin"),
         cause: None,
-        fact: Fact::new(
-            FactKind::TaskAdded,
-            Phased {
-                task: "SPICE-aBcD".parse().expect("handle"),
-                phase: "todo".parse().expect("phase"),
-            },
-        ),
+        fact: Fact::new(body::TaskPhased {
+            task: "SPICE-aBcD".parse().expect("handle"),
+            phase: "todo".parse().expect("phase"),
+        }),
     };
 
     let encoded = String::from_utf8(wire::encode(&root).expect("encodes")).expect("utf8");
@@ -158,7 +148,8 @@ fn envelope_omits_cause_at_a_chain_root() {
         "a chain root omits cause entirely rather than sending a sentinel: {encoded}"
     );
 
-    let decoded: Envelope<Phased> = wire::decode(encoded.as_bytes()).expect("decodes");
+    let decoded: Envelope<Fact<body::TaskPhased>> =
+        wire::decode(encoded.as_bytes()).expect("decodes");
     assert_eq!(decoded, root);
     assert!(decoded.is_root());
 }
@@ -169,11 +160,11 @@ fn a_zero_or_null_cause_sentinel_is_refused() {
     let null = ENVELOPE.replace("\"cause\": 48190", "\"cause\": null");
 
     assert!(
-        wire::decode::<Envelope<Phased>>(zero.as_bytes()).is_err(),
+        wire::decode::<Envelope<Fact<body::TaskPhased>>>(zero.as_bytes()).is_err(),
         "zero is not a position"
     );
     assert!(
-        wire::decode::<Envelope<Phased>>(null.as_bytes()).is_err(),
+        wire::decode::<Envelope<Fact<body::TaskPhased>>>(null.as_bytes()).is_err(),
         "null is not a position"
     );
 }
