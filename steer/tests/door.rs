@@ -10,6 +10,7 @@
 //! parts.
 
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -56,6 +57,7 @@ feed the board
 </1kJK6N3R>
 "
     );
+    scratch.remove();
 }
 
 /// A lane owed nothing is rendered empty rather than sealed around nothing, and
@@ -77,6 +79,7 @@ fn nothing_pending_renders_empty_and_the_wrapper_stays_quiet() {
     let mut heard = Vec::new();
     assert!(!run::emit(&rendering, &mut heard).expect("emit reads"));
     assert!(heard.is_empty());
+    scratch.remove();
 }
 
 /// The wrapper writes exactly what was rendered and reports that it did.
@@ -93,6 +96,7 @@ fn the_wrapper_writes_what_was_rendered() {
     let mut heard = Vec::new();
     assert!(run::emit(&rendering, &mut heard).expect("emit reads"));
     assert_eq!(heard, fs::read(&rendering).expect("rendering readable"));
+    scratch.remove();
 }
 
 /// An absent rendering is ordinary, not a failure.
@@ -110,6 +114,7 @@ fn an_absent_rendering_is_ordinary() {
             .expect("absence is not an error")
     );
     assert!(heard.is_empty());
+    scratch.remove();
 }
 
 /// The wrapper hands the command through and reports what it did, rather than
@@ -140,6 +145,7 @@ fn publishing_replaces_the_rendering_whole() {
         fs::read_to_string(inbox::path(&inbox_root, lane)).expect("rendering readable"),
         ""
     );
+    scratch.remove();
 }
 
 /// Installation places every stage with the bytes this build carries, runnable,
@@ -162,6 +168,7 @@ fn installation_places_every_stage_and_repeats_cleanly() {
         );
         assert_executable(&path);
     }
+    scratch.remove();
 }
 
 /// Proof answers from the environment the caller hands in, so the same call
@@ -184,6 +191,7 @@ fn activation_is_proven_from_the_environment_it_is_handed() {
             text: "not-a-lane".to_owned()
         })
     );
+    scratch.remove();
 }
 
 /// Every way interception fails to prove itself is named by the stage that
@@ -216,6 +224,37 @@ fn a_stage_that_is_missing_or_drifted_is_named() {
     }
 
     hooks.proof(&proven).expect("restored stages prove");
+    scratch.remove();
+}
+
+/// A taken candidate is left intact and the next root starts empty.
+#[test]
+fn scratch_setup_creates_a_root_instead_of_adopting_one() {
+    let owner = Scratch::new("collision-owner");
+    let taken = owner.path().join("taken");
+    let free = owner.path().join("free");
+    fs::create_dir(&taken).expect("plant a taken candidate");
+    let marker = taken.join("left-behind");
+    fs::write(&marker, "not this fixture's bytes\n").expect("plant stale contents");
+
+    let scratch = Scratch::from_candidates([taken.clone(), free.clone()].into_iter());
+
+    assert_eq!(scratch.path(), free);
+    assert!(
+        fs::read_dir(scratch.path())
+            .expect("created root is readable")
+            .next()
+            .is_none(),
+        "the created root carried contents this fixture did not write"
+    );
+    assert_eq!(
+        fs::read_to_string(&marker).expect("taken root remains readable"),
+        "not this fixture's bytes\n",
+        "the taken candidate was disturbed"
+    );
+
+    scratch.remove();
+    owner.remove();
 }
 
 /// The ledger both other tests read their pending direction out of.
@@ -283,30 +322,68 @@ fn assert_executable(path: &Path) {
 #[cfg(not(unix))]
 fn assert_executable(_path: &Path) {}
 
-/// A directory of this test's own, removed when it drops.
-struct Scratch(PathBuf);
+/// Names tried before a scratch root is declared unobtainable.
+const CREATE_ATTEMPTS: usize = 128;
+
+/// A directory this test created and proves it removed.
+struct Scratch {
+    root: PathBuf,
+    removed: bool,
+}
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
 impl Scratch {
     fn new(label: &str) -> Self {
-        let sequence = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "spice-steer-{label}-{}-{sequence}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&path);
-        fs::create_dir_all(&path).expect("scratch directory is created");
-        Self(path)
+        let directory = std::env::temp_dir();
+        let process = std::process::id();
+        Self::from_candidates(std::iter::repeat_with(|| {
+            let sequence = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
+            directory.join(format!("spice-steer-{label}-{process}-{sequence}"))
+        }))
+    }
+
+    /// Own the first candidate this call creates, never one it merely finds.
+    fn from_candidates(candidates: impl Iterator<Item = PathBuf>) -> Self {
+        for root in candidates.take(CREATE_ATTEMPTS) {
+            match fs::create_dir(&root) {
+                Ok(()) => {
+                    return Self {
+                        root,
+                        removed: false,
+                    };
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => panic!("create scratch root at {}: {error}", root.display()),
+            }
+        }
+        panic!("no scratch root was free within {CREATE_ATTEMPTS} attempts");
     }
 
     fn path(&self) -> &Path {
-        &self.0
+        &self.root
+    }
+
+    /// Remove the owned root and prove teardown completed.
+    fn remove(mut self) {
+        fs::remove_dir_all(&self.root).unwrap_or_else(|error| {
+            panic!("remove scratch root at {}: {error}", self.root.display())
+        });
+        assert!(
+            !self.root.exists(),
+            "scratch root outlived removal at {}",
+            self.root.display()
+        );
+        self.removed = true;
     }
 }
 
 impl Drop for Scratch {
+    /// Best effort during unwinding; explicit teardown is the observable path.
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        if self.removed {
+            return;
+        }
+        let _ = fs::remove_dir_all(&self.root);
     }
 }
