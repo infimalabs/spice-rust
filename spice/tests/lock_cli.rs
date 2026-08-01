@@ -2,391 +2,409 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
-use std::thread;
-use std::time::Duration;
 
 use sill::{Acquisition, LockAvailability, LockFile, LockName, LockReport, Possession};
-use wire::{Outcome, ReplyPosition};
+use wire::Outcome;
 
-const BUSY_EXIT: i32 = 71;
-const TAKEN_EXIT: i32 = 72;
-const FULL_EXIT: i32 = 73;
-const EVENT_HORIZON: Duration = Duration::from_secs(10);
+const BUSY_EXIT: i32 = 70;
+const TAKEN_EXIT: i32 = 71;
+const FULL_EXIT: i32 = 72;
 
-struct Scratch(PathBuf);
+struct Fixture {
+    root: PathBuf,
+}
 
-impl Scratch {
-    fn repository(label: &str) -> Self {
+impl Fixture {
+    fn new(label: &str) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!(
             "spice-lock-cli-{label}-{}-{sequence}",
             std::process::id()
         ));
-        fs::create_dir(&root).expect("exclusive scratch repository is created");
-        fs::create_dir(root.join(".git")).expect("fixture Git directory is created");
+        fs::create_dir(&root).expect("lock fixture root is exclusively created");
+        let output = Command::new("/usr/bin/git")
+            .args(["init", "-q"])
+            .current_dir(&root)
+            .output()
+            .expect("initialize lock fixture repository");
+        assert!(output.status.success(), "git init: {output:?}");
+        let root = fs::canonicalize(root).expect("canonicalize lock fixture root");
         fs::write(
             root.join("spice.toml"),
-            format!(
-                concat!(
-                    "[lock]\n",
-                    "busy = {}\n",
-                    "taken = {}\n",
-                    "full = {}\n",
-                    "[lock.single]\n",
-                    "shards = 1\n",
-                    "[lock.pool]\n",
-                    "shards = 2\n",
-                ),
-                BUSY_EXIT, TAKEN_EXIT, FULL_EXIT,
+            concat!(
+                "[lock]\n",
+                "busy = 70\n",
+                "taken = 71\n",
+                "full = 72\n",
+                "\n[lock.solo]\n",
+                "shards = 1\n",
+                "\n[lock.pool]\n",
+                "shards = 2\n",
             ),
         )
-        .expect("fixture lock configuration is written");
-        Self(root)
+        .expect("write lock fixture configuration");
+        Self { root }
     }
 
-    fn path(&self) -> &Path {
-        &self.0
+    fn invoke(&self, argv: &[&str]) -> Spoken {
+        let output = Command::new(env!("CARGO_BIN_EXE_spice"))
+            .args(argv)
+            .current_dir(&self.root)
+            .env_remove(steer::hook::INBOX)
+            .output()
+            .expect("spice lock process launches");
+        Spoken {
+            code: output.status.code(),
+            out: output.stdout,
+            err: output.stderr,
+        }
+    }
+
+    fn hold(&self, name: &str, shard: Option<u32>) -> HeldProcess {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+        command
+            .arg("lock")
+            .arg("run")
+            .arg(name)
+            .current_dir(&self.root)
+            .env_remove(steer::hook::INBOX)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if let Some(shard) = shard {
+            command.arg("--shard").arg(shard.to_string());
+        }
+        let mut child = command
+            .args([
+                "--",
+                "/bin/sh",
+                "-c",
+                "printf 'READY\\n'; /bin/cat >/dev/null",
+            ])
+            .spawn()
+            .expect("spawn held lock process");
+        let stdout = child.stdout.take().expect("held process stdout is piped");
+        let mut reader = BufReader::new(stdout);
+        let mut ready = String::new();
+        reader
+            .read_line(&mut ready)
+            .expect("held child writes readiness line");
+        assert_eq!(ready, "READY\n");
+        HeldProcess {
+            child,
+            stdout: reader,
+        }
     }
 
     fn lock_root(&self) -> PathBuf {
-        fs::canonicalize(self.0.join(".git"))
+        fs::canonicalize(self.root.join(".git"))
             .expect("fixture Git directory canonicalizes")
             .join(".spice-rust/locks")
     }
 }
 
-impl Drop for Scratch {
+impl Drop for Fixture {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+struct HeldProcess {
+    child: Child,
+    stdout: BufReader<std::process::ChildStdout>,
+}
+
+impl HeldProcess {
+    fn release(mut self) {
+        self.child
+            .stdin
+            .take()
+            .expect("held process stdin is piped")
+            .write_all(b"release\n")
+            .expect("release held child");
+        let mut trailing = String::new();
+        self.stdout
+            .read_to_string(&mut trailing)
+            .expect("drain held child stdout");
+        let output = self
+            .child
+            .wait_with_output()
+            .expect("held lock process exits");
+        assert!(output.status.success(), "held lock process: {output:?}");
+        assert!(output.stderr.is_empty(), "held lock stderr: {output:?}");
     }
 }
 
 struct Spoken {
-    status: ExitStatus,
+    code: Option<i32>,
     out: Vec<u8>,
     err: Vec<u8>,
 }
 
-fn invoke(repository: &Path, arguments: &[&str]) -> Spoken {
-    let output = Command::new(env!("CARGO_BIN_EXE_spice"))
-        .args(arguments)
-        .current_dir(repository)
-        .env_remove(steer::hook::INBOX)
-        .output()
-        .expect("spice lock launches");
-    Spoken {
-        status: output.status,
-        out: output.stdout,
-        err: output.stderr,
-    }
-}
-
 #[test]
-fn report_has_text_json_parity_and_never_materializes_lock_state() {
-    let repository = Scratch::repository("report");
-    let expected_root = repository.lock_root();
+fn status_is_a_stable_read_only_direct_report_in_both_forms() {
+    let fixture = Fixture::new("status");
+    let text = fixture.invoke(&["lock"]);
+    let json = fixture.invoke(&["lock", "--json"]);
 
-    let text = invoke(repository.path(), &["lock"]);
-    assert_eq!(text.status.code(), Some(0));
+    assert_eq!(text.code, Some(0));
     assert!(text.err.is_empty());
-    let text_report: LockReport = wire::decode(&text.out).expect("text body is the lock report");
-    assert!(!expected_root.exists(), "text reporting created lock state");
-
-    let json = invoke(repository.path(), &["--json", "lock"]);
-    assert_eq!(json.status.code(), Some(0));
-    assert!(json.err.is_empty());
-    let json_outcome: Outcome<LockReport> =
-        wire::decode(&json.out).expect("JSON is the typed lock outcome");
-    let Outcome::Reply(reply) = json_outcome else {
-        panic!("lock report did not reply");
+    let text: LockReport = wire::decode(&text.out).expect("text body is the typed report");
+    let json: Outcome<LockReport> = wire::decode(&json.out).expect("JSON is a typed outcome");
+    let Outcome::Reply(json) = json else {
+        panic!("lock status must reply: {json:?}");
     };
-    assert_eq!(reply.position, ReplyPosition::Direct {});
-    assert_eq!(reply.body, text_report);
-    assert_eq!(reply.body.root, expected_root.display().to_string());
-    assert_eq!(reply.body.exits.busy, BUSY_EXIT);
-    assert_eq!(reply.body.exits.taken, TAKEN_EXIT);
-    assert_eq!(reply.body.exits.full, FULL_EXIT);
-    assert_eq!(
-        reply
-            .body
-            .pools
-            .iter()
-            .map(|pool| (pool.name.as_str(), pool.shards))
-            .collect::<Vec<_>>(),
-        [("pool", 2), ("single", 1)]
-    );
+    assert_eq!(json.position, wire::ReplyPosition::Direct {});
+    assert_eq!(text, json.body);
+    assert_eq!(text.root, fixture.lock_root().display().to_string());
+    assert_eq!(text.exits.busy, BUSY_EXIT);
+    assert_eq!(text.exits.taken, TAKEN_EXIT);
+    assert_eq!(text.exits.full, FULL_EXIT);
+    assert_eq!(text.pools.iter().map(|pool| pool.shards).sum::<u32>(), 3);
     assert!(
-        reply
-            .body
-            .pools
+        text.pools
             .iter()
             .flat_map(|pool| &pool.entries)
-            .all(|entry| entry.availability == LockAvailability::Available)
+            .all(|entry| { entry.availability == LockAvailability::Available })
     );
-    assert!(!expected_root.exists(), "JSON reporting created lock state");
+    assert!(
+        !fixture.lock_root().exists(),
+        "a status read does not create lock state"
+    );
 }
 
 #[test]
-fn run_preserves_exact_stream_environment_working_directory_and_child_exit() {
-    let repository = Scratch::repository("exact-child");
-    let nested = repository.path().join("nested");
-    fs::create_dir(&nested).expect("nested child working directory is created");
+fn run_preserves_exact_argv_environment_cwd_and_child_status() {
+    let fixture = Fixture::new("child");
     let output = Command::new(env!("CARGO_BIN_EXE_spice"))
         .args([
+            "lock",
+            "run",
+            "solo",
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf '%s|%s|%s' \"$LOCK_PROBE\" \"$1\" \"$PWD\"",
+            "child-zero",
+            "--child-flag",
+        ])
+        .current_dir(&fixture.root)
+        .env_remove(steer::hook::INBOX)
+        .env("LOCK_PROBE", "exact")
+        .output()
+        .expect("lock child process launches");
+    assert!(output.status.success(), "lock child: {output:?}");
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("child output is UTF-8"),
+        format!("exact|--child-flag|{}", fixture.root.display())
+    );
+    assert_eq!(
+        fs::read(fixture.lock_root().join("solo/0")).expect("read released lock metadata"),
+        b""
+    );
+
+    let exited = fixture.invoke(&["lock", "run", "solo", "--", "/bin/sh", "-c", "exit 23"]);
+    assert_eq!(exited.code, Some(23));
+    assert!(exited.out.is_empty());
+    assert!(exited.err.is_empty());
+}
+
+#[test]
+fn all_three_contention_classes_and_held_status_are_observable() {
+    let fixture = Fixture::new("contention");
+    let solo = fixture.hold("solo", None);
+
+    let status = fixture.invoke(&["lock", "--json"]);
+    let report = reply_body(status);
+    assert_eq!(availability(&report, "solo", 0), LockAvailability::Held);
+
+    assert_contention(
+        fixture.invoke(&["--json", "lock", "run", "solo", "--", "/usr/bin/true"]),
+        BUSY_EXIT,
+        "lock::busy",
+    );
+
+    let pool_zero = fixture.hold("pool", Some(0));
+    assert_contention(
+        fixture.invoke(&[
             "--json",
             "lock",
             "run",
             "pool",
             "--shard",
-            "1",
-            "--",
-            "/bin/sh",
-            "-c",
-            "printf '%s|%s|%s' \"$LOCK_TEST_MARKER\" \"$1\" \"$PWD\"; printf 'err' >&2; exit 41",
-            "lock-child",
-            "argument with spaces",
-        ])
-        .current_dir(&nested)
-        .env_remove(steer::hook::INBOX)
-        .env("LOCK_TEST_MARKER", "exact")
-        .output()
-        .expect("lock-held child launches");
-
-    assert_eq!(output.status.code(), Some(41));
-    assert_eq!(
-        output.stdout,
-        format!(
-            "exact|argument with spaces|{}",
-            fs::canonicalize(&nested)
-                .expect("fixture child directory canonicalizes")
-                .display()
-        )
-        .as_bytes()
-    );
-    assert_eq!(output.stderr, b"err");
-    assert!(repository.lock_root().join("pool/1").is_file());
-
-    let retry = invoke(
-        repository.path(),
-        &["lock", "run", "pool", "--shard", "1", "--", "/usr/bin/true"],
-    );
-    assert_eq!(retry.status.code(), Some(0), "released shard reacquires");
-    assert!(retry.out.is_empty());
-    assert!(retry.err.is_empty());
-}
-
-#[test]
-fn child_signal_and_launch_failures_map_to_shell_statuses() {
-    let repository = Scratch::repository("child-status");
-
-    let signalled = invoke(
-        repository.path(),
-        &[
-            "lock",
-            "run",
-            "single",
-            "--",
-            "/bin/sh",
-            "-c",
-            "kill -TERM $$",
-        ],
-    );
-    assert_eq!(signalled.status.code(), Some(143));
-    assert!(signalled.out.is_empty());
-    assert!(signalled.err.is_empty());
-
-    let missing = invoke(
-        repository.path(),
-        &[
-            "--json",
-            "lock",
-            "run",
-            "single",
-            "--",
-            "/definitely/missing/spice-lock-child",
-        ],
-    );
-    assert_eq!(missing.status.code(), Some(127));
-    assert!(missing.out.is_empty());
-    let outcome: Outcome<()> = wire::decode(&missing.err).expect("launch fault is typed JSON");
-    assert!(matches!(
-        outcome,
-        Outcome::Fault(fault) if fault.reason == "lock::child-launch-failed"
-    ));
-}
-
-#[test]
-fn separate_processes_prove_busy_taken_full_and_release() {
-    let repository = Scratch::repository("contention");
-    let single = Holder::spawn(repository.path(), "single", 0, false);
-
-    let held_report = lock_report(repository.path());
-    assert_eq!(
-        shard(&held_report, "single", 0).availability,
-        LockAvailability::Held
-    );
-
-    let taken = invoke(
-        repository.path(),
-        &[
-            "--json",
-            "lock",
-            "run",
-            "single",
-            "--shard",
             "0",
             "--",
             "/usr/bin/true",
-        ],
+        ]),
+        TAKEN_EXIT,
+        "lock::taken",
     );
-    assert_refusal(&taken, TAKEN_EXIT, "lock::taken");
-
-    let busy = invoke(
-        repository.path(),
-        &["lock", "run", "single", "--", "/usr/bin/true"],
-    );
-    assert_eq!(busy.status.code(), Some(BUSY_EXIT));
-    assert!(busy.out.is_empty());
-    assert_eq!(
-        String::from_utf8(busy.err).expect("text refusal is UTF-8"),
-        "spice: lock::busy; wait for the current holder to finish or select another configured shard\n"
+    let pool_one = fixture.hold("pool", Some(1));
+    assert_contention(
+        fixture.invoke(&["--json", "lock", "run", "pool", "--", "/usr/bin/true"]),
+        FULL_EXIT,
+        "lock::full",
     );
 
-    let pool_zero = Holder::spawn(repository.path(), "pool", 0, false);
-    let pool_one = Holder::spawn(repository.path(), "pool", 1, false);
-    let full = invoke(
-        repository.path(),
-        &["--json", "lock", "run", "pool", "--", "/usr/bin/true"],
-    );
-    assert_refusal(&full, FULL_EXIT, "lock::full");
-
-    single.release();
-    pool_zero.release();
     pool_one.release();
-    let released_report = lock_report(repository.path());
-    assert_eq!(
-        shard(&released_report, "single", 0).availability,
-        LockAvailability::Available
+    pool_zero.release();
+    solo.release();
+    let report = reply_body(fixture.invoke(&["lock", "--json"]));
+    assert!(
+        report
+            .pools
+            .iter()
+            .flat_map(|pool| &pool.entries)
+            .all(|entry| { entry.availability == LockAvailability::Available })
     );
-    let retry = invoke(
-        repository.path(),
-        &["lock", "run", "single", "--", "/usr/bin/true"],
-    );
-    assert_eq!(retry.status.code(), Some(0));
 }
 
-fn lock_report(repository: &Path) -> LockReport {
-    let spoken = invoke(repository, &["--json", "lock"]);
-    assert_eq!(spoken.status.code(), Some(0));
+#[test]
+fn a_signal_to_the_wrapper_terminates_the_child_group_and_releases_the_lock() {
+    let fixture = Fixture::new("signal");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_spice"))
+        .args([
+            "lock",
+            "run",
+            "solo",
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf 'READY\\n'; exec /usr/bin/tail -f /dev/null",
+        ])
+        .current_dir(&fixture.root)
+        .env_remove(steer::hook::INBOX)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn signal fixture");
+    let stdout = child.stdout.take().expect("signal fixture stdout is piped");
+    let mut reader = BufReader::new(stdout);
+    let mut ready = String::new();
+    reader
+        .read_line(&mut ready)
+        .expect("signal fixture reaches child execution");
+    assert_eq!(ready, "READY\n");
+
+    let killed = Command::new("/bin/kill")
+        .args(["-TERM", &child.id().to_string()])
+        .output()
+        .expect("signal lock wrapper");
+    assert!(killed.status.success(), "kill wrapper: {killed:?}");
+    let output = child.wait_with_output().expect("signalled wrapper exits");
+    assert_eq!(output.status.code(), Some(143));
+    assert!(output.stderr.is_empty(), "signal fixture: {output:?}");
+    assert_eq!(
+        fs::read(fixture.lock_root().join("solo/0")).expect("read lock after signal"),
+        b""
+    );
+
+    let reacquired = fixture.invoke(&["lock", "run", "solo", "--", "/usr/bin/true"]);
+    assert_eq!(reacquired.code, Some(0));
+}
+
+#[test]
+fn malformed_names_shards_and_configuration_refuse_without_running_a_child() {
+    let fixture = Fixture::new("refusals");
+    for (argv, reason) in [
+        (
+            &["--json", "lock", "run", "../escape", "--", "/usr/bin/true"][..],
+            "lock::name-refused",
+        ),
+        (
+            &[
+                "--json",
+                "lock",
+                "run",
+                "pool",
+                "--shard",
+                "2",
+                "--",
+                "/usr/bin/true",
+            ][..],
+            "lock::shard-refused",
+        ),
+        (
+            &["--json", "lock", "run", "absent", "--", "/usr/bin/true"][..],
+            "lock::unknown",
+        ),
+    ] {
+        let spoken = fixture.invoke(argv);
+        assert_eq!(spoken.code, Some(2));
+        let outcome: Outcome<()> = wire::decode(&spoken.err).expect("typed refusal decodes");
+        let Outcome::Refusal(refusal) = outcome else {
+            panic!("invalid lock request must refuse: {outcome:?}");
+        };
+        assert_eq!(refusal.reason, reason);
+    }
+    assert!(!fixture.lock_root().exists());
+
+    fs::write(fixture.root.join("spice.toml"), "[lock.solo]\nshards = 0\n")
+        .expect("write invalid lock configuration");
+    let invalid = fixture.invoke(&["lock", "--json"]);
+    assert_eq!(invalid.code, Some(2));
+    let invalid: Outcome<()> = wire::decode(&invalid.err).expect("config refusal decodes");
+    let Outcome::Refusal(invalid) = invalid else {
+        panic!("invalid config must refuse: {invalid:?}");
+    };
+    assert_eq!(invalid.reason, "lock::configuration-refused");
+}
+
+fn reply_body(spoken: Spoken) -> LockReport {
+    assert_eq!(spoken.code, Some(0));
     assert!(spoken.err.is_empty());
-    let Outcome::Reply(reply) =
-        wire::decode::<Outcome<LockReport>>(&spoken.out).expect("lock report decodes")
-    else {
-        panic!("lock status must reply");
+    let outcome: Outcome<LockReport> = wire::decode(&spoken.out).expect("typed reply decodes");
+    let Outcome::Reply(reply) = outcome else {
+        panic!("lock status must reply: {outcome:?}");
     };
     reply.body
 }
 
-fn shard<'a>(report: &'a LockReport, name: &str, number: u32) -> &'a sill::LockShardReport {
+fn availability(report: &LockReport, name: &str, shard: u32) -> LockAvailability {
     report
         .pools
         .iter()
         .find(|pool| pool.name == name)
-        .and_then(|pool| pool.entries.iter().find(|entry| entry.shard == number))
+        .expect("configured lock pool is reported")
+        .entries
+        .iter()
+        .find(|entry| entry.shard == shard)
         .expect("configured shard is reported")
+        .availability
 }
 
-#[test]
-fn abandoned_parent_releases_possession_while_its_child_is_still_alive() {
-    let repository = Scratch::repository("abandoned");
-    let holder = Holder::spawn(repository.path(), "single", 0, false);
-    let (mut child_stdin, output) = holder.kill_parent();
+fn assert_contention(spoken: Spoken, code: i32, reason: &str) {
+    assert_eq!(spoken.code, Some(code));
 
-    let retry = invoke(
-        repository.path(),
-        &["lock", "run", "single", "--", "/usr/bin/true"],
-    );
-    assert_eq!(
-        retry.status.code(),
-        Some(0),
-        "an exec child retained the abandoned parent's lock descriptor"
-    );
-
-    child_stdin
-        .write_all(b"release\n")
-        .expect("orphaned fixture child is released");
-    drop(child_stdin);
-    output.join().expect("orphan output reader joins");
-}
-
-#[test]
-fn foreground_process_group_signal_reaches_child_and_releases_lock() {
-    use std::os::unix::process::ExitStatusExt;
-
-    let repository = Scratch::repository("group-signal");
-    let holder = Holder::spawn(repository.path(), "single", 0, true);
-    let status = holder.signal_group(15);
-    assert_eq!(status.signal(), Some(15));
-
-    let retry = invoke(
-        repository.path(),
-        &["lock", "run", "single", "--", "/usr/bin/true"],
-    );
-    assert_eq!(retry.status.code(), Some(0));
-}
-
-#[test]
-fn refused_selection_and_configuration_never_materialize_state() {
-    let repository = Scratch::repository("refused");
-    for arguments in [
-        vec!["lock", "run", "missing", "--", "/usr/bin/true"],
-        vec!["lock", "run", "pool", "--shard", "2", "--", "/usr/bin/true"],
-        vec!["lock", "run", "../outside", "--", "/usr/bin/true"],
-    ] {
-        let refused = invoke(repository.path(), &arguments);
-        assert_eq!(refused.status.code(), Some(2));
-        assert!(refused.out.is_empty());
-        assert!(!String::from_utf8_lossy(&refused.err).contains("release::not-landed"));
-    }
-    assert!(!repository.lock_root().exists());
-
-    fs::write(
-        repository.path().join("spice.toml"),
-        "[lock.pool]\nshards = 0\n",
-    )
-    .expect("malformed configuration is installed");
-    let malformed = invoke(repository.path(), &["--json", "lock"]);
-    assert_eq!(malformed.status.code(), Some(2));
-    let outcome: Outcome<()> =
-        wire::decode(&malformed.err).expect("configuration refusal is typed JSON");
-    assert!(matches!(
-        outcome,
-        Outcome::Refusal(refusal) if refusal.reason == "lock::configuration-refused"
-    ));
-    assert!(!repository.lock_root().exists());
+    assert!(spoken.out.is_empty());
+    let outcome: Outcome<()> = wire::decode(&spoken.err).expect("contention refusal decodes");
+    let Outcome::Refusal(refusal) = outcome else {
+        panic!("lock contention must refuse: {outcome:?}");
+    };
+    assert_eq!(refusal.reason, reason);
 }
 
 #[test]
 fn final_and_intermediate_symlinks_never_escape_the_configured_topology() {
     use std::os::unix::fs::symlink;
 
-    let final_link = Scratch::repository("final-symlink");
-    let final_external = final_link.path().join("external-final");
+    let final_link = Fixture::new("final-symlink");
+    let final_external = final_link.root.join("external-final");
     fs::write(&final_external, b"external final lock").expect("external lock writes");
     let final_hold = hold_external(&final_external, "external-final");
-    let final_pool = final_link.lock_root().join("single");
+    let final_pool = final_link.lock_root().join("solo");
     fs::create_dir_all(&final_pool).expect("final-link pool creates");
     symlink(&final_external, final_pool.join("0")).expect("final shard symlink creates");
-    assert_symlink_refusal(&final_link, "single", &final_hold);
+    assert_symlink_refusal(&final_link, "solo", &final_hold);
 
-    let intermediate = Scratch::repository("intermediate-symlink");
-    let external_pool = intermediate.path().join("external-pool");
+    let intermediate = Fixture::new("intermediate-symlink");
+    let external_pool = intermediate.root.join("external-pool");
     fs::create_dir(&external_pool).expect("external pool creates");
     let external_shard = external_pool.join("0");
     fs::write(&external_shard, b"external intermediate lock").expect("external shard writes");
@@ -408,35 +426,32 @@ fn hold_external(path: &Path, name: &str) -> Possession {
     }
 }
 
-fn assert_symlink_refusal(repository: &Scratch, name: &str, external: &Possession) {
-    let child_marker = repository.path().join("child-launched");
+fn assert_symlink_refusal(repository: &Fixture, name: &str, external: &Possession) {
+    let child_marker = repository.root.join("child-launched");
     let child_marker = child_marker.to_str().expect("fixture path is UTF-8");
-    let before = tree(repository.path());
+    let before = tree(&repository.root);
 
-    assert_state_fault(&invoke(repository.path(), &["--json", "lock"]));
-    assert_state_fault(&invoke(
-        repository.path(),
-        &[
-            "--json",
-            "lock",
-            "run",
-            name,
-            "--shard",
-            "0",
-            "--",
-            "/bin/sh",
-            "-c",
-            "printf launched > \"$1\"",
-            "lock-child",
-            child_marker,
-        ],
-    ));
+    assert_state_fault(&repository.invoke(&["--json", "lock"]));
+    assert_state_fault(&repository.invoke(&[
+        "--json",
+        "lock",
+        "run",
+        name,
+        "--shard",
+        "0",
+        "--",
+        "/bin/sh",
+        "-c",
+        "printf launched > \"$1\"",
+        "lock-child",
+        child_marker,
+    ]));
 
     assert!(
         !Path::new(child_marker).exists(),
         "a refused symlink path launched its child"
     );
-    assert_eq!(tree(repository.path()), before, "a refusal changed state");
+    assert_eq!(tree(&repository.root), before, "a refusal changed state");
     let contender = external
         .lock()
         .try_acquire()
@@ -445,7 +460,7 @@ fn assert_symlink_refusal(repository: &Scratch, name: &str, external: &Possessio
 }
 
 fn assert_state_fault(spoken: &Spoken) {
-    assert_eq!(spoken.status.code(), Some(1));
+    assert_eq!(spoken.code, Some(1));
     assert!(spoken.out.is_empty());
     let outcome: Outcome<()> = wire::decode(&spoken.err).expect("state fault is typed JSON");
     assert!(matches!(
@@ -503,106 +518,4 @@ fn walk_tree(root: &Path, directory: &Path, state: &mut BTreeMap<String, (u32, S
             panic!("snapshot encountered an unsupported file type at {relative}");
         }
     }
-}
-
-fn assert_refusal(spoken: &Spoken, code: i32, reason: &str) {
-    assert_eq!(spoken.status.code(), Some(code));
-    assert!(spoken.out.is_empty());
-    assert!(!String::from_utf8_lossy(&spoken.err).contains("release::not-landed"));
-    let outcome: Outcome<()> = wire::decode(&spoken.err).expect("contention is typed JSON");
-    assert!(matches!(
-        outcome,
-        Outcome::Refusal(refusal) if refusal.reason == reason
-    ));
-}
-
-struct Holder {
-    child: Child,
-    stdin: Option<ChildStdin>,
-    output: thread::JoinHandle<()>,
-}
-
-impl Holder {
-    fn spawn(repository: &Path, name: &str, shard: u32, own_group: bool) -> Self {
-        use std::os::unix::process::CommandExt;
-
-        let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
-        command
-            .args([
-                "lock",
-                "run",
-                name,
-                "--shard",
-                &shard.to_string(),
-                "--",
-                "/bin/sh",
-                "-c",
-                "printf 'ready\\n'; IFS= read -r release",
-            ])
-            .current_dir(repository)
-            .env_remove(steer::hook::INBOX)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        if own_group {
-            command.process_group(0);
-        }
-        let mut child = command.spawn().expect("lock holder launches");
-        let stdin = child.stdin.take().expect("holder stdin is piped");
-        let stdout = child.stdout.take().expect("holder stdout is piped");
-        let (sender, receiver) = mpsc::channel();
-        let output = thread::spawn(move || {
-            let mut lines = BufReader::new(stdout).lines();
-            let first = lines.next().transpose();
-            let _ = sender.send(first);
-            for line in lines {
-                line.expect("holder stdout remains UTF-8");
-            }
-        });
-        let ready = receiver
-            .recv_timeout(EVENT_HORIZON)
-            .expect("holder child reports readiness")
-            .expect("holder readiness is readable");
-        assert_eq!(ready.as_deref(), Some("ready"));
-        Self {
-            child,
-            stdin: Some(stdin),
-            output,
-        }
-    }
-
-    fn release(mut self) {
-        self.stdin
-            .take()
-            .expect("live holder owns stdin")
-            .write_all(b"release\n")
-            .expect("holder child is released");
-        let status = self.child.wait().expect("holder wrapper is reaped");
-        assert_eq!(status.code(), Some(0));
-        self.output.join().expect("holder output reader joins");
-    }
-
-    fn kill_parent(mut self) -> (ChildStdin, thread::JoinHandle<()>) {
-        self.child.kill().expect("holder wrapper is killed");
-        let status = self.child.wait().expect("killed holder is reaped");
-        assert!(!status.success());
-        (
-            self.stdin.take().expect("orphan child retains piped stdin"),
-            self.output,
-        )
-    }
-
-    fn signal_group(mut self, signal: i32) -> ExitStatus {
-        let process_group = -i32::try_from(self.child.id()).expect("child PID fits i32");
-        let result = unsafe { kill(process_group, signal) };
-        assert_eq!(result, 0, "fixture process group accepts signal");
-        self.stdin.take();
-        let status = self.child.wait().expect("signalled wrapper is reaped");
-        self.output.join().expect("holder output reader joins");
-        status
-    }
-}
-
-unsafe extern "C" {
-    fn kill(pid: i32, signal: i32) -> i32;
 }

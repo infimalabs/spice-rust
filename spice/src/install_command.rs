@@ -123,7 +123,7 @@ fn failure<B>(error: InstallError) -> Outcome<B> {
         | InstallError::BinaryEmpty(_)
         | InstallError::BinaryContextChanged
         | InstallError::DigestMismatch { .. }
-        | InstallError::LegacyRecord(_)
+        | InstallError::LegacyRecord { .. }
         | InstallError::RecordMissing
         | InstallError::ApplyInProgress
         | InstallError::UnapplyInProgress
@@ -154,7 +154,7 @@ fn failure<B>(error: InstallError) -> Outcome<B> {
 fn install_refusal_reason(error: &InstallError) -> &'static str {
     match error {
         InstallError::DigestMismatch { .. } => "install::digest-moved",
-        InstallError::LegacyRecord(_) => "install::release-owned-state",
+        InstallError::LegacyRecord { .. } => "install::release-owned-state",
         InstallError::RecordMissing => "install::record-missing",
         InstallError::ApplyInProgress | InstallError::UnapplyInProgress => {
             "install::transition-incomplete"

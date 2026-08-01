@@ -35,7 +35,6 @@ fn planning_is_canonical_digest_bound_and_side_effect_free() {
             .collect::<Vec<_>>(),
         [
             Asset::Exclusions,
-            Asset::Configuration,
             Asset::HookEntry,
             Asset::HookStatic,
             Asset::Skill,
@@ -73,18 +72,23 @@ fn apply_is_idempotent_preserves_python_and_unapply_is_exact() {
     assert_eq!(fs::read(&python).unwrap(), before_python);
     assert_eq!(run(&python), b"python-harness\n");
     assert_eq!(run(&scratch.join(BINARY_PATH)), b"rust-appliance\n");
-    assert_eq!(
-        fs::read(scratch.common(CONFIG_PATH)).unwrap(),
-        STARTER_CONFIG.as_bytes()
-    );
-    assert!(!scratch.join(CONFIG_PATH).exists());
-    crate::config::load_repository(&repository, &[]).expect("starter configuration loads");
     assert!(
         fs::read_to_string(scratch.exclude())
             .unwrap()
             .contains(EXCLUDE_BLOCK)
     );
     assert_eq!(fs::read_to_string(scratch.join(SKILL_PATH)).unwrap(), SKILL);
+    assert_eq!(
+        record_path(&repository),
+        repository.state_root().join(RECORD_NAME)
+    );
+    assert_eq!(mode(&record_path(&repository)), RECORD_MODE);
+    assert!(
+        !repository
+            .common_dir()
+            .join(".spice/rust/install.json")
+            .exists()
+    );
 
     let removed = unapply(&repository).expect("reverse exact install");
     let repeated_remove = unapply(&repository).expect("repeat exact reversal");
@@ -102,27 +106,21 @@ fn apply_is_idempotent_preserves_python_and_unapply_is_exact() {
 }
 
 #[test]
-fn preserved_files_keep_their_bytes_and_modes() {
+fn preserved_exclusions_keep_their_prior_mode() {
     let scratch = Scratch::new("preserve");
     let repository = scratch.repository();
-    let config = scratch.common_file(CONFIG_PATH, b"[operator]\nmode = 'kept'\n");
     set_test_mode(&scratch.exclude(), 0o600);
-    set_test_mode(&config, 0o640);
 
     let planned = plan(&repository, None).unwrap();
     let receipt = apply(&repository, None, &planned.digest().unwrap()).unwrap();
-    assert_eq!(fs::read(&config).unwrap(), b"[operator]\nmode = 'kept'\n");
     assert_eq!(mode(&scratch.exclude()), 0o600);
-    assert_eq!(mode(&config), 0o640);
 
     unapply(&repository).unwrap();
     assert_eq!(
-        receipt.plan().operations()[1].previous().unwrap().mode(),
-        0o640
+        receipt.plan().operations()[0].previous().unwrap().mode(),
+        0o600
     );
-    assert_eq!(fs::read(&config).unwrap(), b"[operator]\nmode = 'kept'\n");
     assert_eq!(mode(&scratch.exclude()), 0o600);
-    assert_eq!(mode(&config), 0o640);
 }
 
 #[test]
@@ -140,7 +138,6 @@ fn stale_plan_refuses_before_record_or_target_mutation() {
         b"operator changed this\n"
     );
     assert!(!record_path(&repository).exists());
-    assert!(!scratch.common(CONFIG_PATH).exists());
     assert!(!scratch.join(ENTRY_PATH).exists());
 }
 
@@ -188,8 +185,8 @@ fn unapply_resumes_a_write_interrupted_before_progress_publication() {
     let planned = plan(&repository, None).unwrap();
     apply(&repository, None, &planned.digest().unwrap()).unwrap();
 
-    let error = unapply_with_interruption(&repository, Some(3)).unwrap_err();
-    assert!(matches!(error, InstallError::Interrupted { operation: 3 }));
+    let error = unapply_with_interruption(&repository, Some(2)).unwrap_err();
+    assert!(matches!(error, InstallError::Interrupted { operation: 2 }));
     let interrupted = read_record(&repository).unwrap().unwrap().record;
     assert_eq!(interrupted.status, InstallStatus::Unapplying);
     assert_eq!(interrupted.completed, 1);
@@ -250,7 +247,6 @@ fn malformed_record_and_divergent_exclusions_refuse_without_mutation() {
     let error = plan(&repository, None).unwrap_err();
     assert!(matches!(error, InstallError::DivergentExclusions));
     assert!(!record_path(&repository).exists());
-    assert!(!divergent.common(CONFIG_PATH).exists());
 
     let duplicate = Scratch::new("duplicate-block");
     let repository = duplicate.repository();
@@ -266,23 +262,25 @@ fn malformed_record_and_divergent_exclusions_refuse_without_mutation() {
 
 #[test]
 fn legacy_record_names_its_owning_release_and_refuses_without_mutation() {
-    let scratch = Scratch::new("legacy-record");
-    let repository = scratch.repository();
-    let legacy = repository.common_dir().join(LEGACY_RECORD_PATH);
-    fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-    fs::write(&legacy, b"legacy record bytes\n").unwrap();
-    let before_exclude = fs::read(scratch.exclude()).unwrap();
+    for (relative, owner) in LEGACY_RECORDS {
+        let scratch = Scratch::new(owner);
+        let repository = scratch.repository();
+        let legacy = repository.common_dir().join(relative);
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        fs::write(&legacy, b"legacy record bytes\n").unwrap();
+        let before_exclude = fs::read(scratch.exclude()).unwrap();
 
-    let error = plan(&repository, None).unwrap_err();
-    assert!(matches!(
-        &error,
-        InstallError::LegacyRecord(path) if path == &legacy
-    ));
-    assert!(error.to_string().contains("SURFACE-1kJQkpFs"));
-    assert_eq!(fs::read(scratch.exclude()).unwrap(), before_exclude);
-    assert!(!record_path(&repository).exists());
-    assert!(!scratch.common(CONFIG_PATH).exists());
-    assert!(!scratch.join(ENTRY_PATH).exists());
+        let error = plan(&repository, None).unwrap_err();
+        assert!(matches!(
+            &error,
+            InstallError::LegacyRecord { path, owner: observed }
+                if path == &legacy && observed == &owner
+        ));
+        assert!(error.to_string().contains(owner));
+        assert_eq!(fs::read(scratch.exclude()).unwrap(), before_exclude);
+        assert!(!record_path(&repository).exists());
+        assert!(!scratch.join(ENTRY_PATH).exists());
+    }
 }
 
 #[test]
@@ -342,6 +340,19 @@ fn planning_binds_internal_symlinked_install_parents_and_refuses_escape() {
     );
     assert!(fs::read_dir(&external).unwrap().next().is_none());
     fs::remove_dir(external).unwrap();
+
+    let state = Scratch::new("state-symlink");
+    let repository = state.repository();
+    let outside = state.join("outside-state");
+    fs::create_dir(&outside).unwrap();
+    symlink(&outside, repository.state_root()).unwrap();
+
+    let error = plan(&repository, None).unwrap_err();
+    assert!(matches!(
+        error,
+        InstallError::PathShape(path) if path == repository.state_root()
+    ));
+    assert!(fs::read_dir(&outside).unwrap().next().is_none());
 }
 
 fn images(repository: &Repository, plan: &InstallPlan) -> Vec<Option<ObservedFile>> {
@@ -413,17 +424,6 @@ impl Scratch {
 
     fn exclude(&self) -> PathBuf {
         self.0.join(".git/info/exclude")
-    }
-
-    fn common(&self, relative: impl AsRef<Path>) -> PathBuf {
-        self.0.join(".git").join(relative)
-    }
-
-    fn common_file(&self, relative: &str, bytes: &[u8]) -> PathBuf {
-        let path = self.common(relative);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, bytes).unwrap();
-        path
     }
 
     fn binary(&self, bytes: &[u8]) -> PathBuf {

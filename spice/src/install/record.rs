@@ -8,7 +8,7 @@ use wire::Digest;
 use super::files::{create_directory, publish_image};
 use super::{
     FileImage, Generation, InstallError, InstallPlan, InstallReceipt, InstallStatus,
-    LEGACY_RECORD_PATH, RECORD_MODE, RECORD_PATH, RECORD_VERSION, Repository, RepositoryIdentity,
+    LEGACY_RECORDS, RECORD_MODE, RECORD_NAME, RECORD_VERSION, Repository, RepositoryIdentity,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -174,6 +174,19 @@ impl InstallRecord {
 
 pub(super) fn read_record(repository: &Repository) -> Result<Option<LoadedRecord>, InstallError> {
     refuse_legacy_record(repository)?;
+    let state_root = repository.state_root();
+    match fs::symlink_metadata(&state_root) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => return Err(InstallError::PathShape(state_root)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(InstallError::io(
+                "inspect install record directory",
+                state_root,
+                source,
+            ));
+        }
+    }
     let path = record_path(repository);
     let metadata = match fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
@@ -251,18 +264,23 @@ fn write_record_bytes(
 }
 
 pub(super) fn record_path(repository: &Repository) -> PathBuf {
-    repository.common_dir().join(RECORD_PATH)
+    repository.state_root().join(RECORD_NAME)
 }
 
 fn refuse_legacy_record(repository: &Repository) -> Result<(), InstallError> {
-    let path = repository.common_dir().join(LEGACY_RECORD_PATH);
-    match fs::symlink_metadata(&path) {
-        Ok(_) => Err(InstallError::LegacyRecord(path)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(InstallError::io(
-            "inspect legacy install record",
-            path,
-            source,
-        )),
+    for (relative, owner) in LEGACY_RECORDS {
+        let path = repository.common_dir().join(relative);
+        match fs::symlink_metadata(&path) {
+            Ok(_) => return Err(InstallError::LegacyRecord { path, owner }),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(InstallError::io(
+                    "inspect legacy install record",
+                    path,
+                    source,
+                ));
+            }
+        }
     }
+    Ok(())
 }
