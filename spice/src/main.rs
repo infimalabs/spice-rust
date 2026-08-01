@@ -13,6 +13,8 @@ use wire::{Fault, FaultClass, Outcome, Refusal};
 
 mod cli;
 mod render;
+#[cfg(not(target_arch = "wasm32"))]
+mod resident;
 
 use render::Form;
 
@@ -43,18 +45,28 @@ fn main() {
         _ => {}
     }
 
-    let command = contract.path.join(" ");
-    let outcome: Outcome<()> = Outcome::Refusal(Refusal {
+    #[cfg(not(target_arch = "wasm32"))]
+    let outcome = match contract.path {
+        ["up"] => resident::up(),
+        ["down"] => resident::down(),
+        _ => not_landed(contract),
+    };
+    #[cfg(target_arch = "wasm32")]
+    let outcome = not_landed(contract);
+    deliver(&outcome, form);
+}
+
+fn not_landed(contract: &cli::Contract) -> Outcome<()> {
+    Outcome::Refusal(Refusal {
         reason: "release::not-landed".to_owned(),
         witness: None,
         expected: None,
-        observed: Some(command),
+        observed: Some(contract.path.join(" ")),
         remedy: format!(
             "finish the {} battery before Rust release one admits this leaf",
             contract.battery
         ),
-    });
-    deliver(&outcome, form);
+    })
 }
 
 fn run_retro(matches: &clap::ArgMatches, form: Form) -> ! {
