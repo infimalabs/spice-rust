@@ -119,13 +119,13 @@ fn declared_kinds() -> Vec<Declared> {
         if line.starts_with("//") || line.starts_with('#') || line.is_empty() {
             continue;
         }
-        if let Some(variant) = line.strip_suffix(',') {
-            if variant.starts_with(char::is_uppercase) {
-                declared.push(Declared {
-                    variant: variant.to_owned(),
-                    spelling: pending.take(),
-                });
-            }
+        if let Some(variant) = line.strip_suffix(',')
+            && variant.starts_with(char::is_uppercase)
+        {
+            declared.push(Declared {
+                variant: variant.to_owned(),
+                spelling: pending.take(),
+            });
         }
     }
 
