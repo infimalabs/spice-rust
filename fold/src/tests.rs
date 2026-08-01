@@ -290,17 +290,23 @@ fn snapshot(count: u64) -> journal::FactSnapshot {
             actor: wire::Actor::Spice,
             origin: "task:FOLD-a1".parse().expect("fixture origin"),
             cause: (position > 1).then(|| seq(position - 1)),
-            fact: {
-                let typed = wire::Fact::new(wire::body::TaskNoted {
-                    task: "FOLD-a1".parse().expect("fixture task"),
-                    note: "Fold fixture note".to_owned(),
-                });
-                let bytes = wire::encode(&typed).expect("typed fixture fact encodes");
-                wire::decode(&bytes).expect("typed fixture fact decodes opaquely")
-            },
+            fact: opaque_note(),
         })
         .collect();
     journal::FactSnapshot::from_facts(facts).expect("fixture snapshot")
+}
+
+/// Read a typed fact back the way a journal verifier reads a stored row.
+///
+/// A fixture mints its body through the registered DTO rather than spelling
+/// one out, so it can never carry fields the decoder would refuse.
+fn opaque_note() -> wire::AnyFact {
+    let fact = wire::Fact::new(wire::body::TaskNoted {
+        task: "FOLD-a1".parse().expect("fixture task handle"),
+        note: "fixture".to_owned(),
+    });
+    let bytes = wire::encode(&fact).expect("a typed fact encodes");
+    wire::decode(&bytes).expect("a stored fact reads back without its body type")
 }
 
 fn seq(value: u64) -> wire::Seq {
