@@ -324,6 +324,81 @@ mod native {
 
     pub use TimerEvents as Events;
     pub use TimerWorker as Worker;
+
+    #[cfg(test)]
+    mod tests {
+        use std::sync::mpsc::{self, TryRecvError};
+        use std::time::{Duration, Instant};
+
+        use super::Schedule;
+        use crate::timer::{Deadline, TimerKind};
+
+        #[test]
+        fn schedule_waits_for_the_earliest_deadline_not_arm_order() {
+            let mut schedule = Schedule::new();
+            let now = Instant::now();
+            let late = schedule
+                .arm(
+                    "late".to_owned(),
+                    TimerKind::LaneResume,
+                    deadline("2030-04-12T18:44:13.000Z"),
+                    now.checked_add(Duration::from_secs(60))
+                        .expect("test deadline is in range"),
+                )
+                .expect("late timer arms first");
+            let early = schedule
+                .arm(
+                    "early".to_owned(),
+                    TimerKind::TaskWake,
+                    deadline("2030-04-12T18:44:10.000Z"),
+                    now.checked_sub(Duration::from_millis(1))
+                        .expect("test deadline is in range"),
+                )
+                .expect("early timer arms last");
+
+            assert_eq!(schedule.wait(), Some(Duration::ZERO));
+            let (sender, receiver) = mpsc::channel();
+            schedule.emit_due(&sender);
+            assert_eq!(receiver.recv().expect("early event").id(), early);
+            assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+            assert!(schedule.cancel(late));
+        }
+
+        #[test]
+        fn emit_due_orders_every_deadline_due_in_one_tick() {
+            let mut schedule = Schedule::new();
+            let now = Instant::now();
+            let later = schedule
+                .arm(
+                    "later".to_owned(),
+                    TimerKind::ClaimRenew,
+                    deadline("2030-04-12T18:44:11.000Z"),
+                    now.checked_sub(Duration::from_millis(1))
+                        .expect("test deadline is in range"),
+                )
+                .expect("later timer arms first");
+            let earlier = schedule
+                .arm(
+                    "earlier".to_owned(),
+                    TimerKind::ClaimLapse,
+                    deadline("2030-04-12T18:44:10.000Z"),
+                    now.checked_sub(Duration::from_millis(2))
+                        .expect("test deadline is in range"),
+                )
+                .expect("earlier timer arms last");
+            let (sender, receiver) = mpsc::channel();
+
+            schedule.emit_due(&sender);
+
+            assert_eq!(receiver.recv().expect("earlier event").id(), earlier);
+            assert_eq!(receiver.recv().expect("later event").id(), later);
+            assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+        }
+
+        fn deadline(value: &str) -> Deadline {
+            value.parse().expect("canonical deadline")
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
