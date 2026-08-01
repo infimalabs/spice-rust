@@ -1,13 +1,13 @@
 //! The native client's sole authenticated path to the current resident.
 
 use std::fs::{self, File, Metadata, OpenOptions};
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tungstenite::client::IntoClientRequest;
@@ -347,6 +347,10 @@ struct DiscoveryRead {
 
 impl DiscoveryRead {
     fn open(path: &Path) -> ClientResult<Self> {
+        Self::open_with(path, || {})
+    }
+
+    fn open_with(path: &Path, before_open: impl FnOnce()) -> ClientResult<Self> {
         let parent = path.parent().ok_or_else(|| {
             environment_fault(
                 "canvas::discovery-unavailable",
@@ -363,6 +367,7 @@ impl DiscoveryRead {
                 "canvas discovery exceeds the current bounded document size",
             ));
         }
+        before_open();
         let mut file = open_discovery(path)?;
         let opened = file.metadata().map_err(discovery_unavailable)?;
         require_secure(&opened, DiscoveryKind::File)?;
@@ -370,7 +375,7 @@ impl DiscoveryRead {
             return Err(discovery_replaced());
         }
         let mut bytes = Vec::new();
-        file.by_ref()
+        Read::by_ref(&mut file)
             .take(MAX_DISCOVERY_BYTES + 1)
             .read_to_end(&mut bytes)
             .map_err(discovery_unavailable)?;
@@ -523,7 +528,7 @@ fn open_discovery(path: &Path) -> ClientResult<File> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
-    options.custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
+    options.custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK);
     options.open(path).map_err(discovery_unavailable)
 }
 
@@ -555,9 +560,106 @@ fn request(
 }
 
 struct AuthenticatedSession {
-    socket: WebSocket<TcpStream>,
+    socket: WebSocket<DeadlineStream>,
     discovery: DiscoveryRead,
     accepted: wire::Accepted,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum IoDirection {
+    Read,
+    Write,
+}
+
+struct DeadlineStream {
+    stream: TcpStream,
+    deadline: Instant,
+    last_failure: Option<IoDirection>,
+}
+
+impl DeadlineStream {
+    fn connect(address: &SocketAddr, deadline: Instant) -> io::Result<Self> {
+        let stream = TcpStream::connect_timeout(address, remaining(deadline)?)?;
+        Ok(Self {
+            stream,
+            deadline,
+            last_failure: None,
+        })
+    }
+
+    fn read_timeout(&mut self) -> io::Result<Duration> {
+        let timeout = remaining(self.deadline)?;
+        self.stream.set_read_timeout(Some(timeout))?;
+        Ok(timeout)
+    }
+
+    fn write_timeout(&mut self) -> io::Result<Duration> {
+        let timeout = remaining(self.deadline)?;
+        self.stream.set_write_timeout(Some(timeout))?;
+        Ok(timeout)
+    }
+}
+
+impl Read for DeadlineStream {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        self.last_failure = None;
+        if let Err(error) = self.read_timeout() {
+            self.last_failure = Some(IoDirection::Read);
+            return Err(error);
+        }
+        match self.stream.read(bytes) {
+            Ok(read) => Ok(read),
+            Err(error) => {
+                self.last_failure = Some(IoDirection::Read);
+                Err(error)
+            }
+        }
+    }
+}
+
+impl Write for DeadlineStream {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        self.last_failure = None;
+        if let Err(error) = self.write_timeout() {
+            self.last_failure = Some(IoDirection::Write);
+            return Err(error);
+        }
+        match self.stream.write(bytes) {
+            Ok(written) => Ok(written),
+            Err(error) => {
+                self.last_failure = Some(IoDirection::Write);
+                Err(error)
+            }
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.last_failure = None;
+        if let Err(error) = self.write_timeout() {
+            self.last_failure = Some(IoDirection::Write);
+            return Err(error);
+        }
+        match self.stream.flush() {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.last_failure = Some(IoDirection::Write);
+                Err(error)
+            }
+        }
+    }
+}
+
+fn remaining(deadline: Instant) -> io::Result<Duration> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "resident command deadline elapsed"))
 }
 
 fn open_session(
@@ -566,7 +668,8 @@ fn open_session(
 ) -> ClientResult<AuthenticatedSession> {
     let (authority, address) = loopback_endpoint(&discovery.value.endpoint)?;
     discovery.verify_current()?;
-    let stream = match TcpStream::connect_timeout(&address, SOCKET_TIMEOUT) {
+    let deadline = Instant::now() + SOCKET_TIMEOUT;
+    let stream = match DeadlineStream::connect(&address, deadline) {
         Ok(stream) => stream,
         Err(error) => {
             return Err(environment_fault(
@@ -575,18 +678,6 @@ fn open_session(
             ));
         }
     };
-    if let Err(error) = stream.set_read_timeout(Some(SOCKET_TIMEOUT)) {
-        return Err(environment_fault(
-            "canvas::timeout-failed",
-            &error.to_string(),
-        ));
-    }
-    if let Err(error) = stream.set_write_timeout(Some(SOCKET_TIMEOUT)) {
-        return Err(environment_fault(
-            "canvas::timeout-failed",
-            &error.to_string(),
-        ));
-    }
     discovery.verify_current()?;
     let mut request = match format!("ws://{authority}/socket").into_client_request() {
         Ok(request) => request,
@@ -788,7 +879,7 @@ fn discloses_capability(value: &impl Serialize, capability: CanonicalUuid) -> bo
     })
 }
 
-fn send<T: Serialize>(socket: &mut WebSocket<TcpStream>, value: &T) -> ClientResult<()> {
+fn send<T: Serialize>(socket: &mut WebSocket<DeadlineStream>, value: &T) -> ClientResult<()> {
     let bytes = wire::encode(value).map_err(|_| {
         protocol_fault(
             "canvas::request-unencodable",
@@ -800,12 +891,20 @@ fn send<T: Serialize>(socket: &mut WebSocket<TcpStream>, value: &T) -> ClientRes
         .map_err(|error| environment_fault("canvas::send-failed", &error.to_string()))
 }
 
-fn receive(socket: &mut WebSocket<TcpStream>) -> ClientResult<Vec<u8>> {
+fn receive(socket: &mut WebSocket<DeadlineStream>) -> ClientResult<Vec<u8>> {
     loop {
-        match socket
-            .read()
-            .map_err(|error| environment_fault("canvas::receive-failed", &error.to_string()))?
-        {
+        let message = match socket.read() {
+            Ok(message) => message,
+            Err(error) => {
+                let reason = if socket.get_ref().last_failure == Some(IoDirection::Write) {
+                    "canvas::send-failed"
+                } else {
+                    "canvas::receive-failed"
+                };
+                return Err(environment_fault(reason, &error.to_string()));
+            }
+        };
+        match message {
             Message::Binary(bytes) => return Ok(bytes.to_vec()),
             Message::Text(text) => return Ok(text.as_bytes().to_vec()),
             Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
@@ -1233,6 +1332,50 @@ mod tests {
             panic!("symlink discovery must be refused");
         };
         assert_eq!(fault.reason, "canvas::discovery-insecure");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discovery_fifo_substitution_is_nonblocking_and_refused_from_the_descriptor() {
+        use rustix::fs::{OFlags, fcntl_getfl};
+        use std::os::unix::fs::OpenOptionsExt as _;
+
+        let fixture = Fixture::new("fifo-substitution");
+        let discovery = fixture.publish();
+        let mut anchor = None;
+
+        let started = Instant::now();
+        let outcome = DiscoveryRead::open_with(&fixture.canvas, || {
+            fs::remove_file(&fixture.canvas).expect("regular discovery removes");
+            let status = ProcessCommand::new("mkfifo")
+                .arg(&fixture.canvas)
+                .status()
+                .expect("mkfifo launches");
+            assert!(status.success(), "mkfifo creates the substitution");
+            anchor = Some(
+                OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .custom_flags(libc::O_CLOEXEC | libc::O_NONBLOCK)
+                    .open(&fixture.canvas)
+                    .expect("fixture anchor opens without waiting"),
+            );
+        });
+
+        let Err(Outcome::Fault(fault)) = outcome else {
+            panic!("FIFO substitution must fault");
+        };
+        assert_eq!(fault.reason, "canvas::discovery-insecure");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "FIFO substitution must not wait for a writer"
+        );
+        assert!(!fault.detail.contains(&discovery.capability.to_string()));
+
+        let opened = open_discovery(&fixture.canvas).expect("FIFO descriptor opens");
+        let flags = fcntl_getfl(&opened).expect("FIFO descriptor flags read");
+        assert!(flags.contains(OFlags::NONBLOCK));
+        drop(anchor);
     }
 
     #[test]
