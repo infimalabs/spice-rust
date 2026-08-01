@@ -364,6 +364,9 @@ dependencies = [
 [[package]]
 name = "dialect"
 version = "0.0.0"
+dependencies = [
+ "toml",
+]
 
 [[package]]
 name = "digest"
