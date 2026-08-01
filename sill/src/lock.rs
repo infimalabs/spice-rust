@@ -12,7 +12,7 @@ pub struct LockName(String);
 impl LockName {
     pub fn new(name: impl Into<String>) -> Result<Self, LockNameError> {
         let name = name.into();
-        if name.is_empty() {
+        if name.is_empty() || !name.bytes().all(|byte| byte.is_ascii_lowercase()) {
             return Err(LockNameError);
         }
         Ok(Self(name))
@@ -28,7 +28,7 @@ pub struct LockNameError;
 
 impl fmt::Display for LockNameError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("lock name must not be empty")
+        formatter.write_str("lock name must be one lower-case word")
     }
 }
 
@@ -214,6 +214,19 @@ pub(crate) mod tests {
         let second = acquired(lock.try_acquire().expect("acquisition after release"));
         drop(second);
         fs::remove_file(path).expect("remove test lock file");
+    }
+
+    #[test]
+    fn lock_names_cannot_escape_the_fixed_topology() {
+        for name in ["", "UPPER", "two-words", "../outside", "with/slash", "9"] {
+            assert!(LockName::new(name).is_err(), "{name:?} must be refused");
+        }
+        assert_eq!(
+            LockName::new("worker")
+                .expect("one lower-case word")
+                .as_str(),
+            "worker"
+        );
     }
 
     fn acquired(acquisition: Acquisition) -> super::Possession {

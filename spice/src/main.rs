@@ -17,6 +17,8 @@ mod cli;
 mod doctor;
 #[cfg(not(target_arch = "wasm32"))]
 mod gate_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod lock_command;
 mod proof_command;
 mod render;
 #[cfg(not(target_arch = "wasm32"))]
@@ -45,6 +47,16 @@ fn main() {
         Form::Text
     };
     let leaf = cli::selected_matches(&matches);
+    #[cfg(not(target_arch = "wasm32"))]
+    if contract.path == ["lock", "run"] {
+        match lock_command::run(leaf) {
+            lock_command::RunOutcome::Child(status) => terminate_child(status),
+            lock_command::RunOutcome::Outcome(outcome) => deliver(&outcome, form),
+            lock_command::RunOutcome::Contended { outcome, code } => {
+                deliver_with_code(&outcome, form, code)
+            }
+        }
+    }
     match contract.path {
         ["watch"] => run_watch(leaf, form),
         ["retro"] => run_retro(leaf, form),
@@ -60,6 +72,7 @@ fn main() {
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
         ["gate", "receipt"] => deliver(&gate_command::receipt(), form),
+        ["lock"] => deliver(&lock_command::status(), form),
         ["version"] => deliver(&version_outcome(), form),
         _ => {}
     }
@@ -439,6 +452,26 @@ pub fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
     std::env::var_os(name)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the binary rim owns ambient bootstrap acquisition"
+)]
+fn bootstrap_environment_entries() -> Vec<(OsString, OsString)> {
+    std::env::vars_os().collect()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn working_directory() -> Result<PathBuf, Outcome<()>> {
+    std::env::current_dir().map_err(|error| {
+        Outcome::Fault(Fault {
+            class: FaultClass::Environment,
+            reason: "environment::working-directory-unavailable".to_owned(),
+            detail: error.to_string(),
+        })
+    })
+}
+
 /// Terminate the process after the command result has returned to the binary
 /// rim.
 pub fn terminate<B>(outcome: &Outcome<B>) -> ! {
@@ -451,6 +484,17 @@ pub fn terminate<B>(outcome: &Outcome<B>) -> ! {
 )]
 fn terminate_code(code: i32) -> ! {
     std::process::exit(code);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn deliver_with_code<B: serde::Serialize>(outcome: &Outcome<B>, form: Form, code: i32) -> ! {
+    match render::render(outcome, form) {
+        Ok(rendering) => {
+            rendering.speak();
+            terminate_code(code);
+        }
+        Err(error) => deliver_fault(render_fault(error), Form::Text),
+    }
 }
 
 const fn exit_status<B>(outcome: &Outcome<B>) -> i32 {
