@@ -24,6 +24,8 @@ mod install_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod lock_command;
 mod proof_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod release_command;
 mod render;
 #[cfg(not(target_arch = "wasm32"))]
 mod resident;
@@ -81,6 +83,7 @@ fn main() {
         ["install"] => deliver(&install_command::run(leaf), form),
         ["config"] => deliver_config(&config_command::run(leaf), form),
         ["lock"] => deliver(&lock_command::status(), form),
+        ["release", "notes"] => deliver_release(&release_command::notes(), form),
         ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
         ["version"] => deliver(&version_outcome(), form),
         _ => {}
@@ -520,6 +523,19 @@ fn deliver_config(outcome: &Outcome<config_command::ConfigReport>, form: Form) -
             }
             Err(error) => deliver_fault(render_fault(error.to_string()), Form::Text),
         }
+    }
+    deliver(outcome, form)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn deliver_release(outcome: &Outcome<dist::ReleaseNotes>, form: Form) -> ! {
+    if form == Form::Text
+        && let Outcome::Reply(reply) = outcome
+    {
+        let mut stdout = io::stdout().lock();
+        let _ = stdout.write_all(reply.body.markdown().as_bytes());
+        let _ = stdout.flush();
+        terminate_code(REPLY_EXIT);
     }
     deliver(outcome, form)
 }

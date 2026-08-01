@@ -89,6 +89,8 @@ pub enum Domain {
     DistPins,
     /// The inventory of what a staging run published.
     DistInventory,
+    /// The canonical two-target release manifest with detached receipts.
+    DistReleaseManifest,
     /// The ordered command inventory one sealed proof replay consumes.
     ProofBattery,
     /// The complete typed result of one sealed proof replay.
@@ -139,6 +141,7 @@ impl Domain {
             Self::DistArtifact => "spice.dist.artifact.v1",
             Self::DistPins => "spice.dist.pins.v1",
             Self::DistInventory => "spice.dist.inventory.v1",
+            Self::DistReleaseManifest => "spice.dist.release-manifest.v1",
             Self::ProofBattery => "spice.proof.battery.v1",
             Self::ProofReplayV2 => "spice.proof.replay.v2",
             Self::ProofReceiptV2 => "spice.proof.receipt.v2",

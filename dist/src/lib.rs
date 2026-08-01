@@ -5,9 +5,14 @@
 //! payload. A pin mismatch returns before any builder method is called.
 
 mod pins;
+mod release;
 mod stage;
 
 pub use pins::{PinError, PinName, RequiredPins};
+pub use release::{
+    AdmittedRelease, CommitSummary, ReleaseError, ReleaseNarrative, ReleaseNotes, TargetNote,
+    admit_release_manifest, release_notes,
+};
 pub use stage::{
     BuildError, BuildStep, Builder, FilePublisher, Pipeline, PublishError, Publisher, StageError,
     StagedTarget,

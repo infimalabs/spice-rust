@@ -457,6 +457,7 @@ name = "dist"
 version = "0.0.0"
 dependencies = [
  "atomic",
+ "serde",
  "serde_json",
  "sill",
  "thiserror",
@@ -2107,8 +2108,10 @@ dependencies = [
  "clap",
  "consent",
  "dialect",
+ "dist",
  "fold",
  "gate",
+ "gix",
  "gix-config",
  "jiff",
  "journal",

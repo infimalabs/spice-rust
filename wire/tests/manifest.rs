@@ -1,6 +1,7 @@
 use wire::manifest::{
     BuildPins, InventoryEntry, PROOF_RECEIPT_VERSION, ProofEnvironment, ProofReceipt,
-    ProofStanding, ReleaseTarget, TargetPayload,
+    ProofStanding, RELEASE_MANIFEST_VERSION, ReleaseManifest, ReleaseTarget, SealedTarget,
+    TARGET_PAYLOAD_VERSION, TargetPayload,
 };
 use wire::{Digest, Domain};
 
@@ -9,6 +10,8 @@ use wire::{Digest, Domain};
 /// This is a foreign registry's spelling, not WIRE's. It is unrelated to the
 /// BLAKE3 digests [`Digest`] mints and only happens to be the same width.
 const OCI_SHA256_HEX_LEN: usize = 64;
+const GIT_SHA1_HEX_LEN: usize = 40;
+const FIXTURE_JOURNAL_SCHEMA: u32 = 1;
 
 /// Mint a fixture digest the way production mints one.
 ///
@@ -21,7 +24,7 @@ fn digest(marker: &str) -> Digest {
 fn payload(target: ReleaseTarget, marker: &str) -> TargetPayload {
     let artifact = digest(marker);
     TargetPayload {
-        version: 1,
+        version: TARGET_PAYLOAD_VERSION,
         target,
         source: digest("source"),
         app: artifact.clone(),
@@ -45,6 +48,41 @@ fn payload(target: ReleaseTarget, marker: &str) -> TargetPayload {
             digest: artifact,
         }],
         inventory_digest: Digest::compute(Domain::DistInventory, marker.as_bytes()),
+    }
+}
+
+fn release_manifest() -> ReleaseManifest {
+    let targets = ReleaseTarget::ALL
+        .into_iter()
+        .map(|target| {
+            let payload = payload(target, target.as_str());
+            let payload_digest = Digest::compute(
+                Domain::DistTargetPayload,
+                &wire::encode(&payload).expect("payload encodes"),
+            );
+            let mut receipt = receipt(target, target.as_str());
+            receipt.payload = payload_digest.clone();
+            let receipt_digest = Digest::compute(
+                Domain::ProofReceiptV2,
+                &wire::encode(&receipt).expect("receipt encodes"),
+            );
+            SealedTarget {
+                target,
+                payload,
+                payload_digest,
+                receipt,
+                receipt_digest,
+            }
+        })
+        .collect();
+    ReleaseManifest {
+        version: RELEASE_MANIFEST_VERSION,
+        release: "1.0.0".to_owned(),
+        git_from: "1".repeat(GIT_SHA1_HEX_LEN),
+        git_to: "2".repeat(GIT_SHA1_HEX_LEN),
+        previous_journal_schema: FIXTURE_JOURNAL_SCHEMA,
+        journal_schema: FIXTURE_JOURNAL_SCHEMA,
+        targets,
     }
 }
 
@@ -195,6 +233,44 @@ fn payloads_refuse_unknown_fields_at_every_structured_level() {
         let bytes = serde_json::to_vec(&changed).expect("changed payload encodes");
         assert!(
             wire::decode::<TargetPayload>(&bytes).is_err(),
+            "unknown field at {path:?} must refuse"
+        );
+    }
+}
+
+#[test]
+fn sealed_release_manifests_round_trip_and_refuse_unknown_nested_fields() {
+    let manifest = release_manifest();
+    let encoded = wire::encode(&manifest).expect("release manifest encodes");
+    assert_eq!(
+        wire::decode::<ReleaseManifest>(&encoded).expect("release manifest decodes"),
+        manifest
+    );
+    let original: serde_json::Value =
+        serde_json::from_slice(&encoded).expect("release manifest is JSON");
+    for path in [Vec::new(), vec!["targets", "0"]] {
+        let mut changed = original.clone();
+        let mut object = &mut changed;
+        for &segment in &path {
+            object = if let Ok(index) = segment.parse::<usize>() {
+                &mut object.as_array_mut().expect("fixture segment is an array")[index]
+            } else {
+                object
+                    .as_object_mut()
+                    .expect("fixture segment is an object")
+                    .get_mut(segment)
+                    .expect("fixture segment exists")
+            };
+        }
+        object
+            .as_object_mut()
+            .expect("fixture target is an object")
+            .insert("unknown".to_owned(), serde_json::Value::Bool(true));
+        assert!(
+            wire::decode::<ReleaseManifest>(
+                &serde_json::to_vec(&changed).expect("changed manifest encodes")
+            )
+            .is_err(),
             "unknown field at {path:?} must refuse"
         );
     }

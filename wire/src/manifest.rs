@@ -13,6 +13,10 @@ const OCI_SHA256_HEX_LEN: usize = 64;
 
 /// The sole current detached proof receipt schema.
 pub const PROOF_RECEIPT_VERSION: u16 = 2;
+/// The sole current target payload schema.
+pub const TARGET_PAYLOAD_VERSION: u16 = 1;
+/// The sole current sealed release manifest schema.
+pub const RELEASE_MANIFEST_VERSION: u16 = 1;
 
 /// An OCI image identity that is pinned by one canonical SHA-256 digest.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -198,6 +202,9 @@ pub enum ReleaseTarget {
 }
 
 impl ReleaseTarget {
+    /// Every supported release tuple in canonical manifest order.
+    pub const ALL: [Self; 2] = [Self::Aarch64AppleDarwin, Self::X86_64UnknownLinuxMusl];
+
     /// The canonical Rust target-triple spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -279,4 +286,28 @@ pub struct ProofReceipt {
     pub environment: ProofEnvironment,
     /// One standing for the complete battery.
     pub standing: ProofStanding,
+}
+
+/// One release target payload bound to its detached clean proof receipt.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SealedTarget {
+    pub target: ReleaseTarget,
+    pub payload: TargetPayload,
+    pub payload_digest: Digest,
+    pub receipt: ProofReceipt,
+    pub receipt_digest: Digest,
+}
+
+/// The canonical post-proof release object consumed by publication and notes.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseManifest {
+    pub version: u16,
+    pub release: String,
+    pub git_from: String,
+    pub git_to: String,
+    pub previous_journal_schema: u32,
+    pub journal_schema: u32,
+    pub targets: Vec<SealedTarget>,
 }

@@ -14,6 +14,7 @@ canvas = { path = "../canvas" }
 clap = "4.6.5"
 consent = { path = "../consent" }
 dialect = { path = "../dialect" }
+dist = { path = "../dist" }
 fold = { path = "../fold" }
 gate = { path = "../gate" }
 journal = { path = "../journal" }
@@ -31,6 +32,7 @@ vendor = { path = "../vendor" }
 wire = { path = "../wire" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+gix = { version = "0.86.0", default-features = false, features = ["revision", "sha1"] }
 gix-config = "0.59.0"
 jiff = "0.2.35"
 notify = "8.2.0"
