@@ -700,10 +700,16 @@ fn generation_at(
     display: &Path,
 ) -> Result<Option<Generation>, InstallError> {
     match unix_fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW) {
-        Ok(stat) => Ok(Some(Generation {
-            device: stat.st_dev as u64,
-            inode: stat.st_ino,
-        })),
+        Ok(stat) => {
+            #[cfg(target_vendor = "apple")]
+            let device = stat.st_dev as u64;
+            #[cfg(not(target_vendor = "apple"))]
+            let device = stat.st_dev;
+            Ok(Some(Generation {
+                device,
+                inode: stat.st_ino,
+            }))
+        }
         Err(rustix::io::Errno::NOENT) => Ok(None),
         Err(source) => Err(InstallError::io(
             "inspect admitted install name",
