@@ -136,7 +136,10 @@ fn prepare() -> Result<Prepared, Box<Outcome<ReleasePlan>>> {
     })?;
     let release = admit_stage(&repository.worktree_root().join("dist/stage"))
         .map_err(|error| Box::new(refusal::<ReleasePlan>("release::manifest-refused", &error)))?;
-    let reader = journal::JournalReader::open(repository.journal_path()).map_err(|error| {
+    let state_paths = repository
+        .admit_state()
+        .map_err(|error| Box::new(crate::state_failure(&error).outcome()))?;
+    let reader = journal::JournalReader::open(state_paths.journal()).map_err(|error| {
         Box::new(environment::<ReleasePlan>(
             "release::journal-unavailable",
             &error.to_string(),
@@ -150,8 +153,7 @@ fn prepare() -> Result<Prepared, Box<Outcome<ReleasePlan>>> {
     })?;
     let state = observe(&snapshot, &release)
         .map_err(|error| Box::new(refusal::<ReleasePlan>("release::evidence-refused", &error)))?;
-    let canvas = repository.state_root().join("canvas");
-    let discovery = resident::read_operator_discovery(&canvas)
+    let discovery = resident::read_operator_discovery(state_paths.canvas())
         .map_err(|outcome| Box::new(map_outcome(outcome, |_| unreachable!())))?;
     Ok(Prepared {
         release,

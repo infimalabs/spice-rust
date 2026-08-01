@@ -8,7 +8,7 @@ use bus::{Bus, CommitOutcome, JournalCommit};
 use journal::{FactCause, GuardError, JournalGuard, JournalWrite};
 use lane::occupant::Seats;
 use sill::{Acquisition, LockFile, LockName, Possession};
-use spice::repository::{Repository, ResolveError};
+use spice::repository::Repository;
 use tokio::sync::oneshot;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::header::ORIGIN;
@@ -36,19 +36,21 @@ struct RuntimePaths {
 }
 
 impl RuntimePaths {
-    fn discover(start: &Path) -> Result<Self, ResolveError> {
-        let repository = Repository::discover(start)?;
-        let runtime = repository.state_root();
-        let data = runtime.join("data");
+    fn discover(start: &Path) -> CommandResult<Self> {
+        let repository = Repository::discover(start)
+            .map_err(|error| environment_fault("resident::git-unavailable", &error.to_string()))?;
+        let state = repository
+            .admit_state()
+            .map_err(|error| crate::state_failure(&error).outcome())?;
         Ok(Self {
-            journal: repository.journal_path(),
-            resident: runtime.join("resident"),
-            canvas: runtime.join("canvas"),
-            degraded: runtime.join("degraded"),
-            tape: runtime.join("tape"),
+            runtime: state.runtime().to_path_buf(),
+            data: state.data().to_path_buf(),
+            journal: state.journal().to_path_buf(),
+            resident: state.resident().to_path_buf(),
+            canvas: state.canvas().to_path_buf(),
+            degraded: state.degraded().to_path_buf(),
+            tape: state.tape().to_path_buf(),
             stage: repository.worktree_root().join("dist/stage"),
-            runtime,
-            data,
         })
     }
 }
@@ -139,7 +141,7 @@ pub(crate) fn up() -> Outcome<()> {
 fn up_from(current: &Path) -> Outcome<()> {
     let paths = match RuntimePaths::discover(current) {
         Ok(paths) => paths,
-        Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
+        Err(outcome) => return outcome,
     };
     if let Err(error) = fs::create_dir_all(&paths.data) {
         return environment_fault("resident::data-unavailable", &error.to_string());
@@ -238,7 +240,7 @@ pub(crate) fn down() -> Outcome<()> {
 fn down_from(current: &Path) -> Outcome<()> {
     let paths = match RuntimePaths::discover(current) {
         Ok(paths) => paths,
-        Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
+        Err(outcome) => return outcome,
     };
     let discovery = match read_operator_discovery(&paths.canvas) {
         Ok(discovery) => discovery,

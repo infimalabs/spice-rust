@@ -38,6 +38,46 @@ const REPLY_EXIT: i32 = 0;
 const FAULT_EXIT: i32 = 1;
 const REFUSAL_EXIT: i32 = 2;
 
+enum StateFailure {
+    Refusal(Refusal),
+    Fault(Fault),
+}
+
+impl StateFailure {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn outcome<B>(self) -> Outcome<B> {
+        match self {
+            Self::Refusal(refusal) => Outcome::Refusal(refusal),
+            Self::Fault(fault) => Outcome::Fault(fault),
+        }
+    }
+}
+
+fn state_failure(error: &spice::repository::StateError) -> StateFailure {
+    match error {
+        spice::repository::StateError::Filesystem { .. } => StateFailure::Fault(Fault {
+            class: FaultClass::Environment,
+            reason: "repository::state-path-unavailable".to_owned(),
+            detail: error.to_string(),
+        }),
+        spice::repository::StateError::Linked { .. }
+        | spice::repository::StateError::NotDirectory { .. }
+        | spice::repository::StateError::NotRegularFile { .. } => StateFailure::Refusal(Refusal {
+            reason: "repository::state-path-refused".to_owned(),
+            witness: Some("repository-state-root".to_owned()),
+            expected: Some(
+                "real fixed components beneath the canonical Git-common .spice-rust directory"
+                    .to_owned(),
+            ),
+            observed: Some(error.to_string()),
+            remedy: format!(
+                "remove or repair the linked or malformed Rust state component at {}",
+                error.path().display()
+            ),
+        }),
+    }
+}
+
 fn main() {
     let matches = cli::command().get_matches();
     #[cfg(not(target_arch = "wasm32"))]
@@ -269,7 +309,11 @@ fn version_outcome() -> Outcome<wire::Version> {
             });
         }
     };
-    let reader = match journal::JournalReader::open(repository.journal_path()) {
+    let state = match repository.admit_state() {
+        Ok(state) => state,
+        Err(error) => return state_failure(&error).outcome(),
+    };
+    let reader = match journal::JournalReader::open(state.journal()) {
         Ok(reader) => reader,
         Err(error) => return journal_version_failure(error),
     };
