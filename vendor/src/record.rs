@@ -1,0 +1,276 @@
+use std::error::Error;
+use std::ffi::{OsStr, OsString};
+use std::fmt;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use listen::{Decoded, Dialect, Locus, LocusLengthError};
+use sill::{
+    Argv, Deadlines, Environment, Output, ProcessGroup, Redaction, Spec, SpecError, StdinPolicy,
+    StreamPolicy, WaitPolicy,
+};
+
+/// Stable identity of a session that can be resumed explicitly.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct SessionId(String);
+
+impl SessionId {
+    /// Admit a nonempty vendor session identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionIdError`] when `value` is empty or whitespace only.
+    pub fn new(value: impl Into<String>) -> Result<Self, SessionIdError> {
+        let value = value.into();
+        if value.trim().is_empty() {
+            return Err(SessionIdError);
+        }
+        Ok(Self(value))
+    }
+
+    /// Vendor spelling of this session identity.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// An empty session identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SessionIdError;
+
+impl fmt::Display for SessionIdError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("vendor session identity must not be empty")
+    }
+}
+
+impl Error for SessionIdError {}
+
+/// Whether a launch begins or resumes an exact session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Resume {
+    /// Begin a new session.
+    Fresh,
+    /// Resume the named session rather than whichever session ran last.
+    Session(SessionId),
+}
+
+impl Resume {
+    /// Session identity when this launch resumes one.
+    #[must_use]
+    pub fn session_id(&self) -> Option<&str> {
+        match self {
+            Self::Fresh => None,
+            Self::Session(session) => Some(session.as_str()),
+        }
+    }
+}
+
+/// Child stream carrying vendor JSONL records.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum RecordStream {
+    /// Records arrive on standard output.
+    Stdout,
+    /// Records arrive on standard error.
+    Stderr,
+}
+
+/// One vendor-neutral launch and decode contract.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Record {
+    argv: Argv,
+    dialect: Dialect,
+    stream: RecordStream,
+    resume: Resume,
+}
+
+impl Record {
+    pub(crate) fn new<I, S>(
+        binary: impl Into<OsString>,
+        arguments: I,
+        dialect: Dialect,
+        stream: RecordStream,
+        resume: Resume,
+    ) -> Result<Self, SpecError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        Ok(Self {
+            argv: Argv::new(binary, arguments)?,
+            dialect,
+            stream,
+            resume,
+        })
+    }
+
+    /// Configured executable.
+    #[must_use]
+    pub fn binary(&self) -> &OsStr {
+        self.argv.program()
+    }
+
+    /// Exact arguments following the executable.
+    #[must_use]
+    pub fn arguments(&self) -> &[OsString] {
+        self.argv.arguments()
+    }
+
+    /// Stream carrying records.
+    #[must_use]
+    pub const fn stream(&self) -> RecordStream {
+        self.stream
+    }
+
+    /// Decoder selected for those records.
+    #[must_use]
+    pub const fn dialect(&self) -> Dialect {
+        self.dialect
+    }
+
+    /// Fresh or exact-session resume disposition.
+    #[must_use]
+    pub const fn resume(&self) -> &Resume {
+        &self.resume
+    }
+
+    /// Build the sole process-door specification for this record contract.
+    #[must_use]
+    pub fn spec(&self, process: &Process) -> Spec {
+        process.spec(self.argv.clone())
+    }
+
+    /// Decode one selected-stream record already committed to tape.
+    ///
+    /// Bytes from the other child stream remain raw diagnostics and return
+    /// `None`; this module never attempts to parse them itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LocusLengthError`] when the selected record's locus does not
+    /// cover exactly the submitted bytes.
+    pub fn decode(
+        &self,
+        stream: RecordStream,
+        bytes: &[u8],
+        locus: Locus,
+    ) -> Result<Option<Decoded>, LocusLengthError> {
+        if stream != self.stream {
+            return Ok(None);
+        }
+        listen::decode(self.dialect, bytes, locus).map(Some)
+    }
+}
+
+/// Vendor-neutral process settings supplied by lane supervision.
+#[derive(Clone, Debug)]
+pub struct Process {
+    cwd: PathBuf,
+    environment: Environment,
+    deadlines: Deadlines,
+    wait: WaitPolicy,
+    capture_limit: usize,
+    grace: Duration,
+}
+
+impl Process {
+    /// Build process settings shared by every vendor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProcessError`] when capture is unbounded by a positive limit.
+    pub fn new(
+        cwd: impl Into<PathBuf>,
+        environment: Environment,
+        deadlines: Deadlines,
+        wait: WaitPolicy,
+        capture_limit: usize,
+        grace: Duration,
+    ) -> Result<Self, ProcessError> {
+        if capture_limit == 0 {
+            return Err(ProcessError::ZeroCaptureLimit);
+        }
+        Ok(Self {
+            cwd: cwd.into(),
+            environment,
+            deadlines,
+            wait,
+            capture_limit,
+            grace,
+        })
+    }
+
+    /// Working directory used for the child.
+    #[must_use]
+    pub fn cwd(&self) -> &Path {
+        &self.cwd
+    }
+
+    fn spec(&self, argv: Argv) -> Spec {
+        Spec {
+            argv,
+            cwd: self.cwd.clone(),
+            environment: self.environment.clone(),
+            group: ProcessGroup::New,
+            deadlines: self.deadlines,
+            wait: self.wait.clone(),
+            output: Output::new(
+                StdinPolicy::Null,
+                StreamPolicy::Capture {
+                    limit: self.capture_limit,
+                },
+                StreamPolicy::Capture {
+                    limit: self.capture_limit,
+                },
+            ),
+            redaction: Redaction::All,
+            grace: self.grace,
+        }
+    }
+}
+
+/// Invalid common process settings.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProcessError {
+    /// Capturing no bytes would make the selected record stream unusable.
+    ZeroCaptureLimit,
+}
+
+impl fmt::Display for ProcessError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroCaptureLimit => formatter.write_str("vendor capture limit must be nonzero"),
+        }
+    }
+}
+
+impl Error for ProcessError {}
+
+/// A launch contract could not be formed or passed through the process door.
+#[derive(Debug)]
+pub enum LaunchError {
+    /// The executable and argument contract was invalid.
+    Contract(SpecError),
+    /// `sill` could not create the child.
+    Spawn(io::Error),
+}
+
+impl fmt::Display for LaunchError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Contract(error) => write!(formatter, "invalid vendor launch contract: {error}"),
+            Self::Spawn(error) => write!(formatter, "vendor process door refused launch: {error}"),
+        }
+    }
+}
+
+impl Error for LaunchError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Contract(error) => Some(error),
+            Self::Spawn(error) => Some(error),
+        }
+    }
+}

@@ -27,6 +27,19 @@ impl EventKind {
         Self::Compaction,
         Self::Failure,
     ];
+
+    /// Stable spelling carried by canary evidence.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Prose => "prose",
+            Self::Reasoning => "reasoning",
+            Self::Tool => "tool",
+            Self::Usage => "usage",
+            Self::Compaction => "compaction",
+            Self::Failure => "failure",
+        }
+    }
 }
 
 /// One typed moment decoded from a vendor record.
