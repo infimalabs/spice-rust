@@ -116,9 +116,10 @@ fn every_contract_has_an_executable_succession_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 17);
+    assert_eq!(landed, 18);
     assert_eq!(landing(&["lock"]), Landing::Landed);
     assert_eq!(landing(&["lock", "run"]), Landing::Landed);
+    assert_eq!(landing(&["restore", "verify"]), Landing::Landed);
 
     let owning_tasks = contracts()
         .iter()
