@@ -60,7 +60,7 @@ const COMMAND: &str = r#"{
 }"#;
 
 const TRUST: &str = r#"{
-  "digest": "sha256:8fc01e",
+  "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "state": "pended"
 }"#;
 
@@ -69,7 +69,7 @@ const FINDING: &str = r#"{
   "severity": "error",
   "locus": "wire/src/head.rs:1",
   "owner": "task.wire",
-  "receipt": "sha256:19cba4",
+  "receipt": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
   "state": "open"
 }"#;
 
@@ -170,6 +170,26 @@ fn lease_instants_refuse_non_utc_spellings() {
     let offset = LEASE.replace("2030-04-12T18:44:09.271Z", "2030-04-12T18:44:09.271+00:00");
 
     assert!(wire::decode::<LeaseHead>(offset.as_bytes()).is_err());
+}
+
+#[test]
+fn trust_head_refuses_a_noncanonical_digest() {
+    let malformed = TRUST.replace(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sha256:8fc01e",
+    );
+
+    assert!(wire::decode::<TrustHead>(malformed.as_bytes()).is_err());
+}
+
+#[test]
+fn finding_head_refuses_a_noncanonical_receipt_digest() {
+    let malformed = FINDING.replace(
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "sha256:19cba4",
+    );
+
+    assert!(wire::decode::<FindingHead>(malformed.as_bytes()).is_err());
 }
 
 fn assert_fields<T>(fixture: &str, fields: &[&str])

@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::envelope::{Actor, Origin, Seq};
-use crate::ident::{CanonicalUuid, Instant};
+use crate::ident::{CanonicalUuid, Digest, Instant};
 use crate::witness::{Phase, TaskHandle};
 
 /// One current task statement.
@@ -169,7 +169,7 @@ pub enum TrustState {
 #[serde(deny_unknown_fields)]
 pub struct TrustHead {
     /// Digest of the executable surface.
-    pub digest: String,
+    pub digest: Digest,
     /// Current operator approval state.
     pub state: TrustState,
 }
@@ -197,7 +197,7 @@ pub struct FindingHead {
     /// Owner responsible for resolution.
     pub owner: String,
     /// Receipt that originated the current finding.
-    pub receipt: String,
+    pub receipt: Digest,
     /// Whether the finding remains open.
     pub state: FindingState,
 }

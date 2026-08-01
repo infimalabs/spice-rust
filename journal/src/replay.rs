@@ -415,7 +415,7 @@ fn verify_heads(
         "trust_heads",
         violations,
         |key, _seq, head| {
-            (head.digest == key)
+            (head.digest.as_str() == key)
                 .then_some(())
                 .ok_or_else(|| "trust digest disagrees with the row".to_owned())
         },
