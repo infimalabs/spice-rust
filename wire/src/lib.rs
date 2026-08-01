@@ -12,6 +12,7 @@
 pub mod command;
 pub mod envelope;
 pub mod fact;
+pub mod head;
 pub mod hello;
 pub mod ident;
 pub mod packed;
@@ -21,6 +22,11 @@ pub mod witness;
 pub use command::{Command, CommandKind, CommandKindError};
 pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVersion};
 pub use fact::{Fact, FactKind};
+pub use head::{
+    ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency, LeaseHead,
+    ResidencyHead, ResidentState, TaskHead, TrustHead, TrustState, WitnessHead, WitnessKind,
+    WorkflowHead,
+};
 pub use hello::{Hello, Rejected};
 pub use ident::{CanonicalUuid, IdentError, Instant};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
