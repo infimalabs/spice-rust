@@ -36,3 +36,4 @@ unfulfilled_lint_expectations = "deny"
 
 [workspace.lints.clippy]
 all = "deny"
+disallowed_methods = "deny"
