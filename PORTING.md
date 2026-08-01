@@ -28,8 +28,8 @@ fact.
 
 ## Rust contracts
 
-The registry contains 63 command leaves. Seventeen have executable dispatch,
-so current executable coverage is 17/63, or 27.0 percent. Completed domain
+The registry contains 63 command leaves. Eighteen have executable dispatch,
+so current executable coverage is 18/63, or 28.6 percent. Completed domain
 libraries do not count as landed command surfaces.
 
 ### Landed
@@ -51,6 +51,7 @@ libraries do not count as landed command surfaces.
 - `down`
 - `run`
 - `config`
+- `restore verify`
 
 `doctor`, `version`, and `up` are executable but not yet usable against the
 current worktree state; the configuration and bootstrap tasks above own those
@@ -59,7 +60,6 @@ operational gaps.
 ### `LOCAL-1kJQlG6b`
 
 - `install`
-- `restore verify`
 
 ### `BOARD-1kJQlDDt`
 
@@ -167,9 +167,9 @@ the registry exposes them even though argparse requires a child action.
 - `doctor`: landed Rust `doctor`; current config work is `INTEGRA-1kJQlCHl`.
 - `init`: Rust `install` and `up`; `LOCAL-1kJQlG6b` and
   `COEXIST-1kJQlCm5`.
-- `lock`: Rust `lock`; `LOCAL-1kJQlG6b`.
-- `lock run`: Rust `lock run`; `LOCAL-1kJQlG6b`.
-- `lock status`: Rust `lock`; `LOCAL-1kJQlG6b`.
+- `lock`: landed Rust `lock`.
+- `lock run`: landed Rust `lock run`.
+- `lock status`: landed Rust `lock`.
 - `watch`: landed Rust `watch`.
 
 `demo` is removed by the LATER.md drop ledger.

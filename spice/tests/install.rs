@@ -315,7 +315,13 @@ impl Fixture {
         fs::create_dir_all(home.join("bin")).expect("create fixture home");
         let home = fs::canonicalize(home).expect("canonical fixture home");
         fs::create_dir_all(root.join(".agents/skills/spice")).expect("create skill parent");
-        let prior_policy = b"[lane]\nvendor = \"codex\"\n\n[taste.polling]\nwords = [\"wait*\"]\nmessage = \"Wait for evidence.\"\n".to_vec();
+        let prior_policy = concat!(
+            "[lane]\nvendor = \"codex\"\n\n",
+            "[taste.polling]\nwords = [\"wait*\"]\n",
+            "message = \"Wait for evidence.\"\n",
+        )
+        .as_bytes()
+        .to_vec();
         let prior_baseline = b"version = 9\n".to_vec();
         let prior_skill = b"python harness skill\n".to_vec();
         let prior_entrypoint = b"python harness entrypoint\n".to_vec();

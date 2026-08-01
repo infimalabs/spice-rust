@@ -1,9 +1,9 @@
 use wire::manifest::{
-    BuildPins, InventoryEntry, PROOF_RECEIPT_VERSION, ProofEnvironment, ProofReceipt,
-    ProofStanding, RELEASE_MANIFEST_VERSION, ReleaseManifest, ReleaseManifestTarget, ReleaseTarget,
-    TargetPayload,
+    BuildPins, InventoryEntry, JOURNAL_BACKUP_VERSION, JournalBackupManifest, JournalBackupMember,
+    PROOF_RECEIPT_VERSION, ProofEnvironment, ProofReceipt, ProofStanding, RELEASE_MANIFEST_VERSION,
+    ReleaseManifest, ReleaseManifestTarget, ReleaseTarget, TargetPayload,
 };
-use wire::{Digest, Domain};
+use wire::{Digest, Domain, WireVersion};
 
 /// Hex width of an OCI `sha256:` reference.
 ///
@@ -17,6 +17,57 @@ const OCI_SHA256_HEX_LEN: usize = 64;
 /// carry a spelling that [`Digest::compute`] would not produce.
 fn digest(marker: &str) -> Digest {
     Digest::compute(Domain::DistArtifact, marker.as_bytes())
+}
+
+#[test]
+fn journal_backup_manifests_have_one_strict_current_wire_shape() {
+    let member_bytes = b"captured journal authority";
+    let manifest = JournalBackupManifest {
+        version: JOURNAL_BACKUP_VERSION,
+        wire: WireVersion::CURRENT,
+        journal_schema: 1,
+        authority: "spicejournal.sqlite3".to_owned(),
+        members: vec![JournalBackupMember {
+            path: "spicejournal.sqlite3".to_owned(),
+            mode: 0o440,
+            bytes: u64::try_from(member_bytes.len()).expect("fixture length crosses"),
+            digest: Digest::compute(Domain::JournalBackupMember, member_bytes),
+        }],
+    };
+    let encoded = wire::encode(&manifest).expect("backup manifest encodes");
+    assert_eq!(
+        wire::decode::<JournalBackupManifest>(&encoded).expect("backup manifest decodes"),
+        manifest
+    );
+
+    let original: serde_json::Value =
+        serde_json::from_slice(&encoded).expect("backup manifest is JSON");
+    for path in [Vec::new(), vec!["members", "0"]] {
+        let mut changed = original.clone();
+        let mut object = &mut changed;
+        for &segment in &path {
+            object = if let Ok(index) = segment.parse::<usize>() {
+                &mut object.as_array_mut().expect("fixture segment is an array")[index]
+            } else {
+                object
+                    .as_object_mut()
+                    .expect("fixture segment is an object")
+                    .get_mut(segment)
+                    .expect("fixture segment exists")
+            };
+        }
+        object
+            .as_object_mut()
+            .expect("fixture target is an object")
+            .insert("unknown".to_owned(), serde_json::Value::Bool(true));
+        assert!(
+            wire::decode::<JournalBackupManifest>(
+                &serde_json::to_vec(&changed).expect("changed manifest is JSON")
+            )
+            .is_err(),
+            "unknown field at {path:?} must refuse"
+        );
+    }
 }
 
 fn payload(target: ReleaseTarget, marker: &str) -> TargetPayload {

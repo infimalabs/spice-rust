@@ -11,7 +11,10 @@ use wire::manifest::{
 use wire::{Digest, Domain, Outcome, ReleaseNotes, ReplyPosition};
 
 const REFUSAL_EXIT: i32 = 2;
-const OCI_IMAGE: &str = "ghcr.io/example/spice-proof@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const OCI_IMAGE: &str = concat!(
+    "ghcr.io/example/spice-proof@sha256:",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+);
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
