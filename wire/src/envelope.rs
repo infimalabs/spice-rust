@@ -8,7 +8,7 @@ use serde::de::{Deserializer, Error as DeError};
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 
-use crate::fact::Fact;
+use crate::fact::{Body, Fact};
 use crate::ident::{CanonicalUuid, Instant};
 
 /// The wire schema version writers emit and readers admit.
@@ -190,7 +190,8 @@ impl<'de> Deserialize<'de> for Origin {
 /// commit door. A client may propose domain data but cannot mint journal
 /// position, time, attribution, or causality.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Envelope<F> {
+#[serde(bound(serialize = "F: Body", deserialize = "F: Body"))]
+pub struct Envelope<F: Body> {
     /// Current wire version.
     pub v: WireVersion,
     /// Durable observation cursor for this fact.
@@ -222,7 +223,7 @@ fn present_cause<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Se
     Seq::deserialize(deserializer).map(Some)
 }
 
-impl<F> Envelope<F> {
+impl<F: Body> Envelope<F> {
     /// True when this envelope begins a causal chain.
     #[must_use]
     pub const fn is_root(&self) -> bool {

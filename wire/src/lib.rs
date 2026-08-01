@@ -9,6 +9,7 @@
 //! migration at open, and the browser has no independent clock because the app
 //! is compiled from this crate and embedded in the binary that owns the socket.
 
+pub mod body;
 pub mod command;
 pub mod envelope;
 pub mod fact;
@@ -20,7 +21,7 @@ pub mod witness;
 
 pub use command::{Command, CommandKind, CommandKindError};
 pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVersion};
-pub use fact::{Fact, FactKind};
+pub use fact::{Body, Fact, FactKind, Producer};
 pub use hello::{Hello, Rejected};
 pub use ident::{CanonicalUuid, IdentError, Instant};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
