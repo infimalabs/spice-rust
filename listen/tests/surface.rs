@@ -4,7 +4,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
-use listen::{Mode, Observation, RetroSelector, Span, Watch, retro};
+use listen::{
+    Dialect, EventKind, Mode, Observation, RetroSelector, Span, StreamOutcome, SurfaceEvent,
+    SurfaceReasoning, SurfaceResidue, SurfaceToolMoment, SurfaceToolResult, Watch, retro,
+};
 use tape::Tape;
 
 const CODEX_PROSE: &[u8] =
@@ -124,7 +127,10 @@ fn watch_heals_missed_wakes_by_comparing_durable_cursors_across_growth_and_seali
     assert_eq!(event_count(&first.observations), 1);
     assert!(first.observations.iter().any(|observation| matches!(
         observation,
-        Observation::Canary { expected, .. } if expected == "reasoning"
+        Observation::Canary {
+            expected: EventKind::Reasoning,
+            ..
+        }
     )));
     assert!(
         watch
@@ -193,11 +199,17 @@ fn retro_accounts_for_partial_malformed_missing_and_ambiguous_spans() {
     assert_eq!(replay.mode, Mode::Retro);
     assert!(replay.observations.iter().any(|observation| matches!(
         observation,
-        Observation::Residue { reason, .. } if reason.starts_with("malformed:")
+        Observation::Residue {
+            residue: SurfaceResidue::Malformed { .. },
+            ..
+        }
     )));
     assert!(replay.observations.iter().any(|observation| matches!(
         observation,
-        Observation::Residue { reason, .. } if reason == "truncated"
+        Observation::Residue {
+            residue: SurfaceResidue::Truncated {},
+            ..
+        }
     )));
 
     let missing_lane = retro(
@@ -322,6 +334,346 @@ fn retro_selector_grammar_never_falls_through_to_another_meaning() {
     assert!(RetroSelector::parse("1:2").is_err());
     assert!(RetroSelector::parse("1:2:3:4").is_err());
     assert!(RetroSelector::parse("member 2 offset nope length 31").is_err());
+}
+
+#[test]
+fn records_keep_one_typed_identity_across_sealed_member_boundaries() {
+    let scratch = Scratch::new("cross-member");
+    let (codex, tape) = session(scratch.path(), "lane-a", "codex");
+    let complete = record(CODEX_PROSE);
+    let first = complete.len() / 3;
+    let second = first * 2;
+
+    tape.tee(&complete[..first])
+        .expect("first record fragment is durable");
+    tape.seal().expect("first fragment member seals");
+    tape.tee(&complete[first..second])
+        .expect("second record fragment is durable");
+    tape.seal().expect("second fragment member seals");
+    tape.tee(&complete[second..])
+        .expect("record delimiter is durable in the active member");
+
+    let mut watch = Watch::new(scratch.path());
+    let watched = watch.poll().expect("watch joins all three fragments");
+    let events = watched
+        .observations
+        .iter()
+        .filter_map(|observation| match observation {
+            Observation::Event { spans, event, .. } => Some((spans, event)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].1.kind(), EventKind::Prose);
+    assert_eq!(
+        events[0].0,
+        &vec![
+            Span {
+                member: 1,
+                offset: 0,
+                length: first as u64,
+            },
+            Span {
+                member: 2,
+                offset: 0,
+                length: (second - first) as u64,
+            },
+            Span {
+                member: 3,
+                offset: 0,
+                length: (complete.len() - second) as u64,
+            },
+        ]
+    );
+    assert!(watched.observations.iter().all(|observation| !matches!(
+        observation,
+        Observation::Residue { .. } | Observation::Pending { .. }
+    )));
+    assert!(watch.poll().expect("cursor advances once").is_empty());
+
+    let replay =
+        retro(scratch.path(), RetroSelector::Path(codex)).expect("retro joins the same fragments");
+    assert_eq!(event_count(&replay.observations), 1);
+    assert!(replay.observations.iter().all(|observation| !matches!(
+        observation,
+        Observation::Residue { .. } | Observation::Pending { .. }
+    )));
+
+    scratch.remove();
+}
+
+#[test]
+fn a_sealed_prefix_remains_pending_until_the_active_member_completes_it() {
+    let scratch = Scratch::new("sealed-prefix");
+    let (_, tape) = session(scratch.path(), "lane-a", "codex");
+    let complete = record(CODEX_REASONING);
+    let split = complete.len() / 2;
+    tape.tee(&complete[..split])
+        .expect("record prefix is durable");
+    tape.seal().expect("record prefix seals");
+
+    let mut watch = Watch::new(scratch.path());
+    let pending = watch.poll().expect("sealed prefix remains pending");
+    assert!(matches!(
+        pending.observations.as_slice(),
+        [Observation::Pending { spans, .. }] if spans == &vec![Span {
+            member: 1,
+            offset: 0,
+            length: split as u64,
+        }]
+    ));
+
+    tape.tee(&complete[split..])
+        .expect("active member completes the record");
+    let completed = watch.poll().expect("completion joins the sealed prefix");
+    assert_eq!(event_count(&completed.observations), 1);
+    assert!(completed.observations.iter().any(|observation| matches!(
+        observation,
+        Observation::Event { spans, event, .. }
+            if event.kind() == EventKind::Reasoning && spans.len() == 2
+    )));
+    assert!(completed.observations.iter().all(|observation| !matches!(
+        observation,
+        Observation::Residue { .. } | Observation::Pending { .. }
+    )));
+
+    scratch.remove();
+}
+
+#[test]
+fn a_newline_before_rotation_keeps_the_next_split_record_distinct() {
+    let scratch = Scratch::new("newline-rotation");
+    let (_, tape) = session(scratch.path(), "lane-a", "codex");
+    let first = record(CODEX_PROSE);
+    let second = record(CODEX_REASONING);
+    let split = second.len() / 2;
+    let mut member = first.clone();
+    member.extend_from_slice(&second[..split]);
+    tape.tee(&member)
+        .expect("whole first record and second prefix are durable");
+    tape.seal().expect("mixed member seals");
+    tape.tee(&second[split..])
+        .expect("second record completes after rotation");
+
+    let mut watch = Watch::new(scratch.path());
+    let observed = watch.poll().expect("both records decode once");
+    let events = observed
+        .observations
+        .iter()
+        .filter_map(|observation| match observation {
+            Observation::Event { spans, event, .. } => Some((spans, event.kind())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].1, EventKind::Prose);
+    assert_eq!(events[0].0.len(), 1);
+    assert_eq!(events[1].1, EventKind::Reasoning);
+    assert_eq!(events[1].0.len(), 2);
+    assert!(observed.observations.iter().all(|observation| !matches!(
+        observation,
+        Observation::Residue { .. } | Observation::Pending { .. }
+    )));
+
+    scratch.remove();
+}
+
+#[test]
+fn finite_retro_accounts_one_terminal_partial_over_every_member() {
+    let scratch = Scratch::new("terminal-partial");
+    let (codex, tape) = session(scratch.path(), "lane-a", "codex");
+    tape.tee(b"{\"type\":")
+        .expect("first incomplete fragment is durable");
+    tape.seal().expect("first incomplete fragment seals");
+    tape.tee(b"\"item.completed\"")
+        .expect("second incomplete fragment is durable");
+
+    let replay = retro(scratch.path(), RetroSelector::Path(codex))
+        .expect("finite retro accounts the terminal fragment");
+    assert!(matches!(
+        replay.observations.as_slice(),
+        [Observation::Residue {
+            spans,
+            residue: SurfaceResidue::Truncated {},
+            ..
+        }] if spans == &vec![
+            Span { member: 1, offset: 0, length: 8 },
+            Span { member: 2, offset: 0, length: 16 },
+        ]
+    ));
+
+    scratch.remove();
+}
+
+#[test]
+fn every_surface_event_has_one_closed_canonical_wire_shape() {
+    let events = vec![
+        SurfaceEvent::Prose {
+            text: "hello".to_owned(),
+            phase: Some("final".to_owned()),
+        },
+        SurfaceEvent::Reasoning {
+            content: SurfaceReasoning::Plain {
+                lines: vec!["inspect".to_owned()],
+            },
+        },
+        SurfaceEvent::Reasoning {
+            content: SurfaceReasoning::Opaque {},
+        },
+        SurfaceEvent::Tool {
+            call_id: "call-1".to_owned(),
+            moment: SurfaceToolMoment::Call {
+                name: "shell".to_owned(),
+            },
+        },
+        SurfaceEvent::Tool {
+            call_id: "call-1".to_owned(),
+            moment: SurfaceToolMoment::Update {
+                name: "shell".to_owned(),
+            },
+        },
+        SurfaceEvent::Tool {
+            call_id: "call-1".to_owned(),
+            moment: SurfaceToolMoment::Result {
+                standing: SurfaceToolResult::Succeeded,
+            },
+        },
+        SurfaceEvent::Tool {
+            call_id: "call-2".to_owned(),
+            moment: SurfaceToolMoment::Result {
+                standing: SurfaceToolResult::Failed,
+            },
+        },
+        SurfaceEvent::Tool {
+            call_id: "call-3".to_owned(),
+            moment: SurfaceToolMoment::Result {
+                standing: SurfaceToolResult::Unreported,
+            },
+        },
+        SurfaceEvent::Usage {
+            input_tokens: 1,
+            cached_input_tokens: 2,
+            cache_write_input_tokens: 3,
+            output_tokens: 4,
+            reasoning_output_tokens: Some(5),
+        },
+        SurfaceEvent::Compaction {},
+        SurfaceEvent::Failure {
+            message: "failed".to_owned(),
+        },
+    ];
+    assert_eq!(
+        events.iter().map(SurfaceEvent::kind).collect::<Vec<_>>(),
+        vec![
+            EventKind::Prose,
+            EventKind::Reasoning,
+            EventKind::Reasoning,
+            EventKind::Tool,
+            EventKind::Tool,
+            EventKind::Tool,
+            EventKind::Tool,
+            EventKind::Tool,
+            EventKind::Usage,
+            EventKind::Compaction,
+            EventKind::Failure,
+        ]
+    );
+    for event in events {
+        let bytes = wire::encode(&event).expect("surface event encodes");
+        let decoded: SurfaceEvent = wire::decode(&bytes).expect("surface event decodes");
+        assert_eq!(decoded, event);
+        assert_eq!(wire::encode(&decoded).expect("event re-encodes"), bytes);
+    }
+}
+
+#[test]
+fn stream_identity_refuses_missing_extra_and_unknown_nested_shapes() {
+    let outcome = StreamOutcome {
+        mode: Mode::Watch,
+        root: PathBuf::from("root"),
+        observations: vec![Observation::Event {
+            lane: "lane-a".to_owned(),
+            dialect: Dialect::Codex,
+            tape: PathBuf::from("root/lane-a/codex"),
+            spans: vec![Span {
+                member: 1,
+                offset: 2,
+                length: 3,
+            }],
+            event: SurfaceEvent::Prose {
+                text: "hello".to_owned(),
+                phase: None,
+            },
+        }],
+    };
+    let bytes = wire::encode(&outcome).expect("stream outcome encodes");
+    let canonical: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("canonical outcome is JSON");
+    assert!(canonical["observations"][0]["event"].get("phase").is_none());
+    let decoded: StreamOutcome = wire::decode(&bytes).expect("stream outcome decodes");
+    assert_eq!(decoded, outcome);
+    assert_eq!(wire::encode(&decoded).expect("outcome re-encodes"), bytes);
+
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes).expect("fixture is JSON");
+    value["extra"] = true.into();
+    assert!(wire::decode::<StreamOutcome>(&serde_json::to_vec(&value).unwrap()).is_err());
+
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes).expect("fixture is JSON");
+    value
+        .as_object_mut()
+        .expect("outcome is an object")
+        .remove("mode");
+    assert!(wire::decode::<StreamOutcome>(&serde_json::to_vec(&value).unwrap()).is_err());
+
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes).expect("fixture is JSON");
+    value["observations"][0]["spans"][0]["extra"] = true.into();
+    assert!(wire::decode::<StreamOutcome>(&serde_json::to_vec(&value).unwrap()).is_err());
+
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes).expect("fixture is JSON");
+    value["observations"][0]["event"]["extra"] = true.into();
+    assert!(wire::decode::<StreamOutcome>(&serde_json::to_vec(&value).unwrap()).is_err());
+
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes).expect("fixture is JSON");
+    value["observations"][0]["event"]
+        .as_object_mut()
+        .expect("event is an object")
+        .remove("text");
+    assert!(wire::decode::<StreamOutcome>(&serde_json::to_vec(&value).unwrap()).is_err());
+
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes).expect("fixture is JSON");
+    value["observations"][0]["event"]["kind"] = "future".into();
+    assert!(wire::decode::<StreamOutcome>(&serde_json::to_vec(&value).unwrap()).is_err());
+
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes).expect("fixture is JSON");
+    value["observations"][0]["event"]["phase"] = serde_json::Value::Null;
+    assert!(wire::decode::<StreamOutcome>(&serde_json::to_vec(&value).unwrap()).is_err());
+
+    let usage = SurfaceEvent::Usage {
+        input_tokens: 1,
+        cached_input_tokens: 2,
+        cache_write_input_tokens: 3,
+        output_tokens: 4,
+        reasoning_output_tokens: None,
+    };
+    let usage_bytes = wire::encode(&usage).expect("usage without reasoning tokens encodes");
+    let mut usage_value: serde_json::Value =
+        serde_json::from_slice(&usage_bytes).expect("canonical usage is JSON");
+    assert!(usage_value.get("reasoning_output_tokens").is_none());
+    usage_value["reasoning_output_tokens"] = serde_json::Value::Null;
+    assert!(wire::decode::<SurfaceEvent>(&serde_json::to_vec(&usage_value).unwrap()).is_err());
+}
+
+#[test]
+fn every_closed_surface_vocabulary_refuses_unknown_variants() {
+    assert!(wire::decode::<Dialect>(br#""future""#).is_err());
+    assert!(wire::decode::<EventKind>(br#""future""#).is_err());
+    assert!(wire::decode::<Mode>(br#""future""#).is_err());
+    assert!(wire::decode::<Observation>(br#"{"type":"future"}"#).is_err());
+    assert!(wire::decode::<SurfaceEvent>(br#"{"kind":"future"}"#).is_err());
+    assert!(wire::decode::<SurfaceReasoning>(br#"{"form":"future"}"#).is_err());
+    assert!(wire::decode::<SurfaceToolMoment>(br#"{"moment":"future"}"#).is_err());
+    assert!(wire::decode::<SurfaceToolResult>(br#""future""#).is_err());
+    assert!(wire::decode::<SurfaceResidue>(br#"{"reason":"future"}"#).is_err());
 }
 
 #[cfg(unix)]

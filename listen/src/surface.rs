@@ -19,10 +19,13 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use tape::{Locus, Tape};
 
-use crate::{Decoded, Dialect, EventKind, Residue, ResidueKind, decode};
+use crate::{
+    Decoded, Dialect, Event, EventKind, ReasoningContent, Residue, ResidueKind, ToolMoment,
+    ToolResult, decode,
+};
 
 /// Which daemonless surface produced a stream outcome.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -36,6 +39,7 @@ pub enum Mode {
 
 /// Serializable spelling of one durable tape span.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Span {
     /// Tape member.
     pub member: u64,
@@ -67,48 +71,364 @@ impl fmt::Display for Span {
     }
 }
 
+/// Stable machine payload of one decoded event.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SurfaceEvent {
+    /// Assistant prose.
+    Prose {
+        /// Text reported by the vendor.
+        text: String,
+        /// Vendor phase when the current dialect reports one.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "present"
+        )]
+        phase: Option<String>,
+    },
+    /// Model reasoning.
+    Reasoning {
+        /// Available reasoning representation.
+        content: SurfaceReasoning,
+    },
+    /// Tool activity.
+    Tool {
+        /// Vendor call identifier.
+        call_id: String,
+        /// Position in the tool lifecycle.
+        moment: SurfaceToolMoment,
+    },
+    /// Token usage.
+    Usage {
+        /// Uncached input tokens.
+        input_tokens: u64,
+        /// Cached input tokens.
+        cached_input_tokens: u64,
+        /// Input tokens written to a cache.
+        cache_write_input_tokens: u64,
+        /// Output tokens.
+        output_tokens: u64,
+        /// Reasoning output tokens, when exposed.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "present"
+        )]
+        reasoning_output_tokens: Option<u64>,
+    },
+    /// Context compaction.
+    Compaction {},
+    /// Vendor failure.
+    Failure {
+        /// Vendor failure message.
+        message: String,
+    },
+}
+
+fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+impl SurfaceEvent {
+    /// Closed kind of this surface event.
+    #[must_use]
+    pub const fn kind(&self) -> EventKind {
+        match self {
+            Self::Prose { .. } => EventKind::Prose,
+            Self::Reasoning { .. } => EventKind::Reasoning,
+            Self::Tool { .. } => EventKind::Tool,
+            Self::Usage { .. } => EventKind::Usage,
+            Self::Compaction {} => EventKind::Compaction,
+            Self::Failure { .. } => EventKind::Failure,
+        }
+    }
+}
+
+impl From<&Event> for SurfaceEvent {
+    fn from(event: &Event) -> Self {
+        match event {
+            Event::Prose(event) => Self::Prose {
+                text: event.text.clone(),
+                phase: event.phase.clone(),
+            },
+            Event::Reasoning(event) => Self::Reasoning {
+                content: (&event.content).into(),
+            },
+            Event::Tool(event) => Self::Tool {
+                call_id: event.call_id.clone(),
+                moment: (&event.moment).into(),
+            },
+            Event::Usage(event) => Self::Usage {
+                input_tokens: event.input_tokens,
+                cached_input_tokens: event.cached_input_tokens,
+                cache_write_input_tokens: event.cache_write_input_tokens,
+                output_tokens: event.output_tokens,
+                reasoning_output_tokens: event.reasoning_output_tokens,
+            },
+            Event::Compaction(_) => Self::Compaction {},
+            Event::Failure(event) => Self::Failure {
+                message: event.message.clone(),
+            },
+        }
+    }
+}
+
+impl fmt::Display for SurfaceEvent {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Prose { text, phase } => {
+                write!(formatter, "prose text={text:?} phase={phase:?}")
+            }
+            Self::Reasoning { content } => write!(formatter, "reasoning {content}"),
+            Self::Tool { call_id, moment } => {
+                write!(formatter, "tool call_id={call_id:?} {moment}")
+            }
+            Self::Usage {
+                input_tokens,
+                cached_input_tokens,
+                cache_write_input_tokens,
+                output_tokens,
+                reasoning_output_tokens,
+            } => write!(
+                formatter,
+                concat!(
+                    "usage input={} cached={} cache_write={} ",
+                    "output={} reasoning={:?}"
+                ),
+                input_tokens,
+                cached_input_tokens,
+                cache_write_input_tokens,
+                output_tokens,
+                reasoning_output_tokens,
+            ),
+            Self::Compaction {} => formatter.write_str("compaction"),
+            Self::Failure { message } => write!(formatter, "failure message={message:?}"),
+        }
+    }
+}
+
+/// Stable reasoning representation.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "form", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SurfaceReasoning {
+    /// Plain reasoning lines.
+    Plain {
+        /// Lines reported by the vendor.
+        lines: Vec<String>,
+    },
+    /// Reasoning exists but its text is unavailable.
+    Opaque {},
+}
+
+impl From<&ReasoningContent> for SurfaceReasoning {
+    fn from(content: &ReasoningContent) -> Self {
+        match content {
+            ReasoningContent::Plain(lines) => Self::Plain {
+                lines: lines.clone(),
+            },
+            ReasoningContent::Opaque => Self::Opaque {},
+        }
+    }
+}
+
+impl fmt::Display for SurfaceReasoning {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Plain { lines } => write!(formatter, "plain lines={lines:?}"),
+            Self::Opaque {} => formatter.write_str("opaque"),
+        }
+    }
+}
+
+/// Stable tool lifecycle representation.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "moment", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SurfaceToolMoment {
+    /// A call names its tool.
+    Call {
+        /// Tool name.
+        name: String,
+    },
+    /// A running call published updated state.
+    Update {
+        /// Tool name.
+        name: String,
+    },
+    /// A result reports its standing.
+    Result {
+        /// Vendor knowledge of completion.
+        standing: SurfaceToolResult,
+    },
+}
+
+impl From<&ToolMoment> for SurfaceToolMoment {
+    fn from(moment: &ToolMoment) -> Self {
+        match moment {
+            ToolMoment::Call { name } => Self::Call { name: name.clone() },
+            ToolMoment::Update { name } => Self::Update { name: name.clone() },
+            ToolMoment::Result(result) => Self::Result {
+                standing: (*result).into(),
+            },
+        }
+    }
+}
+
+impl fmt::Display for SurfaceToolMoment {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Call { name } => write!(formatter, "call name={name:?}"),
+            Self::Update { name } => write!(formatter, "update name={name:?}"),
+            Self::Result { standing } => write!(formatter, "result standing={standing}"),
+        }
+    }
+}
+
+/// Vendor knowledge of a tool result.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SurfaceToolResult {
+    /// The vendor reported success.
+    Succeeded,
+    /// The vendor reported failure.
+    Failed,
+    /// The vendor supplied no status.
+    Unreported,
+}
+
+impl From<ToolResult> for SurfaceToolResult {
+    fn from(result: ToolResult) -> Self {
+        match result {
+            ToolResult::Succeeded => Self::Succeeded,
+            ToolResult::Failed => Self::Failed,
+            ToolResult::Unreported => Self::Unreported,
+        }
+    }
+}
+
+impl fmt::Display for SurfaceToolResult {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Unreported => "unreported",
+        })
+    }
+}
+
+/// Stable reason a complete record remained untyped.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "reason", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SurfaceResidue {
+    /// A required field was absent.
+    Absent {
+        /// Missing field.
+        field: String,
+    },
+    /// The decoder did not own the discriminator.
+    Unknown {
+        /// Observed discriminator.
+        discriminator: String,
+    },
+    /// A field had the wrong representation.
+    Malformed {
+        /// Malformed field.
+        field: String,
+        /// Expected representation.
+        expected: String,
+    },
+    /// JSON ended before one complete value was available.
+    Truncated {},
+    /// A current envelope carried another dialect generation.
+    VersionDrift {
+        /// Observed discriminator.
+        discriminator: String,
+    },
+}
+
+impl From<&ResidueKind> for SurfaceResidue {
+    fn from(kind: &ResidueKind) -> Self {
+        match kind {
+            ResidueKind::Absent { field } => Self::Absent {
+                field: (*field).to_owned(),
+            },
+            ResidueKind::Unknown { discriminator } => Self::Unknown {
+                discriminator: discriminator.clone(),
+            },
+            ResidueKind::Malformed { field, expected } => Self::Malformed {
+                field: (*field).to_owned(),
+                expected: (*expected).to_owned(),
+            },
+            ResidueKind::Truncated => Self::Truncated {},
+            ResidueKind::VersionDrift { discriminator } => Self::VersionDrift {
+                discriminator: discriminator.clone(),
+            },
+        }
+    }
+}
+
+impl fmt::Display for SurfaceResidue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Absent { field } => write!(formatter, "absent field={field}"),
+            Self::Unknown { discriminator } => {
+                write!(formatter, "unknown discriminator={discriminator:?}")
+            }
+            Self::Malformed { field, expected } => {
+                write!(formatter, "malformed field={field} expected={expected}")
+            }
+            Self::Truncated {} => formatter.write_str("truncated"),
+            Self::VersionDrift { discriminator } => {
+                write!(formatter, "version_drift discriminator={discriminator:?}")
+            }
+        }
+    }
+}
+
 /// One visible, accounted listening result.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Observation {
     /// A current decoder emitted a typed event.
     Event {
         /// Lane owning the session.
         lane: String,
         /// Decoder spelling.
-        dialect: String,
+        dialect: Dialect,
         /// Preserved tape.
         tape: PathBuf,
-        /// Exact record bytes.
-        locus: Span,
-        /// Closed event kind.
-        kind: String,
-        /// Current typed payload, rendered without losing its variant.
-        detail: String,
+        /// Exact ordered record spans.
+        spans: Vec<Span>,
+        /// Current typed payload.
+        event: SurfaceEvent,
     },
     /// Complete or terminal bytes remained untyped.
     Residue {
         /// Lane owning the session.
         lane: String,
         /// Decoder spelling.
-        dialect: String,
+        dialect: Dialect,
         /// Preserved tape.
         tape: PathBuf,
-        /// Exact accounted bytes.
-        locus: Span,
+        /// Exact ordered accounted spans.
+        spans: Vec<Span>,
         /// Closed residue reason.
-        reason: String,
+        residue: SurfaceResidue,
     },
     /// An active member ends in a record that may still grow.
     Pending {
         /// Lane owning the session.
         lane: String,
         /// Decoder spelling.
-        dialect: String,
+        dialect: Dialect,
         /// Preserved tape.
         tape: PathBuf,
-        /// Bytes waiting for their record delimiter.
-        locus: Span,
+        /// Ordered bytes waiting for their record delimiter.
+        spans: Vec<Span>,
     },
     /// A selected root or session currently contains no durable record.
     Absent {
@@ -134,16 +454,17 @@ pub enum Observation {
         /// Lane owning the session.
         lane: String,
         /// Decoder spelling.
-        dialect: String,
+        dialect: Dialect,
         /// Preserved tape.
         tape: PathBuf,
         /// Missing event kind.
-        expected: String,
+        expected: EventKind,
     },
 }
 
 /// One typed stream result rendered by either CLI leaf.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct StreamOutcome {
     /// Producing surface.
     pub mode: Mode,
@@ -169,34 +490,40 @@ impl fmt::Display for StreamOutcome {
                     lane,
                     dialect,
                     tape,
-                    locus,
-                    kind,
-                    detail,
+                    spans,
+                    event,
                 } => writeln!(
                     formatter,
-                    "event lane={lane} dialect={dialect} tape={} locus={locus} kind={kind} detail={detail}",
+                    "event lane={lane} dialect={} tape={} spans={} kind={} detail={event}",
+                    dialect.as_str(),
                     tape.display(),
+                    display_spans(spans),
+                    event.kind().as_str(),
                 )?,
                 Observation::Residue {
                     lane,
                     dialect,
                     tape,
-                    locus,
-                    reason,
+                    spans,
+                    residue,
                 } => writeln!(
                     formatter,
-                    "residue lane={lane} dialect={dialect} tape={} locus={locus} reason={reason}",
-                    tape.display()
+                    "residue lane={lane} dialect={} tape={} spans={} detail={residue}",
+                    dialect.as_str(),
+                    tape.display(),
+                    display_spans(spans),
                 )?,
                 Observation::Pending {
                     lane,
                     dialect,
                     tape,
-                    locus,
+                    spans,
                 } => writeln!(
                     formatter,
-                    "pending lane={lane} dialect={dialect} tape={} locus={locus}",
-                    tape.display()
+                    "pending lane={lane} dialect={} tape={} spans={}",
+                    dialect.as_str(),
+                    tape.display(),
+                    display_spans(spans),
                 )?,
                 Observation::Absent { selector } => {
                     writeln!(formatter, "absent selector={selector}")?;
@@ -223,13 +550,23 @@ impl fmt::Display for StreamOutcome {
                     expected,
                 } => writeln!(
                     formatter,
-                    "canary lane={lane} dialect={dialect} tape={} expected={expected}",
-                    tape.display()
+                    "canary lane={lane} dialect={} tape={} expected={}",
+                    dialect.as_str(),
+                    tape.display(),
+                    expected.as_str(),
                 )?,
             }
         }
         Ok(())
     }
+}
+
+fn display_spans(spans: &[Span]) -> String {
+    spans
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// One finite retro selector.
@@ -392,9 +729,9 @@ impl Watch {
                         .filter(|kind| !seen.contains(kind))
                         .map(|kind| Observation::Canary {
                             lane: session.lane.clone(),
-                            dialect: session.dialect.as_str().to_owned(),
+                            dialect: session.dialect,
                             tape: session.tape.clone(),
-                            expected: kind.as_str().to_owned(),
+                            expected: kind,
                         }),
                 );
             }
@@ -497,87 +834,32 @@ fn scan(
     let extents_empty = extents.is_empty();
     let mut observations = Vec::new();
     let mut decoded = Vec::new();
+    let mut record = Vec::new();
+    let mut record_spans = Vec::new();
 
-    for extent in extents {
-        if extent.member < cursor.member {
-            continue;
-        }
-        let start = if extent.member == cursor.member {
-            cursor.offset
-        } else {
-            0
-        };
-        if start > extent.length {
-            return Err(SurfaceError::CursorRetreated {
-                tape: session.tape.clone(),
-                member: extent.member,
-                cursor: start,
-                observed: extent.length,
-            });
-        }
-        if start == extent.length {
-            if extent.sealed {
-                *cursor = Cursor {
-                    member: extent.member + 1,
-                    offset: 0,
-                };
-            }
-            continue;
-        }
-
-        let locus = Locus::new(extent.member, start, extent.length - start);
-        let bytes = tape.read(locus).map_err(|source| SurfaceError::Tape {
-            path: session.tape.clone(),
-            source,
-        })?;
-        let mut record_start = 0_usize;
-        for (position, byte) in bytes.iter().enumerate() {
-            if *byte != b'\n' {
-                continue;
-            }
-            let end = position + 1;
-            let record = &bytes[record_start..end];
-            let offset = start + record_start as u64;
-            let record_locus = Locus::new(extent.member, offset, record.len() as u64);
-            let observation = decode_record(session, record, record_locus)?;
-            decoded.push(observation.0);
-            observations.extend(observation.1);
-            cursor.member = extent.member;
-            cursor.offset = start + end as u64;
-            record_start = end;
-        }
-
-        if record_start < bytes.len() {
-            let trailing = &bytes[record_start..];
-            let offset = start + record_start as u64;
-            let trailing_locus = Locus::new(extent.member, offset, trailing.len() as u64);
-            if finish_partial || extent.sealed {
-                let residue = Decoded::Residue(Residue::new(
-                    session.decoder(),
-                    trailing_locus,
-                    ResidueKind::Truncated,
-                ));
-                observations.extend(observe(session, &residue));
-                decoded.push(residue);
-                cursor.member = extent.member;
-                cursor.offset = extent.length;
-            } else {
-                observations.push(Observation::Pending {
-                    lane: session.lane.clone(),
-                    dialect: session.dialect.as_str().to_owned(),
-                    tape: session.tape.clone(),
-                    locus: trailing_locus.into(),
-                });
-            }
-        }
-
-        if extent.sealed && cursor.offset == extent.length {
-            *cursor = Cursor {
-                member: extent.member + 1,
-                offset: 0,
-            };
-        }
+    for extent in &extents {
+        scan_extent(
+            session,
+            &tape,
+            cursor,
+            extent,
+            &mut record,
+            &mut record_spans,
+            &mut observations,
+            &mut decoded,
+        )?;
     }
+
+    finish_partial_record(
+        session,
+        cursor,
+        &extents,
+        finish_partial,
+        &record,
+        record_spans,
+        &mut observations,
+        &mut decoded,
+    );
 
     Ok(Scan {
         observations,
@@ -586,55 +868,217 @@ fn scan(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn scan_extent(
+    session: &Session,
+    tape: &Tape,
+    cursor: &mut Cursor,
+    extent: &tape::Extent,
+    record: &mut Vec<u8>,
+    record_spans: &mut Vec<Span>,
+    observations: &mut Vec<Observation>,
+    decoded: &mut Vec<Decoded>,
+) -> Result<(), SurfaceError> {
+    if extent.member < cursor.member {
+        return Ok(());
+    }
+    let start = if extent.member == cursor.member {
+        cursor.offset
+    } else {
+        0
+    };
+    if start > extent.length {
+        return Err(SurfaceError::CursorRetreated {
+            tape: session.tape.clone(),
+            member: extent.member,
+            cursor: start,
+            observed: extent.length,
+        });
+    }
+    if start == extent.length {
+        if extent.sealed {
+            *cursor = Cursor {
+                member: extent.member + 1,
+                offset: 0,
+            };
+        }
+        return Ok(());
+    }
+
+    let locus = Locus::new(extent.member, start, extent.length - start);
+    let bytes = tape.read(locus).map_err(|source| SurfaceError::Tape {
+        path: session.tape.clone(),
+        source,
+    })?;
+    let mut fragment_start = 0_usize;
+    for (position, byte) in bytes.iter().enumerate() {
+        if *byte != b'\n' {
+            continue;
+        }
+        let end = position + 1;
+        append_record_fragment(
+            record,
+            record_spans,
+            extent.member,
+            start + fragment_start as u64,
+            &bytes[fragment_start..end],
+        );
+        let observation = decode_record(
+            session,
+            record,
+            synthetic_locus(record_spans, record.len()),
+            record_spans,
+        )?;
+        decoded.push(observation.0);
+        observations.extend(observation.1);
+        cursor.member = extent.member;
+        cursor.offset = start + end as u64;
+        record.clear();
+        record_spans.clear();
+        fragment_start = end;
+    }
+
+    if fragment_start < bytes.len() {
+        append_record_fragment(
+            record,
+            record_spans,
+            extent.member,
+            start + fragment_start as u64,
+            &bytes[fragment_start..],
+        );
+    }
+
+    if record.is_empty()
+        && extent.sealed
+        && cursor.member == extent.member
+        && cursor.offset == extent.length
+    {
+        *cursor = Cursor {
+            member: extent.member + 1,
+            offset: 0,
+        };
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_partial_record(
+    session: &Session,
+    cursor: &mut Cursor,
+    extents: &[tape::Extent],
+    finish_partial: bool,
+    record: &[u8],
+    record_spans: Vec<Span>,
+    observations: &mut Vec<Observation>,
+    decoded: &mut Vec<Decoded>,
+) {
+    if record.is_empty() {
+        return;
+    }
+    if !finish_partial {
+        observations.push(Observation::Pending {
+            lane: session.lane.clone(),
+            dialect: session.dialect,
+            tape: session.tape.clone(),
+            spans: record_spans,
+        });
+        return;
+    }
+
+    let residue = Decoded::Residue(Residue::new(
+        session.decoder(),
+        synthetic_locus(&record_spans, record.len()),
+        ResidueKind::Truncated,
+    ));
+    observations.extend(observe(session, &residue, &record_spans));
+    decoded.push(residue);
+    if let Some(last) = record_spans.last() {
+        cursor.member = last.member;
+        cursor.offset = last.offset + last.length;
+        if extents
+            .iter()
+            .find(|extent| extent.member == last.member)
+            .is_some_and(|extent| extent.sealed && cursor.offset == extent.length)
+        {
+            *cursor = Cursor {
+                member: last.member + 1,
+                offset: 0,
+            };
+        }
+    }
+}
+
 fn decode_record(
     session: &Session,
     bytes: &[u8],
     locus: Locus,
+    spans: &[Span],
 ) -> Result<(Decoded, Vec<Observation>), SurfaceError> {
     let decoded =
         decode(session.decoder(), bytes, locus).map_err(|error| SurfaceError::DecodeContract {
             tape: session.tape.clone(),
             detail: error.to_string(),
         })?;
-    let observations = observe(session, &decoded);
+    let observations = observe(session, &decoded, spans);
     Ok((decoded, observations))
 }
 
-fn observe(session: &Session, decoded: &Decoded) -> Vec<Observation> {
+fn observe(session: &Session, decoded: &Decoded, spans: &[Span]) -> Vec<Observation> {
     match decoded {
         Decoded::Events(events) => events
             .iter()
             .map(|event| Observation::Event {
                 lane: session.lane.clone(),
-                dialect: session.dialect.as_str().to_owned(),
+                dialect: session.dialect,
                 tape: session.tape.clone(),
-                locus: event.locus().into(),
-                kind: event.kind().as_str().to_owned(),
-                detail: format!("{event:?}"),
+                spans: spans.to_vec(),
+                event: event.into(),
             })
             .collect(),
         Decoded::Residue(residue) => vec![Observation::Residue {
             lane: session.lane.clone(),
-            dialect: session.dialect.as_str().to_owned(),
+            dialect: session.dialect,
             tape: session.tape.clone(),
-            locus: residue.locus.into(),
-            reason: residue_reason(&residue.kind),
+            spans: spans.to_vec(),
+            residue: (&residue.kind).into(),
         }],
     }
 }
 
-fn residue_reason(kind: &ResidueKind) -> String {
-    match kind {
-        ResidueKind::Absent { field } => format!("absent:{field}"),
-        ResidueKind::Unknown { discriminator } => format!("unknown:{discriminator}"),
-        ResidueKind::Malformed { field, expected } => {
-            format!("malformed:{field}:{expected}")
-        }
-        ResidueKind::Truncated => "truncated".to_owned(),
-        ResidueKind::VersionDrift { discriminator } => {
-            format!("version-drift:{discriminator}")
-        }
+fn append_record_fragment(
+    record: &mut Vec<u8>,
+    spans: &mut Vec<Span>,
+    member: u64,
+    offset: u64,
+    fragment: &[u8],
+) {
+    if fragment.is_empty() {
+        return;
     }
+    record.extend_from_slice(fragment);
+    let length = fragment.len() as u64;
+    if let Some(last) = spans.last_mut()
+        && last.member == member
+        && last.offset.checked_add(last.length) == Some(offset)
+    {
+        last.length += length;
+    } else {
+        spans.push(Span {
+            member,
+            offset,
+            length,
+        });
+    }
+}
+
+fn synthetic_locus(spans: &[Span], length: usize) -> Locus {
+    let first = spans
+        .first()
+        .expect("a record with bytes has at least one source span");
+    // Decoders require one locus whose length matches their input. A record
+    // crossing members has no such physical locus, so this value is only the
+    // decoder's length witness; public observations retain the exact spans.
+    Locus::new(first.member, first.offset, length as u64)
 }
 
 fn replay_locus(session: &Session, span: Span) -> Result<Vec<Observation>, SurfaceError> {
@@ -658,7 +1102,7 @@ fn replay_locus(session: &Session, span: Span) -> Result<Vec<Observation>, Surfa
             });
         }
     };
-    let (_, observations) = decode_record(session, &bytes, locus)?;
+    let (_, observations) = decode_record(session, &bytes, locus, &[span])?;
     Ok(observations)
 }
 

@@ -136,7 +136,7 @@ macro_rules! row {
 pub(crate) const CONTRACTS: &[Contract] = &[
     row!(
         ["watch"],
-        "watch [ROOT] [--once]",
+        "watch [ROOT]",
         Local,
         None,
         [],
@@ -1226,7 +1226,7 @@ mod tests {
         let parser = command();
         for argv in [
             &["spice", "doctor"][..],
-            &["spice", "watch", "root", "--once"],
+            &["spice", "watch", "root"],
             &["spice", "task", "add", "title", "--project", "rim.cli"],
             &["spice", "task", "depends", "TASK", "FIRST", "SECOND"],
             &["spice", "lane", "add", "--life", "Drive"],
@@ -1242,6 +1242,7 @@ mod tests {
 
         for argv in [
             &["spice", "doctor", "garbage"][..],
+            &["spice", "watch", "root", "--once"],
             &["spice", "task", "add"],
             &["spice", "task", "depends", "TASK"],
             &["spice", "lane", "add", "--life", "Sprint"],

@@ -1,7 +1,10 @@
 use tape::Locus;
 
+use serde::{Deserialize, Serialize};
+
 /// Closed vocabulary of listening moments.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EventKind {
     /// Assistant prose visible to the operator.
     Prose,

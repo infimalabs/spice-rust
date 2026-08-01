@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use listen::{Mode, Observation, StreamOutcome};
+use listen::{EventKind, Mode, Observation, StreamOutcome};
 use tape::Tape;
 use wire::Outcome;
 
@@ -90,15 +90,14 @@ fn utf8(bytes: Vec<u8>) -> String {
 }
 
 #[test]
-fn landed_transcript_leaves_share_typed_text_json_and_success_exit() {
+fn finite_retro_renders_typed_text_json_and_success_exit() {
     let scratch = Scratch::new("transcript-leaves");
     let (path, tape) = session(scratch.path());
     tape.tee(&record(CODEX_PROSE))
         .expect("fixture record is durable");
-    let root = scratch.path().to_string_lossy().into_owned();
     let session = path.to_string_lossy().into_owned();
 
-    let text = invoke(&["watch", &root, "--once"]);
+    let text = invoke(&["retro", &session]);
     assert_eq!(text.code, Some(0));
     assert!(text.err.is_empty());
     let text = utf8(text.out);
@@ -110,24 +109,18 @@ fn landed_transcript_leaves_share_typed_text_json_and_success_exit() {
     );
     assert!(!text.contains("\n\n"), "records have no blank separators");
 
-    let json = invoke(&["--json", "watch", &root, "--once"]);
+    let json = invoke(&["--json", "retro", &session]);
     assert_eq!(json.code, Some(0));
     assert!(json.err.is_empty());
     assert_eq!(json.out.iter().filter(|byte| **byte == b'\n').count(), 1);
-    let watched: StreamOutcome = wire::decode(&json.out).expect("watch emits its typed DTO");
-    assert_eq!(watched.mode, Mode::Watch);
-    assert!(watched.observations.iter().any(
-        |observation| matches!(observation, Observation::Event { kind, .. } if kind == "prose")
-    ));
-
-    let retro = invoke(&["--json", "retro", &session]);
-    assert_eq!(retro.code, Some(0));
-    assert!(retro.err.is_empty());
-    let replayed: StreamOutcome = wire::decode(&retro.out).expect("retro emits its typed DTO");
+    let replayed: StreamOutcome = wire::decode(&json.out).expect("retro emits its typed DTO");
     assert_eq!(replayed.mode, Mode::Retro);
-    assert!(replayed.observations.iter().any(
-        |observation| matches!(observation, Observation::Event { kind, .. } if kind == "prose")
-    ));
+    assert!(replayed.observations.iter().any(|observation| {
+        matches!(
+            observation,
+            Observation::Event { event, .. } if event.kind() == EventKind::Prose
+        )
+    }));
 
     let missing = scratch.path().join("missing/codex");
     let missing = missing.to_string_lossy().into_owned();
