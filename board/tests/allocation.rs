@@ -5,8 +5,9 @@ use board::Snapshot;
 use board::allocate::{Refusal, Request, WinError, win};
 use journal::{FactCause, Journal, JournalWrite};
 use wire::{
-    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, FactKind, Instant, LaneResidency, Origin,
-    Phase, Producer, ResidencyHead, ResidentState, TaskHandle, TaskHead, WorkflowHead, body,
+    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, FactKind, Instant, LaneResidency, LeaseHead,
+    Origin, Phase, Producer, ResidencyHead, ResidentState, TaskHandle, TaskHead, WorkflowHead,
+    body,
 };
 
 fn uuid(last: u8) -> CanonicalUuid {
@@ -262,7 +263,10 @@ fn invalid_rule_deadline_and_residency_leave_authority_untouched() {
         Err(WinError::Refused(Refusal::MissingResidency))
     ));
     assert_eq!(missing.fact_snapshot().expect("after refusal"), before);
+}
 
+#[test]
+fn a_claim_without_a_lease_is_a_zero_write_snapshot_fault() {
     let mut malformed = fixture(None, true);
     let task = handle("BOARD-a1");
     let claim_request = request(47);
@@ -303,6 +307,63 @@ fn invalid_rule_deadline_and_residency_leave_authority_untouched() {
     ));
     assert_eq!(
         malformed.fact_snapshot().expect("after malformed read"),
+        before
+    );
+}
+
+#[test]
+fn a_disordered_lease_is_a_zero_write_snapshot_fault() {
+    let mut disordered = fixture(None, true);
+    let task = handle("BOARD-a1");
+    let claim_request = request(49);
+    let mut write = JournalWrite::new(
+        claim_request.actor.clone(),
+        "task:BOARD-a1".parse().expect("claim origin"),
+        claim_request.at,
+        Producer::CommandDoor,
+    );
+    let fact = write
+        .fact(
+            body::ClaimWon {
+                task: task.clone(),
+                actor: claim_request.actor.clone(),
+                lane: claim_request.lane,
+                occupant: claim_request.occupant,
+                epoch: claim_request.epoch,
+                until: claim_request.expiry,
+            },
+            FactCause::Root,
+        )
+        .expect("malformed lease fact");
+    write.claim_head(task.clone(), fact, move |position| ClaimHead {
+        actor: claim_request.actor,
+        fact: position,
+        lane: claim_request.lane,
+        occupant: claim_request.occupant,
+        epoch: claim_request.epoch,
+        disposition: ClaimDisposition::Freed,
+    });
+    write.lease_head(task, fact, move |_| LeaseHead {
+        start: instant(20),
+        renewal: instant(5),
+        expiry: instant(20),
+        maximum: instant(35),
+        epoch: uuid(22),
+    });
+    disordered
+        .apply(write)
+        .expect("seed a canonically encoded but disordered lease");
+    let before = disordered
+        .fact_snapshot()
+        .expect("before disordered lease read");
+    assert!(matches!(
+        win(&mut disordered, request(50)),
+        Err(WinError::Read(_))
+    ));
+    assert_eq!(
+        disordered
+            .fact_snapshot()
+            .expect("after disordered lease refusal"),
         before
     );
 }
