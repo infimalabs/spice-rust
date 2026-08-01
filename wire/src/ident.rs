@@ -125,6 +125,8 @@ pub enum Domain {
     GateMeasurement,
     /// The complete current identity and ordered outcome of one gate run.
     GateReceipt,
+    /// The exact tracked and machine-local executable policy documents.
+    ConfigExecutableSurface,
 }
 
 impl Domain {
@@ -165,6 +167,7 @@ impl Domain {
             Self::GateInventory => "spice.gate.inventory.v1",
             Self::GateMeasurement => "spice.gate.measurement.v1",
             Self::GateReceipt => "spice.gate.receipt.v1",
+            Self::ConfigExecutableSurface => "spice.config.executable-surface.v1",
         }
     }
 }

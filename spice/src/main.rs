@@ -39,6 +39,8 @@ mod render;
 mod resident;
 #[cfg(not(target_arch = "wasm32"))]
 mod restore_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod trust_command;
 
 use render::Form;
 
@@ -146,6 +148,9 @@ fn main() {
             release_command::RunResult::Plan(outcome) => deliver(&outcome, form),
             release_command::RunResult::Published(outcome) => deliver(&outcome, form),
         },
+        ["trust"] => deliver(&trust_command::report(contract), form),
+        ["trust", "grant"] => deliver(&trust_command::rule(leaf, contract, true), form),
+        ["trust", "revoke"] => deliver(&trust_command::rule(leaf, contract, false), form),
         _ => {}
     }
     #[cfg(target_arch = "wasm32")]
