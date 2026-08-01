@@ -34,7 +34,7 @@ pub enum Standing {
 }
 
 impl Standing {
-    const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Clean => "clean",
             Self::Refused => "refused",
@@ -237,8 +237,7 @@ impl Verdict {
                 observed: evidence.version,
             });
         }
-        let raw: RawVerdict = wire::decode(bytes).map_err(ReceiptDecodeError::Json)?;
-        let receipt = Self::from(raw);
+        let receipt: Self = wire::decode(bytes).map_err(ReceiptDecodeError::Json)?;
         let canonical = receipt.encode().map_err(ReceiptDecodeError::Json)?;
         if bytes != canonical {
             return Err(ReceiptDecodeError::NonCanonical { canonical });
@@ -300,6 +299,24 @@ impl From<RawVerdict> for Verdict {
             standing: raw.standing,
             findings: raw.findings,
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for Verdict {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error as _;
+
+        let raw = RawVerdict::deserialize(deserializer)?;
+        if raw.version != GATE_RECEIPT_VERSION {
+            return Err(D::Error::custom(format!(
+                "receipt version {} is unsupported; current version is {}",
+                raw.version, GATE_RECEIPT_VERSION
+            )));
+        }
+        Ok(Self::from(raw))
     }
 }
 
@@ -616,6 +633,7 @@ mod tests {
     use std::time::Duration;
 
     use sill::Deadlines;
+    use wire::{Outcome, Reply, ReplyPosition};
 
     use super::*;
     use crate::jurisdiction::Ignore;
@@ -671,6 +689,14 @@ mod tests {
         let decoded = Verdict::decode(&encoded).expect("decode canonical receipt");
         assert_eq!(decoded, receipt);
         assert_eq!(decoded.render(), expected_text);
+        let outcome = Outcome::Reply(Reply {
+            position: ReplyPosition::Direct {},
+            body: receipt,
+        });
+        assert_eq!(
+            wire::encode(&outcome).expect("encode direct verdict body"),
+            wire::encode(&outcome).expect("encode direct verdict body again")
+        );
     }
 
     #[test]
@@ -686,6 +712,19 @@ mod tests {
             .insert("argv".to_owned(), serde_json::json!(["untrusted"]));
         assert!(matches!(
             Verdict::decode(&serde_json::to_vec(&unknown).expect("encode unknown field")),
+            Err(ReceiptDecodeError::Json(_))
+        ));
+
+        let mut nested_unknown: serde_json::Value =
+            serde_json::from_slice(&encoded).expect("decode nested fixture value");
+        nested_unknown["findings"][0]["movement"]
+            .as_object_mut()
+            .expect("movement is an object")
+            .insert("unknown".to_owned(), serde_json::json!(true));
+        assert!(matches!(
+            Verdict::decode(
+                &serde_json::to_vec(&nested_unknown).expect("encode nested unknown field")
+            ),
             Err(ReceiptDecodeError::Json(_))
         ));
 
@@ -772,6 +811,9 @@ mod tests {
         let mut changed = receipt.clone();
         changed.tools[0].identity = receipt_digest("other-awk");
         assert_moved(changed, "tool identity");
+        let mut changed = receipt.clone();
+        changed.tools[0].name = "other-tool".to_owned();
+        assert_moved(changed, "tool name");
         let mut changed = receipt.clone();
         changed.standing = Standing::Refused;
         assert_moved(changed, "standing");

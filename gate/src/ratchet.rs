@@ -17,7 +17,7 @@ use crate::measure::Measurement;
 
 /// Where one metric stands against its baseline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase", tag = "movement")]
+#[serde(deny_unknown_fields, rename_all = "lowercase", tag = "movement")]
 pub enum Movement {
     /// The measurement sits exactly at its baseline.
     Held {

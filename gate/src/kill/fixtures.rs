@@ -337,6 +337,19 @@ esac
         assert_eq!(run.movement(), MutationMovement::Shrank { floor, measured });
         assert_eq!(run.proposed_floor(), Some(measured));
 
+        let report = run.report();
+        assert_eq!(report.inventory().targets(), ["src/lib.rs", "src/z.rs"]);
+        assert_eq!(report.inventory().mutants(), ["Killed", "Survived"]);
+        assert_eq!(report.inventory().attempts(), 2);
+        assert_eq!(report.inventory().seed(), 41);
+        assert_eq!(report.rate(), Some(measured.into()));
+        assert_eq!(report.proposed_floor(), Some(measured.into()));
+        let encoded = report.encode().expect("encode current kill report");
+        assert_eq!(
+            crate::KillReport::decode(&encoded).expect("decode current kill report"),
+            report
+        );
+
         assert_eq!(
             fs::read_to_string(source.path("src/lib.rs")).expect("caller source"),
             "original\n",

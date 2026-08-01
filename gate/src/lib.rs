@@ -20,13 +20,14 @@ pub mod measure;
 pub mod message;
 pub mod names;
 pub mod ratchet;
+pub mod report;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tree;
 pub mod verdict;
 
 pub use camp::{
-    BoundRelation, Camp, CampError, CampFinding, CampReport, CampStanding, DistributionReport,
-    LocusDistance, SharedBound,
+    BoundRelation, CAMP_REPORT_VERSION, Camp, CampError, CampFinding, CampReport, CampStanding,
+    DistributionReport, LocusDistance, SharedBound,
 };
 pub use input::{
     BASELINE_PATH, BASELINE_VERSION, Baseline, BaselineError, Contract, ContractError, FieldError,
@@ -48,6 +49,12 @@ pub use measure::{
 pub use message::{CommitMessageError, OriginTrailer, OriginTrailerError, validate_commit_message};
 pub use names::{RETIRED_NAMES, RetiredMatch, RetiredName, retired_matches};
 pub use ratchet::{Finding, Movement, Ratchet, RatchetError};
+pub use report::{
+    GATE_REPORT_VERSION, GateReport, KILL_REPORT_VERSION, KillReport, ReportAttempt,
+    ReportAttemptKind, ReportCompletion, ReportDecodeError, ReportFloor, ReportMeasurement,
+    ReportMutant, ReportMutantDisposition, ReportMutationInventory, ReportMutationMovement,
+    ReportOutcome, ReportProcess, ReportRate, ReportStream,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use tree::{SelectedTree, Selector, TreeError};
 pub use verdict::{
