@@ -17,6 +17,48 @@ const WORKSPACE_MOUNT: &str = "/workspace";
 const CARGO_HOME: &str = "/cargo-home";
 const CARGO_TARGET: &str = "/cargo-target";
 const SHA256_HEX_LENGTH: usize = 64;
+const ATTESTATION_PREFIX: &str = "spice-proof-attestation-v1:";
+const PREFLIGHT_SCRIPT: &str = r#"
+refuse() {
+    printf 'spice-proof-preflight-refused:%s\n' "$1" >&2
+    exit 70
+}
+
+[ "${CARGO_HOME:-}" = /cargo-home ] || refuse cargo-home-environment
+[ "${CARGO_TARGET_DIR:-}" = /cargo-target ] || refuse cargo-target-environment
+[ -d /cargo-home ] || refuse cargo-home-missing
+[ -d /cargo-target ] || refuse cargo-target-missing
+[ -d /sys/class/net ] || refuse network-state-unavailable
+
+workspace_read_only=false
+cargo_home_tmpfs=false
+cargo_target_tmpfs=false
+while IFS= read -r mount; do
+    case "$mount" in
+        *" /workspace ro,"*|*" /workspace ro "*) workspace_read_only=true ;;
+        *" /cargo-home "*" - tmpfs "*) cargo_home_tmpfs=true ;;
+        *" /cargo-target "*" - tmpfs "*) cargo_target_tmpfs=true ;;
+    esac
+done < /proc/self/mountinfo
+[ "$workspace_read_only" = true ] || refuse workspace-not-read-only
+[ "$cargo_home_tmpfs" = true ] || refuse cargo-home-not-tmpfs
+[ "$cargo_target_tmpfs" = true ] || refuse cargo-target-not-tmpfs
+
+for cache in /cargo-home /cargo-target; do
+    for entry in "$cache"/* "$cache"/.[!.]* "$cache"/..?*; do
+        [ ! -e "$entry" ] || refuse cache-not-empty
+    done
+done
+for interface in /sys/class/net/*; do
+    [ -e "$interface" ] || continue
+    [ "${interface##*/}" = lo ] || refuse network-interface-present
+done
+
+dialect=$1
+shift
+printf 'spice-proof-attestation-v1:%s\n' "$dialect" >&2
+exec "$@"
+"#;
 
 /// OCI runtime contract whose network-isolation spelling is known here.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -83,6 +125,15 @@ impl OciRuntime {
 pub enum RuntimeKind {
     Docker,
     Podman,
+}
+
+impl RuntimeKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Docker => "docker",
+            Self::Podman => "podman",
+        }
+    }
 }
 
 /// Explicit process bounds for every battery member.
@@ -208,6 +259,11 @@ impl Container {
             "--env".to_owned(),
             "CARGO_NET_OFFLINE=true".to_owned(),
             self.image.clone(),
+            "/bin/sh".to_owned(),
+            "-ceu".to_owned(),
+            PREFLIGHT_SCRIPT.to_owned(),
+            "spice-proof-attestation".to_owned(),
+            self.runtime.kind.as_str().to_owned(),
             program.to_owned(),
         ];
         runtime_arguments.extend(arguments.iter().cloned());
@@ -266,15 +322,28 @@ impl Container {
             .stdout()
             .map(Captured::from)
             .ok_or(ContainerError::MissingCapture("stdout"))?;
-        let stderr = outcome
+        let mut stderr = outcome
             .stderr()
             .map(Captured::from)
             .ok_or(ContainerError::MissingCapture("stderr"))?;
+        self.verify_attestation(&mut stderr)?;
         Ok(Execution {
             completion,
             stdout,
             stderr,
         })
+    }
+
+    fn verify_attestation(&self, stderr: &mut Captured) -> Result<(), ContainerError> {
+        let expected = format!("{ATTESTATION_PREFIX}{}\n", self.runtime.kind.as_str());
+        if !stderr.bytes.starts_with(expected.as_bytes()) {
+            return Err(ContainerError::RuntimeNotAttested {
+                expected,
+                observed: String::from_utf8_lossy(&stderr.bytes).into_owned(),
+            });
+        }
+        stderr.bytes.drain(..expected.len());
+        Ok(())
     }
 }
 
@@ -327,6 +396,7 @@ pub enum ContainerError {
     SpawnRuntime(io::Error),
     Wait(WaitError),
     MissingCapture(&'static str),
+    RuntimeNotAttested { expected: String, observed: String },
 }
 
 impl fmt::Display for ContainerError {
@@ -394,6 +464,11 @@ impl fmt::Display for ContainerError {
             Self::MissingCapture(stream) => {
                 write!(formatter, "sealed runtime returned no {stream} capture")
             }
+            Self::RuntimeNotAttested { expected, observed } => write!(
+                formatter,
+                "sealed runtime did not prove its OCI isolation contract: expected {expected:?}, \
+                 observed {observed:?}"
+            ),
         }
     }
 }
@@ -415,7 +490,8 @@ impl Error for ContainerError {
             | Self::ZeroOutputLimit
             | Self::EmptyProgram
             | Self::NulInCommand
-            | Self::MissingCapture(_) => None,
+            | Self::MissingCapture(_)
+            | Self::RuntimeNotAttested { .. } => None,
         }
     }
 }
@@ -513,6 +589,11 @@ mod tests {
                 "--env".to_owned(),
                 "CARGO_NET_OFFLINE=true".to_owned(),
                 format!("registry.example/proof@sha256:{}", "4".repeat(64)),
+                "/bin/sh".to_owned(),
+                "-ceu".to_owned(),
+                super::PREFLIGHT_SCRIPT.to_owned(),
+                "spice-proof-attestation".to_owned(),
+                "docker".to_owned(),
                 "cargo".to_owned(),
                 "test".to_owned(),
                 "--locked".to_owned(),
@@ -538,6 +619,68 @@ mod tests {
         .expect_err("tagged images are not sealed");
 
         assert!(matches!(error, ContainerError::ImageNotDigestPinned(_)));
+    }
+
+    #[test]
+    fn an_executable_that_ignores_the_oci_contract_cannot_produce_a_replay_verdict() {
+        let fixture = Fixture::new();
+        let error = crate::replay::replay(&fixture.container())
+            .expect_err("an unattested runtime cannot produce any verdict");
+
+        assert_eq!(error.check(), crate::replay::CheckKind::Gate);
+        assert!(
+            error
+                .evidence()
+                .contains("did not prove its OCI isolation contract"),
+            "the refusal did not name the missing attestation: {error:?}",
+        );
+    }
+
+    #[test]
+    fn attestation_is_required_once_and_removed_from_command_evidence() {
+        let fixture = Fixture::new();
+        let container = fixture.container();
+        let mut stderr = super::Captured {
+            bytes: b"spice-proof-attestation-v1:docker\ncompiler evidence".to_vec(),
+            truncated: false,
+            complete: true,
+        };
+
+        container
+            .verify_attestation(&mut stderr)
+            .expect("the declared dialect attests");
+
+        assert_eq!(stderr.bytes, b"compiler evidence");
+    }
+
+    #[test]
+    fn attestation_must_name_the_declared_runtime_dialect() {
+        let fixture = Fixture::new();
+        let container = fixture.container();
+        let mut stderr = super::Captured {
+            bytes: b"spice-proof-attestation-v1:podman\n".to_vec(),
+            truncated: false,
+            complete: true,
+        };
+
+        let error = container
+            .verify_attestation(&mut stderr)
+            .expect_err("a Podman attestation cannot answer for Docker");
+
+        assert!(matches!(error, ContainerError::RuntimeNotAttested { .. }));
+    }
+
+    #[test]
+    fn the_embedded_preflight_is_valid_posix_shell() {
+        let status = std::process::Command::new("/bin/sh")
+            .args(["-n", "-c", super::PREFLIGHT_SCRIPT])
+            .status()
+            .expect("host POSIX shell runs the syntax check");
+
+        assert!(
+            status.success(),
+            "the sealed preflight must parse before use"
+        );
     }
 
     struct Fixture {
