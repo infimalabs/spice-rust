@@ -11,8 +11,10 @@
 //!
 //! # The vocabularies are closed, so they stay enumerable
 //!
-//! [`CommandKind`], [`FactKind`], [`Witness`], and [`witness::WitnessKind`]
-//! each name a closed set, and none of them is `#[non_exhaustive]`. That
+//! [`CommandKind`], [`FactKind`], [`Witness`], [`WitnessKind`], and
+//! [`WitnessClass`] each name a closed set, and none of them is
+//! `#[non_exhaustive]`. `WitnessKind` classifies command predicates;
+//! `WitnessClass` classifies authoritative witness heads. That
 //! attribute protects consumers compiled against an older release of a
 //! published crate, and this crate has no such consumer: the socket admits the
 //! current version only, the journal runs one forward migration at open, and
