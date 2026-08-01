@@ -6,5 +6,18 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[dependencies]
+atomic = { path = "../atomic" }
+bus = { path = "../bus" }
+consent = { path = "../consent" }
+fold = { path = "../fold" }
+journal = { path = "../journal" }
+listen = { path = "../listen" }
+sill = { path = "../sill" }
+steer = { path = "../steer" }
+tape = { path = "../tape" }
+taste = { path = "../taste" }
+vendor = { path = "../vendor" }
+
 [lints]
 workspace = true

@@ -6,5 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[dependencies]
+wire = { path = "../wire" }
+
 [lints]
 workspace = true
