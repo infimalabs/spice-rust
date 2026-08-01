@@ -273,7 +273,7 @@ impl Reducer for KindReducer {
         let rows = facts
             .facts()
             .iter()
-            .map(|fact| json!({"kind": fact.fact.kind.as_str(), "seq": fact.seq.get()}))
+            .map(|fact| json!({"kind": fact.fact.kind().as_str(), "seq": fact.seq.get()}))
             .collect::<Vec<_>>();
         Ok(Reduction::complete(facts, json!({"rows": rows})))
     }
@@ -281,22 +281,25 @@ impl Reducer for KindReducer {
 
 fn snapshot(count: u64) -> journal::FactSnapshot {
     let facts = (1..=count)
-        .map(|position| wire::Envelope {
-            v: wire::WireVersion::CURRENT,
-            seq: seq(position),
-            at: "2030-04-12T18:44:09.271Z"
-                .parse::<wire::Instant>()
-                .expect("fixture instant"),
-            actor: wire::Actor::Spice,
-            origin: "task:FOLD-a1".parse().expect("fixture origin"),
-            cause: (position > 1).then(|| seq(position - 1)),
-            fact: wire::AnyFact {
-                kind: wire::FactKind::TaskNoted,
-                body: serde_json::Map::from_iter([(
-                    "task".to_owned(),
-                    serde_json::Value::String("FOLD-a1".to_owned()),
-                )]),
-            },
+        .map(|position| {
+            let typed = wire::Fact::new(wire::body::TaskNoted {
+                task: "FOLD-a1".parse().expect("fixture task"),
+                note: format!("note {position}"),
+            });
+            let encoded = wire::encode(&typed).expect("typed fact encodes");
+            let fact = wire::decode(&encoded).expect("typed fact decodes opaquely");
+
+            wire::Envelope {
+                v: wire::WireVersion::CURRENT,
+                seq: seq(position),
+                at: "2030-04-12T18:44:09.271Z"
+                    .parse::<wire::Instant>()
+                    .expect("fixture instant"),
+                actor: wire::Actor::Spice,
+                origin: "task:FOLD-a1".parse().expect("fixture origin"),
+                cause: (position > 1).then(|| seq(position - 1)),
+                fact,
+            }
         })
         .collect();
     journal::FactSnapshot::from_facts(facts).expect("fixture snapshot")
