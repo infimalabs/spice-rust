@@ -436,10 +436,13 @@ impl AdmittedParent {
             self.publish_candidate(documents, candidate)?;
             Ok(true)
         })();
+        let cleanup = if result.is_err() && created {
+            self.remove_created_lock()
+        } else {
+            Ok(())
+        };
         drop(possession);
-        if result.is_err() && created {
-            self.remove_created_lock()?;
-        }
+        cleanup?;
         result
     }
 
