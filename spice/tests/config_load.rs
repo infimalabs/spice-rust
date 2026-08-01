@@ -1,0 +1,374 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use spice::config::{
+    AcquisitionKind, FlagOverride, FlagValue, PathSegment, Resolved, descriptor, descriptors, load,
+};
+use wire::{ConfigSource, Name};
+
+static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
+
+fn path_source(resolved: &Resolved, expected: &str) -> ConfigSource {
+    resolved
+        .provenance()
+        .iter()
+        .find(|row| row.path().to_string() == expected)
+        .unwrap_or_else(|| panic!("missing provenance for {expected}"))
+        .source()
+}
+
+fn repository(scratch: &Scratch, name: &str) -> PathBuf {
+    let root = scratch.join(name);
+    fs::create_dir_all(root.join(".git")).expect("create repository");
+    root
+}
+
+fn local_path(root: &Path) -> PathBuf {
+    root.join(".git/.spice/config.toml")
+}
+
+fn write(path: impl AsRef<Path>, bytes: impl AsRef<[u8]>) {
+    let path = path.as_ref();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create fixture parent");
+    }
+    fs::write(path, bytes).expect("write fixture");
+}
+
+#[test]
+fn missing_documents_are_defaults_repeatably_without_mutation() {
+    let scratch = Scratch::new();
+    let root = repository(&scratch, "missing documents");
+    let start = root.join("src/nested");
+    fs::create_dir_all(&start).expect("create nested start");
+    let before = snapshot(scratch.path());
+
+    let first = load(&start, &[]).expect("missing documents are empty intent");
+    let second = load(&start, &[]).expect("repeated load succeeds");
+    let after = snapshot(scratch.path());
+
+    assert_eq!(first, second);
+    assert_eq!(first.root(), &spice::config::Root::default());
+    assert_eq!(first.registry(), descriptors());
+    assert!(
+        first
+            .provenance()
+            .iter()
+            .all(|row| row.source() == ConfigSource::Builtin)
+    );
+    assert_eq!(after, before);
+}
+
+#[test]
+fn main_worktree_reads_only_the_two_exact_paths_and_passes_typed_flags() {
+    let scratch = Scratch::new();
+    let root = repository(&scratch, "main worktree");
+    let start = root.join("src");
+    fs::create_dir(&start).expect("create start");
+    write(
+        root.join("spice.toml"),
+        b"[lane]\nvendor = \"codex\"\n[listen]\nwindow = \"2m\"\n",
+    );
+    write(
+        local_path(&root),
+        b"[listen]\nwindow = \"3m\"\n[lock.alpha]\nshards = 2\n",
+    );
+
+    for ignored in [
+        root.join("config.toml"),
+        root.join(".spice/config.toml"),
+        root.join(".git/spice.toml"),
+        root.join(".git/.spice/local.toml"),
+        scratch.join("spice.toml"),
+    ] {
+        write(ignored, b"[tasks]\nforbidden = true\n");
+    }
+
+    let mapping = descriptor(&[PathSegment::Key("lane"), PathSegment::Key("vendor")])
+        .and_then(|entry| entry.flag())
+        .expect("vendor mapping");
+    let vendor = FlagOverride::new(
+        mapping,
+        FlagValue::Name("gemini".parse::<Name>().expect("valid name")),
+    )
+    .expect("typed vendor flag");
+    let resolved = load(&start, &[vendor]).expect("exact documents resolve");
+
+    assert_eq!(resolved.root().lane().vendor().as_str(), "gemini");
+    assert_eq!(resolved.root().listen().window_word().to_string(), "3m");
+    assert_eq!(
+        resolved
+            .root()
+            .lock()
+            .named()
+            .map(|(name, shards)| (name.as_str(), shards.get()))
+            .collect::<Vec<_>>(),
+        [("alpha", 2)]
+    );
+    assert_eq!(path_source(&resolved, "lane.vendor"), ConfigSource::Flag);
+    assert_eq!(path_source(&resolved, "listen.window"), ConfigSource::Local);
+}
+
+#[test]
+fn linked_worktrees_select_their_own_tracked_and_shared_local_intent() {
+    let scratch = Scratch::new();
+    let origin = repository(&scratch, "origin");
+    let common = origin.join(".git");
+    let first = linked_worktree(&scratch, &common, "first");
+    let second = linked_worktree(&scratch, &common, "second");
+    write(
+        first.join("spice.toml"),
+        b"[lane]\nvendor = \"codex\"\n[listen]\nwindow = \"2m\"\n",
+    );
+    write(
+        second.join("spice.toml"),
+        b"[lane]\nvendor = \"gemini\"\n[listen]\nwindow = \"3m\"\n",
+    );
+    write(
+        common.join(".spice/config.toml"),
+        b"[listen]\nwindow = \"5m\"\n",
+    );
+    write(origin.join("spice.toml"), b"[tasks]\nwrong = true\n");
+    write(
+        first.join(".spice/config.toml"),
+        b"[policy]\nwrong = true\n",
+    );
+
+    let first = load(first.join("src"), &[]).expect("first linked worktree");
+    let second = load(second.join("src"), &[]).expect("second linked worktree");
+
+    assert_eq!(first.root().lane().vendor().as_str(), "codex");
+    assert_eq!(second.root().lane().vendor().as_str(), "gemini");
+    assert_eq!(first.root().listen().window_word().to_string(), "5m");
+    assert_eq!(second.root().listen().window_word().to_string(), "5m");
+    assert_eq!(path_source(&first, "lane.vendor"), ConfigSource::Tracked);
+    assert_eq!(path_source(&first, "listen.window"), ConfigSource::Local);
+}
+
+#[test]
+fn resolver_diagnostics_from_both_exact_documents_are_retained() {
+    let scratch = Scratch::new();
+    let root = repository(&scratch, "decode issues");
+    write(
+        root.join("spice.toml"),
+        b"[lane]\nlease = \"soon\"\n[proof]\nimage = \"latest\"\n",
+    );
+    write(
+        local_path(&root),
+        b"[lane]\nlife = \"Drain\"\n[listen]\nwindow = \"never\"\n",
+    );
+
+    let error = load(&root, &[]).expect_err("both documents contain refused values");
+    assert!(error.acquisition().is_empty());
+    let resolution = error.resolution().expect("resolver diagnostics");
+    for (source, path) in [
+        (ConfigSource::Tracked, "lane.lease"),
+        (ConfigSource::Tracked, "proof.image"),
+        (ConfigSource::Local, "lane.life"),
+        (ConfigSource::Local, "listen.window"),
+    ] {
+        assert!(resolution.issues().iter().any(|issue| {
+            issue.source() == source
+                && issue
+                    .path()
+                    .is_some_and(|actual| actual.to_string() == path)
+        }));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_and_directory_documents_are_both_typed_without_following() {
+    use std::os::unix::fs::symlink;
+
+    let scratch = Scratch::new();
+    let root = repository(&scratch, "shapes");
+    let target = root.join("other.toml");
+    write(&target, b"[listen]\nwindow = \"2m\"\n");
+    symlink(&target, root.join("spice.toml")).expect("create tracked symlink");
+    fs::create_dir_all(local_path(&root)).expect("create local directory");
+
+    let error = load(&root, &[]).expect_err("both document shapes refuse");
+    let canonical = fs::canonicalize(&root).expect("canonical fixture root");
+    assert_eq!(error.acquisition().len(), 2);
+    assert_eq!(
+        (
+            error.acquisition()[0].source(),
+            error.acquisition()[0].kind(),
+            error.acquisition()[0].path(),
+        ),
+        (
+            ConfigSource::Tracked,
+            AcquisitionKind::Symlink,
+            canonical.join("spice.toml").as_path(),
+        )
+    );
+    assert_eq!(error.acquisition()[1].source(), ConfigSource::Local);
+    assert_eq!(error.acquisition()[1].kind(), AcquisitionKind::Directory);
+    assert_eq!(
+        error.acquisition()[1].path(),
+        canonical.join(".git/.spice/config.toml")
+    );
+    assert!(error.resolution().is_none());
+    assert_eq!(
+        fs::read(target).expect("target remains"),
+        b"[listen]\nwindow = \"2m\"\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn non_regular_and_non_utf8_documents_are_accumulated() {
+    use std::os::unix::net::UnixListener;
+
+    let scratch = Scratch::new();
+    let root = repository(&scratch, "non regular");
+    let _socket = UnixListener::bind(root.join("spice.toml")).expect("bind fixture socket");
+    write(local_path(&root), [0xff, 0xfe]);
+
+    let error = load(&root, &[]).expect_err("both acquisition issues refuse");
+    assert_eq!(error.acquisition().len(), 2);
+    assert_eq!(error.acquisition()[0].kind(), AcquisitionKind::NonRegular);
+    assert_eq!(error.acquisition()[1].kind(), AcquisitionKind::NonUtf8);
+    assert!(error.resolution().is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn unreadable_acquisition_and_other_layer_decode_issue_are_both_returned() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = Scratch::new();
+    let root = repository(&scratch, "unreadable");
+    let tracked = root.join("spice.toml");
+    write(&tracked, b"[listen]\nwindow = \"2m\"\n");
+    write(local_path(&root), b"[tasks]\nbootstrap = true\n");
+    fs::set_permissions(&tracked, fs::Permissions::from_mode(0o000))
+        .expect("make tracked unreadable");
+
+    let error = load(&root, &[]).expect_err("acquisition and decode refuse");
+    fs::set_permissions(&tracked, fs::Permissions::from_mode(0o600))
+        .expect("restore tracked permissions");
+
+    assert_eq!(error.acquisition().len(), 1);
+    assert_eq!(error.acquisition()[0].kind(), AcquisitionKind::Unreadable);
+    assert!(error.acquisition()[0].io_error().is_some());
+    let resolution = error.resolution().expect("other layer was still decoded");
+    assert!(resolution.issues().iter().any(|issue| {
+        issue.source() == ConfigSource::Local
+            && issue.path().is_some_and(|path| path.to_string() == "tasks")
+    }));
+}
+
+#[test]
+fn repository_failure_is_distinct_and_loader_source_has_no_ambient_or_mutating_path() {
+    let scratch = Scratch::new();
+    let outside = scratch.join("not a repository");
+    fs::create_dir(&outside).expect("create non-repository start");
+    let error = load(&outside, &[]).expect_err("repository discovery refuses");
+    assert!(error.repository().is_some());
+    assert!(error.acquisition().is_empty());
+    assert!(error.resolution().is_none());
+
+    let source = include_str!("../src/config/load.rs");
+    for forbidden in [
+        "read_dir",
+        "current_dir",
+        "std::env",
+        "Command::",
+        "journal::",
+        "lock(",
+        "fs::write",
+        "fs::create",
+        "std::net",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "loader unexpectedly references {forbidden}"
+        );
+    }
+}
+
+fn linked_worktree(scratch: &Scratch, common: &Path, name: &str) -> PathBuf {
+    let worktree = scratch.join(format!("linked {name}"));
+    let git = common.join("worktrees").join(name);
+    fs::create_dir_all(worktree.join("src")).expect("create linked worktree");
+    fs::create_dir_all(&git).expect("create linked Git directory");
+    write(
+        worktree.join(".git"),
+        format!("gitdir: {}\n", git.display()),
+    );
+    write(git.join("commondir"), b"../..\n");
+    worktree
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SnapshotEntry {
+    path: PathBuf,
+    kind: &'static str,
+    bytes: Vec<u8>,
+}
+
+fn snapshot(root: &Path) -> Vec<SnapshotEntry> {
+    fn walk(root: &Path, path: &Path, entries: &mut Vec<SnapshotEntry>) {
+        let mut children = fs::read_dir(path)
+            .expect("snapshot directory")
+            .map(|entry| entry.expect("snapshot entry").path())
+            .collect::<Vec<_>>();
+        children.sort();
+        for child in children {
+            let metadata = fs::symlink_metadata(&child).expect("snapshot metadata");
+            let relative = child
+                .strip_prefix(root)
+                .expect("snapshot path")
+                .to_path_buf();
+            if metadata.is_dir() {
+                entries.push(SnapshotEntry {
+                    path: relative,
+                    kind: "directory",
+                    bytes: Vec::new(),
+                });
+                walk(root, &child, entries);
+            } else {
+                entries.push(SnapshotEntry {
+                    path: relative,
+                    kind: "file",
+                    bytes: fs::read(child).expect("snapshot file"),
+                });
+            }
+        }
+    }
+
+    let mut entries = Vec::new();
+    walk(root, root, &mut entries);
+    entries
+}
+
+struct Scratch {
+    path: PathBuf,
+}
+
+impl Scratch {
+    fn new() -> Self {
+        let nonce = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
+        let path =
+            std::env::temp_dir().join(format!("spice-config-load-{}-{nonce}", std::process::id()));
+        fs::create_dir(&path).expect("create scratch directory");
+        Self { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn join(&self, path: impl AsRef<Path>) -> PathBuf {
+        self.path.join(path)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.path).expect("remove scratch directory");
+    }
+}

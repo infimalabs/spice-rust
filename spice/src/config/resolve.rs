@@ -436,6 +436,12 @@ impl Resolved {
         &self.provenance
     }
 
+    /// Registry metadata governing this typed result.
+    #[must_use]
+    pub const fn registry(&self) -> &'static [Descriptor] {
+        descriptors()
+    }
+
     /// Consume the result and return its typed root.
     #[must_use]
     pub fn into_root(self) -> Root {
