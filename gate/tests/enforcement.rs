@@ -34,6 +34,27 @@ const MUTATING_COUNTER: &str = "count=0; for file in \"$@\"; do \
      while IFS= read -r line || [ -n \"$line\" ]; do count=$((count + 1)); done < \"$file\"; \
      done; printf 'added by parser\\n' >> \"$1\"; printf '%s\\n' \"$count\"";
 
+/// Change the selected file, count the transient bytes, and restore it before
+/// returning a successful count.
+const RESTORING_COUNTER: &str = "printf 'one\\ntwo\\n' > \"$1\"; count=0; \
+     while IFS= read -r line || [ -n \"$line\" ]; do count=$((count + 1)); done < \"$1\"; \
+     printf 'one\\n' > \"$1\"; printf '%s\\n' \"$count\"";
+
+/// Mutate the live root named by the first fixed argument, then count only the
+/// captured file arguments that follow it.
+const MUTATING_LIVE_COUNTER: &str = "printf 'changed\\n' >> \"$1/src/lib.rs\"; \
+     printf 'added\\n' > \"$1/added.rs\"; shift; count=0; for file in \"$@\"; do \
+     while IFS= read -r line || [ -n \"$line\" ]; do count=$((count + 1)); done < \"$file\"; \
+     done; printf '%s\\n' \"$count\"";
+
+const MUTATE_LIVE_AFTER_COUNT: &str = "root=$1; shift; count=0; for file in \"$@\"; do \
+     while IFS= read -r line || [ -n \"$line\" ]; do count=$((count + 1)); done < \"$file\"; \
+     done; printf 'one\\ntwo\\nthree\\n' > \"$root/src/lib.rs\"; printf '%s\\n' \"$count\"";
+
+const RESTORE_LIVE_AFTER_COUNT: &str = "root=$1; shift; count=0; for file in \"$@\"; do \
+     while IFS= read -r line || [ -n \"$line\" ]; do count=$((count + 1)); done < \"$file\"; \
+     done; printf 'one\\ntwo\\n' > \"$root/src/lib.rs\"; printf '%s\\n' \"$count\"";
+
 /// A foreign repository that removes itself when the fixture ends.
 struct Tree {
     root: PathBuf,
@@ -524,19 +545,167 @@ fn a_parser_cannot_move_the_tree_behind_its_measurement() {
     assert!(
         matches!(
             &refused,
+            RunError::SnapshotChanged {
+                metric,
+                measured: Some(1),
+                path,
+                tree,
+                observed_tree: Some(observed_tree),
+            } if metric == "rust.lines" && path == "src/lib.rs" && tree != observed_tree
+        ),
+        "the mutating parser was not refused by the snapshot seal: {refused:?}",
+    );
+    assert_eq!(
+        fs::read_to_string(tree.path("src/lib.rs")).expect("read the mutated source"),
+        "one\n",
+        "a parser receives the private snapshot rather than the live source",
+    );
+}
+
+#[test]
+fn a_parser_cannot_measure_transient_bytes_then_restore_them() {
+    let tree = Tree::new("restoring-parser");
+    tree.write("src/lib.rs", "one\n");
+    let restoring_metric = Metric::new(
+        "rust.lines",
+        "rust",
+        "lines while the parser rewrites its input",
+        Parser::new("/bin/sh", ["-c", RESTORING_COUNTER, "sh"]).expect("declare a parser"),
+        "*.rs\n",
+        "",
+    )
+    .expect("declare a metric");
+    let policy = Policy::new(Ignore::parse("").expect("parse ignore"), [restoring_metric])
+        .expect("declare a policy");
+
+    let refused = Run::adjudicate(&policy, &tree.root, &ratchet("rust.lines 2\n"), &bounds())
+        .expect_err("a transient measurement cannot produce a verdict");
+
+    assert!(
+        matches!(
+            &refused,
+            RunError::SnapshotChanged {
+                metric,
+                measured: Some(2),
+                path,
+                tree,
+                observed_tree: Some(observed_tree),
+            } if metric == "rust.lines" && path == "src/lib.rs" && tree == observed_tree
+        ),
+        "the restored bytes hid the transient measurement: {refused:?}",
+    );
+    assert_eq!(
+        fs::read_to_string(tree.path("src/lib.rs")).expect("read the live source"),
+        "one\n",
+    );
+}
+
+#[test]
+fn persistent_live_tree_and_inventory_mutation_remains_named() {
+    let tree = Tree::new("live-mutation");
+    tree.write("src/lib.rs", "one\n");
+    let parser = Parser::new(
+        "/bin/sh",
+        [
+            "-c".to_owned(),
+            MUTATING_LIVE_COUNTER.to_owned(),
+            "sh".to_owned(),
+            tree.root.to_string_lossy().into_owned(),
+        ],
+    )
+    .expect("declare a parser");
+    let metric = Metric::new(
+        "rust.lines",
+        "rust",
+        "lines before the live tree changes",
+        parser,
+        "*.rs\n",
+        "",
+    )
+    .expect("declare a metric");
+    let policy =
+        Policy::new(Ignore::parse("").expect("parse ignore"), [metric]).expect("declare a policy");
+
+    let refused = Run::adjudicate(&policy, &tree.root, &ratchet("rust.lines 1\n"), &bounds())
+        .expect_err("persistent live mutation refuses");
+
+    assert!(
+        matches!(
+            &refused,
             RunError::JurisdictionChanged {
                 inventory,
                 observed_inventory,
                 tree,
                 observed_tree,
-            } if inventory == observed_inventory && tree != observed_tree
+            } if inventory != observed_inventory && tree != observed_tree
         ),
-        "the mutating parser was not refused by its before/after witnesses: {refused:?}",
+        "the live tree and inventory mutation lost its named refusal: {refused:?}",
+    );
+}
+
+#[test]
+fn every_metric_reads_the_same_captured_jurisdiction() {
+    let tree = Tree::new("multiple-metrics");
+    tree.write("src/lib.rs", "one\ntwo\n");
+    let root = tree.root.to_string_lossy().into_owned();
+    let metric = |name: &str, script: &str| {
+        Metric::new(
+            name,
+            "rust",
+            "lines in the captured source",
+            Parser::new(
+                "/bin/sh",
+                [
+                    "-c".to_owned(),
+                    script.to_owned(),
+                    "sh".to_owned(),
+                    root.clone(),
+                ],
+            )
+            .expect("declare a parser"),
+            "*.rs\n",
+            "",
+        )
+        .expect("declare a metric")
+    };
+    let policy = Policy::new(
+        Ignore::parse("").expect("parse ignore"),
+        [
+            metric("rust.first", MUTATE_LIVE_AFTER_COUNT),
+            metric("rust.second", RESTORE_LIVE_AFTER_COUNT),
+        ],
+    )
+    .expect("declare a policy");
+
+    let run = Run::adjudicate(
+        &policy,
+        &tree.root,
+        &ratchet("rust.first 2\nrust.second 2\n"),
+        &bounds(),
+    )
+    .expect("both metrics measure one snapshot");
+
+    assert_eq!(
+        run.measurements()
+            .iter()
+            .map(|measurement| (
+                measurement.metric(),
+                measurement.value(),
+                measurement.files()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("rust.first", 2, ["src/lib.rs".to_owned()].as_slice()),
+            ("rust.second", 2, ["src/lib.rs".to_owned()].as_slice()),
+        ]
     );
     assert_eq!(
-        fs::read_to_string(tree.path("src/lib.rs")).expect("read the mutated source"),
-        "one\nadded by parser\n",
-        "the fixture must prove the parser actually moved an admitted file",
+        run.verdict().tree,
+        run.jurisdiction().tree_digest().expect("digest live tree"),
+    );
+    assert_eq!(
+        fs::read_to_string(tree.path("src/lib.rs")).expect("read restored live tree"),
+        "one\ntwo\n",
     );
 }
 
