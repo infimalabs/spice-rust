@@ -65,10 +65,15 @@ fn the_specified_command_satisfies_its_own_registry_row() {
 fn every_command_names_the_witnesses_it_requires() {
     for kind in CommandKind::ALL {
         let law = kind.law();
-        assert!(
-            !law.required.is_empty(),
-            "{kind} carries a registry row that requires nothing",
-        );
+        if matches!(kind, CommandKind::ConsentRead | CommandKind::ConsentPolicy) {
+            assert!(law.required.is_empty());
+            assert!(law.optional.is_empty());
+        } else {
+            assert!(
+                !law.required.is_empty(),
+                "{kind} carries a registry row that requires nothing",
+            );
+        }
         for optional in law.optional {
             assert!(
                 !law.required.contains(optional),

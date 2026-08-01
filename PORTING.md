@@ -59,8 +59,8 @@ operator authorizes cutover.
 
 ## Rust contracts
 
-The registry contains 63 command leaves. Twenty have executable dispatch,
-so current executable coverage is 20/63, or 31.7 percent. Completed domain
+The registry contains 63 command leaves. Twenty-four have executable dispatch,
+so current executable coverage is 24/63, or 38.1 percent. Completed domain
 libraries do not count as landed command surfaces.
 
 ### Landed
@@ -85,6 +85,10 @@ libraries do not count as landed command surfaces.
 - `run`
 - `config`
 - `restore verify`
+- `consent`
+- `consent allow`
+- `consent deny`
+- `consent policy`
 
 The local command group retains the Python-first ownership boundary described
 above: plain `install` is a side-effect-free plan, and only an exact
@@ -133,10 +137,6 @@ read the Python authority under `<git-common>/.spice`.
 
 ### `POLICY-1kJQlFB6`
 
-- `consent`
-- `consent allow`
-- `consent deny`
-- `consent policy`
 - `taste`
 - `taste add`
 - `taste drop`
