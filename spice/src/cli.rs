@@ -538,7 +538,7 @@ const CONTRACTS: &[Contract] = &[
         "lane wake ID",
         Operator,
         Command,
-        [LaneResumed],
+        [LaneStarted],
         [Resident, OperatorCapability],
         Reply,
         "lane::wake"
@@ -851,7 +851,12 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["run"]
         | ["config"]
         | ["release", "publish"]
-        | ["restore", "verify"] => Landing::Landed,
+        | ["restore", "verify"]
+        | ["lane"]
+        | ["lane", "add"]
+        | ["lane", "drain"]
+        | ["lane", "wake"]
+        | ["recall"] => Landing::Landed,
         ["board"]
         | ["board", "graph"]
         | ["board", "handout"]
@@ -867,15 +872,7 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["task", "depends"]
         | ["doc"]
         | ["doc", "ledger"] => Landing::Gap("BOARD-1kJQlDDt"),
-        ["lane"]
-        | ["lane", "add"]
-        | ["lane", "drain"]
-        | ["lane", "wake"]
-        | ["steer"]
-        | ["steer", "cancel"]
-        | ["inbox"]
-        | ["recall"]
-        | ["ack"] => Landing::Gap("COORDIN-1kJQlDjc"),
+        ["steer"] | ["steer", "cancel"] | ["inbox"] | ["ack"] => Landing::Gap("COORDIN-1kJQlDjc"),
         ["consent"]
         | ["consent", "allow"]
         | ["consent", "deny"]

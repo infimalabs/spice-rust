@@ -594,6 +594,9 @@ fn seed_lane(fixture: &Fixture, lane: wire::CanonicalUuid, capability: wire::Can
     let mut next = current.body().clone();
     next.lanes.push(wire::LaneResidency {
         lane,
+        worktree: fixture.root.display().to_string(),
+        life: "drive".to_owned(),
+        vendor: "claude".parse().expect("fixture vendor"),
         occupant: None,
         lineage: Vec::new(),
         capabilities: vec![capability],
@@ -615,6 +618,8 @@ fn seed_lane(fixture: &Fixture, lane: wire::CanonicalUuid, capability: wire::Can
                 lane,
                 capability,
                 worktree: fixture.root.display().to_string(),
+                life: "drive".to_owned(),
+                vendor: "claude".parse().expect("fixture vendor"),
             },
             FactCause::Existing(current.position()),
         )
@@ -1134,3 +1139,6 @@ fn down_releases_before_reply_and_linked_worktrees_use_common_state() {
         "foreground resident failed"
     );
 }
+
+#[path = "resident/lane_process.rs"]
+mod lane_process;

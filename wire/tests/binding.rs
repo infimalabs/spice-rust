@@ -115,16 +115,23 @@ const BODIES: &[(CommandKind, &str)] = &[
         CommandKind::TrustRevoke,
         r#"{ "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }"#,
     ),
+    (CommandKind::LaneRead, r#"{}"#),
     (
         CommandKind::LaneSeat,
         r#"{
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
-  "worktree": "worktrees/h"
+  "worktree": "worktrees/h",
+  "life": "drive",
+  "vendor": "claude"
 }"#,
     ),
     (
         CommandKind::LaneState,
-        r#"{ "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2", "state": "seated" }"#,
+        r#"{ "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2", "action": "drain" }"#,
+    ),
+    (
+        CommandKind::LaneRecall,
+        r#"{ "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2" }"#,
     ),
     (
         CommandKind::TasteRecord,
@@ -196,8 +203,37 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
 }"#,
     ),
     (
+        AnswerShape::Lane,
+        r#"{
+  "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+  "state": "seated",
+  "lanes": []
+}"#,
+    ),
+    (
+        AnswerShape::LaneChange,
+        r#"{
+  "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "from": "occupied",
+  "to": "vacant"
+}"#,
+    ),
+    (
         AnswerShape::State,
         r#"{ "from": "seated", "to": "quiescing" }"#,
+    ),
+    (
+        AnswerShape::Recall,
+        r#"{
+  "barrier": 48213,
+  "repository": "/worktrees/repository",
+  "residency": {
+    "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+    "state": "seated",
+    "lanes": []
+  },
+  "recent": []
+}"#,
     ),
     (
         AnswerShape::Taste,
@@ -363,8 +399,10 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::SteerDispose,
     BodyShape::ConsentDecide,
     BodyShape::TrustRef,
+    BodyShape::LaneRead,
     BodyShape::LaneSeat,
     BodyShape::LaneState,
+    BodyShape::LaneRecall,
     BodyShape::TasteRecord,
     BodyShape::Recognize,
     BodyShape::ReleasePublish,
@@ -379,7 +417,10 @@ const ALL_ANSWERS: &[AnswerShape] = &[
     AnswerShape::Directive,
     AnswerShape::Consent,
     AnswerShape::Trust,
+    AnswerShape::Lane,
+    AnswerShape::LaneChange,
     AnswerShape::State,
+    AnswerShape::Recall,
     AnswerShape::Taste,
     AnswerShape::Recognition,
 ];

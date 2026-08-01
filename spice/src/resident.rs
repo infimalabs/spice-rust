@@ -20,6 +20,8 @@ type CommandResult<T> = Result<T, Outcome<()>>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RuntimePaths {
+    worktree: PathBuf,
+    common: PathBuf,
     runtime: PathBuf,
     data: PathBuf,
     journal: PathBuf,
@@ -40,6 +42,8 @@ impl RuntimePaths {
         let runtime = repository.state_root();
         let data = runtime.join("data");
         Self {
+            worktree: repository.worktree_root().to_path_buf(),
+            common: repository.common_dir().to_path_buf(),
             journal: repository.journal_path(),
             resident: runtime.join("resident"),
             canvas: runtime.join("canvas"),
@@ -328,7 +332,7 @@ async fn run_surface(
     seats: &mut Seats,
 ) -> CommandResult<()> {
     let operator = new_uuid();
-    let mut capabilities = canvas::axum::Capabilities::default();
+    let capabilities = canvas::axum::Capabilities::default();
     capabilities
         .insert(operator, Actor::Operator)
         .map_err(|error| environment_fault("canvas::capability-invalid", &error.to_string()))?;
@@ -342,7 +346,7 @@ async fn run_surface(
                 })?;
         }
     }
-    let (server, mut control) = canvas::axum::Server::bind(epoch, capabilities)
+    let (server, mut control) = canvas::axum::Server::bind(epoch, capabilities.clone())
         .await
         .map_err(|error| environment_fault("canvas::bind-failed", &error.to_string()))?;
     let discovery = server
@@ -358,6 +362,7 @@ async fn run_surface(
     let mut server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;
     }));
+    lane_surface::restore_seats(bus, paths, epoch, seats)?;
     loop {
         let request = tokio::select! {
             request = control.recv() => request.ok_or_else(|| {
@@ -368,7 +373,7 @@ async fn run_surface(
             }
         };
         let dark = is_dark_command(request.command());
-        let outcome = dispatch_command(bus, paths, epoch, seats, request.command());
+        let outcome = dispatch_command(bus, paths, epoch, seats, &capabilities, request.command());
         let reached_dark = dark && matches!(outcome, Outcome::Reply(_));
         let response = request.respond(outcome);
         if reached_dark {
@@ -400,6 +405,7 @@ fn dispatch_command(
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &mut Seats,
+    capabilities: &canvas::axum::Capabilities,
     command: &wire::AdmittedCommand,
 ) -> Outcome<CommandAnswer> {
     match (command.kind(), command.body()) {
@@ -408,6 +414,18 @@ fn dispatch_command(
         }
         (CommandKind::ReleasePublish, Intent::ReleasePublish(publish)) => {
             dispatch_release_publish(bus, paths, epoch, command, publish)
+        }
+        (CommandKind::LaneRead, Intent::LaneRead(_)) => {
+            lane_surface::read(bus, paths, epoch, command)
+        }
+        (CommandKind::LaneSeat, Intent::LaneSeat(seat)) => {
+            lane_surface::seat(bus, paths, epoch, seats, capabilities, command, seat)
+        }
+        (CommandKind::LaneState, Intent::LaneState(state)) => {
+            lane_surface::state(bus, paths, epoch, seats, command, state)
+        }
+        (CommandKind::LaneRecall, Intent::LaneRecall(recall)) => {
+            lane_surface::recall(bus, paths, epoch, command, recall)
         }
         _ => Outcome::Refusal(Refusal {
             reason: "command::handler-not-landed".to_owned(),
@@ -708,6 +726,7 @@ fn dispatch_up_change(
     }
 }
 
+mod lane_surface;
 mod shutdown;
 
 use shutdown::{current_residency, drive_shutdown};
@@ -1081,6 +1100,9 @@ mod tests {
         let mut head = current.body().clone();
         head.lanes.push(wire::LaneResidency {
             lane,
+            worktree: "/fixture".to_owned(),
+            life: "drive".to_owned(),
+            vendor: "claude".parse().expect("fixture vendor"),
             occupant: Some(occupant),
             lineage: vec![occupant],
             capabilities: vec![test_uuid(9)],
@@ -1095,6 +1117,8 @@ mod tests {
                     lane,
                     capability: test_uuid(9),
                     worktree: "/fixture".to_owned(),
+                    life: "drive".to_owned(),
+                    vendor: "claude".parse().expect("fixture vendor"),
                 },
                 FactCause::Existing(current.position()),
             )
@@ -1105,6 +1129,7 @@ mod tests {
                     lane,
                     occupant,
                     epoch,
+                    group: 123,
                 },
                 FactCause::Pending(seated),
             )

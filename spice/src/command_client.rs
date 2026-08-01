@@ -35,6 +35,14 @@ pub(crate) enum SelectedCommand<'a> {
         release: &'a crate::release_command::AdmittedRelease,
         state: crate::release_command::PublicationState,
     },
+    /// Read the current resident-owned lane table.
+    LaneRead,
+    /// Seat one new lane and launch its first occupant.
+    LaneSeat { body: &'a wire::intent::LaneSeat },
+    /// Drive one existing lane toward drain or wake.
+    LaneState { body: &'a wire::intent::LaneState },
+    /// Read one bounded continuity account.
+    LaneRecall { body: &'a wire::intent::LaneRecall },
 }
 
 /// Submit one contract-bound command to the current repository resident.
@@ -97,6 +105,36 @@ impl MappedCommand {
                     },
                 )
             }
+            (["lane"], SelectedCommand::LaneRead) => Self::new(
+                contract,
+                &["lane"],
+                CommandKind::LaneRead,
+                Vec::new(),
+                &wire::intent::LaneRead {},
+            ),
+            (["lane", "add"], SelectedCommand::LaneSeat { body }) => Self::new(
+                contract,
+                &["lane", "add"],
+                CommandKind::LaneSeat,
+                Vec::new(),
+                body,
+            ),
+            (["lane", "drain"] | ["lane", "wake"], SelectedCommand::LaneState { body }) => {
+                Self::new(
+                    contract,
+                    contract.path,
+                    CommandKind::LaneState,
+                    Vec::new(),
+                    body,
+                )
+            }
+            (["recall"], SelectedCommand::LaneRecall { body }) => Self::new(
+                contract,
+                &["recall"],
+                CommandKind::LaneRecall,
+                Vec::new(),
+                body,
+            ),
             _ => Err(protocol_fault(
                 "command::mapping-unsupported",
                 "selected CLI contract has no resident command mapping",
@@ -358,6 +396,11 @@ fn request(
     mapped: MappedCommand,
     discovery: DiscoveryRead,
 ) -> Outcome<CommandAnswer> {
+    let capability = match ambient_lane_capability() {
+        Ok(Some(capability)) => capability,
+        Ok(None) => discovery.value.capability,
+        Err(outcome) => return outcome,
+    };
     let authority = match endpoint_authority(&discovery.value.endpoint) {
         Ok(authority) => authority,
         Err(outcome) => return outcome,
@@ -425,7 +468,7 @@ fn request(
     }
     let hello = wire::Hello {
         wire: wire::WireVersion::CURRENT,
-        capability: discovery.value.capability,
+        capability,
         epoch: discovery.value.epoch,
     };
     if let Err(outcome) = send(&mut socket, &hello) {
@@ -435,7 +478,7 @@ fn request(
         Ok(opening) => opening,
         Err(outcome) => return outcome,
     };
-    let accepted = match decode_opening(&opening, &discovery.value) {
+    let accepted = match decode_opening(&opening, &discovery.value, capability) {
         Ok(accepted) => accepted,
         Err(outcome) => return outcome,
     };
@@ -462,8 +505,27 @@ fn request(
         mapped.id,
         mapped.kind,
         discovery.value.epoch,
-        discovery.value.capability,
+        capability,
     )
+}
+
+fn ambient_lane_capability() -> ClientResult<Option<CanonicalUuid>> {
+    let Some(value) = crate::bootstrap_environment("SPICE_LANE") else {
+        // env-policy: allow
+        return Ok(None);
+    };
+    let Some(value) = value.to_str() else {
+        return Err(protocol_fault(
+            "hello::lane-capability-invalid",
+            "SPICE_LANE is not UTF-8",
+        ));
+    };
+    value.parse().map(Some).map_err(|_| {
+        protocol_fault(
+            "hello::lane-capability-invalid",
+            "SPICE_LANE is not one canonical capability UUID",
+        )
+    })
 }
 
 fn endpoint_authority(endpoint: &str) -> ClientResult<&str> {
@@ -482,7 +544,11 @@ fn endpoint_authority(endpoint: &str) -> ClientResult<&str> {
     Ok(authority)
 }
 
-fn decode_opening(bytes: &[u8], discovery: &canvas::Discovery) -> ClientResult<wire::Accepted> {
+fn decode_opening(
+    bytes: &[u8],
+    discovery: &canvas::Discovery,
+    capability: CanonicalUuid,
+) -> ClientResult<wire::Accepted> {
     if let Ok(accepted) = wire::decode::<wire::Accepted>(bytes) {
         if accepted.wire.is_current()
             && accepted.epoch == discovery.epoch
@@ -496,13 +562,13 @@ fn decode_opening(bytes: &[u8], discovery: &canvas::Discovery) -> ClientResult<w
         ));
     }
     if let Ok(refusal) = wire::decode::<Refusal>(bytes) {
-        if discloses_capability(&refusal, discovery.capability) {
+        if discloses_capability(&refusal, capability) {
             return Err(capability_disclosed());
         }
         return Err(Outcome::Refusal(refusal));
     }
     if let Ok(fault) = wire::decode::<Fault>(bytes) {
-        if discloses_capability(&fault, discovery.capability) {
+        if discloses_capability(&fault, capability) {
             return Err(capability_disclosed());
         }
         return Err(Outcome::Fault(fault));
@@ -954,7 +1020,7 @@ mod tests {
             remedy: "use current discovery".to_owned(),
         };
         let opening = wire::encode(&refusal).expect("fixture refusal encodes");
-        let Err(Outcome::Fault(fault)) = decode_opening(&opening, &discovery) else {
+        let Err(Outcome::Fault(fault)) = decode_opening(&opening, &discovery, capability) else {
             panic!("opening capability echo must fault");
         };
         assert_eq!(fault.reason, "canvas::capability-disclosed");

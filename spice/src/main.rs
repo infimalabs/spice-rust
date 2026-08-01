@@ -24,6 +24,8 @@ mod gate_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod install_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod lane_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod lock_command;
 mod proof_command;
 #[cfg(not(target_arch = "wasm32"))]
@@ -87,6 +89,9 @@ fn main() {
         ["version"] => deliver(&version_outcome(), form),
         ["release", "notes"] => deliver(&release_command::notes(leaf), form),
         ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
+        ["lane"] | ["lane", "add"] | ["lane", "drain"] | ["lane", "wake"] | ["recall"] => {
+            deliver(&lane_command::run(leaf, contract), form)
+        }
         ["release", "publish"] => match release_command::run(leaf, contract) {
             release_command::RunResult::Plan(outcome) => deliver(&outcome, form),
             release_command::RunResult::Published(outcome) => deliver(&outcome, form),

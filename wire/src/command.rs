@@ -79,10 +79,14 @@ pub enum CommandKind {
     /// Withdraw approval from the exact executable digest.
     TrustRevoke,
 
+    /// Read the current lane table at one resident barrier.
+    LaneRead,
     /// Seat a lane in an operator-created worktree.
     LaneSeat,
     /// Change a seated lane's state.
     LaneState,
+    /// Build one bounded continuity account from the current resident barrier.
+    LaneRecall,
 
     /// Record a taste verdict at its evidence locus.
     TasteRecord,
@@ -338,10 +342,26 @@ impl Law {
         optional: &[],
         authority: Authority::Operator,
     };
-    /// Exact residency head, lane and occupant identities when present, and
-    /// resident epoch.
+    /// Operator-authored lane lifecycle intent. The command envelope binds the
+    /// current resident epoch; the handler compares the named lane with the
+    /// current residency head before changing it. A residency witness cannot
+    /// represent either a lane that does not exist yet or a vacant lane.
     pub const LANE: Self = Self {
-        required: &[WitnessKind::Residency],
+        required: &[],
+        optional: &[],
+        authority: Authority::Operator,
+    };
+    /// Read the lane table as the operator without authoring a residency
+    /// witness for the state being observed.
+    pub const LANE_READ: Self = Self {
+        required: &[],
+        optional: &[],
+        authority: Authority::Operator,
+    };
+    /// Read one bounded continuity account as either the operator or the lane
+    /// capability whose view the resident filters.
+    pub const LANE_RECALL: Self = Self {
+        required: &[],
         optional: &[],
         authority: Authority::Connected,
     };
@@ -423,8 +443,10 @@ impl CommandKind {
         Self::TrustPend,
         Self::TrustGrant,
         Self::TrustRevoke,
+        Self::LaneRead,
         Self::LaneSeat,
         Self::LaneState,
+        Self::LaneRecall,
         Self::TasteRecord,
         Self::CanaryRecognize,
         Self::VendorRecognize,
@@ -464,8 +486,10 @@ impl CommandKind {
             Self::TrustPend => "trust::pend",
             Self::TrustGrant => "trust::grant",
             Self::TrustRevoke => "trust::revoke",
+            Self::LaneRead => "lane::read",
             Self::LaneSeat => "lane::seat",
             Self::LaneState => "lane::state",
+            Self::LaneRecall => "lane::recall",
             Self::TasteRecord => "taste::record",
             Self::CanaryRecognize => "canary::recognize",
             Self::VendorRecognize => "vendor::recognize",
@@ -505,7 +529,9 @@ impl CommandKind {
             Self::ConsentDecide => Law::DECIDE,
             Self::TrustPend => Law::PEND,
             Self::TrustGrant | Self::TrustRevoke => Law::TRUST,
+            Self::LaneRead => Law::LANE_READ,
             Self::LaneSeat | Self::LaneState => Law::LANE,
+            Self::LaneRecall => Law::LANE_RECALL,
             Self::TasteRecord => Law::TASTE,
             Self::CanaryRecognize
             | Self::VendorRecognize
