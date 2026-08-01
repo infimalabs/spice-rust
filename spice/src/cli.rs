@@ -905,11 +905,13 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["task", "oops"]
         | ["task", "depends"]
         | ["doc"]
-        | ["doc", "ledger"] => Landing::Landed,
+        | ["doc", "ledger"]
+        | ["taste"]
+        | ["taste", "add"]
+        | ["taste", "drop"] => Landing::Landed,
         ["lane"] | ["lane", "add"] | ["lane", "drain"] | ["lane", "wake"] | ["recall"] => {
             Landing::Gap("COORDIN-1kJQlDjc")
         }
-        ["taste"] | ["taste", "add"] | ["taste", "drop"] => Landing::Gap("POLICY-1kJQlFB6"),
         _ => Landing::Unaccounted,
     }
 }

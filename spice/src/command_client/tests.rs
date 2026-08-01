@@ -153,7 +153,7 @@ fn mapping_enforces_the_wire_witness_law() {
 }
 
 #[test]
-fn every_landed_board_family_leaf_uses_one_current_command_kind() {
+fn every_landed_task_mutation_leaf_uses_one_current_command_kind() {
     let expected = [
         (&["board"][..], CommandKind::BoardRead),
         (&["board", "graph"][..], CommandKind::BoardGraph),
@@ -170,6 +170,8 @@ fn every_landed_board_family_leaf_uses_one_current_command_kind() {
         (&["task", "depends"][..], CommandKind::TaskDepends),
         (&["doc"][..], CommandKind::DocApply),
         (&["doc", "ledger"][..], CommandKind::DocLedger),
+        (&["taste", "add"][..], CommandKind::TaskAdd),
+        (&["taste", "drop"][..], CommandKind::TaskAdd),
     ];
 
     for (path, kind) in expected {
@@ -186,7 +188,7 @@ fn every_landed_board_family_leaf_uses_one_current_command_kind() {
     }
     let mapped_family_leaves = crate::cli::contracts()
         .iter()
-        .filter(|contract| matches!(contract.path[0], "board" | "task" | "doc"))
+        .filter(|contract| matches!(contract.path[0], "board" | "task" | "doc" | "taste"))
         .filter(|contract| kind_for(contract.path).is_some())
         .count();
     assert_eq!(mapped_family_leaves, expected.len());

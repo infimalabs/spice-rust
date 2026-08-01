@@ -485,8 +485,27 @@ fn submit_add(
     project: Option<String>,
     description: Option<String>,
 ) -> Outcome<CommandAnswer> {
+    submit_task_add(
+        repository,
+        contract,
+        TaskAdd {
+            title,
+            project,
+            description,
+            acceptance: Vec::new(),
+            flow: None,
+            depends: Vec::new(),
+        },
+    )
+}
+
+pub(crate) fn submit_task_add(
+    repository: &Repository,
+    contract: &Contract,
+    body: TaskAdd,
+) -> Outcome<CommandAnswer> {
     mutate_from_board(repository, contract, |board| {
-        let handle = mint_handle(project.as_deref(), &title);
+        let handle = mint_handle(body.project.as_deref(), &body.title);
         if board
             .tasks
             .iter()
@@ -498,14 +517,6 @@ fn submit_add(
                 "retry task add so the authority can mint a fresh handle",
             ));
         }
-        let body = TaskAdd {
-            title,
-            project,
-            description,
-            acceptance: Vec::new(),
-            flow: None,
-            depends: Vec::new(),
-        };
         Ok((
             CommandKind::TaskAdd,
             vec![Witness::Absence { task: handle }],
