@@ -806,12 +806,12 @@ const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["config"],
-        "config [KEY [VALUE]]",
+        "config [KEY [VALUE]] [--apply=<digest>]",
         Local,
         None,
         [],
-        [Daemonless, Offline],
-        Reply,
+        [Daemonless, Offline, DigestOnMutation],
+        Plan,
         "spice::config"
     ),
 ];
