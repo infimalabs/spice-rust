@@ -45,26 +45,7 @@ fn manifests_match_the_documented_dependency_lattice() {
     let expected = expected_lattice();
 
     assert_eq!(members, expected.keys().cloned().collect());
-
-    let member_paths = members
-        .iter()
-        .map(|member| {
-            let path = fs::canonicalize(root.join(member)).unwrap_or_else(|error| {
-                panic!("failed to resolve workspace member {member}: {error}")
-            });
-            (path, member.clone())
-        })
-        .collect::<BTreeMap<_, _>>();
-
-    let actual = members
-        .iter()
-        .map(|member| {
-            (
-                member.clone(),
-                local_dependencies(&root, member, &member_paths),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
+    let actual = locked_lattice(&root, &members);
 
     assert_acyclic(&actual);
     assert_eq!(actual, expected);
@@ -116,48 +97,101 @@ fn expected_lattice() -> BTreeMap<String, BTreeSet<String>> {
         .collect()
 }
 
-fn local_dependencies(
-    root: &Path,
-    member: &str,
-    member_paths: &BTreeMap<PathBuf, String>,
-) -> BTreeSet<String> {
-    let manifest_path = root.join(member).join("Cargo.toml");
-    let manifest = fs::read_to_string(&manifest_path)
-        .unwrap_or_else(|error| panic!("failed to read {}: {error}", manifest_path.display()));
-    let mut dependencies = BTreeSet::new();
-
-    for (index, line) in manifest.lines().enumerate() {
-        let Some(relative_path) = dependency_path(line) else {
-            continue;
-        };
-        let dependency_path = fs::canonicalize(root.join(member).join(relative_path))
-            .unwrap_or_else(|error| {
-                panic!(
-                    "failed to resolve path dependency in {}:{}: {error}",
-                    manifest_path.display(),
-                    index + 1
-                )
-            });
-        let Some(dependency) = member_paths.get(&dependency_path) else {
-            continue;
-        };
-
-        assert!(
-            dependencies.insert(dependency.clone()),
-            "{} declares workspace member {dependency} more than once",
-            manifest_path.display()
-        );
-    }
-
-    dependencies
+#[derive(Default)]
+struct LockedPackage {
+    name: String,
+    version: String,
+    source: Option<String>,
+    dependencies: Vec<String>,
 }
 
-fn dependency_path(line: &str) -> Option<&str> {
-    let (_, after_path) = line.split_once("path")?;
-    let after_path = after_path.trim_start().strip_prefix('=')?.trim_start();
-    let after_quote = after_path.strip_prefix('"')?;
-    let (path, _) = after_quote.split_once('"')?;
-    Some(path)
+fn locked_lattice(root: &Path, members: &BTreeSet<String>) -> BTreeMap<String, BTreeSet<String>> {
+    let lockfile =
+        fs::read_to_string(root.join("Cargo.lock")).expect("workspace Cargo.lock must be readable");
+    let packages = lockfile
+        .split("[[package]]")
+        .skip(1)
+        .map(parse_locked_package)
+        .collect::<Vec<_>>();
+    let mut workspace_versions = BTreeMap::new();
+
+    for package in &packages {
+        if package.source.is_none() && members.contains(&package.name) {
+            assert!(
+                workspace_versions
+                    .insert(package.name.clone(), package.version.clone())
+                    .is_none(),
+                "Cargo.lock contains duplicate workspace package {}",
+                package.name
+            );
+        }
+    }
+    assert_eq!(
+        workspace_versions.keys().cloned().collect::<BTreeSet<_>>(),
+        *members
+    );
+
+    packages
+        .iter()
+        .filter(|package| package.source.is_none() && members.contains(&package.name))
+        .map(|package| {
+            let dependencies = package
+                .dependencies
+                .iter()
+                .filter_map(|dependency| {
+                    workspace_versions.iter().find_map(|(name, version)| {
+                        let qualified = format!("{name} {version}");
+                        (dependency == name || dependency == &qualified).then(|| name.clone())
+                    })
+                })
+                .collect();
+            (package.name.clone(), dependencies)
+        })
+        .collect()
+}
+
+fn parse_locked_package(block: &str) -> LockedPackage {
+    let mut package = LockedPackage::default();
+    let mut reading_dependencies = false;
+
+    for line in block.lines().map(str::trim) {
+        if line == "dependencies = [" {
+            reading_dependencies = true;
+            continue;
+        }
+        if reading_dependencies && line == "]" {
+            reading_dependencies = false;
+            continue;
+        }
+        if reading_dependencies {
+            package
+                .dependencies
+                .push(line.trim_end_matches(',').trim_matches('"').to_owned());
+        } else if let Some(value) = quoted_assignment(line, "name") {
+            package.name = value.to_owned();
+        } else if let Some(value) = quoted_assignment(line, "version") {
+            package.version = value.to_owned();
+        } else if let Some(value) = quoted_assignment(line, "source") {
+            package.source = Some(value.to_owned());
+        }
+    }
+
+    assert!(!package.name.is_empty(), "lockfile package has no name");
+    assert!(
+        !package.version.is_empty(),
+        "lockfile package has no version"
+    );
+    package
+}
+
+fn quoted_assignment<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    let value = line
+        .strip_prefix(key)?
+        .trim_start()
+        .strip_prefix('=')?
+        .trim_start()
+        .strip_prefix('"')?;
+    value.strip_suffix('"')
 }
 
 fn assert_acyclic(lattice: &BTreeMap<String, BTreeSet<String>>) {
