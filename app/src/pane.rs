@@ -33,9 +33,9 @@ const ANSWER_MISMATCH: &str = "pane::answer-mismatch";
 
 /// Who this session acts as, in the generation it acts in.
 ///
-/// A capability is bound to its principal and its epoch together, so the two
-/// travel together here as well. There is no constructor from text, from a
-/// bare [`Actor`], or from anything the app rendered. The only door is
+/// An actor is bound to the unrendered session scope that admitted it, so the
+/// two travel together here as well. There is no constructor from text, from
+/// a bare [`Actor`], or from anything the app rendered. The only door is
 /// [`Principal::admitted`], which needs a frame the resident sent and
 /// [`Session::admit_accepted`] let through, because the resident derives actor
 /// and rights when it accepts the connection and caller fields may describe
@@ -45,7 +45,6 @@ const ANSWER_MISMATCH: &str = "pane::answer-mismatch";
 #[derive(Clone, PartialEq, Eq)]
 pub struct Principal {
     actor: Actor,
-    epoch: CanonicalUuid,
     scope: SessionScope,
 }
 
@@ -54,7 +53,7 @@ impl fmt::Debug for Principal {
         formatter
             .debug_struct("Principal")
             .field("actor", &self.actor)
-            .field("epoch", &self.epoch)
+            .field("epoch", &self.epoch())
             .finish()
     }
 }
@@ -67,7 +66,6 @@ impl Principal {
         let accepted = accepted.get();
         Self {
             actor: accepted.actor.clone(),
-            epoch: accepted.epoch,
             scope,
         }
     }
@@ -81,7 +79,7 @@ impl Principal {
     /// The generation this principal was accepted into.
     #[must_use]
     pub const fn epoch(&self) -> CanonicalUuid {
-        self.epoch
+        self.scope.epoch()
     }
 
     pub(crate) const fn scope(&self) -> SessionScope {
@@ -156,8 +154,7 @@ impl<'a, T> ReadPane<'a, T> {
     /// under another authority's name.
     #[must_use]
     pub fn over(principal: &'a Principal, state: &'a BrowserState<T>) -> Option<Self> {
-        (principal.epoch() == state.epoch() && principal.scope() == state.scope())
-            .then_some(Self { principal, state })
+        (principal.scope() == state.scope()).then_some(Self { principal, state })
     }
 
     /// The principal this pane renders for.
