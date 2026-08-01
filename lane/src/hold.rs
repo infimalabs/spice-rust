@@ -65,6 +65,9 @@ impl Holds {
     /// so the young deaths before it no longer describe it. The returned fact
     /// is the one to commit; the hold is already recorded here either way.
     pub fn died(&mut self, lane: CanonicalUuid, death: Death, until: Instant) -> Option<LaneHeld> {
+        if self.held.contains_key(&lane) {
+            return None;
+        }
         if death == Death::Mature {
             self.young.remove(&lane);
             return None;
@@ -90,10 +93,10 @@ impl Holds {
         self.held.get(&lane).copied()
     }
 
-    /// Whether the lane may be re-seated at this moment.
+    /// Whether the lane may be re-seated after all fact-producing releases.
     #[must_use]
-    pub fn seats(&self, lane: CanonicalUuid, now: Instant) -> bool {
-        self.held(lane).is_none_or(|until| now >= until)
+    pub fn seats(&self, lane: CanonicalUuid) -> bool {
+        !self.held.contains_key(&lane)
     }
 
     /// Releases a hold whose deadline has passed.
@@ -152,7 +155,7 @@ mod tests {
         }
 
         assert_eq!(holds.held(lane(1)), None);
-        assert!(holds.seats(lane(1), instant(0)));
+        assert!(holds.seats(lane(1)));
     }
 
     /// Reaching the limit holds the lane and names its evidence and deadline.
@@ -180,9 +183,12 @@ mod tests {
             .died(lane(1), Death::Young, instant(30))
             .expect("one young death holds at a limit of one");
 
-        assert!(!holds.seats(lane(1), instant(29)));
-        assert!(holds.seats(lane(1), instant(30)));
-        assert!(holds.seats(lane(2), instant(0)), "another lane is unheld");
+        assert!(!holds.seats(lane(1)));
+        assert!(holds.seats(lane(2)), "another lane is unheld");
+        holds
+            .expire(lane(1), instant(30))
+            .expect("expiry emits the release before re-seating");
+        assert!(holds.seats(lane(1)));
     }
 
     /// A mature death clears the run, so young deaths must be consecutive.
@@ -196,6 +202,18 @@ mod tests {
             holds.died(lane(1), Death::Young, instant(30)).is_none(),
             "a young death after a mature one held on the first of a new run",
         );
+    }
+
+    /// A held lane cannot publish another hold before it resumes.
+    #[test]
+    fn deaths_while_held_do_not_replace_or_repeat_the_hold() {
+        let mut holds = Holds::new(1);
+        holds
+            .died(lane(1), Death::Young, instant(30))
+            .expect("the first death holds");
+
+        assert!(holds.died(lane(1), Death::Young, instant(59)).is_none());
+        assert_eq!(holds.held(lane(1)), Some(instant(30)));
     }
 
     /// An expired hold resumes the lane once, naming expiry as the release.

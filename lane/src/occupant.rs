@@ -16,7 +16,7 @@ use std::fmt;
 use std::io;
 
 use journal::crossing::CanonicalUuid;
-use sill::{Running, Spec, WaitError, WaitOutcome, spawn};
+use sill::{ProcessGroup, Running, Spec, WaitError, WaitOutcome, spawn};
 
 /// One process group supervised under a lane.
 pub struct Occupant {
@@ -81,6 +81,11 @@ pub enum SeatError {
         /// Occupant already sitting in it.
         sitting: CanonicalUuid,
     },
+    /// The spec would place the occupant in the caller's process group.
+    InheritedGroup {
+        /// Lane that requires its own process group.
+        lane: CanonicalUuid,
+    },
     /// The sill door refused to open.
     Door(io::Error),
 }
@@ -92,6 +97,9 @@ impl fmt::Display for SeatError {
                 formatter,
                 "lane {lane} is already occupied by {sitting}; a seat holds one process group"
             ),
+            Self::InheritedGroup { lane } => {
+                write!(formatter, "lane {lane} requires a new process group")
+            }
             Self::Door(error) => write!(formatter, "the sill door refused to open: {error}"),
         }
     }
@@ -101,6 +109,7 @@ impl Error for SeatError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Occupied { .. } => None,
+            Self::InheritedGroup { .. } => None,
             Self::Door(error) => Some(error),
         }
     }
@@ -171,6 +180,9 @@ impl Seats {
                 lane,
                 sitting: sitting.occupant,
             });
+        }
+        if spec.group != ProcessGroup::New {
+            return Err(SeatError::InheritedGroup { lane });
         }
         let running = spawn(spec).map_err(SeatError::Door)?;
         Ok(self.occupied.entry(lane).or_insert(Occupant {
@@ -290,6 +302,25 @@ mod tests {
             .expect("the seat was occupied")
             .wait()
             .expect("the group ends");
+    }
+
+    /// Every occupant owns a new group; an inherited group never opens.
+    #[test]
+    fn an_inherited_process_group_is_refused_before_the_door_opens() {
+        let mut seats = Seats::new();
+        let mut inherited = spec();
+        inherited.group = ProcessGroup::Inherit;
+        inherited.argv = Argv::new("/nonexistent/occupant", [] as [&str; 0]).expect("argv");
+
+        let error = seats
+            .seat(uuid(1), uuid(3), inherited)
+            .expect_err("an occupant requires its own process group");
+
+        assert!(matches!(
+            error,
+            SeatError::InheritedGroup { lane } if lane == uuid(1)
+        ));
+        assert!(seats.is_empty());
     }
 
     /// Seats are per lane, so a second lane takes its own group.

@@ -114,6 +114,13 @@ pub enum Refusal {
         /// Lane the fact names.
         lane: CanonicalUuid,
     },
+    /// An occupant start belongs to another resident generation.
+    Stale {
+        /// Epoch this table reduces under.
+        epoch: CanonicalUuid,
+        /// Epoch the start fact named.
+        named: CanonicalUuid,
+    },
     /// An occupant already sits in the seat.
     Occupied {
         /// Lane the fact names.
@@ -142,6 +149,9 @@ impl fmt::Display for Refusal {
         match self {
             Self::Unseated { lane } => write!(formatter, "lane {lane} was never seated"),
             Self::Reseated { lane } => write!(formatter, "lane {lane} is already seated"),
+            Self::Stale { epoch, named } => {
+                write!(formatter, "lane table epoch is {epoch}, not {named}")
+            }
             Self::Occupied { lane, sitting } => {
                 write!(formatter, "lane {lane} is already occupied by {sitting}")
             }
@@ -205,7 +215,7 @@ impl Table {
     pub fn absorb(&mut self, seating: Seating<'_>) -> Result<(), Refusal> {
         match seating {
             Seating::Seated(fact) => self.seat_lane(fact),
-            Seating::Started(fact) => self.start(fact.lane, fact.occupant),
+            Seating::Started(fact) => self.start(fact),
             Seating::Renewed(fact) => self.renew(fact),
             Seating::Exited(fact) => self.end(fact.lane, fact.occupant),
             Seating::Drained(fact) => self.end(fact.lane, fact.occupant),
@@ -241,7 +251,14 @@ impl Table {
     }
 
     /// Seats an occupant, which the seat must be empty to admit.
-    fn start(&mut self, lane: CanonicalUuid, occupant: CanonicalUuid) -> Result<(), Refusal> {
+    fn start(&mut self, fact: &LaneStarted) -> Result<(), Refusal> {
+        if fact.epoch != self.epoch {
+            return Err(Refusal::Stale {
+                epoch: self.epoch,
+                named: fact.epoch,
+            });
+        }
+        let lane = fact.lane;
         let seat = self
             .seats
             .get_mut(&lane)
@@ -249,8 +266,8 @@ impl Table {
         if let Some(sitting) = seat.occupant {
             return Err(Refusal::Occupied { lane, sitting });
         }
-        seat.occupant = Some(occupant);
-        seat.lineage.push(occupant);
+        seat.occupant = Some(fact.occupant);
+        seat.lineage.push(fact.occupant);
         Ok(())
     }
 
@@ -269,6 +286,9 @@ impl Table {
                 sitting,
                 named: fact.ancestor,
             });
+        }
+        if sitting == fact.occupant {
+            return Err(Refusal::Occupied { lane, sitting });
         }
         seat.occupant = Some(fact.occupant);
         seat.lineage.push(fact.occupant);
@@ -382,6 +402,28 @@ mod tests {
         );
     }
 
+    /// An old resident cannot seat an occupant in the current generation.
+    #[test]
+    fn a_stale_epoch_cannot_start_an_occupant() {
+        let mut table = table();
+        let stale = LaneStarted {
+            lane: uuid(1),
+            occupant: uuid(3),
+            epoch: uuid(9),
+        };
+
+        assert_eq!(
+            table.absorb(Seating::Started(&stale)),
+            Err(Refusal::Stale {
+                epoch: uuid(0),
+                named: uuid(9),
+            })
+        );
+        let seat = table.seat(uuid(1)).expect("the lane remains seated");
+        assert_eq!(seat.occupant(), None);
+        assert!(seat.lineage().is_empty());
+    }
+
     /// A successor names the occupant it descends from, and the lineage grows.
     #[test]
     fn renewal_succeeds_the_sitting_occupant_and_records_the_lineage() {
@@ -431,6 +473,28 @@ mod tests {
             [uuid(3)],
             "a refused renewal still grew the lineage",
         );
+    }
+
+    /// Renewal introduces a successor rather than repeating the same occupant.
+    #[test]
+    fn renewal_refuses_the_sitting_occupant_as_its_own_successor() {
+        let mut table = table();
+        table
+            .absorb(Seating::Started(&started(uuid(3))))
+            .expect("an empty seat admits an occupant");
+
+        assert_eq!(
+            table.absorb(Seating::Renewed(&LaneRenewed {
+                lane: uuid(1),
+                occupant: uuid(3),
+                ancestor: uuid(3),
+            })),
+            Err(Refusal::Occupied {
+                lane: uuid(1),
+                sitting: uuid(3),
+            })
+        );
+        assert_eq!(table.seat(uuid(1)).expect("seated").lineage(), [uuid(3)]);
     }
 
     /// Ending an occupant the seat is not holding is refused by name.
