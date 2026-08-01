@@ -51,7 +51,7 @@ fn item(record: &Object, locus: Locus, moment: ItemMoment) -> Events {
                 item,
                 "command_execution".to_owned(),
                 moment,
-                CompletionStatus::Required,
+                StatusPolicy::Reported,
                 locus,
             )
         }
@@ -61,7 +61,7 @@ fn item(record: &Object, locus: Locus, moment: ItemMoment) -> Events {
                 item,
                 "file_change".to_owned(),
                 moment,
-                CompletionStatus::Required,
+                StatusPolicy::Reported,
                 locus,
             )
         }
@@ -69,14 +69,14 @@ fn item(record: &Object, locus: Locus, moment: ItemMoment) -> Events {
             item,
             format!("{}::{}", string(item, "server")?, string(item, "tool")?),
             moment,
-            CompletionStatus::Required,
+            StatusPolicy::Reported,
             locus,
         ),
         "collab_tool_call" => tool(
             item,
             string(item, "tool")?.to_owned(),
             moment,
-            CompletionStatus::Required,
+            StatusPolicy::Reported,
             locus,
         ),
         "web_search" => {
@@ -85,7 +85,7 @@ fn item(record: &Object, locus: Locus, moment: ItemMoment) -> Events {
                 item,
                 "web_search".to_owned(),
                 moment,
-                CompletionStatus::Unreported,
+                StatusPolicy::Unreported,
                 locus,
             )
         }
@@ -98,8 +98,8 @@ fn item(record: &Object, locus: Locus, moment: ItemMoment) -> Events {
 }
 
 #[derive(Clone, Copy)]
-enum CompletionStatus {
-    Required,
+enum StatusPolicy {
+    Reported,
     Unreported,
 }
 
@@ -107,22 +107,26 @@ fn tool(
     item: &Object,
     name: String,
     moment: ItemMoment,
-    completion_status: CompletionStatus,
+    status_policy: StatusPolicy,
     locus: Locus,
 ) -> Events {
     let call_id = string(item, "id")?.to_owned();
     let moment = match moment {
         ItemMoment::Started => {
-            require_in_progress(item)?;
+            if matches!(status_policy, StatusPolicy::Reported) {
+                require_in_progress(item)?;
+            }
             ToolMoment::Call { name }
         }
         ItemMoment::Updated => {
-            require_in_progress(item)?;
+            if matches!(status_policy, StatusPolicy::Reported) {
+                require_in_progress(item)?;
+            }
             ToolMoment::Update { name }
         }
-        ItemMoment::Completed => ToolMoment::Result(match completion_status {
-            CompletionStatus::Required => tool_result(item)?,
-            CompletionStatus::Unreported => ToolResult::Unreported,
+        ItemMoment::Completed => ToolMoment::Result(match status_policy {
+            StatusPolicy::Reported => tool_result(item)?,
+            StatusPolicy::Unreported => ToolResult::Unreported,
         }),
     };
     Ok(vec![Event::Tool(Tool {
