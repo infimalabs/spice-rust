@@ -297,8 +297,10 @@ impl<T> BrowserState<T> {
     /// Apply one same-scope admitted envelope, keeping the cursor monotone.
     ///
     /// Only a position above the cursor advances it. A duplicate and a
-    /// reordered arrival both leave the cursor and the packed answer alone;
-    /// their admitted header remains available to complete a causal walk.
+    /// reordered arrival both leave the cursor and the packed answer alone.
+    /// Their admitted header remains available to complete a causal walk only
+    /// when it falls among the [`CAUSAL_HEADERS`] highest positions received;
+    /// an arrival below a full window's floor is discarded.
     ///
     /// The parameter is [`Admitted`] rather than a bare envelope so that a
     /// frame this build cannot read has no path in. Version admission belongs
@@ -318,15 +320,22 @@ impl<T> BrowserState<T> {
             return Applied::ForeignScope;
         }
         let envelope = admitted.get();
-        self.causal
-            .entry(envelope.seq)
-            .or_insert_with(|| CausalLink {
-                seq: envelope.seq,
-                origin: envelope.origin.clone(),
-                cause: envelope.cause,
-            });
-        while self.causal.len() > CAUSAL_HEADERS {
-            self.causal.pop_first();
+        let below_retention_floor = self.causal.len() == CAUSAL_HEADERS
+            && self
+                .causal
+                .first_key_value()
+                .is_some_and(|(lowest, _)| envelope.seq < *lowest);
+        if !below_retention_floor {
+            self.causal
+                .entry(envelope.seq)
+                .or_insert_with(|| CausalLink {
+                    seq: envelope.seq,
+                    origin: envelope.origin.clone(),
+                    cause: envelope.cause,
+                });
+            while self.causal.len() > CAUSAL_HEADERS {
+                self.causal.pop_first();
+            }
         }
         match self.cursor {
             Some(cursor) if envelope.seq == cursor => Applied::Duplicate,
