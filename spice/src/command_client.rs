@@ -6,6 +6,7 @@ use std::net::{SocketAddr, TcpStream};
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
+use std::process::{Command as ProcessCommand, Stdio};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -30,16 +31,33 @@ type ClientResult<T> = Result<T, Outcome<CommandAnswer>>;
 pub(crate) enum SelectedCommand<'a> {
     /// The operator requests the current resident's bounded Dark transition.
     Down,
+    /// Read the current resident's durable consent queue.
+    ConsentRead,
+    /// Read the tracked consent policy held by the current resident.
+    ConsentPolicy,
+    /// Terminally answer one request from an exact queue snapshot.
+    ConsentDecide {
+        request: CanonicalUuid,
+        answer: wire::Answer,
+        expected: Vec<Witness>,
+    },
     /// The operator recognizes one exact, already admitted release publication.
     ReleasePublish {
         release: &'a crate::release_command::AdmittedRelease,
         state: crate::release_command::PublicationState,
     },
+    /// The operator approves one exact pended executable digest.
+    TrustGrant { digest: &'a wire::Digest },
+    /// The operator withdraws approval from one exact granted digest.
+    TrustRevoke { digest: &'a wire::Digest },
 }
 
 /// Submit one contract-bound command to the current repository resident.
+///
+/// `discovery_path` must be the canvas path returned by the caller's single
+/// [`spice::repository::Repository::admit_state`] admission.
 pub(crate) fn execute(
-    repository: &Repository,
+    discovery_path: &Path,
     contract: &Contract,
     selected: SelectedCommand<'_>,
 ) -> Outcome<CommandAnswer> {
@@ -47,8 +65,7 @@ pub(crate) fn execute(
         Ok(mapped) => mapped,
         Err(outcome) => return outcome,
     };
-    let discovery_path = repository.state_root().join("canvas");
-    let discovery = match DiscoveryRead::open(&discovery_path) {
+    let discovery = match DiscoveryRead::open(discovery_path) {
         Ok(discovery) => discovery,
         Err(outcome) => return outcome,
     };
@@ -79,8 +96,11 @@ pub(crate) fn execute_typed<B: Serialize>(
         Ok(mapped) => mapped,
         Err(outcome) => return outcome,
     };
-    let discovery_path = repository.state_root().join("canvas");
-    let discovery = match DiscoveryRead::open(&discovery_path) {
+    let state = match repository.admit_state() {
+        Ok(state) => state,
+        Err(error) => return crate::state_failure(&error).outcome(),
+    };
+    let discovery = match DiscoveryRead::open(state.canvas()) {
         Ok(discovery) => discovery,
         Err(outcome) => return outcome,
     };
@@ -107,6 +127,112 @@ fn kind_for(path: &[&str]) -> Option<CommandKind> {
     })
 }
 
+/// Open the browser surface named by the current owner-only discovery file.
+///
+/// This deliberately shares [`DiscoveryRead`] with resident commands. Canvas
+/// acquisition therefore has one file-identity, ownership, mode, wire-shape,
+/// and loopback-origin admission path rather than a browser-specific reader.
+pub(crate) fn open_canvas(discovery_path: &Path) -> Outcome<wire::CanvasOpen> {
+    open_canvas_with(discovery_path, || {}, system_browser)
+}
+
+fn open_canvas_with(
+    discovery_path: &Path,
+    before_current_check: impl FnOnce(),
+    launch: impl FnOnce(&str) -> Result<(), String>,
+) -> Outcome<wire::CanvasOpen> {
+    let discovery = match DiscoveryRead::open(discovery_path) {
+        Ok(discovery) => discovery,
+        Err(outcome) => return rebody(outcome),
+    };
+    if let Err(outcome) = loopback_endpoint(&discovery.value.endpoint) {
+        return rebody(outcome);
+    }
+    before_current_check();
+    if let Err(outcome) = discovery.verify_current() {
+        return rebody(outcome);
+    }
+    if let Err(detail) = launch(&discovery.value.endpoint) {
+        return Outcome::Fault(Fault {
+            class: FaultClass::Environment,
+            reason: "canvas::launch-failed".to_owned(),
+            detail,
+        });
+    }
+    Outcome::Reply(Reply {
+        position: ReplyPosition::Direct {},
+        body: wire::CanvasOpen {
+            endpoint: discovery.value.endpoint,
+            epoch: discovery.value.epoch,
+        },
+    })
+}
+
+fn system_browser(endpoint: &str) -> Result<(), String> {
+    let mut command = browser_command(endpoint)?;
+    let status = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|error| format!("the platform browser launcher did not start: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "the platform browser launcher did not accept the current endpoint: {status}"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn browser_command(endpoint: &str) -> Result<ProcessCommand, String> {
+    let mut command = ProcessCommand::new("/usr/bin/open");
+    command.arg("-u").arg(endpoint);
+    Ok(command)
+}
+
+#[cfg(target_os = "linux")]
+fn browser_command(endpoint: &str) -> Result<ProcessCommand, String> {
+    let mut command = ProcessCommand::new("/usr/bin/xdg-open");
+    command.arg(endpoint);
+    Ok(command)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn browser_command(_endpoint: &str) -> Result<ProcessCommand, String> {
+    Err("canvas browser launch is unsupported on this build target".to_owned())
+}
+
+fn rebody<B>(outcome: Outcome<CommandAnswer>) -> Outcome<B> {
+    match outcome {
+        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => Outcome::Fault(fault),
+        Outcome::Reply(_) => Outcome::Fault(Fault {
+            class: FaultClass::Protocol,
+            reason: "canvas::admission-replied".to_owned(),
+            detail: "canvas discovery admission returned a reply instead of a failure".to_owned(),
+        }),
+    }
+}
+
+/// Prove the selected read contract through the resident's sole authenticated
+/// opening path and return the generation that accepted it.
+pub(crate) fn authenticate(
+    discovery_path: &Path,
+    contract: &Contract,
+) -> ClientResult<CanonicalUuid> {
+    if !contract.guards.contains(&Guard::Resident) || matches!(contract.principal, Principal::Local)
+    {
+        return Err(protocol_fault(
+            "command::mapping-unsupported",
+            "selected CLI contract has no authenticated resident read mapping",
+        ));
+    }
+    let discovery = DiscoveryRead::open(discovery_path)?;
+    let session = open_session(contract, discovery)?;
+    Ok(session.accepted.epoch)
+}
+
 struct MappedCommand {
     id: CanonicalUuid,
     kind: CommandKind,
@@ -129,6 +255,34 @@ impl MappedCommand {
                     state: wire::ResidentState::Dark,
                 },
             ),
+            (["consent"], SelectedCommand::ConsentRead) => Self::new(
+                contract,
+                &["consent"],
+                CommandKind::ConsentRead,
+                Vec::new(),
+                &wire::intent::ConsentRead {},
+            ),
+            (["consent", "policy"], SelectedCommand::ConsentPolicy) => Self::new(
+                contract,
+                &["consent", "policy"],
+                CommandKind::ConsentPolicy,
+                Vec::new(),
+                &wire::intent::ConsentPolicy {},
+            ),
+            (
+                ["consent", "allow"] | ["consent", "deny"],
+                SelectedCommand::ConsentDecide {
+                    request,
+                    answer,
+                    expected,
+                },
+            ) => Self::new(
+                contract,
+                contract.path,
+                CommandKind::ConsentDecide,
+                expected,
+                &wire::intent::ConsentDecide { request, answer },
+            ),
             (["release", "publish"], SelectedCommand::ReleasePublish { release, state }) => {
                 let mut expected = vec![Witness::Observation {
                     key: release.key().clone(),
@@ -149,6 +303,30 @@ impl MappedCommand {
                     },
                 )
             }
+            (["trust", "grant"], SelectedCommand::TrustGrant { digest }) => Self::new(
+                contract,
+                &["trust", "grant"],
+                CommandKind::TrustGrant,
+                vec![Witness::Trust {
+                    digest: digest.clone(),
+                    standing: wire::TrustState::Pended,
+                }],
+                &wire::intent::TrustRef {
+                    digest: digest.clone(),
+                },
+            ),
+            (["trust", "revoke"], SelectedCommand::TrustRevoke { digest }) => Self::new(
+                contract,
+                &["trust", "revoke"],
+                CommandKind::TrustRevoke,
+                vec![Witness::Trust {
+                    digest: digest.clone(),
+                    standing: wire::TrustState::Granted,
+                }],
+                &wire::intent::TrustRef {
+                    digest: digest.clone(),
+                },
+            ),
             _ => Err(protocol_fault(
                 "command::mapping-unsupported",
                 "selected CLI contract has no resident command mapping",
@@ -411,48 +589,69 @@ fn request(
     mapped: MappedCommand,
     discovery: DiscoveryRead,
 ) -> Outcome<CommandAnswer> {
-    let authority = match endpoint_authority(&discovery.value.endpoint) {
-        Ok(authority) => authority,
+    let mut session = match open_session(contract, discovery) {
+        Ok(session) => session,
         Err(outcome) => return outcome,
     };
-    let address = match authority.parse::<SocketAddr>() {
-        Ok(address) if address.ip().is_loopback() => address,
-        Ok(_) => {
-            return protocol_fault(
-                "canvas::endpoint-not-loopback",
-                "canvas discovery does not name a loopback socket",
-            );
-        }
-        Err(_) => {
-            return protocol_fault(
-                "canvas::endpoint-invalid",
-                "canvas discovery does not name one socket authority",
-            );
-        }
-    };
-    if let Err(outcome) = discovery.verify_current() {
+    let command = mapped.envelope(session.discovery.value.epoch);
+    if let Err(outcome) = send(&mut session.socket, &command) {
         return outcome;
     }
+    let response = match receive(&mut session.socket) {
+        Ok(response) => response,
+        Err(outcome) => return outcome,
+    };
+    decode_response(
+        &response,
+        contract,
+        mapped.id,
+        mapped.kind,
+        session.discovery.value.epoch,
+        session.discovery.value.capability,
+    )
+}
+
+struct AuthenticatedSession {
+    socket: WebSocket<TcpStream>,
+    discovery: DiscoveryRead,
+    accepted: wire::Accepted,
+}
+
+fn open_session(
+    contract: &Contract,
+    discovery: DiscoveryRead,
+) -> ClientResult<AuthenticatedSession> {
+    let (authority, address) = loopback_endpoint(&discovery.value.endpoint)?;
+    discovery.verify_current()?;
     let stream = match TcpStream::connect_timeout(&address, SOCKET_TIMEOUT) {
         Ok(stream) => stream,
-        Err(error) => return environment_fault("canvas::connect-failed", &error.to_string()),
+        Err(error) => {
+            return Err(environment_fault(
+                "canvas::connect-failed",
+                &error.to_string(),
+            ));
+        }
     };
     if let Err(error) = stream.set_read_timeout(Some(SOCKET_TIMEOUT)) {
-        return environment_fault("canvas::timeout-failed", &error.to_string());
+        return Err(environment_fault(
+            "canvas::timeout-failed",
+            &error.to_string(),
+        ));
     }
     if let Err(error) = stream.set_write_timeout(Some(SOCKET_TIMEOUT)) {
-        return environment_fault("canvas::timeout-failed", &error.to_string());
+        return Err(environment_fault(
+            "canvas::timeout-failed",
+            &error.to_string(),
+        ));
     }
-    if let Err(outcome) = discovery.verify_current() {
-        return outcome;
-    }
+    discovery.verify_current()?;
     let mut request = match format!("ws://{authority}/socket").into_client_request() {
         Ok(request) => request,
         Err(_) => {
-            return protocol_fault(
+            return Err(protocol_fault(
                 "canvas::request-invalid",
                 "canvas endpoint cannot form the current socket request",
-            );
+            ));
         }
     };
     let origin = match discovery
@@ -462,61 +661,43 @@ fn request(
     {
         Ok(origin) => origin,
         Err(_) => {
-            return protocol_fault(
+            return Err(protocol_fault(
                 "canvas::origin-invalid",
                 "canvas endpoint cannot form the current socket origin",
-            );
+            ));
         }
     };
     request.headers_mut().insert(ORIGIN, origin);
     let (mut socket, _) = match tungstenite::client(request, stream) {
         Ok(opened) => opened,
-        Err(error) => return environment_fault("canvas::opening-failed", &error.to_string()),
+        Err(error) => {
+            return Err(environment_fault(
+                "canvas::opening-failed",
+                &error.to_string(),
+            ));
+        }
     };
-    if let Err(outcome) = discovery.verify_current() {
-        return outcome;
-    }
+    discovery.verify_current()?;
     let hello = wire::Hello {
         wire: wire::WireVersion::CURRENT,
         capability: discovery.value.capability,
         epoch: discovery.value.epoch,
     };
-    if let Err(outcome) = send(&mut socket, &hello) {
-        return outcome;
-    }
-    let opening = match receive(&mut socket) {
-        Ok(opening) => opening,
-        Err(outcome) => return outcome,
-    };
-    let accepted = match decode_opening(&opening, &discovery.value) {
-        Ok(accepted) => accepted,
-        Err(outcome) => return outcome,
-    };
+    send(&mut socket, &hello)?;
+    let opening = receive(&mut socket)?;
+    let accepted = decode_opening(&opening, &discovery.value)?;
     if !principal_matches(contract.principal, &accepted.actor) {
-        return protocol_fault(
+        return Err(protocol_fault(
             "command::principal-mismatch",
             "resident capability resolved to a principal outside the selected CLI contract",
-        );
+        ));
     }
-    if let Err(outcome) = discovery.verify_current() {
-        return outcome;
-    }
-    let command = mapped.envelope(discovery.value.epoch);
-    if let Err(outcome) = send(&mut socket, &command) {
-        return outcome;
-    }
-    let response = match receive(&mut socket) {
-        Ok(response) => response,
-        Err(outcome) => return outcome,
-    };
-    decode_response(
-        &response,
-        contract,
-        mapped.id,
-        mapped.kind,
-        discovery.value.epoch,
-        discovery.value.capability,
-    )
+    discovery.verify_current()?;
+    Ok(AuthenticatedSession {
+        socket,
+        discovery,
+        accepted,
+    })
 }
 
 fn endpoint_authority(endpoint: &str) -> ClientResult<&str> {
@@ -533,6 +714,21 @@ fn endpoint_authority(endpoint: &str) -> ClientResult<&str> {
         ));
     }
     Ok(authority)
+}
+
+fn loopback_endpoint(endpoint: &str) -> ClientResult<(&str, SocketAddr)> {
+    let authority = endpoint_authority(endpoint)?;
+    match authority.parse::<SocketAddr>() {
+        Ok(address) if address.ip().is_loopback() => Ok((authority, address)),
+        Ok(_) => Err(protocol_fault(
+            "canvas::endpoint-not-loopback",
+            "canvas discovery does not name a loopback socket",
+        )),
+        Err(_) => Err(protocol_fault(
+            "canvas::endpoint-invalid",
+            "canvas discovery does not name one socket authority",
+        )),
+    }
 }
 
 fn decode_opening(bytes: &[u8], discovery: &canvas::Discovery) -> ClientResult<wire::Accepted> {
@@ -727,6 +923,7 @@ mod tests {
 
     use super::*;
     use crate::cli::{ExitOutcome, JournalAccess, ResultClass};
+    use crate::render::{self, Form};
 
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -931,6 +1128,184 @@ mod tests {
             panic!("replacement must invalidate the captured discovery");
         };
         assert_eq!(fault.reason, "canvas::discovery-replaced");
+    }
+
+    #[test]
+    fn canvas_opens_the_exact_origin_and_never_crosses_the_capability() {
+        let fixture = Fixture::new("canvas-open");
+        let discovery = fixture.publish();
+        let mut launched = None;
+
+        let outcome = open_canvas_with(
+            &fixture.canvas,
+            || {},
+            |endpoint| {
+                launched = Some(endpoint.to_owned());
+                Ok(())
+            },
+        );
+
+        assert_eq!(launched.as_deref(), Some(discovery.endpoint.as_str()));
+        let Outcome::Reply(Reply { position, body }) = &outcome else {
+            panic!("current Canvas discovery must open: {outcome:?}");
+        };
+        assert_eq!(*position, ReplyPosition::Direct {});
+        assert_eq!(
+            body,
+            &wire::CanvasOpen {
+                endpoint: discovery.endpoint,
+                epoch: discovery.epoch,
+            }
+        );
+
+        let capability = discovery.capability.to_string();
+        let text = render::render(&outcome, Form::Text).expect("Canvas receipt renders as text");
+        let text_body: wire::CanvasOpen =
+            wire::decode(text.document()).expect("text carries the typed body");
+        assert_eq!(text_body, *body);
+        assert!(!String::from_utf8_lossy(text.document()).contains(&capability));
+
+        let json = render::render(&outcome, Form::Json).expect("Canvas receipt renders as JSON");
+        let json_outcome: Outcome<wire::CanvasOpen> =
+            wire::decode(json.document()).expect("JSON carries the typed outcome");
+        assert_eq!(json_outcome, outcome);
+        assert!(!String::from_utf8_lossy(json.document()).contains(&capability));
+    }
+
+    #[test]
+    fn canvas_refuses_missing_malformed_and_nonloopback_discovery_without_launching() {
+        let fixture = Fixture::new("canvas-refusals");
+        let mut launches = 0_u8;
+        let missing = open_canvas_with(
+            &fixture.canvas,
+            || {},
+            |_| {
+                launches += 1;
+                Ok(())
+            },
+        );
+        let Outcome::Fault(missing) = missing else {
+            panic!("missing discovery must fault");
+        };
+        assert_eq!(missing.reason, "canvas::discovery-unavailable");
+
+        fs::write(&fixture.canvas, b"not current discovery").expect("malformed fixture writes");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            fs::set_permissions(&fixture.canvas, fs::Permissions::from_mode(0o600))
+                .expect("malformed fixture becomes owner-only");
+        }
+        let malformed = open_canvas_with(
+            &fixture.canvas,
+            || {},
+            |_| {
+                launches += 1;
+                Ok(())
+            },
+        );
+        let Outcome::Fault(malformed) = malformed else {
+            panic!("malformed discovery must fault");
+        };
+        assert_eq!(malformed.reason, "canvas::discovery-malformed");
+
+        canvas::Discovery {
+            endpoint: "http://192.0.2.1:48123".to_owned(),
+            capability: uuid(3),
+            epoch: uuid(4),
+        }
+        .publish(&fixture.canvas)
+        .expect("nonloopback fixture publishes");
+        let nonloopback = open_canvas_with(
+            &fixture.canvas,
+            || {},
+            |_| {
+                launches += 1;
+                Ok(())
+            },
+        );
+        let Outcome::Fault(nonloopback) = nonloopback else {
+            panic!("nonloopback discovery must fault");
+        };
+        assert_eq!(nonloopback.reason, "canvas::endpoint-not-loopback");
+        assert_eq!(launches, 0, "no refused discovery reached the launcher");
+    }
+
+    #[test]
+    fn canvas_rechecks_discovery_identity_immediately_before_launch() {
+        let fixture = Fixture::new("canvas-stale");
+        let original = fixture.publish();
+        let replacement = canvas::Discovery {
+            capability: uuid(5),
+            epoch: uuid(6),
+            ..original.clone()
+        };
+        let mut launched = false;
+
+        let outcome = open_canvas_with(
+            &fixture.canvas,
+            || {
+                replacement
+                    .publish(&fixture.canvas)
+                    .expect("replacement publishes before the launch check");
+            },
+            |_| {
+                launched = true;
+                Ok(())
+            },
+        );
+
+        let Outcome::Fault(fault) = outcome else {
+            panic!("replaced discovery must fault");
+        };
+        assert_eq!(fault.reason, "canvas::discovery-replaced");
+        assert!(!launched, "stale discovery must not reach the launcher");
+        assert!(!fault.detail.contains(&original.capability.to_string()));
+    }
+
+    #[test]
+    fn canvas_launcher_interruption_is_one_typed_fault() {
+        let fixture = Fixture::new("canvas-launch-interruption");
+        let discovery = fixture.publish();
+
+        let outcome = open_canvas_with(
+            &fixture.canvas,
+            || {},
+            |_| Err("fixture launcher was interrupted".to_owned()),
+        );
+
+        let Outcome::Fault(fault) = outcome else {
+            panic!("launcher interruption must fault");
+        };
+        assert_eq!(fault.reason, "canvas::launch-failed");
+        assert_eq!(fault.detail, "fixture launcher was interrupted");
+        assert!(!fault.detail.contains(&discovery.capability.to_string()));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn canvas_platform_launcher_has_one_fixed_program_and_exact_endpoint() {
+        use std::ffi::OsStr;
+
+        let endpoint = "http://127.0.0.1:48123";
+        let command = browser_command(endpoint).expect("this platform has one launcher");
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(command.get_program(), OsStr::new("/usr/bin/open"));
+            assert_eq!(
+                command.get_args().collect::<Vec<_>>(),
+                [OsStr::new("-u"), OsStr::new(endpoint)]
+            );
+        }
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(command.get_program(), OsStr::new("/usr/bin/xdg-open"));
+            assert_eq!(
+                command.get_args().collect::<Vec<_>>(),
+                [OsStr::new(endpoint)]
+            );
+        }
     }
 
     #[cfg(unix)]

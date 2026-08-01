@@ -16,6 +16,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::body::ConsentQueueCause;
 use crate::command::CommandKind;
 use crate::envelope::Actor;
 use crate::head::{ResidentState, TrustState};
@@ -345,6 +346,16 @@ pub struct ConsentDecide {
     pub answer: Answer,
 }
 
+/// Read the pending consent queue and its current renewal budgets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentRead {}
+
+/// Read the tracked consent policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentPolicy {}
+
 /// Name one executable digest and nothing else.
 ///
 /// Pending, granting, and revoking trust each name the exact digest; the
@@ -467,6 +478,99 @@ pub struct ConsentAnswer {
     pub answer: Answer,
 }
 
+/// One current bounded-rule budget.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentBudgetAnswer {
+    /// Rule whose grants are metered.
+    pub rule: Name,
+    /// Grants admitted between renewals.
+    pub bound: u32,
+    /// Grants still available in the current renewal window.
+    pub remaining: u32,
+}
+
+/// One request currently waiting on the operator.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentPendingAnswer {
+    /// Pending request identity.
+    pub request: CanonicalUuid,
+    /// Lane that raised the request.
+    pub lane: CanonicalUuid,
+    /// Operation awaiting consent.
+    pub operation: String,
+    /// Rule or posture that queued the request.
+    pub rule: Name,
+    /// Request-bound reason the operation queued.
+    pub cause: ConsentQueueCause,
+    /// Current renewal state when this request exhausted a bounded rule.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub budget: Option<ConsentBudgetAnswer>,
+}
+
+/// The pending consent queue and all current bounded-rule budgets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentQueueAnswer {
+    /// Requests waiting on the operator, ordered by request identity.
+    pub pending: Vec<ConsentPendingAnswer>,
+    /// Current budgets in tracked policy order.
+    pub budgets: Vec<ConsentBudgetAnswer>,
+}
+
+/// One answer available to tracked consent policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConsentPolicyDecision {
+    /// Permit the operation.
+    Allow,
+    /// Refuse the operation.
+    Deny,
+    /// Ask the operator.
+    Queue,
+}
+
+/// One ordered tracked consent rule and its current budget state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentRuleAnswer {
+    /// Stable rule identity.
+    pub name: Name,
+    /// Exact operation or glob pattern the rule matches.
+    pub tool: String,
+    /// Decision produced by the rule.
+    pub answer: ConsentPolicyDecision,
+    /// Configured grant bound, when present.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub budget: Option<u32>,
+    /// Grants currently available, when the rule is bounded.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub remaining: Option<u32>,
+}
+
+/// The tracked consent posture and ordered rule table.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentPolicyAnswer {
+    /// Decision used when no rule matches.
+    pub posture: ConsentPolicyDecision,
+    /// Rules in first-match order.
+    pub rules: Vec<ConsentRuleAnswer>,
+}
+
 /// The answer a trust command returns.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -552,6 +656,10 @@ pub enum BodyShape {
     SteerDispose,
     /// [`ConsentDecide`]
     ConsentDecide,
+    /// [`ConsentRead`]
+    ConsentRead,
+    /// [`ConsentPolicy`]
+    ConsentPolicy,
     /// [`TrustRef`]
     TrustRef,
     /// [`LaneSeat`]
@@ -585,6 +693,10 @@ pub enum AnswerShape {
     Directive,
     /// [`ConsentAnswer`]
     Consent,
+    /// [`ConsentQueueAnswer`]
+    ConsentQueue,
+    /// [`ConsentPolicyAnswer`]
+    ConsentPolicy,
     /// [`TrustAnswer`]
     Trust,
     /// [`StateAnswer`]
@@ -613,6 +725,10 @@ pub enum CommandAnswer {
     Directive(DirectiveAnswer),
     /// [`AnswerShape::Consent`]
     Consent(ConsentAnswer),
+    /// [`AnswerShape::ConsentQueue`]
+    ConsentQueue(ConsentQueueAnswer),
+    /// [`AnswerShape::ConsentPolicy`]
+    ConsentPolicy(ConsentPolicyAnswer),
     /// [`AnswerShape::Trust`]
     Trust(TrustAnswer),
     /// [`AnswerShape::State`]
@@ -635,6 +751,8 @@ impl CommandAnswer {
             Self::Doc(_) => AnswerShape::Doc,
             Self::Directive(_) => AnswerShape::Directive,
             Self::Consent(_) => AnswerShape::Consent,
+            Self::ConsentQueue(_) => AnswerShape::ConsentQueue,
+            Self::ConsentPolicy(_) => AnswerShape::ConsentPolicy,
             Self::Trust(_) => AnswerShape::Trust,
             Self::State(_) => AnswerShape::State,
             Self::Taste(_) => AnswerShape::Taste,
@@ -660,6 +778,8 @@ impl AnswerShape {
             Self::Doc => CommandAnswer::Doc(crate::decode(bytes)?),
             Self::Directive => CommandAnswer::Directive(crate::decode(bytes)?),
             Self::Consent => CommandAnswer::Consent(crate::decode(bytes)?),
+            Self::ConsentQueue => CommandAnswer::ConsentQueue(crate::decode(bytes)?),
+            Self::ConsentPolicy => CommandAnswer::ConsentPolicy(crate::decode(bytes)?),
             Self::Trust => CommandAnswer::Trust(crate::decode(bytes)?),
             Self::State => CommandAnswer::State(crate::decode(bytes)?),
             Self::Taste => CommandAnswer::Taste(crate::decode(bytes)?),
@@ -722,6 +842,8 @@ impl CommandKind {
             Self::SteerResend | Self::SteerCancel => Binding::of(B::DirectiveRef, A::Directive),
             Self::SteerDispose => Binding::of(B::SteerDispose, A::Directive),
             Self::ConsentDecide => Binding::of(B::ConsentDecide, A::Consent),
+            Self::ConsentRead => Binding::of(B::ConsentRead, A::ConsentQueue),
+            Self::ConsentPolicy => Binding::of(B::ConsentPolicy, A::ConsentPolicy),
             Self::TrustPend | Self::TrustGrant | Self::TrustRevoke => {
                 Binding::of(B::TrustRef, A::Trust)
             }
@@ -787,6 +909,10 @@ pub enum Intent {
     SteerDispose(SteerDispose),
     /// [`BodyShape::ConsentDecide`]
     ConsentDecide(ConsentDecide),
+    /// [`BodyShape::ConsentRead`]
+    ConsentRead(ConsentRead),
+    /// [`BodyShape::ConsentPolicy`]
+    ConsentPolicy(ConsentPolicy),
     /// [`BodyShape::TrustRef`]
     TrustRef(TrustRef),
     /// [`BodyShape::LaneSeat`]
@@ -829,6 +955,8 @@ impl Intent {
             Self::DirectiveRef(_) => BodyShape::DirectiveRef,
             Self::SteerDispose(_) => BodyShape::SteerDispose,
             Self::ConsentDecide(_) => BodyShape::ConsentDecide,
+            Self::ConsentRead(_) => BodyShape::ConsentRead,
+            Self::ConsentPolicy(_) => BodyShape::ConsentPolicy,
             Self::TrustRef(_) => BodyShape::TrustRef,
             Self::LaneSeat(_) => BodyShape::LaneSeat,
             Self::LaneState(_) => BodyShape::LaneState,
@@ -849,6 +977,37 @@ impl BodyShape {
     /// refuse unknown fields, so a body spelled for the wrong kind is a
     /// decode failure rather than a silently truncated value.
     pub fn decode(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
+        if self.is_board_body() {
+            self.decode_board_body(bytes)
+        } else {
+            self.decode_runtime_body(bytes)
+        }
+    }
+
+    const fn is_board_body(self) -> bool {
+        matches!(
+            self,
+            Self::BoardRead
+                | Self::BoardGraph
+                | Self::BoardHandout
+                | Self::DocLedger
+                | Self::TaskAdd
+                | Self::TaskEdit
+                | Self::TaskNote
+                | Self::TaskDefer
+                | Self::TaskRef
+                | Self::TaskDepends
+                | Self::TaskPhase
+                | Self::TaskDone
+                | Self::TaskReview
+                | Self::TaskAssign
+                | Self::ClaimWin
+                | Self::ClaimCarry
+                | Self::DocApply
+        )
+    }
+
+    fn decode_board_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
         Ok(match self {
             Self::BoardRead => Intent::BoardRead(crate::decode(bytes)?),
             Self::BoardGraph => Intent::BoardGraph(crate::decode(bytes)?),
@@ -867,10 +1026,18 @@ impl BodyShape {
             Self::ClaimWin => Intent::ClaimWin(crate::decode(bytes)?),
             Self::ClaimCarry => Intent::ClaimCarry(crate::decode(bytes)?),
             Self::DocApply => Intent::DocApply(crate::decode(bytes)?),
+            _ => unreachable!("board body partition is closed"),
+        })
+    }
+
+    fn decode_runtime_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
+        Ok(match self {
             Self::SteerSend => Intent::SteerSend(crate::decode(bytes)?),
             Self::DirectiveRef => Intent::DirectiveRef(crate::decode(bytes)?),
             Self::SteerDispose => Intent::SteerDispose(crate::decode(bytes)?),
             Self::ConsentDecide => Intent::ConsentDecide(crate::decode(bytes)?),
+            Self::ConsentRead => Intent::ConsentRead(crate::decode(bytes)?),
+            Self::ConsentPolicy => Intent::ConsentPolicy(crate::decode(bytes)?),
             Self::TrustRef => Intent::TrustRef(crate::decode(bytes)?),
             Self::LaneSeat => Intent::LaneSeat(crate::decode(bytes)?),
             Self::LaneState => Intent::LaneState(crate::decode(bytes)?),
@@ -878,6 +1045,7 @@ impl BodyShape {
             Self::Recognize => Intent::Recognize(crate::decode(bytes)?),
             Self::ReleasePublish => Intent::ReleasePublish(crate::decode(bytes)?),
             Self::UpChange => Intent::UpChange(crate::decode(bytes)?),
+            _ => unreachable!("runtime body partition is closed"),
         })
     }
 }

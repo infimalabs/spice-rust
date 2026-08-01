@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
+use std::os::unix::fs::{PermissionsExt as _, symlink};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -74,6 +74,12 @@ impl Fixture {
 
     fn rust_state(&self) -> PathBuf {
         self.common().join(".spice-rust")
+    }
+
+    fn admitted_rust_state(&self) -> PathBuf {
+        fs::canonicalize(self.common())
+            .expect("canonical Git-common directory")
+            .join(".spice-rust")
     }
 
     fn invoke(&self, arguments: &[&str]) -> Output {
@@ -188,6 +194,7 @@ impl Drop for Resident {
 struct Entry {
     bytes: Vec<u8>,
     mode: u32,
+    link: Option<PathBuf>,
 }
 
 #[test]
@@ -266,6 +273,62 @@ fn explicit_rust_lifecycle_uses_only_isolated_state() {
     );
 }
 
+#[test]
+fn a_rust_root_linked_to_python_authority_refuses_every_state_entry_point() {
+    let fixture = Fixture::new();
+    symlink(".spice", fixture.rust_state()).expect("link Rust root to Python authority");
+    let before = snapshot(&fixture.root);
+    let expected = fixture.admitted_rust_state();
+
+    for arguments in [
+        ["--json", "up"],
+        ["--json", "version"],
+        ["--json", "down"],
+        ["--json", "canvas"],
+        ["--json", "lock"],
+        ["--json", "proof"],
+    ] {
+        assert_state_refusal(fixture.invoke(&arguments), &expected, arguments[1]);
+    }
+
+    assert_eq!(
+        snapshot(&fixture.root),
+        before,
+        "a linked Rust root changed Python authority, hooks, or worktree state"
+    );
+}
+
+#[test]
+fn linked_state_components_refuse_before_any_outside_mutation() {
+    for (component, command) in [
+        ("data", "version"),
+        ("locks", "lock"),
+        ("proof", "proof"),
+        ("resident", "down"),
+        ("canvas", "canvas"),
+        ("degraded", "up"),
+        ("tape", "up"),
+    ] {
+        let fixture = Fixture::new();
+        fs::create_dir(fixture.rust_state()).expect("create real Rust state root");
+        let outside = fixture.root.join(format!("outside-{component}"));
+        fs::create_dir(&outside).expect("create outside target");
+        fs::write(outside.join("sentinel"), format!("outside {component}\n"))
+            .expect("plant outside sentinel");
+        symlink(&outside, fixture.rust_state().join(component))
+            .expect("link fixed state component outside");
+        let before = snapshot(&fixture.root);
+        let expected = fixture.admitted_rust_state().join(component);
+
+        assert_state_refusal(fixture.invoke(&["--json", command]), &expected, command);
+        assert_eq!(
+            snapshot(&fixture.root),
+            before,
+            "{command} mutated state through linked {component}"
+        );
+    }
+}
+
 fn assert_reply(output: Output, command: &str) {
     assert!(
         output.status.success(),
@@ -279,6 +342,33 @@ fn assert_reply(output: Output, command: &str) {
     assert!(
         matches!(outcome, Outcome::Reply(_)),
         "{command} did not reply: {outcome:?}",
+    );
+}
+
+fn assert_state_refusal(output: Output, expected: &Path, command: &str) {
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "{command} did not refuse: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "{command} wrote refusal to stdout"
+    );
+    let outcome: Outcome<serde_json::Value> =
+        wire::decode(&output.stderr).expect("state refusal is one typed outcome");
+    let Outcome::Refusal(refusal) = outcome else {
+        panic!("{command} did not emit a refusal: {outcome:?}");
+    };
+    assert_eq!(refusal.reason, "repository::state-path-refused");
+    assert_eq!(refusal.witness.as_deref(), Some("repository-state-root"));
+    let observed = refusal.observed.expect("state refusal names observation");
+    assert!(
+        observed.contains(&expected.display().to_string()),
+        "{command} refusal did not name {}: {observed}",
+        expected.display()
     );
 }
 
@@ -326,7 +416,28 @@ fn collect(root: &Path, directory: &Path, entries: &mut BTreeMap<PathBuf, Entry>
     for entry in fs::read_dir(directory).expect("read snapshot directory") {
         let path = entry.expect("read snapshot entry").path();
         let metadata = fs::symlink_metadata(&path).expect("read snapshot metadata");
-        if metadata.is_dir() {
+        if metadata.file_type().is_symlink() {
+            entries.insert(
+                path.strip_prefix(root)
+                    .expect("snapshot link remains under root")
+                    .to_path_buf(),
+                Entry {
+                    bytes: Vec::new(),
+                    mode: metadata.permissions().mode(),
+                    link: Some(fs::read_link(&path).expect("read snapshot link")),
+                },
+            );
+        } else if metadata.is_dir() {
+            entries.insert(
+                path.strip_prefix(root)
+                    .expect("snapshot directory remains under root")
+                    .to_path_buf(),
+                Entry {
+                    bytes: Vec::new(),
+                    mode: metadata.permissions().mode(),
+                    link: None,
+                },
+            );
             collect(root, &path, entries);
         } else {
             entries.insert(
@@ -336,6 +447,7 @@ fn collect(root: &Path, directory: &Path, entries: &mut BTreeMap<PathBuf, Entry>
                 Entry {
                     bytes: fs::read(&path).expect("read snapshot bytes"),
                     mode: metadata.permissions().mode(),
+                    link: None,
                 },
             );
         }

@@ -2,7 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::path::Path;
 
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 
 use crate::{Availability, Cursor, FoldId, Horizon, INVENTORY};
 
@@ -119,6 +119,20 @@ impl Store {
         Self::from_connection(Connection::open(path).map_err(StoreError::Sqlite)?)
     }
 
+    /// Opens an existing folds store without baseline or writer capability.
+    pub fn open_read_only(path: impl AsRef<Path>) -> Result<Self, StoreError> {
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(StoreError::Sqlite)?;
+        connection
+            .pragma_update(None, "query_only", true)
+            .map_err(StoreError::Sqlite)?;
+        connection
+            .pragma_update(None, "trusted_schema", false)
+            .map_err(StoreError::Sqlite)?;
+        admit_version(&connection, STORE_SCHEMA_VERSION)?;
+        Ok(Self { connection })
+    }
+
     /// Opens an isolated folds store.
     pub fn in_memory() -> Result<Self, StoreError> {
         Self::from_connection(Connection::open_in_memory().map_err(StoreError::Sqlite)?)
@@ -146,6 +160,15 @@ impl Store {
                     materialization,
                 )))
             }
+        }
+    }
+
+    /// Reads the current generation without imposing a requested horizon.
+    pub fn current(&self, fold: FoldId) -> Result<Option<Materialization>, StoreError> {
+        match inspect(&self.connection, fold)? {
+            Inspection::Missing => Ok(None),
+            Inspection::Corrupt(detail) => Err(StoreError::Corrupt { fold, detail }),
+            Inspection::Present(materialization) => Ok(Some(materialization)),
         }
     }
 
@@ -487,6 +510,10 @@ pub(crate) fn baseline(connection: &Connection, current: u32) -> Result<(), Stor
     connection
         .execute(SEED_VERSION_SQL, params![current])
         .map_err(StoreError::Sqlite)?;
+    admit_version(connection, current)
+}
+
+fn admit_version(connection: &Connection, current: u32) -> Result<(), StoreError> {
     let version: u32 = connection
         .query_row(
             "SELECT version FROM fold_schema WHERE singleton = 1",

@@ -43,12 +43,10 @@ fn installed_rust_binary_coexists_with_the_python_entrypoint() {
         fs::metadata(&installed).unwrap().len(),
         fs::metadata(rust).unwrap().len()
     );
-    assert!(
-        fs::metadata(scratch.join(".git/.spice/rust/install.json"))
-            .unwrap()
-            .len()
-            < MAX_COMPACT_RECORD_BYTES
-    );
+    let receipt = fs::metadata(scratch.join(".git/.spice-rust/install.json")).unwrap();
+    assert!(receipt.len() < MAX_COMPACT_RECORD_BYTES);
+    assert_eq!(receipt.permissions().mode() & 0o777, 0o600);
+    assert!(!scratch.join(".git/.spice/rust/install.json").exists());
 
     assert_eq!(
         unapply(&repository).unwrap().status(),
@@ -381,7 +379,7 @@ impl Scratch {
     }
 
     fn record(&self) -> PathBuf {
-        self.join(".git/.spice/rust/install.json")
+        self.join(".git/.spice-rust/install.json")
     }
 
     fn snapshot(&self) -> Snapshot {

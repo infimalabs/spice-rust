@@ -1,4 +1,5 @@
 use std::fmt;
+use std::str::FromStr;
 
 use crate::{
     AnswerContent, Beyond, ConfigSource, FactPlane, HeadSource, Recovery, Source, TapeSource,
@@ -103,6 +104,17 @@ macro_rules! fold_registry {
             }
         }
 
+        impl FromStr for FoldId {
+            type Err = FoldIdError;
+
+            fn from_str(value: &str) -> Result<Self, Self::Err> {
+                match value {
+                    $($name => Ok(Self::$variant),)+
+                    _ => Err(FoldIdError(value.to_owned())),
+                }
+            }
+        }
+
         impl fmt::Display for FoldId {
             fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
                 formatter.write_str(self.as_str())
@@ -125,6 +137,18 @@ macro_rules! fold_registry {
         ];
     };
 }
+
+/// A fold name outside the closed release-one inventory.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FoldIdError(String);
+
+impl fmt::Display for FoldIdError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "unknown fold {:?}", self.0)
+    }
+}
+
+impl std::error::Error for FoldIdError {}
 
 macro_rules! ring_registry {
     ($(

@@ -110,6 +110,8 @@ const BODIES: &[(CommandKind, &str)] = &[
         CommandKind::ConsentDecide,
         r#"{ "request": "018f82d4-6f59-7d06-92e3-bce9131163c4", "answer": "asked" }"#,
     ),
+    (CommandKind::ConsentRead, r#"{}"#),
+    (CommandKind::ConsentPolicy, r#"{}"#),
     (
         CommandKind::TrustPend,
         r#"{ "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }"#,
@@ -212,6 +214,14 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
     (
         AnswerShape::Consent,
         r#"{ "request": "018f82d4-6f59-7d06-92e3-bce9131163c4", "answer": "granted" }"#,
+    ),
+    (
+        AnswerShape::ConsentQueue,
+        r#"{ "pending": [], "budgets": [] }"#,
+    ),
+    (
+        AnswerShape::ConsentPolicy,
+        r#"{ "posture": "queue", "rules": [] }"#,
     ),
     (
         AnswerShape::Trust,
@@ -391,6 +401,8 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::DirectiveRef,
     BodyShape::SteerDispose,
     BodyShape::ConsentDecide,
+    BodyShape::ConsentRead,
+    BodyShape::ConsentPolicy,
     BodyShape::TrustRef,
     BodyShape::LaneSeat,
     BodyShape::LaneState,
@@ -409,6 +421,8 @@ const ALL_ANSWERS: &[AnswerShape] = &[
     AnswerShape::Doc,
     AnswerShape::Directive,
     AnswerShape::Consent,
+    AnswerShape::ConsentQueue,
+    AnswerShape::ConsentPolicy,
     AnswerShape::Trust,
     AnswerShape::State,
     AnswerShape::Taste,

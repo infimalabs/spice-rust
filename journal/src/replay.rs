@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -15,6 +15,88 @@ pub struct Verification {
     pub receipts: usize,
     pub heads: usize,
     pub threads: usize,
+}
+
+/// Counts returned after rebuilding every derived thread-index row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReindexReport {
+    pub facts: usize,
+    pub threads: usize,
+}
+
+/// One verified cause thread, ordered from its root through its latest fact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ThreadSnapshot {
+    pub reference: String,
+    pub root: wire::Seq,
+    pub entries: Vec<wire::Envelope<wire::AnyFact>>,
+}
+
+/// Reindex either could not transact or found corrupt immutable history.
+#[derive(Debug)]
+pub enum ReindexError {
+    Sqlite(rusqlite::Error),
+    Violations(Vec<Violation>),
+}
+
+impl fmt::Display for ReindexError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Sqlite(error) => write!(formatter, "journal reindex failed: {error}"),
+            Self::Violations(violations) => write!(
+                formatter,
+                "journal reindex refused {} immutable-history violation(s)",
+                violations.len()
+            ),
+        }
+    }
+}
+
+impl Error for ReindexError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Sqlite(error) => Some(error),
+            Self::Violations(_) => None,
+        }
+    }
+}
+
+/// Thread lookup either found no unambiguous reference or could not verify authority.
+#[derive(Debug)]
+pub enum ThreadError {
+    Verify(VerifyError),
+    Snapshot(crate::SnapshotError),
+    Sqlite(rusqlite::Error),
+    NotFound { reference: String },
+    Ambiguous { reference: String, roots: Vec<u64> },
+}
+
+impl fmt::Display for ThreadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Verify(error) => write!(formatter, "thread authority is invalid: {error}"),
+            Self::Snapshot(error) => write!(formatter, "thread facts are invalid: {error}"),
+            Self::Sqlite(error) => write!(formatter, "thread lookup failed: {error}"),
+            Self::NotFound { reference } => {
+                write!(formatter, "thread reference {reference:?} was not found")
+            }
+            Self::Ambiguous { reference, roots } => write!(
+                formatter,
+                "thread reference {reference:?} names multiple roots {roots:?}"
+            ),
+        }
+    }
+}
+
+impl Error for ThreadError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Verify(error) => Some(error),
+            Self::Snapshot(error) => Some(error),
+            Self::Sqlite(error) => Some(error),
+            Self::NotFound { .. } | Self::Ambiguous { .. } => None,
+        }
+    }
 }
 
 /// Stable verification planes.
@@ -96,6 +178,59 @@ impl Journal {
     pub fn verify(&self) -> Result<Verification, VerifyError> {
         verify_connection(&self.connection)
     }
+
+    /// Rebuilds only the derived origin/cause thread index in one transaction.
+    pub fn reindex(&mut self) -> Result<ReindexReport, ReindexError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(ReindexError::Sqlite)?;
+        let mut violations = Vec::new();
+        let facts = verify_facts(&transaction, &mut violations).map_err(|error| match error {
+            VerifyError::Sqlite(error) => ReindexError::Sqlite(error),
+            VerifyError::Open(error) => ReindexError::Violations(vec![Violation::new(
+                ViolationClass::Schema,
+                "schema",
+                error.to_string(),
+            )]),
+            VerifyError::Violations(found) => ReindexError::Violations(found),
+        })?;
+        let mut expected = BTreeMap::<u64, ThreadRecord>::new();
+        for (seq, fact) in &facts {
+            if let Some(record) = calculate_thread(*seq, fact, &expected, &mut violations) {
+                expected.insert(*seq, record);
+            }
+        }
+        if !violations.is_empty() {
+            return Err(ReindexError::Violations(violations));
+        }
+
+        transaction
+            .execute("DELETE FROM thread_index", [])
+            .map_err(ReindexError::Sqlite)?;
+        for (seq, record) in &expected {
+            transaction
+                .execute(
+                    concat!(
+                        "INSERT INTO thread_index(seq, origin, cause, root, depth) ",
+                        "VALUES (?1, ?2, ?3, ?4, ?5)"
+                    ),
+                    params![
+                        sqlite_integer(*seq)?,
+                        record.origin,
+                        record.cause.map(sqlite_integer).transpose()?,
+                        sqlite_integer(record.root)?,
+                        sqlite_integer(record.depth)?,
+                    ],
+                )
+                .map_err(ReindexError::Sqlite)?;
+        }
+        transaction.commit().map_err(ReindexError::Sqlite)?;
+        Ok(ReindexReport {
+            facts: facts.len(),
+            threads: expected.len(),
+        })
+    }
 }
 
 impl JournalReader {
@@ -103,6 +238,105 @@ impl JournalReader {
     pub fn verify(&self) -> Result<Verification, VerifyError> {
         verify_connection(&self.connection)
     }
+
+    /// Resolves one sequence or exact origin into a verified cause thread.
+    pub fn thread(&self, reference: &str) -> Result<ThreadSnapshot, ThreadError> {
+        self.verify().map_err(ThreadError::Verify)?;
+        let roots = if let Ok(seq) = reference.parse::<u64>() {
+            let Some(seq) = wire::Seq::new(seq) else {
+                return Err(ThreadError::NotFound {
+                    reference: reference.to_owned(),
+                });
+            };
+            self.connection
+                .query_row(
+                    "SELECT root FROM thread_index WHERE seq = ?1",
+                    params![sqlite_integer(seq.get()).map_err(|error| match error {
+                        ReindexError::Sqlite(error) => ThreadError::Sqlite(error),
+                        ReindexError::Violations(_) =>
+                            unreachable!("integer conversion has no violations"),
+                    })?],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()
+                .map_err(ThreadError::Sqlite)?
+                .and_then(|root| u64::try_from(root).ok())
+                .into_iter()
+                .collect::<Vec<_>>()
+        } else {
+            let mut statement = self
+                .connection
+                .prepare("SELECT DISTINCT root FROM thread_index WHERE origin = ?1 ORDER BY root")
+                .map_err(ThreadError::Sqlite)?;
+            let rows = statement
+                .query_map(params![reference], |row| row.get::<_, i64>(0))
+                .map_err(ThreadError::Sqlite)?;
+            let mut roots = Vec::new();
+            for row in rows {
+                let root = row.map_err(ThreadError::Sqlite)?;
+                if let Ok(root) = u64::try_from(root) {
+                    roots.push(root);
+                }
+            }
+            roots
+        };
+        let root = match roots.as_slice() {
+            [] => {
+                return Err(ThreadError::NotFound {
+                    reference: reference.to_owned(),
+                });
+            }
+            [root] => *root,
+            _ => {
+                return Err(ThreadError::Ambiguous {
+                    reference: reference.to_owned(),
+                    roots,
+                });
+            }
+        };
+        let snapshot = self.fact_snapshot().map_err(ThreadError::Snapshot)?;
+        let by_seq = snapshot
+            .facts()
+            .iter()
+            .map(|envelope| (envelope.seq.get(), envelope))
+            .collect::<BTreeMap<_, _>>();
+        let mut statement = self
+            .connection
+            .prepare("SELECT seq FROM thread_index WHERE root = ?1 ORDER BY seq")
+            .map_err(ThreadError::Sqlite)?;
+        let rows = statement
+            .query_map(
+                params![sqlite_integer(root).map_err(|error| match error {
+                    ReindexError::Sqlite(error) => ThreadError::Sqlite(error),
+                    ReindexError::Violations(_) =>
+                        unreachable!("integer conversion has no violations"),
+                })?],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(ThreadError::Sqlite)?;
+        let mut entries = Vec::new();
+        for row in rows {
+            let seq = row.map_err(ThreadError::Sqlite)?;
+            let seq = u64::try_from(seq).map_err(|_| ThreadError::NotFound {
+                reference: reference.to_owned(),
+            })?;
+            let envelope = by_seq.get(&seq).ok_or_else(|| ThreadError::NotFound {
+                reference: reference.to_owned(),
+            })?;
+            entries.push((*envelope).clone());
+        }
+        Ok(ThreadSnapshot {
+            reference: reference.to_owned(),
+            root: wire::Seq::new(root).expect("verified thread roots are positive"),
+            entries,
+        })
+    }
+}
+
+fn sqlite_integer(value: u64) -> Result<i64, ReindexError> {
+    i64::try_from(value).map_err(|error| {
+        ReindexError::Sqlite(rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
+    })
 }
 
 fn verify_connection(connection: &Connection) -> Result<Verification, VerifyError> {

@@ -69,14 +69,6 @@ struct Invocation {
 
 impl Invocation {
     fn acquire() -> Result<Self, Failure> {
-        let target = proof::compiled_target().map_err(|error| {
-            Failure::refusal(
-                "proof::target-refused",
-                "one of the two compiled proof release targets",
-                error.to_string(),
-                "run the proof leaf from an aarch64 Apple Darwin or x86_64 musl build",
-            )
-        })?;
         let current = std::env::current_dir().map_err(|error| {
             Failure::fault(
                 FaultClass::Environment,
@@ -93,8 +85,22 @@ impl Invocation {
         })?;
         let config =
             spice::config::load_repository(&repository, &[]).map_err(Failure::configuration)?;
-        let layout =
-            proof::Layout::new(repository.worktree_root(), repository.state_root(), target);
+        let state =
+            repository
+                .admit_state()
+                .map_err(|error| match crate::state_failure(&error) {
+                    crate::StateFailure::Refusal(refusal) => Failure::Refusal(refusal),
+                    crate::StateFailure::Fault(fault) => Failure::Fault(fault),
+                })?;
+        let target = proof::compiled_target().map_err(|error| {
+            Failure::refusal(
+                "proof::target-refused",
+                "one of the two compiled proof release targets",
+                error.to_string(),
+                "run the proof leaf from an aarch64 Apple Darwin or x86_64 musl build",
+            )
+        })?;
+        let layout = proof::Layout::new(repository.worktree_root(), state.proof(), target);
         Ok(Self {
             layout,
             workspace: repository.worktree_root().to_path_buf(),

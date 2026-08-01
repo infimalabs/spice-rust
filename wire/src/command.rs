@@ -1,4 +1,4 @@
-//! The command envelope: one mutating request crossing the socket.
+//! The command envelope: one typed resident request crossing the socket.
 //!
 //! The set of commands is closed, and the registry below carries the witness
 //! law beside the command. Both the spelling and the law are stated as
@@ -77,6 +77,10 @@ pub enum CommandKind {
     /// Withdraw a live directive as operator intent.
     SteerCancel,
 
+    /// Read the pending consent queue.
+    ConsentRead,
+    /// Read the tracked consent policy.
+    ConsentPolicy,
     /// Decide one pending consent request.
     ConsentDecide,
 
@@ -178,6 +182,12 @@ impl Law {
     };
     /// Operator-only authenticated read.
     pub const OPERATOR_READ: Self = Self {
+        required: &[],
+        optional: &[],
+        authority: Authority::Operator,
+    };
+    /// Snapshot-only operator inspection carries no mutable predicate.
+    pub const INSPECT: Self = Self {
         required: &[],
         optional: &[],
         authority: Authority::Operator,
@@ -443,6 +453,8 @@ impl CommandKind {
         Self::SteerResend,
         Self::SteerDispose,
         Self::SteerCancel,
+        Self::ConsentRead,
+        Self::ConsentPolicy,
         Self::ConsentDecide,
         Self::TrustPend,
         Self::TrustGrant,
@@ -488,6 +500,8 @@ impl CommandKind {
             Self::SteerResend => "steer::resend",
             Self::SteerDispose => "steer::dispose",
             Self::SteerCancel => "steer::cancel",
+            Self::ConsentRead => "consent::read",
+            Self::ConsentPolicy => "consent::policy",
             Self::ConsentDecide => "consent::decide",
             Self::TrustPend => "trust::pend",
             Self::TrustGrant => "trust::grant",
@@ -532,6 +546,7 @@ impl CommandKind {
             Self::SteerResend => Law::RESEND,
             Self::SteerDispose => Law::DISPOSE,
             Self::SteerCancel => Law::CANCEL,
+            Self::ConsentRead | Self::ConsentPolicy => Law::INSPECT,
             Self::ConsentDecide => Law::DECIDE,
             Self::TrustPend => Law::PEND,
             Self::TrustGrant | Self::TrustRevoke => Law::TRUST,
@@ -551,7 +566,12 @@ impl CommandKind {
     pub const fn is_read(self) -> bool {
         matches!(
             self,
-            Self::BoardRead | Self::BoardGraph | Self::BoardHandout | Self::DocLedger
+            Self::BoardRead
+                | Self::BoardGraph
+                | Self::BoardHandout
+                | Self::DocLedger
+                | Self::ConsentRead
+                | Self::ConsentPolicy
         )
     }
 }
@@ -587,10 +607,11 @@ impl<'de> Deserialize<'de> for CommandKind {
     }
 }
 
-/// A mutating request in one envelope.
+/// A typed resident request in one envelope.
 ///
 /// The body contains no caller-authored actor, lane, epoch, journal position,
-/// result, or fact envelope; the commit door assigns all of those.
+/// result, or fact envelope. A mutating handler assigns those at the commit
+/// door; a read handler answers at its snapshot cursor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Command<B> {

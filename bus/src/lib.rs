@@ -197,6 +197,24 @@ mod runtime {
                 .map_err(BusReadError::Head)
         }
 
+        /// Read one executable trust head through the writer queue.
+        pub fn trust_head(
+            &self,
+            digest: &journal::crossing::Digest,
+        ) -> Result<Option<JournalHead<journal::crossing::TrustHead>>, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::Trust {
+                    digest: digest.clone(),
+                    answer,
+                })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+                .map_err(BusReadError::Head)
+        }
+
         /// Verify authority through the writer queue, after all earlier
         /// submissions have settled.
         pub fn verify(&self) -> Result<Verification, BusVerifyError> {
@@ -257,6 +275,11 @@ mod runtime {
                 Result<Option<JournalHead<journal::crossing::ResidencyHead>>, GuardError>,
             >,
         },
+        Trust {
+            digest: journal::crossing::Digest,
+            answer:
+                SyncSender<Result<Option<JournalHead<journal::crossing::TrustHead>>, GuardError>>,
+        },
         Verify {
             answer: SyncSender<Result<Verification, VerifyError>>,
         },
@@ -302,6 +325,9 @@ mod runtime {
                 }
                 Request::Residency { answer } => {
                     let _ = answer.send(journal.read(|read| read.residency_head()));
+                }
+                Request::Trust { digest, answer } => {
+                    let _ = answer.send(journal.read(|read| read.trust_head(&digest)));
                 }
                 Request::Verify { answer } => {
                     let _ = answer.send(journal.verify());

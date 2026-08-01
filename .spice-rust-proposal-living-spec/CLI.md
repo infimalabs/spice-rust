@@ -131,7 +131,7 @@ resident band for shared work.
 | --- | --- | --- |
 | `spice run -- CMD` | `daemonless`, `toolful` | Deliver pending steering on stderr, then execute the command natively; the operator's own command is the declared tool. Gate measurement owns the budget; the wrapper never refuses runtime on its own, and its hot path performs no Git discovery, SQLite open, or extra spawn — geometry and steering arrive from the hook environment and rendered inbox. Without the resident it leaves one durable per-lane degradation marker. |
 | `spice ack KEY [--decline]` | — | Retire a pending directive by authenticated lane command when the vendor absorbs the semantic ACK prose; the disposition fact records command evidence instead of a transcript locus. |
-| `spice config [KEY [VALUE]]` | `daemonless`, `offline` | Read or set only the keys the generated registry marks local. A bare read returns the effective tree with per-key provenance; any key not marked local refuses and names `spice.toml`. |
+| `spice config [KEY [VALUE]] [--apply=<digest>]` | `daemonless`, `offline` | Read only the keys the generated registry marks local, or preview one typed local mutation and apply only its exact current digest. A bare read returns the effective tree with per-key provenance; any key not marked local refuses and names `spice.toml`. |
 
 ## Discipline
 

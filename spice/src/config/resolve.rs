@@ -44,6 +44,7 @@ pub struct Inputs<'a> {
     tracked: Option<Document<'a>>,
     local: Option<Document<'a>>,
     flags: &'a [FlagOverride],
+    coexist: bool,
 }
 
 impl<'a> Inputs<'a> {
@@ -58,6 +59,23 @@ impl<'a> Inputs<'a> {
             tracked,
             local,
             flags,
+            coexist: false,
+        }
+    }
+
+    /// Supply the same layers while the tracked Python scaffold tables still
+    /// coexist with the Rust tree.
+    #[must_use]
+    pub const fn coexisting(
+        tracked: Option<Document<'a>>,
+        local: Option<Document<'a>>,
+        flags: &'a [FlagOverride],
+    ) -> Self {
+        Self {
+            tracked,
+            local,
+            flags,
+            coexist: true,
         }
     }
 
@@ -468,12 +486,13 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Resolved, ResolveError> {
     let mut layers = Vec::new();
 
     if let Some(document) = inputs.tracked
-        && let Some(layer) = parse_layer(ConfigSource::Tracked, document, &mut issues)
+        && let Some(layer) =
+            parse_layer(ConfigSource::Tracked, document, inputs.coexist, &mut issues)
     {
         layers.push(layer);
     }
     if let Some(document) = inputs.local
-        && let Some(layer) = parse_layer(ConfigSource::Local, document, &mut issues)
+        && let Some(layer) = parse_layer(ConfigSource::Local, document, false, &mut issues)
     {
         layers.push(layer);
     }
@@ -510,6 +529,7 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Resolved, ResolveError> {
 fn parse_layer(
     source: ConfigSource,
     document: Document<'_>,
+    coexist: bool,
     issues: &mut Vec<Issue>,
 ) -> Option<Layer> {
     let mut value = match toml::from_str::<Value>(document.text) {
@@ -538,6 +558,7 @@ fn parse_layer(
         &mut path,
         source,
         document.location,
+        coexist,
         issues,
         &mut leaves,
     );
@@ -554,9 +575,13 @@ fn sanitize(
     path: &mut ConcretePath,
     source: ConfigSource,
     document: &str,
+    coexist: bool,
     issues: &mut Vec<Issue>,
     leaves: &mut Vec<ConcretePath>,
 ) -> bool {
+    if coexist && is_scaffold_root(path) {
+        return false;
+    }
     let borrowed = path.borrowed();
     if let Some(entry) = descriptor(&borrowed) {
         if !entry.layers().contains(&source) {
@@ -612,7 +637,7 @@ fn sanitize(
         Value::Table(table) => {
             table.retain(|key, child| {
                 path.push_key(key);
-                let keep = sanitize(child, path, source, document, issues, leaves);
+                let keep = sanitize(child, path, source, document, coexist, issues, leaves);
                 path.pop();
                 keep
             });
@@ -622,7 +647,7 @@ fn sanitize(
             let mut index = 0;
             values.retain_mut(|child| {
                 path.push_index(index);
-                let keep = sanitize(child, path, source, document, issues, leaves);
+                let keep = sanitize(child, path, source, document, coexist, issues, leaves);
                 path.pop();
                 index += 1;
                 keep
@@ -640,6 +665,13 @@ fn sanitize(
             false
         }
     }
+}
+
+fn is_scaffold_root(path: &ConcretePath) -> bool {
+    matches!(
+        path.0.as_slice(),
+        [OwnedSegment::Key(root)] if matches!(root.as_str(), "tasks" | "policy")
+    )
 }
 
 fn compatible(kind: ValueKind, value: &Value) -> bool {

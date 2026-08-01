@@ -33,7 +33,7 @@ pub struct LockNameError;
 
 impl fmt::Display for LockNameError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("lock name must be one nonempty path component")
+        formatter.write_str("lock name must be one normal path component")
     }
 }
 
@@ -352,6 +352,27 @@ pub(crate) mod tests {
         let second = acquired(lock.try_acquire().expect("acquisition after release"));
         drop(second);
         fs::remove_file(path).expect("remove test lock file");
+    }
+
+    #[test]
+    fn lock_names_cannot_escape_the_fixed_topology() {
+        for name in [
+            "",
+            ".",
+            "..",
+            "../outside",
+            "with/slash",
+            "with\\backslash",
+            "nul\0byte",
+        ] {
+            assert!(LockName::new(name).is_err(), "{name:?} must be refused");
+        }
+        for name in ["worker", "a.b", "two-words", "UPPER", "9"] {
+            assert_eq!(
+                LockName::new(name).expect("normal path component").as_str(),
+                name
+            );
+        }
     }
 
     fn acquired(acquisition: Acquisition) -> super::Possession {
