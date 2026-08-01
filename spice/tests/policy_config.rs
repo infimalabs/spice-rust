@@ -1,7 +1,7 @@
 use consent::Answer;
 use gate::Shape;
 use lane::life::Life;
-use serde::{Deserialize, Serialize};
+use spice::config::Root;
 
 const COMPLETE: &str = r#"
 [taste.zeta]
@@ -55,19 +55,6 @@ binary = "/opt/codex"
 image = "registry.example/proof@sha256:4444444444444444444444444444444444444444444444444444444444444444"
 "#;
 
-#[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
-#[serde(default, deny_unknown_fields)]
-struct Root {
-    taste: taste::Config,
-    consent: consent::Config,
-    gate: gate::Config,
-    board: board::Config,
-    lane: lane::Config,
-    steer: steer::Config,
-    vendor: vendor::Config,
-    proof: proof::Config,
-}
-
 fn decode(document: &str) -> Result<Root, String> {
     let deserializer = toml::Deserializer::parse(document).map_err(|error| error.to_string())?;
     serde_path_to_error::deserialize(deserializer).map_err(|error| error.to_string())
@@ -79,7 +66,7 @@ fn every_policy_shape_round_trips_without_losing_order_or_templates() {
 
     assert_eq!(
         decoded
-            .taste
+            .taste()
             .bag()
             .tastes()
             .iter()
@@ -88,7 +75,7 @@ fn every_policy_shape_round_trips_without_losing_order_or_templates() {
         ["zeta", "alpha"]
     );
     assert_eq!(
-        decoded.taste.bag().tastes()[0]
+        decoded.taste().bag().tastes()[0]
             .triggers()
             .iter()
             .map(taste::Trigger::as_str)
@@ -96,44 +83,44 @@ fn every_policy_shape_round_trips_without_losing_order_or_templates() {
         ["delay*", "poll*", "slept"]
     );
     assert_eq!(
-        decoded.consent.policy().decide("read file").answer(),
+        decoded.consent().policy().decide("read file").answer(),
         Answer::Allow
     );
     assert_eq!(
-        decoded.consent.policy().decide("write file").answer(),
+        decoded.consent().policy().decide("write file").answer(),
         Answer::Deny
     );
-    assert_eq!(decoded.consent.policy().rules()[0].name(), "reads");
-    assert_eq!(decoded.consent.policy().rules()[1].name(), "fallback");
+    assert_eq!(decoded.consent().policy().rules()[0].name(), "reads");
+    assert_eq!(decoded.consent().policy().rules()[1].name(), "fallback");
 
-    let skips = decoded.gate.walk().skip().rules();
+    let skips = decoded.gate().walk().skip().rules();
     assert!(skips[0].matches("src/lib.rs", Shape::File));
     assert!(skips[0].matches("src/deep/module.rs", Shape::File));
     assert!(!skips[0].matches("src", Shape::Directory));
     assert!(!skips[0].matches("docs/src/lib.rs", Shape::File));
 
-    assert_eq!(decoded.board.next().review(), -75.5);
-    assert_eq!(decoded.board.next().band(), 3.0);
-    assert_eq!(decoded.lane.life(), Life::Steer);
-    assert_eq!(decoded.lane.lease().to_string(), "90s");
-    assert_eq!(decoded.lane.vendor().as_str(), "codex");
-    assert_eq!(decoded.lane.deaths(), 4);
-    assert_eq!(decoded.lane.young().to_string(), "45s");
-    assert_eq!(decoded.lane.hold().to_string(), "1h");
-    assert_eq!(decoded.steer.expiry().to_string(), "48h");
+    assert_eq!(decoded.board().next().review(), -75.5);
+    assert_eq!(decoded.board().next().band(), 3.0);
+    assert_eq!(decoded.lane().life(), Life::Steer);
+    assert_eq!(decoded.lane().lease().to_string(), "90s");
+    assert_eq!(decoded.lane().vendor().as_str(), "codex");
+    assert_eq!(decoded.lane().deaths(), 4);
+    assert_eq!(decoded.lane().young().to_string(), "45s");
+    assert_eq!(decoded.lane().hold().to_string(), "1h");
+    assert_eq!(decoded.steer().expiry().to_string(), "48h");
     assert_eq!(
         decoded
-            .steer
+            .steer()
             .resend()
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>(),
         ["10m", "30m", "2h"]
     );
-    assert_eq!(decoded.vendor.entries().len(), 2);
+    assert_eq!(decoded.vendor().entries().len(), 2);
     assert_eq!(
         decoded
-            .vendor
+            .vendor()
             .entries()
             .get(&"claude".parse().expect("fixture vendor name"))
             .expect("claude row")
@@ -142,7 +129,7 @@ fn every_policy_shape_round_trips_without_losing_order_or_templates() {
         "/opt/claude"
     );
     assert_eq!(
-        decoded.proof.image().as_str(),
+        decoded.proof().image().as_str(),
         "registry.example/proof@sha256:4444444444444444444444444444444444444444444444444444444444444444"
     );
 
@@ -155,29 +142,29 @@ fn every_policy_shape_round_trips_without_losing_order_or_templates() {
 fn an_empty_tree_is_the_complete_compiled_policy() {
     let root = decode("").expect("an empty policy tree is valid");
 
-    assert!(root.taste.bag().tastes().is_empty());
-    assert_eq!(root.consent.policy().posture(), Answer::Queue);
-    assert!(root.consent.policy().rules().is_empty());
-    assert!(root.gate.walk().skip().rules().is_empty());
-    assert_eq!(root.board.next().review(), -100.0);
-    assert_eq!(root.board.next().band(), 2.0);
-    assert_eq!(root.lane.life(), Life::Drive);
-    assert_eq!(root.lane.lease().to_string(), "15m");
-    assert_eq!(root.lane.vendor().as_str(), "claude");
-    assert_eq!(root.lane.deaths(), 3);
-    assert_eq!(root.lane.young().to_string(), "30s");
-    assert_eq!(root.lane.hold().to_string(), "30m");
-    assert_eq!(root.steer.expiry().to_string(), "24h");
+    assert!(root.taste().bag().tastes().is_empty());
+    assert_eq!(root.consent().policy().posture(), Answer::Queue);
+    assert!(root.consent().policy().rules().is_empty());
+    assert!(root.gate().walk().skip().rules().is_empty());
+    assert_eq!(root.board().next().review(), -100.0);
+    assert_eq!(root.board().next().band(), 2.0);
+    assert_eq!(root.lane().life(), Life::Drive);
+    assert_eq!(root.lane().lease().to_string(), "15m");
+    assert_eq!(root.lane().vendor().as_str(), "claude");
+    assert_eq!(root.lane().deaths(), 3);
+    assert_eq!(root.lane().young().to_string(), "30s");
+    assert_eq!(root.lane().hold().to_string(), "30m");
+    assert_eq!(root.steer().expiry().to_string(), "24h");
     assert_eq!(
-        root.steer
+        root.steer()
             .resend()
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>(),
         ["5m", "15m", "1h"]
     );
-    assert!(root.vendor.entries().is_empty());
-    assert_eq!(root.proof.image().as_str(), proof::DEFAULT_IMAGE);
+    assert!(root.vendor().entries().is_empty());
+    assert_eq!(root.proof().image().as_str(), proof::DEFAULT_IMAGE);
 
     let rendered = toml::to_string_pretty(&root).expect("compiled policy renders as TOML");
     assert_eq!(
@@ -258,9 +245,12 @@ fn regex_punctuation_is_only_ever_an_exact_consent_word_pattern() {
     )
     .expect("regex-looking punctuation is admitted as literal text");
 
-    assert_eq!(root.consent.policy().decide("read").answer(), Answer::Queue);
     assert_eq!(
-        root.consent.policy().decide("^read$").answer(),
+        root.consent().policy().decide("read").answer(),
+        Answer::Queue
+    );
+    assert_eq!(
+        root.consent().policy().decide("^read$").answer(),
         Answer::Deny
     );
 }
