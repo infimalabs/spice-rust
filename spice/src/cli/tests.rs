@@ -193,7 +193,13 @@ fn malformed_tool_posture_mutations_are_refused() {
             .any(|violation| violation.contains("toolful guard and launch declarations"))
     );
 
-    const DUPLICATE: &[ExternalTool] = &[CALLER_COMMAND[0], CALLER_COMMAND[0]];
+    const DUPLICATE: &[ExternalTool] = &[
+        CALLER_COMMAND[0],
+        ExternalTool {
+            owner: "conflicting owner",
+            ..CALLER_COMMAND[0]
+        },
+    ];
     let mut duplicate = row(&["lock", "run"]);
     duplicate.tools = DUPLICATE;
     assert!(
