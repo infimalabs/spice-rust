@@ -59,7 +59,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert_eq!(missing.root(), &spice::config::Root::default());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 20);
+    assert_eq!(missing.provenance().len(), 24);
     assert!(
         missing
             .provenance()
@@ -156,6 +156,105 @@ fn every_two_layer_precedence_pair_is_deterministic() {
         path_source(&local_and_flag, "lane.vendor"),
         ConfigSource::Flag
     );
+}
+
+#[test]
+fn shared_metadata_is_tracked_only_and_enforces_names_and_depths() {
+    let resolved = resolve(documents(
+        Some(
+            r#"
+[tasks]
+stems = ["app", "board"]
+project_min_depth = 2
+project_max_depth = 3
+
+[policy]
+env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
+"#,
+        ),
+        None,
+    ))
+    .expect("shared tracked metadata resolves");
+
+    assert_eq!(resolved.root().tasks().stems(), ["app", "board"]);
+    assert_eq!(resolved.root().tasks().project_min_depth(), 2);
+    assert_eq!(resolved.root().tasks().project_max_depth(), 3);
+    assert_eq!(
+        resolved.root().policy().env_names(),
+        ["FIXTURE_INBOX", "FIXTURE_PROOF"]
+    );
+    for path in [
+        "tasks.stems",
+        "tasks.project_min_depth",
+        "tasks.project_max_depth",
+        "policy.env_names",
+    ] {
+        assert_eq!(path_source(&resolved, path), ConfigSource::Tracked);
+    }
+
+    let error = resolve(documents(
+        Some(
+            r#"
+[tasks]
+stems = ["", "app", "app"]
+project_min_depth = 4
+project_max_depth = 3
+
+[policy]
+env_names = ["FIXTURE_INBOX", "FIXTURE_INBOX"]
+"#,
+        ),
+        Some(
+            r#"
+[tasks]
+stems = ["local"]
+project_min_depth = 1
+project_max_depth = 2
+
+[policy]
+env_names = ["LOCAL_NAME"]
+"#,
+        ),
+    ))
+    .expect_err("invalid and local shared metadata refuses");
+
+    for (source, kind, path) in [
+        (ConfigSource::Tracked, IssueKind::Malformed, "tasks.stems"),
+        (
+            ConfigSource::Tracked,
+            IssueKind::Malformed,
+            "tasks.project_min_depth",
+        ),
+        (
+            ConfigSource::Tracked,
+            IssueKind::Malformed,
+            "policy.env_names",
+        ),
+        (ConfigSource::Local, IssueKind::Policy, "tasks.stems"),
+        (
+            ConfigSource::Local,
+            IssueKind::Policy,
+            "tasks.project_min_depth",
+        ),
+        (
+            ConfigSource::Local,
+            IssueKind::Policy,
+            "tasks.project_max_depth",
+        ),
+        (ConfigSource::Local, IssueKind::Policy, "policy.env_names"),
+    ] {
+        assert!(
+            error.issues().iter().any(|issue| {
+                issue.source() == source
+                    && issue.kind() == kind
+                    && issue
+                        .path()
+                        .is_some_and(|actual| actual.to_string() == path)
+            }),
+            "missing {source:?} {kind:?} at {path}: {:#?}",
+            error.issues()
+        );
+    }
 }
 
 #[test]
@@ -310,6 +409,14 @@ fn tracked_document_can_address_every_registry_descriptor() {
 [taste.alpha]
 words = ["done*"]
 message = "Done."
+
+[tasks]
+stems = ["app", "board"]
+project_min_depth = 2
+project_max_depth = 3
+
+[policy]
+env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
 
 [consent]
 posture = "deny"
@@ -627,9 +734,9 @@ value = 1
         ("listen.window", ConfigSource::Local, IssueKind::Malformed),
         ("lock.alpha", ConfigSource::Local, IssueKind::Malformed),
         ("lock.beta.mystery", ConfigSource::Local, IssueKind::Unknown),
-        ("policy", ConfigSource::Tracked, IssueKind::Unknown),
+        ("policy.mode", ConfigSource::Tracked, IssueKind::Unknown),
         ("proof.image", ConfigSource::Tracked, IssueKind::Malformed),
-        ("tasks", ConfigSource::Tracked, IssueKind::Unknown),
+        ("tasks.owner", ConfigSource::Tracked, IssueKind::Unknown),
     ] {
         assert!(
             rows.iter()
