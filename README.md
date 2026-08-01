@@ -21,15 +21,8 @@ another agent, with:
 ./scripts/verify.sh
 ```
 
-The `gate` integration tests hold repository-owned contracts to their current
-implementation.
-
-Lattice conformance compares every local path dependency in `Cargo.lock` with
-the gate's acyclic workspace inventory. It fails when a workspace member is
-added without an inventory entry or when a manifest adds, removes, reverses,
-or cycles a local dependency edge.
-
-Doctrine conformance holds root `DOCTRINE.md` to its settled kernel and five
-decision records: every invariant is stated rather than merely named, every
-decision carries rationale and explicit deletions, unsettled language is
-rejected, and relative links resolve on disk.
+The `gate` integration tests enforce repository contracts from stable product
+inputs. Lattice conformance compares every local path dependency in
+`Cargo.lock` with the allowed acyclic workspace graph. It fails when a
+workspace member is added without a lattice entry or when a manifest adds,
+removes, reverses, or cycles a local dependency edge.
