@@ -129,28 +129,22 @@ impl Pending {
         Some(held)
     }
 
-    /// What is held under this request identity, if anything still is.
+    /// The request held under this identity, if it is still pending.
     #[must_use]
-    pub fn held(&self, request: CanonicalUuid) -> Option<&Held> {
+    pub fn get(&self, request: CanonicalUuid) -> Option<&Held> {
         self.held.get(&request)
     }
 
     /// Whether this request is still waiting on the operator.
     #[must_use]
     pub fn holds(&self, request: CanonicalUuid) -> bool {
-        self.held(request).is_some()
+        self.get(request).is_some()
     }
 
     /// Whether the operator refused this request.
     #[must_use]
     pub fn refuses(&self, request: CanonicalUuid) -> bool {
         self.refused.contains(&request)
-    }
-
-    /// The request held under this identity, if it is still pending.
-    #[must_use]
-    pub fn get(&self, request: CanonicalUuid) -> Option<&Held> {
-        self.held.get(&request)
     }
 
     /// Whether this request's action proceeds while requests are held.

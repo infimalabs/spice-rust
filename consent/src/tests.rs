@@ -313,7 +313,7 @@ fn a_held_request_lets_reversible_work_continue_while_the_irreversible_waits() {
 
     let held = actuator
         .pending()
-        .held(request.request)
+        .get(request.request)
         .expect("held request");
 
     assert_eq!(held.operation(), "git push --force");
