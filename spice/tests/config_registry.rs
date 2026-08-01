@@ -5,6 +5,14 @@ use toml::Value;
 use wire::ConfigSource;
 
 const COMPLETE: &str = r#"
+[tasks]
+stems = ["app", "board"]
+project_min_depth = 2
+project_max_depth = 3
+
+[policy]
+env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
+
 [taste.zeta]
 words = ["delay*", "slept"]
 message = "Wait on the real event."
@@ -187,7 +195,7 @@ fn sample_path(template: &str) -> Vec<OwnedSegment> {
 }
 
 #[test]
-fn root_is_exactly_the_eleven_typed_domains() {
+fn root_is_exactly_the_thirteen_typed_domains() {
     let root = decode(&complete()).expect("the complete root decodes");
     let round_trip = decode(&toml::to_string_pretty(&root).expect("root renders"))
         .expect("rendered root decodes");
@@ -195,6 +203,13 @@ fn root_is_exactly_the_eleven_typed_domains() {
     assert_eq!(decode("").expect("empty root"), Root::default());
     assert!(root.proof().container().is_some());
     assert!(root.proof().runner().is_some());
+    assert_eq!(root.tasks().stems(), ["app", "board"]);
+    assert_eq!(root.tasks().project_min_depth(), 2);
+    assert_eq!(root.tasks().project_max_depth(), 3);
+    assert_eq!(
+        root.policy().env_names(),
+        ["FIXTURE_INBOX", "FIXTURE_PROOF"]
+    );
 
     let Value::Table(table) = encoded(&Root::default()) else {
         panic!("a root must encode as a table");
@@ -202,18 +217,41 @@ fn root_is_exactly_the_eleven_typed_domains() {
     assert_eq!(
         table.keys().map(String::as_str).collect::<BTreeSet<_>>(),
         BTreeSet::from([
-            "taste", "consent", "gate", "board", "lane", "steer", "vendor", "listen", "lock",
-            "canvas", "proof",
+            "tasks", "policy", "taste", "consent", "gate", "board", "lane", "steer", "vendor",
+            "listen", "lock", "canvas", "proof",
         ])
     );
 
     for forbidden in [
-        "journal", "bus", "fold", "ack", "dialect", "tape", "wire", "app", "tasks", "policy",
-        "raw", "unknown",
+        "journal", "bus", "fold", "ack", "dialect", "tape", "wire", "app", "raw", "unknown",
     ] {
         let document = format!("[{forbidden}]\nvalue = 1\n");
         let error = decode(&document).expect_err("an unknown root domain must refuse");
         assert!(error.contains(forbidden), "{forbidden}: {error}");
+    }
+}
+
+#[test]
+fn shared_metadata_directly_refuses_invalid_names_depths_and_children() {
+    for (document, expected) in [
+        ("[tasks]\nstems = [\"\"]\n", "nonempty"),
+        ("[tasks]\nstems = [\"app\", \"app\"]\n", "unique"),
+        ("[policy]\nenv_names = [\"\"]\n", "nonempty"),
+        (
+            "[policy]\nenv_names = [\"FIXTURE_PROOF\", \"FIXTURE_PROOF\"]\n",
+            "unique",
+        ),
+        ("[tasks]\nproject_min_depth = 0\n", "positive"),
+        ("[tasks]\nproject_max_depth = 0\n", "positive"),
+        (
+            "[tasks]\nproject_min_depth = 4\nproject_max_depth = 3\n",
+            "less than or equal",
+        ),
+        ("[tasks]\nunknown = true\n", "unknown"),
+        ("[policy]\nunknown = true\n", "unknown"),
+    ] {
+        let error = decode(document).expect_err("invalid shared metadata must refuse");
+        assert!(error.contains(expected), "{document:?}: {error}");
     }
 }
 
@@ -285,8 +323,12 @@ fn registry_builtins_are_the_typed_root_defaults() {
 }
 
 #[test]
-fn templates_are_unique_single_word_non_overlapping_and_stably_ordered() {
+fn templates_are_unique_canonical_non_overlapping_and_stably_ordered() {
     let expected = [
+        "tasks.stems",
+        "tasks.project_min_depth",
+        "tasks.project_max_depth",
+        "policy.env_names",
         "taste.<name>.words",
         "taste.<name>.message",
         "consent.posture",
@@ -342,8 +384,10 @@ fn templates_are_unique_single_word_non_overlapping_and_stably_ordered() {
                 continue;
             }
             assert!(
-                word.bytes().all(|byte| byte.is_ascii_lowercase()),
-                "non-word owned key {word:?} in {template}"
+                word.split('_').all(|part| {
+                    !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_lowercase())
+                }),
+                "non-canonical owned key {word:?} in {template}"
             );
         }
 

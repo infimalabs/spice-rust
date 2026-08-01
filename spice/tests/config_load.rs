@@ -284,7 +284,7 @@ fn unreadable_acquisition_and_other_layer_decode_issue_are_both_returned() {
     let root = repository(&scratch, "unreadable");
     let tracked = root.join("spice.toml");
     write(&tracked, b"[listen]\nwindow = \"2m\"\n");
-    write(local_path(&root), b"[tasks]\nbootstrap = true\n");
+    write(local_path(&root), b"[tasks]\nowner = \"local\"\n");
     fs::set_permissions(&tracked, fs::Permissions::from_mode(0o000))
         .expect("make tracked unreadable");
 
@@ -298,7 +298,9 @@ fn unreadable_acquisition_and_other_layer_decode_issue_are_both_returned() {
     let resolution = error.resolution().expect("other layer was still decoded");
     assert!(resolution.issues().iter().any(|issue| {
         issue.source() == ConfigSource::Local
-            && issue.path().is_some_and(|path| path.to_string() == "tasks")
+            && issue
+                .path()
+                .is_some_and(|path| path.to_string() == "tasks.owner")
     }));
 }
 

@@ -513,7 +513,14 @@ mod tests {
             fs::create_dir_all(&workspace).expect("fixture workspace");
             fs::write(
                 &container,
-                "#!/bin/sh\n[ \"$1\" = --version ] && printf 'Docker version fixture\\n'\n",
+                concat!(
+                    "#!/bin/sh\n",
+                    "if [ \"$1\" = --version ]; then\n",
+                    "    printf 'Docker version fixture\\n'\n",
+                    "    exit 0\n",
+                    "fi\n",
+                    "exit 0\n"
+                ),
             )
             .expect("fixture container runtime");
             fs::write(&runner, "#!/bin/sh\nexit 0\n").expect("fixture native runner");

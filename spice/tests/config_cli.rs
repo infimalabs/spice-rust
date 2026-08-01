@@ -81,7 +81,7 @@ fn complete_builtin_registry_has_identical_text_and_json_bodies() {
     };
     assert_eq!(json.position, wire::ReplyPosition::Direct {});
     assert_eq!(text, json.body);
-    assert_eq!(entries(&text).len(), 20);
+    assert_eq!(entries(&text).len(), 24);
     let life = entry(&text, "lane.life");
     assert_eq!(life["value"], "Drive");
     assert_eq!(life["source"], "builtin");
