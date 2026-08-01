@@ -351,15 +351,15 @@ fn server_outcome(served: Result<Result<(), io::Error>, tokio::task::JoinError>)
 }
 
 fn remove_if_present(path: &Path) -> io::Result<()> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
+    ignore_absent(fs::remove_file(path))
 }
 
 fn remove_tree_if_present(path: &Path) -> io::Result<()> {
-    match fs::remove_dir_all(path) {
+    ignore_absent(fs::remove_dir_all(path))
+}
+
+fn ignore_absent(result: io::Result<()>) -> io::Result<()> {
+    match result {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),

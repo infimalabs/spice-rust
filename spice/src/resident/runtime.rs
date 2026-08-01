@@ -42,6 +42,14 @@ impl RuntimePaths {
             stage: repository.worktree_root().join("dist/stage"),
         })
     }
+
+    fn clear_stale_surfaces(&self) -> CommandResult<()> {
+        remove_if_present(&self.canvas)
+            .map_err(|error| environment_fault("canvas::stale-discovery", &error.to_string()))?;
+        remove_tree_if_present(&self.lane_canvas).map_err(|error| {
+            environment_fault("canvas::stale-lane-discovery", &error.to_string())
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -157,11 +165,8 @@ fn up_from(current: &Path) -> Outcome<()> {
         Ok(lock) => lock,
         Err(outcome) => return outcome,
     };
-    if let Err(error) = remove_if_present(&paths.canvas) {
-        return environment_fault("canvas::stale-discovery", &error.to_string());
-    }
-    if let Err(error) = remove_tree_if_present(&paths.lane_canvas) {
-        return environment_fault("canvas::stale-lane-discovery", &error.to_string());
+    if let Err(outcome) = paths.clear_stale_surfaces() {
+        return outcome;
     }
 
     let journal = match journal::Journal::open(&paths.journal) {

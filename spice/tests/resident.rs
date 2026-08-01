@@ -880,6 +880,54 @@ fn command_client_process_renders_one_success_across_reconnects() {
 }
 
 #[test]
+fn authenticated_board_snapshot_survives_a_resident_restart() {
+    let fixture = Fixture::new("board-restart");
+    let mut first = RunningResident::spawn(&fixture);
+    first.assert_ready(&fixture);
+
+    let initial = invoke_args(&fixture, &["board"], true);
+    assert!(
+        initial.status.success(),
+        "board failed: {:?}",
+        initial.stderr
+    );
+    let Outcome::Reply(initial) = value_outcome(&initial) else {
+        panic!("board must return one typed reply");
+    };
+    assert!(matches!(initial.position, ReplyPosition::Snapshot(_)));
+
+    assert!(invoke(&fixture, "down").status.success());
+    assert!(first.wait().status.success());
+    let mut restarted = RunningResident::spawn(&fixture);
+    restarted.assert_ready(&fixture);
+    let after_restart = invoke_args(&fixture, &["board"], true);
+    assert!(
+        after_restart.status.success(),
+        "restarted board failed: {:?}",
+        after_restart.stderr
+    );
+    let Outcome::Reply(after_restart) = value_outcome(&after_restart) else {
+        panic!("restarted board must return one typed reply");
+    };
+    assert!(matches!(after_restart.position, ReplyPosition::Snapshot(_)));
+    assert_eq!(after_restart.body["schema"], initial.body["schema"]);
+    assert_eq!(after_restart.body["principal"], initial.body["principal"]);
+    assert_eq!(after_restart.body["tasks"], initial.body["tasks"]);
+    assert_ne!(
+        after_restart.body["residency"]["body"]["epoch"],
+        initial.body["residency"]["body"]["epoch"],
+        "restart must publish a new resident generation"
+    );
+    assert!(
+        after_restart.body["cursor"].as_u64() > initial.body["cursor"].as_u64(),
+        "restart authority must advance while the empty board remains stable"
+    );
+
+    assert!(invoke(&fixture, "down").status.success());
+    assert!(restarted.wait().status.success());
+}
+
+#[test]
 fn command_client_process_fences_replay_loss_and_capability_echo() {
     let fixture = Fixture::new("client-fencing");
     let capability = uuid("00000000-0000-4000-8000-000000000031").to_string();

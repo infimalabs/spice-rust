@@ -7,7 +7,7 @@ fn dispatch_command(
     seats: &mut Seats,
     command: &wire::AdmittedCommand,
 ) -> Outcome<CommandAnswer> {
-    if let Some(outcome) = crate::board_command::dispatch(bus, command) {
+    if let Some(outcome) = dispatch_board_command(bus, command) {
         return outcome;
     }
     match (command.kind(), command.body()) {
@@ -49,6 +49,13 @@ fn dispatch_command(
             remedy: "land the registered resident handler before exposing this CLI leaf".to_owned(),
         }),
     }
+}
+
+fn dispatch_board_command(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+) -> Option<Outcome<CommandAnswer>> {
+    crate::board_command::dispatch(bus, command)
 }
 
 fn dispatch_consent_read(bus: &Bus, policy: &consent::Policy) -> Outcome<CommandAnswer> {
