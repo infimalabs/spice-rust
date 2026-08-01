@@ -168,6 +168,26 @@ mod tests {
     }
 
     #[test]
+    fn gate_report_refuses_a_finding_that_disagrees_with_its_measurement() {
+        let mut report = current_gate_report();
+        let forged = report.measurements[0].value.wrapping_add(1);
+        report.findings[0].movement = Movement::Unbaselined { measured: forged };
+        report.tightening.as_mut().expect("clean proposal")[0].value = forged;
+
+        let mut verdict = serde_json::to_value(&report.verdict).expect("verdict JSON value");
+        verdict["findings"][0]["movement"] = json!({
+            "movement": "unbaselined",
+            "measured": forged
+        });
+        report.verdict = serde_json::from_value(verdict).expect("forged typed verdict");
+
+        assert!(matches!(
+            GateReport::decode(&report.encode().expect("encode forged report")),
+            Err(ReportDecodeError::Inconsistent { .. })
+        ));
+    }
+
+    #[test]
     fn kill_report_round_trips_every_complete_and_incomplete_evidence_shape() {
         let report = sample_kill_report();
         let encoded = report.encode().expect("encode kill report");

@@ -236,6 +236,8 @@ impl GateReport {
             "finding metrics",
             self.findings.iter().map(|finding| &finding.metric),
         )?;
+        validate_gate_findings(&self.findings, &self.measurements)
+            .map_err(|evidence| ReportDecodeError::inconsistent("gate report", evidence))?;
         let measurements: Vec<Measurement> = self
             .measurements
             .iter()
@@ -265,6 +267,56 @@ impl CurrentRun {
     pub fn report(&self) -> GateReport {
         GateReport::current(self)
     }
+}
+
+fn validate_gate_findings(
+    findings: &[Finding],
+    measurements: &[ReportMeasurement],
+) -> Result<(), &'static str> {
+    let mut measurements = measurements.iter().peekable();
+    for finding in findings {
+        if measurements.peek().is_some_and(|measurement| {
+            measurement.metric.as_str() < finding.metric.as_str()
+        }) {
+            return Err("a completed measurement has no finding");
+        }
+        let matching = measurements.peek().is_some_and(|measurement| {
+            measurement.metric.as_str() == finding.metric.as_str()
+        });
+        if matches!(finding.movement, Movement::Retired { .. }) {
+            if matching {
+                return Err("a retired finding still has a completed measurement");
+            }
+            continue;
+        }
+        if !matching {
+            return Err("a non-retired finding has no completed measurement");
+        }
+        let measured = measurements
+            .next()
+            .expect("a matching completed measurement was observed")
+            .value;
+        let agrees = match finding.movement {
+            Movement::Held { baseline } => measured == baseline,
+            Movement::Shrank {
+                baseline,
+                measured: observed,
+            } => observed == measured && observed < baseline,
+            Movement::Regressed {
+                baseline,
+                measured: observed,
+            } => observed == measured && observed > baseline,
+            Movement::Unbaselined { measured: observed } => observed == measured,
+            Movement::Retired { .. } => unreachable!("retired findings were handled above"),
+        };
+        if !agrees {
+            return Err("a finding movement disagrees with its completed measurement");
+        }
+    }
+    if measurements.next().is_some() {
+        return Err("a completed measurement has no finding");
+    }
+    Ok(())
 }
 
 fn gate_tightening(
