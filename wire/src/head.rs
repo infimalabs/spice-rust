@@ -19,7 +19,7 @@ pub struct TaskHead {
     pub uuid: CanonicalUuid,
     /// Authored title.
     pub title: String,
-    /// Dotted project grouping.
+    /// Scheduler project grouping.
     pub project: String,
     /// Authored task labels.
     pub tags: Vec<String>,
