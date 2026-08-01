@@ -238,21 +238,11 @@ pub struct Envelope<T> {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "present_cause"
+        deserialize_with = "crate::optional::present"
     )]
     pub cause: Option<Seq>,
     /// Discriminant and body, typed or opaque per the parameter.
     pub fact: T,
-}
-
-/// Decode a `cause` that is present, refusing the null sentinel.
-///
-/// A chain root omits the field entirely. Left to itself `serde` folds an
-/// explicit `null` into `None`, which would admit exactly the sentinel WIRE
-/// forbids and make two different documents mean the same thing. Zero is
-/// already refused by [`Seq`]'s non-zero representation.
-fn present_cause<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Seq>, D::Error> {
-    Seq::deserialize(deserializer).map(Some)
 }
 
 impl<T> Envelope<T> {

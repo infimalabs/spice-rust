@@ -29,16 +29,28 @@ pub struct TaskAdd {
     /// One-line statement of the work.
     pub title: String,
     /// Dotted public project, or absent for private work.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub project: Option<String>,
     /// Longer body context.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub description: Option<String>,
     /// Criteria that decide whether the work is done.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub acceptance: Vec<String>,
     /// Non-default phase route, when the caller means one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub flow: Option<String>,
     /// Handles this task must follow.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -52,10 +64,18 @@ pub struct TaskEdit {
     /// Task whose statement is replaced.
     pub task: TaskHandle,
     /// Replacement title, when the title moves.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub title: Option<String>,
     /// Replacement description, when the description moves.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub description: Option<String>,
     /// Replacement criteria, when they move.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -132,7 +152,11 @@ pub struct TaskReview {
     /// The verdict.
     pub finding: String,
     /// Supporting prose.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub note: Option<String>,
 }
 

@@ -44,10 +44,25 @@ pub struct WorkflowHead {
     /// Current review state.
     pub review: String,
     /// Actor assigned to the current phase, when assignment applies.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub assignment: Option<Actor>,
     /// Wakeable deferral deadline.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub deferral: Option<Instant>,
     /// Completion instant.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub completion: Option<Instant>,
 }
 
@@ -214,6 +229,11 @@ pub struct LaneResidency {
     /// Lane identity.
     pub lane: CanonicalUuid,
     /// Current occupant, absent between seats.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub occupant: Option<CanonicalUuid>,
     /// Occupant ancestry, oldest first.
     pub lineage: Vec<CanonicalUuid>,
@@ -240,7 +260,17 @@ pub struct ResidencyHead {
 #[serde(deny_unknown_fields)]
 pub struct CursorHead {
     /// Last committed journal position, absent before the first fact.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub seq: Option<Seq>,
     /// Durable wake position, absent before the first consumed commit.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub wake: Option<Seq>,
 }
