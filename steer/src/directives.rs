@@ -146,6 +146,15 @@ pub enum Refusal {
         /// Identity that is already taken.
         directive: CanonicalUuid,
     },
+    /// A fact paired a key with another durable directive identity.
+    Identity {
+        /// Key whose identity was contradicted.
+        key: Key,
+        /// Durable identity the directive carries.
+        expected: CanonicalUuid,
+        /// Durable identity the fact claimed.
+        observed: CanonicalUuid,
+    },
     /// No directive carries this key.
     Unknown {
         /// Key nothing answers to.
@@ -207,6 +216,14 @@ impl fmt::Display for Refusal {
                     "a directive already carries identity {directive}"
                 )
             }
+            Self::Identity {
+                key,
+                expected,
+                observed,
+            } => write!(
+                formatter,
+                "directive {key} carries identity {expected}, not {observed}"
+            ),
             Self::Unknown { key } => write!(formatter, "no directive carries {key}"),
             Self::Retired { key, disposition } => {
                 let word = disposition_word(*disposition);
@@ -329,9 +346,11 @@ impl Ledger {
         match steering {
             Steering::Sent(body) => self.send(body),
             Steering::Resent(body) => self.resend(body),
-            Steering::Acked(body) => self.retire(&read("key", &body.key)?, Disposition::Acked),
+            Steering::Acked(body) => {
+                self.dispose(&body.key, body.directive, body.lane, Disposition::Acked)
+            }
             Steering::Declined(body) => {
-                self.retire(&read("key", &body.key)?, Disposition::Declined)
+                self.dispose(&body.key, body.directive, body.lane, Disposition::Declined)
             }
             Steering::Canceled(body) => {
                 self.retire(&read("key", &body.key)?, Disposition::Canceled)
@@ -486,6 +505,35 @@ impl Ledger {
         Ok(())
     }
 
+    fn dispose(
+        &mut self,
+        text: &str,
+        identity: CanonicalUuid,
+        lane: CanonicalUuid,
+        disposition: Disposition,
+    ) -> Result<(), Refusal> {
+        let key = read("key", text)?;
+        let directive = self
+            .directives
+            .get(&key)
+            .ok_or_else(|| Refusal::Unknown { key: key.clone() })?;
+        if directive.directive != identity {
+            return Err(Refusal::Identity {
+                key,
+                expected: directive.directive,
+                observed: identity,
+            });
+        }
+        if directive.lane != lane {
+            return Err(Refusal::Lane {
+                key,
+                expected: directive.lane,
+                observed: lane,
+            });
+        }
+        self.retire(&key, disposition)
+    }
+
     fn lapse(&mut self, body: &SteerLapsed) -> Result<(), Refusal> {
         let key = read("key", &body.key)?;
         let expected = self
@@ -611,7 +659,8 @@ mod tests {
     use crate::ack::keys::Key;
     use crate::ack::scan::Standing;
     use wire::body::{
-        SteerAcked, SteerCanceled, SteerDeclined, SteerLapsed, SteerMissed, SteerResent, SteerSent,
+        AcknowledgmentMiss, SteerAcked, SteerCanceled, SteerDeclined, SteerLapsed, SteerMissed,
+        SteerResent, SteerSent, TranscriptLocus,
     };
     use wire::{CanonicalUuid, Disposition, Instant};
 
@@ -795,6 +844,31 @@ mod tests {
     }
 
     #[test]
+    fn an_acknowledgment_binds_the_directive_identity_and_lane() {
+        let mut ledger = Ledger::new();
+        ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
+        let before = ledger.clone();
+
+        let mut wrong_identity = acked(ROOT);
+        wrong_identity.directive = directive(SECOND);
+        assert!(matches!(
+            ledger.absorb(Steering::Acked(&wrong_identity)),
+            Err(Refusal::Identity { .. })
+        ));
+        assert_eq!(ledger, before);
+
+        let mut wrong_lane = acked(ROOT);
+        wrong_lane.lane = "018f82d4-6f59-7d06-92e3-bce913116399"
+            .parse()
+            .expect("other lane");
+        assert!(matches!(
+            ledger.absorb(Steering::Acked(&wrong_lane)),
+            Err(Refusal::Lane { .. })
+        ));
+        assert_eq!(ledger, before);
+    }
+
+    #[test]
     fn an_operator_cancel_retires_a_live_lineage() {
         let mut ledger = Ledger::new();
         ledger.absorb(Steering::Sent(&sent(ROOT))).expect("sent");
@@ -852,7 +926,9 @@ mod tests {
                 .absorb(Steering::Missed(&SteerMissed {
                     key: named.to_owned(),
                     lane: lane(),
-                    locus: "12:1".to_owned(),
+                    epoch: epoch(),
+                    locus: transcript_locus(12, 1),
+                    miss: AcknowledgmentMiss::Unknown,
                 }))
                 .expect("a missed acknowledgment is always absorbed");
         }
@@ -971,19 +1047,40 @@ mod tests {
 
     fn acked(key: &str) -> SteerAcked {
         SteerAcked {
+            directive: directive(key),
             key: key.to_owned(),
             lane: lane(),
-            locus: "3:1".to_owned(),
+            epoch: epoch(),
+            locus: transcript_locus(3, 1),
         }
     }
 
     fn declined(key: &str) -> SteerDeclined {
         SteerDeclined {
+            directive: directive(key),
             key: key.to_owned(),
             lane: lane(),
-            locus: "3:1".to_owned(),
+            epoch: epoch(),
+            locus: transcript_locus(3, 1),
             reason: "the tree is red".to_owned(),
         }
+    }
+
+    fn transcript_locus(line: u32, column: u32) -> TranscriptLocus {
+        TranscriptLocus {
+            member: 1,
+            offset: 40,
+            length: 80,
+            event: 0,
+            line,
+            column,
+        }
+    }
+
+    fn epoch() -> CanonicalUuid {
+        "018f82d4-6f59-7d06-92e3-bce913116303"
+            .parse()
+            .expect("fixture epoch")
     }
 
     fn directive(key: &str) -> CanonicalUuid {

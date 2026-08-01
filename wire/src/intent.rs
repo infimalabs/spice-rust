@@ -343,9 +343,9 @@ pub struct DirectiveRef {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SteerDispose {
-    /// Directive being retired.
-    pub directive: CanonicalUuid,
-    /// The typed terminal outcome.
+    /// Key-shaped token the caller expects a transcript recognition to name.
+    pub token: String,
+    /// Final disposition the transcript marker must state.
     pub disposition: Disposition,
 }
 
