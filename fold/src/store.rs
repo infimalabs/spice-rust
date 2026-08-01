@@ -172,6 +172,33 @@ impl Store {
         }
     }
 
+    /// Reads every current fold head from one immutable folds-store snapshot.
+    pub fn snapshot(&self) -> Result<Vec<(FoldId, Option<Materialization>)>, StoreError> {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .map_err(StoreError::Sqlite)?;
+        let states = INVENTORY
+            .definitions()
+            .iter()
+            .map(|definition| {
+                let current = match inspect(&transaction, definition.fold)? {
+                    Inspection::Missing => None,
+                    Inspection::Corrupt(detail) => {
+                        return Err(StoreError::Corrupt {
+                            fold: definition.fold,
+                            detail,
+                        });
+                    }
+                    Inspection::Present(materialization) => Some(materialization),
+                };
+                Ok((definition.fold, current))
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        transaction.commit().map_err(StoreError::Sqlite)?;
+        Ok(states)
+    }
+
     /// Reads or heals one fold from a read-only journal snapshot.
     pub fn read_or_rebuild<R: Reducer>(
         &mut self,

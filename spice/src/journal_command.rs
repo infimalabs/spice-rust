@@ -3,6 +3,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::cli::Contract;
 use crate::journal_lock::JournalLock;
 use fold::{
     AnswerContent, Cursor, FoldId, Horizon, INVENTORY, Materialization, Reducer, Reduction, Source,
@@ -11,15 +12,16 @@ use fold::{
 use spice::repository::{Repository, StateError, StatePaths};
 use wire::manifest::{JOURNAL_BACKUP_VERSION, JournalBackupManifest, JournalBackupMember};
 use wire::{
-    Digest, Domain, Fault, FaultClass, FoldReport, FoldState, JournalBackup, JournalReindex,
-    JournalReport, JournalVerification, Outcome, Refusal, Reply, ReplyPosition, ThreadReport,
-    WireVersion,
+    Actor, Digest, Domain, Fault, FaultClass, FoldReport, FoldState, JournalBackup, JournalReindex,
+    JournalReport, JournalVerification, Outcome, Overflow, Packed, Producer, Refusal, Reply,
+    ReplyPosition, Seq, SeqRange, ThreadReport, WireVersion,
 };
 
 const AUTHORITY_MEMBER: &str = "spicejournal.sqlite3";
 const MANIFEST: &str = "manifest.json";
 const PRIVATE_FILE: u32 = 0o600;
 const PRIVATE_DIRECTORY: u32 = 0o700;
+const MAX_REPORT_FACTS: usize = 256;
 static NEXT_BACKUP: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn backup(matches: &clap::ArgMatches) -> Outcome<JournalBackup> {
@@ -27,20 +29,20 @@ pub(crate) fn backup(matches: &clap::ArgMatches) -> Outcome<JournalBackup> {
         .get_one::<String>("OUTPUT")
         .expect("the generated backup parser requires OUTPUT");
     match backup_inner(Path::new(output)) {
-        Ok(body) => reply(ReplyPosition::Direct {}, body),
+        Ok((position, body)) => reply(ReplyPosition::Committed(position), body),
         Err(failure) => failure.outcome(),
     }
 }
 
-pub(crate) fn report() -> Outcome<JournalReport> {
-    match report_inner() {
+pub(crate) fn report(contract: &Contract) -> Outcome<JournalReport> {
+    match report_inner(contract) {
         Ok((position, body)) => reply(position, body),
         Err(failure) => failure.outcome(),
     }
 }
 
-pub(crate) fn verify() -> Outcome<JournalVerification> {
-    match verify_inner() {
+pub(crate) fn verify(contract: &Contract) -> Outcome<JournalVerification> {
+    match verify_inner(contract) {
         Ok((position, body)) => reply(position, body),
         Err(failure) => failure.outcome(),
     }
@@ -53,32 +55,32 @@ pub(crate) fn reindex() -> Outcome<JournalReindex> {
     }
 }
 
-pub(crate) fn thread(matches: &clap::ArgMatches) -> Outcome<ThreadReport> {
+pub(crate) fn thread(matches: &clap::ArgMatches, contract: &Contract) -> Outcome<ThreadReport> {
     let reference = matches
         .get_one::<String>("REF")
         .expect("the generated thread parser requires REF");
-    match thread_inner(reference) {
+    match thread_inner(reference, contract) {
         Ok((position, body)) => reply(position, body),
         Err(failure) => failure.outcome(),
     }
 }
 
-pub(crate) fn folds() -> Outcome<FoldReport> {
-    match folds_inner() {
+pub(crate) fn folds(contract: &Contract) -> Outcome<FoldReport> {
+    match folds_inner(contract) {
         Ok((position, body)) => reply(position, body),
         Err(failure) => failure.outcome(),
     }
 }
 
-pub(crate) fn replay(matches: &clap::ArgMatches) -> Outcome<FoldReport> {
+pub(crate) fn replay(matches: &clap::ArgMatches, contract: &Contract) -> Outcome<FoldReport> {
     let selected = matches.get_one::<String>("FOLD");
-    match replay_inner(selected.map(String::as_str)) {
+    match replay_inner(selected.map(String::as_str), contract) {
         Ok((position, body)) => reply(position, body),
         Err(failure) => failure.outcome(),
     }
 }
 
-fn backup_inner(output: &Path) -> Result<JournalBackup, Failure> {
+fn backup_inner(output: &Path) -> Result<(SeqRange, JournalBackup), Failure> {
     let state = state()?;
     let _lock = acquire_lock(&state)?;
     let reader = open_reader(&state)?;
@@ -132,36 +134,69 @@ fn backup_inner(output: &Path) -> Result<JournalBackup, Failure> {
     })?;
     cleanup.disarm();
     sync_directory(&parent)?;
-    Ok(JournalBackup {
+    let body = JournalBackup {
         output: output.display().to_string(),
         verification,
-    })
+    };
+    let position = match append_recovery_fact(
+        &state,
+        "backup",
+        wire::body::JournalBacked {
+            bundle: destination.display().to_string(),
+            manifest: manifest
+                .members
+                .iter()
+                .map(|member| member.path.clone())
+                .collect(),
+        },
+    ) {
+        Ok(position) => position,
+        Err(failure) => {
+            if let Err(error) = fs::remove_dir_all(&destination) {
+                return Err(Failure::environment(
+                    "backup::rollback-failed",
+                    format!(
+                        "{}: {error}; recovery fact was not committed",
+                        destination.display()
+                    ),
+                ));
+            }
+            sync_directory(&parent)?;
+            return Err(failure);
+        }
+    };
+    Ok((position, body))
 }
 
-fn report_inner() -> Result<(ReplyPosition, JournalReport), Failure> {
+fn report_inner(contract: &Contract) -> Result<(ReplyPosition, JournalReport), Failure> {
     let state = state()?;
     let reader = open_reader(&state)?;
     let schema = reader.schema_version().map_err(open_failure)?;
-    let snapshot = reader.fact_snapshot().map_err(snapshot_failure)?;
-    let cursor = snapshot.horizon();
+    let (cursor, snapshot) = read_authenticated(&state, &reader, contract, |read| {
+        read.fact_snapshot().map_err(snapshot_failure)
+    })?;
+    let facts = count(snapshot.facts().len(), "facts")?;
+    let entries = pack_facts(snapshot.facts().to_vec(), cursor)?;
     Ok((
-        snapshot_position(cursor),
+        ReplyPosition::Snapshot(cursor),
         JournalReport {
             schema,
-            cursor,
-            facts: count(snapshot.facts().len(), "facts")?,
+            cursor: Some(cursor),
+            facts,
+            entries,
         },
     ))
 }
 
-fn verify_inner() -> Result<(ReplyPosition, JournalVerification), Failure> {
+fn verify_inner(contract: &Contract) -> Result<(ReplyPosition, JournalVerification), Failure> {
     let state = state()?;
     let reader = open_reader(&state)?;
     let schema = reader.schema_version().map_err(open_failure)?;
-    let cursor = reader.cursor().map_err(open_failure)?;
-    let verified = reader.verify().map_err(verify_failure)?;
+    let (cursor, verified) = read_authenticated(&state, &reader, contract, |read| {
+        read.verify().map_err(verify_failure)
+    })?;
     Ok((
-        snapshot_position(cursor),
+        ReplyPosition::Snapshot(cursor),
         JournalVerification {
             schema,
             facts: count(verified.facts, "facts")?,
@@ -187,9 +222,13 @@ fn reindex_inner() -> Result<(ReplyPosition, JournalReindex), Failure> {
             Failure::store("journal::reindex-failed", error.to_string())
         }
     })?;
-    let cursor = journal.fact_snapshot().map_err(snapshot_failure)?.horizon();
+    let cursor = journal
+        .fact_snapshot()
+        .map_err(snapshot_failure)?
+        .horizon()
+        .ok_or_else(cursor_missing)?;
     Ok((
-        snapshot_position(cursor),
+        ReplyPosition::Snapshot(cursor),
         JournalReindex {
             facts: count(rebuilt.facts, "facts")?,
             threads: count(rebuilt.threads, "threads")?,
@@ -197,41 +236,29 @@ fn reindex_inner() -> Result<(ReplyPosition, JournalReindex), Failure> {
     ))
 }
 
-fn thread_inner(reference: &str) -> Result<(ReplyPosition, ThreadReport), Failure> {
+fn thread_inner(
+    reference: &str,
+    contract: &Contract,
+) -> Result<(ReplyPosition, ThreadReport), Failure> {
     let state = state()?;
     let reader = open_reader(&state)?;
-    let cursor = reader.cursor().map_err(open_failure)?;
-    let thread = reader.thread(reference).map_err(|error| match error {
-        journal::ThreadError::NotFound { .. } | journal::ThreadError::Ambiguous { .. } => {
-            Failure::refusal(
-                "thread::reference-refused",
-                "one existing sequence or unambiguous exact origin",
-                error.to_string(),
-                "select a fact sequence, or an origin that names exactly one root",
-            )
-        }
-        journal::ThreadError::Verify(_) | journal::ThreadError::Snapshot(_) => Failure::refusal(
-            "thread::authority-invalid",
-            "verified immutable history and thread index",
-            error.to_string(),
-            "run `spice journal verify`, then restore or reindex as directed",
-        ),
-        journal::ThreadError::Sqlite(_) => Failure::store("thread::read-failed", error.to_string()),
+    let (cursor, thread) = read_authenticated(&state, &reader, contract, |read| {
+        read.thread(reference).map_err(thread_failure)
     })?;
     Ok((
-        snapshot_position(cursor),
+        ReplyPosition::Snapshot(cursor),
         ThreadReport {
             reference: thread.reference,
             root: thread.root,
-            entries: thread.entries,
+            entries: pack_facts(thread.entries, cursor)?,
         },
     ))
 }
 
-fn folds_inner() -> Result<(ReplyPosition, FoldReport), Failure> {
+fn folds_inner(contract: &Contract) -> Result<(ReplyPosition, FoldReport), Failure> {
     let state = state()?;
     let reader = open_reader(&state)?;
-    let cursor = reader.cursor().map_err(open_failure)?;
+    let (cursor, ()) = read_authenticated(&state, &reader, contract, |_| Ok(()))?;
     let path = state.folds();
     let states = match fs::symlink_metadata(path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => missing_fold_states(),
@@ -243,7 +270,7 @@ fn folds_inner() -> Result<(ReplyPosition, FoldReport), Failure> {
         }
         Ok(metadata) if metadata.file_type().is_file() => {
             let store = Store::open_read_only(path).map_err(fold_failure)?;
-            current_fold_states(&store)?
+            current_fold_states(&store, cursor)?
         }
         Ok(_) => {
             return Err(Failure::refusal(
@@ -254,14 +281,22 @@ fn folds_inner() -> Result<(ReplyPosition, FoldReport), Failure> {
             ));
         }
     };
-    Ok((snapshot_position(cursor), FoldReport { folds: states }))
+    Ok((
+        ReplyPosition::Snapshot(cursor),
+        FoldReport { folds: states },
+    ))
 }
 
-fn replay_inner(selected: Option<&str>) -> Result<(ReplyPosition, FoldReport), Failure> {
+fn replay_inner(
+    selected: Option<&str>,
+    contract: &Contract,
+) -> Result<(ReplyPosition, FoldReport), Failure> {
     let state = state()?;
     let reader = open_reader(&state)?;
-    reader.verify().map_err(verify_failure)?;
-    let snapshot = reader.fact_snapshot().map_err(snapshot_failure)?;
+    let (cursor, snapshot) = read_authenticated(&state, &reader, contract, |read| {
+        read.verify().map_err(verify_failure)?;
+        read.fact_snapshot().map_err(snapshot_failure)
+    })?;
     let selected = selected
         .map(|name| {
             name.parse::<FoldId>().map_err(|error| {
@@ -290,9 +325,9 @@ fn replay_inner(selected: Option<&str>) -> Result<(ReplyPosition, FoldReport), F
             .map_err(fold_failure)?;
     }
     Ok((
-        snapshot_position(snapshot.horizon()),
+        ReplyPosition::Snapshot(cursor),
         FoldReport {
-            folds: current_fold_states(&store)?,
+            folds: current_fold_states(&store, cursor)?,
         },
     ))
 }
@@ -328,6 +363,12 @@ impl Reducer for AuthorityReducer {
             .collect::<Vec<_>>();
         let payload = serde_json::json!({
             "answer": definition.answer,
+            "sources": definition
+                .sources
+                .iter()
+                .copied()
+                .map(Source::provenance)
+                .collect::<Vec<_>>(),
             "facts": selected,
         });
         if definition
@@ -347,15 +388,25 @@ impl Reducer for AuthorityReducer {
     }
 }
 
-fn current_fold_states(store: &Store) -> Result<Vec<FoldState>, Failure> {
-    INVENTORY
-        .definitions()
-        .iter()
-        .map(|definition| {
-            store
-                .current(definition.fold)
-                .map_err(fold_failure)
-                .map(|current| fold_state(definition.fold, current.as_ref()))
+fn current_fold_states(store: &Store, authority: Seq) -> Result<Vec<FoldState>, Failure> {
+    store
+        .snapshot()
+        .map_err(fold_failure)?
+        .into_iter()
+        .map(|(fold, current)| {
+            if current
+                .as_ref()
+                .and_then(|state| state.cursor.position())
+                .is_some_and(|cursor| cursor > authority)
+            {
+                return Err(Failure::refusal(
+                    "fold::generation-ahead",
+                    format!("a fold cursor no later than authority snapshot {authority}"),
+                    format!("{fold} materialization is ahead of that snapshot"),
+                    "retry against current resident authority",
+                ));
+            }
+            Ok(fold_state(fold, current.as_ref()))
         })
         .collect()
 }
@@ -369,8 +420,8 @@ fn missing_fold_states() -> Vec<FoldState> {
 }
 
 fn fold_state(fold: FoldId, materialization: Option<&Materialization>) -> FoldState {
-    let recovery = INVENTORY
-        .definition(fold)
+    let definition = INVENTORY.definition(fold);
+    let recovery = definition
         .recovery_command()
         .expect("the release-one fold inventory assigns replay recovery");
     FoldState {
@@ -380,8 +431,119 @@ fn fold_state(fold: FoldId, materialization: Option<&Materialization>) -> FoldSt
         cursor: materialization.and_then(|state| state.cursor.position()),
         horizon: materialization.and_then(|state| state.horizon.position()),
         recovery,
+        sources: definition
+            .sources
+            .iter()
+            .copied()
+            .map(Source::provenance)
+            .collect(),
         payload: materialization.map(|state| state.payload().clone()),
     }
+}
+
+fn read_authenticated<T, F>(
+    state: &StatePaths,
+    reader: &journal::JournalReader,
+    contract: &Contract,
+    answer: F,
+) -> Result<(Seq, T), Failure>
+where
+    F: for<'a> FnOnce(&journal::JournalRead<'a>) -> Result<T, Failure>,
+{
+    let epoch = crate::command_client::authenticate(state.canvas(), contract)
+        .map_err(authentication_failure)?;
+    reader
+        .read_with(|read| {
+            let cursor = read
+                .cursor()
+                .map_err(|error| Failure::store("journal::read-failed", error.to_string()))?
+                .ok_or_else(cursor_missing)?;
+            let residency = read
+                .residency_head()
+                .map_err(|error| Failure::store("journal::read-failed", error.to_string()))?
+                .ok_or_else(|| {
+                    Failure::store(
+                        "journal::residency-missing",
+                        "the authenticated resident has no durable residency head",
+                    )
+                })?;
+            if residency.body().epoch != epoch {
+                return Err(Failure::refusal(
+                    "journal::epoch-moved",
+                    epoch.to_string(),
+                    residency.body().epoch.to_string(),
+                    "reconnect through current resident discovery and retry",
+                ));
+            }
+            answer(read).map(|body| (cursor, body))
+        })
+        .map_err(|error| match error {
+            journal::ReadError::Journal(error) => {
+                Failure::store("journal::read-failed", error.to_string())
+            }
+            journal::ReadError::Answer(failure) => failure,
+        })
+}
+
+fn authentication_failure(outcome: Outcome<wire::intent::CommandAnswer>) -> Failure {
+    match outcome {
+        Outcome::Refusal(refusal) => Failure::Refusal(refusal),
+        Outcome::Fault(fault) => Failure::Fault(fault),
+        Outcome::Reply(_) => Failure::protocol(
+            "journal::authentication-invalid",
+            "resident authentication returned a command reply as an error",
+        ),
+    }
+}
+
+fn cursor_missing() -> Failure {
+    Failure::store(
+        "journal::cursor-missing",
+        "a resident or recovery authority has no durable journal position",
+    )
+}
+
+fn thread_failure(error: journal::ThreadError) -> Failure {
+    match error {
+        journal::ThreadError::NotFound { .. } | journal::ThreadError::Ambiguous { .. } => {
+            Failure::refusal(
+                "thread::reference-refused",
+                "one existing sequence or unambiguous exact origin",
+                error.to_string(),
+                "select a fact sequence, or an origin that names exactly one root",
+            )
+        }
+        journal::ThreadError::Verify(_) | journal::ThreadError::Snapshot(_) => Failure::refusal(
+            "thread::authority-invalid",
+            "verified immutable history and thread index",
+            error.to_string(),
+            "run `spice journal verify`, then restore or reindex as directed",
+        ),
+        journal::ThreadError::Sqlite(_) => Failure::store("thread::read-failed", error.to_string()),
+    }
+}
+
+fn append_recovery_fact<F: wire::Body>(
+    state: &StatePaths,
+    operation: &str,
+    body: F,
+) -> Result<SeqRange, Failure> {
+    let origin = format!("recovery:{operation}")
+        .parse::<wire::Origin>()
+        .map_err(|error| Failure::protocol("journal::origin-invalid", error.to_string()))?;
+    let at = wire::Instant::new(jiff::Timestamp::now())
+        .map_err(|error| Failure::environment("journal::clock-invalid", error.to_string()))?;
+    let mut write =
+        journal::JournalWrite::new(Actor::Spice, origin, at, Producer::ResidentRecognition);
+    write
+        .fact(body, journal::FactCause::Root)
+        .map_err(|error| Failure::protocol("journal::recovery-fact-invalid", error.to_string()))?;
+    let mut journal = journal::Journal::open(state.journal()).map_err(open_failure)?;
+    let committed = journal.apply(write).map_err(commit_failure)?;
+    Ok(SeqRange {
+        first: committed.first(),
+        last: committed.last(),
+    })
 }
 
 fn state() -> Result<StatePaths, Failure> {
@@ -459,14 +621,43 @@ fn snapshot_failure(error: journal::SnapshotError) -> Failure {
 
 fn verify_failure(error: journal::VerifyError) -> Failure {
     match error {
-        journal::VerifyError::Violations(_) | journal::VerifyError::Open(_) => Failure::refusal(
+        journal::VerifyError::Violations(violations) => Failure::refusal(
             "journal::verification-failed",
             "one valid schema, history, index, heads, receipts, and cursor closure",
-            error.to_string(),
+            violations
+                .iter()
+                .map(|violation| {
+                    format!(
+                        "{:?}:{}:{}",
+                        violation.class, violation.subject, violation.detail
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" | "),
             "restore valid authority or use the named recovery command for a derived index",
+        ),
+        journal::VerifyError::Open(error) => Failure::refusal(
+            "journal::verification-failed",
+            "one finalized current journal schema",
+            error.to_string(),
+            "finish or replace incompatible authority before retrying",
         ),
         journal::VerifyError::Sqlite(_) => {
             Failure::store("journal::verify-failed", error.to_string())
+        }
+    }
+}
+
+fn commit_failure(error: journal::CommitError) -> Failure {
+    match error {
+        journal::CommitError::Refused(_) => Failure::refusal(
+            "journal::recovery-refused",
+            "one current exclusive recovery transaction",
+            error.to_string(),
+            "verify the current authority and retry while the resident is quiescent",
+        ),
+        journal::CommitError::Fault(_) => {
+            Failure::store("journal::recovery-failed", error.to_string())
         }
     }
 }
@@ -498,8 +689,26 @@ fn count(value: usize, subject: &str) -> Result<u64, Failure> {
     })
 }
 
-fn snapshot_position(cursor: Option<wire::Seq>) -> ReplyPosition {
-    cursor.map_or(ReplyPosition::Direct {}, ReplyPosition::Snapshot)
+fn pack_facts(
+    mut entries: Vec<wire::Envelope<wire::AnyFact>>,
+    horizon: Seq,
+) -> Result<Packed<wire::Envelope<wire::AnyFact>>, Failure> {
+    let overflow = if entries.len() > MAX_REPORT_FACTS {
+        let continuation = entries[MAX_REPORT_FACTS].seq;
+        let omitted = count(entries.len() - MAX_REPORT_FACTS, "omitted facts")?;
+        entries.truncate(MAX_REPORT_FACTS);
+        Some(Overflow {
+            omitted,
+            continuation,
+        })
+    } else {
+        None
+    };
+    Ok(Packed {
+        rows: entries,
+        overflow,
+        horizon,
+    })
 }
 
 fn reply<B>(position: ReplyPosition, body: B) -> Outcome<B> {
@@ -529,9 +738,8 @@ fn create_staging_directory(parent: &Path) -> Result<(PathBuf, DirectoryCleanup)
             std::process::id(),
             NEXT_BACKUP.fetch_add(1, Ordering::Relaxed)
         ));
-        match fs::create_dir(&path) {
+        match create_private_directory(&path) {
             Ok(()) => {
-                set_mode(&path, PRIVATE_DIRECTORY)?;
                 return Ok((path.clone(), DirectoryCleanup(Some(path))));
             }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
@@ -549,18 +757,34 @@ fn create_staging_directory(parent: &Path) -> Result<(PathBuf, DirectoryCleanup)
     ))
 }
 
+#[cfg(unix)]
+fn create_private_directory(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    let mut builder = fs::DirBuilder::new();
+    builder.mode(PRIVATE_DIRECTORY).create(path)
+}
+
+#[cfg(not(unix))]
+fn create_private_directory(path: &Path) -> io::Result<()> {
+    fs::create_dir(path)
+}
+
 fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), Failure> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|error| {
-            Failure::environment(
-                "backup::write-failed",
-                format!("{}: {error}", path.display()),
-            )
-        })?;
-    set_mode(path, PRIVATE_FILE)?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        options.mode(PRIVATE_FILE);
+    }
+    let mut file = options.open(path).map_err(|error| {
+        Failure::environment(
+            "backup::write-failed",
+            format!("{}: {error}", path.display()),
+        )
+    })?;
     file.write_all(bytes).map_err(|error| {
         Failure::environment(
             "backup::write-failed",
@@ -606,23 +830,6 @@ fn mode(path: &Path) -> Result<u32, Failure> {
         "backup::mode-unavailable",
         path.display().to_string(),
     ))
-}
-
-#[cfg(unix)]
-fn set_mode(path: &Path, mode: u32) -> Result<(), Failure> {
-    use std::os::unix::fs::PermissionsExt;
-
-    fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(|error| {
-        Failure::environment(
-            "backup::mode-failed",
-            format!("{}: {error}", path.display()),
-        )
-    })
-}
-
-#[cfg(not(unix))]
-fn set_mode(_path: &Path, _mode: u32) -> Result<(), Failure> {
-    Ok(())
 }
 
 struct DirectoryCleanup(Option<PathBuf>);

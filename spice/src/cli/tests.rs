@@ -85,6 +85,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
                 )
             }
             (JournalAccess::Read, ReplyPositionLaw::Snapshot)
+            | (JournalAccess::Recovery, ReplyPositionLaw::Snapshot)
             | (
                 JournalAccess::Command | JournalAccess::Recovery | JournalAccess::Resident,
                 ReplyPositionLaw::Committed,

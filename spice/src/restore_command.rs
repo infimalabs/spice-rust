@@ -7,8 +7,8 @@ use crate::journal_lock::JournalLock;
 use serde::Serialize;
 use spice::repository::{Repository, StateError, StatePaths};
 use wire::{
-    Digest, Domain, Fault, FaultClass, JournalRestore, Outcome, Refusal, Reply, ReplyPosition,
-    RestoreVerification,
+    Actor, Digest, Domain, Fault, FaultClass, JournalRestore, Outcome, Producer, Refusal, Reply,
+    ReplyPosition, RestoreVerification, SeqRange,
 };
 
 pub(crate) fn restore(matches: &clap::ArgMatches) -> Outcome<JournalRestore> {
@@ -16,10 +16,7 @@ pub(crate) fn restore(matches: &clap::ArgMatches) -> Outcome<JournalRestore> {
         .get_one::<String>("BUNDLE")
         .expect("restore requires its generated BUNDLE operand");
     match restore_inner(Path::new(bundle), matches.get_one::<String>("apply")) {
-        Ok(body) => Outcome::Reply(Reply {
-            position: ReplyPosition::Direct {},
-            body,
-        }),
+        Ok((position, body)) => Outcome::Reply(Reply { position, body }),
         Err(failure) => failure.outcome(),
     }
 }
@@ -37,19 +34,25 @@ pub(crate) fn verify(matches: &clap::ArgMatches) -> Outcome<RestoreVerification>
     }
 }
 
-fn restore_inner(bundle: &Path, requested: Option<&String>) -> Result<JournalRestore, Failure> {
+fn restore_inner(
+    bundle: &Path,
+    requested: Option<&String>,
+) -> Result<(ReplyPosition, JournalRestore), Failure> {
     let prepared = prepare_restore(bundle)?;
     let Some(requested) = requested else {
-        return Ok(prepared.report(false));
+        return Ok((ReplyPosition::Direct {}, prepared.report(false)));
     };
-    apply_restore(prepared, requested)
+    let (position, body) = apply_restore(prepared, requested)?;
+    Ok((ReplyPosition::Committed(position), body))
 }
 
 struct PreparedRestore {
     state: StatePaths,
     destination: PathBuf,
+    bundle: String,
     capture: journal::RestoreCapture,
     previous: Option<Digest>,
+    previous_bytes: Option<Vec<u8>>,
     plan: Digest,
 }
 
@@ -83,7 +86,10 @@ fn prepare_restore(bundle: &Path) -> Result<PreparedRestore, Failure> {
     let state = repository.admit_state().map_err(state_failure)?;
     let destination = state.journal().to_path_buf();
     let capture = journal::capture_restore_bundle(bundle).map_err(bundle_failure)?;
-    let previous = current_identity(&destination)?;
+    let previous_bytes = current_bytes(&destination)?;
+    let previous = previous_bytes
+        .as_ref()
+        .map(|bytes| Digest::compute(Domain::JournalBackupMember, bytes));
     let plan_document = RestorePlanIdentity {
         version: 1,
         bundle: capture.verification().bundle.clone(),
@@ -101,17 +107,35 @@ fn prepare_restore(bundle: &Path) -> Result<PreparedRestore, Failure> {
     Ok(PreparedRestore {
         state,
         destination,
+        bundle: bundle.display().to_string(),
         capture,
         previous,
+        previous_bytes,
         plan,
     })
 }
 
-fn apply_restore(prepared: PreparedRestore, requested: &str) -> Result<JournalRestore, Failure> {
+fn apply_restore(
+    prepared: PreparedRestore,
+    requested: &str,
+) -> Result<(SeqRange, JournalRestore), Failure> {
     let _lock = admit_apply(&prepared, requested)?;
     publish_authority(&prepared.destination, prepared.capture.authority_bytes())?;
-    verify_published(&prepared)?;
-    Ok(prepared.report(true))
+    let finalized = verify_published(&prepared).and_then(|()| append_restored(&prepared));
+    let position = match finalized {
+        Ok(position) => position,
+        Err(failure) => {
+            rollback_authority(&prepared).map_err(|rollback| {
+                fault(
+                    FaultClass::Environment,
+                    "restore::rollback-failed",
+                    format!("{rollback:?}; replacement finalization also failed"),
+                )
+            })?;
+            return Err(failure);
+        }
+    };
+    Ok((position, prepared.report(true)))
 }
 
 fn admit_apply(prepared: &PreparedRestore, requested: &str) -> Result<JournalLock, Failure> {
@@ -196,7 +220,8 @@ fn publish_authority(destination: &Path, bytes: &[u8]) -> Result<(), Failure> {
             "restore::publish-failed",
             error.to_string(),
         )
-    })
+    })?;
+    sync_parent(destination)
 }
 
 fn verify_published(prepared: &PreparedRestore) -> Result<(), Failure> {
@@ -230,6 +255,98 @@ fn verify_published(prepared: &PreparedRestore) -> Result<(), Failure> {
     Ok(())
 }
 
+fn append_restored(prepared: &PreparedRestore) -> Result<SeqRange, Failure> {
+    let epoch = wire::CanonicalUuid::new(uuid::Uuid::new_v4());
+    let origin = format!("recovery:{epoch}")
+        .parse::<wire::Origin>()
+        .map_err(|error| {
+            fault(
+                FaultClass::Protocol,
+                "restore::origin-invalid",
+                error.to_string(),
+            )
+        })?;
+    let at = wire::Instant::new(jiff::Timestamp::now()).map_err(|error| {
+        fault(
+            FaultClass::Environment,
+            "restore::clock-invalid",
+            error.to_string(),
+        )
+    })?;
+    let mut write =
+        journal::JournalWrite::new(Actor::Spice, origin, at, Producer::ResidentRecognition);
+    write
+        .fact(
+            wire::body::JournalRestored {
+                bundle: prepared.bundle.clone(),
+                epoch,
+                authority: prepared.capture.verification().authority.clone(),
+            },
+            journal::FactCause::Root,
+        )
+        .map_err(|error| {
+            fault(
+                FaultClass::Protocol,
+                "restore::fact-invalid",
+                error.to_string(),
+            )
+        })?;
+    let mut authority = journal::Journal::open(&prepared.destination).map_err(|error| {
+        fault(
+            FaultClass::Store,
+            "restore::reopen-failed",
+            error.to_string(),
+        )
+    })?;
+    let committed = authority.apply(write).map_err(|error| match error {
+        journal::CommitError::Refused(_) => refusal(
+            "restore::recognition-refused",
+            "one current restored authority",
+            error.to_string(),
+            "verify the replacement and retry the digest-pinned restore",
+        ),
+        journal::CommitError::Fault(_) => fault(
+            FaultClass::Store,
+            "restore::recognition-failed",
+            error.to_string(),
+        ),
+    })?;
+    Ok(SeqRange {
+        first: committed.first(),
+        last: committed.last(),
+    })
+}
+
+fn rollback_authority(prepared: &PreparedRestore) -> Result<(), Failure> {
+    match prepared.previous_bytes.as_deref() {
+        Some(bytes) => publish_authority(&prepared.destination, bytes),
+        None => match fs::remove_file(&prepared.destination) {
+            Ok(()) => sync_parent(&prepared.destination),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(fault(
+                FaultClass::Environment,
+                "restore::rollback-failed",
+                format!("{}: {error}", prepared.destination.display()),
+            )),
+        },
+    }
+}
+
+fn sync_parent(path: &Path) -> Result<(), Failure> {
+    let parent = path
+        .parent()
+        .expect("repository journal path has a data parent");
+    fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| {
+            fault(
+                FaultClass::Environment,
+                "restore::sync-failed",
+                format!("{}: {error}", parent.display()),
+            )
+        })
+}
+
 #[derive(Serialize)]
 #[serde(deny_unknown_fields)]
 struct RestorePlanIdentity {
@@ -240,6 +357,12 @@ struct RestorePlanIdentity {
 }
 
 fn current_identity(path: &Path) -> Result<Option<Digest>, Failure> {
+    Ok(current_bytes(path)?
+        .as_ref()
+        .map(|bytes| Digest::compute(Domain::JournalBackupMember, bytes)))
+}
+
+fn current_bytes(path: &Path) -> Result<Option<Vec<u8>>, Failure> {
     match fs::symlink_metadata(path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
@@ -281,7 +404,7 @@ fn current_identity(path: &Path) -> Result<Option<Digest>, Failure> {
             format!("{}: {error}", path.display()),
         )
     })?;
-    Ok(Some(Digest::compute(Domain::JournalBackupMember, &bytes)))
+    Ok(Some(bytes))
 }
 
 fn refuse_sidecars(destination: &Path) -> Result<(), Failure> {
@@ -429,6 +552,7 @@ fn failure<B>(error: journal::BackupVerifyError) -> Outcome<B> {
     bundle_failure(error).outcome()
 }
 
+#[derive(Debug)]
 enum Failure {
     Refusal(Refusal),
     Fault(Fault),

@@ -70,6 +70,16 @@ impl<'a> JournalRead<'a> {
     pub fn fact_snapshot(&self) -> Result<crate::FactSnapshot, crate::SnapshotError> {
         crate::read::read_snapshot(self.connection)
     }
+
+    /// Verify every authority plane inside this exact immutable snapshot.
+    pub fn verify(&self) -> Result<crate::Verification, crate::VerifyError> {
+        crate::replay::verify_connection(self.connection)
+    }
+
+    /// Resolve one causal thread inside this exact immutable snapshot.
+    pub fn thread(&self, reference: &str) -> Result<crate::ThreadSnapshot, crate::ThreadError> {
+        crate::replay::thread_connection(self.connection, reference)
+    }
 }
 
 /// One authoritative head body and the fact position that established it.

@@ -138,6 +138,25 @@ pub(crate) enum Landing {
 
 macro_rules! row {
     (
+        [$($path:literal),+], $syntax:literal, $principal:ident,
+        $journal:ident => $position:ident,
+        [$($fact:ident),*], [$($guard:ident),*], $result:ident, $battery:literal
+    ) => {
+        Contract {
+            path: &[$($path),+],
+            syntax: $syntax,
+            principal: Principal::$principal,
+            journal: JournalAccess::$journal,
+            reply_position: ReplyPositionLaw::$position,
+            facts: &[$(FactKind::$fact),*],
+            guards: &[$(Guard::$guard),*],
+            tools: NO_TOOLS,
+            result: ResultClass::$result,
+            outcomes: ExitOutcome::ALL,
+            battery: $battery,
+        }
+    };
+    (
         [$($path:literal),+], $syntax:literal, $principal:ident, $journal:ident,
         [$($fact:ident),*], [$($guard:ident),*], $result:ident, $battery:literal
     ) => {
@@ -689,7 +708,7 @@ const CONTRACTS: &[Contract] = &[
         Operator,
         Recovery,
         [JournalBacked],
-        [Resident, OperatorCapability, JournalLock],
+        [Offline, JournalLock],
         Reply,
         "journal::backup"
     ),
@@ -699,7 +718,7 @@ const CONTRACTS: &[Contract] = &[
         Operator,
         Recovery,
         [JournalRestored],
-        [Resident, OperatorCapability, DigestOnMutation, JournalLock],
+        [Offline, DigestOnMutation, JournalLock],
         Plan,
         "journal::restore"
     ),
@@ -727,9 +746,9 @@ const CONTRACTS: &[Contract] = &[
         ["journal", "reindex"],
         "journal reindex",
         Operator,
-        Recovery,
+        Recovery => Snapshot,
         [],
-        [Resident, OperatorCapability, JournalLock],
+        [Offline, JournalLock],
         Reply,
         "journal::reindex"
     ),
