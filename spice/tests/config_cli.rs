@@ -79,7 +79,7 @@ struct Spoken {
 }
 
 #[test]
-fn reads_name_the_coexistence_projection_effective_tree_and_provenance() {
+fn reads_name_the_coexistence_effective_tree_and_provenance() {
     let fixture = Fixture::new("read");
     let text = fixture.invoke(&["config"]);
     let json = fixture.invoke(&["--json", "config"]);
