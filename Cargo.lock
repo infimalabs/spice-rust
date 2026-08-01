@@ -182,7 +182,6 @@ name = "dist"
 version = "0.0.0"
 dependencies = [
  "atomic",
- "blake3",
  "serde_json",
  "sill",
  "thiserror",
@@ -255,6 +254,7 @@ version = "0.0.0"
 dependencies = [
  "atomic",
  "sill",
+ "syn 3.0.3",
  "wire",
 ]
 
@@ -378,6 +378,7 @@ dependencies = [
 name = "listen"
 version = "0.0.0"
 dependencies = [
+ "serde_json",
  "tape",
  "wire",
 ]

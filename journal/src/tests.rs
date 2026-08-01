@@ -86,6 +86,58 @@ fn unknown_states_and_occupied_databases_are_refused_by_name() {
 }
 
 #[test]
+fn malformed_schema_identity_is_refused_by_name() {
+    let duplicate = schema_fixture(1, "finalized", None, None, None);
+    duplicate
+        .execute(
+            "INSERT INTO journal_schema(singleton, version, state) VALUES (2, 1, 'finalized')",
+            [],
+        )
+        .expect("insert duplicate schema row");
+    let error = Journal::from_connection(duplicate).expect_err("two schema rows refuse open");
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::SchemaRowCount { count: 2 })
+    ));
+    assert!(error.to_string().contains("exactly one row, found 2"));
+
+    let missing = schema_fixture(1, "finalized", None, None, None);
+    missing
+        .execute("UPDATE journal_schema SET singleton = 2", [])
+        .expect("move schema row away from singleton one");
+    let error = Journal::from_connection(missing).expect_err("missing singleton refuses open");
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::MissingSingleton)
+    ));
+    assert!(error.to_string().contains("singleton row 1 is missing"));
+
+    let unknown = schema_fixture(0, "finalized", None, None, None);
+    let error = Journal::from_connection(unknown).expect_err("unknown version refuses open");
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::UnknownVersion { found: 0 })
+    ));
+    assert!(error.to_string().contains("schema 0 has no migration path"));
+
+    let disagreement = schema_fixture(1, "finalized", None, None, None);
+    disagreement
+        .pragma_update(None, "user_version", 0)
+        .expect("make pragma disagree with schema row");
+    let error =
+        Journal::from_connection(disagreement).expect_err("version disagreement refuses open");
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::VersionDisagreement { row: 1, pragma: 0 })
+    ));
+    assert!(
+        error
+            .to_string()
+            .contains("row names version 1, but SQLite user_version names 0")
+    );
+}
+
+#[test]
 fn coherent_authority_verifies_every_required_plane() {
     let journal = authority_fixture();
 
@@ -126,9 +178,20 @@ fn verify_names_envelope_head_receipt_cursor_and_thread_defects() {
 
 #[test]
 fn verify_names_schema_and_sequence_defects() {
-    let classes = refused_classes(&structure_defect_fixture());
-    assert!(classes.contains(&ViolationClass::Schema));
-    assert!(classes.contains(&ViolationClass::Sequence));
+    let violations = refused_violations(&structure_defect_fixture());
+    let sequence = violations
+        .iter()
+        .find(|violation| violation.class == ViolationClass::Sequence)
+        .expect("sequence plane names the history gap");
+    assert_eq!(sequence.subject, "4");
+    assert!(sequence.detail.contains("expected contiguous seq 3"));
+
+    let schema = violations
+        .iter()
+        .find(|violation| violation.class == ViolationClass::Schema)
+        .expect("schema plane names the unresolved foreign key");
+    assert!(schema.subject.contains("thread_index"));
+    assert!(schema.detail.contains("fact_envelopes"));
 }
 
 #[test]
@@ -174,13 +237,18 @@ fn plane_fixture(class: ViolationClass) -> &'static str {
 }
 
 fn refused_classes(journal: &Journal) -> BTreeSet<ViolationClass> {
+    refused_violations(journal)
+        .into_iter()
+        .map(|violation| violation.class)
+        .collect()
+}
+
+fn refused_violations(journal: &Journal) -> Vec<crate::Violation> {
     journal
         .verify()
         .expect_err("a corrupt authority must fail verification")
         .violations()
-        .iter()
-        .map(|violation| violation.class)
-        .collect()
+        .to_vec()
 }
 
 /// An authority whose rows decode but disagree with what they are stored under.
@@ -237,7 +305,7 @@ fn structure_defect_fixture() -> Journal {
             4,
             None,
             FactKind::TaskNoted,
-            json!({"task": "JOURNAL-a1", "note": "sequence fixture"}),
+            json!({"task": "JOURNAL-a1", "note": "Journal fixture note"}),
         ),
     );
     journal
