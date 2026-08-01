@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use wire::{
     Actor, CanonicalUuid, Command, Envelope, Fact, FactKind, Fault, FaultClass, Hello, Instant,
     Origin, Outcome, Overflow, Packed, Refusal, Rejected, Reply, ReplyPosition, Response, Seq,
-    SeqRange, TaskHandle, WireVersion, Witness, body, exit,
+    SeqRange, TaskHandle, WireVersion, Witness, body,
 };
 
 /// Body of the `task::done` command printed in WIRE.md.
@@ -269,7 +269,6 @@ fn witness_order_does_not_change_command_identity() {
 fn reply_matches_the_specified_document() {
     let response: Response<DoneResult> = round_trip(REPLY);
 
-    assert_eq!(response.exit_code(), exit::REPLY);
     let Outcome::Reply(reply) = &response.outcome else {
         panic!("the fixture carries a reply outcome");
     };
@@ -308,7 +307,7 @@ fn a_read_only_reply_carries_a_snapshot_cursor_instead_of_a_range() {
 }
 
 #[test]
-fn a_refusal_round_trips_and_exits_two() {
+fn a_refusal_round_trips() {
     let response: Response<DoneResult> = Response {
         v: WireVersion::CURRENT,
         id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c4"),
@@ -326,7 +325,6 @@ fn a_refusal_round_trips_and_exits_two() {
     let decoded: Response<DoneResult> = wire::decode(&encoded).expect("decodes");
 
     assert_eq!(decoded, response);
-    assert_eq!(decoded.exit_code(), exit::REFUSAL);
     let Outcome::Refusal(refusal) = &decoded.outcome else {
         panic!("a refusal decodes as a refusal");
     };
@@ -334,7 +332,7 @@ fn a_refusal_round_trips_and_exits_two() {
 }
 
 #[test]
-fn a_fault_round_trips_and_exits_one() {
+fn a_fault_round_trips() {
     let response: Response<DoneResult> = Response {
         v: WireVersion::CURRENT,
         id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c4"),
@@ -350,12 +348,6 @@ fn a_fault_round_trips_and_exits_one() {
     let decoded: Response<DoneResult> = wire::decode(&encoded).expect("decodes");
 
     assert_eq!(decoded, response);
-    assert_eq!(decoded.exit_code(), exit::FAULT);
-}
-
-#[test]
-fn the_three_outcomes_carry_distinct_exit_codes() {
-    assert_eq!((exit::REPLY, exit::FAULT, exit::REFUSAL), (0, 1, 2));
 }
 
 #[test]

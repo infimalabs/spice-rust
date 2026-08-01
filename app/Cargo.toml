@@ -7,7 +7,11 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+serde = "1.0.229"
 wire = { path = "../wire" }
+
+[dev-dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
 
 [lints]
 workspace = true

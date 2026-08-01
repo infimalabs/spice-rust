@@ -5,6 +5,29 @@
 //! trailing `Z`. The `uuid` and `jiff` crates own the underlying primitives,
 //! so no leaf chooses its own; these newtypes add only the spelling law,
 //! which those crates deliberately do not enforce.
+//!
+//! # Instants narrow at construction, they do not refuse
+//!
+//! An [`Instant`] holds exactly the resolution its spelling carries, because
+//! [`Instant::new`] floors to milliseconds instead of storing the sharper
+//! timestamp it was handed. Equal wire bytes therefore imply equal values, and
+//! `Ord` and `Hash` agree with what `Display` renders.
+//!
+//! The alternative was refusing sharper input. It was rejected: `new` is how a
+//! clock reading becomes wire-shaped, and every clock reading is sharper than a
+//! millisecond, so refusal would make minting an instant fallible and push the
+//! identical narrowing into every call site — the same repair written N times,
+//! each free to floor, truncate, or round differently. One narrowing in one
+//! place is the deterministic path. Refusal still governs the other direction:
+//! [`FromStr`] rejects a sharper *spelling* outright rather than repairing it,
+//! because there the extra digits are a violated assumption about the wire
+//! rather than a deliberate narrowing of an internal value.
+//!
+//! The narrowing floors toward negative infinity, matching the printer.
+//! Truncating toward zero — which is what `Timestamp::as_millisecond` and
+//! `RoundMode::Trunc` both do — disagrees with the rendered spelling before
+//! 1970: `1969-12-31T23:59:59.999999Z` renders `.999Z` but truncates up to
+//! `1970-01-01T00:00:00Z`, reintroducing this very defect in a narrower range.
 
 use std::fmt;
 use std::str::FromStr;
@@ -127,10 +150,26 @@ impl Instant {
         (23, b'Z'),
     ];
 
-    /// Wrap a timestamp; rendering always truncates to millisecond precision.
+    /// Wrap a timestamp, flooring it to the millisecond the spelling carries.
+    ///
+    /// A timestamp built elsewhere in the workspace may carry more resolution
+    /// than the wire spells; the surplus is dropped here rather than at render,
+    /// so the stored value is the one the spelling denotes.
+    ///
+    /// Flooring is total over the whole `Timestamp` range: `MIN` is already
+    /// whole-millisecond and `MAX` floors downward inside it, which is what
+    /// lets this return `Self` rather than a `Result`. The identity fixture
+    /// pins both bounds.
     #[must_use]
-    pub const fn new(inner: jiff::Timestamp) -> Self {
-        Self(inner)
+    pub fn new(inner: jiff::Timestamp) -> Self {
+        let floored = inner
+            .round(
+                jiff::TimestampRound::new()
+                    .smallest(jiff::Unit::Millisecond)
+                    .mode(jiff::RoundMode::Floor),
+            )
+            .expect("flooring to milliseconds stays inside the timestamp range");
+        Self(floored)
     }
 
     /// The underlying timestamp.
@@ -167,7 +206,7 @@ impl FromStr for Instant {
             return Err(IdentError::Instant(text.to_owned()));
         }
         text.parse::<jiff::Timestamp>()
-            .map(Self)
+            .map(Self::new)
             .map_err(|_| IdentError::Instant(text.to_owned()))
     }
 }

@@ -13,6 +13,7 @@ pub mod body;
 pub mod command;
 pub mod envelope;
 pub mod fact;
+pub mod head;
 pub mod hello;
 pub mod ident;
 pub mod packed;
@@ -22,12 +23,16 @@ pub mod witness;
 pub use command::{Command, CommandKind, CommandKindError};
 pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVersion};
 pub use fact::{Body, Fact, FactKind, Producer};
+pub use head::{
+    ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency, LeaseHead,
+    ResidencyHead, ResidentState, TaskHead, TrustHead, TrustState, WitnessHead, WitnessKind,
+    WorkflowHead,
+};
 pub use hello::{Hello, Rejected};
 pub use ident::{CanonicalUuid, IdentError, Instant};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
     Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, Response, SeqRange, SeqRangeError,
-    exit,
 };
 pub use witness::{Phase, PhaseError, TaskHandle, TaskHandleError, Witness};
 

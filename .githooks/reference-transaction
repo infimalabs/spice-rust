@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+
+set -eu
+
+exec spice dev reference-transaction "$1"

@@ -5,16 +5,6 @@ use serde::{Deserialize, Serialize};
 use crate::envelope::{Seq, WireVersion};
 use crate::ident::CanonicalUuid;
 
-/// Process exit status carried by each outcome.
-pub mod exit {
-    /// A typed result committed or a snapshot answered.
-    pub const REPLY: i32 = 0;
-    /// A named defect in protocol, store, or environment.
-    pub const FAULT: i32 = 1;
-    /// An answer about an event that did not occur.
-    pub const REFUSAL: i32 = 2;
-}
-
 /// An inclusive range of committed journal positions.
 ///
 /// Decoding refuses a reversed range: WIRE names this an inclusive range, and
@@ -159,18 +149,6 @@ pub enum Outcome<B> {
     Fault(Fault),
 }
 
-impl<B> Outcome<B> {
-    /// Process exit status for this outcome.
-    #[must_use]
-    pub const fn exit_code(&self) -> i32 {
-        match self {
-            Self::Reply(_) => exit::REPLY,
-            Self::Refusal(_) => exit::REFUSAL,
-            Self::Fault(_) => exit::FAULT,
-        }
-    }
-}
-
 /// The reply frame: the command it answers, the epoch that answered, and one
 /// tagged outcome.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,12 +162,4 @@ pub struct Response<B> {
     pub epoch: CanonicalUuid,
     /// The one outcome.
     pub outcome: Outcome<B>,
-}
-
-impl<B> Response<B> {
-    /// Process exit status for this reply.
-    #[must_use]
-    pub const fn exit_code(&self) -> i32 {
-        self.outcome.exit_code()
-    }
 }
