@@ -632,6 +632,40 @@ fn migration_diagnostics_name_the_exact_source_field() {
 }
 
 #[test]
+fn disabled_markdown_generation_still_validates_the_stem_dialect() {
+    for text in [
+        concat!(
+            "[policy.markdown_depth_budget]\nextensions = []\n",
+            "stem_pattern = \"(?<=DOC)S\"\n"
+        ),
+        concat!(
+            "[policy.markdown_depth_budget]\nextensions = []\n",
+            "stem_pattern = \"[\"\n"
+        ),
+    ] {
+        let error = migrate_predecessor_policy("disabled.toml", text)
+            .expect_err("disabled unsupported stem pattern must refuse");
+        assert_eq!(error.field(), "policy.markdown_depth_budget.stem_pattern");
+        assert!(error.reason().contains("unsupported by rust-regex-1"));
+        assert!(
+            error
+                .reason()
+                .contains("rewrite it in Rust regex 1.x syntax")
+        );
+    }
+
+    let policy = migrate_predecessor_policy(
+        "disabled.toml",
+        concat!(
+            "[policy.markdown_depth_budget]\nextensions = []\n",
+            "stem_pattern = \"[A-Z_]+\"\n"
+        ),
+    )
+    .expect("disabled supported stem pattern migrates");
+    assert!(policy.document().rules().is_empty());
+}
+
+#[test]
 fn normalized_duplicate_selectors_and_anonymous_current_rules_are_refused() {
     let duplicate = migrate_predecessor_policy(
         "duplicate.toml",

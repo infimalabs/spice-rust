@@ -5,6 +5,7 @@ use std::fmt;
 
 use toml::Value;
 
+use super::matcher::compile_stem_expression;
 use super::{
     BoundLimits, BoundName, CompileError, GlobalRatchet, MagicRule, OneLetterBehavior, Policy,
     PolicyDocument, RuleDeclaration, RuleId, RuleSettings, RuleSource, RuleSourceKind,
@@ -185,6 +186,11 @@ fn parse_markdown(
         .and_then(|table| table.get("stem_pattern"))
         .map(|value| nonempty_string(value, "policy.markdown_depth_budget.stem_pattern", source))
         .transpose()?;
+    if let Some(pattern) = &stem_pattern {
+        compile_stem_expression(pattern).map_err(|reason| {
+            MigrationError::new(source, "policy.markdown_depth_budget.stem_pattern", reason)
+        })?;
+    }
 
     let depth = optional_nested(policy, "markdown_depth", "policy.markdown_depth", source)?;
     reject_unknown(depth, &DEPTH_KEYS, "policy.markdown_depth", source)?;

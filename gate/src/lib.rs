@@ -14,6 +14,7 @@
 
 pub mod camp;
 pub mod config;
+pub mod hygiene;
 pub mod input;
 pub mod jurisdiction;
 pub mod kill;
@@ -24,6 +25,7 @@ pub mod names;
 pub mod policy;
 pub mod ratchet;
 pub mod report;
+pub mod state;
 pub mod toolchain;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tree;
@@ -34,6 +36,18 @@ pub use camp::{
     CampStanding, DistributionReport, LocusDistance, SharedBound,
 };
 pub use config::{Config, WalkConfig};
+pub use hygiene::{
+    AnalysisEvidence, AnalyzerEvidence, EvidenceState, ExclusionEvidence, HYGIENE_ARMS,
+    HYGIENE_REPORT_VERSION, HygieneAnalyzer, HygieneConfigurationSource, HygieneDeclaration,
+    HygieneError, HygieneFinding, HygieneFindingDetail, HygieneJurisdiction, HygieneMeasurement,
+    HygieneObservation, HygieneOutcome, HygieneProvenance, HygieneReport, HygieneTraversal,
+    MigrationRefusal as HygieneMigrationRefusal,
+    PredecessorComparison as HygienePredecessorComparison,
+    PredecessorComparisonError as HygienePredecessorComparisonError,
+    PredecessorObservation as HygienePredecessorObservation,
+    PredecessorResult as HygienePredecessorResult, PythonUnusedStatus,
+    compare_predecessor as compare_hygiene_predecessor, measure_hygiene,
+};
 pub use input::{
     BASELINE_PATH, BASELINE_VERSION, Baseline, BaselineError, Contract, ContractError,
     ExecutableDeclaration, FieldError, Floor, FloorDeclaration, FloorKind, GateSet, GateSetError,
@@ -76,6 +90,12 @@ pub use report::{
     ReportAttemptKind, ReportCompletion, ReportDecodeError, ReportFloor, ReportMeasurement,
     ReportMutant, ReportMutantDisposition, ReportMutationInventory, ReportMutationMovement,
     ReportOutcome, ReportProcess, ReportRate, ReportStream,
+};
+pub use state::{
+    ActorInputs, ActorResolution, ActorSource, BoundDecision, BoundError, BoundRule, ClaimDecision,
+    ClaimStatus, CurrentState, KeyError, LatchEntry, LatchKind, LatchObservation, LatchTransition,
+    PeerClaim, PendingState, PredecessorSources, RenameMap, StateDecision, StateError,
+    StateErrorKind, StateKey, StateLedger, StateReceipt, current_state_path, varied_elastic_limit,
 };
 pub use toolchain::{
     ArmFinding, ArmMeasurement, ArmObservation, ArmOutcome, ConfigurationSource, FindingDetail,

@@ -836,3 +836,6 @@ mod lane_process;
 
 #[path = "resident/lane_continuity.rs"]
 mod lane_continuity;
+
+#[path = "resident/vendor_process.rs"]
+mod vendor_process;

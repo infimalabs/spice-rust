@@ -63,18 +63,19 @@ impl PathPattern {
 }
 
 pub(super) fn compile_stem_pattern(rule: &RuleId, pattern: &str) -> Result<Regex, CompileError> {
+    compile_stem_expression(pattern)
+        .map_err(|reason| CompileError::rule(rule, "stem_pattern", reason))
+}
+
+pub(super) fn compile_stem_expression(pattern: &str) -> Result<Regex, String> {
     let anchored = format!(r"\A(?:{pattern})\z");
     Regex::new(&anchored).map_err(|error| {
-        CompileError::rule(
-            rule,
-            "stem_pattern",
-            format!(
-                concat!(
-                    "pattern {:?} is unsupported by {}: ",
-                    "{}; rewrite it in Rust regex 1.x syntax"
-                ),
-                pattern, REGEX_DIALECT_NAME, error
+        format!(
+            concat!(
+                "pattern {:?} is unsupported by {}: ",
+                "{}; rewrite it in Rust regex 1.x syntax"
             ),
+            pattern, REGEX_DIALECT_NAME, error
         )
     })
 }
