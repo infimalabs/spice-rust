@@ -5,7 +5,7 @@
 //! and begins watching group absence only after the wrapper completes or dies.
 
 use std::fs::File;
-use std::io;
+use std::io::{self, Read};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::thread::JoinHandle;
@@ -14,6 +14,7 @@ const GUARDIAN_LOCK_FD: RawFd = 3;
 const GUARDIAN_NOTICE_FD: RawFd = 4;
 const DUPLICATE_MINIMUM_FD: RawFd = 10;
 const POLL_NANOSECONDS: libc::c_long = 10_000_000;
+const READY_BYTE: u8 = 1;
 
 #[derive(Debug)]
 pub(super) struct PendingGuardian {
@@ -23,11 +24,9 @@ pub(super) struct PendingGuardian {
 
 impl PendingGuardian {
     pub(super) fn start(file: &File) -> io::Result<Self> {
-        let (notifier, receiver) = UnixStream::pair()?;
+        let (mut notifier, receiver) = UnixStream::pair()?;
         let lock = duplicate(file.as_raw_fd())?;
         let notice = duplicate(receiver.as_raw_fd())?;
-        let inherited_descriptors = inherited_descriptors()?;
-        let maximum_fd = maximum_fd();
 
         // SAFETY: the child branch invokes only async-signal-safe system calls and
         // exits with `_exit`, without touching shared Rust runtime state.
@@ -36,17 +35,21 @@ impl PendingGuardian {
             return Err(io::Error::last_os_error());
         }
         if pid == 0 {
-            guardian_main(
-                lock.as_raw_fd(),
-                notice.as_raw_fd(),
-                maximum_fd,
-                &inherited_descriptors,
-            );
+            guardian_main(lock.as_raw_fd(), notice.as_raw_fd());
         }
 
         drop(receiver);
         drop(lock);
         drop(notice);
+        if let Err(error) = await_ready(&mut notifier) {
+            drop(notifier);
+            // SAFETY: `pid` identifies the guardian forked above.
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+            let _reap_result = reap(pid);
+            return Err(error);
+        }
         let reaper = match std::thread::Builder::new()
             .name("sill-lock-guardian".to_owned())
             .spawn(move || reap(pid))
@@ -65,6 +68,7 @@ impl PendingGuardian {
         Ok(Self {
             notifier: Some(notifier),
             guardian: Some(Guardian {
+                pid: u32::try_from(pid).expect("forked guardian pid is positive"),
                 notifier: None,
                 reaper: Some(reaper),
             }),
@@ -88,6 +92,21 @@ impl PendingGuardian {
     }
 }
 
+fn await_ready(notifier: &mut UnixStream) -> io::Result<()> {
+    let mut ready = [0_u8; 1];
+    notifier.read_exact(&mut ready).map_err(|source| {
+        io::Error::new(
+            source.kind(),
+            format!("lock guardian did not complete descriptor setup: {source}"),
+        )
+    })?;
+    if ready == [READY_BYTE] {
+        Ok(())
+    } else {
+        Err(io::Error::other("lock guardian sent invalid readiness"))
+    }
+}
+
 impl Drop for PendingGuardian {
     fn drop(&mut self) {
         drop(self.notifier.take());
@@ -99,11 +118,16 @@ impl Drop for PendingGuardian {
 
 #[derive(Debug)]
 pub(super) struct Guardian {
+    pid: u32,
     notifier: Option<UnixStream>,
     reaper: Option<JoinHandle<io::Result<()>>>,
 }
 
 impl Guardian {
+    pub(super) const fn id(&self) -> u32 {
+        self.pid
+    }
+
     pub(super) fn wait(mut self) -> io::Result<()> {
         drop(self.notifier.take());
         self.reaper
@@ -169,38 +193,7 @@ fn duplicate(descriptor: RawFd) -> io::Result<OwnedFd> {
     Ok(unsafe { OwnedFd::from_raw_fd(duplicate) })
 }
 
-fn maximum_fd() -> RawFd {
-    // SAFETY: `_SC_OPEN_MAX` is a process-local read-only query.
-    let maximum = unsafe { libc::sysconf(libc::_SC_OPEN_MAX) };
-    RawFd::try_from(maximum).unwrap_or(65_536).max(5)
-}
-
-#[cfg(target_os = "linux")]
-fn inherited_descriptors() -> io::Result<Vec<RawFd>> {
-    Ok(Vec::new())
-}
-
-#[cfg(target_os = "macos")]
-fn inherited_descriptors() -> io::Result<Vec<RawFd>> {
-    std::fs::read_dir("/dev/fd")?
-        .map(|entry| {
-            entry.and_then(|entry| {
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .parse()
-                    .map_err(|source| io::Error::new(io::ErrorKind::InvalidData, source))
-            })
-        })
-        .collect()
-}
-
-fn guardian_main(
-    lock: RawFd,
-    notice: RawFd,
-    maximum_fd: RawFd,
-    inherited_descriptors: &[RawFd],
-) -> ! {
+fn guardian_main(lock: RawFd, notice: RawFd) -> ! {
     // SAFETY: the guardian is the only thread in this forked process and uses
     // only raw descriptors until it exits without running Rust destructors.
     unsafe {
@@ -210,7 +203,9 @@ fn guardian_main(
         {
             libc::_exit(125);
         }
-        close_unneeded_descriptors(maximum_fd, inherited_descriptors);
+        if !close_unneeded_descriptors() || !send_ready() {
+            libc::_exit(125);
+        }
 
         let mut bytes = [0_u8; size_of::<u32>()];
         let mut received = 0;
@@ -245,6 +240,27 @@ fn guardian_main(
     }
 }
 
+unsafe fn send_ready() -> bool {
+    let ready = [READY_BYTE];
+    loop {
+        // SAFETY: the one-byte source remains valid for the duration of the call.
+        let result = unsafe {
+            libc::send(
+                GUARDIAN_NOTICE_FD,
+                ready.as_ptr().cast(),
+                ready.len(),
+                libc::MSG_NOSIGNAL,
+            )
+        };
+        if result == 1 {
+            return true;
+        }
+        if result != -1 || unsafe { errno() } != libc::EINTR {
+            return false;
+        }
+    }
+}
+
 unsafe fn wait_for_wrapper_close() {
     let mut byte = 0_u8;
     loop {
@@ -260,7 +276,7 @@ unsafe fn wait_for_wrapper_close() {
 }
 
 #[cfg(target_os = "linux")]
-unsafe fn close_unneeded_descriptors(maximum_fd: RawFd, _inherited_descriptors: &[RawFd]) {
+unsafe fn close_unneeded_descriptors() -> bool {
     for descriptor in 0..GUARDIAN_LOCK_FD {
         // SAFETY: closing an inherited descriptor is valid and failures are irrelevant.
         unsafe {
@@ -269,37 +285,41 @@ unsafe fn close_unneeded_descriptors(maximum_fd: RawFd, _inherited_descriptors: 
     }
 
     // SAFETY: this closes only descriptors above the guardian's two retained slots.
-    if unsafe {
+    (unsafe {
         libc::syscall(
             libc::SYS_close_range,
             GUARDIAN_NOTICE_FD + 1,
             libc::c_uint::MAX,
             0,
         )
-    } == 0
-    {
-        return;
-    }
-
-    for descriptor in (GUARDIAN_NOTICE_FD + 1)..maximum_fd {
-        // SAFETY: closing an inherited descriptor is valid and failures are irrelevant.
-        unsafe {
-            libc::close(descriptor);
-        }
-    }
+    }) == 0
 }
 
 #[cfg(target_os = "macos")]
-unsafe fn close_unneeded_descriptors(_maximum_fd: RawFd, inherited_descriptors: &[RawFd]) {
-    for &descriptor in inherited_descriptors {
-        if descriptor == GUARDIAN_LOCK_FD || descriptor == GUARDIAN_NOTICE_FD {
-            continue;
-        }
+unsafe fn close_unneeded_descriptors() -> bool {
+    let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+    // SAFETY: the guardian owns the writable limit destination.
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, limit.as_mut_ptr()) } == -1 {
+        return false;
+    }
+    // SAFETY: successful `getrlimit` initialized the destination.
+    let maximum = unsafe { limit.assume_init() }.rlim_cur;
+    let Ok(maximum) = RawFd::try_from(maximum) else {
+        return false;
+    };
+    for descriptor in (GUARDIAN_NOTICE_FD + 1)..maximum {
         // SAFETY: closing an inherited descriptor is valid and failures are irrelevant.
         unsafe {
             libc::close(descriptor);
         }
     }
+    for descriptor in 0..GUARDIAN_LOCK_FD {
+        // SAFETY: closing an inherited descriptor is valid and failures are irrelevant.
+        unsafe {
+            libc::close(descriptor);
+        }
+    }
+    true
 }
 
 fn raw_group_absent(pid: libc::pid_t) -> bool {
