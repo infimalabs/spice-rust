@@ -647,8 +647,18 @@ mod tests {
         );
         assert_eq!(
             report.python.pending_paths.len(),
-            24,
-            "the three native Git hook paths must leave the pending parity ledger",
+            23,
+            concat!(
+                "native Git hooks and task capture must leave only ",
+                "the remaining pending parity paths",
+            ),
+        );
+        assert!(
+            report
+                .python
+                .pending_paths
+                .iter()
+                .all(|path| path.path != "task capture")
         );
         assert!(report.python.unconfirmed_deletions.is_empty());
         assert!(report.python.stale_deletion_confirmations.is_empty());

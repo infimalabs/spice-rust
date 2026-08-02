@@ -7,6 +7,7 @@ use bus::{Bus, CommitOutcome};
 use clap::ArgMatches;
 use journal::{FactCause, GuardError, JournalGuard, JournalRead, JournalWrite, PendingFact};
 use spice::repository::Repository;
+use wire::body::GitBoundary;
 use wire::intent::{
     BoardAnswer, BoardGraph, BoardHandout, BoardRead, BoardTask, ClaimWin, CommandAnswer, DocApply,
     DocLedger, Positioned, TaskAdd, TaskDefer, TaskDepends, TaskDone, TaskNote, TaskRef,

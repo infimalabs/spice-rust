@@ -204,6 +204,68 @@ mod tests {
         clean(&root, bus);
     }
 
+    #[test]
+    fn capture_claims_one_exact_eligible_non_allocator_task() {
+        let (root, bus, epoch, seats) = fixture("capture", 1);
+        let lane = Actor::Lane(seats[0].lane);
+        let alpha = add(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "CAP-alpha001",
+            "Allocator winner",
+            Some("todo"),
+        );
+        let beta = add(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "CAP-beta0001",
+            "Exact capture target",
+            Some("todo"),
+        );
+        let available = board(&bus, epoch, lane.clone());
+        let entries = entries(&available)
+            .expect("capture board entries are valid");
+        assert_eq!(
+            board::select(&entries, &lane)
+                .expect("allocator winner")
+                .entry()
+                .statement()
+                .handle,
+            alpha,
+        );
+        let heads = at(&available, &beta);
+        let rule: Name = "capture".parse().expect("capture rule");
+        assert_committed(issue(
+            &bus,
+            epoch,
+            lane.clone(),
+            CommandKind::ClaimWin,
+            vec![
+                statement_witness(heads),
+                workflow_witness(heads),
+                claim_witness(heads),
+                Witness::Eligibility { rule: rule.clone() },
+                residency(&available, &seats[0]),
+            ],
+            &ClaimWin { rule },
+        ));
+
+        let claimed = board(&bus, epoch, lane);
+        assert!(at(&claimed, &alpha).claim.is_none());
+        assert_eq!(
+            at(&claimed, &beta)
+                .claim
+                .as_ref()
+                .expect("capture claim")
+                .body
+                .disposition,
+            ClaimDisposition::Active,
+        );
+        clean(&root, bus);
+    }
+
     fn seed_edit_tasks(
         bus: &Bus,
         epoch: CanonicalUuid,

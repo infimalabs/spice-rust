@@ -237,6 +237,7 @@ fn an_active_claim_without_its_lease_is_a_typed_zero_write_refusal() {
                 occupant: request.occupant,
                 epoch: request.epoch,
                 until: request.expiry,
+                git: None,
             },
             FactCause::Root,
         )
