@@ -60,7 +60,7 @@ pub mod witness;
 
 pub use command::{
     AdmittedCommand, Authority, Command, CommandKind, CommandKindError, CommandRejection, Law,
-    LawError,
+    LawError, TaskCreationAuthority,
 };
 pub use config::{ConfigSource, DurationWord, DurationWordError, Provenance};
 pub use doctor::{

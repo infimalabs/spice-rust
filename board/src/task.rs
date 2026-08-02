@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
+use wire::TaskCreationAuthority;
 use wire::intent::ProjectVisibility;
 use wire::{ClaimHead, LeaseHead, TaskHandle, TaskHead, WorkflowHead};
 
@@ -104,6 +105,22 @@ impl ProjectPolicy {
                 visibility: ProjectVisibility::Public,
             })
         }
+    }
+
+    /// Admit one project under the authority selected at the task-creation
+    /// command boundary.
+    pub fn admit_creation(
+        &self,
+        text: &str,
+        authority: TaskCreationAuthority,
+    ) -> Result<Project, ProjectError> {
+        let project = self.admit(text)?;
+        if authority == TaskCreationAuthority::Manual
+            && let ProjectVisibility::Hidden { stem } = project.visibility()
+        {
+            return Err(ProjectError::SystemReserved(stem.clone()));
+        }
+        Ok(project)
     }
 
     /// Fully resolved hidden roots in allocator classification order.
@@ -210,6 +227,8 @@ pub enum ProjectError {
     UnknownPublicStem(String),
     HiddenSpelling(String),
     UnknownHiddenStem(String),
+    /// Hidden roots are addressable only by typed system creation routes.
+    SystemReserved(String),
     VisibilityMismatch {
         project: String,
         classified_stem: String,
@@ -242,6 +261,10 @@ impl fmt::Display for ProjectError {
             Self::UnknownHiddenStem(stem) => {
                 write!(formatter, "hidden project stem {stem:?} is not resolved")
             }
+            Self::SystemReserved(stem) => write!(
+                formatter,
+                "hidden project stem {stem:?} is reserved for system task creation"
+            ),
             Self::VisibilityMismatch {
                 project,
                 classified_stem,

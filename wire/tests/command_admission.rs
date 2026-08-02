@@ -3,7 +3,7 @@
 use wire::intent::{CommandAnswer, Intent, StateAnswer};
 use wire::{
     Accepted, Actor, CanonicalUuid, Command, CommandKind, CommandRejection, Outcome, Reply,
-    ReplyPosition, ResidentState, WireVersion, Witness,
+    ReplyPosition, ResidentState, TaskCreationAuthority, WireVersion, Witness,
 };
 
 fn uuid(last: u8) -> CanonicalUuid {
@@ -117,6 +117,23 @@ fn lane_cannot_submit_operator_direction() {
         CommandRejection::Refusal(wire::Refusal { ref reason, .. })
             if reason == "command::authority"
     ));
+}
+
+#[test]
+fn task_creation_authority_is_closed_over_the_two_add_routes() {
+    assert_eq!(
+        CommandKind::TaskAdd.task_creation_authority(),
+        Some(TaskCreationAuthority::Manual),
+    );
+    assert_eq!(
+        CommandKind::TaskSystemAdd.task_creation_authority(),
+        Some(TaskCreationAuthority::System),
+    );
+    for kind in CommandKind::ALL {
+        if !matches!(kind, CommandKind::TaskAdd | CommandKind::TaskSystemAdd) {
+            assert_eq!(kind.task_creation_authority(), None, "{kind}");
+        }
+    }
 }
 
 #[test]

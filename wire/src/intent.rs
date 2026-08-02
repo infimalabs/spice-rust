@@ -191,7 +191,8 @@ pub struct TextAnswer {
 pub struct TaskAdd {
     /// One-line statement of the work.
     pub title: String,
-    /// One-to-three-segment public project, or absent for private work.
+    /// One resolved project, or absent for private work. The command kind's
+    /// non-crossing creation authority decides whether a hidden root is legal.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -1154,7 +1155,7 @@ impl CommandKind {
             Self::BoardGraph => Binding::of(B::BoardGraph, A::Text),
             Self::BoardHandout => Binding::of(B::BoardHandout, A::Text),
             Self::DocLedger => Binding::of(B::DocLedger, A::Text),
-            Self::TaskAdd => Binding::of(B::TaskAdd, A::Task),
+            Self::TaskAdd | Self::TaskSystemAdd => Binding::of(B::TaskAdd, A::Task),
             Self::TaskEdit => Binding::of(B::TaskEdit, A::Task),
             Self::TaskNote => Binding::of(B::TaskNote, A::Task),
             Self::TaskDefer => Binding::of(B::TaskDefer, A::Task),
