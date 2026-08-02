@@ -32,6 +32,7 @@ const UUID: &str = "00000000-0000-4000-8000-000000000001";
 const DIGEST: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
 const CASES: &[Case] = &[
+    case("demo", &[]),
     case("watch", &["watch", "missing"]),
     case("retro", &["retro", "missing"]),
     case("session", &["session"]),
@@ -191,9 +192,9 @@ impl Drop for Scratch {
 fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
     let registered = landed_ledger_paths();
     let exercised = CASES.iter().map(|case| case.path).collect::<BTreeSet<_>>();
-    assert_eq!(registered.len(), 83);
-    assert_eq!(CASES.len(), 83);
-    assert_eq!(exercised.len(), 83);
+    assert_eq!(registered.len(), 84);
+    assert_eq!(CASES.len(), 84);
+    assert_eq!(exercised.len(), 84);
     assert_eq!(exercised.len(), CASES.len(), "process case repeated");
     assert_eq!(
         exercised, registered,
@@ -299,8 +300,21 @@ fn invoke(root: &Path, case: &Case, json: bool) -> Output {
     if json {
         command.arg("--json");
     }
+    if case.path == "demo" {
+        command.args([
+            "demo",
+            "--seed-only",
+            "--root",
+            if json {
+                "readiness-demo-json"
+            } else {
+                "readiness-demo-text"
+            },
+        ]);
+    } else {
+        command.args(case.arguments);
+    }
     command
-        .args(case.arguments)
         .current_dir(root)
         .env_remove(steer::hook::INBOX)
         .env_remove("CODEX_THREAD_ID") // env-policy: allow

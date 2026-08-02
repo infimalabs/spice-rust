@@ -24,6 +24,8 @@ mod config_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod consent_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod demo_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod doctor;
 #[cfg(not(target_arch = "wasm32"))]
 mod gate_command;
@@ -151,6 +153,7 @@ fn main() {
 fn dispatch_native_queries(contract: &cli::Contract, leaf: &clap::ArgMatches, form: Form) {
     match contract.path {
         ["doctor"] => deliver(&doctor_outcome(), form),
+        ["demo"] => deliver(&demo_command::run(leaf), form),
         ["gate"] => deliver(&gate_command::run(leaf), form),
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
@@ -270,6 +273,10 @@ fn deliver_target_refusal(path: &[&str], form: Form) {
 #[cfg(any(test, target_arch = "wasm32"))]
 fn target_unsupported(path: &[&str]) -> Option<Fault> {
     let (reason, detail) = match path {
+        ["demo"] => (
+            "demo::target-unsupported",
+            "filesystem seeding and platform browser launch are unavailable on wasm32",
+        ),
         ["gate", ..] => (
             "gate::target-unsupported",
             "immutable Git tree selection is unavailable on wasm32",
@@ -835,6 +842,7 @@ mod tests {
     #[test]
     fn daemonless_local_os_contracts_have_named_wasm_refusals() {
         for (path, reason) in [
+            (&["demo"][..], "demo::target-unsupported"),
             (&["install"][..], "install::target-unsupported"),
             (&["lock"][..], "lock::target-unsupported"),
             (&["lock", "run"][..], "lock::target-unsupported"),
