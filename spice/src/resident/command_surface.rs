@@ -45,9 +45,12 @@ impl<'a> Surface<'a> {
         seats: &mut Seats,
         command: &wire::AdmittedCommand,
     ) -> Outcome<CommandAnswer> {
-        if let Some(outcome) =
-            crate::board_command::dispatch_with_repository(self.bus, command, Some(self.repository))
-        {
+        if let Some(outcome) = crate::board_command::dispatch_with_repository(
+            self.bus,
+            command,
+            Some(self.repository),
+            &self.config.projects,
+        ) {
             return outcome;
         }
         match (command.kind(), command.body()) {

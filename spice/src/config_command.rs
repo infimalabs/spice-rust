@@ -21,7 +21,7 @@ use wire::{
     ConfigSource, Digest, Domain, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition,
 };
 
-const IGNORED_TRACKED_ROOTS: &[&str] = &["policy", "tasks"];
+const IGNORED_TRACKED_ROOTS: &[&str] = &["policy"];
 const CONFIG_PLAN_VERSION: u16 = 1;
 #[cfg(unix)]
 const PUBLICATION_ATTEMPTS: usize = 128;

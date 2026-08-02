@@ -2,8 +2,9 @@ fn claim_free(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     task: &TaskRef,
+    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone()) {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -76,10 +77,12 @@ fn task_done(
     command: &wire::AdmittedCommand,
     done: &TaskDone,
     repository: Option<&Repository>,
+    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let snapshot = match validated_snapshot(
         bus,
         command.actor().clone(),
+        projects,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -273,8 +276,9 @@ fn task_review(
     command: &wire::AdmittedCommand,
     review: &TaskReview,
     repository: Option<&Repository>,
+    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone()) {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -405,8 +409,9 @@ fn doc_apply(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     apply: &DocApply,
+    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
-    let plan = match validate_doc_plan(bus, command, apply) {
+    let plan = match validate_doc_plan(bus, command, apply, projects) {
         Ok(plan) => plan,
         Err(outcome) => return outcome,
     };
@@ -420,6 +425,7 @@ fn validate_doc_plan(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     apply: &DocApply,
+    projects: &ProjectPolicy,
 ) -> Result<DocPlan, Outcome<CommandAnswer>> {
     let preview = board::Preview::classify(&apply.document).map_err(|error| {
         refusal(
@@ -435,8 +441,20 @@ fn validate_doc_plan(
             &format!("apply the document digest {}", preview.digest()),
         ));
     }
-    let snapshot = validated_snapshot(bus, command.actor().clone())?;
+    let snapshot = validated_snapshot(bus, command.actor().clone(), projects)?;
     require_doc_barrier(command, apply, &snapshot)?;
+    let project = preview
+        .document()
+        .project
+        .as_deref()
+        .unwrap_or("task.document");
+    projects.admit(project).map_err(|error| {
+        refusal(
+            "doc::project-refused",
+            Some(error.to_string()),
+            "author a project admitted by the captured task metadata",
+        )
+    })?;
     let touched = document_handles(preview.document());
     if touched.is_empty() {
         return Err(refusal(

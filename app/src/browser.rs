@@ -392,13 +392,9 @@ fn render_workspace(
     let task_count = runtime
         .and_then(CanvasRuntime::board)
         .map_or(0, |board| board.tasks.len());
-    let active_tasks = runtime.and_then(CanvasRuntime::board).map_or(0, |board| {
-        board
-            .tasks
-            .iter()
-            .filter(|task| task.workflow.body.status != "completed")
-            .count()
-    });
+    let active_tasks = runtime
+        .and_then(CanvasRuntime::board)
+        .map_or(0, |board| board.active_public_tasks().count());
     let lane_count = runtime
         .and_then(CanvasRuntime::lanes)
         .map_or(0, |lanes| lanes.lanes.len());
@@ -576,11 +572,12 @@ fn render_flow(
                     <tbody>{for board.tasks.iter().map(|task| {
                         let statement = &task.statement.body;
                         let workflow = &task.workflow.body;
+                        let title = task.presentation_title().to_owned();
                         html! {
                             <tr>
                                 <td class="title-cell">
                                     <div class="mono muted">{statement.handle.to_string()}</div>
-                                    <div>{statement.title.clone()}</div>
+                                    <div>{title}</div>
                                 </td>
                                 <td><span class={phase_class(&workflow.status)}>
                                     {workflow.phase.to_string()}
@@ -612,10 +609,11 @@ fn render_flow(
                     />
                     <datalist id="note-tasks">
                         {for board.tasks.iter().map(|task| {
-                            let task = &task.statement.body;
+                            let statement = &task.statement.body;
+                            let title = task.presentation_title().to_owned();
                             html! {
-                                <option value={task.handle.to_string()}>
-                                    {task.title.clone()}
+                                <option value={statement.handle.to_string()}>
+                                    {title}
                                 </option>
                             }
                         })}

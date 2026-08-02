@@ -3,7 +3,12 @@ struct ValidatedSnapshot {
     answer: BoardAnswer,
     entries: Vec<Entry>,
 }
-fn task_add(bus: &Bus, command: &wire::AdmittedCommand, add: &TaskAdd) -> Outcome<CommandAnswer> {
+fn task_add(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    add: &TaskAdd,
+    projects: &ProjectPolicy,
+) -> Outcome<CommandAnswer> {
     let handles = command
         .expected()
         .iter()
@@ -55,7 +60,9 @@ fn task_add(bus: &Bus, command: &wire::AdmittedCommand, add: &TaskAdd) -> Outcom
         deferral: None,
         completion: None,
     };
-    if let Err(error) = Entry::new(statement.clone(), workflow.clone(), None, None) {
+    if let Err(error) =
+        Entry::new(statement.clone(), workflow.clone(), None, None, projects)
+    {
         return refusal(
             "task::add-refused",
             Some(error.to_string()),
@@ -155,12 +162,25 @@ fn task_defer(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     defer: &TaskDefer,
+    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
-    change_deferral(bus, command, &defer.task, Some(defer.wait), defer.clone())
+    change_deferral(
+        bus,
+        command,
+        &defer.task,
+        Some(defer.wait),
+        defer.clone(),
+        projects,
+    )
 }
 
-fn task_wake(bus: &Bus, command: &wire::AdmittedCommand, task: &TaskRef) -> Outcome<CommandAnswer> {
-    change_deferral(bus, command, &task.task, None, task.clone())
+fn task_wake(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    task: &TaskRef,
+    projects: &ProjectPolicy,
+) -> Outcome<CommandAnswer> {
+    change_deferral(bus, command, &task.task, None, task.clone(), projects)
 }
 
 fn change_deferral<B: serde::Serialize + Clone>(
@@ -169,8 +189,9 @@ fn change_deferral<B: serde::Serialize + Clone>(
     task: &TaskHandle,
     deferral: Option<Instant>,
     intent: B,
+    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone()) {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -241,8 +262,9 @@ fn task_depends(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     depends: &TaskDepends,
+    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone()) {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -291,6 +313,7 @@ fn task_depends(
         entry.workflow().clone(),
         entry.claim().cloned(),
         entry.lease().cloned(),
+        projects,
     ) {
         return refusal(
             "task::dependency-refused",
@@ -344,6 +367,7 @@ fn claim_win(
     command: &wire::AdmittedCommand,
     win: &ClaimWin,
     repository: Option<&Repository>,
+    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let capture = match capture_rule(win) {
         Ok(capture) => capture,
@@ -352,6 +376,7 @@ fn claim_win(
     let snapshot = match validated_snapshot(
         bus,
         command.actor().clone(),
+        projects,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -398,6 +423,7 @@ fn claim_win(
         command,
         capture,
         &task,
+        projects,
     );
     if let Err(outcome) = append_claim_heads(
         &mut write,
@@ -578,6 +604,7 @@ fn guard_claim(
     command: &wire::AdmittedCommand,
     capture: bool,
     task: &TaskHandle,
+    projects: &ProjectPolicy,
 ) {
     let expected = command.expected().to_vec();
     let heads = allocation_heads(&snapshot.answer);
@@ -590,6 +617,7 @@ fn guard_claim(
             heads,
             task.clone(),
             command.actor().clone(),
+            projects.clone(),
         );
     }
 }

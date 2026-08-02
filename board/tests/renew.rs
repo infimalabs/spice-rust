@@ -28,8 +28,19 @@ fn task() -> TaskHandle {
     "BOARD-a1".parse().expect("fixture task")
 }
 
+fn projects() -> board::ProjectPolicy {
+    board::ProjectPolicy::new(
+        ["board".to_owned()],
+        Vec::new(),
+        dialect::PROJECT_MIN_DEPTH as u64,
+        dialect::PROJECT_MAX_DEPTH as u64,
+    )
+    .expect("fixture project policy")
+}
+
 fn win_request(command: u8) -> WinRequest {
     WinRequest {
+        projects: projects(),
         command: uuid(command),
         actor: Actor::Lane(uuid(20)),
         lane: uuid(20),
@@ -44,6 +55,7 @@ fn win_request(command: u8) -> WinRequest {
 
 fn renew_request(command: u8) -> Request {
     Request {
+        projects: projects(),
         command: uuid(command),
         occupant: uuid(21),
         epoch: uuid(22),
@@ -55,6 +67,7 @@ fn renew_request(command: u8) -> Request {
 
 fn lapse_request(command: u8, expiry: u8) -> LapseRequest {
     LapseRequest {
+        projects: projects(),
         command: uuid(command),
         occupant: uuid(21),
         epoch: uuid(22),
@@ -141,7 +154,7 @@ fn claimed() -> Journal {
 #[test]
 fn renewal_preserves_claim_and_extends_only_the_lease() {
     let mut journal = claimed();
-    let before = Snapshot::read(&journal).expect("claimed snapshot");
+    let before = Snapshot::read(&journal, &projects()).expect("claimed snapshot");
     let statement = before.entries()[0].statement().clone();
     let workflow = before.entries()[0].workflow().clone();
     let claim = before.entries()[0].claim().expect("claim").clone();
@@ -150,7 +163,7 @@ fn renewal_preserves_claim_and_extends_only_the_lease() {
     let renewed = renew(&mut journal, renew_request(32)).expect("renew claim");
     assert_eq!(renewed.task(), &task());
     assert_eq!(renewed.first(), renewed.last());
-    let after = Snapshot::read(&journal).expect("renewed snapshot");
+    let after = Snapshot::read(&journal, &projects()).expect("renewed snapshot");
     assert_eq!(after.entries()[0].statement(), &statement);
     assert_eq!(after.entries()[0].workflow(), &workflow);
     assert_eq!(after.entries()[0].claim(), Some(&claim));
@@ -229,14 +242,14 @@ fn renewal_refusals_preserve_every_fact_and_head() {
     for (request, expected) in cases {
         let mut journal = claimed();
         let before = journal.fact_snapshot().expect("before refusal");
-        let heads = Snapshot::read(&journal).expect("heads before refusal");
+        let heads = Snapshot::read(&journal, &projects()).expect("heads before refusal");
         match renew(&mut journal, request) {
             Err(RenewError::Refused(observed)) => assert_eq!(observed, expected),
             other => panic!("expected {expected:?}, found {other:?}"),
         }
         assert_eq!(journal.fact_snapshot().expect("after refusal"), before);
         assert_eq!(
-            Snapshot::read(&journal).expect("heads after refusal"),
+            Snapshot::read(&journal, &projects()).expect("heads after refusal"),
             heads
         );
     }
@@ -245,6 +258,13 @@ fn renewal_refusals_preserve_every_fact_and_head() {
     free(
         &mut journal,
         FreeRequest {
+            projects: board::ProjectPolicy::new(
+                ["board".to_owned()],
+                Vec::new(),
+                dialect::PROJECT_MIN_DEPTH as u64,
+                dialect::PROJECT_MAX_DEPTH as u64,
+            )
+            .expect("fixture project policy"),
             command: uuid(47),
             actor: Actor::Lane(uuid(20)),
             lane: uuid(20),
@@ -256,7 +276,7 @@ fn renewal_refusals_preserve_every_fact_and_head() {
     )
     .expect("free first");
     let before = journal.fact_snapshot().expect("before inactive refusal");
-    let heads = Snapshot::read(&journal).expect("heads before inactive refusal");
+    let heads = Snapshot::read(&journal, &projects()).expect("heads before inactive refusal");
     assert!(matches!(
         renew(&mut journal, renew_request(48)),
         Err(RenewError::Refused(Refusal::Claim(
@@ -265,7 +285,7 @@ fn renewal_refusals_preserve_every_fact_and_head() {
     ));
     assert_eq!(journal.fact_snapshot().expect("after refusal"), before);
     assert_eq!(
-        Snapshot::read(&journal).expect("heads after inactive refusal"),
+        Snapshot::read(&journal, &projects()).expect("heads after inactive refusal"),
         heads
     );
 }
@@ -305,7 +325,7 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
     journal.apply(write).expect("seed malformed claim");
 
     let before = journal.fact_snapshot().expect("before malformed refusal");
-    let heads = Snapshot::read(&journal).expect("heads before malformed refusal");
+    let heads = Snapshot::read(&journal, &projects()).expect("heads before malformed refusal");
     assert!(matches!(
         renew(&mut journal, renew_request(50)),
         Err(RenewError::Refused(Refusal::MissingLease))
@@ -315,7 +335,7 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
         before
     );
     assert_eq!(
-        Snapshot::read(&journal).expect("heads after malformed refusal"),
+        Snapshot::read(&journal, &projects()).expect("heads after malformed refusal"),
         heads
     );
 }
@@ -330,20 +350,20 @@ fn independent_connections_observe_stale_and_current_expiry_events() {
     let mut second = Journal::open(store.path()).expect("second connection");
 
     let before = first.fact_snapshot().expect("before duplicate");
-    let heads = Snapshot::read(&first).expect("heads before duplicate");
+    let heads = Snapshot::read(&first, &projects()).expect("heads before duplicate");
     assert!(matches!(
         renew(&mut first, renew_request(31)),
         Err(RenewError::Commit(_))
     ));
     assert_eq!(first.fact_snapshot().expect("duplicate rolls back"), before);
     assert_eq!(
-        Snapshot::read(&first).expect("duplicate preserves heads"),
+        Snapshot::read(&first, &projects()).expect("duplicate preserves heads"),
         heads
     );
 
     renew(&mut second, renew_request(52)).expect("second connection renews");
     let before_stale = first.fact_snapshot().expect("before stale lapse");
-    let heads = Snapshot::read(&first).expect("heads before stale lapse");
+    let heads = Snapshot::read(&first, &projects()).expect("heads before stale lapse");
     assert!(matches!(
         lapse(&mut first, lapse_request(53, 20)),
         Err(board::lapse::LapseError::Refused(
@@ -355,10 +375,10 @@ fn independent_connections_observe_stale_and_current_expiry_events() {
         before_stale
     );
     assert_eq!(
-        Snapshot::read(&first).expect("stale timer preserves heads"),
+        Snapshot::read(&first, &projects()).expect("stale timer preserves heads"),
         heads
     );
-    let snapshot = Snapshot::read(&first).expect("renewed heads");
+    let snapshot = Snapshot::read(&first, &projects()).expect("renewed heads");
     board::Active::admit(&snapshot.entries()[0], &Actor::Lane(uuid(20)), instant(24))
         .expect("renewed lease remains active");
 

@@ -623,6 +623,9 @@ fn sanitize(
         .iter()
         .any(|entry| entry.template().accepts_prefix(&borrowed))
     {
+        if coexist && is_coexisting_task_extra(path) {
+            return false;
+        }
         issues.push(Issue::at(
             IssueKind::Unknown,
             source,
@@ -670,7 +673,43 @@ fn sanitize(
 fn is_scaffold_root(path: &ConcretePath) -> bool {
     matches!(
         path.0.as_slice(),
-        [OwnedSegment::Key(root)] if matches!(root.as_str(), "tasks" | "policy")
+        [OwnedSegment::Key(root)] if root == "policy"
+    )
+}
+
+fn is_coexisting_task_extra(path: &ConcretePath) -> bool {
+    matches!(
+        path.0.as_slice(),
+        [OwnedSegment::Key(root), OwnedSegment::Key(key), ..]
+            if root == "tasks" && matches!(key.as_str(),
+                "base_stems"
+                    | "internal_stems"
+                    | "oops_hidden_stem"
+                    | "maxim_proposal_hidden_stem"
+                    | "approved_phases"
+                    | "phase_slot_count"
+                    | "default_flow"
+                    | "private_default_flow"
+                    | "oops_default_flow"
+                    | "default_priority"
+                    | "severities"
+                    | "claim_ttl_seconds"
+                    | "claim_context_seconds"
+                    | "deferred_wait"
+                    | "oops_wait_seconds"
+                    | "allocator_band_width"
+                    | "allocator_anti_self_review"
+                    | "priority"
+                    | "severity_priority"
+                    | "severity_shorthands"
+                    | "priority_urgency"
+                    | "taskwarrior_urgency"
+                    | "sla_due_seconds"
+                    | "reports"
+                    | "analytics"
+                    | "flows"
+                    | "phase_models"
+            )
     )
 }
 
@@ -761,7 +800,12 @@ fn validate_layer(
                 .collect::<Vec<_>>();
             merge(&mut isolated, build_units(&layer.value, &units, &mask));
             if let Err(error) = decode_root(isolated) {
-                invalid.push((index, unit.clone(), error.1));
+                let path = if hidden_stem_index(&error.0).is_some() {
+                    error.0
+                } else {
+                    unit.clone()
+                };
+                invalid.push((index, path, error.1));
             }
         }
 
@@ -773,7 +817,12 @@ fn validate_layer(
                 .map(|(index, _)| index)
                 .or_else(|| active.iter().position(|active| *active))
                 .expect("a layer decode cannot fail without authored validation units");
-            invalid.push((index, units[index].clone(), full_error.1));
+            let path = if hidden_stem_index(&full_error.0).is_some() {
+                full_error.0
+            } else {
+                units[index].clone()
+            };
+            invalid.push((index, path, full_error.1));
         }
 
         for (index, path, message) in invalid {
@@ -786,6 +835,17 @@ fn validate_layer(
                 message,
             ));
         }
+    }
+}
+
+fn hidden_stem_index(path: &ConcretePath) -> Option<usize> {
+    match path.0.as_slice() {
+        [
+            OwnedSegment::Key(tasks),
+            OwnedSegment::Key(hidden),
+            OwnedSegment::Index(index),
+        ] if tasks == "tasks" && hidden == "hidden_stems" => Some(*index),
+        _ => None,
     }
 }
 
@@ -897,6 +957,16 @@ fn merge(base: &mut Value, overlay: Value) {
 }
 
 fn decode_root(value: Value) -> Result<Root, (ConcretePath, String)> {
+    if let Some((index, message)) = invalid_hidden_stem(&value) {
+        return Err((
+            ConcretePath(vec![
+                OwnedSegment::Key("tasks".to_owned()),
+                OwnedSegment::Key("hidden_stems".to_owned()),
+                OwnedSegment::Index(index),
+            ]),
+            message,
+        ));
+    }
     serde_path_to_error::deserialize(value).map_err(|error| {
         let path = ConcretePath(
             error
@@ -913,6 +983,34 @@ fn decode_root(value: Value) -> Result<Root, (ConcretePath, String)> {
         );
         (path, error.inner().message().to_owned())
     })
+}
+
+fn invalid_hidden_stem(value: &Value) -> Option<(usize, String)> {
+    let tasks = value.get("tasks")?.as_table()?;
+    let public = tasks
+        .get("stems")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let hidden = tasks
+        .get("hidden_stems")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let error = board::ProjectPolicy::new(public, hidden, 1, 1).err()?;
+    match &error {
+        board::ProjectPolicyError::HiddenStem {
+            index: Some(index), ..
+        }
+        | board::ProjectPolicyError::HiddenPublicCollision {
+            index: Some(index), ..
+        } => Some((*index, error.to_string())),
+        _ => None,
+    }
 }
 
 fn provenance(root: &Root, layers: &[Layer]) -> Vec<Provenance> {

@@ -23,6 +23,9 @@ const ADD_TITLE: &str = concat!(
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 const POLICY: &str = r#"
+[tasks]
+stems = ["taste"]
+
 [taste.zeta]
 words = ["wait*", "sleep*"]
 message = "Observe the real completion event."

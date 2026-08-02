@@ -63,7 +63,8 @@ pub fn select<'a>(entries: &'a [Entry], actor: &Actor) -> Option<Selection<'a>> 
 
 fn eligible(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskHandle>) -> bool {
     let workflow = entry.workflow();
-    workflow.status == "pending"
+    !entry.project().visibility().is_hidden()
+        && workflow.status == "pending"
         && workflow.completion.is_none()
         && workflow.deferral.is_none()
         && workflow

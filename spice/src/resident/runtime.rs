@@ -19,6 +19,7 @@ struct SurfaceConfig {
     steering: steer::Config,
     consent: consent::Policy,
     speech: canvas::SpeechConfig,
+    projects: board::ProjectPolicy,
 }
 
 // Runtime policy and trust identity are projections of this one captured generation.
@@ -48,6 +49,7 @@ where
             steering: loaded.resolved().root().steer().clone(),
             consent: loaded.resolved().root().consent().policy().clone(),
             speech: loaded.resolved().root().say().clone(),
+            projects: loaded.resolved().root().tasks().project_policy(),
         },
         trust: crate::trust_command::Surface::from_loaded(&loaded),
     })
