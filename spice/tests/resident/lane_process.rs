@@ -46,7 +46,7 @@ fn reply_body<T: serde::de::DeserializeOwned>(output: &Output) -> T {
     wire::decode(&bytes).expect("reply body decodes as its selected DTO")
 }
 
-fn configure_fake_vendor(fixture: &Fixture) {
+pub(super) fn configure_fake_vendor(fixture: &Fixture) {
     let launches = fixture.root.join("vendor-launches");
     configure_vendor(
         fixture,
