@@ -1,67 +1,53 @@
 # Executable succession ledger
 
-This ledger records the Python-to-Rust command succession observed on
-2026-08-01. It is an execution ledger, not cutover authorization. Python
-remains the scaffold authority until the operator explicitly changes that
-fact.
+Captured on 2026-08-01. This is an execution ledger, not cutover authority.
+Python remains the installed scaffold until the operator explicitly changes it.
 
-## Current authority
+## Authority and readiness
 
-- The ambient command resolves from `command -v spice` to the user-local bin,
-  version `0.31.0`.
-- That script imports `spice.cli.entry` through the Python environment at
-  `~/.local/share/uv/tools/spice-harness`.
-- Its editable source resolves to the sibling checkout
-  `../spice-z/spice/cli/entry.py`.
-- `core.hooksPath` is `.spice/hooks`. Its `pre-commit`, `commit-msg`, and
-  `reference-transaction` entries still invoke `spice dev ...`.
-- Rust is invoked explicitly with `cargo run --locked -q -p spice -- ...`.
-- The tracked `spice.toml` and Git-common `.spice/config.toml` are admitted
-  configuration inputs for Rust Doctor. Doctor inspects them without opening
-  authority or launching declared tools.
-- Rust authority and runtime files live only under the Git-common
-  `.spice-rust` directory. The installed Python command continues to own its
-  Git-common `.spice` authority.
-- `HOOKS-1kJQnmG8` owns the eventual native hook transition. No active hook or
-  ambient command path changes before explicit operator cutover.
-- Cutover starts a clean Rust authority as required by DOCTRINE.md. It does not
-  open, import, migrate, or mutate Python authority bytes.
+The ambient `~/.local/bin/spice` is Python `0.31.0`; Rust runs explicitly via
+Cargo. Active `.spice/hooks` still invoke Python. Python owns Git-common
+`.spice`; Rust owns `.spice-rust` and never reads Python authority bytes.
 
-## Rust coexistence bootstrap
+| Measure | Result |
+| --- | --- |
+| Installed Python registry | 123/123 paths have one disposition; no gaps or duplicates |
+| Rust contract registry | 63/63 leaves landed; no gaps or unaccounted leaves |
+| Rust process sweep | 126 text/JSON invocations; matching exits and streams; no placeholders |
+| Functional smoke | 39/39 process tests across lifecycle, control, evidence, and recovery |
+| Coexistence | Two Rust generations; Python command, state, hooks, and hook path unchanged |
 
-The sole repository-local Rust invocation during construction is Cargo with
-the workspace package selected explicitly. From any directory in the target
-worktree, run:
+The smoke set is `succession`, `coexistence`, `resident`, `steering`,
+`gate_cli`, `proof_cli`, and `journal_cli`. It covers restart, control, evidence,
+and recovery. Python activation, agent/task status, and the live claim were
+exercised in the same worktree with separate authority.
 
-```console
-cargo run --locked -q -p spice -- doctor
-cargo run --locked -q -p spice -- up
-cargo run --locked -q -p spice -- version
-cargo run --locked -q -p spice -- down
-```
+Cutover remains blocked on four risks:
 
-`up` remains in the foreground until `down` completes, so the last two commands
-run from another terminal in the same repository. `up` creates or admits the
-Rust journal at `<git-common>/.spice-rust/data/spicejournal.sqlite3`; linked
-worktrees resolve the same Git-common root. `version` reads that finalized Rust
-journal, and `down` reads the discovery published at
-`<git-common>/.spice-rust/canvas`.
+1. `HOOKS-1kJQnmG8` and `VERIFY-1kJQlH5b` must land native hooks and put the
+   installed Python policy step plus readiness threshold in one verifier.
+2. `SURFACE-1kJQmdKN` and `SPEECH-1kJQnmkd` must replace the empty canvas shell
+   and close the retained `config say` behavior.
+3. The clean break has no Python migration; the operator must approve a
+   predecessor backup/export and an empty Rust authority.
+4. Installed entrypoint selection and rollback still require an operator-run
+   cutover rehearsal and explicit authorization.
 
-The same root owns resident locks, lane tape, degraded-state evidence, command
-locks, and proof receipts. Resident, version, lock, proof, and release commands
-first admit the fixed root and parent components without following links; a
-linked or malformed component returns `repository::state-path-refused` with
-its exact path. Rust startup does not inspect Python databases below
-`<git-common>/.spice`. An unfinalized or incompatible `.spice-rust` journal
-returns the typed `journal::schema-refused` outcome naming its state. The
-ambient `spice` command and `.spice/hooks` remain Python-owned until the
-operator authorizes cutover.
+## Rust coexistence
+
+From the target worktree, run `doctor`, then foreground `up`. Run `version` and
+`down` from another terminal. `up` creates or admits
+`<git-common>/.spice-rust/data/spicejournal.sqlite3` and publishes owner-only
+discovery at `<git-common>/.spice-rust/canvas`. State links, malformed state,
+and incompatible journals refuse by name. No command changes the ambient
+entrypoint, active hooks, or Python authority.
 
 ## Rust contracts
 
-The registry contains 63 command leaves. All 63 have executable dispatch, so
-current executable coverage is 63/63, or 100 percent. Completed domain
-libraries do not count as landed command surfaces.
+The closed registry contains 63 leaves and all 63 have executable dispatch.
+`spice/src/cli.rs::landing` carries the same classification; its tests reject
+registry drift, and the process sweep rejects terminal release or resident
+placeholder outcomes.
 
 ### Landed
 
@@ -69,30 +55,41 @@ libraries do not count as landed command surfaces.
 - `retro`
 - `doctor`
 - `version`
+- `install`
+- `lock`
+- `lock run`
+- `restore verify`
 - `gate`
 - `gate camp`
 - `gate kill`
 - `gate receipt`
-- `install`
-- `lock`
-- `lock run`
 - `proof`
 - `proof replay`
 - `release notes`
-- `release publish`
 - `up`
 - `down`
-- `run`
-- `steer`
-- `steer cancel`
-- `inbox`
-- `ack`
-- `config`
-- `restore verify`
+- `board`
+- `board graph`
+- `board handout`
+- `task next`
+- `task add`
+- `task done`
+- `task review`
+- `task note`
+- `task defer`
+- `task wake`
+- `task free`
+- `task oops`
+- `task depends`
+- `doc`
+- `doc ledger`
 - `lane`
 - `lane add`
 - `lane drain`
 - `lane wake`
+- `steer`
+- `steer cancel`
+- `inbox`
 - `recall`
 - `consent`
 - `consent allow`
@@ -113,247 +110,190 @@ libraries do not count as landed command surfaces.
 - `fold`
 - `thread`
 - `canvas`
-- `board`
-- `board graph`
-- `board handout`
-- `task next`
-- `task add`
-- `task done`
-- `task review`
-- `task note`
-- `task defer`
-- `task wake`
-- `task free`
-- `task oops`
-- `task depends`
-- `doc`
-- `doc ledger`
+- `release publish`
+- `run`
+- `ack`
+- `config`
 
-The local command group retains the Python-first ownership boundary described
-above: plain `install` is a side-effect-free plan, and only an exact
-`--apply=<digest>` crosses its fixed authored mutation plan. Rust binaries and
-hook stages remain namespaced below worktree `.spice/rust`, while the install
-receipt lives below Git-common `.spice-rust`. The plan does not replace the
-ambient command or active `core.hooksPath`. Durable receipts at the retired
-`.spice/install` and `.spice/rust/install.json` locations are refused with
-their owning installer task named; they are never read as a fallback.
-
-`doctor`, `version`, and `up` are executable but not yet usable against the
-current worktree state; the configuration and bootstrap tasks above own those
-operational gaps. `release publish` admits its sealed stage against the Rust
-journal and resident discovery under `<git-common>/.spice-rust`; it does not
-read the Python authority under `<git-common>/.spice`.
-
-`spice/src/cli.rs::landing` carries the same classification. Its closure test
-fails for any registered Rust leaf without a disposition. A leaf classified
-as landed that reaches the terminal release branch faults as a dispatch defect
-instead of presenting unfinished work.
+`install`, `config`, `restore`, and `release publish` are digest-bound plans.
+Rust installation remains namespaced and never replaces the ambient command or
+active hooks. Recovery is offline and lock-held; resident reads are
+authenticated. `doctor`, `version`, `up`, and `down` execute end to end against
+isolated Rust state in both forms.
 
 ## Installed Python paths
 
-The installed parser reported 123 paths. Namespace rows are included because
-the registry exposes them even though argparse requires a child action.
+The parser has 123 paths. `R` means replacement, `D` intentional regrouping,
+and `X` clean-break removal. A pending owner is a cutover risk, not a fallback.
 
 ### Agent lifecycle
 
-- `agent`: namespace only; Rust uses resident and lane surfaces.
-- `agent activation`: `lane` and canvas discovery; `COORDIN-1kJQlDjc`.
-- `agent ensure`: `lane add`; `COORDIN-1kJQlDjc`.
-- `agent import`: removed by the LATER.md drop ledger.
-- `agent post-tool-hook`: landed `run`, `inbox`, and `ack`.
-- `agent reply`: landed `ack`.
-- `agent requeue-deadletter`: removed by the LATER.md drop ledger.
-- `agent run`: landed `run`.
-- `agent show`: `lane` and `recall`; `COORDIN-1kJQlDjc`.
-- `agent supervise`: landed `up` plus `lane`; `COORDIN-1kJQlDjc`.
+- `agent`: D -> resident and lane surfaces.
+- `agent activation`: R -> `lane` and canvas discovery.
+- `agent ensure`: R -> `lane add`.
+- `agent import`: X -> reviewed documents only.
+- `agent post-tool-hook`: R -> `run`, `inbox`, and `ack`.
+- `agent reply`: R -> `ack`.
+- `agent requeue-deadletter`: X -> durable directives need no deadletter.
+- `agent run`: R -> `run`.
+- `agent show`: R -> `lane` and `recall`.
+- `agent supervise`: R -> `up` and `lane`.
 
 ### Configuration
 
-- `config`: namespace in Python; landed Rust leaf `config`.
-- `config agent`: `config` plus vendor launch; `LOCAL-1kJQlG6b`.
-- `config defaults`: landed typed `config` provenance.
-- `config judge`: tracked `taste` policy; `POLICY-1kJQlFB6`.
-- `config personality`: typed `config` and vendor launch; `LOCAL-1kJQlG6b`.
-- `config say`: typed canvas speech; `SPEECH-1kJQnmkd`.
-- `config set`: landed typed machine-local preview plus exact digest apply with
-  atomic replacement; tracked task and policy authority remains read-only.
-- `config show`: landed Rust `config`.
-- `config system`: landed typed `config` provenance.
-- `config trust`: namespace; Rust `trust`; `POLICY-1kJQlFB6`.
-- `config trust grant`: `trust grant`; `POLICY-1kJQlFB6`.
-- `config trust revoke`: `trust revoke`; `POLICY-1kJQlFB6`.
-- `config trust show`: `trust`; `POLICY-1kJQlFB6`.
+- `config`: D -> Rust `config` is a leaf, not a namespace.
+- `config agent`: D -> `config` plus vendor launch.
+- `config defaults`: R -> `config` provenance.
+- `config judge`: R -> `taste`.
+- `config personality`: D -> `config` plus vendor launch.
+- `config say`: D -> pending canvas speech (`SPEECH-1kJQnmkd`).
+- `config set`: R -> digest-bound `config` apply.
+- `config show`: R -> `config`.
+- `config system`: R -> `config` provenance.
+- `config trust`: D -> Rust `trust` family.
+- `config trust grant`: R -> `trust grant`.
+- `config trust revoke`: R -> `trust revoke`.
+- `config trust show`: R -> `trust`.
 
 ### Installation, locks, and health
 
-- `deinit`: withdrawn in Python; Rust `install --unapply` and `down`;
-  `LOCAL-1kJQlG6b`.
-- `doctor`: landed Rust `doctor`; current config work is `INTEGRA-1kJQlCHl`.
-- `init`: Rust `install` and `up`; `LOCAL-1kJQlG6b` and
-  `COEXIST-1kJQlCm5`.
-- `lock`: landed Rust `lock`.
-- `lock run`: landed Rust `lock run`.
-- `lock status`: landed Rust `lock`.
-- `watch`: landed Rust `watch`.
+- `deinit`: D -> `install --unapply` plus `down`.
+- `demo`: X -> product paths carry executable evidence.
+- `doctor`: R -> `doctor`.
+- `init`: D -> `install` plus `up`.
+- `lock`: D -> Rust `lock` family.
+- `lock run`: R -> `lock run`.
+- `lock status`: R -> `lock`.
+- `watch`: R -> `watch`.
 
-`demo` is removed by the LATER.md drop ledger.
+### Development gates
 
-### Development and repository gates
+- `dev`: D -> `gate`, `proof`, and `cargo xtask verify`.
+- `dev commit-msg`: D -> pending native hook (`HOOKS-1kJQnmG8`).
+- `dev doctor`: R -> `doctor`.
+- `dev install-hooks`: D -> `install` plus pending native hooks.
+- `dev pre-commit`: D -> `gate` plus the canonical verifier.
+- `dev pytest`: D -> workspace tests in the canonical verifier.
+- `dev python-typecheck`: X -> strict Rust linting and tests.
+- `dev reference-transaction`: X -> Git publication behavior removed.
+- `dev serve-web-typecheck`: D -> verifier Wasm check.
+- `dev serve-web-types`: X -> shared Rust wire types.
 
-- `dev`: namespace only; Rust uses `gate`, `proof`, and `cargo xtask verify`.
-- `dev commit-msg`: native hook work; `HOOKS-1kJQnmG8`.
-- `dev doctor`: landed Rust `doctor` plus `INTEGRA-1kJQlCHl`.
-- `dev install-hooks`: Rust `install` plus `HOOKS-1kJQnmG8`.
-- `dev pre-commit`: `gate` and canonical verification; `VERIFY-1kJQlH5b`.
-- `dev pytest`: workspace tests in canonical verification; `VERIFY-1kJQlH5b`.
-- `dev python-typecheck`: ends with the Python implementation; Rust Clippy and
-  tests are owned by `VERIFY-1kJQlH5b`.
-- `dev reference-transaction`: its Git publication behavior is removed by the
-  LATER.md drop ledger; hook withdrawal is `HOOKS-1kJQnmG8`.
-- `dev serve-web-typecheck`: Wasm checks in canonical verification;
-  `VERIFY-1kJQlH5b`.
-- `dev serve-web-types`: shared Rust wire types replace emitted JavaScript;
-  `VERIFY-1kJQlH5b`.
+Each `study` path is D -> gate or verifier evidence, not a shipped verb.
 
-Every path below is development evidence for `gate` or canonical verification,
-not a shipped one-for-one product verb. `VERIFY-1kJQlH5b` owns policy parity.
-
-- `study`
-- `study assertion-free-tests`
-- `study complexity`
-- `study complexity-hotspots`
-- `study csharp-members`
-- `study csharp-unused-candidates`
-- `study env-name-ledger`
-- `study env-policy`
-- `study file-loc`
-- `study javascript-unused`
-- `study magic-numbers`
-- `study markdown-links`
-- `study mutations`
-- `study private-internals`
-- `study python-unused`
-- `study reachability`
-- `study shape`
-- `study subsumption`
-- `study suite-seam-reach`
-- `study symbol-reachability`
-- `study taste`
+- `study`: D.
+- `study assertion-free-tests`: D.
+- `study complexity`: D.
+- `study complexity-hotspots`: D.
+- `study csharp-members`: D.
+- `study csharp-unused-candidates`: D.
+- `study env-name-ledger`: D.
+- `study env-policy`: D.
+- `study file-loc`: D.
+- `study javascript-unused`: D.
+- `study magic-numbers`: D.
+- `study markdown-links`: D.
+- `study mutations`: D.
+- `study private-internals`: D.
+- `study python-unused`: D.
+- `study reachability`: D.
+- `study shape`: D.
+- `study subsumption`: D.
+- `study suite-seam-reach`: D.
+- `study symbol-reachability`: D.
+- `study taste`: D.
 
 ### Taste curation
 
-- `maxim`: namespace; Rust uses `taste`; `POLICY-1kJQlFB6`.
-- `maxim agree`: taste judgment and canvas curation; `POLICY-1kJQlFB6`.
-- `maxim disable`: tracked taste deletion proposal; `POLICY-1kJQlFB6`.
-- `maxim disabled`: `taste` membership view; `POLICY-1kJQlFB6`.
-- `maxim disagree`: taste judgment and canvas curation; `POLICY-1kJQlFB6`.
-- `maxim enable`: tracked taste admission proposal; `POLICY-1kJQlFB6`.
-- `maxim file-proposals`: `taste add` plus `task add`; policy and board tasks.
-- `maxim proposals`: `taste add`; `POLICY-1kJQlFB6`.
-- `maxim propose`: `taste add` plus `task add`; policy and board tasks.
-- `maxim report`: `taste` and canvas curation; policy and publish tasks.
-- `maxim show`: `taste`; `POLICY-1kJQlFB6`.
-- `maxim sources`: taste loci in `taste` and canvas; policy and publish tasks.
+- `maxim`: D -> Rust `taste` family.
+- `maxim agree`: D -> `taste` judgment and canvas curation.
+- `maxim disable`: D -> tracked `taste drop` proposal.
+- `maxim disabled`: R -> `taste` membership.
+- `maxim disagree`: D -> `taste` judgment and canvas curation.
+- `maxim enable`: D -> tracked `taste add` proposal.
+- `maxim file-proposals`: D -> `taste add` plus `task add`.
+- `maxim proposals`: R -> `taste add`.
+- `maxim propose`: D -> `taste add` plus `task add`.
+- `maxim report`: D -> `taste` plus canvas curation.
+- `maxim show`: R -> `taste`.
+- `maxim sources`: D -> `taste` provenance plus canvas.
 
 ### Operator canvas
 
-- `serve`: landed Rust `canvas`.
-- `serve browser-artifact-path`: embedded canvas discovery;
-  landed Rust `canvas`.
-- `serve rebuild-projections`: `journal replay` and `fold`;
-  `JOURNAL-1kJQlFfS`.
-- `serve teams`: `lane` and `board`; coordination and board tasks.
+- `serve`: R -> `canvas`.
+- `serve browser-artifact-path`: D -> embedded canvas artifact.
+- `serve rebuild-projections`: R -> `journal replay` and `fold`.
+- `serve teams`: R -> `lane` and `board`.
 
 ### Session forensics
 
-The complete Python `session` family is removed by the LATER.md drop ledger.
-Its retained questions are answered by landed `watch` and `retro`, plus
-`recall` and `thread` under their owning tasks.
+All `session` paths are X as commands. Their retained questions use `watch`,
+`retro`, `recall`, and `thread` over owned tape and journal loci.
 
-- `session`
-- `session briefing`
-- `session commands`
-- `session commits`
-- `session compactions`
-- `session messages`
-- `session phases`
-- `session slices`
-- `session summary`
-- `session sweep`
-- `session thread`
-- `session timeline`
-- `session tokens`
-- `session turns`
+- `session`: X.
+- `session briefing`: X.
+- `session commands`: X.
+- `session commits`: X.
+- `session compactions`: X.
+- `session messages`: X.
+- `session phases`: X.
+- `session slices`: X.
+- `session summary`: X.
+- `session sweep`: X.
+- `session thread`: X.
+- `session timeline`: X.
+- `session tokens`: X.
+- `session turns`: X.
 
 ### Task plane
 
-- `task`: namespace; Rust uses `board`, `task`, and `doc`;
-  `BOARD-1kJQlDDt`.
-- `task add`: Rust `task add`; `BOARD-1kJQlDDt`.
-- `task artifact`: the task-addressed sidecar family is removed by the
-  LATER.md drop ledger. Rust evidence is a task document or `task note`
-  carrying a repository path, tape locus, or digest.
-- `task artifact add`: removed with the sidecar family. Rust `task note`
-  commits the evidence reference as a `task::noted` fact under the task
-  origin; payload bytes do not enter a second store.
-- `task artifact list`: removed with the sidecar family. Rust `journal`
-  exposes the immutable task-origin facts and their stable sequence loci.
-- `task artifact prune`: removed with the sidecar family. Journal evidence is
-  immutable, and release one has no second retention authority or prune plan.
-- `task artifact show`: removed with the sidecar family. Rust `journal` emits
-  the cited envelope and `thread` follows its stable sequence locus.
-- `task capture`: implicit Git capture and publication are removed by the
-  LATER.md drop ledger. Rust `task note` or `task done --validation` records
-  the repository commit; `task add` mints any newly discovered work.
-- `task claim`: allocator-owned `task next`; direct row choice does not cross.
-- `task delete`: `doc` task editing; settled correction remains trigger-bound
-  in LATER.md; `BOARD-1kJQlDDt`.
-- `task depends`: Rust `task depends`; `BOARD-1kJQlDDt`.
-- `task doctor`: Rust `doctor` and `board`; `BOARD-1kJQlDDt`.
-- `task done`: Rust `task done`; `BOARD-1kJQlDDt`.
-- `task graph`: Rust `board graph`; `BOARD-1kJQlDDt`.
-- `task handout`: Rust `board handout`; `BOARD-1kJQlDDt`.
-- `task ingest`: Rust `doc`; `BOARD-1kJQlDDt`.
-- `task ledger`: Rust `doc ledger`; `BOARD-1kJQlDDt`.
-- `task list`: Rust `board`; `BOARD-1kJQlDDt`.
-- `task modify`: Rust `doc` and task-edit intent; `BOARD-1kJQlDDt`.
-- `task next`: Rust `task next`; `BOARD-1kJQlDDt`.
-- `task note`: Rust `task note`; `BOARD-1kJQlDDt`.
-- `task oops`: Rust `task oops`; `BOARD-1kJQlDDt`.
-- `task reclaim`: manual renewal is removed by the LATER.md drop ledger; the
-  resident alone may use the board's typed renew and lapse transitions.
-- `task review`: Rust `task review`; `BOARD-1kJQlDDt`.
-- `task reword`: active statement correction uses `doc`; settled correction is
-  trigger-bound in LATER.md; `BOARD-1kJQlDDt`.
-- `task show`: Rust `board`; `BOARD-1kJQlDDt`.
-- `task sizing`: Rust `board` and `board graph`; `BOARD-1kJQlDDt`.
-- `task stale`: Rust `board` and `lane`; board and coordination tasks.
-- `task status`: Rust `board`; `BOARD-1kJQlDDt`.
-- `task unclaim`: Rust `task free`; `BOARD-1kJQlDDt`.
-- `task wake`: Rust `task wake`; `BOARD-1kJQlDDt`.
+- `task`: D -> Rust board/task/doc families.
+- `task add`: R -> `task add`.
+- `task artifact`: X -> journal-cited evidence.
+- `task artifact add`: X -> `task note` evidence references.
+- `task artifact list`: X -> `journal` task-origin facts.
+- `task artifact prune`: X -> immutable evidence has no prune verb.
+- `task artifact show`: X -> `journal` plus `thread`.
+- `task capture`: X -> Git publication remains operator-owned.
+- `task claim`: R -> allocator-owned `task next`.
+- `task delete`: D -> authored `doc` correction.
+- `task depends`: R -> `task depends`.
+- `task doctor`: D -> `doctor` plus `board`.
+- `task done`: R -> `task done`.
+- `task graph`: R -> `board graph`.
+- `task handout`: R -> `board handout`.
+- `task ingest`: R -> `doc`.
+- `task ledger`: R -> `doc ledger`.
+- `task list`: R -> `board`.
+- `task modify`: D -> `doc`.
+- `task next`: R -> `task next`.
+- `task note`: R -> `task note`.
+- `task oops`: R -> `task oops`.
+- `task reclaim`: X -> renewal is resident-only.
+- `task review`: R -> `task review`.
+- `task reword`: D -> active correction uses `doc`.
+- `task show`: R -> `board`.
+- `task sizing`: R -> `board graph`.
+- `task stale`: D -> `board` plus `lane`.
+- `task status`: R -> `board`.
+- `task unclaim`: R -> `task free`.
+- `task wake`: R -> `task wake`.
 
-Mounted repository commands are absent from the installed 123-path registry.
-They remain behind the evidence trigger in LATER.md and are not release-one
-work.
+Mounted repository commands are absent from the installed registry and remain
+behind their LATER.md evidence trigger.
 
 ## Reproduce the audit
-
-Capture the installed Python registry without importing it into Rust:
 
 ```sh
 ~/.local/share/uv/tools/spice-harness/bin/python -c \
   'from spice.cli.parser import command_path_registry as r; \
 print("\\n".join(" ".join(p) for p in sorted(r())))'
-```
-
-Inspect Rust registration and executable classification with:
-
-```sh
+cargo test --locked -p spice \
+  installed_python_registry_and_ledger_dispositions_are_bijective
 cargo test --locked -p spice \
   every_contract_has_an_executable_succession_disposition
-cargo run --locked -q -p spice -- --help
+cargo test --locked -p spice --test succession
 ```
 
-`VERIFY-1kJQlH5b` owns the final machine-readable coverage report and the
-95-percent pre-cutover threshold. Passing that threshold still does not grant
-cutover authority.
+`VERIFY-1kJQlH5b` owns integrating the readiness threshold into the one
+canonical verifier. Passing it still does not grant cutover authority.

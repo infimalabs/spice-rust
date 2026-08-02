@@ -76,6 +76,11 @@ impl Fixture {
         self.common().join(".spice-rust")
     }
 
+    fn discovery(&self) -> canvas::Discovery {
+        wire::decode(&fs::read(self.rust_state().join("canvas")).expect("read Rust discovery"))
+            .expect("decode Rust discovery")
+    }
+
     fn admitted_rust_state(&self) -> PathBuf {
         fs::canonicalize(self.common())
             .expect("canonical Git-common directory")
@@ -218,9 +223,25 @@ fn explicit_rust_lifecycle_uses_only_isolated_state() {
 
     let mut resident = Resident::start(&fixture);
     resident.wait_until_ready(&fixture);
+    let first_epoch = fixture.discovery().epoch;
     assert_reply(fixture.invoke(&["--json", "version"]), "version");
+    assert_reply(fixture.invoke(&["--json", "board"]), "board");
+    assert_reply(
+        fixture.invoke(&["--json", "task", "add", "coexistence smoke"]),
+        "task add",
+    );
+    assert_reply(fixture.invoke(&["--json", "lane"]), "lane");
+    assert_reply(fixture.invoke(&["--json", "inbox"]), "inbox");
     assert_reply(fixture.invoke(&["--json", "down"]), "down");
     assert_reply(resident.wait(), "up");
+
+    let mut restarted = Resident::start(&fixture);
+    restarted.wait_until_ready(&fixture);
+    assert_ne!(fixture.discovery().epoch, first_epoch);
+    assert_text_reply(fixture.invoke(&["version"]), "restarted version");
+    assert_text_reply(fixture.invoke(&["board"]), "restarted board");
+    assert_text_reply(fixture.invoke(&["down"]), "restarted down");
+    assert_reply(restarted.wait(), "restarted up");
 
     let resident_lock = LockFile::new(
         LockName::new("resident").expect("resident lock name is valid"),
@@ -343,6 +364,18 @@ fn assert_reply(output: Output, command: &str) {
         matches!(outcome, Outcome::Reply(_)),
         "{command} did not reply: {outcome:?}",
     );
+}
+
+fn assert_text_reply(output: Output, command: &str) {
+    assert!(
+        output.status.success(),
+        "{command} failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(output.stderr.is_empty(), "{command} wrote stderr");
+    serde_json::from_slice::<serde_json::Value>(&output.stdout)
+        .unwrap_or_else(|error| panic!("{command} text reply did not decode: {error}"));
 }
 
 fn assert_state_refusal(output: Output, expected: &Path, command: &str) {

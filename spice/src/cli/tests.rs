@@ -187,6 +187,54 @@ fn every_contract_has_an_executable_succession_disposition() {
     }
 }
 
+#[test]
+fn installed_python_registry_and_ledger_dispositions_are_bijective() {
+    let captured = include_str!("../../tests/fixtures/python-command-registry.txt")
+        .lines()
+        .collect::<Vec<_>>();
+    let captured_set = captured.iter().copied().collect::<BTreeSet<_>>();
+    assert_eq!(captured.len(), 123);
+    assert_eq!(
+        captured_set.len(),
+        captured.len(),
+        "captured Python path repeated"
+    );
+
+    let inventory = include_str!("../../../PORTING.md")
+        .split_once("## Installed Python paths")
+        .expect("the ledger contains the Python inventory")
+        .1
+        .split_once("## Reproduce the audit")
+        .expect("the Python inventory has a finite boundary")
+        .0;
+    let ledger = inventory
+        .lines()
+        .filter_map(|line| line.strip_prefix("- `"))
+        .filter_map(|line| line.split_once('`'))
+        .map(|(path, disposition)| {
+            assert!(
+                [": R", ": D", ": X"]
+                    .iter()
+                    .any(|prefix| disposition.starts_with(prefix)),
+                "Python ledger path has no explicit disposition: {path}",
+            );
+            path
+        })
+        .collect::<Vec<_>>();
+    let ledger_set = ledger.iter().copied().collect::<BTreeSet<_>>();
+
+    assert_eq!(ledger.len(), 123, "every Python path needs one disposition");
+    assert_eq!(
+        ledger_set.len(),
+        ledger.len(),
+        "Python ledger path repeated"
+    );
+    assert_eq!(
+        ledger_set, captured_set,
+        "installed Python inventory drifted"
+    );
+}
+
 #[derive(Clone, Copy, Debug)]
 enum PythonTaskDisposition {
     Landed(&'static [&'static str]),
@@ -433,9 +481,9 @@ fn python_lifecycle_and_session_forensics_name_their_rust_successors() {
         .expect("the agent lifecycle section is bounded")
         .0;
     for mapping in [
-        "- `agent activation`: `lane` and canvas discovery; `COORDIN-1kJQlDjc`.",
-        "- `agent ensure`: `lane add`; `COORDIN-1kJQlDjc`.",
-        "- `agent show`: `lane` and `recall`; `COORDIN-1kJQlDjc`.",
+        "- `agent activation`: R -> `lane` and canvas discovery.",
+        "- `agent ensure`: R -> `lane add`.",
+        "- `agent show`: R -> `lane` and `recall`.",
     ] {
         assert!(
             agent.lines().any(|line| line == mapping),
@@ -450,11 +498,11 @@ fn python_lifecycle_and_session_forensics_name_their_rust_successors() {
         .split_once("### Task plane")
         .expect("the session forensics section is bounded")
         .0;
-    let historical_path = format!("- `session {}{}`", "brie", "fing");
+    let historical_path = format!("- `session {}{}`: X.", "brie", "fing");
     assert!(sessions.lines().any(|line| line == historical_path));
     assert!(sessions.contains(
-        "Its retained questions are answered by landed `watch` and `retro`, plus\n\
-         `recall` and `thread` under their owning tasks."
+        "Their retained questions use `watch`,\n\
+         `retro`, `recall`, and `thread` over owned tape and journal loci."
     ));
     for path in [&["lane"][..], &["lane", "add"][..], &["recall"][..]] {
         assert_eq!(landing(path), Landing::Landed);
