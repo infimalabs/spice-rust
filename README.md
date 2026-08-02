@@ -8,9 +8,12 @@ Install the tracked hooks once per checkout or linked worktree:
 ./scripts/install-hooks.sh
 ```
 
-The pre-commit hook runs formatting, Clippy, and the complete workspace test
-suite through `cargo xtask verify`. It prints each command before execution
-and names the command and exit status when verification fails.
+During coexistence the active pre-commit hook remains Python-owned and invokes
+`spice dev pre-commit`. The canonical Rust verifier runs that installed policy
+gate after formatting, Clippy, native and browser-target builds, deterministic
+app verification, workspace tests, doctests, and the machine-readable
+succession-readiness check. It prints each command before execution and names
+the first command and exit status when verification fails.
 
 ## Workspace verification
 

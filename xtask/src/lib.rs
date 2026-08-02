@@ -1,10 +1,13 @@
 //! Repository-local development commands.
 
+use std::ffi::OsStr;
 use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+mod succession;
 
 /// The target the browser app is compiled for.
 ///
@@ -19,12 +22,12 @@ const CARGO_HOME: &str = concat!(env!("HOME"), "/.cargo");
 const APP_FILES: [&str; 4] = ["app.module", "app_bg.wasm", "canvas-app.html", "style.css"];
 const GENERATED_MODULE_REFERENCES: usize = 2;
 
-const VERIFY_STEPS: [Step; 6] = [
-    Step::new(
+const VERIFY_ACTIONS: [Action; 8] = [
+    Action::Command(Step::cargo(
         "cargo fmt --all -- --check",
         &["fmt", "--all", "--", "--check"],
-    ),
-    Step::new(
+    )),
+    Action::Command(Step::cargo(
         "cargo clippy --locked --workspace --all-targets -- -D warnings",
         &[
             "clippy",
@@ -35,20 +38,29 @@ const VERIFY_STEPS: [Step; 6] = [
             "-D",
             "warnings",
         ],
-    ),
-    Step::new(
+    )),
+    Action::Command(Step::cargo(
         "cargo check --locked --workspace --target wasm32-unknown-unknown",
         &["check", "--locked", "--workspace", "--target", WASM_TARGET],
-    ),
-    Step::new("cargo xtask check-app", &["xtask", "check-app"]),
-    Step::new(
+    )),
+    Action::Command(Step::cargo(
+        "cargo xtask check-app",
+        &["xtask", "check-app"],
+    )),
+    Action::Command(Step::cargo(
         "cargo test --locked --workspace --all-targets",
         &["test", "--locked", "--workspace", "--all-targets"],
-    ),
-    Step::new(
+    )),
+    Action::Command(Step::cargo(
         "cargo test --locked --workspace --doc",
         &["test", "--locked", "--workspace", "--doc"],
-    ),
+    )),
+    Action::Readiness,
+    Action::Command(Step::new(
+        "spice",
+        "spice dev pre-commit",
+        &["dev", "pre-commit"],
+    )),
 ];
 
 /// Compile the browser app with the pinned Trunk adapter and replace the
@@ -253,13 +265,41 @@ impl std::error::Error for AppBuildError {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Step {
+    program: &'static str,
     label: &'static str,
     arguments: &'static [&'static str],
 }
 
 impl Step {
-    const fn new(label: &'static str, arguments: &'static [&'static str]) -> Self {
-        Self { label, arguments }
+    const fn new(
+        program: &'static str,
+        label: &'static str,
+        arguments: &'static [&'static str],
+    ) -> Self {
+        Self {
+            program,
+            label,
+            arguments,
+        }
+    }
+
+    const fn cargo(label: &'static str, arguments: &'static [&'static str]) -> Self {
+        Self::new("cargo", label, arguments)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Action {
+    Command(Step),
+    Readiness,
+}
+
+impl Action {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Command(step) => step.label,
+            Self::Readiness => succession::LABEL,
+        }
     }
 }
 
@@ -271,17 +311,28 @@ struct Status {
 
 trait Runner {
     fn run(&mut self, step: Step) -> io::Result<Status>;
+    fn readiness(&mut self) -> Result<succession::Report, succession::Error>;
 }
 
-struct SystemRunner;
+struct SystemRunner<'a> {
+    search_path: Option<&'a OsStr>,
+}
 
-impl Runner for SystemRunner {
+impl Runner for SystemRunner<'_> {
     fn run(&mut self, step: Step) -> io::Result<Status> {
-        let status = Command::new("cargo").args(step.arguments).status()?;
+        let status = Command::new(step.program).args(step.arguments).status()?;
         Ok(Status {
             success: status.success(),
             code: status.code(),
         })
+    }
+
+    fn readiness(&mut self) -> Result<succession::Report, succession::Error> {
+        let root = std::env::current_dir().map_err(|source| succession::Error::Io {
+            path: PathBuf::from("."),
+            source,
+        })?;
+        succession::inspect(&root, self.search_path)
     }
 }
 
@@ -291,22 +342,36 @@ impl Runner for SystemRunner {
 ///
 /// Returns the first output, launch, or command failure and does not start any
 /// subsequent command.
-pub fn verify(output: &mut impl Write) -> Result<(), VerifyError> {
-    verify_with(&mut SystemRunner, output)
+pub fn verify(search_path: Option<&OsStr>, output: &mut impl Write) -> Result<(), VerifyError> {
+    verify_with(&mut SystemRunner { search_path }, output)
 }
 
 fn verify_with<R: Runner>(runner: &mut R, output: &mut impl Write) -> Result<(), VerifyError> {
-    for step in VERIFY_STEPS {
-        writeln!(output, "[verify] {}", step.label).map_err(VerifyError::Output)?;
-        let status = runner.run(step).map_err(|source| VerifyError::Launch {
-            label: step.label,
-            source,
-        })?;
-        if !status.success {
-            return Err(VerifyError::Exit {
-                label: step.label,
-                code: status.code,
-            });
+    for action in VERIFY_ACTIONS {
+        writeln!(output, "[verify] {}", action.label()).map_err(VerifyError::Output)?;
+        match action {
+            Action::Command(step) => {
+                let status = runner.run(step).map_err(|source| VerifyError::Launch {
+                    label: step.label,
+                    source,
+                })?;
+                if !status.success {
+                    return Err(VerifyError::Exit {
+                        label: step.label,
+                        code: status.code,
+                    });
+                }
+            }
+            Action::Readiness => {
+                let report = runner
+                    .readiness()
+                    .map_err(|source| VerifyError::Readiness(source.to_string()))?;
+                serde_json::to_writer(&mut *output, &report).map_err(VerifyError::Encode)?;
+                writeln!(output).map_err(VerifyError::Output)?;
+                if !report.admitted() {
+                    return Err(VerifyError::ReadinessRefused);
+                }
+            }
         }
     }
     Ok(())
@@ -316,6 +381,9 @@ fn verify_with<R: Runner>(runner: &mut R, output: &mut impl Write) -> Result<(),
 #[derive(Debug)]
 pub enum VerifyError {
     Output(io::Error),
+    Encode(serde_json::Error),
+    Readiness(String),
+    ReadinessRefused,
     Launch {
         label: &'static str,
         source: io::Error,
@@ -330,6 +398,11 @@ impl fmt::Display for VerifyError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Output(source) => write!(formatter, "[verify] output failed: {source}"),
+            Self::Encode(source) => write!(formatter, "[verify] readiness output failed: {source}"),
+            Self::Readiness(detail) => {
+                write!(formatter, "[verify] readiness acquisition failed: {detail}")
+            }
+            Self::ReadinessRefused => formatter.write_str("[verify] succession readiness refused"),
             Self::Launch { label, source } => {
                 write!(formatter, "[verify] failed to launch: {label} ({source})")
             }
@@ -348,7 +421,8 @@ impl std::error::Error for VerifyError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Output(source) | Self::Launch { source, .. } => Some(source),
-            Self::Exit { .. } => None,
+            Self::Encode(source) => Some(source),
+            Self::Readiness(_) | Self::ReadinessRefused | Self::Exit { .. } => None,
         }
     }
 }
@@ -367,6 +441,7 @@ mod tests {
 
     struct FakeRunner {
         outcomes: VecDeque<Outcome>,
+        readiness: Option<Result<succession::Report, succession::Error>>,
         calls: Vec<&'static str>,
     }
 
@@ -385,33 +460,44 @@ mod tests {
                 Outcome::Launch => Err(io::Error::other("fixture launch refusal")),
             }
         }
+
+        fn readiness(&mut self) -> Result<succession::Report, succession::Error> {
+            self.calls.push(succession::LABEL);
+            self.readiness
+                .take()
+                .expect("fixture has one readiness outcome")
+        }
     }
 
     #[test]
     fn success_runs_every_step_in_order_and_prints_exact_labels() {
-        let mut runner = runner(VERIFY_STEPS.map(|_| Outcome::Success));
+        let mut runner = runner(successful_commands());
         let mut output = Vec::new();
 
         verify_with(&mut runner, &mut output).expect("verification succeeds");
 
         assert_eq!(runner.calls, labels());
-        assert_eq!(
-            String::from_utf8(output).expect("labels are UTF-8"),
-            labels()
-                .into_iter()
-                .map(|label| format!("[verify] {label}\n"))
-                .collect::<String>()
-        );
+        let output = String::from_utf8(output).expect("labels are UTF-8");
+        let report = serde_json::to_string(&succession::fixture_report(true))
+            .expect("fixture report encodes");
+        let expected = VERIFY_ACTIONS
+            .into_iter()
+            .map(|action| match action {
+                Action::Command(step) => format!("[verify] {}\n", step.label),
+                Action::Readiness => format!("[verify] {}\n{report}\n", succession::LABEL),
+            })
+            .collect::<String>();
+        assert_eq!(output, expected);
     }
 
     #[test]
     fn verifier_steps_match_the_complete_command_guard() {
-        const GUARDED_STEPS: [Step; 6] = [
-            Step::new(
+        const GUARDED_ACTIONS: [Action; 8] = [
+            Action::Command(Step::cargo(
                 "cargo fmt --all -- --check",
                 &["fmt", "--all", "--", "--check"],
-            ),
-            Step::new(
+            )),
+            Action::Command(Step::cargo(
                 "cargo clippy --locked --workspace --all-targets -- -D warnings",
                 &[
                     "clippy",
@@ -422,8 +508,8 @@ mod tests {
                     "-D",
                     "warnings",
                 ],
-            ),
-            Step::new(
+            )),
+            Action::Command(Step::cargo(
                 "cargo check --locked --workspace --target wasm32-unknown-unknown",
                 &[
                     "check",
@@ -432,30 +518,45 @@ mod tests {
                     "--target",
                     "wasm32-unknown-unknown",
                 ],
-            ),
-            Step::new("cargo xtask check-app", &["xtask", "check-app"]),
-            Step::new(
+            )),
+            Action::Command(Step::cargo(
+                "cargo xtask check-app",
+                &["xtask", "check-app"],
+            )),
+            Action::Command(Step::cargo(
                 "cargo test --locked --workspace --all-targets",
                 &["test", "--locked", "--workspace", "--all-targets"],
-            ),
-            Step::new(
+            )),
+            Action::Command(Step::cargo(
                 "cargo test --locked --workspace --doc",
                 &["test", "--locked", "--workspace", "--doc"],
-            ),
+            )),
+            Action::Readiness,
+            Action::Command(Step::new(
+                "spice",
+                "spice dev pre-commit",
+                &["dev", "pre-commit"],
+            )),
         ];
 
-        assert_eq!(VERIFY_STEPS.as_slice(), GUARDED_STEPS.as_slice());
+        assert_eq!(VERIFY_ACTIONS.as_slice(), GUARDED_ACTIONS.as_slice());
     }
 
     #[test]
     fn verifier_explicitly_runs_workspace_doctests() {
-        let step = VERIFY_STEPS
+        let (index, step) = VERIFY_ACTIONS
             .iter()
-            .find(|step| step.label == "cargo test --locked --workspace --doc")
+            .enumerate()
+            .find_map(|(index, action)| match action {
+                Action::Command(step) if step.label == "cargo test --locked --workspace --doc" => {
+                    Some((index, step))
+                }
+                _ => None,
+            })
             .expect("the verifier has a doctest step");
 
         assert_eq!(step.arguments, ["test", "--locked", "--workspace", "--doc"]);
-        assert_eq!(VERIFY_STEPS.last(), Some(step));
+        assert_eq!(VERIFY_ACTIONS[index + 1], Action::Readiness);
     }
 
     /// The battery builds for a second target, and says which one.
@@ -467,9 +568,12 @@ mod tests {
     /// only "check failed" would look for a defect that is not there.
     #[test]
     fn verifier_builds_the_workspace_for_the_browser_target() {
-        let step = VERIFY_STEPS
+        let step = VERIFY_ACTIONS
             .iter()
-            .find(|step| step.arguments.contains(&"--target"))
+            .find_map(|action| match action {
+                Action::Command(step) if step.arguments.contains(&"--target") => Some(step),
+                _ => None,
+            })
             .expect("the verifier has a cross-target step");
 
         assert_eq!(
@@ -505,14 +609,67 @@ mod tests {
         assert_eq!(runner.calls, labels()[..1]);
     }
 
+    #[test]
+    fn readiness_refusal_stops_before_the_python_policy_step() {
+        let mut runner = runner(successful_commands());
+        runner.readiness = Some(Ok(succession::fixture_report(false)));
+        let mut output = Vec::new();
+
+        let error = verify_with(&mut runner, &mut output).expect_err("readiness refuses");
+
+        assert!(matches!(error, VerifyError::ReadinessRefused));
+        assert_eq!(runner.calls, labels()[..7]);
+    }
+
+    #[test]
+    fn readiness_acquisition_failure_stops_before_the_python_policy_step() {
+        let mut runner = runner(successful_commands());
+        runner.readiness = Some(Err(succession::Error::PythonLedgerBoundary));
+        let mut output = Vec::new();
+
+        let error = verify_with(&mut runner, &mut output).expect_err("readiness fails");
+
+        assert!(matches!(error, VerifyError::Readiness(_)));
+        assert_eq!(runner.calls, labels()[..7]);
+    }
+
+    #[test]
+    fn installed_python_policy_is_last_and_its_failure_propagates() {
+        let mut outcomes = successful_commands();
+        *outcomes.last_mut().expect("policy outcome exists") = Outcome::Exit(7);
+        let mut runner = runner(outcomes);
+        let mut output = Vec::new();
+
+        let error = verify_with(&mut runner, &mut output).expect_err("policy fails");
+
+        assert!(matches!(error, VerifyError::Exit { code: Some(7), .. }));
+        assert_eq!(runner.calls, labels());
+        let Action::Command(policy) = VERIFY_ACTIONS[7] else {
+            panic!("policy must be an external command");
+        };
+        assert_eq!(
+            (policy.program, policy.arguments),
+            ("spice", &["dev", "pre-commit"][..])
+        );
+    }
+
     fn runner(outcomes: impl IntoIterator<Item = Outcome>) -> FakeRunner {
         FakeRunner {
             outcomes: outcomes.into_iter().collect(),
+            readiness: Some(Ok(succession::fixture_report(true))),
             calls: Vec::new(),
         }
     }
 
+    fn successful_commands() -> Vec<Outcome> {
+        VERIFY_ACTIONS
+            .iter()
+            .filter(|action| matches!(action, Action::Command(_)))
+            .map(|_| Outcome::Success)
+            .collect()
+    }
+
     fn labels() -> Vec<&'static str> {
-        VERIFY_STEPS.iter().map(|step| step.label).collect()
+        VERIFY_ACTIONS.iter().map(|action| action.label()).collect()
     }
 }

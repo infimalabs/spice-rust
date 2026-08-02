@@ -24,8 +24,8 @@ exercised in the same worktree with separate authority.
 
 Cutover remains blocked on three risks:
 
-1. `HOOKS-1kJQnmG8` and `VERIFY-1kJQlH5b` must land native hooks and put the
-   installed Python policy step plus readiness threshold in one verifier.
+1. `HOOKS-1kJQnmG8` must land native hooks; until then the active Python hook
+   remains unchanged and its policy gate runs last in `cargo xtask verify`.
 2. The clean break has no Python migration; the operator must approve a
    predecessor backup/export and an empty Rust authority.
 3. Installed entrypoint selection and rollback still require an operator-run
@@ -293,5 +293,7 @@ cargo test --locked -p spice \
 cargo test --locked -p spice --test succession
 ```
 
-`VERIFY-1kJQlH5b` owns integrating the readiness threshold into the one
-canonical verifier. Passing it still does not grant cutover authority.
+`cargo xtask verify` emits the versioned succession-readiness report, enforces
+the 95 percent landed threshold and both registry closures, then runs the
+installed Python `spice dev pre-commit` policy gate. Passing it still does not
+grant cutover authority.

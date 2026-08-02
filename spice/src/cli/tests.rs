@@ -793,7 +793,7 @@ fn contract_syntax_drives_argument_registration() {
 #[test]
 fn configuration_flag_mappings_resolve_in_the_generated_tree() {
     let parser = command();
-    for mapping in spice::config::descriptors()
+    for mapping in crate::config::descriptors()
         .iter()
         .filter_map(|descriptor| descriptor.flag())
     {
