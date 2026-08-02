@@ -723,6 +723,7 @@ dependencies = [
  "gix-glob",
  "serde",
  "serde_json",
+ "shell-words",
  "sill",
  "syn 3.0.3",
  "toml",
