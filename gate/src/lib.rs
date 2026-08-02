@@ -14,6 +14,7 @@
 
 pub mod camp;
 pub mod config;
+pub mod hygiene;
 pub mod input;
 pub mod jurisdiction;
 pub mod kill;
@@ -34,6 +35,18 @@ pub use camp::{
     CampStanding, DistributionReport, LocusDistance, SharedBound,
 };
 pub use config::{Config, WalkConfig};
+pub use hygiene::{
+    AnalysisEvidence, AnalyzerEvidence, EvidenceState, ExclusionEvidence, HYGIENE_ARMS,
+    HYGIENE_REPORT_VERSION, HygieneAnalyzer, HygieneConfigurationSource, HygieneDeclaration,
+    HygieneError, HygieneFinding, HygieneFindingDetail, HygieneJurisdiction, HygieneMeasurement,
+    HygieneObservation, HygieneOutcome, HygieneProvenance, HygieneReport, HygieneTraversal,
+    MigrationRefusal as HygieneMigrationRefusal,
+    PredecessorComparison as HygienePredecessorComparison,
+    PredecessorComparisonError as HygienePredecessorComparisonError,
+    PredecessorObservation as HygienePredecessorObservation,
+    PredecessorResult as HygienePredecessorResult, PythonUnusedStatus,
+    compare_predecessor as compare_hygiene_predecessor, measure_hygiene,
+};
 pub use input::{
     BASELINE_PATH, BASELINE_VERSION, Baseline, BaselineError, Contract, ContractError,
     ExecutableDeclaration, FieldError, Floor, FloorDeclaration, FloorKind, GateSet, GateSetError,
