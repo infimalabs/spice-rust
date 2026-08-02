@@ -28,7 +28,7 @@ pub enum BodyShape {
     DocLedger,
     /// [`TaskAdd`]
     TaskAdd,
-    /// [`TaskOopsAdd`]
+    /// [`TaskOopsAdd`], the strict body for the server-owned `.oops` route.
     TaskOopsAdd,
     /// [`TaskEdit`]
     TaskEdit,
