@@ -263,6 +263,7 @@ fn build_write(
                 occupant: request.occupant,
                 epoch: request.epoch,
                 until: request.expiry,
+                git: None,
             },
             FactCause::Root,
         )

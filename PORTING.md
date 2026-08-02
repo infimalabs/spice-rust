@@ -12,8 +12,8 @@ Cargo. Active `.spice/hooks` still invoke Python. Python owns Git-common
 | Measure | Result |
 | --- | --- |
 | Installed Python registry | 123/123 paths have one disposition; no gaps or duplicates |
-| Rust contract registry | 63/63 leaves landed; no gaps or unaccounted leaves |
-| Rust process sweep | 126 text/JSON invocations; matching exits and streams; no placeholders |
+| Rust contract registry | 64/64 leaves landed; no gaps or unaccounted leaves |
+| Rust process sweep | 128 text/JSON invocations; matching exits and streams; no placeholders |
 | Functional smoke | 39/39 process tests across lifecycle, control, evidence, and recovery |
 | Coexistence | Two Rust generations; Python command, state, hooks, and hook path unchanged |
 
@@ -42,7 +42,7 @@ entrypoint, active hooks, or Python authority.
 
 ## Rust contracts
 
-The closed registry contains 63 leaves and all 63 have executable dispatch.
+The closed registry contains 64 leaves and all 64 have executable dispatch.
 `spice/src/cli.rs::landing` carries the same classification; its tests reject
 registry drift, and the process sweep rejects terminal release or resident
 placeholder outcomes.
@@ -71,6 +71,7 @@ placeholder outcomes.
 - `board handout`
 - `task next`
 - `task add`
+- `task capture`
 - `task done`
 - `task review`
 - `task note`
@@ -173,7 +174,7 @@ and `X` clean-break removal. A pending owner is a cutover risk, not a fallback.
 - `dev pre-commit`: D -> `gate` plus the canonical verifier.
 - `dev pytest`: D -> workspace tests in the canonical verifier.
 - `dev python-typecheck`: X -> strict Rust linting and tests.
-- `dev reference-transaction`: X -> Git publication behavior removed.
+- `dev reference-transaction`: X -> hook execution is installer-owned; task Git publication runs at task boundaries.
 - `dev serve-web-typecheck`: D -> verifier Wasm check.
 - `dev serve-web-types`: X -> shared Rust wire types.
 
@@ -252,7 +253,7 @@ All `session` paths are X as commands. Their retained questions use `watch`,
 - `task artifact list`: X -> `journal` task-origin facts.
 - `task artifact prune`: X -> immutable evidence has no prune verb.
 - `task artifact show`: X -> `journal` plus `thread`.
-- `task capture`: X -> Git publication remains operator-owned.
+- `task capture`: R -> `task capture`.
 - `task claim`: R -> allocator-owned `task next`.
 - `task delete`: D -> authored `doc` correction.
 - `task depends`: R -> `task depends`.

@@ -7,3 +7,7 @@ pub mod config;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod install;
 pub mod repository;
+#[cfg(not(target_arch = "wasm32"))]
+// Gate's source ceiling is narrower than rustfmt's default width.
+#[rustfmt::skip]
+pub mod task_git;

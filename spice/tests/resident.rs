@@ -738,6 +738,7 @@ fn seed_active_claim(fixture: &Fixture) {
                 occupant,
                 epoch,
                 until: expiry,
+                git: None,
             },
             FactCause::Existing(
                 wire::Seq::new(added.last()).expect("task commit has a non-zero position"),
