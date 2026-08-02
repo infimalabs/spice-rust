@@ -264,7 +264,7 @@ struct FailingReader;
 
 impl Read for FailingReader {
     fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
-        Err(io::Error::other("fixture selected reader failure"))
+        Err(io::Error::other("fixture reader failure"))
     }
 }
 
@@ -281,8 +281,8 @@ fn selected_reader_failure_uses_the_same_bounded_cleanup_path() {
     .expect("reader-failure child launches");
     let (records, _received) = mpsc::channel();
     let (failures, failed) = mpsc::channel();
-    let observer = Arc::new(ForwardObserver { records, failures });
-    let observation = Observation::new(OutputStream::Stdout, 32, 1, observer)
+    let observer: Arc<dyn RecordObserver> = Arc::new(ForwardObserver { records, failures });
+    let observation = Observation::new(OutputStream::Stdout, 32, 1, Arc::clone(&observer))
         .expect("reader-failure observation");
     let context = Arc::new(FailureContext {
         pid: running.pid,
@@ -303,6 +303,7 @@ fn selected_reader_failure_uses_the_same_bounded_cleanup_path() {
         CaptureWorker {
             stream: OutputStream::Stdout,
             observation: Some(observation),
+            failure_observer: Some(observer),
             sink_deadline: Duration::from_millis(50),
             failure: context,
             wake: running
@@ -320,12 +321,74 @@ fn selected_reader_failure_uses_the_same_bounded_cleanup_path() {
     assert!(matches!(
         failed.recv_timeout(Duration::from_secs(2)).expect("reader failure reports"),
         ObservationFailure::Reader { detail, .. }
-            if detail.contains("fixture selected reader failure")
+            if detail.contains("fixture reader failure")
     ));
     let outcome = running.wait().expect("reader-failure child reaps");
     assert!(matches!(
         outcome.observation_failure(),
         Some(ObservationFailure::Reader { .. })
+    ));
+}
+
+#[test]
+fn opaque_reader_failure_uses_the_selected_observer_cleanup_path() {
+    let mut running = spawn(test_spec(
+        "/usr/bin/tail",
+        ["-f", "/dev/null"],
+        Environment::empty(),
+        Cancellation::Never,
+        Duration::from_secs(10),
+        StreamPolicy::Null,
+    ))
+    .expect("opaque-reader-failure child launches");
+    let (records, _received) = mpsc::channel();
+    let (failures, failed) = mpsc::channel();
+    let observer: Arc<dyn RecordObserver> = Arc::new(ForwardObserver { records, failures });
+    let context = Arc::new(FailureContext {
+        pid: running.pid,
+        group: running.spec.group,
+        owner: running.spec.wait.owner().to_owned(),
+        grace: running.spec.grace,
+        reap: running.spec.deadlines.reap(),
+        process: Arc::clone(&running.process),
+        wake: running
+            .cancellation_wake
+            .try_clone()
+            .expect("fixture wake clones"),
+        failed: std::sync::atomic::AtomicBool::new(false),
+    });
+    running.stderr = Some(start_capture(
+        FailingReader,
+        32,
+        CaptureWorker {
+            stream: OutputStream::Stderr,
+            observation: None,
+            failure_observer: Some(observer),
+            sink_deadline: Duration::from_millis(50),
+            failure: context,
+            wake: running
+                .cancellation_wake
+                .try_clone()
+                .expect("capture wake clones"),
+            observer_wake: None,
+        },
+    ));
+    assert!(matches!(
+        failed
+            .recv_timeout(Duration::from_secs(2))
+            .expect("opaque reader failure reports"),
+        ObservationFailure::Reader {
+            stream: OutputStream::Stderr,
+            detail,
+        } if detail.contains("fixture reader failure")
+    ));
+    let outcome = running.wait().expect("opaque-reader-failure child reaps");
+    assert!(matches!(
+        outcome.observation_failure(),
+        Some(ObservationFailure::Reader {
+            stream: OutputStream::Stderr,
+            ..
+        })
     ));
 }
 

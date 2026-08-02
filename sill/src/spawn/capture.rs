@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug)]
 pub(super) struct CaptureHandle {
     state: Arc<Mutex<CaptureState>>,
-    selected: bool,
+    failure_supervised: bool,
 }
 
 #[derive(Debug)]
@@ -33,7 +33,7 @@ impl CaptureHandle {
             .state
             .lock()
             .map_err(|_| io::Error::other("capture state lock is poisoned"))?;
-        if self.selected {
+        if self.failure_supervised {
             return Ok(());
         }
         state
@@ -71,6 +71,7 @@ struct Frame {
 pub(super) struct CaptureWorker {
     pub(super) stream: OutputStream,
     pub(super) observation: Option<Observation>,
+    pub(super) failure_observer: Option<Arc<dyn RecordObserver>>,
     pub(super) sink_deadline: Duration,
     pub(super) failure: Arc<FailureContext>,
     pub(super) wake: std::os::unix::net::UnixDatagram,
@@ -84,12 +85,14 @@ where
     let CaptureWorker {
         stream,
         observation,
+        failure_observer,
         sink_deadline,
         failure,
         wake,
         observer_wake,
     } = worker;
     let selected = observation.is_some();
+    let failure_supervised = failure_observer.is_some();
     let state = Arc::new(Mutex::new(CaptureState {
         output: CapturedOutput {
             bytes: Vec::with_capacity(limit.min(8 * 1024)),
@@ -108,6 +111,10 @@ where
                 Arc::clone(&failure),
                 Arc::clone(&worker_state),
                 observer_wake.expect("selected capture has a preallocated observer wake"),
+                failure_observer
+                    .as_ref()
+                    .map(Arc::clone)
+                    .expect("selected capture has a failure observer"),
             )
         });
         let mut buffer = [0_u8; 8 * 1024];
@@ -142,11 +149,15 @@ where
                     if let Ok(mut state) = worker_state.lock() {
                         state.failure = Some(captured.clone());
                     }
-                    if let Some(framer) = &framer {
-                        framer.fail(ObservationFailure::Reader {
-                            stream,
-                            detail: captured.detail,
-                        });
+                    if let Some(observer) = &failure_observer {
+                        fail_observation(
+                            &failure,
+                            observer,
+                            ObservationFailure::Reader {
+                                stream,
+                                detail: captured.detail,
+                            },
+                        );
                     }
                     let _wake_result = wake.send(WAKE_BYTE);
                     return;
@@ -155,7 +166,10 @@ where
         }
     });
 
-    CaptureHandle { state, selected }
+    CaptureHandle {
+        state,
+        failure_supervised,
+    }
 }
 
 struct SelectedFramer {
@@ -176,11 +190,11 @@ impl SelectedFramer {
         failure: Arc<FailureContext>,
         state: Arc<Mutex<CaptureState>>,
         wake: std::os::unix::net::UnixDatagram,
+        observer: Arc<dyn RecordObserver>,
     ) -> Self {
         let stream = observation.stream();
         let limit = observation.frame_limit();
         let capacity = observation.queue_capacity();
-        let observer = observation.observer();
         let (sender, receiver) = mpsc::sync_channel(capacity);
         start_observer_worker(
             receiver,
