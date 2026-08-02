@@ -35,6 +35,7 @@ pub(crate) use typed::execute_typed;
 use typed::kind_for;
 
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(3);
+const LANE_CHANGE_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_DISCOVERY_BYTES: u64 = 16 * 1024;
 
 type ClientResult<T> = Result<T, Outcome<CommandAnswer>>;
@@ -143,7 +144,7 @@ pub(crate) fn authenticate(
     }
     let connection = ambient_lane_identity()?.map_or(Connection::Operator, Connection::Lane);
     let discovery = DiscoveryRead::open(&selected_discovery_path(discovery_path, connection))?;
-    let session = open_session(contract, discovery)?;
+    let session = open_session(contract, discovery, SOCKET_TIMEOUT)?;
     Ok(session.accepted.epoch)
 }
 
@@ -397,7 +398,11 @@ fn request(
     mapped: MappedCommand,
     discovery: DiscoveryRead,
 ) -> Outcome<CommandAnswer> {
-    let mut session = match open_session(contract, discovery) {
+    let timeout = match mapped.kind {
+        CommandKind::LaneSeat | CommandKind::LaneState => LANE_CHANGE_TIMEOUT,
+        _ => SOCKET_TIMEOUT,
+    };
+    let mut session = match open_session(contract, discovery, timeout) {
         Ok(session) => session,
         Err(outcome) => return outcome,
     };
@@ -525,10 +530,11 @@ fn remaining(deadline: Instant) -> io::Result<Duration> {
 fn open_session(
     contract: &Contract,
     discovery: DiscoveryRead,
+    timeout: Duration,
 ) -> ClientResult<AuthenticatedSession> {
     let (authority, address) = loopback_endpoint(&discovery.value.endpoint)?;
     discovery.verify_current()?;
-    let deadline = Instant::now() + SOCKET_TIMEOUT;
+    let deadline = Instant::now() + timeout;
     let stream = match DeadlineStream::connect(&address, deadline) {
         Ok(stream) => stream,
         Err(error) => {

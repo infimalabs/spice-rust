@@ -582,6 +582,7 @@ fn invoke_lane(
         .expect("lane spice launches")
 }
 
+#[track_caller]
 fn reply_body<T: serde::de::DeserializeOwned>(output: &Output) -> T {
     assert!(
         output.status.success(),
