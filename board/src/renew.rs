@@ -12,13 +12,15 @@ use wire::{
     body, intent,
 };
 
-use crate::{Active, ClaimRefusal, Entry};
+use crate::{Active, ClaimRefusal, Entry, ProjectPolicy};
 
 const CHANGED: &str = "renewal inputs changed before extension could commit";
 
 /// Durable timer inputs for one claim renewal.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Request {
+    /// Captured project vocabulary used by both renewal observations.
+    pub projects: ProjectPolicy,
     /// Identity stored with the canonical command receipt.
     pub command: CanonicalUuid,
     /// Occupant whose renewal timer fired.
@@ -274,6 +276,7 @@ fn observe(
         workflow.body().clone(),
         Some(claim.body().clone()),
         Some(lease.body().clone()),
+        &request.projects,
     )
     .map_err(|error| GuardError::Invalid(format!("task {task} is invalid: {error}")))?;
     Active::admit(&entry, &claim.body().actor, request.at).map_err(Refusal::Claim)?;
@@ -471,8 +474,19 @@ mod tests {
         "BOARD-a1".parse().expect("task")
     }
 
+    fn projects() -> crate::ProjectPolicy {
+        crate::ProjectPolicy::new(
+            ["board".to_owned()],
+            Vec::new(),
+            dialect::PROJECT_MIN_DEPTH as u64,
+            dialect::PROJECT_MAX_DEPTH as u64,
+        )
+        .expect("fixture project policy")
+    }
+
     fn renew_request(command: u8) -> Request {
         Request {
+            projects: projects(),
             command: uuid(command),
             occupant: uuid(21),
             epoch: uuid(22),
@@ -546,6 +560,7 @@ mod tests {
         win(
             &mut journal,
             WinRequest {
+                projects: projects(),
                 command: uuid(31),
                 actor: Actor::Lane(uuid(20)),
                 lane: uuid(20),

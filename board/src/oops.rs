@@ -1,4 +1,4 @@
-use crate::task::{Project, TaskError};
+use crate::task::{Project, ProjectPolicy, TaskError};
 
 /// A report entering the board's oops seam.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,11 +23,12 @@ impl Friction {
         title: impl Into<String>,
         description: impl Into<String>,
         project: &str,
+        projects: &ProjectPolicy,
     ) -> Result<Self, TaskError> {
         Ok(Self {
             title: title.into(),
             description: description.into(),
-            project: project.parse()?,
+            project: projects.admit(project)?,
         })
     }
 }

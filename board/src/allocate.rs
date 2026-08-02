@@ -12,7 +12,7 @@ use wire::{
     Name, Producer, Seq, TaskHandle, WireVersion, Witness, body, intent,
 };
 
-use crate::{Entry, select};
+use crate::{Entry, ProjectPolicy, select};
 
 const CURRENT_RULE: &str = "next";
 const CHANGED: &str = "allocator inputs changed before the claim could commit";
@@ -20,6 +20,8 @@ const CHANGED: &str = "allocator inputs changed before the claim could commit";
 /// Authenticated inputs for one handle-free allocation request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Request {
+    /// Captured project vocabulary used by both allocation observations.
+    pub projects: ProjectPolicy,
     /// Identity stored with the canonical command receipt.
     pub command: CanonicalUuid,
     /// Principal derived from the authenticated resident capability.
@@ -414,7 +416,7 @@ fn observe(
     let residency = read.residency_head()?.ok_or(Refusal::MissingResidency)?;
     admit_residency(residency.body(), request)?;
     let heads = read.task_heads()?;
-    let entries = entries(&heads)?;
+    let entries = entries(&heads, &request.projects)?;
     let winner = select(&entries, &request.actor)
         .ok_or(Refusal::Empty)?
         .entry()
@@ -459,7 +461,7 @@ fn admit_residency(residency: &wire::ResidencyHead, request: &Request) -> Result
     Ok(())
 }
 
-fn entries(heads: &[TaskHeads]) -> Result<Vec<Entry>, ObservationError> {
+fn entries(heads: &[TaskHeads], projects: &ProjectPolicy) -> Result<Vec<Entry>, ObservationError> {
     heads
         .iter()
         .cloned()
@@ -467,7 +469,7 @@ fn entries(heads: &[TaskHeads]) -> Result<Vec<Entry>, ObservationError> {
             admit_possession(&heads)?;
             let (statement, workflow, claim, lease) = heads.into_bodies();
             let handle = statement.handle.clone();
-            Entry::new(statement, workflow, claim, lease).map_err(|source| {
+            Entry::new(statement, workflow, claim, lease, projects).map_err(|source| {
                 ObservationError::Fault(GuardError::Invalid(format!(
                     "allocator task {handle} is invalid: {source}"
                 )))
@@ -554,6 +556,13 @@ mod tests {
     fn request(command: u8) -> Request {
         let lane = uuid(20);
         Request {
+            projects: crate::ProjectPolicy::new(
+                ["board".to_owned()],
+                Vec::new(),
+                dialect::PROJECT_MIN_DEPTH as u64,
+                dialect::PROJECT_MAX_DEPTH as u64,
+            )
+            .expect("fixture project policy"),
             command: uuid(command),
             actor: Actor::Lane(lane),
             lane,

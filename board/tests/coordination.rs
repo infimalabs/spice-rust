@@ -37,6 +37,25 @@ fn seq(value: u64) -> Seq {
     Seq::new(value).expect("non-zero sequence")
 }
 
+fn projects() -> board::ProjectPolicy {
+    board::ProjectPolicy::new(
+        ["board".to_owned(), "agent".to_owned()],
+        Vec::new(),
+        dialect::PROJECT_MIN_DEPTH as u64,
+        dialect::PROJECT_MAX_DEPTH as u64,
+    )
+    .expect("fixture project policy")
+}
+
+fn admitted(
+    statement: TaskHead,
+    workflow: WorkflowHead,
+    claim: Option<ClaimHead>,
+    lease: Option<LeaseHead>,
+) -> Result<Entry, board::TaskError> {
+    Entry::new(statement, workflow, claim, lease, &projects())
+}
+
 fn statement(name: &str) -> TaskHead {
     TaskHead {
         handle: handle(name),
@@ -84,11 +103,11 @@ fn lease() -> LeaseHead {
 }
 
 fn entry(name: &str) -> Entry {
-    Entry::new(statement(name), workflow("todo"), None, None).expect("valid heads")
+    admitted(statement(name), workflow("todo"), None, None).expect("valid heads")
 }
 
 fn claimed_entry(name: &str, current: &str) -> Entry {
-    Entry::new(
+    admitted(
         statement(name),
         workflow(current),
         Some(claim(ClaimDisposition::Active)),
@@ -101,7 +120,7 @@ fn completed_entry(name: &str) -> Entry {
     let mut completed = workflow("review");
     completed.status = "completed".to_owned();
     completed.completion = Some(instant("2026-08-01T06:06:00.000Z"));
-    Entry::new(
+    admitted(
         statement(name),
         completed,
         Some(claim(ClaimDisposition::Active)),
@@ -148,14 +167,21 @@ fn journal_with_heads(mut statement: TaskHead, workflow: WorkflowHead) -> Journa
 fn statement_views_preserve_project_family_handle_and_dependency_heads() {
     let mut head = statement("BOARD-a1");
     head.dependencies = vec![handle("WIRE-b2"), handle("JOURNAL-c3")];
-    let entry = Entry::new(head, workflow("todo"), None, None).expect("valid heads");
+    let entry = admitted(head, workflow("todo"), None, None).expect("valid heads");
 
     assert_eq!(entry.project().as_str(), "board.kernel");
     assert_eq!(entry.family().as_str(), "BOARD");
-    assert!(".oops.workflow".parse::<board::Project>().is_ok());
+    let projects = board::ProjectPolicy::new(
+        ["board".to_owned(), "agent".to_owned()],
+        Vec::new(),
+        dialect::PROJECT_MIN_DEPTH as u64,
+        dialect::PROJECT_MAX_DEPTH as u64,
+    )
+    .expect("fixture project policy");
+    assert!(projects.admit(".oops.workflow").is_ok());
     assert!(
-        "agent.019fbbde510575a3a76a722afde1e407.task"
-            .parse::<board::Project>()
+        projects
+            .admit("agent.019fbbde510575a3a76a722afde1e407.task")
             .is_ok()
     );
     assert_eq!(
@@ -175,44 +201,168 @@ fn statement_views_preserve_project_family_handle_and_dependency_heads() {
     let mut self_dependent = statement("BOARD-a1");
     self_dependent.dependencies = vec![handle("BOARD-a1")];
     assert!(matches!(
-        Entry::new(self_dependent, workflow("todo"), None, None),
+        admitted(self_dependent, workflow("todo"), None, None),
         Err(board::TaskError::SelfDependency(_))
     ));
 
     let mut duplicate = statement("BOARD-a1");
     duplicate.dependencies = vec![handle("WIRE-b2"), handle("WIRE-b2")];
     assert!(matches!(
-        Entry::new(duplicate, workflow("todo"), None, None),
+        admitted(duplicate, workflow("todo"), None, None),
         Err(board::TaskError::DuplicateDependency { .. })
     ));
 
     let mut malformed = workflow("todo");
     malformed.phase = phase("design");
     assert!(matches!(
-        Entry::new(statement("BOARD-a1"), malformed, None, None),
+        admitted(statement("BOARD-a1"), malformed, None, None),
         Err(board::TaskError::PhaseOutsideFlow(_))
     ));
 
     let mut empty = workflow("todo");
     empty.flow.clear();
     assert!(matches!(
-        Entry::new(statement("BOARD-a1"), empty, None, None),
+        admitted(statement("BOARD-a1"), empty, None, None),
         Err(board::TaskError::EmptyFlow)
     ));
 
     let mut duplicate_phase = workflow("todo");
     duplicate_phase.flow.push(phase("todo"));
     assert!(matches!(
-        Entry::new(statement("BOARD-a1"), duplicate_phase, None, None),
+        admitted(statement("BOARD-a1"), duplicate_phase, None, None),
         Err(board::TaskError::DuplicatePhase(_))
     ));
 
     let mut unknown_status = workflow("todo");
     unknown_status.status = "mystery".to_owned();
     assert!(matches!(
-        Entry::new(statement("BOARD-a1"), unknown_status, None, None),
+        admitted(statement("BOARD-a1"), unknown_status, None, None),
         Err(board::TaskError::WorkflowStatus(_))
     ));
+}
+
+#[test]
+fn project_policy_admits_only_resolved_hidden_roots_without_broadening_public_law() {
+    let projects = board::ProjectPolicy::new(
+        ["board".to_owned()],
+        [
+            "sandbox".to_owned(),
+            "oops".to_owned(),
+            "sandbox".to_owned(),
+        ],
+        2,
+        3,
+    )
+    .expect("hidden additions resolve");
+    assert_eq!(
+        projects.hidden_stems(),
+        ["oops", "maxim_proposal", "sandbox"]
+    );
+
+    for (project, stem) in [
+        (".oops", "oops"),
+        (".oops.correctness", "oops"),
+        (".maxim_proposal", "maxim_proposal"),
+        (".maxim_proposal.theme_2", "maxim_proposal"),
+        (".sandbox.deep.audit_1", "sandbox"),
+    ] {
+        let admitted = projects.admit(project).expect("resolved hidden project");
+        assert_eq!(admitted.as_str(), project);
+        assert_eq!(admitted.visibility().hidden_stem(), Some(stem));
+    }
+    assert!(matches!(
+        projects.admit(".unknown.work"),
+        Err(board::ProjectError::UnknownHiddenStem(stem)) if stem == "unknown"
+    ));
+    for malformed in [".", ".oops.", ".oops..work", ".oops.bad-stem", ".oops.Bad"] {
+        assert!(matches!(
+            projects.admit(malformed),
+            Err(board::ProjectError::HiddenSpelling(_))
+        ));
+    }
+
+    for public in ["board.work", "board.deep_work.unit2"] {
+        let admitted = projects.admit(public).expect("current public project");
+        assert!(!admitted.visibility().is_hidden());
+    }
+    for refused in ["board", "board.one.two.three", "board.bad-stem"] {
+        assert!(projects.admit(refused).is_err(), "{refused}");
+    }
+    assert!(matches!(
+        board::ProjectPolicy::new(["board".to_owned()], ["board".to_owned()], 2, 3),
+        Err(board::ProjectPolicyError::HiddenPublicCollision {
+            index: Some(0),
+            stem,
+        }) if stem == "board"
+    ));
+}
+
+#[test]
+fn allocator_and_inventory_share_the_stored_visibility_for_every_actor_route() {
+    let projects = board::ProjectPolicy::new(["board".to_owned()], ["sandbox".to_owned()], 2, 3)
+        .expect("fixture policy");
+    let admitted = |name: &str, project: &str, critical: bool| {
+        let mut head = statement(name);
+        head.project = project.to_owned();
+        if critical {
+            head.tags.push("priority:critical".to_owned());
+        }
+        Entry::new(head, workflow("todo"), None, None, &projects).expect("fixture entry")
+    };
+    let public = admitted("BOARD-public", "board.visibility", false);
+    let hidden_oops = admitted("BOARD-oops", ".oops.correctness", true);
+    let hidden_maxim = admitted("BOARD-maxim", ".maxim_proposal.theme_2", true);
+    let hidden_sandbox = admitted("BOARD-sandbox", ".sandbox.audit", true);
+    let entries = vec![hidden_sandbox, hidden_oops, public, hidden_maxim];
+
+    let lane = uuid("019fbbde-5105-75a3-a76a-722afde1e408");
+    for actor in [Actor::Spice, Actor::Operator, Actor::Lane(lane)] {
+        assert_eq!(
+            select(&entries, &actor)
+                .expect("public task remains eligible")
+                .entry()
+                .statement()
+                .handle,
+            handle("BOARD-public")
+        );
+        for hidden in [&entries[0], &entries[1], &entries[3]] {
+            assert!(!board::eligible_entry(&entries, hidden, &actor));
+        }
+    }
+
+    let inventory = board::Inventory::new(&entries);
+    assert_eq!(inventory.public().len(), 1);
+    assert_eq!(
+        inventory.public()[0].statement().handle,
+        handle("BOARD-public")
+    );
+    assert_eq!(
+        inventory
+            .hidden()
+            .map(|group| (group.stem().to_owned(), group.entries().len()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("maxim_proposal".to_owned(), 1),
+            ("oops".to_owned(), 1),
+            ("sandbox".to_owned(), 1),
+        ]
+    );
+}
+
+#[test]
+fn policy_snapshot_retains_hidden_rows_as_explicit_evidence() {
+    let projects =
+        board::ProjectPolicy::new(["board".to_owned()], Vec::new(), 2, 3).expect("fixture policy");
+    let mut hidden = statement("BOARD-hidden");
+    hidden.project = ".oops.correctness".to_owned();
+    let journal = journal_with_heads(hidden, workflow("todo"));
+    let snapshot =
+        Snapshot::read(&journal, &projects).expect("hidden evidence remains in the snapshot");
+
+    assert_eq!(snapshot.entries().len(), 1);
+    let entry = &snapshot.entries()[0];
+    assert_eq!(entry.project().as_str(), ".oops.correctness");
+    assert_eq!(entry.project().visibility().hidden_stem(), Some("oops"));
 }
 
 #[test]
@@ -232,7 +382,7 @@ fn snapshot_is_a_schema_and_cursor_bounded_head_answer() {
 fn durable_snapshot_owns_one_validated_journal_answer() {
     let snapshot = {
         let journal = journal_with_heads(statement("BOARD-a1"), workflow("todo"));
-        Snapshot::read(&journal).expect("authoritative board snapshot")
+        Snapshot::read(&journal, &projects()).expect("authoritative board snapshot")
     };
 
     assert_eq!(snapshot.schema_version(), journal::SCHEMA_VERSION);
@@ -247,7 +397,8 @@ fn durable_snapshot_names_the_task_whose_heads_violate_board_policy() {
     invalid.flow.clear();
     let journal = journal_with_heads(statement("BOARD-a1"), invalid);
 
-    let error = Snapshot::read(&journal).expect_err("empty flow refuses board snapshot");
+    let error =
+        Snapshot::read(&journal, &projects()).expect_err("empty flow refuses board snapshot");
     assert!(matches!(
         error,
         SnapshotReadError::Task {
@@ -284,7 +435,7 @@ fn active_claim_is_only_admitted_from_matching_coherent_live_heads() {
         Err(ClaimRefusal::Expired { .. })
     ));
 
-    let freed = Entry::new(
+    let freed = admitted(
         statement("BOARD-a1"),
         workflow("todo"),
         Some(claim(ClaimDisposition::Freed)),
@@ -379,7 +530,7 @@ fn urgency_is_a_pure_total_scalar_over_heads() {
     let plain = entry("BOARD-a1");
     let mut important_head = statement("BOARD-b2");
     important_head.tags.push("priority:high".to_owned());
-    let important = Entry::new(important_head, workflow("todo"), None, None).expect("valid heads");
+    let important = admitted(important_head, workflow("todo"), None, None).expect("valid heads");
     let claimed = claimed_entry("BOARD-c3", "todo");
 
     assert_eq!(
@@ -399,14 +550,14 @@ fn allocation_is_deterministic_and_has_one_eligibility_path() {
     blocked_head.tags.push("priority:critical".to_owned());
     blocked_head.dependencies.push(handle("WIRE-missing"));
     let blocked =
-        Entry::new(blocked_head, workflow("todo"), None, None).expect("valid blocked heads");
+        admitted(blocked_head, workflow("todo"), None, None).expect("valid blocked heads");
 
     let mut assigned_workflow = workflow("todo");
     assigned_workflow.assignment = Some(Actor::Operator);
     let mut assigned_head = statement("BOARD-y8");
     assigned_head.tags.push("priority:critical".to_owned());
     let assigned =
-        Entry::new(assigned_head, assigned_workflow, None, None).expect("valid assigned heads");
+        admitted(assigned_head, assigned_workflow, None, None).expect("valid assigned heads");
 
     let active = claimed_entry("BOARD-x7", "todo");
     let mut deferred_workflow = workflow("todo");
@@ -414,7 +565,7 @@ fn allocation_is_deterministic_and_has_one_eligibility_path() {
     let mut deferred_head = statement("BOARD-w6");
     deferred_head.tags.push("priority:critical".to_owned());
     let deferred =
-        Entry::new(deferred_head, deferred_workflow, None, None).expect("valid deferred heads");
+        admitted(deferred_head, deferred_workflow, None, None).expect("valid deferred heads");
 
     let mut completed_workflow = workflow("todo");
     completed_workflow.status = "completed".to_owned();
@@ -422,7 +573,7 @@ fn allocation_is_deterministic_and_has_one_eligibility_path() {
     let mut completed_head = statement("BOARD-v5");
     completed_head.tags.push("priority:critical".to_owned());
     let completed =
-        Entry::new(completed_head, completed_workflow, None, None).expect("valid completed heads");
+        admitted(completed_head, completed_workflow, None, None).expect("valid completed heads");
     let ordered = [
         blocked.clone(),
         second.clone(),
@@ -542,7 +693,7 @@ fn diagrams_and_handout_are_stable_across_input_order() {
     let prerequisite = entry("BOARD-a1");
     let mut dependent_head = statement("BOARD-b2");
     dependent_head.dependencies.push(handle("BOARD-a1"));
-    let dependent = Entry::new(dependent_head, workflow("todo"), None, None).expect("valid heads");
+    let dependent = admitted(dependent_head, workflow("todo"), None, None).expect("valid heads");
     let first = [dependent.clone(), prerequisite.clone()];
     let second = [prerequisite, dependent];
 
@@ -559,6 +710,13 @@ fn oops_routes_friction_to_work_and_observations_to_notes_only() {
         "Cargo metadata is blocked",
         "A duplicate table refuses every command",
         "tooling.manifest",
+        &board::ProjectPolicy::new(
+            ["tooling".to_owned()],
+            Vec::new(),
+            dialect::PROJECT_MIN_DEPTH as u64,
+            dialect::PROJECT_MAX_DEPTH as u64,
+        )
+        .expect("fixture project policy"),
     )
     .expect("valid project");
     let Routed::Wakeable(task) = board::oops::route(Report::Friction(friction)) else {

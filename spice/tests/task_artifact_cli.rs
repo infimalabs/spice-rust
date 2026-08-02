@@ -24,6 +24,8 @@ impl Fixture {
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(root.join(".git")).expect("create repository fixture");
+        fs::write(root.join("spice.toml"), "[tasks]\nstems = [\"rim\"]\n")
+            .expect("write task project policy");
         let bundle = root.join("artifact-backup");
         Self { root, bundle }
     }

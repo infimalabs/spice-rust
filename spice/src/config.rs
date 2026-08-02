@@ -133,6 +133,7 @@ impl Root {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TaskMetadata {
     stems: Vec<String>,
+    hidden_stems: Vec<String>,
     project_min_depth: u64,
     project_max_depth: u64,
 }
@@ -142,6 +143,24 @@ impl TaskMetadata {
     #[must_use]
     pub fn stems(&self) -> &[String] {
         &self.stems
+    }
+
+    /// Fully resolved hidden roots in declared order, without leading dots.
+    #[must_use]
+    pub fn hidden_stems(&self) -> &[String] {
+        &self.hidden_stems
+    }
+
+    /// One immutable classifier for board admission and allocation.
+    #[must_use]
+    pub fn project_policy(&self) -> board::ProjectPolicy {
+        board::ProjectPolicy::new(
+            self.stems.clone(),
+            self.hidden_stems.clone(),
+            self.project_min_depth,
+            self.project_max_depth,
+        )
+        .expect("admitted task metadata always reconstructs its project policy")
     }
 
     /// Fewest dotted segments admitted for a public project.
@@ -161,6 +180,10 @@ impl Default for TaskMetadata {
     fn default() -> Self {
         Self {
             stems: Vec::new(),
+            hidden_stems: board::BUILTIN_HIDDEN_STEMS
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
             project_min_depth: default_project_min_depth(),
             project_max_depth: default_project_max_depth(),
         }
@@ -172,6 +195,8 @@ impl Default for TaskMetadata {
 struct TaskMetadataInput {
     #[serde(default, deserialize_with = "unique_names")]
     stems: Vec<String>,
+    #[serde(default)]
+    hidden_stems: Vec<String>,
     #[serde(
         default = "default_project_min_depth",
         deserialize_with = "positive_depth"
@@ -196,8 +221,16 @@ impl<'de> Deserialize<'de> for TaskMetadata {
                 input.project_min_depth, input.project_max_depth,
             )));
         }
+        let projects = board::ProjectPolicy::new(
+            input.stems.clone(),
+            input.hidden_stems,
+            input.project_min_depth,
+            input.project_max_depth,
+        )
+        .map_err(D::Error::custom)?;
         Ok(Self {
             stems: input.stems,
+            hidden_stems: projects.hidden_stems().to_vec(),
             project_min_depth: input.project_min_depth,
             project_max_depth: input.project_max_depth,
         })
@@ -551,6 +584,13 @@ registry! {
     fixed "tasks.stems" {
         kind: StringList,
         builtin: Some(Builtin::Strings(&[])),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "tasks.hidden_stems" {
+        kind: StringList,
+        builtin: Some(Builtin::Strings(&board::BUILTIN_HIDDEN_STEMS)),
         layers: TRACKED,
         class: Policy,
         flag: None,

@@ -7,6 +7,7 @@ use wire::ConfigSource;
 const COMPLETE: &str = r#"
 [tasks]
 stems = ["app", "board"]
+hidden_stems = ["oops", "sandbox", "sandbox"]
 project_min_depth = 2
 project_max_depth = 3
 
@@ -219,6 +220,10 @@ fn root_is_exactly_the_fourteen_typed_domains() {
     assert!(root.proof().container().is_some());
     assert!(root.proof().runner().is_some());
     assert_eq!(root.tasks().stems(), ["app", "board"]);
+    assert_eq!(
+        root.tasks().hidden_stems(),
+        ["oops", "maxim_proposal", "sandbox"]
+    );
     assert_eq!(root.tasks().project_min_depth(), 2);
     assert_eq!(root.tasks().project_max_depth(), 3);
     assert_eq!(
@@ -341,6 +346,7 @@ fn registry_builtins_are_the_typed_root_defaults() {
 fn templates_are_unique_canonical_non_overlapping_and_stably_ordered() {
     let expected = [
         "tasks.stems",
+        "tasks.hidden_stems",
         "tasks.project_min_depth",
         "tasks.project_max_depth",
         "policy.env_names",
