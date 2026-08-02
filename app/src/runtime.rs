@@ -1,9 +1,8 @@
 //! Capability-scoped state used by the real Wasm canvas runtime.
 //!
 //! Every mutation enters through an admitted acceptance, response, or stream
-//! frame. Raw fact bodies are never retained: `lane::seated` legitimately
-//! carries a minted lane capability in the journal, so the canvas projects only
-//! the envelope metadata its panes render and drops the body at the door.
+//! frame. Stream facts are already credential-free; the canvas projects only
+//! the envelope metadata its panes render and retains no kind-specific body.
 
 use wire::intent::{
     BoardAnswer, BoardTask, ConsentPolicyAnswer, ConsentQueueAnswer, InboxAnswer, LaneAnswer,
@@ -61,14 +60,14 @@ impl FactRow {
     }
 }
 
-impl From<&wire::Envelope<wire::AnyFact>> for FactRow {
-    fn from(envelope: &wire::Envelope<wire::AnyFact>) -> Self {
+impl From<&wire::StreamFact> for FactRow {
+    fn from(fact: &wire::StreamFact) -> Self {
         Self {
-            seq: envelope.seq,
-            actor: envelope.actor.clone(),
-            origin: envelope.origin.clone(),
-            cause: envelope.cause,
-            kind: envelope.fact.kind(),
+            seq: fact.seq(),
+            actor: fact.actor().clone(),
+            origin: fact.origin().clone(),
+            cause: fact.cause(),
+            kind: fact.kind(),
         }
     }
 }
@@ -399,7 +398,7 @@ impl CanvasRuntime {
                     epoch,
                     seq: packed
                         .overflow
-                        .and_then(|_| packed.rows.last().map(|row| row.seq))
+                        .and_then(|_| packed.rows.last().map(wire::StreamFact::seq))
                         .unwrap_or(packed.horizon),
                 });
                 let mut directives = continuation(ViewSubject::Facts, epoch, packed);
@@ -409,7 +408,7 @@ impl CanvasRuntime {
                     directives.push(StreamDirective::Thread {
                         cursor: StreamCursor {
                             epoch,
-                            seq: last.seq,
+                            seq: last.seq(),
                         },
                     });
                 }
@@ -421,7 +420,7 @@ impl CanvasRuntime {
             }
             StreamFrame::Thread { packed, .. } => {
                 if self.thread_start.is_none() {
-                    self.thread_start = packed.rows.first().map(|row| row.seq);
+                    self.thread_start = packed.rows.first().map(wire::StreamFact::seq);
                 }
                 self.observe_fact_rows(admitted, &packed.rows, true);
                 self.thread_pages
@@ -440,12 +439,12 @@ impl CanvasRuntime {
                 let packed = Packed {
                     rows: vec![FactRow::from(fact)],
                     overflow: None,
-                    horizon: fact.seq,
+                    horizon: fact.seq(),
                 };
                 self.fact_pages.push(self.page(admitted, packed));
                 self.resume = Some(StreamCursor {
                     epoch,
-                    seq: fact.seq,
+                    seq: fact.seq(),
                 });
                 self.thread = BrowserState::new(&self.accepted);
                 self.thread_pages.clear();
@@ -453,7 +452,7 @@ impl CanvasRuntime {
                 vec![StreamDirective::Thread {
                     cursor: StreamCursor {
                         epoch,
-                        seq: fact.seq,
+                        seq: fact.seq(),
                     },
                 }]
             }
@@ -598,7 +597,7 @@ impl CanvasRuntime {
     fn observe_fact_rows(
         &mut self,
         admitted: &Admitted<StreamFrame>,
-        rows: &[wire::Envelope<wire::AnyFact>],
+        rows: &[wire::StreamFact],
         thread: bool,
     ) {
         let state = if thread {
@@ -607,7 +606,7 @@ impl CanvasRuntime {
             &mut self.facts
         };
         for row in rows {
-            state.observe_stream(admitted, row.seq, row.origin.clone(), row.cause);
+            state.observe_stream(admitted, row.seq(), row.origin().clone(), row.cause());
         }
     }
 
@@ -624,7 +623,7 @@ impl CanvasRuntime {
     }
 }
 
-fn project_page(packed: &Packed<wire::Envelope<wire::AnyFact>>) -> Packed<FactRow> {
+fn project_page(packed: &Packed<wire::StreamFact>) -> Packed<FactRow> {
     Packed {
         rows: packed.rows.iter().map(FactRow::from).collect(),
         overflow: packed.overflow,

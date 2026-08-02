@@ -261,12 +261,12 @@ impl Session {
                 v, epoch, packed, ..
             } => {
                 for envelope in &packed.rows {
-                    admit_wire(envelope.v)?;
+                    admit_wire(envelope.wire())?;
                 }
                 (*v, *epoch)
             }
             StreamFrame::Fact { v, epoch, fact, .. } => {
-                admit_wire(fact.v)?;
+                admit_wire(fact.wire())?;
                 (*v, *epoch)
             }
             StreamFrame::Trust { v, epoch, .. }

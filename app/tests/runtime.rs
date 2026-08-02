@@ -49,8 +49,8 @@ fn task_fact(position: u64, cause: Option<u64>) -> serde_json::Value {
     value
 }
 
-fn seated_fact(position: u64) -> serde_json::Value {
-    serde_json::json!({
+fn seated_fact(position: u64, capability: Option<&str>) -> serde_json::Value {
+    let mut value = serde_json::json!({
         "v": 1,
         "seq": position,
         "at": "2030-04-12T18:44:09.271Z",
@@ -59,12 +59,15 @@ fn seated_fact(position: u64) -> serde_json::Value {
         "fact": {
             "kind": "lane::seated",
             "lane": LANE,
-            "capability": SECRET_LANE_CAPABILITY,
             "worktree": "/tmp/lane",
             "life": "continuous",
             "vendor": "codex",
         },
-    })
+    });
+    if let Some(capability) = capability {
+        value["fact"]["capability"] = serde_json::json!(capability);
+    }
+    value
 }
 
 fn packed_frame(
@@ -198,9 +201,20 @@ fn raw_fact_capability_is_dropped_before_any_renderable_row_is_retained() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
+    let leaked = packed_frame(
+        "facts",
+        &[seated_fact(51, Some(SECRET_LANE_CAPABILITY))],
+        None,
+        51,
+    );
+    let fault = session
+        .admit_stream(&leaked)
+        .expect_err("credential-bearing stream fact is refused");
+    assert_eq!(fault.reason, "frame::undecodable");
+
     let frame = admitted_stream(
         &session,
-        &packed_frame("facts", &[seated_fact(51)], None, 51),
+        &packed_frame("facts", &[seated_fact(51, None)], None, 51),
     );
 
     runtime.apply_stream(&frame);
