@@ -5,13 +5,20 @@ compile_error!("sill supports the Linux and macOS release targets plus wasm cont
 
 pub mod config;
 mod lock;
+mod observe;
 mod spawn;
 mod spec;
 mod surface;
 
 pub use config::{ConfigError, ExitCode, ExitStatuses, LockConfig, ShardCount};
 pub use lock::{Acquisition, Availability, LockFile, LockName, LockNameError, Possession};
-pub use spawn::{CapturedOutput, Completion, Running, WaitError, WaitOutcome, WaitStep, spawn};
+pub use observe::{
+    Observation, ObservationFailure, ObservationSpecError, ObserveError, ObservedRecord,
+    OutputStream, RecordBoundary, RecordObserver,
+};
+pub use spawn::{
+    CapturedOutput, Completion, Running, WaitError, WaitOutcome, WaitStep, spawn, spawn_observed,
+};
 pub use spec::{
     Argv, Cancellation, CancellationToken, Deadlines, Environment, Output, ProcessGroup, Redaction,
     RestartDisposition, Spec, SpecError, StdinPolicy, StreamPolicy, WaitPolicy,

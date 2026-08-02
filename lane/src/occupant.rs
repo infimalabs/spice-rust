@@ -17,7 +17,10 @@ use std::io;
 use std::time::Duration;
 
 use journal::crossing::CanonicalUuid;
-use sill::{ProcessGroup, Running, Spec, WaitError, WaitOutcome, WaitStep, spawn};
+use sill::{
+    Observation, ProcessGroup, Running, Spec, WaitError, WaitOutcome, WaitStep, spawn,
+    spawn_observed,
+};
 
 /// One process group supervised under a lane.
 pub struct Occupant {
@@ -253,6 +256,36 @@ impl Seats {
         occupant: CanonicalUuid,
         spec: Spec,
     ) -> Result<&Occupant, SeatError> {
+        self.seat_with(lane, occupant, spec, spawn)
+    }
+
+    /// Opens the sole observed SILL door for a lane and supervises its group.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same occupancy, group, and door errors as [`Self::seat`].
+    pub fn seat_observed(
+        &mut self,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        spec: Spec,
+        observation: Observation,
+    ) -> Result<&Occupant, SeatError> {
+        self.seat_with(lane, occupant, spec, |spec| {
+            spawn_observed(spec, observation)
+        })
+    }
+
+    fn seat_with<F>(
+        &mut self,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        spec: Spec,
+        open: F,
+    ) -> Result<&Occupant, SeatError>
+    where
+        F: FnOnce(Spec) -> io::Result<Running>,
+    {
         if let Some(sitting) = self.occupied.get(&lane) {
             return Err(SeatError::Occupied {
                 lane,
@@ -262,7 +295,7 @@ impl Seats {
         if spec.group != ProcessGroup::New {
             return Err(SeatError::InheritedGroup { lane });
         }
-        let running = spawn(spec).map_err(SeatError::Door)?;
+        let running = open(spec).map_err(SeatError::Door)?;
         Ok(self.occupied.entry(lane).or_insert(Occupant {
             lane,
             occupant,

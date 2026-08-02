@@ -97,6 +97,45 @@ fn exiting_vendor(fixture: &Fixture, code: i32) -> std::thread::JoinHandle<()> {
     })
 }
 
+fn recording_vendor(
+    fixture: &Fixture,
+    complete: &str,
+    terminal: &str,
+) -> std::thread::JoinHandle<()> {
+    let exit_pipe = fixture.root.join("recording-vendor-exited");
+    let made = Command::new("mkfifo")
+        .arg(&exit_pipe)
+        .output()
+        .expect("mkfifo launches");
+    assert!(made.status.success(), "mkfifo failed: {:?}", made.stderr);
+    configure_vendor(
+        fixture,
+        &format!(
+            concat!(
+                "#!/bin/sh\n",
+                "exec 3>{}\n",
+                "printf '%s\\n' {}\n",
+                "printf '%s' {}\n",
+                "printf '%s' 'opaque diagnostic' >&2\n",
+                "exit 0\n",
+            ),
+            shell_word(&exit_pipe.display().to_string()),
+            shell_word(complete),
+            shell_word(terminal),
+        ),
+    );
+    std::thread::spawn(move || {
+        let mut pipe = fs::File::open(exit_pipe).expect("recording exit observer opens");
+        let mut bytes = Vec::new();
+        pipe.read_to_end(&mut bytes)
+            .expect("recording exit observer reaches EOF");
+        assert!(
+            bytes.is_empty(),
+            "recording exit observer carries no payload"
+        );
+    })
+}
+
 fn shell_word(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
@@ -578,6 +617,77 @@ fn drain_records_an_occupant_that_already_exited() {
         .expect("self-exited occupant is recorded");
     assert_eq!(exited.fact.body()["code"], 7);
     drop(journal);
+    let down = invoke(&fixture, "down");
+    assert!(down.status.success(), "down failed: {:?}", down.stderr);
+    assert!(resident.wait().status.success(), "resident failed");
+}
+
+#[test]
+fn resident_capture_is_byte_exact_and_listenable_through_terminal_residue() {
+    const COMPLETE: &str = concat!(
+        r#"{"type":"assistant","message":{"type":"message","#,
+        r#""role":"assistant","content":[{"type":"text","text":"done"}],"#,
+        r#""usage":{"input_tokens":7,"cache_read_input_tokens":5,"#,
+        r#""cache_creation_input_tokens":3,"output_tokens":2}}}"#,
+    );
+    const TERMINAL: &str = r#"{"type":"assistant","message":"#;
+
+    let fixture = Fixture::new("lane-capture");
+    let exited = recording_vendor(&fixture, COMPLETE, TERMINAL);
+    let mut resident = RunningResident::spawn(&fixture);
+    resident.assert_ready(&fixture);
+    let added = reply_body::<wire::intent::LaneChangeAnswer>(&invoke_args(
+        &fixture,
+        &["lane", "add", "--vendor", "claude"],
+        true,
+        None,
+    ));
+    exited.join().expect("recording vendor exit is observed");
+    let drained = invoke_args(
+        &fixture,
+        &["lane", "drain", &added.lane.to_string()],
+        true,
+        None,
+    );
+    assert!(
+        drained.status.success(),
+        "drain failed: {:?}",
+        drained.stderr
+    );
+
+    let tape_root = fixture
+        .root
+        .join(".git/.spice-rust/tape")
+        .join(added.lane.to_string())
+        .join("claude");
+    let tape = tape::Tape::open_existing(&tape_root).expect("resident transcript tape opens");
+    let extents = tape.extents().expect("resident transcript extents read");
+    assert_eq!(extents.len(), 1);
+    let bytes = tape
+        .read(tape::Locus::new(extents[0].member, 0, extents[0].length))
+        .expect("resident transcript reads");
+    assert_eq!(bytes, format!("{COMPLETE}\n{TERMINAL}").as_bytes());
+
+    let replay = listen::retro(
+        fixture.root.join(".git/.spice-rust/tape"),
+        listen::RetroSelector::Lane(added.lane.to_string()),
+    )
+    .expect("resident transcript replays");
+    assert!(replay.observations.iter().any(|observation| matches!(
+        observation,
+        listen::Observation::Event {
+            event: listen::SurfaceEvent::Prose { text, .. },
+            ..
+        } if text == "done"
+    )));
+    assert!(replay.observations.iter().any(|observation| matches!(
+        observation,
+        listen::Observation::Residue {
+            residue: listen::SurfaceResidue::Truncated {},
+            ..
+        }
+    )));
+
     let down = invoke(&fixture, "down");
     assert!(down.status.success(), "down failed: {:?}", down.stderr);
     assert!(resident.wait().status.success(), "resident failed");
