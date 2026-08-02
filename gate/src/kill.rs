@@ -36,14 +36,21 @@ pub const PINNED_CARGO_MUTANTS: &str = "cargo-mutants 27.1.0";
 pub(crate) const SEED_ENVIRONMENT: &str = wire::SpiceVariable::MutationSeed.as_str();
 pub(crate) const ATTEMPT_ENVIRONMENT: &str = wire::SpiceVariable::MutationAttempt.as_str();
 const CARGO_ENVIRONMENT: &str = "CARGO";
+const CARGO_BUILD_DIRECTORY_ENVIRONMENT: &str = "CARGO_BUILD_BUILD_DIR";
+const CARGO_TARGET_DIRECTORY_ENVIRONMENT: &str = "CARGO_TARGET_DIR";
+const MUTATION_BUILD_DIRECTORY: &str = "target/mutation-build";
+const MUTATION_TARGET_DIRECTORY: &str = "target/mutation-target";
 const OUTPUT_DIRECTORY: &str = ".spice-gate-mutants";
-const VERSION_ARGUMENTS: [&str; 1] = ["--version"];
+const OUTPUT_ARTIFACT_DIRECTORY: &str = "mutants.out";
+const VERSION_ARGUMENTS: [&str; 2] = ["mutants", "--version"];
 const BASELINE_ARGUMENTS: [&str; 4] = ["test", "--locked", "--workspace", "--all-targets"];
-const INVENTORY_ARGUMENTS: [&str; 4] = ["--no-config", "--no-shuffle", "--list", "--json"];
-const ATTEMPT_ARGUMENTS: [&str; 9] = [
+const INVENTORY_ARGUMENTS: [&str; 5] =
+    ["mutants", "--no-config", "--no-shuffle", "--list", "--json"];
+const ATTEMPT_ARGUMENTS: [&str; 10] = [
+    "mutants",
     "--no-config",
     "--no-shuffle",
-    "--jobs=1",
+    "--in-place",
     "--test-workspace=true",
     "--baseline=skip",
     "--colors=never",
@@ -463,39 +470,21 @@ impl Kill {
         let caller_inventory = caller.inventory_digest();
         let caller_tree = caller.tree_digest().map_err(KillError::Walk)?;
         let selected = caller.snapshot().map_err(KillError::Walk)?;
+        let build_root = selected.jurisdiction().root();
         let tool = self.tool.identify()?;
 
-        {
-            let private = selected
-                .jurisdiction()
-                .snapshot()
-                .map_err(KillError::Walk)?;
-            self.attest_tool(private.jurisdiction().root())?;
-        }
-        let before = {
-            let private = selected
-                .jurisdiction()
-                .snapshot()
-                .map_err(KillError::Walk)?;
-            self.inventory(private.jurisdiction().root(), &tool)?
-        };
+        let preflight = selected
+            .jurisdiction()
+            .snapshot()
+            .map_err(KillError::Walk)?;
+        let preflight_root = preflight.jurisdiction().root();
+        self.attest_tool(preflight_root, build_root)?;
+        let before = self.inventory(preflight_root, build_root, &tool)?;
         if before.mutants.is_empty() {
             return Err(KillError::EmptyInventory);
         }
-        let baseline = {
-            let private = selected
-                .jurisdiction()
-                .snapshot()
-                .map_err(KillError::Walk)?;
-            self.baseline(private.jurisdiction().root())?
-        };
-        let after = {
-            let private = selected
-                .jurisdiction()
-                .snapshot()
-                .map_err(KillError::Walk)?;
-            self.inventory(private.jurisdiction().root(), &tool)?
-        };
+        let baseline = self.baseline(preflight_root, build_root)?;
+        let after = self.inventory(preflight_root, build_root, &tool)?;
         if before != after {
             return Err(KillError::InventoryDrift {
                 before: Box::new(before),
@@ -511,7 +500,12 @@ impl Kill {
                     .jurisdiction()
                     .snapshot()
                     .map_err(KillError::Walk)?;
-                attempts.push(self.attempt(private.jurisdiction().root(), identity, number));
+                attempts.push(self.attempt(
+                    private.jurisdiction().root(),
+                    build_root,
+                    identity,
+                    number,
+                ));
             }
             let disposition = classify(&attempts);
             mutants.push(MutantEvidence {
@@ -567,8 +561,14 @@ impl Kill {
         })
     }
 
-    fn attest_tool(&self, root: &Path) -> Result<(), KillError> {
-        let evidence = self.process(self.tool.mutants_program(), root, VERSION_ARGUMENTS, None);
+    fn attest_tool(&self, root: &Path, build_root: &Path) -> Result<(), KillError> {
+        let evidence = self.process(
+            self.tool.mutants_program(),
+            root,
+            build_root,
+            VERSION_ARGUMENTS,
+            None,
+        );
         if !evidence.exited(0) || !evidence.outputs_complete() {
             return Err(KillError::ToolUnavailable(Box::new(evidence)));
         }
@@ -591,10 +591,17 @@ impl Kill {
     fn inventory(
         &self,
         root: &Path,
+        build_root: &Path,
         tool: &MutationToolIdentity,
     ) -> Result<MutationInventory, KillError> {
         let arguments = inventory_arguments(&self.battery.targets);
-        let evidence = self.process(self.tool.mutants_program(), root, arguments, None);
+        let evidence = self.process(
+            self.tool.mutants_program(),
+            root,
+            build_root,
+            arguments,
+            None,
+        );
         if !evidence.exited(0) || !evidence.outputs_complete() {
             return Err(KillError::InventoryUnavailable(Box::new(evidence)));
         }
@@ -624,8 +631,14 @@ impl Kill {
         })
     }
 
-    fn baseline(&self, root: &Path) -> Result<ProcessEvidence, KillError> {
-        let evidence = self.process(self.tool.cargo_program(), root, BASELINE_ARGUMENTS, None);
+    fn baseline(&self, root: &Path, build_root: &Path) -> Result<ProcessEvidence, KillError> {
+        let evidence = self.process(
+            self.tool.cargo_program(),
+            root,
+            build_root,
+            BASELINE_ARGUMENTS,
+            None,
+        );
         if evidence.exited(0) && evidence.outputs_complete() {
             Ok(evidence)
         } else {
@@ -633,23 +646,32 @@ impl Kill {
         }
     }
 
-    fn attempt(&self, root: &Path, identity: &str, number: usize) -> AttemptEvidence {
+    fn attempt(
+        &self,
+        root: &Path,
+        build_root: &Path,
+        identity: &str,
+        number: usize,
+    ) -> AttemptEvidence {
+        if let Err(source) = make_mutation_targets_writable(root, &self.battery.targets) {
+            return attempt_launch_error(
+                number,
+                self.battery.seed,
+                format!(
+                    "preparing private mutation targets below {}",
+                    root.display()
+                ),
+                source,
+            );
+        }
         let output = root.join(OUTPUT_DIRECTORY);
         if let Err(source) = remove_existing_output(&output) {
-            return AttemptEvidence {
+            return attempt_launch_error(
                 number,
-                seed: self.battery.seed,
-                kind: AttemptKind::LaunchError,
-                process: ProcessEvidence {
-                    completion: ProcessCompletion::LaunchError(format!(
-                        "refusing stale mutation output at {}: {source}",
-                        output.display()
-                    )),
-                    stdout: None,
-                    stderr: None,
-                },
-                outcome: OutcomeEvidence::Unreadable(source.to_string()),
-            };
+                self.battery.seed,
+                format!("refusing stale mutation output at {}", output.display()),
+                source,
+            );
         }
         let arguments = attempt_arguments(
             &self.battery.targets,
@@ -657,8 +679,14 @@ impl Kill {
             self.bounds.timeout_seconds(),
             Path::new(OUTPUT_DIRECTORY),
         );
-        let process = self.process(self.tool.mutants_program(), root, arguments, Some(number));
-        let outcome = match fs::read(output.join("outcomes.json")) {
+        let process = self.process(
+            self.tool.mutants_program(),
+            root,
+            build_root,
+            arguments,
+            Some(number),
+        );
+        let outcome = match fs::read(output.join(OUTPUT_ARTIFACT_DIRECTORY).join("outcomes.json")) {
             Ok(bytes) => OutcomeEvidence::Present(bytes),
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => OutcomeEvidence::Absent,
             Err(source) => OutcomeEvidence::Unreadable(source.to_string()),
@@ -677,10 +705,11 @@ impl Kill {
         &self,
         program: &Path,
         root: &Path,
+        build_root: &Path,
         arguments: impl IntoIterator<Item = impl Into<OsString>>,
         attempt: Option<usize>,
     ) -> ProcessEvidence {
-        let spec = self.spec(program, root, arguments, attempt);
+        let spec = self.spec(program, root, build_root, arguments, attempt);
         let spec = match spec {
             Ok(spec) => spec,
             Err(source) => {
@@ -715,13 +744,16 @@ impl Kill {
         &self,
         program: &Path,
         root: &Path,
+        build_root: &Path,
         arguments: impl IntoIterator<Item = impl Into<OsString>>,
         attempt: Option<usize>,
     ) -> Result<Spec, SpecError> {
         Ok(Spec {
             argv: Argv::new(program.as_os_str(), arguments)?,
             cwd: root.to_path_buf(),
-            environment: self.tool.environment(self.battery.seed, attempt)?,
+            environment: self
+                .tool
+                .environment(build_root, self.battery.seed, attempt)?,
             group: ProcessGroup::New,
             deadlines: self.bounds.deadlines,
             wait: self.bounds.wait.clone(),
@@ -738,6 +770,52 @@ impl Kill {
             grace: self.bounds.grace,
         })
     }
+}
+
+fn attempt_launch_error(
+    number: usize,
+    seed: u64,
+    context: String,
+    source: io::Error,
+) -> AttemptEvidence {
+    AttemptEvidence {
+        number,
+        seed,
+        kind: AttemptKind::LaunchError,
+        process: ProcessEvidence {
+            completion: ProcessCompletion::LaunchError(format!("{context}: {source}")),
+            stdout: None,
+            stderr: None,
+        },
+        outcome: OutcomeEvidence::Unreadable(source.to_string()),
+    }
+}
+
+fn make_mutation_targets_writable(root: &Path, targets: &[String]) -> io::Result<()> {
+    for target in targets {
+        let path = root.join(target);
+        let metadata = fs::symlink_metadata(&path)?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "mutation target is not one regular file: {}",
+                    path.display()
+                ),
+            ));
+        }
+        let mut permissions = metadata.permissions();
+        #[cfg(target_family = "unix")]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            permissions.set_mode(permissions.mode() | 0o200);
+        }
+        #[cfg(not(target_family = "unix"))]
+        permissions.set_readonly(false);
+        fs::set_permissions(&path, permissions)?;
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]

@@ -180,7 +180,7 @@ const MUTATION_RUNTIME: Duration = Duration::from_secs(300);
 const MUTATION_OUTPUT_DRAIN: Duration = Duration::from_secs(2);
 const MUTATION_REAP: Duration = Duration::from_secs(2);
 const MUTATION_GRACE: Duration = Duration::from_secs(1);
-const MUTATION_CAPTURE: usize = 256 * 1024;
+const MUTATION_CAPTURE: usize = 512 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct KillBoundsDeclaration {
@@ -250,8 +250,18 @@ impl KillDeclaration {
             .to_path_buf();
         let mutants_program = Path::new(env!("HOME")).join(".cargo/bin/cargo-mutants");
         let environment = Environment::new([
+            ("AR", "/usr/bin/ar".to_owned()),
             ("CARGO_HOME", concat!(env!("HOME"), "/.cargo").to_owned()),
-            ("PATH", cargo_bin.display().to_string()),
+            ("CARGO_INCREMENTAL", "0".to_owned()),
+            ("CC", "/usr/bin/cc".to_owned()),
+            ("HOME", env!("HOME").to_owned()),
+            (
+                "PATH",
+                format!("{}:/usr/bin:/bin", cargo_bin.display()),
+            ),
+            ("RUSTFLAGS", "-C linker=/usr/bin/cc".to_owned()),
+            ("RUSTC_WORKSPACE_WRAPPER", String::new()),
+            ("RUSTC_WRAPPER", String::new()),
         ])
         .map_err(RateError::Spec)?;
         let tool = MutationTool::new(

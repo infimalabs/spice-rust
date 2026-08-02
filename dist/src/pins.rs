@@ -2,9 +2,7 @@
 
 use std::fmt;
 
-use wire::manifest::BuildPins;
-
-const SHA256_HEX_LEN: usize = 64;
+use wire::manifest::{BuildPins, ProofImage};
 
 /// One pin in the fixed pre-build comparison order.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -59,7 +57,7 @@ impl RequiredPins {
     ///
     /// Returns [`PinError::Empty`] when any identity is blank and
     /// [`PinError::ContainerNotDigestPinned`] when the proof image is not an
-    /// OCI digest reference.
+    /// canonical lower-case SHA-256 digest reference.
     pub fn new(pins: BuildPins) -> Result<Self, PinError> {
         for name in PinName::ALL {
             if name.value(&pins).trim().is_empty() {
@@ -105,7 +103,9 @@ impl RequiredPins {
 pub enum PinError {
     #[error("required {name} pin is empty")]
     Empty { name: PinName },
-    #[error("proof container must use name@sha256:<lower-case SHA-256 hex>: {observed:?}")]
+    #[error(
+        "proof container must use a canonical lower-case SHA-256 digest reference: {observed:?}"
+    )]
     ContainerNotDigestPinned { observed: String },
     #[error("{name} pin mismatch: expected {expected:?}, observed {observed:?}")]
     Mismatch {
@@ -116,12 +116,5 @@ pub enum PinError {
 }
 
 fn digest_pinned_container(value: &str) -> bool {
-    let Some((name, digest)) = value.rsplit_once("@sha256:") else {
-        return false;
-    };
-    !name.is_empty()
-        && digest.len() == SHA256_HEX_LEN
-        && digest.bytes().all(|byte| {
-            byte.is_ascii_digit() || (byte.is_ascii_lowercase() && byte.is_ascii_hexdigit())
-        })
+    ProofImage::admits(value)
 }

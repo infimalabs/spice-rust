@@ -11,6 +11,11 @@ mod tests {
     const FAKE_TOOL: &str = r#"#!/bin/sh
 printf '%s\n' "$*" >> "$FAKE_LOG"
 
+if [ "${0##*/}" = "cargo-mutants" ]; then
+    [ "$1" = "mutants" ] || exit 73
+    shift
+fi
+
 if [ "$1" = "--version" ]; then
     if [ -f "$FAKE_BAD_VERSION" ]; then
         printf 'cargo-mutants 0.0.0\n'
@@ -64,8 +69,8 @@ for argument in "$@"; do
 done
 
 write_outcome() {
-    /bin/mkdir -p "$output_dir"
-    printf '%s\n' "$1" > "$output_dir/outcomes.json"
+    /bin/mkdir -p "$output_dir/mutants.out"
+    printf '%s\n' "$1" > "$output_dir/mutants.out/outcomes.json"
 }
 
 caught='{
@@ -261,18 +266,21 @@ esac
                 "cargo-executable {}\n",
                 "cargo-mutants-executable {}\n",
                 "tool-identity {}\n",
+                "version-argument mutants\n",
                 "version-argument --version\n",
                 "baseline-argument test\n",
                 "baseline-argument --locked\n",
                 "baseline-argument --workspace\n",
                 "baseline-argument --all-targets\n",
+                "inventory-argument mutants\n",
                 "inventory-argument --no-config\n",
                 "inventory-argument --no-shuffle\n",
                 "inventory-argument --list\n",
                 "inventory-argument --json\n",
+                "attempt-argument mutants\n",
                 "attempt-argument --no-config\n",
                 "attempt-argument --no-shuffle\n",
-                "attempt-argument --jobs=1\n",
+                "attempt-argument --in-place\n",
                 "attempt-argument --test-workspace=true\n",
                 "attempt-argument --baseline=skip\n",
                 "attempt-argument --colors=never\n",
@@ -419,6 +427,34 @@ esac
     }
 
     #[test]
+    fn immutable_selected_sources_are_writable_only_inside_private_attempts() {
+        let (source, tool, log) = fixture(r#"[{"name":"Killed"}]"#);
+        fs::set_permissions(source.path("src/lib.rs"), fs::Permissions::from_mode(0o400))
+            .expect("make selected source immutable");
+
+        let run = gate(&tool, &log, &["src/lib.rs"], 1, 4096)
+            .run(&source.root, &empty_ignore(), None)
+            .expect("private attempt makes only its own target writable");
+
+        assert_eq!(
+            run.mutants()[0].disposition,
+            MutantDisposition::ConfirmedKilled
+        );
+        assert_eq!(
+            fs::metadata(source.path("src/lib.rs"))
+                .expect("caller target metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o400
+        );
+        assert_eq!(
+            fs::read_to_string(source.path("src/lib.rs")).expect("caller target bytes"),
+            "original\n"
+        );
+    }
+
+    #[test]
     fn flaky_and_timed_out_mutants_keep_ordered_evidence_without_moving_the_floor() {
         let (source, tool, log) = fixture(r#"[{"name":"Timeout"},{"name":"Flaky"}]"#);
         let gate = gate(&tool, &log, &["src/lib.rs"], 2, 4096);
@@ -523,7 +559,7 @@ esac
     fn a_stale_caller_outcome_cannot_masquerade_as_current_evidence() {
         let (source, tool, log) = fixture(r#"[{"name":"NoOutcome"}]"#);
         source.write(
-            ".spice-gate-mutants/outcomes.json",
+            ".spice-gate-mutants/mutants.out/outcomes.json",
             concat!(
                 "{\"cargo_mutants_version\":\"27.1.0\",\"total_mutants\":1,",
                 "\"missed\":0,\"caught\":1,\"timeout\":0,\"unviable\":0,",
@@ -541,7 +577,11 @@ esac
         }));
         assert_eq!(run.rate(), None);
         assert_eq!(run.proposed_floor(), None);
-        assert!(source.path(".spice-gate-mutants/outcomes.json").is_file());
+        assert!(
+            source
+                .path(".spice-gate-mutants/mutants.out/outcomes.json")
+                .is_file()
+        );
     }
 
     #[test]
@@ -735,17 +775,50 @@ esac
             ),
             Err(RateError::InvalidToolIdentity { .. })
         ));
-        let reserved =
-            Environment::new([("CARGO", "/alternate/cargo")]).expect("one environment entry");
-        assert!(matches!(
-            MutationTool::new(
-                "/absolute/cargo",
-                "/absolute/cargo-mutants",
-                PINNED_CARGO_MUTANTS,
-                reserved
-            ),
-            Err(RateError::ReservedEnvironment { ref key }) if key == "CARGO"
-        ));
+        for key in [
+            CARGO_ENVIRONMENT,
+            CARGO_BUILD_DIRECTORY_ENVIRONMENT,
+            CARGO_TARGET_DIRECTORY_ENVIRONMENT,
+        ] {
+            let reserved =
+                Environment::new([(key, "/alternate")]).expect("one reserved environment entry");
+            assert!(matches!(
+                MutationTool::new(
+                    "/absolute/cargo",
+                    "/absolute/cargo-mutants",
+                    PINNED_CARGO_MUTANTS,
+                    reserved
+                ),
+                Err(RateError::ReservedEnvironment { key: ref observed }) if observed == key
+            ));
+        }
+
+        let tool = MutationTool::new(
+            "/absolute/cargo",
+            "/absolute/cargo-mutants",
+            PINNED_CARGO_MUTANTS,
+            Environment::empty(),
+        )
+        .expect("empty base environment is valid");
+        let root = Path::new("/private/selected-snapshot");
+        let environment = tool
+            .environment(root, 41, Some(2))
+            .expect("gate-owned environment resolves");
+        let value = |key: &str| {
+            environment
+                .entries()
+                .iter()
+                .find_map(|(name, value)| (name == key).then_some(value.as_os_str()))
+                .unwrap_or_else(|| panic!("missing gate-owned environment {key}"))
+        };
+        assert_eq!(
+            value(CARGO_BUILD_DIRECTORY_ENVIRONMENT),
+            root.join(MUTATION_BUILD_DIRECTORY).as_os_str()
+        );
+        assert_eq!(
+            value(CARGO_TARGET_DIRECTORY_ENVIRONMENT),
+            root.join(MUTATION_TARGET_DIRECTORY).as_os_str()
+        );
     }
 
     #[test]
