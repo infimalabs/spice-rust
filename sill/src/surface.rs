@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     Acquisition, Availability, ExitCode, LockConfig, LockFile, LockName, LockTarget, Possession,
 };
+#[cfg(unix)]
+use crate::{Running, Spec};
 
 const OWNER_BYTES_LIMIT: u64 = 64 * 1024;
 
@@ -644,6 +646,17 @@ impl HeldShard {
     #[must_use]
     pub const fn possession(&self) -> &Possession {
         &self.possession
+    }
+
+    /// Spawn a child that retains kernel possession if this process dies abruptly.
+    ///
+    /// The child and descendants inherit the lock descriptor across `exec`. The
+    /// descriptor remains close-on-exec in this process and in unrelated spawns.
+    #[cfg(unix)]
+    pub fn spawn_protected(&mut self, spec: Spec) -> io::Result<Running> {
+        let running = crate::spawn::spawn_inheriting(spec, self.possession.file())?;
+        self.possession.retain_until_last_close();
+        Ok(running)
     }
 }
 

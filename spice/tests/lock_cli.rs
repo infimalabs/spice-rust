@@ -382,7 +382,7 @@ fn a_signal_to_the_wrapper_terminates_the_child_group_and_releases_the_lock() {
 }
 
 #[test]
-fn abrupt_wrapper_death_leaves_stale_evidence_but_releases_kernel_possession() {
+fn abrupt_wrapper_death_keeps_possession_until_the_protected_group_exits() {
     let fixture = Fixture::new("abrupt");
     let child_pid_path = fixture.root.join("abrupt-child-pid");
     let mut child = Command::new(env!("CARGO_BIN_EXE_spice"));
@@ -394,16 +394,18 @@ fn abrupt_wrapper_death_leaves_stale_evidence_but_releases_kernel_possession() {
             "--",
             "/bin/sh",
             "-c",
-            "printf '%s' \"$$\" > \"$1\"; printf 'READY\\n'; exec /usr/bin/tail -f /dev/null",
+            "printf '%s' \"$$\" > \"$1\"; printf 'READY\\n'; /bin/cat >/dev/null",
             "lock-child",
         ])
         .arg(&child_pid_path)
         .current_dir(&fixture.root)
         .env_remove(steer::hook::INBOX)
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut wrapper = child.spawn().expect("abrupt wrapper launches");
     let wrapper_pid = wrapper.id();
+    let release = wrapper.stdin.take().expect("wrapper stdin is piped");
     let mut output = BufReader::new(wrapper.stdout.take().expect("wrapper stdout is piped"));
     let mut ready = String::new();
     output
@@ -425,12 +427,50 @@ fn abrupt_wrapper_death_leaves_stale_evidence_but_releases_kernel_possession() {
         .find(|pool| pool.name == "solo")
         .expect("single lock is reported")
         .entries[0];
+    assert_eq!(entry.availability, LockAvailability::Held);
+    assert_eq!(
+        entry.owner.as_ref().map(|owner| owner.pid),
+        Some(wrapper_pid)
+    );
+    assert!(!entry.owner_stale);
+    assert_contention(
+        fixture.invoke(&["--json", "lock", "run", "solo", "--", "/usr/bin/true"]),
+        BUSY_EXIT,
+        "lock::busy",
+    );
+
+    drop(release);
+    let mut trailing = String::new();
+    output
+        .read_to_string(&mut trailing)
+        .expect("protected process group closes stdout on exit");
+    assert!(trailing.is_empty(), "abrupt child output: {trailing:?}");
+
+    let child_pid: i32 = fs::read_to_string(&child_pid_path)
+        .expect("child PID reads")
+        .parse()
+        .expect("child PID parses");
+    assert_eq!(unsafe { libc::kill(child_pid, 0) }, -1);
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ESRCH),
+        "protected child remains after its process group closed stdout"
+    );
+
+    let released = reply_body(fixture.invoke(&["lock", "--json"]));
+    let entry = &released
+        .pools
+        .iter()
+        .find(|pool| pool.name == "solo")
+        .expect("single lock is reported")
+        .entries[0];
     assert_eq!(entry.availability, LockAvailability::Available);
     assert_eq!(
         entry.owner.as_ref().map(|owner| owner.pid),
         Some(wrapper_pid)
     );
     assert!(entry.owner_stale);
+
     assert_eq!(
         fixture
             .invoke(&["lock", "run", "solo", "--", "/usr/bin/true"])
@@ -441,19 +481,69 @@ fn abrupt_wrapper_death_leaves_stale_evidence_but_releases_kernel_possession() {
         fs::read(fixture.lock_root().join("solo.lock")).expect("released metadata reads"),
         b""
     );
+}
 
-    let child_pid: i32 = fs::read_to_string(&child_pid_path)
-        .expect("child PID reads")
-        .parse()
-        .expect("child PID parses");
-    let result = unsafe { libc::kill(child_pid, libc::SIGKILL) };
-    if result == -1 {
-        assert_eq!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::ESRCH),
-            "abrupt child cleanup failed"
-        );
-    }
+#[test]
+fn a_surviving_group_member_retains_possession_after_the_leader_exits() {
+    let fixture = Fixture::new("descendant");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+    command
+        .args([
+            "lock",
+            "run",
+            "solo",
+            "--",
+            "/bin/sh",
+            "-c",
+            "exec 3<&0; /bin/cat <&3 & printf 'READY\\n'",
+        ])
+        .current_dir(&fixture.root)
+        .env_remove(steer::hook::INBOX)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut wrapper = command.spawn().expect("descendant wrapper launches");
+    let release = wrapper.stdin.take().expect("wrapper stdin is piped");
+    let mut output = BufReader::new(wrapper.stdout.take().expect("wrapper stdout is piped"));
+    let mut ready = String::new();
+    output
+        .read_line(&mut ready)
+        .expect("group leader reaches execution");
+    assert_eq!(ready, "READY\n");
+    assert!(
+        wrapper
+            .wait()
+            .expect("wrapper exits with its leader")
+            .success()
+    );
+
+    let report = reply_body(fixture.invoke(&["lock", "--json"]));
+    let entry = &report
+        .pools
+        .iter()
+        .find(|pool| pool.name == "solo")
+        .expect("single lock is reported")
+        .entries[0];
+    assert_eq!(entry.availability, LockAvailability::Held);
+    assert!(entry.owner.is_none());
+    assert_contention(
+        fixture.invoke(&["--json", "lock", "run", "solo", "--", "/usr/bin/true"]),
+        BUSY_EXIT,
+        "lock::busy",
+    );
+
+    drop(release);
+    let mut trailing = String::new();
+    output
+        .read_to_string(&mut trailing)
+        .expect("surviving group member closes stdout on exit");
+    assert!(trailing.is_empty(), "group member output: {trailing:?}");
+    assert_eq!(
+        fixture
+            .invoke(&["lock", "run", "solo", "--", "/usr/bin/true"])
+            .code,
+        Some(0)
+    );
 }
 
 #[test]
