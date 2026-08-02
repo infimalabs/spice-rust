@@ -14,6 +14,7 @@
 
 pub mod camp;
 pub mod config;
+pub mod core;
 pub mod hygiene;
 pub mod input;
 pub mod jurisdiction;
@@ -37,6 +38,15 @@ pub use camp::{
     CampStanding, DistributionReport, LocusDistance, SharedBound,
 };
 pub use config::{Config, WalkConfig};
+pub use core::{
+    CORE_GATE_IDS, CORE_REPORT_VERSION, ConfigInventoryEvidence, ConfigKeyEvidence,
+    CoreArmDeclaration, CoreArmInput, CoreArmReport, CoreEvidence, CoreFinding, CoreInputError,
+    CoreInputs, CoreObservation, CoreProvenance, CoreReport, CoreReportDecodeError, CoreStanding,
+    CoreTimeoutContract, CoreToolContract, DocMeasurement, GitCommandContract,
+    MergeIntegrityEvidence, MergeTreeCompletion, PlanPhaseEvidence,
+    PredecessorObservation as CorePredecessorObservation, RepoDocLimit, RepoDocsEvidence,
+    RepoShapeEvidence, StagingEvidence, core_declarations, evaluate_core,
+};
 pub use hygiene::{
     AnalysisEvidence, AnalyzerEvidence, EvidenceState, ExclusionEvidence, HYGIENE_ARMS,
     HYGIENE_REPORT_VERSION, HygieneAnalyzer, HygieneConfigurationSource, HygieneDeclaration,
