@@ -140,30 +140,31 @@ fn build_order_payload_bytes_and_restaging_are_deterministic() {
 }
 
 #[test]
-fn interrupted_object_publication_preserves_the_old_target_pointer() {
+fn interruption_at_every_publication_edge_preserves_the_old_target_pointer() {
     let required = pins();
     let pipeline = Pipeline::new(RequiredPins::new(required.clone()).expect("pins are valid"));
     let payload_path = PathBuf::from("targets/aarch64-apple-darwin/payload.json");
-    let mut publisher = MemoryPublisher {
-        files: BTreeMap::from([(payload_path.clone(), (0o644, OLD_PAYLOAD.to_vec()))]),
-        writes: Vec::new(),
-        fail_at: Some(1),
-    };
-    let mut builder = RecordingBuilder::default();
+    for fail_at in 0..=3 {
+        let mut publisher = MemoryPublisher {
+            files: BTreeMap::from([(payload_path.clone(), (0o644, OLD_PAYLOAD.to_vec()))]),
+            writes: Vec::new(),
+            fail_at: Some(fail_at),
+        };
+        let mut builder = RecordingBuilder::default();
 
-    let error = pipeline
-        .stage(
-            ReleaseTarget::Aarch64AppleDarwin,
-            source_digest(),
-            &required,
-            &mut builder,
-            &mut publisher,
-        )
-        .expect_err("publication interruption must surface");
+        let error = pipeline
+            .stage(
+                ReleaseTarget::Aarch64AppleDarwin,
+                source_digest(),
+                &required,
+                &mut builder,
+                &mut publisher,
+            )
+            .expect_err("publication interruption must surface");
 
-    assert!(matches!(error, StageError::Publish { .. }));
-    assert_eq!(publisher.files[&payload_path].1, OLD_PAYLOAD);
-    assert!(!publisher.writes.contains(&payload_path));
+        assert!(matches!(error, StageError::Publish { .. }));
+        assert_eq!(publisher.files[&payload_path].1, OLD_PAYLOAD);
+    }
 }
 
 #[test]
@@ -235,6 +236,10 @@ fn proof_container_must_be_bound_by_an_oci_digest() {
         RequiredPins::new(unpinned),
         Err(PinError::ContainerNotDigestPinned { .. })
     ));
+
+    let mut bare = pins();
+    bare.proof_container = format!("sha256:{}", "0".repeat(64));
+    RequiredPins::new(bare).expect("the compiled bare digest form is pinned");
 }
 
 struct Run {

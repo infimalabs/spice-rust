@@ -170,6 +170,8 @@ pub enum StageError {
 pub enum PublishError {
     #[error("stage path must be relative and contain no parent traversal: {0}")]
     InvalidPath(PathBuf),
+    #[error("stage publication refused at {path}: {reason}")]
+    Guard { path: PathBuf, reason: String },
     #[error("stage I/O failed at {path}: {source}")]
     Io { path: PathBuf, source: io::Error },
     #[error(transparent)]

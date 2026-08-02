@@ -6,6 +6,10 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod release;
+
+pub use release::{CommandRecord, ReleaseEnvironment, TargetBuild, TargetBuildError, stage_target};
+
 /// The target the browser app is compiled for.
 ///
 /// Every other step builds for the host and only for the host, so the far side
