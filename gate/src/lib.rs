@@ -25,6 +25,7 @@ pub mod names;
 pub mod policy;
 pub mod ratchet;
 pub mod report;
+pub mod state;
 pub mod toolchain;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tree;
@@ -89,6 +90,12 @@ pub use report::{
     ReportAttemptKind, ReportCompletion, ReportDecodeError, ReportFloor, ReportMeasurement,
     ReportMutant, ReportMutantDisposition, ReportMutationInventory, ReportMutationMovement,
     ReportOutcome, ReportProcess, ReportRate, ReportStream,
+};
+pub use state::{
+    ActorInputs, ActorResolution, ActorSource, BoundDecision, BoundError, BoundRule, ClaimDecision,
+    ClaimStatus, CurrentState, KeyError, LatchEntry, LatchKind, LatchObservation, LatchTransition,
+    PeerClaim, PendingState, PredecessorSources, RenameMap, StateDecision, StateError,
+    StateErrorKind, StateKey, StateLedger, StateReceipt, current_state_path, varied_elastic_limit,
 };
 pub use toolchain::{
     ArmFinding, ArmMeasurement, ArmObservation, ArmOutcome, ConfigurationSource, FindingDetail,

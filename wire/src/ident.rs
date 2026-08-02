@@ -135,6 +135,10 @@ pub enum Domain {
     GateMeasurement,
     /// The complete current identity and ordered outcome of one gate run.
     GateReceipt,
+    /// One complete current persistent gate-state ledger.
+    GateStateLedger,
+    /// One immutable accepted or rejected gate-state transition.
+    GateStateReceipt,
     /// The exact tracked and machine-local executable policy documents.
     ConfigExecutableSurface,
 }
@@ -182,6 +186,8 @@ impl Domain {
             Self::GateInventory => "spice.gate.inventory.v1",
             Self::GateMeasurement => "spice.gate.measurement.v1",
             Self::GateReceipt => "spice.gate.receipt.v1",
+            Self::GateStateLedger => "spice.gate.state-ledger.v1",
+            Self::GateStateReceipt => "spice.gate.state-receipt.v1",
             Self::ConfigExecutableSurface => "spice.config.executable-surface.v1",
         }
     }

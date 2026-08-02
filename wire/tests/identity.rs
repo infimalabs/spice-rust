@@ -94,9 +94,11 @@ const fn position(domain: Domain) -> usize {
         Domain::GateInventory => 29,
         Domain::GateMeasurement => 30,
         Domain::GateReceipt => 31,
-        Domain::ConfigExecutableSurface => 32,
-        Domain::TaskArtifactPayload => 33,
-        Domain::TaskArtifactStore => 34,
+        Domain::GateStateLedger => 32,
+        Domain::GateStateReceipt => 33,
+        Domain::ConfigExecutableSurface => 34,
+        Domain::TaskArtifactPayload => 35,
+        Domain::TaskArtifactStore => 36,
     }
 }
 
@@ -112,7 +114,7 @@ fn the_sweep_names_every_domain_exactly_once() {
 }
 
 /// Every domain, so a new class cannot be added without being swept here.
-const DOMAINS: [Domain; 35] = [
+const DOMAINS: [Domain; 37] = [
     Domain::BoardDocument,
     Domain::BoardTaskIdentity,
     Domain::BoardBarrier,
@@ -145,6 +147,8 @@ const DOMAINS: [Domain; 35] = [
     Domain::GateInventory,
     Domain::GateMeasurement,
     Domain::GateReceipt,
+    Domain::GateStateLedger,
+    Domain::GateStateReceipt,
     Domain::ConfigExecutableSurface,
     Domain::TaskArtifactPayload,
     Domain::TaskArtifactStore,
@@ -231,6 +235,8 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
             "spice.gate.inventory.v1",
             "spice.gate.measurement.v1",
             "spice.gate.receipt.v1",
+            "spice.gate.state-ledger.v1",
+            "spice.gate.state-receipt.v1",
             "spice.config.executable-surface.v1",
             "spice.task.artifact-payload.v1",
             "spice.task.artifact-store.v1",
