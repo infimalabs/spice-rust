@@ -124,6 +124,24 @@ fn actor_order_and_blake2b_variation_match_the_predecessor() {
             .expect("large predecessor rounding vector"),
         9_512_727_937_301_801_642
     );
+    // Offset -100 still passes through Python binary64 division. The rounded
+    // quotient leaves one unit of headroom rather than clamping to base.
+    assert_eq!(
+        varied_elastic_limit(1, 9_007_199_254_740_994, "src/259.rs", "actor-a", 100,)
+            .expect("complete-reduction predecessor rounding vector"),
+        2
+    );
+    // CPython rounds the exact integer rational; converting the product to
+    // binary64 before dividing would double-round this result upward by 512.
+    assert_eq!(
+        varied_elastic_limit(1, 10_870_685_112_660_186, "src/14254.rs", "actor-a", 32_768,)
+            .expect("exact predecessor true-division vector"),
+        3_335_561_019_968_650_970
+    );
+    assert_eq!(
+        varied_elastic_limit(1, u64::MAX, "src/20.rs", "actor-a", 100),
+        Err(BoundError::VariationOverflow)
+    );
     let varied = BoundRule::new("slice", "file-loc", 100, 150, false, false)
         .expect("varied bound")
         .decide(
@@ -176,6 +194,28 @@ fn current_policy_variation_domain_reaches_canonical_state_evidence() {
     assert_eq!(evidence["configured_elastic_limit"], 150);
     assert_eq!(evidence["elastic_limit"], 100);
     assert_eq!(evidence["actor"]["source"], "active-actor");
+
+    let rounded = BoundRule::new("slice", "file-loc", 1, 10_870_685_112_660_186, false, false)
+        .expect("large varied bound")
+        .decide(
+            1,
+            false,
+            &ActorInputs::new("src/14254.rs")
+                .expect("large actor inputs")
+                .with_active_actor("actor-a"),
+            32_768,
+        )
+        .expect("large predecessor decision");
+    assert_eq!(rounded.variation_percent(), 32_768);
+    assert_eq!(rounded.elastic_limit(), 3_335_561_019_968_650_970);
+    let rounded_evidence: serde_json::Value =
+        wire::decode(&wire::encode(&rounded).expect("rounded decision encodes"))
+            .expect("rounded decision decodes");
+    assert_eq!(rounded_evidence["variation_percent"], 32_768);
+    assert_eq!(
+        rounded_evidence["elastic_limit"],
+        3_335_561_019_968_650_970_u64
+    );
 
     assert_eq!(
         varied_elastic_limit(100, 150, "src/lib.rs", "actor-a", u64::MAX)

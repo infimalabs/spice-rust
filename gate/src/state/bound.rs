@@ -1,4 +1,6 @@
 const COMPLETE_HEADROOM_REDUCTION_PERCENT: i128 = -100;
+const BINARY64_FRACTION_BITS: i32 = 52;
+const PERCENT_DENOMINATOR: u128 = 100;
 
 /// Candidate provenance used by elastic headroom and peer claims.
 ///
@@ -288,21 +290,96 @@ pub fn varied_elastic_limit(
     let offset = i128::try_from(bucket).expect("a two-byte bucket fits i128")
         - i128::from(variation_percent);
     let headroom = i128::from(elastic_limit - base_limit);
-    // Any offset at or below -100 consumes the complete headroom, so the
-    // predecessor's final base clamp decides the result without multiplying
-    // an otherwise unbounded percentage.
-    if offset <= COMPLETE_HEADROOM_REDUCTION_PERCENT {
+    // Any offset below -100 consumes more than the complete headroom even
+    // after binary64 rounding. At exactly -100, predecessor rounding can leave
+    // a small positive remainder, so it must take the exact division path.
+    if offset < COMPLETE_HEADROOM_REDUCTION_PERCENT {
         return Ok(base_limit);
     }
     let scaled = headroom
         .checked_mul(offset)
         .ok_or(BoundError::VariationOverflow)?;
-    // Python's `/ 100` converts the integer product through binary64 before
-    // `int(...)` truncates it. Preserve that rounding at large admitted limits.
-    let variation = (scaled as f64 / 100.0).trunc() as i128;
+    let variation = predecessor_truncated_percentage(scaled)?;
     let varied = i128::from(elastic_limit) + variation;
     let varied = varied.max(i128::from(base_limit));
     u64::try_from(varied).map_err(|_| BoundError::VariationOverflow)
+}
+
+fn predecessor_truncated_percentage(scaled: i128) -> Result<i128, BoundError> {
+    if scaled == 0 {
+        return Ok(0);
+    }
+    let negative = scaled.is_negative();
+    let magnitude = scaled.unsigned_abs();
+    let mut exponent = binary_exponent(magnitude, PERCENT_DENOMINATOR);
+    let (numerator, denominator) = if exponent <= BINARY64_FRACTION_BITS {
+        let shift = u32::try_from(BINARY64_FRACTION_BITS - exponent)
+            .map_err(|_| BoundError::VariationOverflow)?;
+        (
+            magnitude
+                .checked_shl(shift)
+                .ok_or(BoundError::VariationOverflow)?,
+            PERCENT_DENOMINATOR,
+        )
+    } else {
+        let shift = u32::try_from(exponent - BINARY64_FRACTION_BITS)
+            .map_err(|_| BoundError::VariationOverflow)?;
+        (
+            magnitude,
+            PERCENT_DENOMINATOR
+                .checked_shl(shift)
+                .ok_or(BoundError::VariationOverflow)?,
+        )
+    };
+
+    // CPython rounds the exact integer rational to nearest-even binary64
+    // before int(...) truncates it. Build that 53-bit significand directly so
+    // an earlier integer-to-f64 conversion cannot introduce double rounding.
+    let mut significand = numerator / denominator;
+    let remainder = numerator % denominator;
+    let twice_remainder = remainder
+        .checked_mul(2)
+        .ok_or(BoundError::VariationOverflow)?;
+    if twice_remainder > denominator
+        || (twice_remainder == denominator && significand % 2 == 1)
+    {
+        significand += 1;
+    }
+    if significand == 1_u128 << (BINARY64_FRACTION_BITS + 1) {
+        significand >>= 1;
+        exponent += 1;
+    }
+
+    let truncated = if exponent >= BINARY64_FRACTION_BITS {
+        let shift = u32::try_from(exponent - BINARY64_FRACTION_BITS)
+            .map_err(|_| BoundError::VariationOverflow)?;
+        significand
+            .checked_shl(shift)
+            .ok_or(BoundError::VariationOverflow)?
+    } else {
+        let shift = u32::try_from(BINARY64_FRACTION_BITS - exponent)
+            .map_err(|_| BoundError::VariationOverflow)?;
+        significand >> shift
+    };
+    let truncated = i128::try_from(truncated).map_err(|_| BoundError::VariationOverflow)?;
+    Ok(if negative { -truncated } else { truncated })
+}
+
+fn binary_exponent(numerator: u128, denominator: u128) -> i32 {
+    let numerator_bits = i32::try_from(u128::BITS - numerator.leading_zeros())
+        .expect("u128 bit width fits i32");
+    let denominator_bits = i32::try_from(u128::BITS - denominator.leading_zeros())
+        .expect("u128 bit width fits i32");
+    let mut exponent = numerator_bits - denominator_bits;
+    let below_binade = if exponent >= 0 {
+        numerator < denominator << u32::try_from(exponent).expect("non-negative exponent")
+    } else {
+        numerator << u32::try_from(-exponent).expect("negated exponent is positive") < denominator
+    };
+    if below_binade {
+        exponent -= 1;
+    }
+    exponent
 }
 
 /// Every input and output behind one bound decision.

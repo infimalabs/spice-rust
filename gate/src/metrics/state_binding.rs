@@ -20,7 +20,7 @@ pub struct MetricStateBinding {
     rule: ResolvedMetricRule,
     entry: LatchEntry,
     bound: BoundRule,
-    variation_percent: u32,
+    variation_percent: u64,
 }
 
 impl MetricStateBinding {
@@ -54,8 +54,7 @@ impl MetricStateBinding {
         let kind = latch_kind(metric).ok_or(StateBindingError::UnboundedMetric(metric))?;
         let state_key = state_key(&key)?;
         let entry = LatchEntry::new(kind, state_key).map_err(StateBindingError::Key)?;
-        let variation_percent = u32::try_from(rule.variation_percent())
-            .map_err(|_| StateBindingError::VariationPercent(rule.variation_percent()))?;
+        let variation_percent = rule.variation_percent();
         let bound = BoundRule::new(
             rule_identity(&rule),
             metric.as_str(),
@@ -233,7 +232,6 @@ pub enum StateBindingError {
         expected: MetricId,
         observed: MetricId,
     },
-    VariationPercent(u64),
     KeyShape(String),
     Parser(String),
     Key(KeyError),
@@ -254,12 +252,6 @@ impl fmt::Display for StateBindingError {
                 expected.as_str(),
                 observed.as_str()
             ),
-            Self::VariationPercent(value) => {
-                write!(
-                    formatter,
-                    "variation percent {value} does not fit current state"
-                )
-            }
             Self::KeyShape(reason) | Self::Parser(reason) | Self::Decision(reason) => {
                 formatter.write_str(reason)
             }
