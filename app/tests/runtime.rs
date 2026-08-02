@@ -102,6 +102,86 @@ fn admitted_stream(session: &Session, bytes: &[u8]) -> app::Admitted<StreamFrame
         .expect("stream frame is admitted")
 }
 
+fn board_task(handle: &str, uuid: &str, title: &str, project: &str) -> serde_json::Value {
+    let visibility = if project.starts_with('.') {
+        serde_json::json!({"kind": "hidden", "stem": "oops"})
+    } else {
+        serde_json::json!({"kind": "public"})
+    };
+    serde_json::json!({
+        "visibility": visibility,
+        "presentation_title": title,
+        "statement": {
+            "position": 1,
+            "body": {
+                "handle": handle,
+                "uuid": uuid,
+                "project": project,
+                "tags": [],
+                "dependencies": [],
+                "provenance": format!("task:{handle}"),
+                "revision": 1,
+            },
+        },
+        "workflow": {
+            "position": 2,
+            "body": {
+                "flow": ["todo"],
+                "phase": "todo",
+                "status": "pending",
+                "review": "unassigned",
+            },
+        },
+    })
+}
+
+fn board_response(
+    session: &Session,
+    hidden_title: &str,
+) -> app::Admitted<Response<wire::intent::BoardAnswer>> {
+    let body = serde_json::json!({
+        "schema": 1,
+        "cursor": 4,
+        "principal": "operator",
+        "tasks": [
+            board_task(
+                "HIDDEN-oops1",
+                REQUEST,
+                hidden_title,
+                ".oops.correctness",
+            ),
+            board_task(
+                "PUBLIC-work1",
+                NEXT_CAPABILITY,
+                "Visible allocator work",
+                "board.visibility",
+            ),
+        ],
+        "residency": {
+            "position": 3,
+            "body": {
+                "epoch": EPOCH,
+                "state": "seated",
+                "lanes": [],
+            },
+        },
+    });
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "outcome": {
+            "kind": "reply",
+            "cursor": 4,
+            "body": body,
+        },
+    }))
+    .expect("board response fixture serializes");
+    session
+        .admit_frame(&bytes)
+        .expect("board response is admitted")
+}
+
 fn fact_frame(fact: serde_json::Value) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
         "stream": "fact",
@@ -159,6 +239,39 @@ fn operator_and_lane_stream_authority_come_from_the_admitted_principal() {
     assert!(!lane.grants());
     assert!(lane.offers(CommandKind::TaskNote));
     assert!(!lane.offers(CommandKind::ConsentDecide));
+}
+
+#[test]
+fn browser_state_retains_hidden_evidence_without_hidden_title_prose() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let secret = "secret allocator failure details";
+    let response = board_response(&session, secret);
+    let wire::Outcome::Reply(reply) = &response.get().outcome else {
+        panic!("board fixture is a reply");
+    };
+    assert_eq!(reply.body.tasks[0].presentation_title(), secret);
+
+    runtime.apply_board(&response);
+
+    let board = runtime.board().expect("board response is retained");
+    let hidden = &board.tasks[0];
+    assert_eq!(hidden.presentation_title(), "Hidden task");
+    assert_eq!(hidden.statement.body.handle.to_string(), "HIDDEN-oops1");
+    assert_eq!(hidden.statement.body.project, ".oops.correctness");
+    assert_eq!(hidden.visibility.hidden_stem(), Some("oops"));
+    assert_eq!(hidden.workflow.body.status, "pending");
+    assert!(!format!("{hidden:?}").contains(secret));
+    let hidden_json = serde_json::to_value(hidden).expect("browser row serializes");
+    assert!(hidden_json["statement"]["body"].get("title").is_none());
+    assert_eq!(
+        board.tasks[1].presentation_title(),
+        "Visible allocator work"
+    );
+    assert!(!board.tasks[1].visibility.is_hidden());
+    let public_json = serde_json::to_value(&board.tasks[1]).expect("public browser row serializes");
+    assert!(public_json["statement"]["body"].get("title").is_none());
 }
 
 #[test]

@@ -49,20 +49,14 @@ fn validated_snapshot(
             )
         })?;
         let visibility = entry.project().visibility().clone();
-        let presentation_title = if visibility.is_hidden() {
-            "Hidden task".to_owned()
-        } else {
-            statement.body.title.clone()
-        };
         entries.push(entry);
-        tasks.push(BoardTask {
+        tasks.push(BoardTask::from_authoritative(
             visibility,
-            presentation_title,
             statement,
             workflow,
             claim,
             lease,
-        });
+        ));
     }
     Ok(ValidatedSnapshot {
         cursor,
