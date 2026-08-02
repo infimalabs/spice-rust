@@ -1,6 +1,5 @@
 //! Resident-owned lane seating, lifecycle, restart, and recall handlers.
 
-use std::ffi::OsString;
 use std::path::Path;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
@@ -9,10 +8,7 @@ use bus::Bus;
 use journal::{FactCause, JournalWrite};
 use lane::capture::{CaptureFailure, CaptureRecord, CaptureReportError, CaptureReporter};
 use lane::occupant::{Occupant, OccupantWait, Seats};
-use sill::{
-    Cancellation, Deadlines, Environment, Observation, RestartDisposition, Spec, WaitOutcome,
-    WaitPolicy,
-};
+use sill::WaitOutcome;
 use spice::repository::Repository;
 use wire::intent::{
     CommandAnswer, LaneAction, LaneAnswer, LaneChangeAnswer, LaneRecall, LaneSeat, LaneState,

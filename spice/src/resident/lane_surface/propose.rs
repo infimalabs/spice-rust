@@ -2,6 +2,7 @@
 
 use super::*;
 
+/// Propose the lane, capability, and first occupant one seat admits.
 pub(super) fn propose_seat(
     command: &wire::AdmittedCommand,
     request: &LaneSeat,
@@ -73,6 +74,7 @@ pub(super) fn propose_seat(
     Ok(write)
 }
 
+/// Propose the vacancy and closure one drained lane records.
 pub(super) fn propose_drain(
     command: &wire::AdmittedCommand,
     request: &LaneState,
@@ -119,6 +121,7 @@ pub(super) fn propose_drain(
     Ok(write)
 }
 
+/// Propose the occupant and residency one woken lane records.
 pub(super) fn propose_wake(
     command: &wire::AdmittedCommand,
     request: &LaneState,
@@ -168,6 +171,7 @@ pub(super) fn propose_wake(
     Ok(write)
 }
 
+/// Commit the restored residency one recovered seat proved.
 pub(super) fn commit_restored(
     bus: &Bus,
     epoch: CanonicalUuid,

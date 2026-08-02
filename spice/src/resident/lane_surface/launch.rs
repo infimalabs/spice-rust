@@ -1,5 +1,11 @@
 //! Occupant process launch and its configuration refusals.
 
+use std::ffi::OsString;
+
+use sill::{
+    Cancellation, Deadlines, Environment, Observation, RestartDisposition, Spec, WaitPolicy,
+};
+
 use super::*;
 
 pub(super) struct OccupantLaunch {

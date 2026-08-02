@@ -381,7 +381,8 @@ fn prove_session_tape(
     Ok(identity)
 }
 
-pub(super) fn session_head_refusal(
+/// Refuse one resume whose durable session head no longer holds.
+fn session_head_refusal(
     reason: &str,
     expected: Option<String>,
     observed: Option<String>,

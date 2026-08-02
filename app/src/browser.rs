@@ -26,6 +26,8 @@ mod view;
 use view::render_canvas;
 
 type SenderHandle = Rc<RefCell<Option<UnboundedSender<ClientAction>>>>;
+type SocketWriter = futures_util::stream::SplitSink<WebSocket, Message>;
+type SocketReader = futures_util::stream::SplitStream<WebSocket>;
 
 #[derive(Clone, PartialEq)]
 enum Connection {
@@ -386,14 +388,7 @@ async fn run_connection(
 /// Discover the resident endpoint and open the socket its bootstrap names.
 async fn open_socket(
     speech: &UseStateHandle<wire::SpeechPlayback>,
-) -> Result<
-    (
-        Session,
-        futures_util::stream::SplitSink<WebSocket, Message>,
-        futures_util::stream::SplitStream<WebSocket>,
-    ),
-    String,
-> {
+) -> Result<(Session, SocketWriter, SocketReader), String> {
     let discovery: wire::CanvasBootstrap = Request::get("/bootstrap")
         .send()
         .await
@@ -422,7 +417,7 @@ async fn open_socket(
 /// Admit the acceptance frame and publish the runtime that frame names.
 async fn admit_runtime(
     session: &Session,
-    reader: &mut futures_util::stream::SplitStream<WebSocket>,
+    reader: &mut SocketReader,
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
     data: &Rc<RefCell<SurfaceData>>,
@@ -461,7 +456,7 @@ async fn admit_runtime(
 /// Carry back the stream directives one admitted frame produced.
 async fn relay_directives(
     principal: &Principal,
-    writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    writer: &mut SocketWriter,
     directives: Vec<StreamDirective>,
 ) -> Result<(), String> {
     for directive in directives {
@@ -475,7 +470,7 @@ async fn relay_directives(
 /// Send one operator action as the typed command the resident admits.
 async fn dispatch_action(
     principal: &Principal,
-    writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    writer: &mut SocketWriter,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     action: ClientAction,
 ) -> Result<(), String> {
@@ -571,7 +566,7 @@ fn bounded_speech_error(error: &str) -> String {
 
 async fn send_refresh(
     principal: &Principal,
-    writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    writer: &mut SocketWriter,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
 ) -> Result<(), String> {
     send_if_offered(
@@ -628,7 +623,7 @@ async fn send_refresh(
 
 async fn send_if_offered<B: Serialize>(
     principal: &Principal,
-    writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    writer: &mut SocketWriter,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     pending_kind: PendingKind,
     kind: CommandKind,
@@ -652,7 +647,7 @@ async fn send_if_offered<B: Serialize>(
 
 async fn send_typed<B: Serialize>(
     principal: &Principal,
-    writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    writer: &mut SocketWriter,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     pending_kind: PendingKind,
     kind: CommandKind,
@@ -674,7 +669,7 @@ async fn send_typed<B: Serialize>(
 async fn send_subscription(
     principal: &Principal,
     data: &Rc<RefCell<SurfaceData>>,
-    writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    writer: &mut SocketWriter,
 ) -> Result<(), String> {
     let (subjects, after, pending_thread) = {
         let data = data.borrow();
@@ -715,7 +710,7 @@ async fn send_subscription(
 
 async fn send_stream_directive(
     principal: &Principal,
-    writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    writer: &mut SocketWriter,
     directive: StreamDirective,
 ) -> Result<bool, String> {
     let request = match directive {
@@ -739,7 +734,7 @@ async fn send_stream_directive(
 }
 
 async fn send_stream_request(
-    writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    writer: &mut SocketWriter,
     request: &StreamRequest,
 ) -> Result<(), String> {
     writer

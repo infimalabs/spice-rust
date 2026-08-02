@@ -159,7 +159,8 @@ pub(super) fn recall_provenance(
     Ok(provenance)
 }
 
-pub(super) fn steering_provenance(
+/// Name one steering fact as the provenance a recall answer carries.
+fn steering_provenance(
     directive: Option<CanonicalUuid>,
     key: String,
     disposition: wire::Disposition,
@@ -177,7 +178,8 @@ pub(super) fn steering_provenance(
     }
 }
 
-pub(super) fn recall_body<T: serde::de::DeserializeOwned>(
+/// Read one recalled fact body back out of its admitted envelope.
+fn recall_body<T: serde::de::DeserializeOwned>(
     fact: &wire::Envelope<wire::AnyFact>,
 ) -> CommandResult<T> {
     let bytes = wire::encode(fact.fact.body())

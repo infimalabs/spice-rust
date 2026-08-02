@@ -398,10 +398,7 @@ pub(super) fn render_chronology(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let events = surface
-        .iter()
-        .flat_map(|runtime| runtime.events())
-        .collect::<Vec<_>>();
+    let events = runtime.map_or(&[][..], CanvasRuntime::events);
     html! {
         <div class="split">
             <div>
@@ -412,7 +409,7 @@ pub(super) fn render_chronology(
             </div>
             <div>
                 {runtime.map_or_else(Html::default, render_trust)}
-                {render_command_outcomes(connection, &events)}
+                {render_command_outcomes(connection, events)}
                 {runtime.map_or_else(Html::default, render_fact_chronology)}
             </div>
         </div>
@@ -505,7 +502,7 @@ fn render_pending_direction(directives: &[&wire::intent::PendingDirective]) -> H
 }
 
 /// Command outcomes, led by an explicit offline reason when one exists.
-fn render_command_outcomes(connection: &Connection, events: &[&crate::RuntimeEvent]) -> Html {
+fn render_command_outcomes(connection: &Connection, events: &[crate::RuntimeEvent]) -> Html {
     html! {
         <section class="section">
             <div class="section-heading"><h2>{"Command outcomes"}</h2></div>
