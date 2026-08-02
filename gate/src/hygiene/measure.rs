@@ -8,7 +8,7 @@ use super::*;
 ///
 /// Refuses foreign, duplicate, missing, or inconsistent observations. No
 /// partial report is returned.
-pub fn measure_hygiene(
+pub(crate) fn measure_hygiene(
     observations: impl IntoIterator<Item = HygieneObservation>,
 ) -> Result<HygieneReport, HygieneError> {
     let mut remaining: Vec<_> = observations.into_iter().collect();

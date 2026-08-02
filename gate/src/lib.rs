@@ -38,15 +38,16 @@ pub use camp::{
 pub use config::{Config, WalkConfig};
 pub use hygiene::{
     AnalysisEvidence, AnalyzerEvidence, EvidenceState, ExclusionEvidence, HYGIENE_ARMS,
-    HYGIENE_REPORT_VERSION, HygieneAnalyzer, HygieneConfigurationSource, HygieneDeclaration,
-    HygieneError, HygieneFinding, HygieneFindingDetail, HygieneJurisdiction, HygieneMeasurement,
-    HygieneObservation, HygieneOutcome, HygieneProvenance, HygieneReport, HygieneTraversal,
+    HYGIENE_REPORT_VERSION, HygieneAnalysisError, HygieneAnalyzer, HygieneConfiguration,
+    HygieneConfigurationSource, HygieneDeclaration, HygieneError, HygieneExclusion, HygieneFinding,
+    HygieneFindingDetail, HygieneJurisdiction, HygieneMeasurement, HygieneOutcome,
+    HygieneProvenance, HygieneReport, HygieneTraversal,
     MigrationRefusal as HygieneMigrationRefusal,
     PredecessorComparison as HygienePredecessorComparison,
     PredecessorComparisonError as HygienePredecessorComparisonError,
     PredecessorObservation as HygienePredecessorObservation,
-    PredecessorResult as HygienePredecessorResult, PythonUnusedStatus,
-    compare_predecessor as compare_hygiene_predecessor, measure_hygiene,
+    PredecessorResult as HygienePredecessorResult, PrivateCouplingException, PythonUnusedStatus,
+    analyze_hygiene, compare_predecessor as compare_hygiene_predecessor,
 };
 pub use input::{
     BASELINE_PATH, BASELINE_VERSION, Baseline, BaselineError, Contract, ContractError,
