@@ -16,7 +16,7 @@ use sill::{
 use spice::repository::Repository;
 use wire::intent::{
     CommandAnswer, LaneAction, LaneAnswer, LaneChangeAnswer, LaneRecall, LaneSeat, LaneState,
-    RecallAnswer, RecallEntry,
+    RecallAnswer, RecallEntry, RecallProvenance,
 };
 use wire::{
     Actor, CanonicalUuid, Command, Fault, FaultClass, Outcome, Producer, Refusal, Reply,
@@ -38,7 +38,7 @@ const OUTPUT_DRAIN: Duration = Duration::from_secs(2);
 const REAP: Duration = Duration::from_secs(2);
 const TERMINATION_GRACE: Duration = Duration::from_secs(1);
 const RECORD_QUEUE: usize = 64;
-const SESSION_PROOF: Duration = Duration::from_secs(2);
+const SESSION_PROOF: Duration = Duration::from_secs(10);
 const SESSION_SETTLE: Duration = Duration::from_millis(25);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -572,6 +572,57 @@ pub(super) fn capture_record(
             ));
         }
     }
+    let compactions = record
+        .decoded
+        .events()
+        .iter()
+        .filter_map(|event| match event {
+            listen::Event::Compaction(boundary) => Some(boundary.locus),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if !compactions.is_empty() {
+        let observed = current_residency(bus, epoch)?;
+        let current = observed
+            .body()
+            .lanes
+            .iter()
+            .find(|row| row.lane == record.lane)
+            .ok_or_else(|| {
+                store_fault(
+                    "lane::compaction-head-missing",
+                    "a live compaction has no durable lane authority",
+                )
+            })?;
+        if current.occupant != Some(record.occupant) {
+            return Err(store_fault(
+                "lane::compaction-occupant-moved",
+                "the compaction occupant does not equal durable residency",
+            ));
+        }
+        let mut write = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
+        guard_residency(&mut write, &observed);
+        let mut cause = FactCause::Existing(observed.position());
+        for locus in compactions {
+            let fact = write
+                .fact(
+                    wire::body::LaneCompacted {
+                        lane: record.lane,
+                        occupant: record.occupant,
+                        stream: record_stream(record.stream).to_owned(),
+                        member: locus.member,
+                        offset: locus.offset,
+                        length: locus.length,
+                    },
+                    cause,
+                )
+                .map_err(|error| {
+                    store_fault("lane::compaction-fact-invalid", &error.to_string())
+                })?;
+            cause = FactCause::Pending(fact);
+        }
+        commit(bus, write)?;
+    }
     Ok(())
 }
 
@@ -648,10 +699,21 @@ pub(super) fn recall(
         }
         Actor::Spice => return authority_refusal(command.actor(), "operator or lane"),
     };
-    let head = match current_residency(bus, epoch) {
-        Ok(head) => head,
-        Err(outcome) => return typed_outcome(outcome),
+    let snapshot = match bus.canvas_snapshot() {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            return typed_store_fault("recall::journal-unreadable", &error.to_string());
+        }
     };
+    let Some(head) = snapshot.residency() else {
+        return typed_store_fault("resident::head-missing", "residency head is absent");
+    };
+    if head.body().epoch != epoch {
+        return typed_store_fault(
+            "resident::epoch-moved",
+            &format!("expected {epoch}, observed {}", head.body().epoch),
+        );
+    }
     if let Some(lane) = selected
         && !head.body().lanes.iter().any(|row| row.lane == lane)
     {
@@ -662,25 +724,35 @@ pub(super) fn recall(
             "read lane and retry with a current lane identity",
         );
     }
-    let snapshot = match bus.fact_snapshot() {
-        Ok(snapshot) => snapshot,
-        Err(error) => return typed_store_fault("recall::journal-unreadable", &error.to_string()),
+    let Some(barrier) = snapshot.cursor() else {
+        return typed_store_fault(
+            "recall::journal-empty",
+            "a running resident has no durable fact cursor",
+        );
     };
-    let barrier = head.position();
-    let recent = snapshot
+    let mut recent = Vec::new();
+    for fact in snapshot
+        .facts()
         .facts()
         .iter()
         .rev()
         .filter(|fact| fact.seq <= barrier)
         .filter(|fact| selected.is_none_or(|lane| relevant(fact, lane)))
         .take(RECALL_LIMIT)
-        .map(|fact| RecallEntry {
+    {
+        let provenance = match recall_provenance(fact) {
+            Ok(provenance) => provenance,
+            Err(outcome) => return typed_outcome(outcome),
+        };
+        recent.push(RecallEntry {
             seq: fact.seq,
             kind: fact.fact.kind(),
             actor: fact.actor.clone(),
             origin: fact.origin.clone(),
-        })
-        .collect();
+            lane: fact_lane(fact),
+            provenance,
+        });
+    }
     let body = RecallAnswer {
         barrier,
         repository: paths.worktree.display().to_string(),
@@ -1558,13 +1630,145 @@ fn answer(head: &wire::ResidencyHead, selected: Option<CanonicalUuid>) -> LaneAn
 }
 
 fn relevant(fact: &wire::Envelope<wire::AnyFact>, lane: CanonicalUuid) -> bool {
-    fact.actor == Actor::Lane(lane)
-        || fact
-            .fact
-            .body()
-            .get("lane")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|named| named == lane.to_string())
+    fact.actor == Actor::Lane(lane) || fact_lane(fact) == Some(lane)
+}
+
+fn fact_lane(fact: &wire::Envelope<wire::AnyFact>) -> Option<CanonicalUuid> {
+    fact.fact
+        .body()
+        .get("lane")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|lane| lane.parse().ok())
+        .or(match fact.actor {
+            Actor::Lane(lane) => Some(lane),
+            Actor::Operator | Actor::Spice => None,
+        })
+}
+
+fn recall_provenance(
+    fact: &wire::Envelope<wire::AnyFact>,
+) -> CommandResult<Option<RecallProvenance>> {
+    let provenance = match fact.fact.kind() {
+        wire::FactKind::LaneSessionDeclared => {
+            let body: wire::body::LaneSessionDeclared = recall_body(fact)?;
+            Some(RecallProvenance::Session {
+                occupant: body.occupant,
+                worktree: body.worktree,
+                vendor: body.vendor,
+                epoch: body.epoch,
+                stream: body.stream,
+                identity: body.identity,
+                locus: wire::TapeLocus {
+                    member: body.member,
+                    offset: body.offset,
+                    length: body.length,
+                },
+            })
+        }
+        wire::FactKind::LaneCompacted => {
+            let body: wire::body::LaneCompacted = recall_body(fact)?;
+            Some(RecallProvenance::Compaction {
+                occupant: body.occupant,
+                stream: body.stream,
+                locus: wire::TapeLocus {
+                    member: body.member,
+                    offset: body.offset,
+                    length: body.length,
+                },
+            })
+        }
+        wire::FactKind::SteerSent => {
+            let body: wire::body::SteerSent = recall_body(fact)?;
+            Some(steering_provenance(
+                Some(body.directive),
+                body.key,
+                wire::Disposition::Live,
+                None,
+                None,
+                None,
+            ))
+        }
+        wire::FactKind::SteerResent => {
+            let body: wire::body::SteerResent = recall_body(fact)?;
+            Some(steering_provenance(
+                Some(body.directive),
+                body.key,
+                wire::Disposition::Live,
+                Some(body.ancestor),
+                None,
+                None,
+            ))
+        }
+        wire::FactKind::SteerAcked => {
+            let body: wire::body::SteerAcked = recall_body(fact)?;
+            Some(steering_provenance(
+                Some(body.directive),
+                body.key,
+                wire::Disposition::Acked,
+                None,
+                Some(body.epoch),
+                Some(body.locus),
+            ))
+        }
+        wire::FactKind::SteerDeclined => {
+            let body: wire::body::SteerDeclined = recall_body(fact)?;
+            Some(steering_provenance(
+                Some(body.directive),
+                body.key,
+                wire::Disposition::Declined,
+                None,
+                Some(body.epoch),
+                Some(body.locus),
+            ))
+        }
+        wire::FactKind::SteerCanceled => {
+            let body: wire::body::SteerCanceled = recall_body(fact)?;
+            Some(steering_provenance(
+                None,
+                body.key,
+                wire::Disposition::Canceled,
+                None,
+                None,
+                None,
+            ))
+        }
+        wire::FactKind::LaneRenewed => {
+            let body: wire::body::LaneRenewed = recall_body(fact)?;
+            Some(RecallProvenance::Renewal {
+                occupant: body.occupant,
+                ancestor: body.ancestor,
+                epoch: body.epoch,
+            })
+        }
+        _ => None,
+    };
+    Ok(provenance)
+}
+
+fn steering_provenance(
+    directive: Option<CanonicalUuid>,
+    key: String,
+    disposition: wire::Disposition,
+    ancestor: Option<String>,
+    epoch: Option<CanonicalUuid>,
+    locus: Option<wire::body::TranscriptLocus>,
+) -> RecallProvenance {
+    RecallProvenance::Steering {
+        directive,
+        key,
+        disposition,
+        ancestor,
+        epoch,
+        locus,
+    }
+}
+
+fn recall_body<T: serde::de::DeserializeOwned>(
+    fact: &wire::Envelope<wire::AnyFact>,
+) -> CommandResult<T> {
+    let bytes = wire::encode(fact.fact.body())
+        .map_err(|error| store_fault("recall::fact-invalid", &error.to_string()))?;
+    wire::decode(&bytes).map_err(|error| store_fault("recall::fact-invalid", &error.to_string()))
 }
 
 fn committed_lane_reply(

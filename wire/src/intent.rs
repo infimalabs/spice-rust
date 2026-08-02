@@ -16,11 +16,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::body::ConsentQueueCause;
+use crate::body::{ConsentQueueCause, TranscriptLocus};
 use crate::command::CommandKind;
 use crate::envelope::{Actor, Origin, Seq};
 use crate::fact::FactKind;
-use crate::head::{LaneResidency, ResidentState, TrustState};
+use crate::head::{LaneResidency, ResidentState, TapeLocus, TrustState};
 use crate::ident::{CanonicalUuid, Digest, Instant};
 use crate::witness::{Answer, Disposition, Name, Phase, TaskHandle};
 
@@ -723,6 +723,96 @@ pub struct RecallEntry {
     pub actor: Actor,
     /// Durable origin carried by the event.
     pub origin: Origin,
+    /// Lane named by the event, absent for repository-wide facts.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub lane: Option<CanonicalUuid>,
+    /// Safe continuity evidence projected from selected fact bodies.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub provenance: Option<RecallProvenance>,
+}
+
+/// Closed, redacted evidence carried by a continuity chronology entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum RecallProvenance {
+    /// Exact durable vendor session authority.
+    Session {
+        /// Occupant that declared the session.
+        occupant: CanonicalUuid,
+        /// Worktree bound to the session launch.
+        worktree: String,
+        /// Vendor that admitted the declaration.
+        vendor: Name,
+        /// Resident generation that observed the declaration.
+        epoch: CanonicalUuid,
+        /// Selected child stream carrying the declaration.
+        stream: String,
+        /// Exact resumable vendor identity.
+        identity: String,
+        /// Durable bytes carrying the declaration.
+        locus: TapeLocus,
+    },
+    /// One typed compaction boundary recognized from selected-stream bytes.
+    Compaction {
+        /// Occupant that crossed the boundary.
+        occupant: CanonicalUuid,
+        /// Selected child stream carrying the boundary.
+        stream: String,
+        /// Durable bytes carrying the boundary.
+        locus: TapeLocus,
+    },
+    /// Redacted steering lineage or disposition evidence.
+    Steering {
+        /// Directive identity, absent for terminal facts whose body carries only its key.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        directive: Option<CanonicalUuid>,
+        /// Stable directive key.
+        key: String,
+        /// Current disposition established by the fact.
+        disposition: Disposition,
+        /// Prior key named by a resend, when this is a lineage rung.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        ancestor: Option<String>,
+        /// Resident generation authenticating transcript evidence, when applicable.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        epoch: Option<CanonicalUuid>,
+        /// Exact assistant-prose evidence, absent for send, resend, or cancellation.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        locus: Option<TranscriptLocus>,
+    },
+    /// Successor ancestry without exposing the operating-system process group.
+    Renewal {
+        /// Successor occupant.
+        occupant: CanonicalUuid,
+        /// Occupant the successor descends from.
+        ancestor: CanonicalUuid,
+        /// Resident generation that admitted the successor.
+        epoch: CanonicalUuid,
+    },
 }
 
 /// Ranked, bounded continuity account served at one journal barrier.

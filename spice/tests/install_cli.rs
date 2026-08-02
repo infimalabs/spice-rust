@@ -238,7 +238,8 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
     assert_eq!(text_digest, json_digest);
     assert_eq!(preview.digest().as_str(), text_digest);
     assert_eq!(preview.digest(), &preview.plan().digest().unwrap());
-    assert_eq!(preview.plan().operations().len(), 5);
+    let operation_count = preview.plan().operations().len();
+    assert_eq!(operation_count, 8);
     assert!(!fixture.installed_binary().exists());
     assert!(!fixture.record().exists());
     assert!(!fixture.root.join(".git/.spice-rust").exists());
@@ -271,7 +272,7 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
     let applied: InstallReceipt =
         reply_body(fixture.invoke(&["--json", "install", &format!("--apply={text_digest}")]));
     assert_eq!(applied.status(), InstallStatus::Complete);
-    assert_eq!(applied.completed(), 5);
+    assert_eq!(applied.completed(), operation_count);
     assert_eq!(
         fs::read(fixture.installed_binary()).unwrap(),
         fs::read(env!("CARGO_BIN_EXE_spice")).unwrap()
@@ -284,6 +285,7 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
 fn unapply_restores_exact_prior_images_and_keeps_the_namespaced_receipt() {
     let fixture = Fixture::new("unapply");
     let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
+    let operation_count = preview.plan().operations().len();
     let digest = preview.digest();
     let applied = fixture.invoke(&["install", &format!("--apply={digest}")]);
     assert_eq!(applied.code, Some(0));
@@ -291,7 +293,7 @@ fn unapply_restores_exact_prior_images_and_keeps_the_namespaced_receipt() {
 
     let unapplied: InstallReceipt = reply_body(fixture.invoke(&["--json", "install", "--unapply"]));
     assert_eq!(unapplied.status(), InstallStatus::Uninstalled);
-    assert_eq!(unapplied.completed(), 5);
+    assert_eq!(unapplied.completed(), operation_count);
     assert!(!fixture.installed_binary().exists());
     assert!(fixture.record().is_file());
     assert_eq!(

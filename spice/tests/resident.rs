@@ -24,7 +24,8 @@ use wire::{
 const FAULT_EXIT: i32 = 1;
 const REFUSAL_EXIT: i32 = 2;
 const READINESS_DEADLINE: Duration = Duration::from_secs(10);
-const CLIENT_DEADLINE_BOUND: Duration = Duration::from_secs(5);
+const CLIENT_DEADLINE_BOUND: Duration = Duration::from_secs(10);
+const LANE_DEADLINE_BOUND: Duration = Duration::from_secs(20);
 const ADVERSARIAL_PEER_LIFE: Duration = Duration::from_secs(7);
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -832,3 +833,6 @@ mod cases;
 
 #[path = "resident/lane_process.rs"]
 mod lane_process;
+
+#[path = "resident/lane_continuity.rs"]
+mod lane_continuity;

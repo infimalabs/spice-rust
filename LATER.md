@@ -30,39 +30,57 @@ Everything else remains absent.
 | Steering attachments | An operator demonstrably needs to steer with non-text evidence — a screenshot, capture, or artifact — that a path or locus reference inside directive text cannot carry. The design must name storage ownership, retention, and rendering scope before any media crosses the wire. |
 | Vendor record as tracked data | A vendor field rename that a tracked-data change could absorb forces a full release cycle in practice. Moving the record (versions, required fields, corpus path) under the trust digest must not weaken the compiled decoder's corpus-as-law posture. |
 
-## The drop ledger
+## Predecessor parity ledger
 
-Rust opens no Python authority bytes. Wanted unfinished work crosses the clean
-break only as a reviewed task document; the old state is backed up and remains
-forensic evidence. The following Python surfaces have no compatibility
-successor and are not ports in waiting.
+The clean break changes authority storage, not the capability contract. Rust
+opens no Python authority bytes; predecessor state is backed up and retained as
+forensic evidence. A capability is either **landed** on an executable Rust path
+or **pending** on a public task whose acceptance records behavior and recovery
+parity. It is not clipped merely because the replacement uses a different
+mechanism. Operator direction `ack:1kJWMcnL` establishes that explicit cutover
+authorization is a deployment gate, not deletion authority.
 
-| Python surface | Clean-break disposition |
+| Python surface | Current parity disposition |
 | --- | --- |
-| Taskwarrior subprocess seam | Removed. Task statements, workflow, coordination heads, facts, and command results commit under the resident in one authority transaction. |
-| Generated `taskrc` | Removed. No generated compatibility configuration mediates the task plane. |
-| Taskwarrior reports | Removed. Typed board reads rank and pack current head answers; report syntax is not accepted or translated. |
-| Raw rc overrides | Removed. Operator configuration is the typed domain tree with compiled defaults and rendered provenance. |
-| JavaScript emission | Removed. Browser DTOs compile from the wire crate, so there is no emitted foreign mirror or staleness protocol. |
-| Source-text UI tests | Removed. Shared fixtures prove typed view state and the browser pass proves the rendered appliance. |
-| Vendor files as citations | Removed. Owned tape bytes and stable loci are the only transcript evidence boundary. |
-| Session forensics (`spice session`) | Removed as a Python command family. Release one keeps forensics only through current `spice watch`, `spice retro`, `spice recall`, and `spice thread` surfaces backed by owned tape and journal loci; the Python subcommand set and private parsing rules do not cross. |
-| `spice demo` | Removed. Demonstration-only execution paths do not enter release one; examples and confidence evidence belong in current command fixtures, app fixtures, and sealed proof receipts. |
-| `spice agent import` | Removed. Agent state crosses the clean break only as reviewed task documents or explicit current-dialect application; no import verb reads Python state or makes old transcripts or tasks authoritative. |
-| Agent-to-agent messaging | Removed. Board state, directives, facts, and repository evidence are the complete coordination surface. |
-| Multi-user authority | Removed. One operator capability governs the repository; independent human authority is outside doctrine. |
-| Hidden projects | Removed. Work is visible through the ordinary board and allocator contract. |
-| Regex policy | Removed. Named first-match rules use the declared word-glob grammar. |
-| Anonymous rules | Removed. Every rule has a stable name, order, provenance, and rendered outcome. |
-| Elastic gate margins | Removed. Versioned own-history floors shrink with improvement and rise only by operator commit. |
-| Persistent threshold latches | Removed. Regression is measured against the current versioned floor without a second stateful threshold. |
-| Actor-varied thresholds | Removed. The same measured tree and policy yield the same gate decision for every actor. |
-| Silent skips | Removed. Unsupported, unavailable, unmeasured, and failed checks are explicit result states. |
-| Bundled old gate arms | Removed. The current engine evaluates a selected tree; old receipts remain data and old executable policy is not carried forward. |
-| Inbox deadletter parking | Removed. Directives are durable journal facts with per-lane rendered inboxes; an occupant that never starts loses nothing, so parking and a requeue verb have no role. The launch-refusal half survives as `lane::held`. |
-| Task-addressed sidecar artifacts | Removed. Evidence is durable task documents and `task::noted` facts under the task origin; notes carry repository paths, tape loci, or digests instead of copying payload bytes into a second store. `journal` exposes immutable envelopes with stable sequence citations, and `thread` follows a cited sequence. The Python artifact manifest, payload copies, retention classes, and prune protocol do not cross. |
-| Manual claim renewal | Removed. Renewal and lapse are resident-only board transitions inside the journal authority; a client cannot choose a replacement lease or repair a claim out of band. Any expiry and subsequent allocation remain ordinary claim and lease facts. |
-| `spice lock` path and directory overrides | Removed. Resource locks and pool shards live at the fixed `locks/<name>/<shard>` topology; capacity and exit codes remain configured under `[lock]`. |
-| Launch-time file writes | Removed. Python wrote a `PostToolUse` config file and read the repository's commit-trailer policy while assembling argv; `vendor` builds launch contracts without touching disk, so the hook command, MCP server, steering token, model, and `Launch::attribution` disposition arrive already resolved by the caller that owns those reads. |
-| Claude `personality` and `fast_mode` | Removed for Claude alone. `claude --print` has no launch-time seam for either, so Python deleted both arguments unread; `Launch` still carries them because Codex honors both, and the Claude builder withholds them rather than inventing flags. |
-| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | Removed from the launch contract. It is process environment, not argv, and belongs to whoever composes the child's `Environment` rather than to the argument vector this crate states. |
+| Taskwarrior subprocess seam | Landed through resident-owned task statements, workflow, coordination heads, facts, and command results in one journal transaction. |
+| Generated `taskrc` | Landed through typed configuration, compiled defaults, and rendered provenance without a compatibility file. |
+| Taskwarrior reports | Landed through typed `board`, `board graph`, `board handout`, and task/document projections. |
+| Raw rc overrides | Pending on `PARITY-1kJWSQ7W`, including migration and refusal for every predecessor override. |
+| JavaScript emission | Landed through browser DTOs compiled from the shared wire crate and app-drift verification. |
+| Source-text UI tests | Landed through shared typed fixtures and rendered browser tests that preserve the tested outcomes. |
+| Vendor files as citations | Landed through owned tape bytes and stable loci; vendor paths remain discovery inputs, not mutable evidence. |
+| Session forensics (`spice session`) | Pending on `FORENSI-1kJWS7G5`; `watch`, `retro`, `recall`, and `thread` are landed foundations but do not yet answer every predecessor query. |
+| `spice demo` | Pending on `DEMO-1kJWSLwL` for the zero-setup seeded repository, transcript, lane, and canvas lifecycle. |
+| `spice agent import` | Pending on `RECOVER-1kJWSHkc` for team, lineage, session, and claim transfer without admitting stale predecessor authority. |
+| Agent-to-agent messaging | Landed as the predecessor's coordination outcome through board state, directives, facts, and repository evidence; no private transport was an independent authority. |
+| Multi-user authority | Landed at the predecessor's effective boundary: one operator capability with attributed lanes and teams, not independent human principals. |
+| Hidden projects | Pending on `PARITY-1kJWSQ7W` until every predecessor visibility scope has an equivalent typed board answer or explicit migration refusal. |
+| Regex policy | Pending on `PARITY-1kJWSQ7W`; word-glob substitution alone is not evidence of equivalent expressiveness. |
+| Anonymous rules | Pending on `PARITY-1kJWSQ7W` for deterministic naming, order, provenance, and migration. |
+| Elastic gate margins | Pending on `PARITY-1kJWSQ7W` for equivalent threshold evolution or exact unsupported-input refusal. |
+| Persistent threshold latches | Pending on `PARITY-1kJWSQ7W` for state migration and recovery parity. |
+| Actor-varied thresholds | Pending on `PARITY-1kJWSQ7W` for actor-scope migration and decision parity. |
+| Silent skips | Landed as explicit unsupported, unavailable, unmeasured, timeout, failed, and passed result states; the predecessor's ability to continue a report is preserved without a silent success. |
+| Bundled old gate arms | Pending on `PARITY-1kJWSQ7W` until every retained arm is executable in canonical verification and old receipts remain replayable evidence. |
+| Inbox deadletter parking | Pending on `RECOVER-1kJWSHkc` for exact-once directive recovery; durable journal facts and `lane::held` are landed foundations, not proof that requeue behavior is unnecessary. |
+| Task-addressed sidecar artifacts | Pending on `ARTIFAC-1kJWSCFm` for text/binary payloads, manifests, retention, prune preview/apply, citations, and backup recovery. |
+| Manual claim renewal | Pending on `RECOVER-1kJWSHkc` for bounded operator recovery of supervisor-owned or expiring claims. |
+| Task-boundary Git publication and capture | Landed through deterministic merge trees, compare-and-swap publication, bounded race recovery, restart-safe conflict state, and loose-commit capture. |
+| `spice lock` path and directory overrides | Pending on `PARITY-1kJWSV53`; fixed topology alone does not preserve configured placement use cases. |
+| Launch-time file writes | Pending on `PARITY-1kJWSV53` for equivalent hook materialization and commit-policy input through admitted, explicit launch composition. |
+| Claude `personality` and `fast_mode` | Pending on `PARITY-1kJWSV53` for supported behavior and deterministic unsupported-option refusal across vendors. |
+| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | Pending on `PARITY-1kJWSV53` as child-environment behavior with exact launch and restart fixtures. |
+
+## Operator-confirmed deletions
+
+An installed Python path may use disposition `X` in `PORTING.md` only when its
+exact path appears in this registry with the acknowledgment key for an explicit
+operator deletion decision. Confirmations are single-path and cannot authorize
+adjacent surfaces. The current operator direction authorizes no deletions.
+
+```json
+{
+  "version": 1,
+  "operator_confirmed_deletions": []
+}
+```
