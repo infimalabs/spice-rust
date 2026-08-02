@@ -327,6 +327,14 @@ mod tests {
         assert_eq!(hidden_json["presentation_title"], "Hidden task");
         assert!(hidden_json["statement"]["body"].get("title").is_none());
         assert_eq!(hidden_json["workflow"]["body"]["status"], "pending");
+        let public_json = json["tasks"]
+            .as_array()
+            .expect("task rows")
+            .iter()
+            .find(|task| task["statement"]["body"]["handle"] == public.to_string())
+            .expect("public JSON row");
+        assert_eq!(public_json["presentation_title"], "Visible allocator work");
+        assert!(public_json["statement"]["body"].get("title").is_none());
 
         let rendered = Outcome::Reply(Reply {
             position: ReplyPosition::Snapshot(answer.cursor),

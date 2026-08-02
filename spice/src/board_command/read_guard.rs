@@ -49,22 +49,14 @@ fn validated_snapshot(
             )
         })?;
         let visibility = entry.project().visibility().clone();
-        let presentation_title = statement.body.title.clone();
-        let statement = Positioned {
-            position: statement.position,
-            body: BoardStatement::from(&statement.body),
-        };
         entries.push(entry);
-        let mut task = BoardTask {
+        tasks.push(BoardTask::from_authoritative(
             visibility,
-            presentation_title,
             statement,
             workflow,
             claim,
             lease,
-        };
-        task.redact_hidden_title();
-        tasks.push(task);
+        ));
     }
     Ok(ValidatedSnapshot {
         cursor,

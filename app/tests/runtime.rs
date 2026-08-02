@@ -269,6 +269,9 @@ fn browser_state_retains_hidden_evidence_without_hidden_title_prose() {
         board.tasks[1].presentation_title(),
         "Visible allocator work"
     );
+    assert!(!board.tasks[1].visibility.is_hidden());
+    let public_json = serde_json::to_value(&board.tasks[1]).expect("public browser row serializes");
+    assert!(public_json["statement"]["body"].get("title").is_none());
 }
 
 #[test]

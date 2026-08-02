@@ -718,7 +718,7 @@ fn entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<CommandAnswer>> {
         .iter()
         .map(|heads| {
             Entry::from_answer(
-                heads.statement_head(),
+                heads.client_statement(),
                 heads.workflow.body.clone(),
                 heads.claim.as_ref().map(|head| head.body.clone()),
                 heads.lease.as_ref().map(|head| head.body.clone()),

@@ -9,9 +9,9 @@ use journal::{FactCause, GuardError, JournalGuard, JournalRead, JournalWrite, Pe
 use spice::repository::Repository;
 use wire::body::GitBoundary;
 use wire::intent::{
-    BoardAnswer, BoardGraph, BoardHandout, BoardRead, BoardStatement, BoardTask, ClaimWin,
-    CommandAnswer, DocApply, DocLedger, Positioned, TaskAdd, TaskDefer, TaskDepends, TaskDone,
-    TaskNote, TaskRef, TaskReview, TextAnswer,
+    BoardAnswer, BoardGraph, BoardHandout, BoardRead, BoardTask, ClaimWin, CommandAnswer, DocApply,
+    DocLedger, Positioned, TaskAdd, TaskDefer, TaskDepends, TaskDone, TaskNote, TaskRef,
+    TaskReview, TextAnswer,
 };
 use wire::{
     Actor, ClaimDisposition, ClaimHead, Command, CommandKind, Digest, Domain, Fault, FaultClass,

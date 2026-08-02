@@ -271,6 +271,7 @@ fn assert_review_plan(board: &BoardAnswer, answer: &TaskAnswer, title: &str) {
         .expect("planned task is on the current board");
     assert_eq!(task.presentation_title(), title);
     assert_eq!(task.statement.body.project, "taste.policy");
+    assert!(!task.visibility.is_hidden());
     assert_eq!(
         task.workflow
             .body

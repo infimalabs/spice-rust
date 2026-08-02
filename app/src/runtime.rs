@@ -85,10 +85,12 @@ pub struct BoardView {
 
 impl From<&BoardAnswer> for BoardView {
     fn from(answer: &BoardAnswer) -> Self {
-        let mut tasks = answer.tasks.clone();
-        for task in &mut tasks {
-            task.redact_hidden_title();
-        }
+        let tasks = answer
+            .tasks
+            .iter()
+            .cloned()
+            .map(BoardTask::into_actor_facing)
+            .collect();
         Self {
             cursor: answer.cursor,
             tasks,
