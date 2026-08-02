@@ -44,7 +44,32 @@ fn fixture() -> Fixture {
     }
 }
 
-fn seed_residency(fixture: &Fixture, seed: &mut JournalWrite) {
+const PREDECESSOR: &str = "/worktrees/predecessor";
+const SUCCESSOR: &str = "/worktrees/successor";
+
+fn occupied_row(fixture: &Fixture) -> wire::LaneResidency {
+    wire::LaneResidency {
+        lane: fixture.lane,
+        worktree: PREDECESSOR.into(),
+        life: "drive".into(),
+        vendor: "claude".parse().expect("fixture vendor"),
+        occupant: Some(fixture.ancestor),
+        lineage: vec![fixture.ancestor],
+        capabilities: vec![uuid(6)],
+        session: None,
+        disposition: OCCUPIED.into(),
+    }
+}
+
+fn vacant_row(fixture: &Fixture) -> wire::LaneResidency {
+    wire::LaneResidency {
+        occupant: None,
+        disposition: VACANT.into(),
+        ..occupied_row(fixture)
+    }
+}
+
+fn seed_residency(fixture: &Fixture, seed: &mut JournalWrite, lanes: Vec<wire::LaneResidency>) {
     let seated = seed
         .fact(
             wire::body::UpSeated {
@@ -53,23 +78,11 @@ fn seed_residency(fixture: &Fixture, seed: &mut JournalWrite) {
             FactCause::Root,
         )
         .expect("resident fact");
-    let lane = fixture.lane;
-    let ancestor = fixture.ancestor;
     let epoch = fixture.old_epoch;
     seed.residency_head(seated, move |_| wire::ResidencyHead {
         epoch,
         state: wire::ResidentState::Seated,
-        lanes: vec![wire::LaneResidency {
-            lane,
-            worktree: "/worktrees/predecessor".into(),
-            life: "drive".into(),
-            vendor: "claude".parse().expect("fixture vendor"),
-            occupant: Some(ancestor),
-            lineage: vec![ancestor],
-            capabilities: vec![uuid(6)],
-            session: None,
-            disposition: OCCUPIED.into(),
-        }],
+        lanes,
     });
 }
 
@@ -157,17 +170,26 @@ fn seed_claim(fixture: &Fixture, seed: &mut JournalWrite, added: PendingFact) {
 }
 
 fn seed(fixture: &Fixture) {
+    seed_lanes(fixture, vec![occupied_row(fixture)]);
+}
+
+fn seed_lanes(fixture: &Fixture, lanes: Vec<wire::LaneResidency>) {
     let origin: wire::Origin = format!("resident:{}", fixture.old_epoch)
         .parse()
         .expect("fixture origin");
     let mut seed = JournalWrite::new(Actor::Operator, origin, fixture.at, Producer::CommandDoor);
-    seed_residency(fixture, &mut seed);
+    seed_residency(fixture, &mut seed, lanes);
     let added = seed_task(fixture, &mut seed);
     seed_claim(fixture, &mut seed, added);
     assert!(matches!(
         fixture.bus.commit(seed).expect("seed reaches writer"),
         bus::CommitOutcome::Committed(_)
     ));
+}
+
+fn finish(fixture: Fixture) {
+    fixture.bus.shutdown().expect("fixture bus stops");
+    std::fs::remove_dir_all(&fixture.root).expect("fixture cleanup");
 }
 
 fn reseat(fixture: &Fixture) {
@@ -280,8 +302,7 @@ fn successor_carry_moves_operator_claim_and_lease_authority_together() {
     reseat(&fixture);
     carry(&fixture);
     assert_carried(&fixture);
-    fixture.bus.shutdown().expect("fixture bus stops");
-    std::fs::remove_dir_all(fixture.root).expect("fixture cleanup");
+    finish(fixture);
 }
 
 #[test]
@@ -300,6 +321,566 @@ fn import_refuses_an_active_head_whose_lease_is_no_longer_live() {
             if reason == "lane::claim-lease-stale"
     ));
 
-    fixture.bus.shutdown().expect("fixture bus stops");
-    std::fs::remove_dir_all(fixture.root).expect("fixture cleanup");
+    finish(fixture);
+}
+
+// Import admission: every reason that keeps stale predecessor state from
+// becoming authoritative, each proven by the exact refusal it must raise.
+
+fn runtime_paths(fixture: &Fixture, common: std::path::PathBuf) -> RuntimePaths {
+    RuntimePaths {
+        worktree: fixture.root.clone(),
+        common,
+        runtime: fixture.root.join("runtime"),
+        data: fixture.root.join("data"),
+        journal: fixture.root.join("authority.sqlite3"),
+        resident: fixture.root.join("resident"),
+        canvas: fixture.root.join("canvas"),
+        lane_canvas: fixture.root.join("lane-canvas"),
+        inbox: fixture.root.join("inbox"),
+        degraded: fixture.root.join("degraded"),
+        tape: fixture.root.join("tape"),
+        stage: fixture.root.join("stage"),
+    }
+}
+
+/// The one real worktree these tests can offer an admission that reaches
+/// [`validate_worktree`], which resolves its argument against a live repository.
+fn real_worktree() -> (String, std::path::PathBuf) {
+    let repository = Repository::discover(env!("CARGO_MANIFEST_DIR"))
+        .expect("crate tests run inside a repository worktree");
+    (
+        repository.worktree_root().display().to_string(),
+        repository.common_dir().to_path_buf(),
+    )
+}
+
+fn refusal_reason<T>(result: CommandResult<T>) -> String {
+    match result {
+        Err(Outcome::Refusal(refusal)) => refusal.reason,
+        Err(Outcome::Fault(fault)) => fault.reason,
+        Err(Outcome::Reply(_)) | Ok(_) => panic!("import admitted a lane it must refuse"),
+    }
+}
+
+fn wake(lane: CanonicalUuid, worktree: Option<&str>) -> LaneState {
+    LaneState {
+        lane,
+        action: wire::intent::LaneAction::Wake,
+        worktree: worktree.map(str::to_owned),
+    }
+}
+
+fn admit_row_reason(
+    fixture: &Fixture,
+    lanes: &[wire::LaneResidency],
+    row: &wire::LaneResidency,
+    worktree: &str,
+) -> String {
+    let paths = runtime_paths(fixture, fixture.root.clone());
+    let residency = wire::ResidencyHead {
+        epoch: fixture.old_epoch,
+        state: wire::ResidentState::Seated,
+        lanes: lanes.to_vec(),
+    };
+    refusal_reason(admit_row(&paths, &Seats::new(), &residency, row, worktree))
+}
+
+#[test]
+fn import_refuses_a_wake_that_names_no_successor_worktree() {
+    let fixture = fixture();
+    seed(&fixture);
+    let paths = runtime_paths(&fixture, fixture.root.clone());
+    assert_eq!(
+        refusal_reason(admit_import(
+            &fixture.bus,
+            &paths,
+            fixture.old_epoch,
+            &Seats::new(),
+            &wake(fixture.lane, None),
+        )),
+        "lane::import-worktree-missing"
+    );
+    finish(fixture);
+}
+
+/// The command surface routes any worktree-bearing lane state here, so a drain
+/// carrying a worktree reaches import and must be refused on shape.
+#[test]
+fn import_refuses_a_worktree_bearing_action_that_is_not_wake() {
+    let fixture = fixture();
+    let paths = runtime_paths(&fixture, fixture.root.clone());
+    let request = LaneState {
+        lane: fixture.lane,
+        action: wire::intent::LaneAction::Drain,
+        worktree: Some(SUCCESSOR.into()),
+    };
+    let outcome = import(
+        &fixture.bus,
+        &paths,
+        fixture.old_epoch,
+        &mut Seats::new(),
+        &Runtime::new(Arc::new(SilentReporter)),
+        &admitted(&fixture, &request),
+        &request,
+    );
+    match outcome {
+        Outcome::Refusal(refusal) => assert_eq!(refusal.reason, "lane::state-shape"),
+        Outcome::Reply(_) | Outcome::Fault(_) => {
+            panic!("import admitted a drain action carrying a successor worktree")
+        }
+    }
+    finish(fixture);
+}
+
+#[test]
+fn import_refuses_a_lane_absent_from_the_current_residency() {
+    let fixture = fixture();
+    seed(&fixture);
+    let paths = runtime_paths(&fixture, fixture.root.clone());
+    assert_eq!(
+        refusal_reason(admit_import(
+            &fixture.bus,
+            &paths,
+            fixture.old_epoch,
+            &Seats::new(),
+            &wake(uuid(9), Some(SUCCESSOR)),
+        )),
+        "lane::missing"
+    );
+    finish(fixture);
+}
+
+#[test]
+fn import_refuses_a_durable_lane_carrying_no_predecessor_lineage() {
+    let fixture = fixture();
+    let (worktree, common) = real_worktree();
+    seed_lanes(
+        &fixture,
+        vec![wire::LaneResidency {
+            lineage: Vec::new(),
+            ..vacant_row(&fixture)
+        }],
+    );
+    let paths = runtime_paths(&fixture, common);
+    assert_eq!(
+        refusal_reason(admit_import(
+            &fixture.bus,
+            &paths,
+            fixture.old_epoch,
+            &Seats::new(),
+            &wake(fixture.lane, Some(&worktree)),
+        )),
+        "lane::lineage-missing"
+    );
+    finish(fixture);
+}
+
+#[test]
+fn import_refuses_a_lane_whose_predecessor_still_holds_the_seat() {
+    let fixture = fixture();
+    let row = occupied_row(&fixture);
+    assert_eq!(
+        admit_row_reason(&fixture, std::slice::from_ref(&row), &row, SUCCESSOR),
+        "lane::import-occupied"
+    );
+    finish(fixture);
+}
+
+/// A spec the seat door will open, for a process that ends on its own at once.
+fn sleeping_spec() -> Spec {
+    Spec {
+        argv: sill::Argv::new("/bin/sleep", ["0"]).expect("fixture argv"),
+        cwd: std::path::PathBuf::from("/"),
+        environment: Environment::new([("PATH", "/usr/bin:/bin")]).expect("fixture environment"),
+        group: sill::ProcessGroup::New,
+        deadlines: Deadlines::new(
+            Duration::from_secs(10),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        )
+        .expect("fixture deadlines"),
+        wait: WaitPolicy::new("lane", Cancellation::Never, RestartDisposition::Never)
+            .expect("fixture wait policy"),
+        output: sill::Output::new(
+            sill::StdinPolicy::Null,
+            sill::StreamPolicy::Null,
+            sill::StreamPolicy::Null,
+        ),
+        redaction: sill::Redaction::None,
+        grace: Duration::from_secs(1),
+    }
+}
+
+/// The other door onto the same refusal: a durably vacant row is still refused
+/// while a live occupant sits in that lane, which the row alone cannot show.
+#[test]
+fn import_refuses_a_vacant_row_whose_lane_seat_is_still_live() {
+    let fixture = fixture();
+    let row = vacant_row(&fixture);
+    let paths = runtime_paths(&fixture, fixture.root.clone());
+    let residency = wire::ResidencyHead {
+        epoch: fixture.old_epoch,
+        state: wire::ResidentState::Seated,
+        lanes: vec![row.clone()],
+    };
+    let mut seats = Seats::new();
+    seats
+        .seat(fixture.lane, fixture.successor, sleeping_spec())
+        .expect("the seat door opens");
+    assert_eq!(
+        refusal_reason(admit_row(&paths, &seats, &residency, &row, SUCCESSOR)),
+        "lane::import-occupied"
+    );
+    seats
+        .vacate(fixture.lane)
+        .expect("the seat was occupied")
+        .wait()
+        .expect("the supervised group ends");
+    finish(fixture);
+}
+
+#[test]
+fn import_refuses_a_lane_whose_life_already_ended_in_drain() {
+    let fixture = fixture();
+    let row = wire::LaneResidency {
+        life: "drain".into(),
+        ..vacant_row(&fixture)
+    };
+    assert_eq!(
+        admit_row_reason(&fixture, std::slice::from_ref(&row), &row, SUCCESSOR),
+        "lane::life-ended"
+    );
+    finish(fixture);
+}
+
+#[test]
+fn import_refuses_a_worktree_identical_to_the_predecessor_root() {
+    let fixture = fixture();
+    let row = vacant_row(&fixture);
+    assert_eq!(
+        admit_row_reason(&fixture, std::slice::from_ref(&row), &row, PREDECESSOR),
+        "lane::import-unmoved"
+    );
+    finish(fixture);
+}
+
+#[test]
+fn import_refuses_a_worktree_already_bound_to_another_lane() {
+    let fixture = fixture();
+    let row = vacant_row(&fixture);
+    let neighbour = wire::LaneResidency {
+        lane: uuid(9),
+        worktree: SUCCESSOR.into(),
+        ..vacant_row(&fixture)
+    };
+    assert_eq!(
+        admit_row_reason(&fixture, &[row.clone(), neighbour], &row, SUCCESSOR),
+        "lane::worktree-occupied"
+    );
+    finish(fixture);
+}
+
+// Session proof: the successor is only authoritative once it declares exactly
+// one identity, on the selected stream, for this lane and this occupant.
+
+struct SilentReporter;
+
+impl CaptureReporter for SilentReporter {
+    fn record(&self, _record: CaptureRecord) -> Result<(), CaptureReportError> {
+        Ok(())
+    }
+
+    fn failed(&self, _failure: CaptureFailure) {}
+}
+
+struct Proof {
+    reporter: DeclarationReporter,
+    session: mpsc::Receiver<Result<wire::LaneSession, SessionProofError>>,
+}
+
+fn proof(expected: Option<&str>) -> Proof {
+    let (reply, session) = mpsc::sync_channel(4);
+    Proof {
+        reporter: DeclarationReporter {
+            inner: Arc::new(SilentReporter),
+            lane: uuid(3),
+            occupant: uuid(5),
+            worktree: SUCCESSOR.into(),
+            vendor: "claude".parse().expect("fixture vendor"),
+            epoch: uuid(2),
+            stream: vendor::RecordStream::Stdout,
+            expected: expected.map(str::to_owned),
+            state: Mutex::new(DeclarationState { reply, seen: None }),
+        },
+        session,
+    }
+}
+
+fn locus() -> listen::Locus {
+    listen::Locus::new(0, 0, 64)
+}
+
+fn declared(identity: &str) -> CaptureRecord {
+    CaptureRecord {
+        lane: uuid(3),
+        occupant: uuid(5),
+        stream: vendor::RecordStream::Stdout,
+        boundary: sill::RecordBoundary::Complete,
+        locus: locus(),
+        declaration: Some(vendor::SessionDeclaration {
+            session: vendor::SessionId::new(identity.to_owned()).expect("fixture identity"),
+            locus: locus(),
+        }),
+        decoded: listen::Decoded::Events(Vec::new()),
+    }
+}
+
+fn session_refusal_reason(
+    session: mpsc::Receiver<Result<wire::LaneSession, SessionProofError>>,
+) -> String {
+    match await_session(session) {
+        Ok(admitted) => panic!("session proof admitted {}", admitted.identity),
+        Err(error) => error.refusal().reason,
+    }
+}
+
+#[test]
+fn session_proof_refuses_a_declaration_belonging_to_another_lane() {
+    let proof = proof(None);
+    let record = CaptureRecord {
+        lane: uuid(9),
+        ..declared("successor-session")
+    };
+    proof
+        .reporter
+        .record(record)
+        .expect_err("a foreign lane declaration must be refused");
+    assert_eq!(
+        session_refusal_reason(proof.session),
+        "lane::session-cross-lane"
+    );
+}
+
+#[test]
+fn session_proof_refuses_a_declaration_belonging_to_another_occupant() {
+    let proof = proof(None);
+    let record = CaptureRecord {
+        occupant: uuid(9),
+        ..declared("successor-session")
+    };
+    proof
+        .reporter
+        .record(record)
+        .expect_err("a foreign occupant declaration must be refused");
+    assert_eq!(
+        session_refusal_reason(proof.session),
+        "lane::session-cross-occupant"
+    );
+}
+
+#[test]
+fn session_proof_refuses_a_declaration_off_the_selected_stream() {
+    let proof = proof(None);
+    let record = CaptureRecord {
+        stream: vendor::RecordStream::Stderr,
+        ..declared("successor-session")
+    };
+    proof
+        .reporter
+        .record(record)
+        .expect_err("an unselected stream declaration must be refused");
+    assert_eq!(
+        session_refusal_reason(proof.session),
+        "lane::session-wrong-stream"
+    );
+}
+
+#[test]
+fn session_proof_refuses_a_declaration_resuming_another_identity() {
+    let proof = proof(Some("predecessor-session"));
+    proof
+        .reporter
+        .record(declared("successor-session"))
+        .expect_err("a resumed launch must declare the exact durable identity");
+    assert_eq!(
+        session_refusal_reason(proof.session),
+        "lane::session-mismatched"
+    );
+}
+
+#[test]
+fn session_proof_refuses_a_second_declaration_from_one_occupant() {
+    let proof = proof(None);
+    proof
+        .reporter
+        .record(declared("successor-session"))
+        .expect("the one initialization record is admitted");
+    proof
+        .reporter
+        .record(declared("successor-session"))
+        .expect_err("a second declaration must be refused");
+    assert_eq!(
+        session_refusal_reason(proof.session),
+        "lane::session-duplicate"
+    );
+}
+
+#[test]
+fn session_proof_refuses_a_terminal_capture_failure() {
+    let proof = proof(None);
+    proof.reporter.failed(CaptureFailure {
+        lane: uuid(3),
+        occupant: uuid(5),
+        failure: sill::ObservationFailure::Reader {
+            stream: sill::OutputStream::Stdout,
+            detail: "selected pipe closed".into(),
+        },
+    });
+    assert_eq!(
+        session_refusal_reason(proof.session),
+        "lane::session-capture-failed"
+    );
+}
+
+#[test]
+fn session_proof_refuses_a_launch_that_never_declared() {
+    let proof = proof(None);
+    drop(proof.reporter);
+    assert_eq!(
+        session_refusal_reason(proof.session),
+        "lane::session-missing"
+    );
+}
+
+// A successful import: one atomic transfer of seat, identity, lineage, session
+// authority, and active claim into the successor worktree.
+
+fn admitted(fixture: &Fixture, request: &LaneState) -> wire::AdmittedCommand {
+    Command {
+        v: wire::WireVersion::CURRENT,
+        id: uuid(8),
+        epoch: fixture.new_epoch,
+        kind: wire::CommandKind::LaneState,
+        expected: Vec::new(),
+        body: serde_json::to_value(request).expect("lane intent encodes"),
+    }
+    .admit(&wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch: fixture.new_epoch,
+    })
+    .expect("operator lane intent admits")
+}
+
+fn proven(fixture: &Fixture) -> ProvenOccupant {
+    ProvenOccupant {
+        occupant: fixture.successor,
+        group: 42,
+        session: wire::LaneSession {
+            lane: fixture.lane,
+            occupant: fixture.successor,
+            worktree: SUCCESSOR.into(),
+            vendor: "claude".parse().expect("fixture vendor"),
+            epoch: fixture.new_epoch,
+            stream: "stdout".into(),
+            identity: "successor-session".into(),
+            locus: wire::TapeLocus {
+                member: 0,
+                offset: 0,
+                length: 64,
+            },
+        },
+    }
+}
+
+fn assert_imported(fixture: &Fixture) {
+    let snapshot = fixture.bus.task_snapshot().expect("imported heads read");
+    let residency = snapshot.residency().expect("residency remains present");
+    let row = &residency.body().lanes[0];
+    assert_eq!(row.worktree, SUCCESSOR);
+    assert_eq!(row.occupant, Some(fixture.successor));
+    assert_eq!(row.lineage, [fixture.ancestor, fixture.successor]);
+    assert_eq!(row.disposition, OCCUPIED);
+    assert_eq!(row.capabilities, [uuid(6)]);
+    assert_eq!(row.vendor.as_str(), "claude");
+    let session = row.session.as_ref().expect("import declares one authority");
+    assert_eq!(session.identity, "successor-session");
+    assert_eq!(session.occupant, fixture.successor);
+    assert_eq!(session.epoch, fixture.new_epoch);
+    assert!(
+        residency
+            .body()
+            .lanes
+            .iter()
+            .all(|row| row.worktree != PREDECESSOR && row.occupant != Some(fixture.ancestor)),
+        "a predecessor row remained authoritative after import"
+    );
+    let claim = snapshot
+        .tasks()
+        .first()
+        .expect("fixture task remains")
+        .claim()
+        .expect("claim remains active");
+    assert_eq!(claim.body().occupant, fixture.successor);
+    assert_eq!(claim.body().epoch, fixture.new_epoch);
+    assert_eq!(claim.position(), residency.position());
+    assert_imported_facts(fixture);
+    fixture.bus.verify().expect("imported authority verifies");
+}
+
+fn assert_imported_facts(fixture: &Fixture) {
+    let facts = fixture.bus.fact_snapshot().expect("facts read");
+    let kinds = facts
+        .facts()
+        .iter()
+        .map(|fact| fact.fact.kind())
+        .collect::<Vec<_>>();
+    for kind in [
+        wire::FactKind::LaneImported,
+        wire::FactKind::LaneSessionDeclared,
+        wire::FactKind::LaneStarted,
+        wire::FactKind::ClaimCarried,
+    ] {
+        assert!(kinds.contains(&kind), "import recorded no {kind:?}");
+    }
+}
+
+#[test]
+fn import_moves_seat_lineage_session_and_claim_into_the_successor_worktree() {
+    let fixture = fixture();
+    seed_lanes(&fixture, vec![vacant_row(&fixture)]);
+    reseat(&fixture);
+    let carried = observe_carried_claim(&fixture.bus, fixture.lane, fixture.ancestor, fixture.at)
+        .expect("claim observation")
+        .expect("the predecessor holds one active operator claim");
+    let observed = current_residency(&fixture.bus, fixture.new_epoch).expect("current residency");
+    let context = ImportContext {
+        row: observed.body().lanes[0].clone(),
+        observed,
+        worktree: SUCCESSOR.into(),
+        ancestor: fixture.ancestor,
+        resume: vendor::Resume::Session(
+            vendor::SessionId::new("predecessor-session".to_owned()).expect("fixture identity"),
+        ),
+        carried: Some(carried),
+    };
+    let request = wake(fixture.lane, Some(SUCCESSOR));
+    let answer = LaneChangeAnswer {
+        lane: fixture.lane,
+        from: context.row.worktree.clone(),
+        to: context.worktree.clone(),
+    };
+    let proposal = propose_import(
+        &admitted(&fixture, &request),
+        fixture.new_epoch,
+        &request,
+        &context,
+        &proven(&fixture),
+        answer,
+    )
+    .expect("import proposal composes");
+    commit(&fixture.bus, proposal).expect("import commits atomically");
+    assert_imported(&fixture);
+    finish(fixture);
 }
