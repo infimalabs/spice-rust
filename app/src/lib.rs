@@ -30,6 +30,9 @@ pub mod socket;
 pub mod state;
 pub mod view;
 
+#[cfg(target_arch = "wasm32")]
+mod browser;
+
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
 pub use socket::{Admitted, Session};
 pub use state::{Answer, Applied, BrowserState, CAUSAL_HEADERS, CausalLink, ChainEnd, ChainWalk};

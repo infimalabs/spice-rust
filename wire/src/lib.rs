@@ -74,7 +74,7 @@ pub use head::{
     ResidencyHead, ResidentState, TaskHead, TrustHead, TrustState, WitnessClass, WitnessHead,
     WorkflowHead,
 };
-pub use hello::{Accepted, Hello, Rejected};
+pub use hello::{Accepted, CanvasBootstrap, Hello, Rejected};
 pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{

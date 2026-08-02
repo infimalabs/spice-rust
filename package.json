@@ -1,0 +1,10 @@
+{
+  "name": "spice-rust-browser-tests",
+  "private": true,
+  "scripts": {
+    "test:canvas": "node app/browser/canvas.spec.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

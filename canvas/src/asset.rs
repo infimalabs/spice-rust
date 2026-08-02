@@ -5,44 +5,112 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-static APP_BYTES: &[u8] = include_bytes!("../../dist/stage/canvas-app.html");
+static APP_HTML: &[u8] = include_bytes!("../../dist/stage/canvas-app.html");
+static APP_JAVASCRIPT: &[u8] = include_bytes!("../../dist/stage/app.module");
+static APP_STYLESHEET: &[u8] = include_bytes!("../../dist/stage/style.css");
+static APP_WASM: &[u8] = include_bytes!("../../dist/stage/app_bg.wasm");
 
-/// Browser artifact embedded into this native canvas build.
+static APP_ASSETS: [EmbeddedAsset; 4] = [
+    EmbeddedAsset::new("/", APP_HTML, "text/html; charset=utf-8"),
+    EmbeddedAsset::new(
+        "/app.module",
+        APP_JAVASCRIPT,
+        "text/javascript; charset=utf-8",
+    ),
+    EmbeddedAsset::new("/style.css", APP_STYLESHEET, "text/css; charset=utf-8"),
+    EmbeddedAsset::new("/app_bg.wasm", APP_WASM, "application/wasm"),
+];
+
+/// One exact browser asset compiled into the native canvas.
 #[derive(Clone, Copy)]
-pub struct EmbeddedApp {
+pub struct EmbeddedAsset {
+    path: &'static str,
     bytes: &'static [u8],
+    content_type: &'static str,
 }
 
-/// The exact staged app bytes compiled into this canvas.
-pub const EMBEDDED_APP: EmbeddedApp = EmbeddedApp { bytes: APP_BYTES };
+impl EmbeddedAsset {
+    const fn new(path: &'static str, bytes: &'static [u8], content_type: &'static str) -> Self {
+        Self {
+            path,
+            bytes,
+            content_type,
+        }
+    }
 
-impl EmbeddedApp {
-    /// Exact embedded bytes served by the loopback endpoint.
+    #[must_use]
+    pub const fn path(self) -> &'static str {
+        self.path
+    }
+
     #[must_use]
     pub const fn bytes(self) -> &'static [u8] {
         self.bytes
     }
 
-    /// Content identity under the same domain the distribution stage uses.
+    #[must_use]
+    pub const fn content_type(self) -> &'static str {
+        self.content_type
+    }
+
     #[must_use]
     pub fn digest(self) -> wire::Digest {
         wire::Digest::compute(wire::Domain::DistArtifact, self.bytes)
+    }
+}
+
+impl fmt::Debug for EmbeddedAsset {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EmbeddedAsset")
+            .field("path", &self.path)
+            .field("bytes", &self.bytes.len())
+            .field("content_type", &self.content_type)
+            .field("digest", &self.digest())
+            .finish()
+    }
+}
+
+/// Browser artifact embedded into this native canvas build.
+#[derive(Clone, Copy)]
+pub struct EmbeddedApp {
+    assets: &'static [EmbeddedAsset],
+}
+
+/// The exact staged app bytes compiled into this canvas.
+pub const EMBEDDED_APP: EmbeddedApp = EmbeddedApp {
+    assets: &APP_ASSETS,
+};
+
+impl EmbeddedApp {
+    /// Exact embedded bytes served by the loopback endpoint.
+    #[must_use]
+    pub const fn bytes(self) -> &'static [u8] {
+        self.assets[0].bytes
+    }
+
+    /// Content identity under the same domain the distribution stage uses.
+    #[must_use]
+    pub fn digest(self) -> wire::Digest {
+        self.assets[0].digest()
     }
 
     /// Media type for the fallback shell or an opaque staged bundle.
     #[must_use]
     pub fn content_type(self) -> &'static str {
-        if self
-            .bytes
-            .iter()
-            .copied()
-            .find(|byte| !byte.is_ascii_whitespace())
-            == Some(b'<')
-        {
-            "text/html; charset=utf-8"
-        } else {
-            "application/octet-stream"
-        }
+        self.assets[0].content_type
+    }
+
+    /// Every exact staged asset in its closed route order.
+    #[must_use]
+    pub const fn assets(self) -> &'static [EmbeddedAsset] {
+        self.assets
+    }
+
+    /// Resolve one exact route. Unknown paths have no shell fallback.
+    #[must_use]
+    pub fn asset(self, path: &str) -> Option<EmbeddedAsset> {
+        self.assets.iter().copied().find(|asset| asset.path == path)
     }
 }
 
@@ -50,7 +118,7 @@ impl fmt::Debug for EmbeddedApp {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("EmbeddedApp")
-            .field("bytes", &self.bytes.len())
+            .field("assets", &self.assets)
             .field("digest", &self.digest())
             .finish()
     }
@@ -174,6 +242,34 @@ mod tests {
         assert_eq!(
             EMBEDDED_APP.digest(),
             wire::Digest::compute(wire::Domain::DistArtifact, EMBEDDED_APP.bytes())
+        );
+    }
+
+    #[test]
+    fn embedded_routes_are_closed_typed_and_nonempty() {
+        assert_eq!(
+            EMBEDDED_APP
+                .assets()
+                .iter()
+                .map(|asset| (asset.path(), asset.content_type()))
+                .collect::<Vec<_>>(),
+            [
+                ("/", "text/html; charset=utf-8"),
+                ("/app.module", "text/javascript; charset=utf-8"),
+                ("/style.css", "text/css; charset=utf-8"),
+                ("/app_bg.wasm", "application/wasm"),
+            ]
+        );
+        assert!(
+            EMBEDDED_APP
+                .assets()
+                .iter()
+                .all(|asset| !asset.bytes().is_empty())
+        );
+        assert!(EMBEDDED_APP.asset("/missing").is_none());
+        assert!(
+            String::from_utf8_lossy(EMBEDDED_APP.bytes()).contains("/app_bg.wasm"),
+            "staged HTML does not load the embedded Wasm"
         );
     }
 

@@ -10,5 +10,5 @@ pub mod config;
 pub mod thread;
 pub mod view;
 
-pub use asset::{Discovery, EMBEDDED_APP, EmbeddedApp, PublishError};
+pub use asset::{Discovery, EMBEDDED_APP, EmbeddedApp, EmbeddedAsset, PublishError};
 pub use config::{Config, ConfigError};
