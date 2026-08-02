@@ -77,7 +77,7 @@ impl From<&wire::StreamFact> for FactRow {
 pub struct BoardView {
     /// Greatest durable position covered by every task head.
     pub cursor: Seq,
-    /// Current task-head bundles.
+    /// Current actor-facing task evidence bundles.
     pub tasks: Vec<BoardTask>,
     /// Current resident state.
     pub resident: wire::ResidentState,
@@ -85,9 +85,13 @@ pub struct BoardView {
 
 impl From<&BoardAnswer> for BoardView {
     fn from(answer: &BoardAnswer) -> Self {
+        let mut tasks = answer.tasks.clone();
+        for task in &mut tasks {
+            task.redact_hidden_title();
+        }
         Self {
             cursor: answer.cursor,
-            tasks: answer.tasks.clone(),
+            tasks,
             resident: answer.residency.body.state,
         }
     }
