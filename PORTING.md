@@ -12,22 +12,22 @@ never reads Python authority bytes.
 
 | Measure | Result |
 | --- | --- |
-| Installed Python registry | 123/123 paths have one disposition; 18 task-owned gaps; no unsupported deletions |
-| Rust contract registry | 68/68 leaves landed; no gaps or unaccounted leaves |
-| Rust process sweep | 136 text/JSON invocations; matching exits and streams; no placeholders |
-| Functional smoke | 45/45 process tests across lifecycle, control, evidence, and recovery |
+| Installed Python registry | 123/123 paths have one disposition; 4 task-owned gaps; no unsupported deletions |
+| Rust contract registry | 82/82 leaves landed; no gaps or unaccounted leaves |
+| Rust process sweep | 164 text/JSON invocations; matching exits and streams; no placeholders |
+| Functional smoke | 48/48 process tests across lifecycle, control, evidence, and recovery |
 | Coexistence | Two Rust generations; Python command, state, hooks, and hook path unchanged |
 
 The smoke set is `succession`, `coexistence`, `resident`, `steering`,
-`gate_cli`, `proof_cli`, `journal_cli`, and `task_artifact_cli`. It covers
-restart, control, evidence, and recovery. Python activation, agent/task status,
-and the live claim were exercised in the same worktree with separate authority.
+`gate_cli`, `proof_cli`, `journal_cli`, `session_cli`, and `task_artifact_cli`.
+It covers restart, control, evidence, session forensics, and recovery. Python
+activation, agent/task status, and the live claim were exercised in the same
+worktree with separate authority.
 
 Cutover remains blocked on three classes of risk:
 
-1. `FORENSI-1kJWS7G5`, `RECOVER-1kJWSHkc`,
-   `DEMO-1kJWSLwL`, `PARITY-1kJWSQ7W`,
-   and `PARITY-1kJWSV53` own retained predecessor behavior
+1. `RECOVER-1kJWSHkc`, `DEMO-1kJWSLwL`, `PARITY-1kJWSQ7W`, and
+   `PARITY-1kJWSV53` own retained predecessor behavior
    that is not yet executable in Rust. Until they land, the active Python
    hooks and command remain unchanged and the Python policy gate runs last in
    `cargo xtask verify`.
@@ -57,7 +57,7 @@ entrypoint, active hooks, or Python authority.
 
 ## Rust contracts
 
-The closed registry contains 68 leaves and all 68 have executable dispatch.
+The closed registry contains 82 leaves and all 82 have executable dispatch.
 `spice/src/cli.rs::landing` carries the same classification; its tests reject
 registry drift, and the process sweep rejects terminal release or resident
 placeholder outcomes.
@@ -66,6 +66,20 @@ placeholder outcomes.
 
 - `watch`
 - `retro`
+- `session`
+- `session briefing`
+- `session commands`
+- `session commits`
+- `session compactions`
+- `session messages`
+- `session phases`
+- `session slices`
+- `session summary`
+- `session sweep`
+- `session thread`
+- `session timeline`
+- `session tokens`
+- `session turns`
 - `doctor`
 - `version`
 - `install`
@@ -252,24 +266,24 @@ Each `study` path is D -> gate or verifier evidence, not a shipped verb.
 
 ### Session forensics
 
-The landed `watch`, `retro`, `recall`, and `thread` paths provide owned tape
-and journal foundations but do not yet answer every predecessor query. All
-`session` paths remain retained under `FORENSI-1kJWS7G5`.
+The Rust rim now reads immutable Codex and Claude transcript evidence directly,
+including gzip, ambient/thread discovery, compaction reconstruction, usage and
+tool accounting, deterministic residue, and bounded filtered projections.
 
-- `session`: P -> `FORENSI-1kJWS7G5`.
-- `session briefing`: P -> `FORENSI-1kJWS7G5`.
-- `session commands`: P -> `FORENSI-1kJWS7G5`.
-- `session commits`: P -> `FORENSI-1kJWS7G5`.
-- `session compactions`: P -> `FORENSI-1kJWS7G5`.
-- `session messages`: P -> `FORENSI-1kJWS7G5`.
-- `session phases`: P -> `FORENSI-1kJWS7G5`.
-- `session slices`: P -> `FORENSI-1kJWS7G5`.
-- `session summary`: P -> `FORENSI-1kJWS7G5`.
-- `session sweep`: P -> `FORENSI-1kJWS7G5`.
-- `session thread`: P -> `FORENSI-1kJWS7G5`.
-- `session timeline`: P -> `FORENSI-1kJWS7G5`.
-- `session tokens`: P -> `FORENSI-1kJWS7G5`.
-- `session turns`: P -> `FORENSI-1kJWS7G5`.
+- `session`: R -> `rim::session_briefing`.
+- `session briefing`: R -> `rim::session_briefing`.
+- `session commands`: R -> `rim::session_commands`.
+- `session commits`: R -> `rim::session_commits`.
+- `session compactions`: R -> `rim::session_compactions`.
+- `session messages`: R -> `rim::session_messages`.
+- `session phases`: R -> `rim::session_phases`.
+- `session slices`: R -> `rim::session_slices`.
+- `session summary`: R -> `rim::session_summary`.
+- `session sweep`: R -> `rim::session_sweep`.
+- `session thread`: R -> `rim::session_thread`.
+- `session timeline`: R -> `rim::session_timeline`.
+- `session tokens`: R -> `rim::session_tokens`.
+- `session turns`: R -> `rim::session_turns`.
 
 ### Task plane
 

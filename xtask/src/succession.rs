@@ -647,7 +647,7 @@ mod tests {
         );
         assert_eq!(
             report.python.pending_paths.len(),
-            18,
+            4,
             concat!(
                 "native Git hooks, task capture, and task artifacts must leave only ",
                 "the remaining pending parity paths",
