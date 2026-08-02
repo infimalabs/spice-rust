@@ -6,7 +6,7 @@ use gate::metrics::{
     EvidenceState, LatchBinding, MagicFinding, MetricEvidence, MetricId, MetricKey,
     MetricMeasurement, MetricParity, MetricReport, MetricStateBinding, MetricUnit, ParseError,
     ParserEvidence, ParserId, ParserMode, PredecessorMetricObservation, PredecessorMetricResult,
-    RuleBinding, STRUCTURAL_ARMS, STRUCTURAL_METRICS, StructuralArmEvidence,
+    ResolvedMetricRule, RuleBinding, STRUCTURAL_ARMS, STRUCTURAL_METRICS, StructuralArmEvidence,
     compare_predecessor_metric, measure_file_shape, measure_repository_document, parse_lizard_csv,
     resolve_magic_metric, resolve_metric_rule, scan_magic_regressions, scan_markdown_link_case,
 };
@@ -95,6 +95,98 @@ fn declarations_freeze_ids_units_parsers_scopes_and_order() {
             .exclusions()
             .contains(&"repository-truth documents")
     );
+}
+
+#[test]
+fn measured_parser_evidence_binds_mode_tool_version_and_executable_identity() {
+    let policy = migrate_predecessor_policy("fixtures/metrics.toml", SCOPED_POLICY)
+        .expect("predecessor policy migrates once");
+    let complexity_rule = resolve_metric_rule(
+        &policy,
+        MetricId::RoutineCcn,
+        &PolicyContext::new().with_path("src/app.rs"),
+    )
+    .expect("complexity rule resolves");
+    let complexity_key = MetricKey::function("src/app.rs", "run").unwrap();
+
+    for parser in [
+        ParserEvidence::Native {
+            parser: ParserId::LizardCsvV1,
+        },
+        ParserEvidence::External {
+            parser: ParserId::LizardCsvV1,
+            tool: "python-lizard".to_owned(),
+            version: "1.23.0".to_owned(),
+            executable_digest: "sha256:fixture".to_owned(),
+        },
+        ParserEvidence::External {
+            parser: ParserId::LizardCsvV1,
+            tool: "lizard".to_owned(),
+            version: "1.24.0".to_owned(),
+            executable_digest: "sha256:fixture".to_owned(),
+        },
+        ParserEvidence::External {
+            parser: ParserId::LizardCsvV1,
+            tool: "lizard".to_owned(),
+            version: "1.23.0".to_owned(),
+            executable_digest: String::new(),
+        },
+    ] {
+        assert_parser_refused_by_both(
+            MetricId::RoutineCcn,
+            complexity_key.clone(),
+            5,
+            "routine_ccn",
+            parser,
+            &complexity_rule,
+        );
+    }
+
+    let file_rule = resolve_metric_rule(
+        &policy,
+        MetricId::FileLines,
+        &PolicyContext::new().with_path("src/app.rs"),
+    )
+    .expect("file rule resolves");
+    assert_parser_refused_by_both(
+        MetricId::FileLines,
+        MetricKey::path("src/app.rs").unwrap(),
+        12,
+        "file_loc",
+        ParserEvidence::External {
+            parser: ParserId::Utf8FileShapeV1,
+            tool: "lizard".to_owned(),
+            version: "1.23.0".to_owned(),
+            executable_digest: "sha256:fixture".to_owned(),
+        },
+        &file_rule,
+    );
+
+    let pinned = ParserEvidence::External {
+        parser: ParserId::LizardCsvV1,
+        tool: "lizard".to_owned(),
+        version: "1.23.0".to_owned(),
+        executable_digest: "sha256:fixture".to_owned(),
+    };
+    MetricEvidence::new(
+        MetricId::RoutineCcn,
+        complexity_key.clone(),
+        EvidenceState::measured(bounded_measurement_with_parser(
+            MetricId::RoutineCcn,
+            5,
+            "routine_ccn",
+            pinned.clone(),
+        )),
+    )
+    .expect("the exact declared lizard evidence is measured");
+    MetricStateBinding::new(
+        MetricId::RoutineCcn,
+        complexity_key,
+        5,
+        pinned,
+        complexity_rule,
+    )
+    .expect("the exact declared lizard evidence enters state binding");
 }
 
 #[test]
@@ -691,14 +783,6 @@ fn bounded_measurement(metric: MetricId, value: u64, field: &str) -> MetricMeasu
         MetricId::RepositoryDocumentCharacters => ParserId::Utf8DocumentCharactersV1,
         _ => unreachable!("fixture helper only builds bounded measurements"),
     };
-    let kind = match metric {
-        MetricId::FileLines => "file_loc",
-        MetricId::FileBytes => "file_bytes",
-        MetricId::RoutineCcn => "complexity_ccn",
-        MetricId::RoutineLength => "complexity_length",
-        MetricId::RepositoryDocumentCharacters => "repo_doc_chars",
-        _ => unreachable!("fixture helper only builds bounded measurements"),
-    };
     let parser = if parser == ParserId::LizardCsvV1 {
         ParserEvidence::External {
             parser,
@@ -708,6 +792,23 @@ fn bounded_measurement(metric: MetricId, value: u64, field: &str) -> MetricMeasu
         }
     } else {
         ParserEvidence::Native { parser }
+    };
+    bounded_measurement_with_parser(metric, value, field, parser)
+}
+
+fn bounded_measurement_with_parser(
+    metric: MetricId,
+    value: u64,
+    field: &str,
+    parser: ParserEvidence,
+) -> MetricMeasurement {
+    let kind = match metric {
+        MetricId::FileLines => "file_loc",
+        MetricId::FileBytes => "file_bytes",
+        MetricId::RoutineCcn => "complexity_ccn",
+        MetricId::RoutineLength => "complexity_length",
+        MetricId::RepositoryDocumentCharacters => "repo_doc_chars",
+        _ => unreachable!("fixture helper only builds bounded measurements"),
     };
     MetricMeasurement::new(value, parser)
         .with_rule(
@@ -736,6 +837,32 @@ fn bounded_measurement(metric: MetricId, value: u64, field: &str) -> MetricMeasu
             )
             .unwrap(),
         )
+}
+
+fn assert_parser_refused_by_both(
+    metric: MetricId,
+    key: MetricKey,
+    value: u64,
+    field: &str,
+    parser: ParserEvidence,
+    rule: &ResolvedMetricRule,
+) {
+    let evidence_error = MetricEvidence::new(
+        metric,
+        key.clone(),
+        EvidenceState::measured(bounded_measurement_with_parser(
+            metric,
+            value,
+            field,
+            parser.clone(),
+        )),
+    )
+    .expect_err("mismatched parser evidence cannot become metric evidence");
+    assert!(evidence_error.to_string().contains("parser evidence"));
+
+    let binding_error = MetricStateBinding::new(metric, key, value, parser, rule.clone())
+        .expect_err("mismatched parser evidence cannot enter state binding");
+    assert!(binding_error.to_string().contains("parser evidence"));
 }
 
 fn measured_evidence(metric: MetricId) -> MetricEvidence {
