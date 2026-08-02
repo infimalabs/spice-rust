@@ -424,6 +424,108 @@ mod tests {
     }
 
     #[test]
+    fn document_ledgers_keep_hidden_titles_actor_facing_and_public_bytes_stable() {
+        let (root, bus, epoch, seats) = fixture("hidden-ledger", 1);
+        let secret = "secret document ledger details";
+        let hidden = add_project_with_kind(
+            &bus,
+            epoch,
+            Actor::Operator,
+            CommandKind::TaskSystemAdd,
+            (
+                "HIDDEN-ledger1",
+                secret,
+                ".oops.correctness",
+                Some("todo"),
+            ),
+        );
+        let public = add_project(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "PUBLIC-ledger1",
+            "Visible document ledger",
+            "board.visibility",
+            Some("todo"),
+        );
+
+        let mut public_ledgers = Vec::new();
+        for actor in [Actor::Operator, Actor::Lane(seats[0].lane)] {
+            let actor_board = board(&bus, epoch, actor.clone());
+            let retained_hidden = actor_board
+                .tasks
+                .iter()
+                .find(|task| task.statement.body.handle == hidden)
+                .expect("actor retains hidden board row")
+                .statement
+                .body
+                .handle
+                .clone();
+            let hidden_ledger = issue(
+                &bus,
+                epoch,
+                actor.clone(),
+                CommandKind::DocLedger,
+                Vec::new(),
+                &DocLedger {
+                    task: retained_hidden,
+                },
+            );
+            let Outcome::Reply(Reply {
+                body: CommandAnswer::Text(ref answer),
+                ..
+            }) = hidden_ledger
+            else {
+                panic!("hidden ledger was not a text snapshot: {hidden_ledger:?}");
+            };
+            assert_eq!(answer.text, "# Hidden task\nFlow: todo\n");
+            for form in [crate::render::Form::Text, crate::render::Form::Json] {
+                let document = crate::render::render(&hidden_ledger, form)
+                    .expect("hidden ledger renders")
+                    .document()
+                    .to_vec();
+                let document = String::from_utf8(document).expect("ledger rendering is UTF-8");
+                assert!(!document.contains(secret), "{form:?} leaked hidden title");
+                assert!(
+                    document.contains("Hidden task"),
+                    "{form:?} omitted actor-facing title"
+                );
+            }
+
+            let retained_public = actor_board
+                .tasks
+                .iter()
+                .find(|task| task.statement.body.handle == public)
+                .expect("actor retains public board row")
+                .statement
+                .body
+                .handle
+                .clone();
+            let public_ledger = issue(
+                &bus,
+                epoch,
+                actor,
+                CommandKind::DocLedger,
+                Vec::new(),
+                &DocLedger {
+                    task: retained_public,
+                },
+            );
+            let Outcome::Reply(Reply {
+                body: CommandAnswer::Text(answer),
+                ..
+            }) = public_ledger
+            else {
+                panic!("public ledger was not a text snapshot: {public_ledger:?}");
+            };
+            assert_eq!(answer.text.as_bytes(), b"# Visible document ledger\nFlow: todo\n");
+            public_ledgers.push(answer.text);
+        }
+        assert_eq!(public_ledgers[0], public_ledgers[1]);
+        clean(&root, bus);
+    }
+
+    #[test]
     fn manual_hidden_creation_is_zero_write_and_system_routes_are_explicit() {
         let (root, bus, epoch, seats) = fixture("hidden-creation", 1);
         let lane = Actor::Lane(seats[0].lane);
