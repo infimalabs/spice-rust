@@ -11,7 +11,9 @@ use gate::metrics::{
     resolve_magic_metric, resolve_metric_rule, scan_magic_regressions, scan_markdown_link_case,
 };
 use gate::state::{ActorInputs, CurrentState, LatchKind, PredecessorSources, RenameMap};
-use gate::{GateId, PolicyContext, RulePolicy, migrate_predecessor_policy};
+use gate::{
+    GateId, PREDECESSOR_GATE_RELEASE, PolicyContext, RulePolicy, migrate_predecessor_policy,
+};
 
 const EXISTING_MAGIC_VALUE: u64 = 75;
 const FIXTURE_BASE_LIMIT: u64 = 1_000;
@@ -209,9 +211,22 @@ fn native_file_and_document_parsers_preserve_predecessor_counts() {
             "separator {separator:?}"
         );
     }
-    let replaced = measure_file_shape("src/replaced.rs", b"a\xffb\nc")
-        .expect("invalid non-NUL UTF-8 follows predecessor replacement decoding");
-    assert_eq!((replaced.lines(), replaced.bytes()), (2, 5));
+    let invalid = measure_file_shape("src/invalid.rs", b"a\xffb\nc")
+        .expect_err("the predecessor excludes invalid UTF-8 source blobs");
+    assert!(matches!(
+        invalid,
+        ParseError::Unsupported {
+            ref source_field,
+            ref recovery,
+            ..
+        } if source_field == "policy.file_shape.source_suffixes"
+            && recovery.contains("encode it as UTF-8")
+    ));
+    assert!(matches!(
+        invalid.into_evidence_state(),
+        EvidenceState::Unsupported { owning_release, .. }
+            if owning_release == PREDECESSOR_GATE_RELEASE
+    ));
     assert_eq!(
         measure_file_shape("src/empty.rs", b"")
             .expect("empty text is measured, not omitted")
