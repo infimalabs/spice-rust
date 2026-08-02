@@ -6,6 +6,23 @@ use crate::envelope::{Actor, WireVersion};
 use crate::ident::CanonicalUuid;
 use crate::reply::{Fault, FaultClass, Refusal};
 
+/// Same-origin bootstrap for one embedded operator canvas.
+///
+/// The browser obtains this current generation document from the loopback
+/// origin that served its exact embedded assets, then presents the capability
+/// only inside [`Hello`]. It is not a durable discovery file and carries no
+/// historical or fallback endpoint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanvasBootstrap {
+    /// Current loopback HTTP origin and no other endpoint.
+    pub endpoint: String,
+    /// Operator capability for the immediately following opening.
+    pub capability: CanonicalUuid,
+    /// Resident generation the endpoint and capability address.
+    pub epoch: CanonicalUuid,
+}
+
 /// The first frame of every socket.
 ///
 /// All three fields are required. The socket keeps a current-version-only
