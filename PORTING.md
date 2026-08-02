@@ -24,12 +24,23 @@ exercised in the same worktree with separate authority.
 
 Cutover remains blocked on three risks:
 
-1. `HOOKS-1kJQnmG8` must land native hooks; until then the active Python hook
-   remains unchanged and its policy gate runs last in `cargo xtask verify`.
+1. `AUDIT-1kJWNFH0` must re-evaluate every claimed clean-break removal against
+   full predecessor parity, including the task-boundary Git successor tracked
+   by `GIT-1kJWMPvF`.
 2. The clean break has no Python migration; the operator must approve a
    predecessor backup/export and an empty Rust authority.
 3. Installed entrypoint selection and rollback still require an operator-run
    cutover rehearsal and explicit authorization.
+
+The version-three Rust install plan publishes executable `pre-commit`,
+`commit-msg`, and `reference-transaction` artifacts beneath
+`.spice/rust/git-hooks`. The first invokes only the canonical verifier; the
+second preserves current commit-message hygiene and additionally enforces the
+frozen `Spice-Origin` v1 grammar; the third preserves the independent guard
+against abandoning commits already merged into the current branch's upstream.
+Git remains on the Python-owned `.spice/hooks` path until the operator
+explicitly runs `scripts/install-hooks.sh`, which activates the complete Rust
+namespace.
 
 ## Rust coexistence
 
@@ -167,13 +178,13 @@ and `X` clean-break removal. A pending owner is a cutover risk, not a fallback.
 ### Development gates
 
 - `dev`: D -> `gate`, `proof`, and `cargo xtask verify`.
-- `dev commit-msg`: D -> pending native hook (`HOOKS-1kJQnmG8`).
+- `dev commit-msg`: D -> installer-owned `cargo xtask commit-msg` hook.
 - `dev doctor`: R -> `doctor`.
-- `dev install-hooks`: D -> `install` plus pending native hooks.
+- `dev install-hooks`: D -> `install` plus operator-run `scripts/install-hooks.sh` cutover.
 - `dev pre-commit`: D -> `gate` plus the canonical verifier.
 - `dev pytest`: D -> workspace tests in the canonical verifier.
 - `dev python-typecheck`: X -> strict Rust linting and tests.
-- `dev reference-transaction`: X -> Git publication behavior removed.
+- `dev reference-transaction`: D -> installer-owned `cargo xtask reference-transaction` hook.
 - `dev serve-web-typecheck`: D -> verifier Wasm check.
 - `dev serve-web-types`: X -> shared Rust wire types.
 
@@ -252,7 +263,7 @@ All `session` paths are X as commands. Their retained questions use `watch`,
 - `task artifact list`: X -> `journal` task-origin facts.
 - `task artifact prune`: X -> immutable evidence has no prune verb.
 - `task artifact show`: X -> `journal` plus `thread`.
-- `task capture`: X -> Git publication remains operator-owned.
+- `task capture`: R -> pending native task-boundary Git publication (`GIT-1kJWMPvF`).
 - `task claim`: R -> allocator-owned `task next`.
 - `task delete`: D -> authored `doc` correction.
 - `task depends`: R -> `task depends`.

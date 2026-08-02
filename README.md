@@ -2,18 +2,33 @@
 
 ## Development hooks
 
-Install the tracked hooks once per checkout or linked worktree:
+During coexistence, Git remains configured to the Python-owned `.spice/hooks`
+directory. A digest-bound Rust install publishes inactive `pre-commit`,
+`commit-msg`, and `reference-transaction` artifacts under
+`.spice/rust/git-hooks` without changing those active files or
+`core.hooksPath`.
+
+At an explicitly authorized hook cutover, preview and apply the current Rust
+install plan, then activate its exact hook directory once per checkout or
+linked worktree:
 
 ```sh
+cargo run --locked -p spice -- install
+cargo run --locked -p spice -- install --apply=DIGEST_FROM_PREVIEW
 ./scripts/install-hooks.sh
 ```
 
-During coexistence the active pre-commit hook remains Python-owned and invokes
-`spice dev pre-commit`. The canonical Rust verifier runs that installed policy
-gate after formatting, Clippy, native and browser-target builds, deterministic
-app verification, workspace tests, doctests, and the machine-readable
-succession-readiness check. It prints each command before execution and names
-the first command and exit status when verification fails.
+The activation script refuses unless all three native hooks are executable. The
+native pre-commit hook runs the canonical Rust verifier, which performs
+formatting, Clippy, native and browser-target builds, deterministic app
+verification, workspace tests, doctests, the machine-readable
+succession-readiness check, and the still-installed Python policy gate during
+coexistence. It prints each command before execution and names the first
+command and exit status when verification fails. The native commit-msg hook
+preserves the current fixed message-hygiene law and additionally requires every
+committed `Spice-Origin` line to use the exact v1 grammar. The native
+reference-transaction hook refuses a current-branch update that would abandon
+commits already merged into its upstream.
 
 ## Workspace verification
 

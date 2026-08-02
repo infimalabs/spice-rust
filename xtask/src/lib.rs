@@ -7,7 +7,40 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod commit_message;
+mod reference_transaction;
 mod succession;
+
+pub use commit_message::{CommitMessageError, WRAP_LIMIT as COMMIT_MESSAGE_WRAP_LIMIT};
+pub use reference_transaction::ReferenceTransactionError;
+
+/// Apply the repository's native commit-message law to one Git message file.
+///
+/// The boolean answer says whether long body prose was folded in place.
+///
+/// # Errors
+///
+/// Returns an I/O failure or the first commit-message policy refusal.
+pub fn commit_message(path: &Path) -> Result<bool, CommitMessageError> {
+    commit_message::apply(path)
+}
+
+/// Guard a Git reference transaction from abandoning upstream-merged commits.
+///
+/// States other than `prepared` are intentionally inert, as required by Git's
+/// reference-transaction hook protocol.
+///
+/// # Errors
+///
+/// Returns malformed hook input, Git execution failure, or a protected-history
+/// refusal.
+pub fn reference_transaction(
+    repository: &Path,
+    state: &OsStr,
+    input: &str,
+) -> Result<(), ReferenceTransactionError> {
+    reference_transaction::apply(repository, state, input)
+}
 
 /// The target the browser app is compiled for.
 ///

@@ -239,11 +239,12 @@ fn installed_python_registry_and_ledger_dispositions_are_bijective() {
 enum PythonTaskDisposition {
     Landed(&'static [&'static str]),
     Later(&'static str),
+    Pending(&'static str),
 }
 
 #[test]
 fn every_python_task_control_has_one_tested_current_disposition() {
-    use PythonTaskDisposition::{Landed, Later};
+    use PythonTaskDisposition::{Landed, Later, Pending};
 
     let mappings = [
         ("task", Landed(&["board"])),
@@ -265,10 +266,7 @@ fn every_python_task_control_has_one_tested_current_disposition() {
             "task artifact show",
             Later("Task-addressed sidecar artifacts"),
         ),
-        (
-            "task capture",
-            Later("Task-boundary Git publication and capture"),
-        ),
+        ("task capture", Pending("GIT-1kJWMPvF")),
         ("task claim", Landed(&["task", "next"])),
         ("task delete", Landed(&["doc"])),
         ("task depends", Landed(&["task", "depends"])),
@@ -338,6 +336,10 @@ fn every_python_task_control_has_one_tested_current_disposition() {
                         .is_some_and(|(surface, _)| surface == boundary)
                 }),
                 "Python `{python}` names an absent LATER.md boundary: {boundary}",
+            ),
+            Pending(owner) => assert!(
+                task_plane.contains(&format!("`{owner}`")),
+                "Python `{python}` does not name its pending owner `{owner}`",
             ),
         }
     }

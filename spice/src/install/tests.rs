@@ -35,6 +35,9 @@ fn planning_is_canonical_digest_bound_and_side_effect_free() {
             .collect::<Vec<_>>(),
         [
             Asset::Exclusions,
+            Asset::GitPreCommit,
+            Asset::GitCommitMessage,
+            Asset::GitReferenceTransaction,
             Asset::HookEntry,
             Asset::HookStatic,
             Asset::Skill,
@@ -43,6 +46,9 @@ fn planning_is_canonical_digest_bound_and_side_effect_free() {
     );
     assert_eq!(fs::read(scratch.exclude()).unwrap(), b"# local ignore\n");
     assert!(!record_path(&repository).unwrap().exists());
+    assert!(!scratch.join(GIT_PRE_COMMIT_PATH).exists());
+    assert!(!scratch.join(GIT_COMMIT_MESSAGE_PATH).exists());
+    assert!(!scratch.join(GIT_REFERENCE_TRANSACTION_PATH).exists());
     assert!(!scratch.join(ENTRY_PATH).exists());
     assert!(!scratch.join(SKILL_PATH).exists());
 }
@@ -70,6 +76,27 @@ fn apply_is_idempotent_preserves_python_and_unapply_is_exact() {
     assert_eq!(first, repeated);
     assert_eq!(installed_images, images(&repository, repeated.plan()));
     assert_eq!(fs::read(&python).unwrap(), before_python);
+    assert_eq!(
+        fs::read_to_string(scratch.join(GIT_PRE_COMMIT_PATH)).unwrap(),
+        GIT_PRE_COMMIT
+    );
+    assert_eq!(
+        fs::read_to_string(scratch.join(GIT_COMMIT_MESSAGE_PATH)).unwrap(),
+        GIT_COMMIT_MESSAGE
+    );
+    assert_eq!(
+        fs::read_to_string(scratch.join(GIT_REFERENCE_TRANSACTION_PATH)).unwrap(),
+        GIT_REFERENCE_TRANSACTION
+    );
+    assert_eq!(mode(&scratch.join(GIT_PRE_COMMIT_PATH)), EXECUTABLE_MODE);
+    assert_eq!(
+        mode(&scratch.join(GIT_COMMIT_MESSAGE_PATH)),
+        EXECUTABLE_MODE
+    );
+    assert_eq!(
+        mode(&scratch.join(GIT_REFERENCE_TRANSACTION_PATH)),
+        EXECUTABLE_MODE
+    );
     assert_eq!(run(&python), b"python-harness\n");
     assert_eq!(run(&scratch.join(BINARY_PATH)), b"rust-appliance\n");
     assert!(
@@ -184,16 +211,26 @@ fn apply_resumes_a_write_interrupted_before_progress_publication() {
 
 #[test]
 fn unapply_resumes_a_write_interrupted_before_progress_publication() {
+    const INTERRUPTION: usize = 2;
+
     let scratch = Scratch::new("unapply-resume");
     let repository = scratch.repository();
     let planned = plan(&repository, None).unwrap();
     apply(&repository, None, &planned.digest().unwrap()).unwrap();
 
-    let error = unapply_with_interruption(&repository, Some(2)).unwrap_err();
-    assert!(matches!(error, InstallError::Interrupted { operation: 2 }));
+    let error = unapply_with_interruption(&repository, Some(INTERRUPTION)).unwrap_err();
+    assert!(matches!(
+        error,
+        InstallError::Interrupted {
+            operation: INTERRUPTION
+        }
+    ));
     let interrupted = read_record(&repository).unwrap().unwrap().record;
     assert_eq!(interrupted.status, InstallStatus::Unapplying);
-    assert_eq!(interrupted.completed, 1);
+    assert_eq!(
+        interrupted.completed,
+        planned.operations().len() - 1 - INTERRUPTION
+    );
     assert_eq!(
         plan(&repository, None).unwrap().digest().unwrap(),
         planned.digest().unwrap()
