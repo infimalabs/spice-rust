@@ -187,7 +187,7 @@ pub(crate) fn up() -> Outcome<()> {
     up_from(&current)
 }
 
-fn up_from(current: &Path) -> Outcome<()> {
+pub(crate) fn up_from(current: &Path) -> Outcome<()> {
     let repository = match Repository::discover(current) {
         Ok(repository) => repository,
         Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
@@ -317,7 +317,7 @@ pub(crate) fn down(contract: &crate::cli::Contract) -> Outcome<()> {
     down_from(&current, contract)
 }
 
-fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outcome<()> {
+pub(crate) fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outcome<()> {
     let repository = match Repository::discover(current) {
         Ok(repository) => repository,
         Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),

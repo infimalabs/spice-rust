@@ -50,7 +50,6 @@ authorization is a deployment gate, not deletion authority.
 | Source-text UI tests | Landed through shared typed fixtures and rendered browser tests that preserve the tested outcomes. |
 | Vendor files as citations | Landed through owned tape bytes and stable loci; vendor paths remain discovery inputs, not mutable evidence. |
 | Session forensics (`spice session`) | Landed through typed Rust queries over bounded immutable Codex and Claude transcript evidence, including discovery, gzip, filters, compaction windows, accounting, and explicit residue/refusal recovery. |
-| `spice demo` | Pending on `DEMO-1kJWSLwL` for the zero-setup seeded repository, transcript, lane, and canvas lifecycle. |
 | `spice agent import` | Landed as `lane import`: one vacant team seat moves to a linked worktree only after predecessor lineage and taped session authority are re-proved, with a sole active claim carried atomically to the successor. |
 | Agent-to-agent messaging | Landed as the predecessor's coordination outcome through board state, directives, facts, and repository evidence; no private transport was an independent authority. |
 | Multi-user authority | Landed at the predecessor's effective boundary: one operator capability with attributed lanes and teams, not independent human principals. |

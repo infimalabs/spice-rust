@@ -647,11 +647,8 @@ mod tests {
         );
         assert_eq!(
             report.python.pending_paths.len(),
-            1,
-            concat!(
-                "native Git hooks, task capture, and task artifacts must leave only ",
-                "the remaining pending parity paths",
-            ),
+            0,
+            "recovery and demo successors must leave no pending installed Python path",
         );
         assert!(
             report

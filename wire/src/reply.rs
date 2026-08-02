@@ -171,6 +171,31 @@ pub struct CanvasOpen {
     pub epoch: CanonicalUuid,
 }
 
+/// Deterministic environment and lifecycle receipt returned by `spice demo`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DemoAnswer {
+    /// Canonical disposable repository root.
+    pub root: String,
+    /// Canned transcript seeded beneath the repository root.
+    pub transcript: String,
+    /// Whether this invocation only seeded or also opened the canvas.
+    pub mode: String,
+    /// Whether the root remains available or was removed after clean canvas shutdown.
+    pub lifecycle: String,
+    /// Exact loopback origin opened for canvas mode.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub endpoint: Option<String>,
+    /// Shell-safe command that opens this exact seeded root.
+    pub launch_command: String,
+    /// Shell-safe command that removes this exact disposable root.
+    pub remove_command: String,
+}
+
 /// Authenticated identities and replay counts for one offline restore bundle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

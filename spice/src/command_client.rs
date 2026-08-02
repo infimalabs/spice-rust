@@ -26,9 +26,11 @@ mod mapping;
 mod steering;
 mod typed;
 
+#[cfg(test)]
+use browser::browser_command;
 pub(crate) use browser::open_canvas;
 #[cfg(test)]
-use browser::{browser_command, open_canvas_with};
+pub(crate) use browser::open_canvas_with;
 pub(crate) use steering::execute_steering;
 pub(crate) use typed::execute_typed;
 #[cfg(test)]

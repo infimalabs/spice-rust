@@ -12,21 +12,22 @@ never reads Python authority bytes.
 
 | Measure | Result |
 | --- | --- |
-| Installed Python registry | 123/123 paths have one disposition; 1 task-owned gap; no unsupported deletions |
-| Rust contract registry | 86/86 leaves landed; no gaps or unaccounted leaves |
-| Rust process sweep | 172 text/JSON invocations; matching exits and streams; no placeholders |
-| Functional smoke | 48/48 process tests across lifecycle, control, evidence, and recovery |
+| Installed Python registry | 123/123 paths have one disposition; no task-owned gaps or unsupported deletions |
+| Rust contract registry | 87/87 leaves landed; no gaps or unaccounted leaves |
+| Rust process sweep | 174 text/JSON invocations; matching exits and streams; no placeholders |
+| Functional smoke | 59/59 process tests across lifecycle, control, evidence, and recovery |
 | Coexistence | Two Rust generations; Python command, state, hooks, and hook path unchanged |
 
-The smoke set is `succession`, `coexistence`, `resident`, `steering`,
-`gate_cli`, `proof_cli`, `journal_cli`, `session_cli`, and `task_artifact_cli`.
+The smoke set is `succession`, `coexistence`, `demo_cli`, `resident`,
+`steering`, `gate_cli`, `proof_cli`, `journal_cli`, `session_cli`, and
+`task_artifact_cli`.
 It covers restart, control, evidence, session forensics, and recovery. Python
 activation, agent/task status, and the live claim were exercised in the same
 worktree with separate authority.
 
 Cutover remains blocked on three classes of risk:
 
-1. `DEMO-1kJWSLwL`, `PARITY-1kJWSQ7W`, and `PARITY-1kJWSV53` own retained predecessor behavior
+1. `PARITY-1kJWSQ7W` and `PARITY-1kJWSV53` own retained predecessor behavior
    that is not yet executable in Rust. Until they land, the active Python
    hooks and command remain unchanged and the Python policy gate runs last in
    `cargo xtask verify`.
@@ -56,13 +57,14 @@ entrypoint, active hooks, or Python authority.
 
 ## Rust contracts
 
-The closed registry contains 86 leaves and all 86 have executable dispatch.
+The closed registry contains 87 leaves and all 87 have executable dispatch.
 `spice/src/cli.rs::landing` carries the same classification; its tests reject
 registry drift, and the process sweep rejects terminal release or resident
 placeholder outcomes.
 
 ### Landed
 
+- `demo`
 - `watch`
 - `retro`
 - `session`
@@ -200,7 +202,7 @@ risk, not a fallback.
 ### Installation, locks, and health
 
 - `deinit`: D -> `install --unapply` plus `down`.
-- `demo`: P -> `DEMO-1kJWSLwL` for the zero-setup seeded canvas environment.
+- `demo`: R -> Rust `demo` seeds and opens the isolated native canvas environment.
 - `doctor`: R -> `doctor`.
 - `init`: D -> `install` plus `up`.
 - `lock`: D -> Rust `lock` family.
