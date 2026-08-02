@@ -93,6 +93,13 @@ impl From<&BoardAnswer> for BoardView {
     }
 }
 
+impl BoardView {
+    /// Pending public work only; hidden rows remain in `tasks` as evidence.
+    pub fn active_public_tasks(&self) -> impl Iterator<Item = &BoardTask> {
+        self.tasks.iter().filter(|task| task.is_active_public())
+    }
+}
+
 /// Lane snapshot fields used by the canvas, excluding capabilities and session
 /// authority.
 #[derive(Clone, PartialEq, Eq)]

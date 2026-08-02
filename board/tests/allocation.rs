@@ -30,9 +30,20 @@ fn handle(text: &str) -> TaskHandle {
     text.parse().expect("fixture handle")
 }
 
+fn projects() -> board::ProjectPolicy {
+    board::ProjectPolicy::new(
+        ["board".to_owned()],
+        Vec::new(),
+        dialect::PROJECT_MIN_DEPTH as u64,
+        dialect::PROJECT_MAX_DEPTH as u64,
+    )
+    .expect("fixture project policy")
+}
+
 fn request(command: u8) -> Request {
     let lane = uuid(20);
     Request {
+        projects: projects(),
         command: uuid(command),
         actor: Actor::Lane(lane),
         lane,
@@ -131,6 +142,67 @@ fn fixture(path: Option<&Path>, with_residency: bool) -> Journal {
     journal
 }
 
+fn append_hidden(journal: &mut Journal) -> TaskHandle {
+    let task = handle("HIDDEN-z9");
+    let origin = "task:HIDDEN-root"
+        .parse::<Origin>()
+        .expect("fixture origin");
+    let flow = workflow();
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        origin.clone(),
+        instant(1),
+        Producer::CommandDoor,
+    );
+    let fact = write
+        .fact(
+            body::TaskAdded {
+                task: task.clone(),
+                uuid: uuid(3),
+                title: "Retain hidden evidence".to_owned(),
+                project: ".maxim_proposal.theme_2".to_owned(),
+                tags: vec!["priority:critical".to_owned()],
+                depends: Vec::new(),
+                flow: flow.flow.clone(),
+                phase: flow.phase.clone(),
+                revision: 1,
+            },
+            FactCause::Root,
+        )
+        .expect("hidden task fact");
+    let statement_task = task.clone();
+    write.task_head(fact, move |position| TaskHead {
+        handle: statement_task,
+        uuid: uuid(3),
+        title: "Retain hidden evidence".to_owned(),
+        project: ".maxim_proposal.theme_2".to_owned(),
+        tags: vec!["priority:critical".to_owned()],
+        dependencies: Vec::new(),
+        provenance: origin,
+        revision: position,
+    });
+    write.workflow_head(task.clone(), fact, move |_| flow);
+    journal.apply(write).expect("seed hidden task");
+    task
+}
+
+#[test]
+fn journal_allocator_never_claims_hidden_rows_even_at_higher_urgency() {
+    let mut journal = fixture(None, true);
+    let hidden = append_hidden(&mut journal);
+
+    let won = win(&mut journal, request(30)).expect("public allocator winner");
+    assert_eq!(won.task(), &handle("BOARD-a1"));
+    let snapshot = Snapshot::read(&journal, &projects()).expect("mixed snapshot");
+    let hidden = snapshot
+        .entries()
+        .iter()
+        .find(|entry| entry.statement().handle == hidden)
+        .expect("hidden row retained");
+    assert!(hidden.project().visibility().is_hidden());
+    assert!(hidden.claim().is_none());
+}
+
 #[test]
 fn allocator_claims_in_deterministic_order_and_never_claims_twice() {
     let mut journal = fixture(None, true);
@@ -150,7 +222,7 @@ fn allocator_claims_in_deterministic_order_and_never_claims_twice() {
             .expect("duplicate receipt rolls back"),
         before_fault
     );
-    let after_fault = Snapshot::read(&journal).expect("board after rolled-back claim");
+    let after_fault = Snapshot::read(&journal, &projects()).expect("board after rolled-back claim");
     assert!(
         after_fault
             .entries()
@@ -173,7 +245,7 @@ fn allocator_claims_in_deterministic_order_and_never_claims_twice() {
     let after_empty = journal.fact_snapshot().expect("fact snapshot");
     assert_eq!(after_empty, before_empty);
 
-    let snapshot = Snapshot::read(&journal).expect("claimed board snapshot");
+    let snapshot = Snapshot::read(&journal, &projects()).expect("claimed board snapshot");
     assert_eq!(snapshot.entries().len(), 2);
     for entry in snapshot.entries() {
         assert_eq!(
@@ -398,7 +470,7 @@ fn independent_connections_observe_the_same_single_allocation_path() {
         Err(WinError::Refused(Refusal::Empty))
     ));
 
-    let snapshot = Snapshot::read(&second).expect("shared authority snapshot");
+    let snapshot = Snapshot::read(&second, &projects()).expect("shared authority snapshot");
     assert_eq!(
         snapshot
             .entries()

@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use artifact::{AddRequest, ArtifactAnswer, ArtifactContent, ErrorClass, Retention, Store};
 use spice::cli::Contract;
+use spice::config::LoadError;
 use spice::repository::{Repository, StateError, StatePaths};
 use wire::{Fault, FaultClass, Instant, Outcome, Refusal, Reply, ReplyPosition, Seq, TaskHandle};
 
@@ -126,6 +127,7 @@ fn snapshot() -> Result<Snapshot, Failure> {
             error.to_string(),
         )
     })?;
+    let projects = task_project_policy(&repository)?;
     let state = repository.admit_state().map_err(state_failure)?;
     let reader = journal::JournalReader::open(state.journal()).map_err(|error| {
         Failure::fault(
@@ -153,13 +155,14 @@ fn snapshot() -> Result<Snapshot, Failure> {
     let mut statuses = BTreeMap::new();
     for heads in heads {
         let (statement, workflow, claim, lease) = heads.into_bodies();
-        let entry = board::Entry::new(statement, workflow, claim, lease).map_err(|error| {
-            Failure::fault(
-                FaultClass::Store,
-                "artifact::task-head-invalid",
-                error.to_string(),
-            )
-        })?;
+        let entry =
+            board::Entry::new(statement, workflow, claim, lease, &projects).map_err(|error| {
+                Failure::fault(
+                    FaultClass::Store,
+                    "artifact::task-head-invalid",
+                    error.to_string(),
+                )
+            })?;
         statuses.insert(
             entry.statement().handle.clone(),
             entry.workflow().status.clone(),
@@ -170,6 +173,12 @@ fn snapshot() -> Result<Snapshot, Failure> {
         cursor,
         statuses,
     })
+}
+
+fn task_project_policy(repository: &Repository) -> Result<board::ProjectPolicy, Failure> {
+    let resolved = spice::config::load_coexisting_repository(repository, &[])
+        .map_err(Failure::configuration)?;
+    Ok(resolved.root().tasks().project_policy())
 }
 
 fn selected_task(matches: &clap::ArgMatches, snapshot: &Snapshot) -> Result<TaskHandle, Failure> {
@@ -342,10 +351,54 @@ impl Failure {
         })
     }
 
+    fn configuration(error: LoadError) -> Self {
+        if let Some(repository) = error.repository() {
+            return Self::fault(
+                FaultClass::Environment,
+                "artifact::repository-unavailable",
+                repository.to_string(),
+            );
+        }
+        let diagnostics = configuration_diagnostics(&error);
+        if error
+            .acquisition()
+            .iter()
+            .any(|issue| issue.io_error().is_some())
+        {
+            return Self::fault(
+                FaultClass::Environment,
+                "artifact::configuration-unreadable",
+                diagnostics,
+            );
+        }
+        Self::refusal(
+            "artifact::configuration-refused",
+            "one admitted tracked task-project policy and machine-local configuration",
+            diagnostics,
+            "repair the named configuration values before running the artifact command again",
+        )
+    }
+
     fn outcome(self) -> Outcome<ArtifactAnswer> {
         match self {
             Self::Refusal(refusal) => Outcome::Refusal(refusal),
             Self::Fault(fault) => Outcome::Fault(fault),
         }
+    }
+}
+
+fn configuration_diagnostics(error: &LoadError) -> String {
+    let mut diagnostics = error
+        .acquisition()
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if let Some(resolution) = error.resolution() {
+        diagnostics.extend(resolution.issues().iter().map(ToString::to_string));
+    }
+    if diagnostics.is_empty() {
+        error.to_string()
+    } else {
+        diagnostics.join(" | ")
     }
 }

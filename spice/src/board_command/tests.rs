@@ -141,6 +141,18 @@ mod tests {
         title: &str,
         flow: Option<&str>,
     ) -> TaskHandle {
+        add_project(bus, epoch, actor, task, title, "board.test", flow)
+    }
+
+    fn add_project(
+        bus: &Bus,
+        epoch: CanonicalUuid,
+        actor: Actor,
+        task: &str,
+        title: &str,
+        project: &str,
+        flow: Option<&str>,
+    ) -> TaskHandle {
         let task = task.parse::<TaskHandle>().expect("fixture task handle");
         assert_committed(issue(
             bus,
@@ -150,7 +162,7 @@ mod tests {
             vec![Witness::Absence { task: task.clone() }],
             &TaskAdd {
                 title: title.to_owned(),
-                project: Some("board.test".to_owned()),
+                project: Some(project.to_owned()),
                 description: None,
                 acceptance: Vec::new(),
                 flow: flow.map(str::to_owned),
@@ -225,6 +237,7 @@ mod tests {
             Some("todo"),
         );
         let available = board(&bus, epoch, lane.clone());
+        assert_eq!(available.active_public_tasks().count(), 2);
         let entries = entries(&available)
             .expect("capture board entries are valid");
         assert_eq!(
@@ -263,6 +276,79 @@ mod tests {
                 .disposition,
             ClaimDisposition::Active,
         );
+        clean(&root, bus);
+    }
+
+    #[test]
+    fn board_read_retains_hidden_evidence_while_next_and_presentation_stay_public() {
+        let (root, bus, epoch, seats) = fixture("hidden-visibility", 1);
+        let lane = Actor::Lane(seats[0].lane);
+        let hidden = add_project(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "HIDDEN-oops1",
+            "secret allocator failure details",
+            ".oops.correctness",
+            Some("todo"),
+        );
+        let public = add_project(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "PUBLIC-work1",
+            "Visible allocator work",
+            "board.visibility",
+            Some("todo"),
+        );
+
+        let available = board(&bus, epoch, lane.clone());
+        let hidden_heads = at(&available, &hidden);
+        assert_eq!(hidden_heads.visibility.hidden_stem(), Some("oops"));
+        assert_eq!(hidden_heads.statement.body.project, ".oops.correctness");
+        assert_eq!(hidden_heads.presentation_title(), "Hidden task");
+        assert_eq!(at(&available, &public).presentation_title(), "Visible allocator work");
+        let json = serde_json::to_value(&available).expect("board answer encodes");
+        let hidden_json = json["tasks"]
+            .as_array()
+            .expect("task rows")
+            .iter()
+            .find(|task| task["statement"]["body"]["handle"] == hidden.to_string())
+            .expect("hidden JSON row");
+        assert_eq!(
+            hidden_json["visibility"],
+            serde_json::json!({"kind": "hidden", "stem": "oops"})
+        );
+        assert_eq!(hidden_json["presentation_title"], "Hidden task");
+        let rendered = Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(available.cursor),
+            body: CommandAnswer::Board(Box::new(available.clone())),
+        });
+        for form in [crate::render::Form::Text, crate::render::Form::Json] {
+            let document = crate::render::render(&rendered, form)
+                .expect("board presentation renders")
+                .document()
+                .to_vec();
+            assert!(
+                String::from_utf8(document)
+                    .expect("presentation is UTF-8")
+                    .contains("Hidden task"),
+                "{form:?} presentation"
+            );
+        }
+
+        let rule: Name = "next".parse().expect("allocator rule");
+        assert_committed(issue(
+            &bus,
+            epoch,
+            lane.clone(),
+            CommandKind::ClaimWin,
+            claim_expected(&available, &public, &seats[0]),
+            &ClaimWin { rule },
+        ));
+        let claimed = board(&bus, epoch, lane);
+        assert!(at(&claimed, &hidden).claim.is_none());
+        assert!(at(&claimed, &public).claim.is_some());
         clean(&root, bus);
     }
 

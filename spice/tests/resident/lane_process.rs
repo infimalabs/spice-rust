@@ -590,6 +590,10 @@ fn lane_lifecycle_and_recall_cross_the_resident_in_both_forms() {
 fn typed_task_commands_retain_the_ambient_lane_principal() {
     let fixture = Fixture::new("lane-task-principal");
     configure_fake_vendor(&fixture);
+    let mut config = fs::read_to_string(fixture.root.join("spice.toml"))
+        .expect("task fixture configuration reads");
+    config.push_str("\n[tasks]\nstems = [\"spice\"]\n");
+    fs::write(fixture.root.join("spice.toml"), config).expect("task fixture project policy writes");
     initialize_task_git_fixture(&fixture);
     let mut resident = RunningResident::spawn(&fixture);
     resident.assert_ready(&fixture);

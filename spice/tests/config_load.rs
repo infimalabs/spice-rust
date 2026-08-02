@@ -78,7 +78,7 @@ fn coexisting_loader_reads_rust_local_intent_without_admitting_python_tracked_ta
     write(
         root.join("spice.toml"),
         concat!(
-            "[tasks]\nstems = ['rim']\n",
+            "[tasks]\nstems = ['rim']\nhidden_stems = ['sandbox']\n",
             "[policy]\nenv_names = []\n",
             "[taste.polling]\nwords = ['poll*']\nmessage = 'use events'\n",
         ),
@@ -97,7 +97,11 @@ fn coexisting_loader_reads_rust_local_intent_without_admitting_python_tracked_ta
     let before = snapshot(scratch.path());
     let resolved = load_coexisting_repository(&repository, &[])
         .expect("coexisting loader projects out tracked shared metadata");
-    assert!(resolved.root().tasks().stems().is_empty());
+    assert_eq!(resolved.root().tasks().stems(), ["rim"]);
+    assert_eq!(
+        resolved.root().tasks().hidden_stems(),
+        ["oops", "maxim_proposal", "sandbox"]
+    );
     assert!(resolved.root().policy().env_names().is_empty());
     assert_eq!(resolved.root().taste().bag().tastes().len(), 1);
     assert_eq!(resolved.root().lock().named().len(), 1);
