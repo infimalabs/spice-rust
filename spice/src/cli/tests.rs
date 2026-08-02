@@ -104,7 +104,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 
 #[test]
 fn every_contract_has_an_executable_succession_disposition() {
-    assert_eq!(contracts().len(), 67);
+    assert_eq!(contracts().len(), 68);
 
     let unaccounted = contracts()
         .iter()
@@ -117,7 +117,7 @@ fn every_contract_has_an_executable_succession_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 67);
+    assert_eq!(landed, 68);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
     assert_eq!(landing(&["lock", "run"]), Landing::Landed);
@@ -239,12 +239,12 @@ fn installed_python_registry_and_ledger_dispositions_are_bijective() {
 enum PythonTaskDisposition {
     Landed(&'static [&'static str]),
     Branch(&'static [&'static str]),
-    Later(&'static str),
+    Pending(&'static str),
 }
 
 #[test]
 fn every_python_task_control_has_one_tested_current_disposition() {
-    use PythonTaskDisposition::{Branch, Landed, Later};
+    use PythonTaskDisposition::{Branch, Landed, Pending};
 
     let mappings = [
         ("task", Landed(&["board"])),
@@ -257,10 +257,7 @@ fn every_python_task_control_has_one_tested_current_disposition() {
             Landed(&["task", "artifact", "prune"]),
         ),
         ("task artifact show", Landed(&["task", "artifact", "show"])),
-        (
-            "task capture",
-            Later("Task-boundary Git publication and capture"),
-        ),
+        ("task capture", Landed(&["task", "capture"])),
         ("task claim", Landed(&["task", "next"])),
         ("task delete", Landed(&["doc"])),
         ("task depends", Landed(&["task", "depends"])),
@@ -275,7 +272,7 @@ fn every_python_task_control_has_one_tested_current_disposition() {
         ("task next", Landed(&["task", "next"])),
         ("task note", Landed(&["task", "note"])),
         ("task oops", Landed(&["task", "oops"])),
-        ("task reclaim", Later("Manual claim renewal")),
+        ("task reclaim", Pending("RECOVER-1kJWSHkc")),
         ("task review", Landed(&["task", "review"])),
         ("task reword", Landed(&["doc"])),
         ("task show", Landed(&["board"])),
@@ -298,7 +295,6 @@ fn every_python_task_control_has_one_tested_current_disposition() {
         .filter_map(|line| line.strip_prefix("- `"))
         .filter_map(|line| line.split_once('`').map(|(path, _)| path))
         .collect::<BTreeSet<_>>();
-    let later = include_str!("../../../LATER.md");
     let mapped = mappings
         .iter()
         .map(|(path, _)| *path)
@@ -335,13 +331,9 @@ fn every_python_task_control_has_one_tested_current_disposition() {
                     "Python `{python}` branch unexpectedly names a leaf: {path:?}",
                 );
             }
-            Later(boundary) => assert!(
-                later.lines().any(|line| {
-                    line.strip_prefix("| ")
-                        .and_then(|line| line.split_once(" |"))
-                        .is_some_and(|(surface, _)| surface == boundary)
-                }),
-                "Python `{python}` names an absent LATER.md boundary: {boundary}",
+            Pending(owner) => assert!(
+                task_plane.contains(&format!("`{owner}`")),
+                "Python `{python}` does not name its pending owner `{owner}`",
             ),
         }
     }
@@ -615,6 +607,10 @@ fn tool_postures_follow_the_closed_command_order() {
                 "proof replay".to_owned(),
                 vec!["OCI runtime", "sealed battery member"],
             ),
+            ("task next".to_owned(), vec!["git"]),
+            ("task capture".to_owned(), vec!["git"]),
+            ("task done".to_owned(), vec!["git"]),
+            ("task review".to_owned(), vec!["git"]),
             ("run".to_owned(), vec!["CMD"]),
         ]
     );

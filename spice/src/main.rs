@@ -184,6 +184,7 @@ fn main() {
         | ["board", "handout"]
         | ["task", "next"]
         | ["task", "add"]
+        | ["task", "capture"]
         | ["task", "done"]
         | ["task", "review"]
         | ["task", "note"]

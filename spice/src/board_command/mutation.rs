@@ -3,7 +3,6 @@ struct ValidatedSnapshot {
     answer: BoardAnswer,
     entries: Vec<Entry>,
 }
-
 fn task_add(bus: &Bus, command: &wire::AdmittedCommand, add: &TaskAdd) -> Outcome<CommandAnswer> {
     let handles = command
         .expected()
@@ -340,108 +339,79 @@ fn task_depends(
     committed(bus, write, CommandAnswer::Task(answer))
 }
 
-fn claim_win(bus: &Bus, command: &wire::AdmittedCommand, win: &ClaimWin) -> Outcome<CommandAnswer> {
-    if win.rule.as_str() != "next" {
-        return refusal(
-            "board::allocator-rule",
-            Some(win.rule.to_string()),
-            "use the sole current next allocator rule",
-        );
-    }
-    let snapshot = match validated_snapshot(bus, command.actor().clone()) {
+fn claim_win(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    win: &ClaimWin,
+    repository: Option<&Repository>,
+) -> Outcome<CommandAnswer> {
+    let capture = match capture_rule(win) {
+        Ok(capture) => capture,
+        Err(outcome) => return outcome,
+    };
+    let snapshot = match validated_snapshot(
+        bus,
+        command.actor().clone(),
+    ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let Some(selected) = board::select(&snapshot.entries, command.actor()) else {
-        return refusal(
-            "board::allocator-empty",
-            None,
-            "add or wake eligible work before requesting task next",
-        );
-    };
-    let task = selected.entry().statement().handle.clone();
-    let Some((lane, occupant)) = command.expected().iter().find_map(|witness| match witness {
-        Witness::Residency {
-            lane,
-            occupant,
-            epoch,
-        } if *epoch == command.epoch() => Some((*lane, *occupant)),
-        _ => None,
-    }) else {
-        return protocol_fault(
-            "claim::residency-witness",
-            "claim win has no current residency witness",
-        );
-    };
-    if let Actor::Lane(actor) = command.actor()
-        && *actor != lane
-    {
-        return refusal(
-            "claim::lane-mismatch",
-            Some(lane.to_string()),
-            "claim through the lane bound to the authenticated capability",
-        );
-    }
-    let at = match current_instant() {
-        Ok(at) => at,
+    let selected = match claim_selection(
+        &snapshot,
+        command,
+        capture,
+    ) {
+        Ok(selected) => selected,
         Err(outcome) => return outcome,
     };
-    let expiry = match instant_after(at, 15 * 60) {
-        Ok(expiry) => expiry,
+    let task = selected.statement().handle.clone();
+    let (lane, occupant) = match claim_residency(command) {
+        Ok(seat) => seat,
         Err(outcome) => return outcome,
     };
-    let maximum = match instant_after(at, 60 * 60) {
-        Ok(maximum) => maximum,
+    let (at, expiry, maximum) = match claim_deadlines() {
+        Ok(deadlines) => deadlines,
+        Err(outcome) => return outcome,
+    };
+    let git = match claim_git_boundary(
+        repository,
+        &snapshot,
+        command,
+        capture,
+    ) {
+        Ok(git) => git,
         Err(outcome) => return outcome,
     };
     let origin = match task_origin(&task) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
-    let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
-    guard_allocation(
-        &mut write,
-        command.expected().to_vec(),
-        allocation_heads(&snapshot.answer),
-        task.clone(),
+    let mut write = JournalWrite::new(
         command.actor().clone(),
+        origin,
+        at,
+        Producer::CommandDoor,
     );
-    let won = match write.fact(
-        body::ClaimWon {
-            task: task.clone(),
-            actor: command.actor().clone(),
-            lane,
-            occupant,
-            epoch: command.epoch(),
-            until: expiry,
-        },
-        FactCause::Root,
-    ) {
-        Ok(fact) => fact,
-        Err(error) => return store_fault("claim::win-build", &error.to_string()),
-    };
-    let actor = command.actor().clone();
-    let epoch = command.epoch();
-    write.claim_head(task.clone(), won, move |fact| ClaimHead {
-        actor,
-        fact,
+    guard_claim(
+        &mut write,
+        &snapshot,
+        command,
+        capture,
+        &task,
+    );
+    if let Err(outcome) = append_claim_heads(
+        &mut write,
+        command,
+        selected,
+        &task,
         lane,
         occupant,
-        epoch,
-        disposition: ClaimDisposition::Active,
-    });
-    write.lease_head(task.clone(), won, move |_| LeaseHead {
-        start: at,
-        renewal: at,
+        at,
         expiry,
         maximum,
-        epoch,
-    });
-    if selected.entry().workflow().phase.as_str() == "review" {
-        let mut workflow = selected.entry().workflow().clone();
-        workflow.assignment = Some(command.actor().clone());
-        workflow.review = "assigned".to_owned();
-        write.workflow_head(task.clone(), won, move |_| workflow);
+        git,
+    ) {
+        return outcome;
     }
     let answer = wire::intent::ClaimAnswer {
         task: task.clone(),
@@ -452,7 +422,234 @@ fn claim_win(bus: &Bus, command: &wire::AdmittedCommand, win: &ClaimWin) -> Outc
         command.epoch(),
         answer.clone(),
     ) {
-        return store_fault("claim::win-receipt", &error.to_string());
+        return store_fault(
+            "claim::win-receipt",
+            &error.to_string(),
+        );
     }
     committed(bus, write, CommandAnswer::Claim(answer))
+}
+
+fn capture_rule(
+    win: &ClaimWin,
+) -> Result<bool, Outcome<CommandAnswer>> {
+    match win.rule.as_str() {
+        "next" => Ok(false),
+        "capture" => Ok(true),
+        _ => Err(refusal(
+            "board::allocator-rule",
+            Some(win.rule.to_string()),
+            "use the next or capture possession rule",
+        )),
+    }
+}
+
+fn claim_selection<'a>(
+    snapshot: &'a ValidatedSnapshot,
+    command: &wire::AdmittedCommand,
+    capture: bool,
+) -> Result<&'a Entry, Outcome<CommandAnswer>> {
+    if !capture {
+        return board::select(
+            &snapshot.entries,
+            command.actor(),
+        )
+        .map(|selected| selected.entry())
+        .ok_or_else(|| {
+            refusal(
+                "board::allocator-empty",
+                None,
+                concat!(
+                    "add or wake eligible work before ",
+                    "requesting task next",
+                ),
+            )
+        });
+    }
+    let task = command
+        .expected()
+        .iter()
+        .find_map(|witness| match witness {
+            Witness::Task { task, .. } => Some(task),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            protocol_fault(
+                "claim::capture-task-witness",
+                "capture possession has no exact task witness",
+            )
+        })?;
+    let entry = snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.statement().handle == *task)
+        .ok_or_else(|| {
+            refusal(
+                "task::unknown",
+                Some(task.to_string()),
+                "capture into one current pending task",
+            )
+        })?;
+    if board::eligible_entry(
+        &snapshot.entries,
+        entry,
+        command.actor(),
+    ) {
+        Ok(entry)
+    } else {
+        Err(refusal(
+            "claim::capture-ineligible",
+            Some(task.to_string()),
+            "capture only an unclaimed, ready, pending task",
+        ))
+    }
+}
+
+fn claim_residency(
+    command: &wire::AdmittedCommand,
+) -> Result<
+    (wire::CanonicalUuid, wire::CanonicalUuid),
+    Outcome<CommandAnswer>,
+> {
+    let seat = command
+        .expected()
+        .iter()
+        .find_map(|witness| match witness {
+            Witness::Residency {
+                lane,
+                occupant,
+                epoch,
+            } if *epoch == command.epoch() => {
+                Some((*lane, *occupant))
+            }
+            _ => None,
+        })
+        .ok_or_else(|| {
+            protocol_fault(
+                "claim::residency-witness",
+                "claim win has no current residency witness",
+            )
+        })?;
+    if let Actor::Lane(actor) = command.actor()
+        && *actor != seat.0
+    {
+        return Err(refusal(
+            "claim::lane-mismatch",
+            Some(seat.0.to_string()),
+            concat!(
+                "claim through the lane bound to the ",
+                "authenticated capability",
+            ),
+        ));
+    }
+    Ok(seat)
+}
+
+fn claim_deadlines(
+) -> Result<(Instant, Instant, Instant), Outcome<CommandAnswer>> {
+    let at = current_instant()?;
+    let expiry = instant_after(at, 15 * 60)?;
+    let maximum = instant_after(at, 60 * 60)?;
+    Ok((at, expiry, maximum))
+}
+
+fn claim_git_boundary(
+    repository: Option<&Repository>,
+    snapshot: &ValidatedSnapshot,
+    command: &wire::AdmittedCommand,
+    capture: bool,
+) -> Result<Option<GitBoundary>, Outcome<CommandAnswer>> {
+    let Some(resident) = repository else {
+        return Ok(None);
+    };
+    let lane = task_repository(snapshot, command, resident)?;
+    let result = if capture {
+        spice::task_git::capture(&lane)
+            .map(|capture| capture.boundary)
+    } else {
+        spice::task_git::prepare_claim(&lane)
+    };
+    result.map(Some).map_err(task_git_outcome)
+}
+
+fn guard_claim(
+    write: &mut JournalWrite,
+    snapshot: &ValidatedSnapshot,
+    command: &wire::AdmittedCommand,
+    capture: bool,
+    task: &TaskHandle,
+) {
+    let expected = command.expected().to_vec();
+    let heads = allocation_heads(&snapshot.answer);
+    if capture {
+        guard_capture(write, expected, heads);
+    } else {
+        guard_allocation(
+            write,
+            expected,
+            heads,
+            task.clone(),
+            command.actor().clone(),
+        );
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one claim fact and its two heads share one boundary"
+)]
+fn append_claim_heads(
+    write: &mut JournalWrite,
+    command: &wire::AdmittedCommand,
+    selected: &Entry,
+    task: &TaskHandle,
+    lane: wire::CanonicalUuid,
+    occupant: wire::CanonicalUuid,
+    at: Instant,
+    expiry: Instant,
+    maximum: Instant,
+    git: Option<GitBoundary>,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let won = write
+        .fact(
+            body::ClaimWon {
+                task: task.clone(),
+                actor: command.actor().clone(),
+                lane,
+                occupant,
+                epoch: command.epoch(),
+                until: expiry,
+                git,
+            },
+            FactCause::Root,
+        )
+        .map_err(|error| {
+            store_fault("claim::win-build", &error.to_string())
+        })?;
+    let actor = command.actor().clone();
+    let epoch = command.epoch();
+    write.claim_head(task.clone(), won, move |fact| {
+        ClaimHead {
+            actor,
+            fact,
+            lane,
+            occupant,
+            epoch,
+            disposition: ClaimDisposition::Active,
+        }
+    });
+    write.lease_head(task.clone(), won, move |_| LeaseHead {
+        start: at,
+        renewal: at,
+        expiry,
+        maximum,
+        epoch,
+    });
+    if selected.workflow().phase.as_str() == "review" {
+        let mut workflow = selected.workflow().clone();
+        workflow.assignment = Some(command.actor().clone());
+        workflow.review = "assigned".to_owned();
+        write.workflow_head(task.clone(), won, move |_| workflow);
+    }
+    Ok(())
 }

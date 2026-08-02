@@ -102,6 +102,17 @@ fn admitted_stream(session: &Session, bytes: &[u8]) -> app::Admitted<StreamFrame
         .expect("stream frame is admitted")
 }
 
+fn fact_frame(fact: serde_json::Value) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "stream": "fact",
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "fact": fact,
+    }))
+    .expect("fact fixture serializes")
+}
+
 #[test]
 fn stream_door_checks_nested_wire_and_terminal_cursor_epoch() {
     let session = session(OPERATOR, EPOCH);
@@ -229,6 +240,11 @@ fn admitted_thread_pages_render_received_links_and_their_real_terminal_state() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
+    let facts = admitted_stream(
+        &session,
+        &packed_frame("facts", &[task_fact(43, Some(42))], None, 43),
+    );
+    runtime.apply_stream(&facts);
     let thread = admitted_stream(
         &session,
         &packed_frame(
@@ -249,6 +265,45 @@ fn admitted_thread_pages_render_received_links_and_their_real_terminal_state() {
         vec![seq(43), seq(42)]
     );
     assert_eq!(walk.end(), ChainEnd::Root);
+}
+
+#[test]
+fn a_stale_thread_reply_cannot_merge_into_the_latest_requested_walk() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let first = admitted_stream(&session, &fact_frame(task_fact(41, None)));
+    let latest = admitted_stream(&session, &fact_frame(task_fact(42, Some(41))));
+
+    runtime.apply_stream(&first);
+    runtime.apply_stream(&latest);
+    assert_eq!(
+        runtime.pending_thread().expect("pending thread").seq,
+        seq(42)
+    );
+
+    let stale = admitted_stream(
+        &session,
+        &packed_frame("thread", &[task_fact(41, None)], None, 42),
+    );
+    assert!(runtime.apply_stream(&stale).is_empty());
+    assert!(runtime.thread_pages().is_empty());
+
+    let current = admitted_stream(
+        &session,
+        &packed_frame(
+            "thread",
+            &[task_fact(42, Some(41)), task_fact(41, None)],
+            None,
+            42,
+        ),
+    );
+    assert!(runtime.apply_stream(&current).is_empty());
+    assert_eq!(
+        runtime.thread_walk().expect("current walk").end(),
+        ChainEnd::Root
+    );
+    assert_eq!(runtime.pending_thread(), None);
 }
 
 #[test]

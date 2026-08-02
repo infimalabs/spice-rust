@@ -1315,12 +1315,16 @@ async fn send_subscription(
     data: &Rc<RefCell<SurfaceData>>,
     writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
 ) -> Result<(), String> {
-    let (subjects, after) = {
+    let (subjects, after, pending_thread) = {
         let data = data.borrow();
         let runtime = data
             .as_ref()
             .ok_or_else(|| "canvas runtime is absent".to_owned())?;
-        (runtime.subjects(), runtime.resume())
+        (
+            runtime.subjects(),
+            runtime.resume(),
+            runtime.pending_thread(),
+        )
     };
     send_stream_request(
         writer,
@@ -1332,7 +1336,20 @@ async fn send_subscription(
             after,
         },
     )
-    .await
+    .await?;
+    if let Some(cursor) = pending_thread {
+        send_stream_request(
+            writer,
+            &StreamRequest::Thread {
+                v: WireVersion::CURRENT,
+                id: random_uuid()?,
+                epoch: principal.epoch(),
+                cursor,
+            },
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 async fn send_stream_directive(

@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::path::{Component, Path, PathBuf};
 
 use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, Visitor};
 use serde::ser::SerializeMap;
@@ -20,11 +21,11 @@ const DEFAULT_FULL: u8 = 77;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LockConfig {
     exits: ExitStatuses,
-    named: BTreeMap<LockName, ShardCount>,
+    named: BTreeMap<LockName, LockTarget>,
 }
 
 impl LockConfig {
-    /// Admit exit codes and named lock capacities.
+    /// Admit exit codes and programmatic named lock pools.
     ///
     /// # Errors
     ///
@@ -44,8 +45,11 @@ impl LockConfig {
             }
             let lock = LockName::new(name.clone())
                 .map_err(|_| ConfigError::InvalidName { name: name.clone() })?;
-            let shards = ShardCount::new(&name, shards)?;
-            if admitted.insert(lock, shards).is_some() {
+            let target = LockTarget::Pool {
+                directory: ConfiguredPath::new(format!("lock.{name}.directory"), name.clone())?,
+                shards: ShardCount::new(&name, shards)?,
+            };
+            if admitted.insert(lock, target).is_some() {
                 return Err(ConfigError::DuplicateName { name });
             }
         }
@@ -61,15 +65,15 @@ impl LockConfig {
         self.exits
     }
 
-    /// Named lock pools in stable name order.
-    pub fn named(&self) -> impl ExactSizeIterator<Item = (&LockName, ShardCount)> {
-        self.named.iter().map(|(name, shards)| (name, *shards))
+    /// Named lock targets in stable name order.
+    pub fn named(&self) -> impl ExactSizeIterator<Item = (&LockName, &LockTarget)> {
+        self.named.iter()
     }
 
-    /// Configured capacity for one named lock pool.
+    /// Configured target for one named lock or pool.
     #[must_use]
-    pub fn shards(&self, name: &LockName) -> Option<ShardCount> {
-        self.named.get(name).copied()
+    pub fn target(&self, name: &LockName) -> Option<&LockTarget> {
+        self.named.get(name)
     }
 }
 
@@ -91,8 +95,8 @@ impl Serialize for LockConfig {
         map.serialize_entry("busy", &self.exits.busy)?;
         map.serialize_entry("taken", &self.exits.taken)?;
         map.serialize_entry("full", &self.exits.full)?;
-        for (name, shards) in &self.named {
-            map.serialize_entry(name.as_str(), &NamedLock { shards: *shards })?;
+        for (name, target) in &self.named {
+            map.serialize_entry(name.as_str(), target)?;
         }
         map.end()
     }
@@ -130,19 +134,31 @@ impl<'de> Visitor<'de> for LockConfigVisitor {
                             "duplicate configuration field lock.{field}"
                         )));
                     }
-                    let shards = map.next_value_seed(NamedLockSeed { name: &field })?;
-                    named.push((field, u64::from(shards.get())));
+                    let target = map.next_value_seed(NamedLockSeed { name: &field })?;
+                    named.push((field, target));
                 }
             }
         }
 
-        LockConfig::new(
+        let exits = ExitStatuses::new(
             busy.unwrap_or(u64::from(DEFAULT_BUSY)),
             taken.unwrap_or(u64::from(DEFAULT_TAKEN)),
             full.unwrap_or(u64::from(DEFAULT_FULL)),
-            named,
         )
-        .map_err(serde::de::Error::custom)
+        .map_err(serde::de::Error::custom)?;
+        let mut admitted = BTreeMap::new();
+        for (name, target) in named {
+            if matches!(name.as_str(), "busy" | "taken" | "full") {
+                return Err(serde::de::Error::custom(ConfigError::ReservedName { name }));
+            }
+            let lock = LockName::new(name.clone())
+                .map_err(|_| serde::de::Error::custom(ConfigError::InvalidName { name }))?;
+            admitted.insert(lock, target);
+        }
+        Ok(LockConfig {
+            exits,
+            named: admitted,
+        })
     }
 }
 
@@ -168,7 +184,7 @@ struct NamedLockSeed<'a> {
 }
 
 impl<'de> DeserializeSeed<'de> for NamedLockSeed<'_> {
-    type Value = ShardCount;
+    type Value = LockTarget;
 
     fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
         deserializer.deserialize_map(NamedLockVisitor { name: self.name })
@@ -180,42 +196,185 @@ struct NamedLockVisitor<'a> {
 }
 
 impl<'de> Visitor<'de> for NamedLockVisitor<'_> {
-    type Value = ShardCount;
+    type Value = LockTarget;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "the lock.{} configuration table", self.name)
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
-        let path = format!("lock.{}.shards", self.name);
+        let base = format!("lock.{}", self.name);
+        let path_path = format!("{base}.path");
+        let directory_path = format!("{base}.directory");
+        let shards_path = format!("{base}.shards");
+        let mut path = None;
+        let mut directory = None;
         let mut shards = None;
         while let Some(field) = map.next_key::<String>()? {
-            if field == "shards" {
-                if shards.is_some() {
+            match field.as_str() {
+                "path" => {
+                    if path.is_some() {
+                        return Err(serde::de::Error::custom(format!(
+                            "duplicate configuration field {path_path}"
+                        )));
+                    }
+                    let value = map.next_value::<String>().map_err(|error| {
+                        serde::de::Error::custom(format!("invalid {path_path}: {error}"))
+                    })?;
+                    path = Some(
+                        ConfiguredPath::new(path_path.clone(), value)
+                            .map_err(serde::de::Error::custom)?,
+                    );
+                }
+                "directory" => {
+                    if directory.is_some() {
+                        return Err(serde::de::Error::custom(format!(
+                            "duplicate configuration field {directory_path}"
+                        )));
+                    }
+                    let value = map.next_value::<String>().map_err(|error| {
+                        serde::de::Error::custom(format!("invalid {directory_path}: {error}"))
+                    })?;
+                    directory = Some(
+                        ConfiguredPath::new(directory_path.clone(), value)
+                            .map_err(serde::de::Error::custom)?,
+                    );
+                }
+                "shards" => {
+                    if shards.is_some() {
+                        return Err(serde::de::Error::custom(format!(
+                            "duplicate configuration field {shards_path}"
+                        )));
+                    }
+                    let value = map.next_value::<u64>().map_err(|error| {
+                        serde::de::Error::custom(format!("invalid {shards_path}: {error}"))
+                    })?;
+                    shards =
+                        Some(ShardCount::new(self.name, value).map_err(serde::de::Error::custom)?);
+                }
+                _ => {
+                    map.next_value::<IgnoredAny>()?;
                     return Err(serde::de::Error::custom(format!(
-                        "duplicate configuration field {path}"
+                        "unknown configuration field {base}.{field}"
                     )));
                 }
-                let value = map.next_value::<u64>().map_err(|error| {
-                    serde::de::Error::custom(format!("invalid {path}: {error}"))
-                })?;
-                shards = Some(ShardCount::new(self.name, value).map_err(serde::de::Error::custom)?);
-            } else {
-                map.next_value::<IgnoredAny>()?;
-                return Err(serde::de::Error::custom(format!(
-                    "unknown configuration field lock.{}.{field}",
-                    self.name
-                )));
             }
         }
-        shards
-            .ok_or_else(|| serde::de::Error::custom(format!("missing configuration field {path}")))
+        match (path, directory, shards) {
+            (Some(path), None, None) => Ok(LockTarget::File { path }),
+            (Some(_), Some(_), _) => Err(serde::de::Error::custom(format!(
+                "{base} must declare exactly one of {path_path} or {directory_path}"
+            ))),
+            (Some(_), None, Some(_)) => Err(serde::de::Error::custom(format!(
+                "{shards_path} is only valid with {directory_path}"
+            ))),
+            (None, Some(directory), shards) => Ok(LockTarget::Pool {
+                directory,
+                shards: shards.unwrap_or(ShardCount(1)),
+            }),
+            (None, None, _) => Err(serde::de::Error::custom(format!(
+                "{base} must declare exactly one of {path_path} or {directory_path}"
+            ))),
+        }
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-struct NamedLock {
-    shards: ShardCount,
+/// One explicit configured lock location.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfiguredPath(PathBuf);
+
+impl ConfiguredPath {
+    fn new(path: String, value: String) -> Result<Self, ConfigError> {
+        let candidate = Path::new(&value);
+        let mut normal = 0usize;
+        for component in candidate.components() {
+            match component {
+                Component::Normal(_) => normal += 1,
+                Component::RootDir | Component::Prefix(_) => {}
+                Component::CurDir | Component::ParentDir => {
+                    return Err(ConfigError::InvalidPath {
+                        path,
+                        detail: "must not contain current-directory or parent-directory components",
+                    });
+                }
+            }
+        }
+        if value.trim().is_empty() || value.contains('\0') || normal == 0 {
+            return Err(ConfigError::InvalidPath {
+                path,
+                detail: "must be a nonempty file-system path",
+            });
+        }
+        Ok(Self(candidate.to_path_buf()))
+    }
+
+    /// Exact configured path before repository-relative resolution.
+    #[must_use]
+    pub fn as_path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Serialize for ConfiguredPath {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0.to_string_lossy())
+    }
+}
+
+/// Either one lock file or a directory containing a fixed shard pool.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LockTarget {
+    File {
+        path: ConfiguredPath,
+    },
+    Pool {
+        directory: ConfiguredPath,
+        shards: ShardCount,
+    },
+}
+
+impl LockTarget {
+    /// Configured file or directory path.
+    #[must_use]
+    pub const fn location(&self) -> &ConfiguredPath {
+        match self {
+            Self::File { path } => path,
+            Self::Pool { directory, .. } => directory,
+        }
+    }
+
+    /// True for a single-file lock rather than a shard pool.
+    #[must_use]
+    pub const fn is_file(&self) -> bool {
+        matches!(self, Self::File { .. })
+    }
+
+    /// Number of acquisition slots represented by this target.
+    #[must_use]
+    pub const fn shards(&self) -> ShardCount {
+        match self {
+            Self::File { .. } => ShardCount(1),
+            Self::Pool { shards, .. } => *shards,
+        }
+    }
+}
+
+impl Serialize for LockTarget {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::File { path } => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("path", path)?;
+                map.end()
+            }
+            Self::Pool { directory, shards } => {
+                let mut map = serializer.serialize_map(Some(2))?;
+                map.serialize_entry("directory", directory)?;
+                map.serialize_entry("shards", shards)?;
+                map.end()
+            }
+        }
+    }
 }
 
 /// Three distinct non-success process statuses.
@@ -344,6 +503,8 @@ pub enum ConfigError {
     ZeroShards { name: String },
     /// A named pool exceeded the portable count range.
     ShardsOverflow { name: String, value: u64 },
+    /// A configured file or directory path was empty or unsafe.
+    InvalidPath { path: String, detail: &'static str },
 }
 
 impl fmt::Display for ConfigError {
@@ -381,6 +542,7 @@ impl fmt::Display for ConfigError {
                 "lock.{name}.shards exceeds the maximum {}: {value}",
                 u32::MAX
             ),
+            Self::InvalidPath { path, detail } => write!(formatter, "{path} {detail}"),
         }
     }
 }
@@ -403,23 +565,35 @@ mod tests {
             builtin
         );
 
-        let configured: LockConfig = serde_json::from_str(
-            r#"{"busy":70,"taken":71,"full":72,"zeta":{"shards":2},"alpha":{"shards":3}}"#,
-        )
+        let configured: LockConfig = serde_json::from_str(concat!(
+            r#"{"busy":70,"taken":71,"full":72,"zeta":{"directory":"locks/zeta","shards":2},"#,
+            r#""alpha":{"directory":"locks/alpha","shards":3}}"#,
+        ))
         .expect("decode lock config");
         let alpha = LockName::new("alpha").expect("lock name");
-        assert_eq!(configured.shards(&alpha).map(ShardCount::get), Some(3));
+        assert_eq!(
+            configured
+                .target(&alpha)
+                .map(LockTarget::shards)
+                .map(ShardCount::get),
+            Some(3)
+        );
         assert_eq!(
             configured
                 .named()
-                .map(|(name, shards)| (name.as_str(), shards.get()))
+                .map(|(name, target)| (name.as_str(), target.shards().get()))
                 .collect::<Vec<_>>(),
             [("alpha", 3), ("zeta", 2)]
         );
         let bytes = serde_json::to_vec(&configured).expect("encode lock config");
         assert_eq!(
             bytes,
-            br#"{"busy":70,"taken":71,"full":72,"alpha":{"shards":3},"zeta":{"shards":2}}"#
+            concat!(
+                r#"{"busy":70,"taken":71,"full":72,"#,
+                r#""alpha":{"directory":"locks/alpha","shards":3},"#,
+                r#""zeta":{"directory":"locks/zeta","shards":2}}"#,
+            )
+            .as_bytes()
         );
         assert_eq!(
             serde_json::from_slice::<LockConfig>(&bytes).expect("round trip"),
@@ -440,11 +614,30 @@ mod tests {
             (r#"{"taken":"76"}"#, TAKEN),
             (r#"{"full":75}"#, FULL),
             (r#"{"worker":1}"#, "lock.worker"),
-            (r#"{"worker":{}}"#, "lock.worker.shards"),
-            (r#"{"worker":{"shards":0}}"#, "lock.worker.shards"),
-            (r#"{"worker":{"shards":4294967296}}"#, "lock.worker.shards"),
+            (r#"{"worker":{}}"#, "lock.worker"),
+            (
+                r#"{"worker":{"directory":"locks/worker","shards":0}}"#,
+                "lock.worker.shards",
+            ),
+            (
+                r#"{"worker":{"directory":"locks/worker","shards":4294967296}}"#,
+                "lock.worker.shards",
+            ),
             (r#"{"worker":{"other":1}}"#, "lock.worker.other"),
-            (r#"{"":{"shards":1}}"#, "lock."),
+            (r#"{"":{"path":"locks/worker.lock"}}"#, "lock."),
+            (r#"{"worker":{"path":""}}"#, "lock.worker.path"),
+            (
+                r#"{"worker":{"path":"../outside.lock"}}"#,
+                "lock.worker.path",
+            ),
+            (
+                r#"{"worker":{"path":"locks/worker.lock","directory":"locks/worker"}}"#,
+                "lock.worker",
+            ),
+            (
+                r#"{"worker":{"path":"locks/worker.lock","shards":1}}"#,
+                "lock.worker.shards",
+            ),
         ] {
             let error =
                 serde_json::from_str::<LockConfig>(document).expect_err("config must refuse");
@@ -470,12 +663,16 @@ mod tests {
         for (document, path) in [
             (r#"{"busy":70,"busy":71}"#, BUSY),
             (
-                r#"{"worker":{"shards":1},"worker":{"shards":2}}"#,
+                r#"{"worker":{"directory":"locks/one"},"worker":{"directory":"locks/two"}}"#,
                 "lock.worker",
             ),
             (
-                r#"{"worker":{"shards":1,"shards":2}}"#,
+                r#"{"worker":{"directory":"locks/worker","shards":1,"shards":2}}"#,
                 "lock.worker.shards",
+            ),
+            (
+                r#"{"worker":{"path":"one.lock","path":"two.lock"}}"#,
+                "lock.worker.path",
             ),
         ] {
             let error =

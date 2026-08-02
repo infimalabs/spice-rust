@@ -79,3 +79,14 @@ fn eligible(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskHandle>) -> b
             .claim()
             .is_some_and(|claim| claim.disposition == ClaimDisposition::Active)
 }
+
+/// Whether one named entry satisfies the same eligibility law as allocation.
+#[must_use]
+pub fn eligible_entry(entries: &[Entry], entry: &Entry, actor: &Actor) -> bool {
+    let completed = entries
+        .iter()
+        .filter(|candidate| candidate.workflow().status == "completed")
+        .map(|candidate| candidate.statement().handle.clone())
+        .collect::<BTreeSet<_>>();
+    eligible(entry, actor, &completed)
+}

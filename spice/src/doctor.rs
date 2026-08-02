@@ -178,6 +178,10 @@ fn tool_observation(
             )
             .to_owned(),
         },
+        DoctorToolSource::TaskBoundaryContract => match probe.named(tool.name) {
+            Ok(()) => DoctorObservation::Ready {},
+            Err(reason) => DoctorObservation::Unavailable { reason },
+        },
         DoctorToolSource::WorktreeConfiguration => match probe.named(tool.name) {
             Ok(()) => DoctorObservation::Ready {},
             Err(reason) => DoctorObservation::Unavailable { reason },

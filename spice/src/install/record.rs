@@ -9,14 +9,14 @@ use super::binding::bind_destination;
 use super::files::{observe_bound, publish_bound};
 use super::{
     FileImage, Generation, InstallError, InstallPlan, InstallReceipt, InstallStatus,
-    LEGACY_RECORDS, RECORD_MODE, RECORD_NAME, RECORD_PATH, RECORD_VERSION, Repository,
-    RepositoryIdentity,
+    LEGACY_RECORD_VERSIONS, LEGACY_RECORDS, RECORD_MODE, RECORD_NAME, RECORD_PATH, RECORD_VERSION,
+    Repository, RepositoryIdentity,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct InstallRecord {
-    version: u16,
+    pub(super) version: u16,
     repository: RepositoryIdentity,
     pub(super) plan: InstallPlan,
     pub(super) plan_digest: Digest,
@@ -189,6 +189,15 @@ pub(super) fn read_record(repository: &Repository) -> Result<Option<LoadedRecord
     let generation = observed.generation;
     let bytes = observed.image.bytes;
     let record: InstallRecord = wire::decode(&bytes).map_err(InstallError::Decode)?;
+    if let Some((_, owner)) = LEGACY_RECORD_VERSIONS
+        .iter()
+        .find(|(version, _)| *version == record.version)
+    {
+        return Err(InstallError::LegacyRecord {
+            path: record_path(repository)?,
+            owner,
+        });
+    }
     record.validate_for_repository(repository)?;
     let canonical = wire::encode(&record).map_err(InstallError::Encode)?;
     if canonical != bytes {

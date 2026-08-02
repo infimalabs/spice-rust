@@ -10,7 +10,9 @@ mod spawn;
 mod spec;
 mod surface;
 
-pub use config::{ConfigError, ExitCode, ExitStatuses, LockConfig, ShardCount};
+pub use config::{
+    ConfigError, ConfiguredPath, ExitCode, ExitStatuses, LockConfig, LockTarget, ShardCount,
+};
 pub use lock::{Acquisition, Availability, LockFile, LockName, LockNameError, Possession};
 pub use observe::{
     Observation, ObservationFailure, ObservationSpecError, ObserveError, ObservedRecord,
@@ -24,6 +26,6 @@ pub use spec::{
     RestartDisposition, Spec, SpecError, StdinPolicy, StreamPolicy, WaitPolicy,
 };
 pub use surface::{
-    Contention, HeldShard, LockAttempt, LockAvailability, LockExitReport, LockPoolReport,
-    LockReport, LockShardReport, LockSurfaceError, LockTopology,
+    Contention, HeldShard, LockAttempt, LockAvailability, LockExitReport, LockOwnerReport,
+    LockPoolReport, LockReport, LockShardReport, LockSurfaceError, LockTargetKind, LockTopology,
 };

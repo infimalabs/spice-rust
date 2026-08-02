@@ -6,14 +6,15 @@ Python remains the installed scaffold until the operator explicitly changes it.
 ## Authority and readiness
 
 The ambient `~/.local/bin/spice` is Python `0.31.0`; Rust runs explicitly via
-Cargo. Active `.spice/hooks` still invoke Python. Python owns Git-common
-`.spice`; Rust owns `.spice-rust` and never reads Python authority bytes.
+Cargo. Active `.spice/hooks` and legacy tracked `.githooks` wrappers still
+invoke Python. Python owns Git-common `.spice`; Rust owns `.spice-rust` and
+never reads Python authority bytes.
 
 | Measure | Result |
 | --- | --- |
-| Installed Python registry | 123/123 paths have one disposition; 22 task-owned gaps; no unsupported deletions |
-| Rust contract registry | 67/67 leaves landed; no gaps or unaccounted leaves |
-| Rust process sweep | 134 text/JSON invocations; matching exits and streams; no placeholders |
+| Installed Python registry | 123/123 paths have one disposition; 18 task-owned gaps; no unsupported deletions |
+| Rust contract registry | 68/68 leaves landed; no gaps or unaccounted leaves |
+| Rust process sweep | 136 text/JSON invocations; matching exits and streams; no placeholders |
 | Functional smoke | 45/45 process tests across lifecycle, control, evidence, and recovery |
 | Coexistence | Two Rust generations; Python command, state, hooks, and hook path unchanged |
 
@@ -24,9 +25,9 @@ and the live claim were exercised in the same worktree with separate authority.
 
 Cutover remains blocked on three classes of risk:
 
-1. `HOOKS-1kJQnmG8`, `FORENSI-1kJWS7G5`, `RECOVER-1kJWSHkc`,
+1. `FORENSI-1kJWS7G5`, `RECOVER-1kJWSHkc`,
    `DEMO-1kJWSLwL`, `PARITY-1kJWSQ7W`,
-   `PARITY-1kJWSV53`, and `GIT-1kJWMPvF` own retained predecessor behavior
+   and `PARITY-1kJWSV53` own retained predecessor behavior
    that is not yet executable in Rust. Until they land, the active Python
    hooks and command remain unchanged and the Python policy gate runs last in
    `cargo xtask verify`.
@@ -34,6 +35,16 @@ Cutover remains blocked on three classes of risk:
    empty Rust authority is not a substitute for retained capability.
 3. Installed entrypoint selection and rollback still require an operator-run
    cutover rehearsal and explicit authorization.
+
+The version-three Rust install plan publishes executable `pre-commit`,
+`commit-msg`, and `reference-transaction` artifacts beneath
+`.spice/rust/git-hooks`. The first invokes only the canonical verifier; the
+second preserves current commit-message hygiene and additionally enforces the
+frozen `Spice-Origin` v1 grammar; the third preserves the independent guard
+against abandoning commits already merged into the current branch's upstream.
+Git remains on its Python-owned `.spice/hooks` or `.githooks` path until the
+operator explicitly runs `scripts/install-hooks.sh`, which activates the
+complete Rust namespace.
 
 ## Rust coexistence
 
@@ -46,7 +57,7 @@ entrypoint, active hooks, or Python authority.
 
 ## Rust contracts
 
-The closed registry contains 67 leaves and all 67 have executable dispatch.
+The closed registry contains 68 leaves and all 68 have executable dispatch.
 `spice/src/cli.rs::landing` carries the same classification; its tests reject
 registry drift, and the process sweep rejects terminal release or resident
 placeholder outcomes.
@@ -75,6 +86,7 @@ placeholder outcomes.
 - `board handout`
 - `task next`
 - `task add`
+- `task capture`
 - `task done`
 - `task review`
 - `task note`
@@ -182,13 +194,13 @@ risk, not a fallback.
 ### Development gates
 
 - `dev`: D -> `gate`, `proof`, and `cargo xtask verify`.
-- `dev commit-msg`: P -> `HOOKS-1kJQnmG8` for native commit-message parity.
+- `dev commit-msg`: D -> installer-owned `cargo xtask commit-msg` hook.
 - `dev doctor`: R -> `doctor`.
-- `dev install-hooks`: P -> `HOOKS-1kJQnmG8` for the complete inactive native hook set.
+- `dev install-hooks`: D -> `install` plus operator-run `scripts/install-hooks.sh` cutover.
 - `dev pre-commit`: D -> `gate` plus the canonical verifier.
 - `dev pytest`: D -> workspace tests in the canonical verifier.
 - `dev python-typecheck`: R -> strict Rust linting and workspace tests in the canonical verifier.
-- `dev reference-transaction`: P -> `HOOKS-1kJQnmG8` for the native upstream-history guard.
+- `dev reference-transaction`: D -> installer-owned `cargo xtask reference-transaction` hook.
 - `dev serve-web-typecheck`: D -> verifier Wasm check.
 - `dev serve-web-types`: R -> shared Rust wire types plus verifier app-drift and Wasm checks.
 
@@ -268,7 +280,7 @@ and journal foundations but do not yet answer every predecessor query. All
 - `task artifact list`: R -> `task artifact list`.
 - `task artifact prune`: R -> `task artifact prune`.
 - `task artifact show`: R -> `task artifact show`.
-- `task capture`: P -> `GIT-1kJWMPvF` for loose-commit capture and publication.
+- `task capture`: R -> `task capture` with loose-commit capture and boundary publication.
 - `task claim`: R -> allocator-owned `task next`.
 - `task delete`: D -> authored `doc` correction.
 - `task depends`: R -> `task depends`.

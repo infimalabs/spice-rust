@@ -53,6 +53,7 @@ const CASES: &[Case] = &[
     ),
     case("task next", &["task", "next"]),
     case("task add", &["task", "add", "readiness task"]),
+    case("task capture", &["task", "capture"]),
     case("task done", &["task", "done"]),
     case("task review", &["task", "review", "READY-12345678"]),
     case(
@@ -158,8 +159,8 @@ impl Drop for Scratch {
 fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
     let registered = landed_ledger_paths();
     let exercised = CASES.iter().map(|case| case.path).collect::<BTreeSet<_>>();
-    assert_eq!(registered.len(), 67);
-    assert_eq!(CASES.len(), 67);
+    assert_eq!(registered.len(), 68);
+    assert_eq!(CASES.len(), 68);
     assert_eq!(exercised.len(), CASES.len(), "process case repeated");
     assert_eq!(
         exercised, registered,
