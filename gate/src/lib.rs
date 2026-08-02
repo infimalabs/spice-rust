@@ -23,6 +23,7 @@ pub mod message;
 pub mod names;
 pub mod ratchet;
 pub mod report;
+pub mod toolchain;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tree;
 pub mod verdict;
@@ -64,6 +65,13 @@ pub use report::{
     ReportAttemptKind, ReportCompletion, ReportDecodeError, ReportFloor, ReportMeasurement,
     ReportMutant, ReportMutantDisposition, ReportMutationInventory, ReportMutationMovement,
     ReportOutcome, ReportProcess, ReportRate, ReportStream,
+};
+pub use toolchain::{
+    ArmFinding, ArmMeasurement, ArmObservation, ArmOutcome, ConfigurationSource, FindingDetail,
+    MigrationRefusal as ToolchainMigrationRefusal, PredecessorComparison,
+    PredecessorComparisonError, PredecessorObservation, PredecessorResult, TOOLCHAIN_ARMS,
+    TOOLCHAIN_REPORT_VERSION, ToolEvidence, ToolRequirement, ToolchainDeclaration, ToolchainError,
+    ToolchainReport, TreeJurisdiction, compare_predecessor, measure_toolchain,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use tree::{SelectedTree, Selector, TreeError};
