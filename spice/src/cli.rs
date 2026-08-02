@@ -1041,6 +1041,16 @@ const CONTRACTS: &[Contract] = &[
         Plan,
         "spice::config"
     ),
+    row!(
+        ["config", "migrate-tasks"],
+        "config migrate-tasks EXPORT",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "spice::task_config_migration"
+    ),
 ];
 
 /// The complete registry in the order used by help and Doctor rendering.
@@ -1091,6 +1101,7 @@ pub fn landing(path: &[&str]) -> Landing {
         | ["down"]
         | ["run"]
         | ["config"]
+        | ["config", "migrate-tasks"]
         | ["trust"]
         | ["trust", "grant"]
         | ["trust", "revoke"]

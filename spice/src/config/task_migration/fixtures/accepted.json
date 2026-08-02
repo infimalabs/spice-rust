@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "source_release": "0.31.0",
+  "source_file": "/exports/release-0.31.0-tasks.json",
+  "tasks": {
+    "stems": [],
+    "hidden_stems": [
+      "oops",
+      "maxim_proposal",
+      "sandbox",
+      "audit"
+    ],
+    "project_min_depth": 2,
+    "project_max_depth": 3
+  },
+  "provenance": [
+    {
+      "release": "0.31.0",
+      "source_kind": "packaged",
+      "decision": "packaged",
+      "source_file": "/exports/release-0.31.0-tasks.json",
+      "field": "tasks.hidden_stems::<builtin>",
+      "target": "tasks.hidden_stems[0]"
+    },
+    {
+      "release": "0.31.0",
+      "source_kind": "packaged",
+      "decision": "packaged",
+      "source_file": "/exports/release-0.31.0-tasks.json",
+      "field": "tasks.hidden_stems::<builtin>",
+      "target": "tasks.hidden_stems[1]"
+    },
+    {
+      "release": "0.31.0",
+      "source_kind": "export",
+      "decision": "emitted",
+      "source_file": "/exports/release-0.31.0-tasks.json",
+      "field": "tasks.hidden_stems[0]",
+      "list_index": 0,
+      "target": "tasks.hidden_stems[2]"
+    },
+    {
+      "release": "0.31.0",
+      "source_kind": "export",
+      "decision": "deduplicated",
+      "source_file": "/exports/release-0.31.0-tasks.json",
+      "field": "tasks.hidden_stems[1]",
+      "list_index": 1,
+      "target": "tasks.hidden_stems[0]"
+    },
+    {
+      "release": "0.31.0",
+      "source_kind": "export",
+      "decision": "emitted",
+      "source_file": "/exports/release-0.31.0-tasks.json",
+      "field": "tasks.hidden_stems[2]",
+      "list_index": 2,
+      "target": "tasks.hidden_stems[3]"
+    },
+    {
+      "release": "0.31.0",
+      "source_kind": "export",
+      "decision": "deduplicated",
+      "source_file": "/exports/release-0.31.0-tasks.json",
+      "field": "tasks.hidden_stems[3]",
+      "list_index": 3,
+      "target": "tasks.hidden_stems[2]"
+    },
+    {
+      "release": "0.31.0",
+      "source_kind": "export",
+      "decision": "selected-empty",
+      "source_file": "/exports/release-0.31.0-tasks.json",
+      "team": "alpha",
+      "field": "teams[0].shellSettings.taskRc"
+    },
+    {
+      "release": "0.31.0",
+      "source_kind": "export",
+      "decision": "selected-empty",
+      "source_file": "/exports/release-0.31.0-tasks.json",
+      "team": "beta",
+      "field": "teams[1].shellSettings.rc"
+    },
+    {
+      "release": "0.31.0",
+      "source_kind": "export",
+      "decision": "selected-empty",
+      "source_file": "/exports/release-0.31.0-tasks.json",
+      "team": "gamma",
+      "field": "teams[2].shellSettings.taskRc[0]",
+      "list_index": 0
+    }
+  ]
+}
