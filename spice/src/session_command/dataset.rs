@@ -233,7 +233,9 @@ fn reduce_codex(events: &[&RawEvent], dataset: &mut Dataset, markers: &mut Vec<M
                     &mut current,
                     payload.get("turn_id").and_then(Value::as_str),
                 );
-                if let Some(text) = payload.get("last_agent_message").and_then(Value::as_str) {
+                if let Some(text) = payload.get("last_agent_message").and_then(Value::as_str)
+                    && !last_final_matches(dataset, index, text)
+                {
                     push_message(dataset, index, event, "assistant", "final_answer", text);
                 }
                 finish_turn(dataset, index, &event.ts, true);
@@ -320,10 +322,10 @@ fn reduce_claude(events: &[&RawEvent], dataset: &mut Dataset, markers: &mut Vec<
                     if let Some(index) = current {
                         finish_turn(dataset, index, &event.ts, false);
                     }
-                    current = Some(start_turn(dataset, event, None));
+                    current = Some(start_turn(dataset, event, prompt));
                     active_prompt = prompt.map(str::to_owned);
                 }
-                let index = ensure_turn(dataset, event, &mut current, None);
+                let index = ensure_turn(dataset, event, &mut current, prompt);
                 let content = event.value.pointer("/message/content");
                 for text in content_texts(content) {
                     push_message(dataset, index, event, "user", "prompt", &text);
@@ -464,6 +466,15 @@ fn finish_turn(dataset: &mut Dataset, index: usize, ts: &str, completed: bool) {
 
 fn touch_turn(dataset: &mut Dataset, index: usize, ts: &str) {
     dataset.turns[index].last_activity_ts = ts.to_owned();
+}
+
+fn last_final_matches(dataset: &Dataset, index: usize, text: &str) -> bool {
+    dataset.turns[index]
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.side == "assistant" && message.phase == "final_answer")
+        .is_some_and(|message| message.text == text)
 }
 
 fn push_message(
