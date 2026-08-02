@@ -648,13 +648,13 @@ impl HeldShard {
         &self.possession
     }
 
-    /// Spawn a child that retains kernel possession if this process dies abruptly.
+    /// Spawn a child whose process group retains possession if this process dies.
     ///
-    /// The child and descendants inherit the lock descriptor across `exec`. The
-    /// descriptor remains close-on-exec in this process and in unrelated spawns.
+    /// An independent guardian holds the descriptor until every member of the
+    /// child's new process group is terminally absent.
     #[cfg(unix)]
     pub fn spawn_protected(&mut self, spec: Spec) -> io::Result<Running> {
-        let running = crate::spawn::spawn_inheriting(spec, self.possession.file())?;
+        let running = crate::spawn::spawn_guarded(spec, self.possession.file())?;
         self.possession.retain_until_last_close();
         Ok(running)
     }

@@ -1,9 +1,10 @@
 use super::capture::{CaptureWorker, FailureContext, start_capture};
+use super::guardian::PendingGuardian;
 use super::{ProcessCompletion, ProcessState, Running, start_exit_watcher};
 use crate::observe::{Observation, OutputStream};
 use crate::spec::{ProcessGroup, Spec, StdinPolicy, StreamPolicy};
+use std::fs::File;
 use std::io;
-use std::os::fd::RawFd;
 use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Condvar, Mutex};
@@ -15,11 +16,18 @@ use std::os::unix::process::CommandExt;
 pub(super) fn spawn_inner(
     spec: Spec,
     observation: Option<Observation>,
-    inherited: Option<RawFd>,
+    guarded: Option<&File>,
 ) -> io::Result<Running> {
     validate_observation(&spec, observation.as_ref())?;
+    if guarded.is_some() && spec.group != ProcessGroup::New {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "guarded processes require a new process group",
+        ));
+    }
     let wakes = SpawnWakes::new(&spec, observation.as_ref())?;
-    let mut child = command(&spec, inherited).spawn()?;
+    let guardian = guarded.map(PendingGuardian::start).transpose()?;
+    let mut child = command(&spec, guardian.as_ref()).spawn()?;
     let started = Instant::now();
     let pid = child.id();
     let pipes = match capture_pipes(&mut child, &spec) {
@@ -64,6 +72,7 @@ pub(super) fn spawn_inner(
             captures.worker(OutputStream::Stderr, wakes.stderr),
         )
     });
+    let guardian = guardian.map(PendingGuardian::activate);
     Ok(Running {
         pid,
         spec,
@@ -74,6 +83,7 @@ pub(super) fn spawn_inner(
         process,
         stdout,
         stderr,
+        guardian,
     })
 }
 
@@ -181,7 +191,7 @@ impl CaptureSetup {
     }
 }
 
-fn command(spec: &Spec, inherited: Option<RawFd>) -> Command {
+fn command(spec: &Spec, guardian: Option<&PendingGuardian>) -> Command {
     let mut command = Command::new(spec.argv.program());
     command
         .args(spec.argv.arguments())
@@ -197,24 +207,14 @@ fn command(spec: &Spec, inherited: Option<RawFd>) -> Command {
     if spec.group == ProcessGroup::New {
         command.process_group(0);
     }
-    if let Some(descriptor) = inherited {
-        // SAFETY: this child-only hook performs only async-signal-safe fcntl calls.
+    if let Some(guardian) = guardian {
+        let notifier = guardian.notifier_fd();
+        // SAFETY: this child-only hook performs only async-signal-safe system calls.
         unsafe {
-            command.pre_exec(move || clear_cloexec(descriptor));
+            command.pre_exec(move || super::guardian::notify_group(notifier));
         }
     }
     command
-}
-
-fn clear_cloexec(descriptor: RawFd) -> io::Result<()> {
-    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
-    if flags == -1 {
-        return Err(io::Error::last_os_error());
-    }
-    if unsafe { libc::fcntl(descriptor, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } == -1 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
 }
 
 fn configure_stream(command: &mut Command, stdout: bool, policy: StreamPolicy) {
