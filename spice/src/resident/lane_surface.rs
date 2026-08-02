@@ -38,7 +38,7 @@ const OUTPUT_DRAIN: Duration = Duration::from_secs(2);
 const REAP: Duration = Duration::from_secs(2);
 const TERMINATION_GRACE: Duration = Duration::from_secs(1);
 const RECORD_QUEUE: usize = 64;
-const SESSION_PROOF: Duration = Duration::from_secs(2);
+const SESSION_PROOF: Duration = Duration::from_secs(10);
 const SESSION_SETTLE: Duration = Duration::from_millis(25);
 
 #[derive(Clone, Debug, Eq, PartialEq)]

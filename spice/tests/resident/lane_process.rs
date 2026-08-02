@@ -892,7 +892,7 @@ fn missing_and_duplicate_declarations_refuse_and_fully_unwind_lane_add() {
         let started = Monotonic::now();
         let added = invoke_args(&fixture, &["lane", "add", "--vendor", "claude"], true, None);
         assert_eq!(refusal_reason(&added), expected);
-        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(started.elapsed() < LANE_DEADLINE_BOUND);
         let lanes =
             reply_body::<wire::intent::LaneAnswer>(&invoke_args(&fixture, &["lane"], true, None));
         assert!(lanes.lanes.is_empty());
