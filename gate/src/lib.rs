@@ -14,6 +14,7 @@
 
 pub mod camp;
 pub mod config;
+pub mod core;
 pub mod input;
 pub mod jurisdiction;
 pub mod kill;
@@ -32,6 +33,15 @@ pub use camp::{
     CampStanding, DistributionReport, LocusDistance, SharedBound,
 };
 pub use config::{Config, WalkConfig};
+pub use core::{
+    CORE_GATE_IDS, CORE_REPORT_VERSION, ConfigInventoryEvidence, ConfigKeyEvidence,
+    CoreArmDeclaration, CoreArmInput, CoreArmReport, CoreEvidence, CoreFinding, CoreInputError,
+    CoreInputs, CoreObservation, CoreProvenance, CoreReport, CoreReportDecodeError, CoreStanding,
+    CoreTimeoutContract, CoreToolContract, DocMeasurement, GitCommandContract,
+    MergeIntegrityEvidence, MergeTreeCompletion, PlanPhaseEvidence, PredecessorObservation,
+    RepoDocLimit, RepoDocsEvidence, RepoShapeEvidence, StagingEvidence, core_declarations,
+    evaluate_core,
+};
 pub use input::{
     BASELINE_PATH, BASELINE_VERSION, Baseline, BaselineError, Contract, ContractError,
     ExecutableDeclaration, FieldError, Floor, FloorDeclaration, FloorKind, GateSet, GateSetError,
