@@ -24,18 +24,27 @@ pub(super) struct PendingGuardian {
 
 impl PendingGuardian {
     pub(super) fn start(file: &File) -> io::Result<Self> {
+        Self::start_configured(file, true)
+    }
+
+    #[cfg(test)]
+    pub(super) fn start_refusing_descriptor_setup(file: &File) -> io::Result<Self> {
+        Self::start_configured(file, false)
+    }
+
+    fn start_configured(file: &File, descriptor_setup: bool) -> io::Result<Self> {
         let (mut notifier, receiver) = UnixStream::pair()?;
         let lock = duplicate(file.as_raw_fd())?;
         let notice = duplicate(receiver.as_raw_fd())?;
 
-        // SAFETY: the child branch invokes only async-signal-safe system calls and
-        // exits with `_exit`, without touching shared Rust runtime state.
+        // SAFETY: the child branch uses fixed-stack descriptor setup and raw
+        // process operations, then exits with `_exit` without running destructors.
         let pid = unsafe { libc::fork() };
         if pid == -1 {
             return Err(io::Error::last_os_error());
         }
         if pid == 0 {
-            guardian_main(lock.as_raw_fd(), notice.as_raw_fd());
+            guardian_main(lock.as_raw_fd(), notice.as_raw_fd(), descriptor_setup);
         }
 
         drop(receiver);
@@ -80,6 +89,14 @@ impl PendingGuardian {
             .as_ref()
             .expect("pending guardian retains its notifier")
             .as_raw_fd()
+    }
+
+    #[cfg(all(test, target_os = "macos"))]
+    fn id(&self) -> u32 {
+        self.guardian
+            .as_ref()
+            .expect("pending guardian retains its process")
+            .pid
     }
 
     pub(super) fn activate(mut self) -> Guardian {
@@ -193,7 +210,7 @@ fn duplicate(descriptor: RawFd) -> io::Result<OwnedFd> {
     Ok(unsafe { OwnedFd::from_raw_fd(duplicate) })
 }
 
-fn guardian_main(lock: RawFd, notice: RawFd) -> ! {
+fn guardian_main(lock: RawFd, notice: RawFd, descriptor_setup: bool) -> ! {
     // SAFETY: the guardian is the only thread in this forked process and uses
     // only raw descriptors until it exits without running Rust destructors.
     unsafe {
@@ -203,7 +220,8 @@ fn guardian_main(lock: RawFd, notice: RawFd) -> ! {
         {
             libc::_exit(125);
         }
-        if !close_unneeded_descriptors() || !send_ready() {
+        if !descriptor_setup || !close_unneeded_descriptors() || !send_ready() {
+            libc::close(GUARDIAN_NOTICE_FD);
             libc::_exit(125);
         }
 
@@ -278,9 +296,9 @@ unsafe fn wait_for_wrapper_close() {
 #[cfg(target_os = "linux")]
 unsafe fn close_unneeded_descriptors() -> bool {
     for descriptor in 0..GUARDIAN_LOCK_FD {
-        // SAFETY: closing an inherited descriptor is valid and failures are irrelevant.
-        unsafe {
-            libc::close(descriptor);
+        // SAFETY: each inherited descriptor belongs to this guardian process.
+        if unsafe { libc::close(descriptor) } == -1 && unsafe { errno() } != libc::EBADF {
+            return false;
         }
     }
 
@@ -297,29 +315,58 @@ unsafe fn close_unneeded_descriptors() -> bool {
 
 #[cfg(target_os = "macos")]
 unsafe fn close_unneeded_descriptors() -> bool {
-    let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
-    // SAFETY: the guardian owns the writable limit destination.
-    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, limit.as_mut_ptr()) } == -1 {
-        return false;
-    }
-    // SAFETY: successful `getrlimit` initialized the destination.
-    let maximum = unsafe { limit.assume_init() }.rlim_cur;
-    let Ok(maximum) = RawFd::try_from(maximum) else {
+    const DESCRIPTOR_BATCH: usize = 128;
+    let byte_capacity = size_of::<libc::proc_fdinfo>() * DESCRIPTOR_BATCH;
+    let Ok(byte_capacity) = libc::c_int::try_from(byte_capacity) else {
         return false;
     };
-    for descriptor in (GUARDIAN_NOTICE_FD + 1)..maximum {
-        // SAFETY: closing an inherited descriptor is valid and failures are irrelevant.
-        unsafe {
-            libc::close(descriptor);
+
+    loop {
+        let mut descriptors =
+            [const { std::mem::MaybeUninit::<libc::proc_fdinfo>::uninit() }; DESCRIPTOR_BATCH];
+        // SAFETY: the fixed stack array is writable for its complete byte capacity.
+        let bytes = unsafe {
+            libc::proc_pidinfo(
+                libc::getpid(),
+                libc::PROC_PIDLISTFDS,
+                0,
+                descriptors.as_mut_ptr().cast(),
+                byte_capacity,
+            )
+        };
+        let Ok(bytes) = usize::try_from(bytes) else {
+            return false;
+        };
+        if bytes == 0 || bytes % size_of::<libc::proc_fdinfo>() != 0 {
+            return false;
+        }
+
+        let mut retained_lock = false;
+        let mut retained_notice = false;
+        let mut closed = 0;
+        for descriptor in descriptors
+            .iter()
+            .take(bytes / size_of::<libc::proc_fdinfo>())
+        {
+            // SAFETY: `proc_pidinfo` initialized every complete returned entry.
+            let descriptor = unsafe { descriptor.assume_init_ref() }.proc_fd;
+            match descriptor {
+                GUARDIAN_LOCK_FD => retained_lock = true,
+                GUARDIAN_NOTICE_FD => retained_notice = true,
+                _ => {
+                    // SAFETY: each listed descriptor belongs to this guardian process.
+                    if unsafe { libc::close(descriptor) } == -1 && unsafe { errno() } != libc::EBADF
+                    {
+                        return false;
+                    }
+                    closed += 1;
+                }
+            }
+        }
+        if closed == 0 {
+            return retained_lock && retained_notice && bytes == 2 * size_of::<libc::proc_fdinfo>();
         }
     }
-    for descriptor in 0..GUARDIAN_LOCK_FD {
-        // SAFETY: closing an inherited descriptor is valid and failures are irrelevant.
-        unsafe {
-            libc::close(descriptor);
-        }
-    }
-    true
 }
 
 fn raw_group_absent(pid: libc::pid_t) -> bool {
@@ -354,5 +401,108 @@ fn reap(pid: libc::pid_t) -> io::Result<()> {
         if error.kind() != io::ErrorKind::Interrupted {
             return Err(error);
         }
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::PendingGuardian;
+    use std::fs;
+    use std::mem::MaybeUninit;
+    use std::os::fd::AsRawFd;
+    use std::process::Command;
+
+    const FIXTURE_NAME: &str = "spawn::guardian::tests::macos_guardian_exact_descriptor_fixture";
+
+    #[test]
+    fn macos_guardian_closes_descriptors_above_lowered_soft_limit() {
+        let output = Command::new(std::env::current_exe().expect("locate SILL test executable"))
+            .args(["--exact", FIXTURE_NAME, "--ignored", "--nocapture"])
+            .output()
+            .expect("launch isolated guardian descriptor fixture");
+
+        assert!(output.status.success(), "descriptor fixture: {output:?}");
+    }
+
+    #[test]
+    #[ignore = "subprocess fixture isolates RLIMIT_NOFILE mutation"]
+    fn macos_guardian_exact_descriptor_fixture() {
+        const LOWERED_LIMIT: libc::rlim_t = 64;
+        const HIGH_DESCRIPTOR: libc::c_int = 96;
+
+        let mut limit = MaybeUninit::<libc::rlimit>::uninit();
+        // SAFETY: the limit destination is writable for the complete structure.
+        assert_eq!(
+            unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, limit.as_mut_ptr()) },
+            0
+        );
+        // SAFETY: successful `getrlimit` initialized the limit.
+        let original = unsafe { limit.assume_init() };
+        assert!(original.rlim_max > HIGH_DESCRIPTOR as libc::rlim_t);
+        let raised = libc::rlimit {
+            rlim_cur: original.rlim_cur.max((HIGH_DESCRIPTOR + 1) as libc::rlim_t),
+            rlim_max: original.rlim_max,
+        };
+        // SAFETY: the requested soft limit does not exceed the existing hard limit.
+        assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &raised) }, 0);
+
+        let path =
+            std::env::temp_dir().join(format!("sill-guardian-descriptors-{}", std::process::id()));
+        let file = fs::File::create(&path).expect("guardian descriptor fixture creates");
+        // SAFETY: `fcntl` duplicates the live file above the future soft limit.
+        let high = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, HIGH_DESCRIPTOR) };
+        assert!(
+            high >= HIGH_DESCRIPTOR,
+            "high descriptor duplication failed"
+        );
+
+        let lowered = libc::rlimit {
+            rlim_cur: LOWERED_LIMIT,
+            rlim_max: original.rlim_max,
+        };
+        // SAFETY: lowering the process-local soft limit preserves the hard limit.
+        assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &lowered) }, 0);
+
+        let guardian = PendingGuardian::start(&file).expect("guardian descriptor setup succeeds");
+        assert_eq!(guardian_descriptors(guardian.id()), [3, 4]);
+
+        // SAFETY: `high` remains owned by this fixture process after the guardian fork.
+        assert_eq!(unsafe { libc::close(high) }, 0);
+        drop(guardian);
+        drop(file);
+        fs::remove_file(path).expect("guardian descriptor fixture removes");
+    }
+
+    fn guardian_descriptors(pid: u32) -> Vec<libc::c_int> {
+        const CAPACITY: usize = 128;
+        let mut descriptors = [const { MaybeUninit::<libc::proc_fdinfo>::uninit() }; CAPACITY];
+        let capacity = libc::c_int::try_from(size_of_val(&descriptors))
+            .expect("descriptor buffer size fits c_int");
+        // SAFETY: the fixed descriptor buffer is writable for its complete size.
+        let bytes = unsafe {
+            libc::proc_pidinfo(
+                pid as libc::c_int,
+                libc::PROC_PIDLISTFDS,
+                0,
+                descriptors.as_mut_ptr().cast(),
+                capacity,
+            )
+        };
+        let bytes = usize::try_from(bytes).expect("descriptor query succeeds");
+        assert_eq!(bytes % size_of::<libc::proc_fdinfo>(), 0);
+        assert!(
+            bytes < size_of_val(&descriptors),
+            "descriptor query truncated"
+        );
+        let mut descriptors = descriptors
+            .iter()
+            .take(bytes / size_of::<libc::proc_fdinfo>())
+            .map(|descriptor| {
+                // SAFETY: every complete returned entry was initialized.
+                unsafe { descriptor.assume_init_ref() }.proc_fd
+            })
+            .collect::<Vec<_>>();
+        descriptors.sort_unstable();
+        descriptors
     }
 }
