@@ -22,6 +22,7 @@ pub mod kill;
 pub mod manifest;
 pub mod measure;
 pub mod message;
+pub mod metrics;
 pub mod names;
 pub mod policy;
 pub mod ratchet;
