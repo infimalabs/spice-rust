@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "app",
+    "artifact",
     "atomic",
     "board",
     "bus",

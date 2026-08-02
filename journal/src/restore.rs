@@ -32,6 +32,36 @@ pub fn verify_restore_bundle(
 pub struct RestoreCapture {
     verification: RestoreVerification,
     authority: Vec<u8>,
+    authority_path: String,
+    members: Vec<RestoreMember>,
+}
+
+/// One authenticated regular file captured from a restore bundle.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RestoreMember {
+    path: String,
+    mode: u32,
+    bytes: Vec<u8>,
+}
+
+impl RestoreMember {
+    /// Canonical slash-separated member path relative to the bundle root.
+    #[must_use]
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Exact POSIX mode authenticated by the bundle manifest.
+    #[must_use]
+    pub const fn mode(&self) -> u32 {
+        self.mode
+    }
+
+    /// Exact authenticated member bytes.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
 }
 
 impl RestoreCapture {
@@ -45,6 +75,18 @@ impl RestoreCapture {
     #[must_use]
     pub fn authority_bytes(&self) -> &[u8] {
         &self.authority
+    }
+
+    /// Canonical member path carrying the SQLite authority.
+    #[must_use]
+    pub fn authority_path(&self) -> &str {
+        &self.authority_path
+    }
+
+    /// Every authenticated bundle member in canonical manifest order.
+    #[must_use]
+    pub fn members(&self) -> &[RestoreMember] {
+        &self.members
     }
 
     /// Consumes the capture and returns its public verification receipt.
@@ -96,7 +138,8 @@ where
     let (manifest, manifest_bytes) = read_manifest(&bundle)?;
     admit_manifest_versions(&manifest)?;
     let authority = admitted_member_path(&manifest.authority)?;
-    let authority_capture = authenticate_members(&bundle, &manifest, &authority, after_inventory)?;
+    let (authority_capture, members) =
+        authenticate_members(&bundle, &manifest, &authority, after_inventory)?;
     after_capture(&root.join(&authority));
     let verified = verify_authority(&authority_capture.bytes, manifest.journal_schema)?;
 
@@ -113,6 +156,8 @@ where
             threads: count(verified.threads, "threads")?,
         },
         authority: authority_capture.bytes,
+        authority_path: manifest.authority,
+        members,
     })
 }
 
@@ -246,7 +291,7 @@ fn authenticate_members<F>(
     manifest: &JournalBackupManifest,
     authority: &Path,
     after_inventory: F,
-) -> Result<CapturedMember, BackupVerifyError>
+) -> Result<(CapturedMember, Vec<RestoreMember>), BackupVerifyError>
 where
     F: FnOnce(&Path),
 {
@@ -254,6 +299,7 @@ where
     after_inventory(&bundle.root);
     let mut previous: Option<&str> = None;
     let mut authority_capture = None;
+    let mut captures = Vec::with_capacity(manifest.members.len());
     for member in &manifest.members {
         let relative = admitted_member_path(&member.path)?;
         admit_member_order(&bundle.root, previous, &member.path)?;
@@ -261,15 +307,25 @@ where
         let observed =
             authenticate_member(bundle, &relative, member.mode, member.bytes, &member.digest)?;
         if relative == authority {
-            authority_capture = Some(observed);
+            authority_capture = Some(CapturedMember {
+                digest: observed.digest.clone(),
+                bytes: observed.bytes.clone(),
+            });
         }
+        captures.push(RestoreMember {
+            path: member.path.clone(),
+            mode: member.mode,
+            bytes: observed.bytes,
+        });
     }
-    authority_capture.ok_or_else(|| BackupVerifyError::Incomplete {
-        detail: format!(
-            "authority member {:?} is absent from the manifest inventory",
-            manifest.authority
-        ),
-    })
+    authority_capture
+        .map(|authority| (authority, captures))
+        .ok_or_else(|| BackupVerifyError::Incomplete {
+            detail: format!(
+                "authority member {:?} is absent from the manifest inventory",
+                manifest.authority
+            ),
+        })
 }
 
 fn admit_inventory(

@@ -504,6 +504,46 @@ const CONTRACTS: &[Contract] = &[
         "board::task_depends"
     ),
     row!(
+        ["task", "artifact", "add"],
+        "task artifact add HANDLE PATH [--name NAME] [--type TYPE] [--retention RETENTION]",
+        OperatorOrLane,
+        Read,
+        [],
+        [Daemonless],
+        Reply,
+        "artifact::add"
+    ),
+    row!(
+        ["task", "artifact", "list"],
+        "task artifact list HANDLE",
+        OperatorOrLane,
+        Read,
+        [],
+        [Daemonless],
+        Reply,
+        "artifact::list"
+    ),
+    row!(
+        ["task", "artifact", "show"],
+        "task artifact show HANDLE ARTIFACT",
+        OperatorOrLane,
+        Read,
+        [],
+        [Daemonless],
+        Reply,
+        "artifact::show"
+    ),
+    row!(
+        ["task", "artifact", "prune"],
+        "task artifact prune [--older-than DURATION] [--apply]",
+        OperatorOrLane,
+        Read,
+        [],
+        [Daemonless],
+        Reply,
+        "artifact::prune"
+    ),
+    row!(
         ["doc"],
         "doc [PATH|-] [--apply=<digest>]",
         OperatorOrLane,
@@ -910,6 +950,10 @@ pub fn landing(path: &[&str]) -> Landing {
         | ["task", "free"]
         | ["task", "oops"]
         | ["task", "depends"]
+        | ["task", "artifact", "add"]
+        | ["task", "artifact", "list"]
+        | ["task", "artifact", "show"]
+        | ["task", "artifact", "prune"]
         | ["doc"]
         | ["doc", "ledger"]
         | ["taste"]

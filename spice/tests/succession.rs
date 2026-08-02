@@ -70,6 +70,19 @@ const CASES: &[Case] = &[
         "task depends",
         &["task", "depends", "READY-12345678", "AFTER-12345678"],
     ),
+    case(
+        "task artifact add",
+        &["task", "artifact", "add", "READY-12345678", "missing"],
+    ),
+    case(
+        "task artifact list",
+        &["task", "artifact", "list", "READY-12345678"],
+    ),
+    case("task artifact prune", &["task", "artifact", "prune"]),
+    case(
+        "task artifact show",
+        &["task", "artifact", "show", "READY-12345678", "A1"],
+    ),
     case("doc", &["doc", "missing"]),
     case("doc ledger", &["doc", "ledger", "READY-12345678"]),
     case("lane", &["lane"]),
@@ -145,8 +158,8 @@ impl Drop for Scratch {
 fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
     let registered = landed_ledger_paths();
     let exercised = CASES.iter().map(|case| case.path).collect::<BTreeSet<_>>();
-    assert_eq!(registered.len(), 63);
-    assert_eq!(CASES.len(), 63);
+    assert_eq!(registered.len(), 67);
+    assert_eq!(CASES.len(), 67);
     assert_eq!(exercised.len(), CASES.len(), "process case repeated");
     assert_eq!(
         exercised, registered,

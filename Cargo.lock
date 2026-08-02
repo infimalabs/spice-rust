@@ -110,6 +110,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
+name = "artifact"
+version = "0.0.0"
+dependencies = [
+ "atomic",
+ "libc",
+ "serde",
+ "sill",
+ "wire",
+]
+
+[[package]]
 name = "atomic"
 version = "0.0.0"
 
@@ -2759,6 +2770,7 @@ dependencies = [
 name = "spice"
 version = "0.0.0"
 dependencies = [
+ "artifact",
  "atomic",
  "board",
  "bus",
