@@ -88,11 +88,29 @@ fn run_trunk(root: &Path, stage: &Path, output: &mut impl Write) -> Result<(), A
     writeln!(output, "[app] trunk 0.21.14 -> {}", stage.display())
         .map_err(AppBuildError::Output)?;
     let rustflags = remapped_rustflags(root)?;
-    let status = Command::new("trunk")
+    let status = trunk_command(root, stage, rustflags)
+        .status()
+        .map_err(AppBuildError::Launch)?;
+    if !status.success() {
+        return Err(AppBuildError::Exit(status.code()));
+    }
+    finalize_stage(stage)
+}
+
+fn trunk_command(root: &Path, stage: &Path, rustflags: String) -> Command {
+    let target = root.join("target/xtask-app");
+    let build = root.join("target/xtask-app-build");
+    let mut command = Command::new("trunk");
+    command
         .current_dir(root.join("app"))
+        .env("CARGO_BUILD_BUILD_DIR", build)
         .env("CARGO_ENCODED_RUSTFLAGS", rustflags)
         .env("CARGO_HOME", CARGO_HOME)
+        .env("CARGO_INCREMENTAL", "0")
+        .env("CARGO_TARGET_DIR", target)
         .env("NO_COLOR", "true")
+        .env("RUSTC_WORKSPACE_WRAPPER", "")
+        .env("RUSTC_WRAPPER", "")
         .args([
             "build",
             "index.html",
@@ -103,13 +121,8 @@ fn run_trunk(root: &Path, stage: &Path, output: &mut impl Write) -> Result<(), A
             "canvas-app.html",
             "--dist",
         ])
-        .arg(stage)
-        .status()
-        .map_err(AppBuildError::Launch)?;
-    if !status.success() {
-        return Err(AppBuildError::Exit(status.code()));
-    }
-    finalize_stage(stage)
+        .arg(stage);
+    command
 }
 
 fn finalize_stage(stage: &Path) -> Result<(), AppBuildError> {
@@ -359,7 +372,7 @@ impl std::error::Error for VerifyError {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
+    use std::collections::{BTreeMap, VecDeque};
 
     use super::*;
 
@@ -389,6 +402,64 @@ mod tests {
                 Outcome::Launch => Err(io::Error::other("fixture launch refusal")),
             }
         }
+    }
+
+    #[test]
+    fn app_build_command_owns_cache_and_wrapper_inputs() {
+        let root = Path::new("/workspace");
+        let stage = Path::new("/stage");
+        let command = trunk_command(root, stage, "remapped-flags".to_owned());
+        let environment = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(
+            environment,
+            BTreeMap::from([
+                (
+                    "CARGO_BUILD_BUILD_DIR".to_owned(),
+                    Some("/workspace/target/xtask-app-build".to_owned()),
+                ),
+                (
+                    "CARGO_ENCODED_RUSTFLAGS".to_owned(),
+                    Some("remapped-flags".to_owned()),
+                ),
+                ("CARGO_HOME".to_owned(), Some(CARGO_HOME.to_owned())),
+                ("CARGO_INCREMENTAL".to_owned(), Some("0".to_owned())),
+                (
+                    "CARGO_TARGET_DIR".to_owned(),
+                    Some("/workspace/target/xtask-app".to_owned()),
+                ),
+                ("NO_COLOR".to_owned(), Some("true".to_owned())),
+                ("RUSTC_WORKSPACE_WRAPPER".to_owned(), Some(String::new())),
+                ("RUSTC_WRAPPER".to_owned(), Some(String::new())),
+            ])
+        );
+        assert_eq!(command.get_current_dir(), Some(Path::new("/workspace/app")));
+        assert_eq!(command.get_program(), "trunk");
+        assert_eq!(
+            command
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            [
+                "build",
+                "index.html",
+                "--release",
+                "--locked",
+                "--filehash=false",
+                "--html-output",
+                "canvas-app.html",
+                "--dist",
+                "/stage",
+            ]
+        );
     }
 
     #[test]
