@@ -236,24 +236,21 @@ fn a_repository_that_refuses_claudes_trailer_gets_attribution_withheld() {
 }
 
 #[test]
-fn vendor_effort_rendering_refuses_only_claudes_unsupported_maximum() {
+fn vendor_effort_rendering_carries_every_shared_value_once() {
     for effort in Effort::ALL {
         let mut claude_launch = fixture(CLAUDE_MODEL, Resume::Fresh);
         claude_launch.effort = *effort;
-        if *effort == Effort::Max {
-            assert_eq!(
-                claude::record("/opt/claude", &claude_launch)
-                    .expect_err("Claude max effort refuses"),
-                ContractError::Unsupported {
-                    path: "vendor.claude.effort",
-                    vendor: "Claude",
-                }
-            );
-        } else {
-            let record =
-                claude::record("/opt/claude", &claude_launch).expect("valid Claude record");
-            assert_arguments_contain(&record, &["--effort", effort.as_str()]);
-        }
+        let record = claude::record("/opt/claude", &claude_launch).expect("valid Claude record");
+        let rendered = arguments(&record);
+        assert_eq!(
+            rendered
+                .windows(2)
+                .filter(|pair| pair == &["--effort", effort.as_str()])
+                .count(),
+            1,
+            "Claude effort {:?} must render exactly once",
+            effort
+        );
 
         let mut codex_launch = fixture(CODEX_MODEL, Resume::Fresh);
         codex_launch.effort = *effort;
