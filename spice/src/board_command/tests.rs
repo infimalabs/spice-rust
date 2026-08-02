@@ -53,6 +53,7 @@ mod tests {
                 occupant: Some(seat.occupant),
                 lineage: vec![seat.occupant],
                 capabilities: vec![uuid(number * 100 + index as u64 + 50)],
+                session: None,
                 disposition: "occupied".to_owned(),
             })
             .collect::<Vec<_>>();

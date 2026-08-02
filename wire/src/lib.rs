@@ -70,9 +70,9 @@ pub use doctor::{
 pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVersion};
 pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{
-    ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency, LeaseHead,
-    ResidencyHead, ResidentState, TaskHead, TrustHead, TrustState, WitnessClass, WitnessHead,
-    WorkflowHead,
+    ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency, LaneSession,
+    LeaseHead, ResidencyHead, ResidentState, TapeLocus, TaskHead, TrustHead, TrustState,
+    WitnessClass, WitnessHead, WorkflowHead,
 };
 pub use hello::{Accepted, CanvasBootstrap, Hello, Rejected};
 pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant};

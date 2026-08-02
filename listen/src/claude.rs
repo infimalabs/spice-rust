@@ -3,7 +3,8 @@ use tape::Locus;
 use crate::event::Usage;
 use crate::{
     Compaction, Event, Events, Failure, Object, Prose, Reasoning, ReasoningContent, ResidueKind,
-    Tool, ToolMoment, ToolResult, array, object, optional_boolean, required, string, unsigned,
+    SessionDeclaration, Tool, ToolMoment, ToolResult, array, object, optional_boolean, required,
+    string, unsigned,
 };
 
 pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
@@ -116,6 +117,10 @@ fn user(record: &Object, locus: Locus) -> Events {
 
 fn system(record: &Object, locus: Locus) -> Events {
     match string(record, "subtype")? {
+        "init" => Ok(vec![Event::Session(SessionDeclaration {
+            identity: string(record, "session_id")?.to_owned(),
+            locus,
+        })]),
         "compact_boundary" => Ok(vec![Event::Compaction(Compaction { locus })]),
         other => Err(drift(&format!("system:{other}"))),
     }

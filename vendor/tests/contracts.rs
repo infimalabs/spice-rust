@@ -14,8 +14,12 @@ use vendor::{
 use wire::CanonicalUuid;
 
 const CLAUDE_PROSE: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3,"output_tokens":2}}}"#;
+const CLAUDE_SESSION: &[u8] =
+    br#"{"type":"system","subtype":"init","session_id":"018f7777-7777-7444-8888-999999999999"}"#;
 const CODEX_PROSE: &[u8] =
     br#"{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"done"}}"#;
+const CODEX_SESSION: &[u8] =
+    br#"{"type":"thread.started","thread_id":"019fbc32-beb1-7ee0-b814-a7513f8f8ea5"}"#;
 
 const HOOK_COMMAND: &str = "/usr/bin/spice agent post-tool-hook --repo-root /worktree";
 const STEERING_TOKEN: &str = "1kJHh5bb";
@@ -104,6 +108,7 @@ fn codex_carries_every_launch_knob_and_resumes_after_its_flags() {
             "/worktree",
             "--model",
             "gpt-5-codex",
+            "--json",
             "--config",
             CODEX_HOOK_OVERRIDE,
             "--config",
@@ -140,6 +145,7 @@ fn codex_carries_every_launch_knob_and_resumes_after_its_flags() {
             "/worktree",
             "--model",
             "gpt-5-codex",
+            "--json",
             "--config",
             CODEX_HOOK_OVERRIDE,
             "--config",
@@ -256,6 +262,89 @@ fn a_session_identity_stores_exactly_what_it_admitted() {
         "padding admitted for the emptiness check must not ride into --resume"
     );
     assert!(SessionId::new("  ").is_err());
+}
+
+#[test]
+fn both_selected_record_contracts_admit_the_exact_typed_session_declaration() {
+    let cases = [
+        (
+            claude::record("/opt/claude", &fixture(CLAUDE_MODEL, Resume::Fresh))
+                .expect("Claude record"),
+            CLAUDE_SESSION,
+            "018f7777-7777-7444-8888-999999999999",
+        ),
+        (
+            codex::record("/opt/codex", &fixture(CODEX_MODEL, Resume::Fresh))
+                .expect("Codex record"),
+            CODEX_SESSION,
+            "019fbc32-beb1-7ee0-b814-a7513f8f8ea5",
+        ),
+    ];
+    for (record, bytes, expected) in cases {
+        let locus = Locus::new(7, 31, bytes.len() as u64);
+        let decoded = record
+            .decode(RecordStream::Stdout, bytes, locus)
+            .expect("matching locus")
+            .expect("selected stream");
+        let declaration = record
+            .session_declaration(&decoded)
+            .expect("session identity is admitted")
+            .expect("initialization record declares a session");
+        assert_eq!(declaration.session.as_str(), expected);
+        assert_eq!(declaration.locus, locus);
+    }
+}
+
+#[test]
+fn diagnostics_malformed_records_and_unrelated_events_never_create_session_authority() {
+    let cases = [
+        (
+            claude::record("/opt/claude", &fixture(CLAUDE_MODEL, Resume::Fresh))
+                .expect("Claude record"),
+            CLAUDE_SESSION,
+            CLAUDE_PROSE,
+            br#"{"type":"system","subtype":"init"}"#.as_slice(),
+            br#"{"type":"system","subtype":"init","session_id":""}"#.as_slice(),
+        ),
+        (
+            codex::record("/opt/codex", &fixture(CODEX_MODEL, Resume::Fresh))
+                .expect("Codex record"),
+            CODEX_SESSION,
+            CODEX_PROSE,
+            br#"{"type":"thread.started"}"#.as_slice(),
+            br#"{"type":"thread.started","thread_id":""}"#.as_slice(),
+        ),
+    ];
+    for (record, session, unrelated, malformed, empty) in cases {
+        let diagnostic_locus = Locus::new(8, 0, session.len() as u64);
+        assert!(
+            record
+                .decode(RecordStream::Stderr, session, diagnostic_locus)
+                .expect("diagnostic locus matches")
+                .is_none()
+        );
+
+        for bytes in [unrelated, malformed] {
+            let locus = Locus::new(9, 0, bytes.len() as u64);
+            let decoded = record
+                .decode(RecordStream::Stdout, bytes, locus)
+                .expect("selected record locus matches")
+                .expect("selected record is accounted");
+            assert_eq!(
+                record
+                    .session_declaration(&decoded)
+                    .expect("non-session record has no invalid identity"),
+                None
+            );
+        }
+
+        let locus = Locus::new(10, 0, empty.len() as u64);
+        let decoded = record
+            .decode(RecordStream::Stdout, empty, locus)
+            .expect("empty declaration locus matches")
+            .expect("selected declaration is decoded");
+        assert!(record.session_declaration(&decoded).is_err());
+    }
 }
 
 #[test]
