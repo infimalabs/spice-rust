@@ -1,3 +1,5 @@
+const COMPLETE_HEADROOM_REDUCTION_PERCENT: i128 = -100;
+
 /// Candidate provenance used by elastic headroom and peer claims.
 ///
 /// Jitter uses the first present value in this exact order: published task
@@ -203,7 +205,7 @@ impl BoundRule {
         measured: u64,
         latched: bool,
         actor_inputs: &ActorInputs,
-        variation_percent: u32,
+        variation_percent: u64,
     ) -> Result<BoundDecision, BoundError> {
         let actor = if self.actor_required {
             Some(actor_inputs.require_actor()?)
@@ -246,6 +248,7 @@ impl BoundRule {
             measured,
             base_limit: self.base_limit,
             configured_elastic_limit: self.elastic_limit,
+            variation_percent,
             elastic_limit,
             active_limit,
             unlimited: self.unlimited,
@@ -265,7 +268,7 @@ pub fn varied_elastic_limit(
     elastic_limit: u64,
     path: &str,
     actor: &str,
-    variation_percent: u32,
+    variation_percent: u64,
 ) -> Result<u64, BoundError> {
     if elastic_limit <= base_limit {
         return Ok(elastic_limit);
@@ -280,14 +283,23 @@ pub fn varied_elastic_limit(
     hasher
         .finalize_variable(&mut digest)
         .expect("the requested BLAKE2b output length is unchanged");
-    let buckets = u64::from(variation_percent)
-        .checked_mul(2)
-        .and_then(|value| value.checked_add(1))
-        .ok_or(BoundError::VariationOverflow)?;
-    let bucket = u64::from(u16::from_be_bytes(digest)) % buckets;
-    let offset = i128::from(bucket) - i128::from(variation_percent);
+    let buckets = u128::from(variation_percent) * 2 + 1;
+    let bucket = u128::from(u16::from_be_bytes(digest)) % buckets;
+    let offset = i128::try_from(bucket).expect("a two-byte bucket fits i128")
+        - i128::from(variation_percent);
     let headroom = i128::from(elastic_limit - base_limit);
-    let variation = headroom * offset / 100;
+    // Any offset at or below -100 consumes the complete headroom, so the
+    // predecessor's final base clamp decides the result without multiplying
+    // an otherwise unbounded percentage.
+    if offset <= COMPLETE_HEADROOM_REDUCTION_PERCENT {
+        return Ok(base_limit);
+    }
+    let scaled = headroom
+        .checked_mul(offset)
+        .ok_or(BoundError::VariationOverflow)?;
+    // Python's `/ 100` converts the integer product through binary64 before
+    // `int(...)` truncates it. Preserve that rounding at large admitted limits.
+    let variation = (scaled as f64 / 100.0).trunc() as i128;
     let varied = i128::from(elastic_limit) + variation;
     let varied = varied.max(i128::from(base_limit));
     u64::try_from(varied).map_err(|_| BoundError::VariationOverflow)
@@ -301,6 +313,7 @@ pub struct BoundDecision {
     measured: u64,
     base_limit: u64,
     configured_elastic_limit: u64,
+    variation_percent: u64,
     elastic_limit: u64,
     active_limit: u64,
     unlimited: bool,
@@ -342,6 +355,12 @@ impl BoundDecision {
     #[must_use]
     pub const fn configured_elastic_limit(&self) -> u64 {
         self.configured_elastic_limit
+    }
+
+    /// Configured actor/path variation percentage.
+    #[must_use]
+    pub const fn variation_percent(&self) -> u64 {
+        self.variation_percent
     }
 
     /// Effective actor-varied flex limit.
