@@ -33,6 +33,7 @@ impl Fixture {
             "[tasks]\nstems = ['rim']\n",
             "[policy]\nenv_names = []\n",
             "[taste.polling]\nwords = ['poll*']\nmessage = 'use events'\n",
+            "[lock.worker]\ndirectory = 'locks/worker'\n",
         )
         .as_bytes()
         .to_vec();
@@ -280,7 +281,11 @@ fn local_symlinks_are_refused_without_following_or_replacing_them() {
 
     let fixture = Fixture::new("symlink");
     let target = fixture.root.join("outside.toml");
-    fs::write(&target, "[lock.worker]\nshards = 7\n").expect("write symlink target");
+    fs::write(
+        &target,
+        "[lock.worker]\ndirectory = 'locks/worker'\nshards = 7\n",
+    )
+    .expect("write symlink target");
     fs::create_dir_all(fixture.local().parent().expect("local parent"))
         .expect("create local parent");
     symlink(&target, fixture.local()).expect("plant local symlink");
@@ -291,7 +296,7 @@ fn local_symlinks_are_refused_without_following_or_replacing_them() {
     );
     assert_eq!(
         fs::read(&target).expect("read symlink target"),
-        b"[lock.worker]\nshards = 7\n"
+        b"[lock.worker]\ndirectory = 'locks/worker'\nshards = 7\n"
     );
     assert!(
         fs::symlink_metadata(fixture.local())

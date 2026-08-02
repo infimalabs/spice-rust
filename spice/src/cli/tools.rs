@@ -70,6 +70,17 @@ pub(super) const GATE_MUTATION_TOOLS: &[ExternalTool] = &[ExternalTool {
     network: ToolNetwork::Permitted,
 }];
 
+pub(super) const TASK_GIT_TOOLS: &[ExternalTool] = &[ExternalTool {
+    name: "git",
+    owner: "task_git",
+    mode: ToolMode::Launch,
+    requirement: ToolRequirement::Required,
+    source: ToolSource::TaskBoundaryContract,
+    bounds: ToolBounds::TaskBoundary,
+    cancellation: ToolCancellation::Deadline,
+    network: ToolNetwork::Permitted,
+}];
+
 pub(super) const PROOF_TOOLS: &[ExternalTool] = &[
     ExternalTool {
         name: "OCI runtime",
@@ -97,117 +108,123 @@ pub(super) const PROOF_TOOLS: &[ExternalTool] = &[
 pub(super) fn posture_violations(contracts: &[Contract]) -> Vec<String> {
     let mut violations = Vec::new();
     for contract in contracts {
-        let path = contract.path.join(" ");
-        let launches = contract
-            .tools
-            .iter()
-            .any(|tool| tool.mode == ToolMode::Launch);
-        if launches != contract.guards.contains(&Guard::Toolful) {
-            violations.push(format!(
-                "{path}: toolful guard and launch declarations disagree"
-            ));
-        }
-
-        let mut declarations = BTreeSet::new();
-        for tool in contract.tools {
-            if tool.name.trim().is_empty() {
-                violations.push(format!("{path}: external tool has no name"));
-            }
-            if tool.owner.trim().is_empty() {
-                violations.push(format!(
-                    "{path}: external tool {:?} has no owner",
-                    tool.name
-                ));
-            }
-            if !declarations.insert(tool.name) {
-                violations.push(format!(
-                    "{path}: external tool {:?} is declared more than once",
-                    tool.name
-                ));
-            }
-
-            let execution = (tool.bounds, tool.cancellation, tool.network);
-            match tool.mode {
-                ToolMode::Launch => {
-                    if matches!(tool.bounds, ToolBounds::NotExecuted)
-                        || matches!(tool.cancellation, ToolCancellation::NotExecuted)
-                        || matches!(tool.network, ToolNetwork::NotExecuted)
-                    {
-                        violations.push(format!(
-                            "{path}: launched tool {:?} has an observation-only posture",
-                            tool.name
-                        ));
-                    }
-                }
-                ToolMode::Observe => {
-                    let not_executed = (
-                        ToolBounds::NotExecuted,
-                        ToolCancellation::NotExecuted,
-                        ToolNetwork::NotExecuted,
-                    );
-                    if execution != not_executed {
-                        violations.push(format!(
-                            "{path}: observed tool {:?} carries execution posture",
-                            tool.name
-                        ));
-                    }
-                }
-            }
-            match tool.source {
-                ToolSource::CommandOperand => {
-                    let expected = (
-                        ToolMode::Launch,
-                        ToolBounds::ChildOwned,
-                        ToolCancellation::ChildOwned,
-                        ToolNetwork::ChildOwned,
-                    );
-                    if (tool.mode, tool.bounds, tool.cancellation, tool.network) != expected {
-                        violations.push(format!(
-                            "{path}: command operand {:?} does not delegate its execution posture",
-                            tool.name
-                        ));
-                    }
-                }
-                ToolSource::GatePolicyContract | ToolSource::GateMutationContract => {
-                    let expected = (
-                        ToolMode::Launch,
-                        ToolBounds::GateContract,
-                        ToolCancellation::Deadline,
-                        ToolNetwork::Permitted,
-                    );
-                    if (tool.mode, tool.bounds, tool.cancellation, tool.network) != expected {
-                        violations.push(format!(
-                            "{path}: Gate tool {:?} escaped the Gate contract",
-                            tool.name
-                        ));
-                    }
-                }
-                ToolSource::ProofRuntime | ToolSource::ProofBattery => {
-                    let expected = (
-                        ToolMode::Launch,
-                        ToolBounds::ProofLimits,
-                        ToolCancellation::Deadline,
-                        ToolNetwork::Denied,
-                    );
-                    if (tool.mode, tool.bounds, tool.cancellation, tool.network) != expected {
-                        violations.push(format!(
-                            "{path}: Proof tool {:?} escaped the sealed limits",
-                            tool.name
-                        ));
-                    }
-                }
-                ToolSource::WorktreeConfiguration => {
-                    if tool.mode != ToolMode::Observe
-                        || tool.requirement != ToolRequirement::Optional
-                    {
-                        violations.push(format!(
-                            "{path}: worktree tool {:?} is not an optional observation",
-                            tool.name
-                        ));
-                    }
-                }
-            }
-        }
+        validate_contract_tools(contract, &mut violations);
     }
     violations
+}
+
+#[cfg(test)]
+fn validate_contract_tools(contract: &Contract, violations: &mut Vec<String>) {
+    let path = contract.path.join(" ");
+    let launches = contract
+        .tools
+        .iter()
+        .any(|tool| tool.mode == ToolMode::Launch);
+    if launches != contract.guards.contains(&Guard::Toolful) {
+        violations.push(format!(
+            "{path}: toolful guard and launch declarations disagree"
+        ));
+    }
+    let mut declarations = BTreeSet::new();
+    for tool in contract.tools {
+        validate_tool_shape(&path, tool, &mut declarations, violations);
+        validate_execution_posture(&path, tool, violations);
+        validate_source_posture(&path, tool, violations);
+    }
+}
+
+#[cfg(test)]
+fn validate_tool_shape(
+    path: &str,
+    tool: &ExternalTool,
+    declarations: &mut BTreeSet<&'static str>,
+    violations: &mut Vec<String>,
+) {
+    if tool.name.trim().is_empty() {
+        violations.push(format!("{path}: external tool has no name"));
+    }
+    if tool.owner.trim().is_empty() {
+        violations.push(format!(
+            "{path}: external tool {:?} has no owner",
+            tool.name
+        ));
+    }
+    if !declarations.insert(tool.name) {
+        violations.push(format!(
+            "{path}: external tool {:?} is declared more than once",
+            tool.name
+        ));
+    }
+}
+
+#[cfg(test)]
+fn validate_execution_posture(path: &str, tool: &ExternalTool, violations: &mut Vec<String>) {
+    let execution = (tool.bounds, tool.cancellation, tool.network);
+    let not_executed = (
+        ToolBounds::NotExecuted,
+        ToolCancellation::NotExecuted,
+        ToolNetwork::NotExecuted,
+    );
+    let invalid = match tool.mode {
+        ToolMode::Launch => {
+            execution.0 == ToolBounds::NotExecuted
+                || execution.1 == ToolCancellation::NotExecuted
+                || execution.2 == ToolNetwork::NotExecuted
+        }
+        ToolMode::Observe => execution != not_executed,
+    };
+    if invalid {
+        let detail = match tool.mode {
+            ToolMode::Launch => "has an observation-only posture",
+            ToolMode::Observe => "carries execution posture",
+        };
+        violations.push(format!("{path}: tool {:?} {detail}", tool.name));
+    }
+}
+
+#[cfg(test)]
+fn validate_source_posture(path: &str, tool: &ExternalTool, violations: &mut Vec<String>) {
+    if tool.source == ToolSource::WorktreeConfiguration {
+        if tool.mode != ToolMode::Observe || tool.requirement != ToolRequirement::Optional {
+            violations.push(format!(
+                "{path}: worktree tool {:?} is not optional",
+                tool.name
+            ));
+        }
+        return;
+    }
+    let expected = match tool.source {
+        ToolSource::CommandOperand => (
+            ToolMode::Launch,
+            ToolBounds::ChildOwned,
+            ToolCancellation::ChildOwned,
+            ToolNetwork::ChildOwned,
+        ),
+        ToolSource::GatePolicyContract | ToolSource::GateMutationContract => (
+            ToolMode::Launch,
+            ToolBounds::GateContract,
+            ToolCancellation::Deadline,
+            ToolNetwork::Permitted,
+        ),
+        ToolSource::ProofRuntime | ToolSource::ProofBattery => (
+            ToolMode::Launch,
+            ToolBounds::ProofLimits,
+            ToolCancellation::Deadline,
+            ToolNetwork::Denied,
+        ),
+        ToolSource::TaskBoundaryContract => (
+            ToolMode::Launch,
+            ToolBounds::TaskBoundary,
+            ToolCancellation::Deadline,
+            ToolNetwork::Permitted,
+        ),
+        ToolSource::WorktreeConfiguration => unreachable!(),
+    };
+    let observed = (tool.mode, tool.bounds, tool.cancellation, tool.network);
+    if observed != expected {
+        violations.push(format!(
+            "{path}: tool {:?} escaped its source contract",
+            tool.name
+        ));
+    }
 }

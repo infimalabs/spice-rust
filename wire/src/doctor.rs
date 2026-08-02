@@ -163,6 +163,8 @@ pub enum DoctorToolSource {
     ProofRuntime,
     /// The sealed Proof battery supplies a program inside the container.
     ProofBattery,
+    /// The resident task-boundary contract supplies Git.
+    TaskBoundaryContract,
     /// A worktree-local integration seam supplies the executable.
     WorktreeConfiguration,
 }
@@ -175,6 +177,7 @@ impl DoctorToolSource {
         Self::GateMutationContract,
         Self::ProofRuntime,
         Self::ProofBattery,
+        Self::TaskBoundaryContract,
         Self::WorktreeConfiguration,
     ];
 }
@@ -189,6 +192,8 @@ pub enum DoctorToolBounds {
     GateContract,
     /// Proof owns runtime, drain, reap, grace, and capture limits.
     ProofLimits,
+    /// Task Git owns command deadlines and bounded captured output.
+    TaskBoundary,
     /// Observation never starts the tool.
     NotExecuted,
 }
@@ -199,6 +204,7 @@ impl DoctorToolBounds {
         Self::ChildOwned,
         Self::GateContract,
         Self::ProofLimits,
+        Self::TaskBoundary,
         Self::NotExecuted,
     ];
 }

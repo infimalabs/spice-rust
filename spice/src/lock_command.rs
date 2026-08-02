@@ -60,7 +60,7 @@ impl Drop for SignalRelay {
     }
 }
 
-/// Report the effective fixed topology without opening or creating it.
+/// Report the effective configured topology without opening or creating it.
 pub(crate) fn report() -> Outcome<LockReport> {
     let invocation = match Invocation::acquire() {
         Ok(invocation) => invocation,
@@ -114,7 +114,7 @@ fn run_inner(matches: &clap::ArgMatches) -> Result<ExitStatus, Box<Rejection>> {
         .topology
         .try_acquire(name, requested)
         .map_err(|error| Failure::surface(error).standard_rejection())?;
-    let held = match attempt {
+    let mut held = match attempt {
         LockAttempt::Acquired(held) => held,
         LockAttempt::Contended { kind, code } => {
             return Err(contention(name, requested, kind).rejection(code.get()));
@@ -154,7 +154,9 @@ fn run_inner(matches: &clap::ArgMatches) -> Result<ExitStatus, Box<Rejection>> {
         )
         .rejection(1)
     })?;
-    let running = sill::spawn(spec).map_err(|error| launch_failure(program, error))?;
+    let running = held
+        .spawn_protected(spec)
+        .map_err(|error| launch_failure(program, error))?;
     let waited = running.wait().map_err(|error| {
         Failure::fault(
             FaultClass::Environment,
@@ -259,14 +261,13 @@ impl Invocation {
         })?;
         let resolved = spice::config::load_coexisting_repository(&repository, &[])
             .map_err(Failure::configuration)?;
-        let state =
-            repository
-                .admit_state()
-                .map_err(|error| match crate::state_failure(&error) {
-                    crate::StateFailure::Refusal(refusal) => Failure::Refusal(refusal),
-                    crate::StateFailure::Fault(fault) => Failure::Fault(fault),
-                })?;
-        let topology = LockTopology::new(state.locks(), resolved.root().lock());
+        repository
+            .admit_state()
+            .map_err(|error| match crate::state_failure(&error) {
+                crate::StateFailure::Refusal(refusal) => Failure::Refusal(refusal),
+                crate::StateFailure::Fault(fault) => Failure::Fault(fault),
+            })?;
+        let topology = LockTopology::new(repository.worktree_root(), resolved.root().lock());
         Ok(Self { working, topology })
     }
 }
@@ -318,6 +319,12 @@ impl Failure {
                 "one configured lock name",
                 name,
                 "select a lock name from the topology reported by `spice lock`",
+            ),
+            error @ LockSurfaceError::ShardOnFile { .. } => Self::refusal(
+                "lock::shard-refused",
+                "no shard selection for a configured single-file lock",
+                error.to_string(),
+                "remove --shard or select a configured lock pool",
             ),
             error @ LockSurfaceError::ShardOutOfRange { .. } => Self::refusal(
                 "lock::shard-refused",

@@ -11,9 +11,11 @@ atomic = { path = "../atomic" }
 gix-glob = "0.27.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+shell-words = "1.1.1"
 sill = { path = "../sill" }
 toml = { version = "1.1.4", default-features = false, features = [
     "parse",
+    "display",
     "preserve_order",
     "serde",
     "std",

@@ -50,6 +50,8 @@ mod session_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod steering_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod task_artifact_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod taste_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod trust_command;
@@ -174,6 +176,12 @@ fn dispatch_native_queries(contract: &cli::Contract, leaf: &clap::ArgMatches, fo
             }
         },
         ["backup"] => deliver(&journal_command::backup(leaf), form),
+        ["task", "artifact", "add"]
+        | ["task", "artifact", "list"]
+        | ["task", "artifact", "show"]
+        | ["task", "artifact", "prune"] => {
+            deliver(&task_artifact_command::run(leaf, contract), form)
+        }
         ["restore"] => deliver(&restore_command::restore(leaf), form),
         ["journal"] => deliver(&journal_command::report(contract), form),
         ["journal", "replay"] => deliver(&journal_command::replay(leaf, contract), form),
@@ -221,6 +229,7 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         | ["board", "handout"]
         | ["task", "next"]
         | ["task", "add"]
+        | ["task", "capture"]
         | ["task", "done"]
         | ["task", "review"]
         | ["task", "note"]

@@ -17,6 +17,7 @@ pub mod config;
 pub mod input;
 pub mod jurisdiction;
 pub mod kill;
+pub mod manifest;
 pub mod measure;
 pub mod message;
 pub mod names;
@@ -45,6 +46,11 @@ pub use kill::{
     MutantEvidence, MutationBattery, MutationInventory, MutationMovement, MutationTool,
     MutationToolIdentity, OutcomeEvidence, PINNED_CARGO_MUTANTS, ProcessCompletion,
     ProcessEvidence, RateError, StreamEvidence, SurvivorRate,
+};
+pub use manifest::{
+    GATE_MANIFEST_VERSION, GateDeclaration, GateId, GateManifest, GateManifestError,
+    MigrationError, MigrationErrorKind, OriginLayer, PREDECESSOR_GATE_RELEASE, PredecessorDocument,
+    PredecessorInputs, Provenance, migrate_predecessor,
 };
 pub use measure::{
     Bounds, MeasureError, Measurement, Metric, MetricError, Parser, Policy, measurement_digest,

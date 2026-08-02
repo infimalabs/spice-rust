@@ -114,10 +114,13 @@ pub enum Availability {
     Held,
 }
 
+/// Exclusive kernel possession of one lock file.
 #[derive(Debug)]
 pub struct Possession {
     lock: LockFile,
     file: File,
+    #[cfg(unix)]
+    unlock_on_drop: bool,
 }
 
 impl Possession {
@@ -127,6 +130,11 @@ impl Possession {
 
     pub fn file(&self) -> &File {
         &self.file
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn retain_until_last_close(&mut self) {
+        self.unlock_on_drop = false;
     }
 }
 
@@ -183,6 +191,7 @@ fn acquire_opened(
         return Ok(Possession {
             lock: lock.clone(),
             file,
+            unlock_on_drop: true,
         });
     }
     Err(io::Error::last_os_error())
@@ -299,7 +308,9 @@ impl Drop for Possession {
     fn drop(&mut self) {
         use std::os::fd::AsRawFd;
 
-        let _result = unsafe { platform::flock(self.file.as_raw_fd(), platform::LOCK_UN) };
+        if self.unlock_on_drop {
+            let _result = unsafe { platform::flock(self.file.as_raw_fd(), platform::LOCK_UN) };
+        }
     }
 }
 
@@ -359,7 +370,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn lock_names_cannot_escape_the_fixed_topology() {
+    fn lock_names_are_single_safe_path_components() {
         for name in [
             "",
             ".",

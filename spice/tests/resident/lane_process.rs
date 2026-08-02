@@ -66,6 +66,30 @@ pub(super) fn configure_fake_vendor(fixture: &Fixture) {
     );
 }
 
+fn initialize_task_git_fixture(fixture: &Fixture) {
+    fixture_git(fixture, &["init", "-b", "main"]);
+    fixture_git(fixture, &["config", "user.name", "Resident Task Fixture"]);
+    fixture_git(fixture, &["config", "user.email", "resident@example.test"]);
+    fs::write(fixture.root.join(".gitignore"), "vendor-launches\n")
+        .expect("task fixture ignore writes");
+    fixture_git(fixture, &["add", ".gitignore", "fake-claude", "spice.toml"]);
+    fixture_git(fixture, &["commit", "-m", "resident fixture"]);
+}
+
+fn fixture_git(fixture: &Fixture, arguments: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&fixture.root)
+        .args(arguments)
+        .output()
+        .expect("fixture Git launches");
+    assert!(
+        output.status.success(),
+        "git {arguments:?}: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
 fn configure_vendor(fixture: &Fixture, script: &str) {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt as _;
@@ -566,6 +590,7 @@ fn lane_lifecycle_and_recall_cross_the_resident_in_both_forms() {
 fn typed_task_commands_retain_the_ambient_lane_principal() {
     let fixture = Fixture::new("lane-task-principal");
     configure_fake_vendor(&fixture);
+    initialize_task_git_fixture(&fixture);
     let mut resident = RunningResident::spawn(&fixture);
     resident.assert_ready(&fixture);
 
@@ -892,7 +917,7 @@ fn missing_and_duplicate_declarations_refuse_and_fully_unwind_lane_add() {
         let started = Monotonic::now();
         let added = invoke_args(&fixture, &["lane", "add", "--vendor", "claude"], true, None);
         assert_eq!(refusal_reason(&added), expected);
-        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(started.elapsed() < LANE_DEADLINE_BOUND);
         let lanes =
             reply_body::<wire::intent::LaneAnswer>(&invoke_args(&fixture, &["lane"], true, None));
         assert!(lanes.lanes.is_empty());

@@ -17,6 +17,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 #[cfg(unix)]
 use std::time::Instant;
+#[cfg(unix)]
+use std::{fs::File, os::fd::AsRawFd};
 
 #[cfg(unix)]
 const WAKE_BYTE: &[u8] = &[1];
@@ -200,7 +202,12 @@ pub struct Running {
 
 #[cfg(unix)]
 pub fn spawn(spec: Spec) -> io::Result<Running> {
-    spawn_inner(spec, None)
+    spawn_inner(spec, None, None)
+}
+
+#[cfg(unix)]
+pub(crate) fn spawn_inheriting(spec: Spec, file: &File) -> io::Result<Running> {
+    spawn_inner(spec, None, Some(file.as_raw_fd()))
 }
 
 /// Spawn one child with a bounded selected-stream observer.
@@ -214,7 +221,7 @@ pub fn spawn(spec: Spec) -> io::Result<Running> {
 /// or when the child and its capture workers cannot be created.
 #[cfg(unix)]
 pub fn spawn_observed(spec: Spec, observation: Observation) -> io::Result<Running> {
-    spawn_inner(spec, Some(observation))
+    spawn_inner(spec, Some(observation), None)
 }
 
 #[cfg(not(unix))]

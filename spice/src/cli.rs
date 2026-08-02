@@ -17,6 +17,7 @@ use syntax::{is_optional, syntax_tokens};
 pub use tools::ExternalTool;
 use tools::{
     CALLER_COMMAND, DOCTOR_TOOLS, GATE_MUTATION_TOOLS, GATE_POLICY_TOOLS, NO_TOOLS, PROOF_TOOLS,
+    TASK_GIT_TOOLS,
 };
 #[cfg(test)]
 use tools::{ToolBounds, ToolCancellation, ToolNetwork, posture_violations};
@@ -561,7 +562,8 @@ const CONTRACTS: &[Contract] = &[
         OperatorOrLane,
         Command,
         [ClaimWon],
-        [Resident],
+        [Resident, Toolful],
+        TASK_GIT_TOOLS,
         Reply,
         "board::next"
     ),
@@ -576,12 +578,24 @@ const CONTRACTS: &[Contract] = &[
         "board::task_add"
     ),
     row!(
+        ["task", "capture"],
+        "task capture [HANDLE] [--title TITLE] [--project PROJECT]",
+        OperatorOrLane,
+        Command,
+        [ClaimWon],
+        [Resident, Toolful],
+        TASK_GIT_TOOLS,
+        Reply,
+        "board::task_capture"
+    ),
+    row!(
         ["task", "done"],
         "task done [--validation TEXT]",
         Lane,
         Command,
         [TaskDone, TaskPhased],
-        [Resident, LaneCapability],
+        [Resident, LaneCapability, Toolful],
+        TASK_GIT_TOOLS,
         Reply,
         "board::task_done"
     ),
@@ -591,7 +605,8 @@ const CONTRACTS: &[Contract] = &[
         Lane,
         Command,
         [TaskReviewed],
-        [Resident, LaneCapability],
+        [Resident, LaneCapability, Toolful],
+        TASK_GIT_TOOLS,
         Reply,
         "board::task_review"
     ),
@@ -654,6 +669,46 @@ const CONTRACTS: &[Contract] = &[
         [Resident],
         Reply,
         "board::task_depends"
+    ),
+    row!(
+        ["task", "artifact", "add"],
+        "task artifact add HANDLE PATH [--name NAME] [--type TYPE] [--retention RETENTION]",
+        OperatorOrLane,
+        Read,
+        [],
+        [Daemonless],
+        Reply,
+        "artifact::add"
+    ),
+    row!(
+        ["task", "artifact", "list"],
+        "task artifact list HANDLE",
+        OperatorOrLane,
+        Read,
+        [],
+        [Daemonless],
+        Reply,
+        "artifact::list"
+    ),
+    row!(
+        ["task", "artifact", "show"],
+        "task artifact show HANDLE ARTIFACT",
+        OperatorOrLane,
+        Read,
+        [],
+        [Daemonless],
+        Reply,
+        "artifact::show"
+    ),
+    row!(
+        ["task", "artifact", "prune"],
+        "task artifact prune [--older-than DURATION] [--apply]",
+        OperatorOrLane,
+        Read,
+        [],
+        [Daemonless],
+        Reply,
+        "artifact::prune"
     ),
     row!(
         ["doc"],
@@ -1068,6 +1123,7 @@ pub fn landing(path: &[&str]) -> Landing {
         | ["board", "handout"]
         | ["task", "next"]
         | ["task", "add"]
+        | ["task", "capture"]
         | ["task", "done"]
         | ["task", "review"]
         | ["task", "note"]
@@ -1076,6 +1132,10 @@ pub fn landing(path: &[&str]) -> Landing {
         | ["task", "free"]
         | ["task", "oops"]
         | ["task", "depends"]
+        | ["task", "artifact", "add"]
+        | ["task", "artifact", "list"]
+        | ["task", "artifact", "show"]
+        | ["task", "artifact", "prune"]
         | ["doc"]
         | ["doc", "ledger"]
         | ["taste"]

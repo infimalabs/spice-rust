@@ -83,7 +83,10 @@ fn coexisting_loader_reads_rust_local_intent_without_admitting_python_tracked_ta
             "[taste.polling]\nwords = ['poll*']\nmessage = 'use events'\n",
         ),
     );
-    write(local_path(&root), b"[lock.worker]\nshards = 3\n");
+    write(
+        local_path(&root),
+        b"[lock.worker]\ndirectory = 'locks/worker'\nshards = 3\n",
+    );
     let repository = spice::repository::Repository::discover(&root).expect("fixture repository");
 
     let strict = spice::config::load_repository(&repository, &[])
@@ -121,7 +124,7 @@ fn main_worktree_reads_only_the_two_exact_paths_and_passes_typed_flags() {
         local_path(&root),
         format!(
             concat!(
-                "[listen]\nwindow = \"3m\"\n[lock.alpha]\nshards = 2\n",
+                "[listen]\nwindow = \"3m\"\n[lock.alpha]\ndirectory = 'locks/alpha'\nshards = 2\n",
                 "[proof]\ncontainer = \"{}\"\nrunner = \"{}\"\n",
             ),
             container, runner
@@ -173,7 +176,7 @@ fn main_worktree_reads_only_the_two_exact_paths_and_passes_typed_flags() {
             .root()
             .lock()
             .named()
-            .map(|(name, shards)| (name.as_str(), shards.get()))
+            .map(|(name, target)| (name.as_str(), target.shards().get()))
             .collect::<Vec<_>>(),
         [("alpha", 2)]
     );

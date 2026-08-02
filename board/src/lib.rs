@@ -29,7 +29,7 @@ pub use apply::{
 pub use claim::{Active, ClaimRefusal};
 pub use config::{Config, NextConfig};
 pub use graph::{Diagram, View};
-pub use next::{Selection, select};
+pub use next::{Selection, eligible_entry, select};
 pub use phase::{PhaseRefusal, Transition, TransitionKind};
 pub use task::{Dependency, Entry, Family, Project, TaskError};
 pub use urgency::Urgency;

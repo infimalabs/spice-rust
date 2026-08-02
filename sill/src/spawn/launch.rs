@@ -3,6 +3,7 @@ use super::{ProcessCompletion, ProcessState, Running, start_exit_watcher};
 use crate::observe::{Observation, OutputStream};
 use crate::spec::{ProcessGroup, Spec, StdinPolicy, StreamPolicy};
 use std::io;
+use std::os::fd::RawFd;
 use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Condvar, Mutex};
@@ -11,10 +12,14 @@ use std::time::Instant;
 use std::os::unix::net::UnixDatagram;
 use std::os::unix::process::CommandExt;
 
-pub(super) fn spawn_inner(spec: Spec, observation: Option<Observation>) -> io::Result<Running> {
+pub(super) fn spawn_inner(
+    spec: Spec,
+    observation: Option<Observation>,
+    inherited: Option<RawFd>,
+) -> io::Result<Running> {
     validate_observation(&spec, observation.as_ref())?;
     let wakes = SpawnWakes::new(&spec, observation.as_ref())?;
-    let mut child = command(&spec).spawn()?;
+    let mut child = command(&spec, inherited).spawn()?;
     let started = Instant::now();
     let pid = child.id();
     let pipes = match capture_pipes(&mut child, &spec) {
@@ -176,7 +181,7 @@ impl CaptureSetup {
     }
 }
 
-fn command(spec: &Spec) -> Command {
+fn command(spec: &Spec, inherited: Option<RawFd>) -> Command {
     let mut command = Command::new(spec.argv.program());
     command
         .args(spec.argv.arguments())
@@ -192,7 +197,24 @@ fn command(spec: &Spec) -> Command {
     if spec.group == ProcessGroup::New {
         command.process_group(0);
     }
+    if let Some(descriptor) = inherited {
+        // SAFETY: this child-only hook performs only async-signal-safe fcntl calls.
+        unsafe {
+            command.pre_exec(move || clear_cloexec(descriptor));
+        }
+    }
     command
+}
+
+fn clear_cloexec(descriptor: RawFd) -> io::Result<()> {
+    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
+    if flags == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    if unsafe { libc::fcntl(descriptor, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 fn configure_stream(command: &mut Command, stdout: bool, policy: StreamPolicy) {

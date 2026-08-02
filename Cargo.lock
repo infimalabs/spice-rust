@@ -110,6 +110,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
+name = "artifact"
+version = "0.0.0"
+dependencies = [
+ "atomic",
+ "libc",
+ "serde",
+ "sill",
+ "wire",
+]
+
+[[package]]
 name = "atomic"
 version = "0.0.0"
 
@@ -723,6 +734,7 @@ dependencies = [
  "gix-glob",
  "serde",
  "serde_json",
+ "shell-words",
  "sill",
  "syn 3.0.3",
  "toml",
@@ -2759,6 +2771,7 @@ dependencies = [
 name = "spice"
 version = "0.0.0"
 dependencies = [
+ "artifact",
  "atomic",
  "board",
  "bus",
@@ -2796,6 +2809,7 @@ dependencies = [
  "tungstenite",
  "uuid",
  "vendor",
+ "wait-timeout",
  "wire",
 ]
 
@@ -3214,6 +3228,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "wait-timeout"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09ac3b126d3914f9849036f826e054cbabdc8519970b8998ddaf3b5bd3c65f11"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "walkdir"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3440,6 +3463,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 name = "xtask"
 version = "0.0.0"
 dependencies = [
+ "gate",
  "serde",
  "serde_json",
  "spice",

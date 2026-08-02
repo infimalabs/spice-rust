@@ -289,6 +289,7 @@ fn a_claim_without_a_lease_is_a_zero_write_snapshot_fault() {
                 occupant: claim_request.occupant,
                 epoch: claim_request.epoch,
                 until: claim_request.expiry,
+                git: None,
             },
             FactCause::Root,
         )
@@ -335,6 +336,7 @@ fn a_disordered_lease_is_a_zero_write_snapshot_fault() {
                 occupant: claim_request.occupant,
                 epoch: claim_request.epoch,
                 until: claim_request.expiry,
+                git: None,
             },
             FactCause::Root,
         )

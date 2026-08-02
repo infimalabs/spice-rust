@@ -81,6 +81,32 @@ pub struct TaskPhased {
     pub phase: Phase,
 }
 
+/// Exact repository history selected at one task boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitBoundary {
+    /// Lane commit that entered the boundary.
+    pub head: String,
+    /// Commit whose tree and ancestry left the boundary.
+    pub integrated: String,
+    /// Remote-tracking baseline used by the boundary, when one exists.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub upstream: Option<String>,
+    /// Exact baseline commit incorporated by the boundary, when one exists.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub upstream_head: Option<String>,
+    /// Lane commits ahead of the observed baseline when the boundary opened.
+    pub local_commits: u32,
+}
+
 /// A task completed under a re-proven active claim.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskDone {
@@ -88,6 +114,13 @@ pub struct TaskDone {
     pub task: TaskHandle,
     /// Evidence the completion rests on.
     pub validation: String,
+    /// Repository history published before the workflow advanced.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub git: Option<GitBoundary>,
 }
 
 /// A review verdict landed with reviewer and assignment witnesses.
@@ -106,6 +139,13 @@ pub struct TaskReviewed {
         deserialize_with = "crate::optional::present"
     )]
     pub finding: Option<String>,
+    /// Repository history published before the review completed.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub git: Option<GitBoundary>,
 }
 
 /// The allocator seated a reviewer under the anti-self-review witness.
@@ -168,6 +208,13 @@ pub struct ClaimWon {
     pub epoch: CanonicalUuid,
     /// Lease expiry the possession runs to.
     pub until: Instant,
+    /// Repository history fixed when possession was minted.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub git: Option<GitBoundary>,
 }
 
 /// Possession passed to a successor with ancestor lineage preserved.

@@ -645,7 +645,21 @@ mod tests {
             (report.python.installed_total, report.python.ledger_total),
             (123, 123)
         );
-        assert_eq!(report.python.pending_paths.len(), 13);
+        assert_eq!(
+            report.python.pending_paths.len(),
+            4,
+            concat!(
+                "native Git hooks, task capture, and task artifacts must leave only ",
+                "the remaining pending parity paths",
+            ),
+        );
+        assert!(
+            report
+                .python
+                .pending_paths
+                .iter()
+                .all(|path| path.path != "task capture" && !path.path.starts_with("task artifact"))
+        );
         assert!(report.python.unconfirmed_deletions.is_empty());
         assert!(report.python.stale_deletion_confirmations.is_empty());
         let encoded = serde_json::to_value(&report).expect("report encodes");
