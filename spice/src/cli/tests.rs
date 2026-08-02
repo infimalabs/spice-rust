@@ -104,7 +104,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 
 #[test]
 fn every_contract_has_an_executable_succession_disposition() {
-    assert_eq!(contracts().len(), 64);
+    assert_eq!(contracts().len(), 68);
 
     let unaccounted = contracts()
         .iter()
@@ -117,7 +117,7 @@ fn every_contract_has_an_executable_succession_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 64);
+    assert_eq!(landed, 68);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
     assert_eq!(landing(&["lock", "run"]), Landing::Landed);
@@ -238,21 +238,25 @@ fn installed_python_registry_and_ledger_dispositions_are_bijective() {
 #[derive(Clone, Copy, Debug)]
 enum PythonTaskDisposition {
     Landed(&'static [&'static str]),
+    Branch(&'static [&'static str]),
     Pending(&'static str),
 }
 
 #[test]
 fn every_python_task_control_has_one_tested_current_disposition() {
-    use PythonTaskDisposition::{Landed, Pending};
+    use PythonTaskDisposition::{Branch, Landed, Pending};
 
     let mappings = [
         ("task", Landed(&["board"])),
         ("task add", Landed(&["task", "add"])),
-        ("task artifact", Pending("ARTIFAC-1kJWSCFm")),
-        ("task artifact add", Pending("ARTIFAC-1kJWSCFm")),
-        ("task artifact list", Pending("ARTIFAC-1kJWSCFm")),
-        ("task artifact prune", Pending("ARTIFAC-1kJWSCFm")),
-        ("task artifact show", Pending("ARTIFAC-1kJWSCFm")),
+        ("task artifact", Branch(&["task", "artifact"])),
+        ("task artifact add", Landed(&["task", "artifact", "add"])),
+        ("task artifact list", Landed(&["task", "artifact", "list"])),
+        (
+            "task artifact prune",
+            Landed(&["task", "artifact", "prune"]),
+        ),
+        ("task artifact show", Landed(&["task", "artifact", "show"])),
         ("task capture", Landed(&["task", "capture"])),
         ("task claim", Landed(&["task", "next"])),
         ("task delete", Landed(&["doc"])),
@@ -313,6 +317,18 @@ fn every_python_task_control_has_one_tested_current_disposition() {
                     landing(path),
                     Landing::Landed,
                     "Python `{python}` maps to an unlanded Rust leaf: {path:?}",
+                );
+            }
+            Branch(path) => {
+                assert!(
+                    contracts().iter().any(|contract| {
+                        contract.path.starts_with(path) && contract.path.len() > path.len()
+                    }),
+                    "Python `{python}` maps to an empty Rust branch: {path:?}",
+                );
+                assert!(
+                    contracts().iter().all(|contract| contract.path != path),
+                    "Python `{python}` branch unexpectedly names a leaf: {path:?}",
                 );
             }
             Pending(owner) => assert!(

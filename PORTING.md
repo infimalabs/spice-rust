@@ -12,22 +12,22 @@ never reads Python authority bytes.
 
 | Measure | Result |
 | --- | --- |
-| Installed Python registry | 123/123 paths have one disposition; 23 task-owned gaps; no unsupported deletions |
-| Rust contract registry | 64/64 leaves landed; no gaps or unaccounted leaves |
-| Rust process sweep | 128 text/JSON invocations; matching exits and streams; no placeholders |
-| Functional smoke | 39/39 process tests across lifecycle, control, evidence, and recovery |
+| Installed Python registry | 123/123 paths have one disposition; 18 task-owned gaps; no unsupported deletions |
+| Rust contract registry | 68/68 leaves landed; no gaps or unaccounted leaves |
+| Rust process sweep | 136 text/JSON invocations; matching exits and streams; no placeholders |
+| Functional smoke | 45/45 process tests across lifecycle, control, evidence, and recovery |
 | Coexistence | Two Rust generations; Python command, state, hooks, and hook path unchanged |
 
 The smoke set is `succession`, `coexistence`, `resident`, `steering`,
-`gate_cli`, `proof_cli`, and `journal_cli`. It covers restart, control, evidence,
-and recovery. Python activation, agent/task status, and the live claim were
-exercised in the same worktree with separate authority.
+`gate_cli`, `proof_cli`, `journal_cli`, and `task_artifact_cli`. It covers
+restart, control, evidence, and recovery. Python activation, agent/task status,
+and the live claim were exercised in the same worktree with separate authority.
 
 Cutover remains blocked on three classes of risk:
 
-1. `FORENSI-1kJWS7G5`, `ARTIFAC-1kJWSCFm`, `RECOVER-1kJWSHkc`,
+1. `FORENSI-1kJWS7G5`, `RECOVER-1kJWSHkc`,
    `DEMO-1kJWSLwL`, `PARITY-1kJWSQ7W`,
-   `PARITY-1kJWSV53`, and `GIT-1kJWMPvF` own retained predecessor behavior
+   and `PARITY-1kJWSV53` own retained predecessor behavior
    that is not yet executable in Rust. Until they land, the active Python
    hooks and command remain unchanged and the Python policy gate runs last in
    `cargo xtask verify`.
@@ -57,7 +57,7 @@ entrypoint, active hooks, or Python authority.
 
 ## Rust contracts
 
-The closed registry contains 64 leaves and all 64 have executable dispatch.
+The closed registry contains 68 leaves and all 68 have executable dispatch.
 `spice/src/cli.rs::landing` carries the same classification; its tests reject
 registry drift, and the process sweep rejects terminal release or resident
 placeholder outcomes.
@@ -95,6 +95,10 @@ placeholder outcomes.
 - `task free`
 - `task oops`
 - `task depends`
+- `task artifact add`
+- `task artifact list`
+- `task artifact prune`
+- `task artifact show`
 - `doc`
 - `doc ledger`
 - `lane`
@@ -132,8 +136,10 @@ placeholder outcomes.
 `install`, `config`, `restore`, and `release publish` are digest-bound plans.
 Rust installation remains namespaced and never replaces the ambient command or
 active hooks. Recovery is offline and lock-held; resident reads are
-authenticated. `doctor`, `version`, `up`, and `down` execute end to end against
-isolated Rust state in both forms.
+authenticated. `backup` and digest-pinned `restore` carry the complete
+manifest-referenced task-artifact generation with the journal authority and
+roll both planes back together on failed finalization. `doctor`, `version`,
+`up`, and `down` execute end to end against isolated Rust state in both forms.
 
 ## Installed Python paths
 
@@ -269,11 +275,11 @@ and journal foundations but do not yet answer every predecessor query. All
 
 - `task`: D -> Rust board/task/doc families.
 - `task add`: R -> `task add`.
-- `task artifact`: P -> `ARTIFAC-1kJWSCFm` for task-addressed text/binary evidence.
-- `task artifact add`: P -> `ARTIFAC-1kJWSCFm`.
-- `task artifact list`: P -> `ARTIFAC-1kJWSCFm`.
-- `task artifact prune`: P -> `ARTIFAC-1kJWSCFm` for retention preview/apply parity.
-- `task artifact show`: P -> `ARTIFAC-1kJWSCFm`.
+- `task artifact`: D -> Rust `task artifact` command family.
+- `task artifact add`: R -> `task artifact add`.
+- `task artifact list`: R -> `task artifact list`.
+- `task artifact prune`: R -> `task artifact prune`.
+- `task artifact show`: R -> `task artifact show`.
 - `task capture`: R -> `task capture` with loose-commit capture and boundary publication.
 - `task claim`: R -> allocator-owned `task next`.
 - `task delete`: D -> authored `doc` correction.

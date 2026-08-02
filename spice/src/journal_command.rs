@@ -18,6 +18,7 @@ use wire::{
 };
 
 const AUTHORITY_MEMBER: &str = "spicejournal.sqlite3";
+const ARTIFACT_MEMBERS: &str = "artifacts/tasks";
 const MANIFEST: &str = "manifest.json";
 const PRIVATE_FILE: u32 = 0o600;
 const PRIVATE_DIRECTORY: u32 = 0o700;
@@ -107,23 +108,26 @@ fn backup_inner(output: &Path) -> Result<(SeqRange, JournalBackup), Failure> {
     let (temporary, mut cleanup) = create_staging_directory(&parent)?;
     let authority_path = temporary.join(AUTHORITY_MEMBER);
     write_private_file(&authority_path, &authority)?;
-    let member = JournalBackupMember {
+    let authority_member = JournalBackupMember {
         path: AUTHORITY_MEMBER.to_owned(),
         mode: mode(&authority_path)?,
         bytes: count(authority.len(), "authority bytes")?,
         digest: Digest::compute(Domain::JournalBackupMember, &authority),
     };
+    let mut members = vec![authority_member];
+    members.extend(stage_artifact_members(&state, &temporary)?);
+    members.sort_by(|left, right| left.path.cmp(&right.path));
     let manifest = JournalBackupManifest {
         version: JOURNAL_BACKUP_VERSION,
         wire: WireVersion::CURRENT,
         journal_schema: journal::SCHEMA_VERSION,
         authority: AUTHORITY_MEMBER.to_owned(),
-        members: vec![member],
+        members,
     };
     let manifest_bytes = wire::encode(&manifest)
         .map_err(|error| Failure::protocol("backup::manifest-unencodable", error.to_string()))?;
     write_private_file(&temporary.join(MANIFEST), &manifest_bytes)?;
-    sync_directory(&temporary)?;
+    sync_tree_directories(&temporary)?;
     let verification = journal::verify_restore_bundle(&temporary).map_err(bundle_failure)?;
     require_absent(&destination)?;
     fs::rename(&temporary, &destination).map_err(|error| {
@@ -166,6 +170,31 @@ fn backup_inner(output: &Path) -> Result<(SeqRange, JournalBackup), Failure> {
         }
     };
     Ok((position, body))
+}
+
+fn stage_artifact_members(
+    state: &StatePaths,
+    temporary: &Path,
+) -> Result<Vec<JournalBackupMember>, Failure> {
+    let store = artifact::Store::new(state.artifacts(), state.locks().join("task-artifacts.lock"));
+    let image = store.capture().map_err(artifact_failure)?;
+    let mut members = Vec::with_capacity(image.files().len());
+    for artifact in image.files() {
+        let relative = Path::new(ARTIFACT_MEMBERS).join(&artifact.path);
+        let destination = temporary.join(&relative);
+        let directory = destination
+            .parent()
+            .expect("artifact backup member has a parent");
+        create_private_directories(directory)?;
+        write_backup_member(&destination, &artifact.bytes, artifact.mode)?;
+        members.push(JournalBackupMember {
+            path: relative_spelling(&relative)?,
+            mode: mode(&destination)?,
+            bytes: count(artifact.bytes.len(), "artifact member bytes")?,
+            digest: Digest::compute(Domain::JournalBackupMember, &artifact.bytes),
+        });
+    }
+    Ok(members)
 }
 
 fn report_inner(contract: &Contract) -> Result<(ReplyPosition, JournalReport), Failure> {
@@ -757,6 +786,22 @@ fn create_staging_directory(parent: &Path) -> Result<(PathBuf, DirectoryCleanup)
     ))
 }
 
+fn create_private_directories(path: &Path) -> Result<(), Failure> {
+    #[cfg(unix)]
+    use std::os::unix::fs::DirBuilderExt;
+
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    builder.mode(PRIVATE_DIRECTORY);
+    builder.create(path).map_err(|error| {
+        Failure::environment(
+            "backup::stage-failed",
+            format!("{}: {error}", path.display()),
+        )
+    })
+}
+
 #[cfg(unix)]
 fn create_private_directory(path: &Path) -> io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
@@ -797,6 +842,101 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), Failure> {
             format!("{}: {error}", path.display()),
         )
     })
+}
+
+fn write_backup_member(path: &Path, bytes: &[u8], requested_mode: u32) -> Result<(), Failure> {
+    write_private_file(path, bytes)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(requested_mode)).map_err(|error| {
+            Failure::environment(
+                "backup::mode-failed",
+                format!("{}: {error}", path.display()),
+            )
+        })?;
+        File::open(path)
+            .and_then(|file| file.sync_all())
+            .map_err(|error| {
+                Failure::environment(
+                    "backup::mode-failed",
+                    format!("{}: {error}", path.display()),
+                )
+            })?;
+    }
+    #[cfg(not(unix))]
+    let _ = requested_mode;
+    Ok(())
+}
+
+fn relative_spelling(path: &Path) -> Result<String, Failure> {
+    path.components()
+        .map(|component| component.as_os_str().to_str())
+        .collect::<Option<Vec<_>>>()
+        .map(|parts| parts.join("/"))
+        .ok_or_else(|| {
+            Failure::protocol(
+                "backup::member-path-invalid",
+                format!("{} is not UTF-8", path.display()),
+            )
+        })
+}
+
+fn sync_tree_directories(root: &Path) -> Result<(), Failure> {
+    let mut directories = vec![root.to_path_buf()];
+    let mut index = 0;
+    while index < directories.len() {
+        let directory = directories[index].clone();
+        for entry in fs::read_dir(&directory).map_err(|error| {
+            Failure::environment(
+                "backup::sync-failed",
+                format!("{}: {error}", directory.display()),
+            )
+        })? {
+            let entry = entry.map_err(|error| {
+                Failure::environment(
+                    "backup::sync-failed",
+                    format!("{}: {error}", directory.display()),
+                )
+            })?;
+            if entry
+                .file_type()
+                .map_err(|error| {
+                    Failure::environment(
+                        "backup::sync-failed",
+                        format!("{}: {error}", entry.path().display()),
+                    )
+                })?
+                .is_dir()
+            {
+                directories.push(entry.path());
+            }
+        }
+        index += 1;
+    }
+    directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for directory in directories {
+        sync_directory(&directory)?;
+    }
+    Ok(())
+}
+
+fn artifact_failure(error: artifact::Error) -> Failure {
+    match error.class() {
+        artifact::ErrorClass::Refusal => Failure::refusal(
+            "backup::artifact-refused",
+            "one current artifact store generation",
+            error.to_string(),
+            "repair or migrate the artifact store with the release that owns it",
+        ),
+        artifact::ErrorClass::Corrupt => {
+            Failure::store("backup::artifact-corrupt", error.to_string())
+        }
+        artifact::ErrorClass::Environment => {
+            Failure::environment("backup::artifact-unavailable", error.to_string())
+        }
+    }
 }
 
 fn sync_directory(path: &Path) -> Result<(), Failure> {
