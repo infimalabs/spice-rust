@@ -1091,7 +1091,7 @@ mod tests {
             local_path: local_path.clone(),
             parent: witness.clone(),
         };
-        let candidate = b"[lock.worker]\nshards = 2\n";
+        let candidate = b"[lock.worker]\ndirectory = 'locks/worker'\nshards = 2\n";
         let plan = MutationPlan::new(&documents, "lock.worker.shards", candidate).unwrap();
         let admitted = AdmittedParent::open(&local_path, &witness).unwrap();
 

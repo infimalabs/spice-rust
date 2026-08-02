@@ -725,6 +725,20 @@ registry! {
         class: MachineLocal,
         flag: None,
     }
+    named "lock.<name>.path" {
+        kind: String,
+        builtin: None,
+        layers: TRACKED_LOCAL,
+        class: MachineLocal,
+        flag: None,
+    }
+    named "lock.<name>.directory" {
+        kind: String,
+        builtin: None,
+        layers: TRACKED_LOCAL,
+        class: MachineLocal,
+        flag: None,
+    }
     named "lock.<name>.shards" {
         kind: UnsignedInteger,
         builtin: None,

@@ -177,7 +177,7 @@ fn coexistence_ignores_only_the_two_tracked_scaffold_roots() {
         "[policy]\nenv_names = []\n",
         "[taste.polling]\nwords = ['poll*']\nmessage = 'use events'\n",
     );
-    let local = "[lock.worker]\nshards = 2\n";
+    let local = "[lock.worker]\ndirectory = 'locks/worker'\nshards = 2\n";
 
     let strict = resolve(documents(Some(tracked), Some(local)))
         .expect("strict resolution admits typed shared metadata");
@@ -598,7 +598,11 @@ taken = 71
 full = 72
 
 [lock.alpha]
+directory = "locks/alpha"
 shards = 2
+
+[lock.single]
+path = "locks/single.lock"
 
 [canvas.pack]
 rows = 50
@@ -684,9 +688,10 @@ fn tables_merge_recursively_and_dynamic_lock_rows_keep_typed_paths() {
     let resolved = resolve(documents(
         Some(concat!(
             "[lock]\nbusy = 70\ntaken = 71\nfull = 72\n",
-            "[lock.alpha]\nshards = 2\n[lock.\"a.b\"]\nshards = 3\n",
+            "[lock.alpha]\ndirectory = 'locks/alpha'\nshards = 2\n",
+            "[lock.\"a.b\"]\ndirectory = 'locks/a.b'\nshards = 3\n",
         )),
-        Some("[lock.alpha]\nshards = 4\n[lock.zeta]\nshards = 5\n"),
+        Some("[lock.alpha]\nshards = 4\n[lock.zeta]\ndirectory = 'locks/zeta'\nshards = 5\n"),
     ))
     .expect("dynamic lock tables merge");
 
@@ -696,7 +701,7 @@ fn tables_merge_recursively_and_dynamic_lock_rows_keep_typed_paths() {
             .root()
             .lock()
             .named()
-            .map(|(name, shards)| (name.as_str(), shards.get()))
+            .map(|(name, target)| (name.as_str(), target.shards().get()))
             .collect::<Vec<_>>(),
         [("a.b", 3), ("alpha", 4), ("zeta", 5)]
     );
@@ -831,9 +836,11 @@ life = "Drain"
 window = "never"
 
 [lock.alpha]
+directory = "locks/alpha"
 shards = 0
 
 [lock.beta]
+directory = "locks/beta"
 shards = 2
 mystery = 3
 
@@ -968,7 +975,8 @@ fn flag_values_cannot_cross_descriptor_types_or_duplicate_mappings() {
 
 #[test]
 fn equivalent_repeated_resolutions_are_identical_and_the_resolver_has_no_io_surface() {
-    let tracked = "[listen]\nwindow = \"2m\"\n[lock.alpha]\nshards = 2\n";
+    let tracked =
+        "[listen]\nwindow = \"2m\"\n[lock.alpha]\ndirectory = 'locks/alpha'\nshards = 2\n";
     let local = "[listen]\nwindow = \"3m\"\n";
     let first = resolve(documents(Some(tracked), Some(local))).expect("first resolution");
     let second = resolve(documents(Some(tracked), Some(local))).expect("second resolution");

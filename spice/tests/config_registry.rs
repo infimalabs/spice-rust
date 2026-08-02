@@ -69,15 +69,18 @@ taken = 71
 full = 72
 
 [lock.alpha]
-shards = 2
+path = "locks/alpha.lock"
 
 [lock.zeta]
+directory = "locks/zeta"
 shards = 4
 
 [lock."a.b"]
+directory = "locks/a.b"
 shards = 5
 
 [lock."a[0]"]
+directory = "locks/a[0]"
 shards = 6
 
 [canvas.pack]
@@ -352,6 +355,8 @@ fn templates_are_unique_canonical_non_overlapping_and_stably_ordered() {
         "lock.busy",
         "lock.taken",
         "lock.full",
+        "lock.<name>.path",
+        "lock.<name>.directory",
         "lock.<name>.shards",
         "canvas.pack.rows",
         "say.backend",
@@ -409,16 +414,23 @@ fn templates_are_unique_canonical_non_overlapping_and_stably_ordered() {
     }
 
     for name in ["a.b", "a[0]", ""] {
-        let path = [
-            PathSegment::Key("lock"),
-            PathSegment::Key(name),
-            PathSegment::Key("shards"),
-        ];
-        assert_eq!(
-            descriptor(&path).map(|entry| entry.template().as_str()),
-            Some("lock.<name>.shards"),
-            "the registry must leave {name:?} to the lock name authority"
-        );
+        for field in ["path", "directory", "shards"] {
+            let path = [
+                PathSegment::Key("lock"),
+                PathSegment::Key(name),
+                PathSegment::Key(field),
+            ];
+            assert_eq!(
+                descriptor(&path).map(|entry| entry.template().as_str()),
+                Some(match field {
+                    "path" => "lock.<name>.path",
+                    "directory" => "lock.<name>.directory",
+                    "shards" => "lock.<name>.shards",
+                    _ => unreachable!(),
+                }),
+                "the registry must leave {name:?} to the lock name authority"
+            );
+        }
     }
 }
 
@@ -436,6 +448,8 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
             "lock.busy",
             "lock.taken",
             "lock.full",
+            "lock.<name>.path",
+            "lock.<name>.directory",
             "lock.<name>.shards",
             "canvas.pack.rows",
             "say.backend",
