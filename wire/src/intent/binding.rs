@@ -5,8 +5,8 @@ use serde::Serialize;
 use crate::command::CommandKind;
 
 use super::{
-    BoardAnswer, BoardGraph, BoardHandout, BoardRead, ClaimAnswer, ClaimCarry, ClaimWin,
-    ConsentAnswer, ConsentDecide, ConsentPolicy, ConsentPolicyAnswer, ConsentQueueAnswer,
+    BoardAnswer, BoardGraph, BoardHandout, BoardRead, ClaimAnswer, ClaimCarry, ClaimRenew,
+    ClaimWin, ConsentAnswer, ConsentDecide, ConsentPolicy, ConsentPolicyAnswer, ConsentQueueAnswer,
     ConsentRead, DirectiveAnswer, DirectiveRef, DocAnswer, DocApply, DocLedger, InboxAnswer,
     LaneAnswer, LaneChangeAnswer, LaneRead, LaneRecall, LaneSeat, LaneState, RecallAnswer,
     RecognitionAnswer, Recognize, ReleasePublish, StateAnswer, SteerDispose, SteerInbox, SteerSend,
@@ -52,6 +52,8 @@ pub enum BodyShape {
     ClaimWin,
     /// [`ClaimCarry`]
     ClaimCarry,
+    /// [`ClaimRenew`]
+    ClaimRenew,
     /// [`DocApply`]
     DocApply,
     /// [`SteerSend`]
@@ -271,9 +273,8 @@ impl CommandKind {
             Self::TaskAssign => Binding::of(B::TaskAssign, A::Task),
             Self::ClaimWin => Binding::of(B::ClaimWin, A::Claim),
             Self::ClaimCarry => Binding::of(B::ClaimCarry, A::Claim),
-            Self::ClaimRenew | Self::ClaimFree | Self::ClaimLapse => {
-                Binding::of(B::TaskRef, A::Claim)
-            }
+            Self::ClaimRenew => Binding::of(B::ClaimRenew, A::Claim),
+            Self::ClaimFree | Self::ClaimLapse => Binding::of(B::TaskRef, A::Claim),
             Self::DocApply => Binding::of(B::DocApply, A::Doc),
             Self::SteerSend => Binding::of(B::SteerSend, A::Directive),
             Self::SteerInbox => Binding::of(B::SteerInbox, A::Inbox),
@@ -341,6 +342,8 @@ pub enum Intent {
     ClaimWin(ClaimWin),
     /// [`BodyShape::ClaimCarry`]
     ClaimCarry(ClaimCarry),
+    /// [`BodyShape::ClaimRenew`]
+    ClaimRenew(ClaimRenew),
     /// [`BodyShape::DocApply`]
     DocApply(DocApply),
     /// [`BodyShape::SteerSend`]
@@ -399,6 +402,7 @@ impl Intent {
             Self::TaskAssign(_) => BodyShape::TaskAssign,
             Self::ClaimWin(_) => BodyShape::ClaimWin,
             Self::ClaimCarry(_) => BodyShape::ClaimCarry,
+            Self::ClaimRenew(_) => BodyShape::ClaimRenew,
             Self::DocApply(_) => BodyShape::DocApply,
             Self::SteerSend(_) => BodyShape::SteerSend,
             Self::SteerInbox(_) => BodyShape::SteerInbox,
@@ -456,6 +460,7 @@ impl BodyShape {
                 | Self::TaskAssign
                 | Self::ClaimWin
                 | Self::ClaimCarry
+                | Self::ClaimRenew
                 | Self::DocApply
         )
     }
@@ -479,6 +484,7 @@ impl BodyShape {
             Self::TaskAssign => Intent::TaskAssign(crate::decode(bytes)?),
             Self::ClaimWin => Intent::ClaimWin(crate::decode(bytes)?),
             Self::ClaimCarry => Intent::ClaimCarry(crate::decode(bytes)?),
+            Self::ClaimRenew => Intent::ClaimRenew(crate::decode(bytes)?),
             Self::DocApply => Intent::DocApply(crate::decode(bytes)?),
             _ => unreachable!("board body partition is closed"),
         })

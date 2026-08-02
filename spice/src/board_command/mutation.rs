@@ -3,6 +3,7 @@ struct ValidatedSnapshot {
     answer: BoardAnswer,
     entries: Vec<Entry>,
 }
+
 fn task_add(
     bus: &Bus,
     command: &wire::AdmittedCommand,

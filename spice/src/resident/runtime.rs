@@ -539,12 +539,14 @@ async fn run_surface(
         mut failures,
     } = capture::channels();
     lane_surface::restore_seats(bus, paths, epoch, seats, &reporter)?;
+    let recovery = lane_recovery::Runtime::new(reporter.clone());
     let command_surface = command_surface::Surface::new(
         bus,
         repository,
         paths,
         epoch,
         lane_surface::Runtime::new(&capabilities, &discovery, reporter),
+        recovery,
         config,
     );
     loop {

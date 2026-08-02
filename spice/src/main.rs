@@ -222,9 +222,12 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
             &session_command::run(leaf, contract.path, &session_environment()),
             form,
         ),
-        ["lane"] | ["lane", "add"] | ["lane", "drain"] | ["lane", "wake"] | ["recall"] => {
-            deliver(&lane_command::run(leaf, contract), form)
-        }
+        ["lane"]
+        | ["lane", "add"]
+        | ["lane", "drain"]
+        | ["lane", "wake"]
+        | ["lane", "import"]
+        | ["recall"] => deliver(&lane_command::run(leaf, contract), form),
         ["release", "publish"] => match release_command::run(leaf, contract) {
             release_command::RunResult::Plan(outcome) => deliver(&outcome, form),
             release_command::RunResult::Published(outcome) => deliver(&outcome, form),
@@ -233,6 +236,7 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         | ["board", "graph"]
         | ["board", "handout"]
         | ["task", "next"]
+        | ["task", "reclaim"]
         | ["task", "add"]
         | ["task", "capture"]
         | ["task", "done"]
@@ -245,7 +249,7 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         | ["task", "depends"]
         | ["doc"]
         | ["doc", "ledger"] => deliver(&board_command::run(leaf, contract), form),
-        ["steer"] | ["steer", "cancel"] | ["inbox"] | ["ack"] => deliver(
+        ["steer"] | ["steer", "cancel"] | ["steer", "recover"] | ["inbox"] | ["ack"] => deliver(
             &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
             form,
         ),

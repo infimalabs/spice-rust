@@ -54,6 +54,7 @@ pub(super) fn kind_for(path: &[&str]) -> Option<CommandKind> {
         ["board", "graph"] => CommandKind::BoardGraph,
         ["board", "handout"] => CommandKind::BoardHandout,
         ["task", "next"] => CommandKind::ClaimWin,
+        ["task", "reclaim"] => CommandKind::ClaimRenew,
         ["task", "capture"] => CommandKind::ClaimWin,
         ["task", "add"] => CommandKind::TaskAdd,
         ["task", "oops"] => CommandKind::TaskOopsAdd,

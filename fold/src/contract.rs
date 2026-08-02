@@ -105,6 +105,7 @@ const fn is_steering(kind: wire::FactKind) -> bool {
         kind,
         wire::FactKind::SteerSent
             | wire::FactKind::SteerResent
+            | wire::FactKind::SteerRecovered
             | wire::FactKind::SteerAcked
             | wire::FactKind::SteerDeclined
             | wire::FactKind::SteerMissed

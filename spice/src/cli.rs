@@ -568,6 +568,16 @@ const CONTRACTS: &[Contract] = &[
         "board::next"
     ),
     row!(
+        ["task", "reclaim"],
+        "task reclaim [HANDLE] [--lease-seconds SECONDS]",
+        Lane,
+        Command,
+        [ClaimRenewed],
+        [Resident, LaneCapability],
+        Reply,
+        "board::reclaim"
+    ),
+    row!(
         ["task", "add"],
         "task add TITLE [--project PROJECT]",
         OperatorOrLane,
@@ -765,10 +775,20 @@ const CONTRACTS: &[Contract] = &[
         "lane wake ID",
         Operator,
         Command,
-        [LaneSessionDeclared, LaneStarted],
+        [LaneSessionDeclared, LaneStarted, ClaimCarried],
         [Resident, OperatorCapability],
         Reply,
         "lane::wake"
+    ),
+    row!(
+        ["lane", "import"],
+        "lane import ID WORKTREE",
+        Operator,
+        Command,
+        [LaneImported, LaneSessionDeclared, LaneStarted, ClaimCarried],
+        [Resident, OperatorCapability],
+        Reply,
+        "lane::import"
     ),
     row!(
         ["steer"],
@@ -789,6 +809,16 @@ const CONTRACTS: &[Contract] = &[
         [Resident, OperatorCapability],
         Reply,
         "steer::cancel"
+    ),
+    row!(
+        ["steer", "recover"],
+        "steer recover ID",
+        Operator,
+        Command,
+        [SteerRecovered],
+        [Resident, OperatorCapability],
+        Reply,
+        "steer::recover"
     ),
     row!(
         ["inbox"],
@@ -1120,9 +1150,11 @@ pub fn landing(path: &[&str]) -> Landing {
         | ["lane", "add"]
         | ["lane", "drain"]
         | ["lane", "wake"]
+        | ["lane", "import"]
         | ["recall"]
         | ["steer"]
         | ["steer", "cancel"]
+        | ["steer", "recover"]
         | ["inbox"]
         | ["ack"]
         | ["consent"]
@@ -1133,6 +1165,7 @@ pub fn landing(path: &[&str]) -> Landing {
         | ["board", "graph"]
         | ["board", "handout"]
         | ["task", "next"]
+        | ["task", "reclaim"]
         | ["task", "add"]
         | ["task", "capture"]
         | ["task", "done"]

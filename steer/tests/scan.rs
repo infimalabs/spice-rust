@@ -221,6 +221,7 @@ fn the_ledger_answers_as_standing() {
                 .expect("lane"),
             text: "hold the line".to_owned(),
             control: None,
+            attachments: Vec::new(),
             expires: "2026-08-01T07:07:19.000Z".parse().expect("instant"),
         }))
         .expect("sent");

@@ -10,7 +10,7 @@ use wire::{CanonicalUuid, Fault, FaultClass, Outcome, Refusal};
 use crate::cli::Contract;
 use crate::command_client::{self, SelectedCommand};
 
-/// Execute one of the five landed lane-family leaves.
+/// Execute one landed lane-family leaf.
 pub(crate) fn run(matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
     let current = match std::env::current_dir() {
         Ok(current) => current,
@@ -31,6 +31,7 @@ pub(crate) fn run(matches: &ArgMatches, contract: &Contract) -> Outcome<CommandA
         ["lane", "add"] => add(&repository, canvas, &current, matches, contract),
         ["lane", "drain"] => state(canvas, matches, contract, LaneAction::Drain),
         ["lane", "wake"] => state(canvas, matches, contract, LaneAction::Wake),
+        ["lane", "import"] => import(&repository, canvas, &current, matches, contract),
         ["recall"] => recall(canvas, matches, contract),
         _ => protocol_fault(
             "lane::dispatch-gap",
@@ -130,7 +131,70 @@ fn state(
         Ok(lane) => lane,
         Err(error) => return protocol_fault("lane::id-invalid", &error.to_string()),
     };
-    let body = LaneState { lane, action };
+    let body = LaneState {
+        lane,
+        action,
+        worktree: None,
+    };
+    command_client::execute(canvas, contract, SelectedCommand::LaneState { body: &body })
+}
+
+fn import(
+    repository: &Repository,
+    canvas: &Path,
+    current: &Path,
+    matches: &ArgMatches,
+    contract: &Contract,
+) -> Outcome<CommandAnswer> {
+    let Some(id) = matches.get_one::<String>("ID") else {
+        return protocol_fault(
+            "lane::id-missing",
+            "generated parser omitted required lane ID",
+        );
+    };
+    let lane = match id.parse::<CanonicalUuid>() {
+        Ok(lane) => lane,
+        Err(error) => return protocol_fault("lane::id-invalid", &error.to_string()),
+    };
+    let requested = PathBuf::from(
+        matches
+            .get_one::<String>("WORKTREE")
+            .expect("generated syntax requires the import worktree"),
+    );
+    let requested = if requested.is_absolute() {
+        requested
+    } else {
+        current.join(requested)
+    };
+    let target = match Repository::discover(&requested) {
+        Ok(target) => target,
+        Err(error) => return environment_fault("lane::worktree-unresolved", &error.to_string()),
+    };
+    if target.common_dir() != repository.common_dir() {
+        return refusal(
+            "lane::foreign-worktree",
+            Some(repository.common_dir().display().to_string()),
+            Some(target.common_dir().display().to_string()),
+            "choose an existing worktree belonging to the current Git common directory",
+        );
+    }
+    let requested = match std::fs::canonicalize(requested) {
+        Ok(requested) => requested,
+        Err(error) => return environment_fault("lane::worktree-unresolved", &error.to_string()),
+    };
+    if requested != target.worktree_root() {
+        return refusal(
+            "lane::worktree-not-root",
+            Some(target.worktree_root().display().to_string()),
+            Some(requested.display().to_string()),
+            "name the root of one existing worktree",
+        );
+    }
+    let body = LaneState {
+        lane,
+        action: LaneAction::Wake,
+        worktree: Some(requested.display().to_string()),
+    };
     command_client::execute(canvas, contract, SelectedCommand::LaneState { body: &body })
 }
 

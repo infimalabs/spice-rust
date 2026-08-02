@@ -8,8 +8,8 @@ use wire::intent::{CommandAnswer, Intent};
 use wire::{CanonicalUuid, CommandKind, Outcome, Refusal};
 
 use super::{
-    RuntimePaths, SurfaceConfig, dispatch_release_publish, dispatch_up_change, lane_surface,
-    policy_surface, steering,
+    RuntimePaths, SurfaceConfig, dispatch_release_publish, dispatch_up_change, lane_recovery,
+    lane_surface, policy_surface, steering,
 };
 
 pub(super) struct Surface<'a> {
@@ -18,6 +18,7 @@ pub(super) struct Surface<'a> {
     paths: &'a RuntimePaths,
     epoch: CanonicalUuid,
     lane: lane_surface::Runtime<'a>,
+    recovery: lane_recovery::Runtime,
     config: &'a SurfaceConfig,
 }
 
@@ -28,6 +29,7 @@ impl<'a> Surface<'a> {
         paths: &'a RuntimePaths,
         epoch: CanonicalUuid,
         lane: lane_surface::Runtime<'a>,
+        recovery: lane_recovery::Runtime,
         config: &'a SurfaceConfig,
     ) -> Self {
         Self {
@@ -36,6 +38,7 @@ impl<'a> Surface<'a> {
             paths,
             epoch,
             lane,
+            recovery,
             config,
         }
     }
@@ -66,6 +69,17 @@ impl<'a> Surface<'a> {
             (CommandKind::LaneSeat, Intent::LaneSeat(seat)) => lane_surface::seat(
                 self.bus, self.paths, self.epoch, seats, &self.lane, command, seat,
             ),
+            (CommandKind::LaneState, Intent::LaneState(state)) if state.worktree.is_some() => {
+                lane_recovery::import(
+                    self.bus,
+                    self.paths,
+                    self.epoch,
+                    seats,
+                    &self.recovery,
+                    command,
+                    state,
+                )
+            }
             (CommandKind::LaneState, Intent::LaneState(state)) => lane_surface::state(
                 self.bus, self.paths, self.epoch, seats, &self.lane, command, state,
             ),
@@ -86,6 +100,14 @@ impl<'a> Surface<'a> {
             (CommandKind::SteerCancel, Intent::DirectiveRef(cancel)) => {
                 steering::cancel(self.bus, self.paths, self.epoch, command, cancel)
             }
+            (CommandKind::SteerResend, Intent::DirectiveRef(recover)) => steering::recover(
+                self.bus,
+                self.paths,
+                self.epoch,
+                &self.config.steering,
+                command,
+                recover,
+            ),
             (CommandKind::SteerDispose, Intent::SteerDispose(dispose)) => {
                 steering::dispose(self.bus, self.paths, self.epoch, command, dispose)
             }

@@ -51,7 +51,7 @@ authorization is a deployment gate, not deletion authority.
 | Vendor files as citations | Landed through owned tape bytes and stable loci; vendor paths remain discovery inputs, not mutable evidence. |
 | Session forensics (`spice session`) | Landed through typed Rust queries over bounded immutable Codex and Claude transcript evidence, including discovery, gzip, filters, compaction windows, accounting, and explicit residue/refusal recovery. |
 | `spice demo` | Pending on `DEMO-1kJWSLwL` for the zero-setup seeded repository, transcript, lane, and canvas lifecycle. |
-| `spice agent import` | Pending on `RECOVER-1kJWSHkc` for team, lineage, session, and claim transfer without admitting stale predecessor authority. |
+| `spice agent import` | Landed as `lane import`: one vacant team seat moves to a linked worktree only after predecessor lineage and taped session authority are re-proved, with a sole active claim carried atomically to the successor. |
 | Agent-to-agent messaging | Landed as the predecessor's coordination outcome through board state, directives, facts, and repository evidence; no private transport was an independent authority. |
 | Multi-user authority | Landed at the predecessor's effective boundary: one operator capability with attributed lanes and teams, not independent human principals. |
 | Hidden projects | Pending on `PARITY-1kJWSQ7W` until every predecessor visibility scope has an equivalent typed board answer or explicit migration refusal. |
@@ -62,8 +62,8 @@ authorization is a deployment gate, not deletion authority.
 | Actor-varied thresholds | Pending on `PARITY-1kJWSQ7W` for actor-scope migration and decision parity. |
 | Silent skips | Landed as explicit unsupported, unavailable, unmeasured, timeout, failed, and passed result states; the predecessor's ability to continue a report is preserved without a silent success. |
 | Bundled old gate arms | Pending on `PARITY-1kJWSQ7W` until every retained arm is executable in canonical verification and old receipts remain replayable evidence. |
-| Inbox deadletter parking | Pending on `RECOVER-1kJWSHkc` for exact-once directive recovery; durable journal facts and `lane::held` are landed foundations, not proof that requeue behavior is unnecessary. |
-| Manual claim renewal | Pending on `RECOVER-1kJWSHkc` for bounded operator recovery of supervisor-owned or expiring claims. |
+| Inbox deadletter parking | Landed as `steer recover`: only an exact lapsed directive returns live, retaining identity, lineage, text, control, typed attachments, and original fact provenance while missing, live, duplicate, and other retired states refuse deterministically. |
+| Manual claim renewal | Landed as lane-only `task reclaim`, extending the exact active claim and lease heads within their durable maximum without changing workflow or allocator ownership. |
 | Task-boundary Git publication and capture | Landed through deterministic merge trees, compare-and-swap publication, bounded race recovery, restart-safe conflict state, and loose-commit capture. |
 | `spice lock` path and directory overrides | Pending on `PARITY-1kJWSV53`; fixed topology alone does not preserve configured placement use cases. |
 | Launch-time file writes | Pending on `PARITY-1kJWSV53` for equivalent hook materialization and commit-policy input through admitted, explicit launch composition. |

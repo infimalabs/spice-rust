@@ -61,7 +61,10 @@ fn renew_request(command: u8) -> Request {
         epoch: uuid(22),
         at: instant(10),
         until: instant(25),
-        intent: intent::TaskRef { task: task() },
+        intent: intent::ClaimRenew {
+            task: task(),
+            lease_seconds: 15,
+        },
     }
 }
 
