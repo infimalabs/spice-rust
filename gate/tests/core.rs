@@ -1,3 +1,5 @@
+use std::fs;
+use std::process::{Command, Output};
 use std::str::FromStr;
 
 use gate::{
@@ -11,6 +13,12 @@ use gate::{
 use serde::Deserialize;
 use serde_json::Value;
 use wire::{Digest, Domain, Phase, TaskHandle};
+
+mod support;
+
+use support::Tree;
+
+const GIT: &str = "/usr/bin/git";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -253,6 +261,62 @@ fn merge_evidence_refuses_conflicts_on_a_clean_completion() {
         MergeTreeCompletion::Clean,
         vec!["spice/src/lib.rs".to_owned()],
     ));
+}
+
+#[test]
+fn real_modify_delete_conflict_with_the_head_tree_fails_with_path_provenance() {
+    let repository = git_repository("core-merge-conflict");
+    repository.write("f", "base\n");
+    git_commit(&repository, "base");
+
+    git(&repository, &["checkout", "-q", "-b", "side"]);
+    fs::remove_file(repository.path("f")).expect("delete f on side");
+    git_commit(&repository, "delete f");
+
+    git(&repository, &["checkout", "-q", "main"]);
+    repository.write("f", "modified on main\n");
+    git_commit(&repository, "modify f");
+
+    let head_tree = git(&repository, &["rev-parse", "HEAD^{tree}"]);
+    let merge = git_output(
+        &repository,
+        &[
+            "merge-tree",
+            "--write-tree",
+            "-z",
+            "--name-only",
+            "HEAD",
+            "side",
+        ],
+    );
+    assert_eq!(merge.status.code(), Some(1), "modify/delete must conflict");
+    let fields = merge.stdout.split(|byte| *byte == 0).collect::<Vec<_>>();
+    let expected_tree = String::from_utf8(fields[0].to_owned()).expect("tree is UTF-8");
+    assert_eq!(expected_tree, head_tree, "conflicted tree reproduces HEAD");
+    assert!(
+        fields.iter().any(|field| *field == b"f"),
+        "git merge-tree names the conflicted path: {:?}",
+        String::from_utf8_lossy(&merge.stdout)
+    );
+
+    let tree = fixture_tree();
+    let observation = measured(CoreEvidence::MergeIntegrity(
+        MergeIntegrityEvidence::Compared {
+            head_tree,
+            expected_tree,
+            completion: MergeTreeCompletion::Conflicted,
+            conflicted_paths: vec!["f".to_owned()],
+        },
+    ));
+    let report = evaluate_core(
+        &CoreInputs::new(battery_for(&tree, GateId::MergeIntegrity, observation))
+            .expect("real conflicted evidence admits for evaluation"),
+    );
+    let merge_arm = &report.arms()[0];
+    assert_eq!(merge_arm.standing(), CoreStanding::Failed);
+    assert!(merge_arm.diagnostic().contains("conflicted at: f"));
+
+    repository.remove();
 }
 
 #[test]
@@ -556,6 +620,46 @@ fn drifted_inventory(path: &[&str]) -> ConfigInventoryEvidence {
 
 fn finding(code: &str, path: Option<impl Into<String>>, detail: &str) -> CoreFinding {
     CoreFinding::new(code, path, detail).expect("valid fixture finding")
+}
+
+fn git_repository(label: &str) -> Tree {
+    let repository = Tree::new(label);
+    git(&repository, &["init", "-q", "-b", "main"]);
+    git(&repository, &["config", "user.name", "Gate Fixture"]);
+    git(
+        &repository,
+        &["config", "user.email", "gate@example.invalid"],
+    );
+    repository
+}
+
+fn git_commit(repository: &Tree, message: &str) {
+    git(repository, &["add", "--all"]);
+    git(repository, &["commit", "-q", "-m", message]);
+}
+
+fn git(repository: &Tree, arguments: &[&str]) -> String {
+    let output = git_output(repository, arguments);
+    assert!(
+        output.status.success(),
+        "git {arguments:?} exited {}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .expect("Git fixture output is UTF-8")
+        .trim()
+        .to_owned()
+}
+
+fn git_output(repository: &Tree, arguments: &[&str]) -> Output {
+    Command::new(GIT)
+        .args(arguments)
+        .current_dir(&repository.root)
+        .env_clear()
+        .env("HOME", &repository.root)
+        .output()
+        .unwrap_or_else(|error| panic!("run git {arguments:?}: {error}"))
 }
 
 fn fixture_tree() -> Digest {
