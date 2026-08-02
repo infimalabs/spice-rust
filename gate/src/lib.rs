@@ -15,6 +15,7 @@
 pub mod camp;
 pub mod config;
 pub mod core;
+pub mod hygiene;
 pub mod input;
 pub mod jurisdiction;
 pub mod kill;
@@ -22,8 +23,11 @@ pub mod manifest;
 pub mod measure;
 pub mod message;
 pub mod names;
+pub mod policy;
 pub mod ratchet;
 pub mod report;
+pub mod state;
+pub mod toolchain;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tree;
 pub mod verdict;
@@ -38,9 +42,21 @@ pub use core::{
     CoreArmDeclaration, CoreArmInput, CoreArmReport, CoreEvidence, CoreFinding, CoreInputError,
     CoreInputs, CoreObservation, CoreProvenance, CoreReport, CoreReportDecodeError, CoreStanding,
     CoreTimeoutContract, CoreToolContract, DocMeasurement, GitCommandContract,
-    MergeIntegrityEvidence, MergeTreeCompletion, PlanPhaseEvidence, PredecessorObservation,
-    RepoDocLimit, RepoDocsEvidence, RepoShapeEvidence, StagingEvidence, core_declarations,
-    evaluate_core,
+    MergeIntegrityEvidence, MergeTreeCompletion, PlanPhaseEvidence,
+    PredecessorObservation as CorePredecessorObservation, RepoDocLimit, RepoDocsEvidence,
+    RepoShapeEvidence, StagingEvidence, core_declarations, evaluate_core,
+};
+pub use hygiene::{
+    AnalysisEvidence, AnalyzerEvidence, EvidenceState, ExclusionEvidence, HYGIENE_ARMS,
+    HYGIENE_REPORT_VERSION, HygieneAnalyzer, HygieneConfigurationSource, HygieneDeclaration,
+    HygieneError, HygieneFinding, HygieneFindingDetail, HygieneJurisdiction, HygieneMeasurement,
+    HygieneObservation, HygieneOutcome, HygieneProvenance, HygieneReport, HygieneTraversal,
+    MigrationRefusal as HygieneMigrationRefusal,
+    PredecessorComparison as HygienePredecessorComparison,
+    PredecessorComparisonError as HygienePredecessorComparisonError,
+    PredecessorObservation as HygienePredecessorObservation,
+    PredecessorResult as HygienePredecessorResult, PythonUnusedStatus,
+    compare_predecessor as compare_hygiene_predecessor, measure_hygiene,
 };
 pub use input::{
     BASELINE_PATH, BASELINE_VERSION, Baseline, BaselineError, Contract, ContractError,
@@ -71,12 +87,32 @@ pub use message::{
     validate_commit_message,
 };
 pub use names::{RETIRED_NAMES, RetiredMatch, RetiredName, retired_matches};
+pub use policy::{
+    BoundLimits, BoundName, CompileError as PolicyCompileError, GlobalRatchet, MagicRule,
+    MigrationError as PolicyMigrationError, OneLetterBehavior, Policy as RulePolicy, PolicyContext,
+    PolicyDocument, RegexDialect, ResolveError as PolicyResolveError, ResolvedBound, ResolvedMagic,
+    RuleDeclaration, RuleId, RuleSettings, RuleSource, RuleSourceKind, ScopeAxis, ScopeSelector,
+    SelectionProvenance, SelectorSpecificity, migrate_predecessor_policy,
+};
 pub use ratchet::{Finding, Movement, Ratchet, RatchetError};
 pub use report::{
     GATE_REPORT_VERSION, GateReport, KILL_REPORT_VERSION, KillReport, ReportAttempt,
     ReportAttemptKind, ReportCompletion, ReportDecodeError, ReportFloor, ReportMeasurement,
     ReportMutant, ReportMutantDisposition, ReportMutationInventory, ReportMutationMovement,
     ReportOutcome, ReportProcess, ReportRate, ReportStream,
+};
+pub use state::{
+    ActorInputs, ActorResolution, ActorSource, BoundDecision, BoundError, BoundRule, ClaimDecision,
+    ClaimStatus, CurrentState, KeyError, LatchEntry, LatchKind, LatchObservation, LatchTransition,
+    PeerClaim, PendingState, PredecessorSources, RenameMap, StateDecision, StateError,
+    StateErrorKind, StateKey, StateLedger, StateReceipt, current_state_path, varied_elastic_limit,
+};
+pub use toolchain::{
+    ArmFinding, ArmMeasurement, ArmObservation, ArmOutcome, ConfigurationSource, FindingDetail,
+    MigrationRefusal as ToolchainMigrationRefusal, PredecessorComparison,
+    PredecessorComparisonError, PredecessorObservation, PredecessorResult, TOOLCHAIN_ARMS,
+    TOOLCHAIN_REPORT_VERSION, ToolEvidence, ToolRequirement, ToolchainDeclaration, ToolchainError,
+    ToolchainReport, TreeJurisdiction, compare_predecessor, measure_toolchain,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use tree::{SelectedTree, Selector, TreeError};

@@ -88,6 +88,7 @@ enum ClaudeEffort {
     #[default]
     High,
     Xhigh,
+    Max,
 }
 
 impl ClaudeEffort {
@@ -97,6 +98,7 @@ impl ClaudeEffort {
             Self::Medium => Effort::Medium,
             Self::High => Effort::High,
             Self::Xhigh => Effort::XHigh,
+            Self::Max => Effort::Max,
         }
     }
 }

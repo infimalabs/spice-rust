@@ -1,0 +1,910 @@
+//! Compiled declarations and typed measurements for hygiene analysis.
+//!
+//! The five arms in this module replace Python-AST predecessor execution with
+//! versioned Rust analyzers. Observations retain each analysis stage instead of
+//! translating absence, parse errors, or provider failures into a clean scan.
+
+use std::error::Error;
+use std::fmt;
+
+use serde::Serialize;
+
+use crate::manifest::GateId;
+
+mod measure;
+mod predecessor;
+
+pub use measure::measure_hygiene;
+pub use predecessor::{
+    MigrationRefusal, PredecessorComparison, PredecessorComparisonError, PredecessorObservation,
+    PredecessorResult, compare_predecessor,
+};
+
+#[cfg(test)]
+use crate::manifest::PREDECESSOR_GATE_RELEASE;
+#[cfg(test)]
+use measure::{
+    evidence_rank, has_applicable_language, has_completed_deadline, has_completed_parse,
+    has_native_analyzer, has_traversal_evidence,
+};
+#[cfg(test)]
+use predecessor::{PREDECESSOR_PROVIDER_FIELD, predecessor_arm_field};
+
+/// The only report schema emitted by this compiled arm family.
+pub const HYGIENE_REPORT_VERSION: u64 = 1;
+const NATIVE_ANALYZER_VERSION: &str = "spice-gate-hygiene-v1";
+
+/// One tracked or compiled configuration input.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HygieneConfigurationSource {
+    source: &'static str,
+    field: &'static str,
+}
+
+impl HygieneConfigurationSource {
+    /// Tracked document or compiled namespace.
+    #[must_use]
+    pub const fn source(self) -> &'static str {
+        self.source
+    }
+
+    /// Exact field or compiled symbol.
+    #[must_use]
+    pub const fn field(self) -> &'static str {
+        self.field
+    }
+}
+
+/// Complete selected-tree jurisdiction for one hygiene arm.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HygieneJurisdiction {
+    roots: &'static [&'static str],
+    includes: &'static [&'static str],
+    excludes: &'static [&'static str],
+    applicability: &'static str,
+}
+
+impl HygieneJurisdiction {
+    /// Roots used to classify production and test inputs.
+    #[must_use]
+    pub const fn roots(self) -> &'static [&'static str] {
+        self.roots
+    }
+
+    /// Closed selected-file grammar.
+    #[must_use]
+    pub const fn includes(self) -> &'static [&'static str] {
+        self.includes
+    }
+
+    /// Closed generated/vendor exclusion grammar.
+    #[must_use]
+    pub const fn excludes(self) -> &'static [&'static str] {
+        self.excludes
+    }
+
+    /// Exact applicability boundary.
+    #[must_use]
+    pub const fn applicability(self) -> &'static str {
+        self.applicability
+    }
+}
+
+/// Native traversal performed by an arm.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HygieneTraversal {
+    /// Construct production and test import graphs.
+    ImportGraph,
+    /// Extract declarations and fixed-point references from the graph.
+    SymbolGraph,
+    /// Classify production top-level Python declarations.
+    PythonDeclarations,
+    /// Classify Python tests and their effective assertions.
+    TestAssertions,
+    /// Resolve private imports and private assertion targets.
+    PrivateBoundaries,
+}
+
+/// Versioned compiled analyzer selected by one declaration.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HygieneAnalyzer {
+    /// Python import graph and importer analysis.
+    PythonImportGraph,
+    /// Python definitions and fixed-point reference analysis.
+    PythonSymbolGraph,
+    /// Production top-level Python declaration classification.
+    PythonUnusedSymbols,
+    /// Python test and effective-assertion classification.
+    PythonTestAssertions,
+    /// Python private-import and assertion-target resolution.
+    PythonPrivateBoundaries,
+}
+
+impl HygieneAnalyzer {
+    const fn evidence_name(self) -> &'static str {
+        match self {
+            Self::PythonImportGraph => "python-import-graph",
+            Self::PythonSymbolGraph => "python-symbol-graph",
+            Self::PythonUnusedSymbols => "python-unused-symbols",
+            Self::PythonTestAssertions => "python-test-assertions",
+            Self::PythonPrivateBoundaries => "python-private-boundaries",
+        }
+    }
+
+    const fn component(self) -> &'static str {
+        match self {
+            Self::PythonImportGraph => {
+                concat!("gate::hygiene::HygieneAnalyzer::", "PythonImportGraph")
+            }
+            Self::PythonSymbolGraph => {
+                concat!("gate::hygiene::HygieneAnalyzer::", "PythonSymbolGraph")
+            }
+            Self::PythonUnusedSymbols => {
+                concat!("gate::hygiene::HygieneAnalyzer::", "PythonUnusedSymbols")
+            }
+            Self::PythonTestAssertions => {
+                concat!("gate::hygiene::HygieneAnalyzer::", "PythonTestAssertions")
+            }
+            Self::PythonPrivateBoundaries => concat!(
+                "gate::hygiene::HygieneAnalyzer::",
+                "PythonPrivateBoundaries"
+            ),
+        }
+    }
+}
+
+/// One native declaration in fixed predecessor-relative order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HygieneDeclaration {
+    id: GateId,
+    analyzer: HygieneAnalyzer,
+    jurisdiction: HygieneJurisdiction,
+    configuration: &'static [HygieneConfigurationSource],
+    traversals: &'static [HygieneTraversal],
+    provider_contract: Option<&'static str>,
+}
+
+impl HygieneDeclaration {
+    /// Stable current gate identity.
+    #[must_use]
+    pub const fn id(self) -> GateId {
+        self.id
+    }
+
+    /// Rust component that owns policy and parsing.
+    #[must_use]
+    pub const fn native_component(self) -> &'static str {
+        self.analyzer.component()
+    }
+
+    /// Stable analyzer evidence name.
+    #[must_use]
+    pub const fn analyzer(self) -> HygieneAnalyzer {
+        self.analyzer
+    }
+
+    /// Closed selected-tree jurisdiction.
+    #[must_use]
+    pub const fn jurisdiction(self) -> HygieneJurisdiction {
+        self.jurisdiction
+    }
+
+    /// All admitted configuration sources.
+    #[must_use]
+    pub const fn configuration(self) -> &'static [HygieneConfigurationSource] {
+        self.configuration
+    }
+
+    /// Required native traversals in execution order.
+    #[must_use]
+    pub const fn traversals(self) -> &'static [HygieneTraversal] {
+        self.traversals
+    }
+
+    /// Exact-version law for optional external providers.
+    #[must_use]
+    pub const fn provider_contract(self) -> Option<&'static str> {
+        self.provider_contract
+    }
+}
+
+const COMMON_EXCLUDES: &[&str] = &[
+    ".git/**",
+    ".spice*/**",
+    ".venv/**",
+    ".ruff_cache/**",
+    ".pytest_cache/**",
+    "**/__pycache__/**",
+    "node_modules/**",
+    "site-packages/**",
+    "spice.toml:policy.exclude",
+];
+const PYTHON_GRAPH_CONFIG: &[HygieneConfigurationSource] = &[
+    HygieneConfigurationSource {
+        source: "compiled",
+        field: "gate::hygiene::PYTHON_PRODUCTION_ROOTS_V1",
+    },
+    HygieneConfigurationSource {
+        source: "spice.toml",
+        field: concat!(
+            "policy.test_paths -> ",
+            "pyproject.toml:tool.pytest.ini_options.testpaths -> tests"
+        ),
+    },
+    HygieneConfigurationSource {
+        source: "spice.toml",
+        field: "policy.exclude + policy.reachability_providers",
+    },
+];
+const PYTHON_UNUSED_CONFIG: &[HygieneConfigurationSource] = &[
+    HygieneConfigurationSource {
+        source: "pyproject.toml",
+        field: "project.scripts + project.gui-scripts + project.entry-points",
+    },
+    HygieneConfigurationSource {
+        source: "compiled",
+        field: "gate::hygiene::PYTHON_UNUSED_EXEMPTIONS_V1",
+    },
+    HygieneConfigurationSource {
+        source: "spice.toml",
+        field: "commands + policy.test_paths + policy.exclude",
+    },
+];
+const ASSERTION_CONFIG: &[HygieneConfigurationSource] = &[HygieneConfigurationSource {
+    source: "spice.toml",
+    field: concat!(
+        "policy.test_paths + policy.exclude + policy.assertion_helpers + ",
+        "policy.debt.assertion_free_tests"
+    ),
+}];
+const PRIVATE_CONFIG: &[HygieneConfigurationSource] = &[HygieneConfigurationSource {
+    source: "spice.toml",
+    field: concat!(
+        "policy.test_paths + policy.exclude + ",
+        "policy.internal_couplings"
+    ),
+}];
+const GRAPH_TRAVERSAL: &[HygieneTraversal] = &[HygieneTraversal::ImportGraph];
+const SYMBOL_TRAVERSALS: &[HygieneTraversal] =
+    &[HygieneTraversal::ImportGraph, HygieneTraversal::SymbolGraph];
+const UNUSED_TRAVERSALS: &[HygieneTraversal] = &[
+    HygieneTraversal::ImportGraph,
+    HygieneTraversal::SymbolGraph,
+    HygieneTraversal::PythonDeclarations,
+];
+const ASSERTION_TRAVERSAL: &[HygieneTraversal] = &[HygieneTraversal::TestAssertions];
+const PRIVATE_TRAVERSALS: &[HygieneTraversal] = &[
+    HygieneTraversal::TestAssertions,
+    HygieneTraversal::PrivateBoundaries,
+];
+const EXACT_PROVIDER_CONTRACT: &str = concat!(
+    "tracked provider declarations must name one program, exact version, ",
+    "version probe, digest, arguments, scope, and timeout"
+);
+
+/// All five declarations in their fixed final battery interval.
+pub const HYGIENE_ARMS: [HygieneDeclaration; 5] = [
+    HygieneDeclaration {
+        id: GateId::Reachability,
+        analyzer: HygieneAnalyzer::PythonImportGraph,
+        jurisdiction: HygieneJurisdiction {
+            roots: &[
+                "spice/cli/entry.py",
+                "spice/serve/app.py",
+                "spice/hooks/precommit.py",
+                "spice/hooks/commitmsg.py",
+                "spice/hooks/refguard.py",
+                "spice/hooks/install.py",
+                "spice/agent/cli.py",
+                "spice/agent/judgeadapter.py",
+                "spice/release.py",
+                "configured test roots",
+            ],
+            includes: &["pyproject.toml", "spice.toml", "**/*.py", "**/*.pyi"],
+            excludes: COMMON_EXCLUDES,
+            applicability: concat!(
+                "a selected Python package, production root, and test root ",
+                "are all present"
+            ),
+        },
+        configuration: PYTHON_GRAPH_CONFIG,
+        traversals: GRAPH_TRAVERSAL,
+        provider_contract: Some(EXACT_PROVIDER_CONTRACT),
+    },
+    HygieneDeclaration {
+        id: GateId::SymbolReachability,
+        analyzer: HygieneAnalyzer::PythonSymbolGraph,
+        jurisdiction: HygieneJurisdiction {
+            roots: &["production-reachable modules", "configured test roots"],
+            includes: &["pyproject.toml", "spice.toml", "**/*.py", "**/*.pyi"],
+            excludes: COMMON_EXCLUDES,
+            applicability: concat!(
+                "reachability applies and at least one production-reachable ",
+                "module declares a function, class, or method"
+            ),
+        },
+        configuration: PYTHON_GRAPH_CONFIG,
+        traversals: SYMBOL_TRAVERSALS,
+        provider_contract: Some(EXACT_PROVIDER_CONTRACT),
+    },
+    HygieneDeclaration {
+        id: GateId::PythonUnused,
+        analyzer: HygieneAnalyzer::PythonUnusedSymbols,
+        jurisdiction: HygieneJurisdiction {
+            roots: &[
+                "production-reachable Python package",
+                "configured test roots",
+            ],
+            includes: &["pyproject.toml", "spice.toml", "**/*.py", "**/*.pyi"],
+            excludes: COMMON_EXCLUDES,
+            applicability: concat!(
+                "a selected Python package contains a production-reachable ",
+                "top-level function or class"
+            ),
+        },
+        configuration: PYTHON_UNUSED_CONFIG,
+        traversals: UNUSED_TRAVERSALS,
+        provider_contract: None,
+    },
+    HygieneDeclaration {
+        id: GateId::AssertionFreeTests,
+        analyzer: HygieneAnalyzer::PythonTestAssertions,
+        jurisdiction: HygieneJurisdiction {
+            roots: &["configured test roots"],
+            includes: &["test*.py", "*_test.py"],
+            excludes: COMMON_EXCLUDES,
+            applicability: "at least one selected Python test function",
+        },
+        configuration: ASSERTION_CONFIG,
+        traversals: ASSERTION_TRAVERSAL,
+        provider_contract: None,
+    },
+    HygieneDeclaration {
+        id: GateId::PrivateInternals,
+        analyzer: HygieneAnalyzer::PythonPrivateBoundaries,
+        jurisdiction: HygieneJurisdiction {
+            roots: &["configured test roots", "selected production packages"],
+            includes: &["spice.toml", "test*.py", "*_test.py"],
+            excludes: COMMON_EXCLUDES,
+            applicability: concat!(
+                "at least one selected Python test and production package ",
+                "boundary are present"
+            ),
+        },
+        configuration: PRIVATE_CONFIG,
+        traversals: PRIVATE_TRAVERSALS,
+        provider_contract: None,
+    },
+];
+
+/// State retained by a typed analysis stage.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EvidenceState {
+    /// Stage completed and its counts are usable.
+    Completed,
+    /// Stage has not produced a measurement.
+    Unmeasured,
+    /// Stage exceeded its declared deadline.
+    TimedOut,
+    /// Stage rejected source or provider output.
+    ParseFailed,
+    /// Stage ended for another explicit cause.
+    Failed,
+}
+
+/// Analyzer or provider discovery retained before analysis begins.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(tag = "discovery", rename_all = "kebab-case")]
+pub enum AnalyzerEvidence {
+    /// A compiled analyzer or declared provider was unavailable.
+    Unavailable {
+        /// Stable analyzer/provider name.
+        name: String,
+        /// Native component or declared executable.
+        requested: String,
+    },
+    /// A compiled analyzer or declared provider was identified.
+    Identified {
+        /// Stable analyzer/provider name.
+        name: String,
+        /// Native component or declared executable.
+        requested: String,
+        /// Resolved component or executable identity.
+        resolved: String,
+        /// Exact declared version.
+        declared_version: String,
+        /// Unmodified observed version.
+        observed_version: String,
+        /// Digest of native build or external executable bytes.
+        digest: String,
+    },
+}
+
+impl AnalyzerEvidence {
+    fn name(&self) -> &str {
+        match self {
+            Self::Unavailable { name, .. } | Self::Identified { name, .. } => name,
+        }
+    }
+
+    fn is_native_for(&self, declaration: HygieneDeclaration) -> bool {
+        matches!(
+            self,
+            Self::Identified {
+                name,
+                requested,
+                declared_version,
+                observed_version,
+                digest,
+                ..
+            } if name == declaration.analyzer.evidence_name()
+                && requested == declaration.analyzer.component()
+                && declared_version == NATIVE_ANALYZER_VERSION
+                && observed_version == NATIVE_ANALYZER_VERSION
+                && !digest.is_empty()
+        )
+    }
+
+    fn is_unavailable(&self) -> bool {
+        matches!(self, Self::Unavailable { .. })
+    }
+
+    fn is_unsupported(&self) -> bool {
+        matches!(
+            self,
+            Self::Identified {
+                declared_version,
+                observed_version,
+                ..
+            } if declared_version != observed_version
+        )
+    }
+
+    fn is_supported_provider(&self, provider: &str) -> bool {
+        matches!(
+            self,
+            Self::Identified {
+                name,
+                requested,
+                resolved,
+                declared_version,
+                observed_version,
+                digest,
+            } if name == provider
+                && !requested.is_empty()
+                && !resolved.is_empty()
+                && !declared_version.is_empty()
+                && declared_version == observed_version
+                && !digest.is_empty()
+        )
+    }
+}
+
+/// Exact origin of one applicability or exclusion decision.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct HygieneProvenance {
+    /// Release that owns the source grammar.
+    pub release: String,
+    /// Compiled, repository, worktree, or system layer.
+    pub layer: String,
+    /// Exact source document.
+    pub document: String,
+    /// Exact structural field or compiled symbol.
+    pub field: String,
+}
+
+impl HygieneProvenance {
+    fn is_complete(&self) -> bool {
+        !self.release.is_empty()
+            && !self.layer.is_empty()
+            && !self.document.is_empty()
+            && !self.field.is_empty()
+    }
+}
+
+/// Evidence that a compiled or tracked exclusion selected an explicit skip.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct ExclusionEvidence {
+    /// Exact release, layer, document, and field.
+    pub provenance: HygieneProvenance,
+    /// Why this selected tree is excluded.
+    pub reason: String,
+}
+
+/// Typed evidence from one analysis stage.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(tag = "evidence", rename_all = "kebab-case")]
+pub enum AnalysisEvidence {
+    /// File-language applicability was measured.
+    LanguageApplicability {
+        /// Language selected by the declaration.
+        language: String,
+        /// Number of selected source files.
+        selected_files: u32,
+        /// Selected project markers in canonical order.
+        project_markers: Vec<String>,
+        /// Whether the declaration's applicability predicate holds.
+        applicable: bool,
+        /// Exact origin of the applicability law.
+        provenance: HygieneProvenance,
+    },
+    /// Production and test graph construction evidence.
+    GraphConstruction {
+        /// Production roots in canonical order.
+        production_roots: Vec<String>,
+        /// Test roots in canonical order.
+        test_roots: Vec<String>,
+        /// Distinct graph nodes.
+        nodes: u32,
+        /// Distinct directed graph edges.
+        edges: u32,
+    },
+    /// Declaration/reference extraction evidence.
+    SymbolExtraction {
+        /// Extracted declarations.
+        declarations: u32,
+        /// References from production-reachable modules.
+        production_references: u32,
+        /// References from tests.
+        test_references: u32,
+    },
+    /// Test and effective-assertion classification evidence.
+    TestClassification {
+        /// Selected test files.
+        files: u32,
+        /// Classified top-level or `Test*` methods.
+        tests: u32,
+        /// Effective non-static assertions.
+        assertions: u32,
+        /// Configured assertion helpers in canonical order.
+        helpers: Vec<String>,
+    },
+    /// Private import/assertion boundary resolution evidence.
+    PrivateBoundaryResolution {
+        /// Selected production package boundaries.
+        packages: Vec<String>,
+        /// Resolved private import targets.
+        private_imports: u32,
+        /// Resolved private assertion targets.
+        private_assertions: u32,
+        /// Exact admitted coupling entries.
+        admitted_exceptions: u32,
+        /// Configured entries with no matching coupling.
+        stale_exceptions: u32,
+    },
+    /// Configured or compiled finding threshold and measured count.
+    PolicyDecision {
+        /// Exact source field or compiled zero-findings law.
+        field: String,
+        /// Maximum admitted findings.
+        limit: u32,
+        /// Structured findings observed before the decision.
+        observed: u32,
+    },
+    /// Native analyzer or declared external-provider identity.
+    Analyzer(AnalyzerEvidence),
+    /// Deadline result for the complete arm.
+    Deadline {
+        /// Declared analysis deadline.
+        limit_ms: u64,
+        /// Measured elapsed duration.
+        elapsed_ms: u64,
+        /// Completed or timed-out state.
+        state: EvidenceState,
+    },
+    /// Parser result over source and provider documents.
+    Parse {
+        /// Number of successfully parsed documents.
+        documents: u32,
+        /// Completed or parse-failed state.
+        state: EvidenceState,
+        /// Selected-tree-relative failed document, if any.
+        failed_path: Option<String>,
+        /// Exact parser diagnostic, if any.
+        diagnostic: Option<String>,
+    },
+    /// Terminal measurement state.
+    Measurement {
+        /// Completed, unmeasured, or failed state.
+        state: EvidenceState,
+        /// Stage that supplied the terminal state.
+        stage: String,
+    },
+    /// Explicit skip provenance.
+    Exclusion(ExclusionEvidence),
+}
+
+/// Classification of one unused Python declaration.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PythonUnusedStatus {
+    /// No production or test references exist.
+    CandidateUnused,
+    /// References exist only in tests.
+    TestOnly,
+}
+
+/// Closed finding identity for the five hygiene arms.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum HygieneFindingDetail {
+    /// A module is reachable only from tests.
+    ModuleReachability {
+        /// Native or declared provider name.
+        provider: String,
+        /// Dotted module or provider subject.
+        subject: String,
+        /// Test importers in canonical order.
+        imported_by: Vec<String>,
+    },
+    /// A function, class, or method is reachable only from tests.
+    SymbolReachability {
+        /// Native or declared provider name.
+        provider: String,
+        /// Dotted module.
+        module: String,
+        /// Symbol within the module.
+        symbol: String,
+        /// Function, class, method, or declared provider kind.
+        symbol_kind: String,
+        /// Test importers in canonical order.
+        imported_by: Vec<String>,
+    },
+    /// A top-level Python declaration lacks a production reference.
+    PythonUnused {
+        /// Dotted module.
+        module: String,
+        /// Top-level symbol.
+        symbol: String,
+        /// Function or class.
+        declaration_kind: String,
+        /// Candidate-unused or test-only state.
+        status: PythonUnusedStatus,
+        /// Exact classification reason.
+        reason: String,
+        /// Test referrers in canonical order.
+        test_references: Vec<String>,
+    },
+    /// A test contains no effective assertion.
+    AssertionFree {
+        /// Top-level test or `TestClass.test_method`.
+        test_name: String,
+    },
+    /// A test couples to a private production boundary.
+    PrivateCoupling {
+        /// Test owning the coupling, or `<module>`.
+        test_name: String,
+        /// Private import or private assertion.
+        coupling_kind: String,
+        /// Exact private target.
+        target: String,
+    },
+    /// A tracked private-coupling exception has no matching coupling.
+    StalePrivateException {
+        /// Configured test identity.
+        test_name: String,
+        /// Configured target.
+        target: String,
+    },
+}
+
+impl HygieneFindingDetail {
+    const fn gate(&self) -> GateId {
+        match self {
+            Self::ModuleReachability { .. } => GateId::Reachability,
+            Self::SymbolReachability { .. } => GateId::SymbolReachability,
+            Self::PythonUnused { .. } => GateId::PythonUnused,
+            Self::AssertionFree { .. } => GateId::AssertionFreeTests,
+            Self::PrivateCoupling { .. } | Self::StalePrivateException { .. } => {
+                GateId::PrivateInternals
+            }
+        }
+    }
+
+    fn canonicalize(&mut self) {
+        match self {
+            Self::ModuleReachability { imported_by, .. }
+            | Self::SymbolReachability { imported_by, .. } => {
+                imported_by.sort();
+                imported_by.dedup();
+            }
+            Self::PythonUnused {
+                test_references, ..
+            } => {
+                test_references.sort();
+                test_references.dedup();
+            }
+            Self::AssertionFree { .. }
+            | Self::PrivateCoupling { .. }
+            | Self::StalePrivateException { .. } => {}
+        }
+    }
+
+    fn has_external_provider(&self) -> bool {
+        match self {
+            Self::ModuleReachability { provider, .. }
+            | Self::SymbolReachability { provider, .. } => provider != "python",
+            _ => false,
+        }
+    }
+}
+
+/// One structured finding with stable selected-tree identity.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct HygieneFinding {
+    /// Selected-tree-relative path.
+    pub path: String,
+    /// One-based source line when the finding has a source locus.
+    pub line: Option<u32>,
+    /// Gate-specific stable identity.
+    pub detail: HygieneFindingDetail,
+}
+
+/// Typed result of one hygiene arm.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HygieneOutcome {
+    /// Analysis completed without findings.
+    Passed,
+    /// Analysis completed with structured findings.
+    Findings,
+    /// Applicability predicate was false.
+    NotApplicable,
+    /// A compiled or tracked exclusion selected the arm out.
+    Excluded,
+    /// Native analyzer or declared provider was unavailable.
+    Unavailable,
+    /// Analyzer/provider version violated its exact contract.
+    Unsupported,
+    /// Required analysis never produced a measurement.
+    Unmeasured,
+    /// Analysis exceeded its declared deadline.
+    Timeout,
+    /// Source or provider output could not be parsed.
+    ParseFailure,
+    /// Analysis ended for another explicit cause.
+    Failed,
+}
+
+impl HygieneOutcome {
+    /// Only declared absence and exclusion are skips.
+    #[must_use]
+    pub const fn is_skip(self) -> bool {
+        matches!(self, Self::NotApplicable | Self::Excluded)
+    }
+
+    /// A clean measurement or an explicit contract-owned skip satisfies.
+    #[must_use]
+    pub const fn satisfies_gate(self) -> bool {
+        matches!(self, Self::Passed | Self::NotApplicable | Self::Excluded)
+    }
+}
+
+/// Raw native-run observation measured against one declaration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HygieneObservation {
+    /// Stable current gate identity.
+    pub gate_id: GateId,
+    /// Typed terminal outcome.
+    pub outcome: HygieneOutcome,
+    /// Exact one-line cause.
+    pub reason: String,
+    /// Typed stage evidence in any input order.
+    pub evidence: Vec<AnalysisEvidence>,
+    /// Structured findings in any input order.
+    pub findings: Vec<HygieneFinding>,
+}
+
+/// Canonical retained measurement of one hygiene arm.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct HygieneMeasurement {
+    /// Stable current gate identity.
+    pub gate_id: GateId,
+    /// Typed terminal outcome.
+    pub outcome: HygieneOutcome,
+    /// Exact retained cause.
+    pub reason: String,
+    /// Native Rust analyzer identity.
+    pub native_engine: String,
+    /// Configuration sources retained in declaration order.
+    pub configuration: Vec<String>,
+    /// Complete roots retained in declaration order.
+    pub roots: Vec<String>,
+    /// Complete includes retained in declaration order.
+    pub includes: Vec<String>,
+    /// Complete exclusions retained in declaration order.
+    pub excludes: Vec<String>,
+    /// Exact applicability predicate.
+    pub applicability: String,
+    /// Required native traversals in declaration order.
+    pub traversals: Vec<HygieneTraversal>,
+    /// Exact law for optional providers.
+    pub provider_contract: Option<String>,
+    /// Typed evidence in canonical order.
+    pub evidence: Vec<AnalysisEvidence>,
+    /// Findings in canonical identity order.
+    pub findings: Vec<HygieneFinding>,
+}
+
+impl HygieneMeasurement {
+    fn has_external_provider(&self) -> bool {
+        self.findings
+            .iter()
+            .any(|finding| finding.detail.has_external_provider())
+    }
+}
+
+/// Canonical ordered report for the complete five-arm family.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct HygieneReport {
+    /// Current report schema.
+    pub version: u64,
+    /// Exactly five measurements in compiled order.
+    pub arms: Vec<HygieneMeasurement>,
+}
+
+impl HygieneReport {
+    /// Deterministic JSON evidence with one trailing newline.
+    #[must_use]
+    pub fn canonical_json(&self) -> Vec<u8> {
+        let mut bytes = serde_json::to_vec(self).expect("hygiene reports contain only JSON values");
+        bytes.push(b'\n');
+        bytes
+    }
+}
+
+/// Why observations could not become a canonical report.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum HygieneError {
+    /// Observation named a gate outside this family.
+    ForeignGate(GateId),
+    /// Two observations named the same gate.
+    DuplicateGate(GateId),
+    /// Complete family omitted a gate.
+    MissingGate(GateId),
+    /// Reason was empty or multiline.
+    InvalidReason(GateId),
+    /// Findings did not match outcome or gate.
+    InvalidFindings { gate: GateId, evidence: String },
+    /// Evidence did not match the declaration or outcome.
+    InvalidEvidence { gate: GateId, evidence: String },
+}
+
+impl fmt::Display for HygieneError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ForeignGate(gate) => {
+                write!(formatter, "{} is not a hygiene arm", gate.as_str())
+            }
+            Self::DuplicateGate(gate) => {
+                write!(formatter, "{} has duplicate observations", gate.as_str())
+            }
+            Self::MissingGate(gate) => {
+                write!(formatter, "{} has no observation", gate.as_str())
+            }
+            Self::InvalidReason(gate) => write!(
+                formatter,
+                "{} has an empty or multiline reason",
+                gate.as_str()
+            ),
+            Self::InvalidFindings { gate, evidence } => write!(
+                formatter,
+                "{} findings are invalid: {evidence}",
+                gate.as_str()
+            ),
+            Self::InvalidEvidence { gate, evidence } => write!(
+                formatter,
+                "{} evidence is invalid: {evidence}",
+                gate.as_str()
+            ),
+        }
+    }
+}
+
+impl Error for HygieneError {}
+
+#[cfg(test)]
+include!("hygiene/fixtures.rs");

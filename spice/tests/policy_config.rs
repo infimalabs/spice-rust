@@ -48,7 +48,7 @@ resend = ["10m", "30m", "2h"]
 [vendor.claude]
 binary = "/opt/claude"
 model = "claude-opus"
-effort = "xhigh"
+effort = "max"
 auto_compact_window_tokens = 123456
 
 [vendor.codex]
@@ -126,7 +126,7 @@ fn every_policy_shape_round_trips_without_losing_order_or_templates() {
     );
     assert_eq!(decoded.vendor().claude().binary().as_str(), "/opt/claude");
     assert_eq!(decoded.vendor().claude().model(), "claude-opus");
-    assert_eq!(decoded.vendor().claude().effort(), vendor::Effort::XHigh);
+    assert_eq!(decoded.vendor().claude().effort(), vendor::Effort::Max);
     assert_eq!(
         decoded.vendor().claude().auto_compact_window_tokens(),
         123_456
@@ -219,10 +219,6 @@ fn malformed_policy_values_are_refused_under_their_domain_paths() {
         (
             "[vendor.claude]\nfast_mode = false\n",
             "vendor.claude.fast_mode",
-        ),
-        (
-            "[vendor.claude]\neffort = \"max\"\n",
-            "vendor.claude.effort",
         ),
         (
             "[vendor.claude]\nauto_compact_window_tokens = 0\n",
