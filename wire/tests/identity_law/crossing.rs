@@ -613,6 +613,12 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
 
     let first_fact = opaque_stream_envelope(48213, None, "checked");
     let second_fact = opaque_stream_envelope(48214, Some(48213), "verified");
+    let lane_fact = stream_lane_seated(48215, Some(48214));
+    law(
+        covered,
+        "StreamFact",
+        &[first_fact.clone(), second_fact.clone(), lane_fact],
+    );
     let facts = Packed {
         rows: vec![first_fact.clone(), second_fact.clone()],
         overflow: Some(Overflow {
@@ -680,8 +686,8 @@ fn stream_data_samples(
     epoch: CanonicalUuid,
     first_id: CanonicalUuid,
     second_id: CanonicalUuid,
-    fact: Envelope<AnyFact>,
-    facts: Packed<Envelope<AnyFact>>,
+    fact: StreamFact,
+    facts: Packed<StreamFact>,
     trust: Packed<TrustView>,
 ) -> Vec<StreamFrame> {
     vec![
@@ -765,7 +771,7 @@ fn opaque_stream_envelope(
     position: u64,
     cause: Option<u64>,
     validation: &str,
-) -> Envelope<AnyFact> {
+) -> StreamFact {
     let typed = Envelope {
         v: WireVersion::CURRENT,
         seq: seq(position),
@@ -775,8 +781,34 @@ fn opaque_stream_envelope(
         cause: cause.map(seq),
         fact: Fact::new(body(validation)),
     };
-    wire::decode(&wire::encode(&typed).expect("typed envelope encodes"))
-        .expect("opaque envelope decodes")
+    let opaque: Envelope<AnyFact> =
+        wire::decode(&wire::encode(&typed).expect("typed envelope encodes"))
+            .expect("opaque envelope decodes");
+    StreamFact::from(opaque)
+}
+
+fn stream_lane_seated(position: u64, cause: Option<u64>) -> StreamFact {
+    let typed = Envelope {
+        v: WireVersion::CURRENT,
+        seq: seq(position),
+        at: at("2030-04-12T18:44:09.273Z"),
+        actor: Actor::Spice,
+        origin: "resident:018f82d4-6f59-7d06-92e3-bce9131163c3"
+            .parse()
+            .expect("origin"),
+        cause: cause.map(seq),
+        fact: Fact::new(body::LaneSeated {
+            lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163d8"),
+            capability: uuid("018f82d4-6f59-7d06-92e3-bce9131163d9"),
+            worktree: "/tmp/lane".to_owned(),
+            life: "drive".to_owned(),
+            vendor: "claude".parse().expect("vendor"),
+        }),
+    };
+    let opaque: Envelope<AnyFact> =
+        wire::decode(&wire::encode(&typed).expect("lane envelope encodes"))
+            .expect("lane envelope decodes");
+    StreamFact::from(opaque)
 }
 
 /// Concrete command predicates and their nested state vocabularies.

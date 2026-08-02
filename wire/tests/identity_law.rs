@@ -58,8 +58,9 @@ use wire::{
     LaneResidency, LaneSession, LeaseHead, Name, Origin, Outcome, Overflow, Packed, Phase,
     Producer, ProofEvidence, Provenance, Refusal, Reply, ReplyPosition, ResidencyHead,
     ResidentState, Response, RestoreVerification, Seq, SeqRange, SpiceVariable, StreamCursor,
-    StreamFrame, StreamRequest, TapeLocus, TaskHandle, TaskHead, TrustHead, TrustState, TrustView,
-    ViewSubject, WireVersion, Witness, WitnessClass, WitnessHead, WitnessKind, WorkflowHead, body,
+    StreamFact, StreamFrame, StreamRequest, TapeLocus, TaskHandle, TaskHead, TrustHead, TrustState,
+    TrustView, ViewSubject, WireVersion, Witness, WitnessClass, WitnessHead, WitnessKind,
+    WorkflowHead, body,
 };
 
 include!("identity_law/laws.rs");
