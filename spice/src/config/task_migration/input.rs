@@ -144,8 +144,15 @@ fn team_overrides(
     let mut identities = HashSet::new();
     let mut provenance = Vec::new();
     for (team_index, team) in teams.iter().enumerate() {
-        let team_source = Source::root(source_file, &format!("teams[{team_index}]"));
-        let team = object(team, &team_source)?;
+        let indexed_source = Source::root(source_file, &format!("teams[{team_index}]"));
+        let team = object(team, &indexed_source)?;
+        let team_source = team
+            .get("teamId")
+            .and_then(Value::as_str)
+            .filter(|identity| !identity.is_empty())
+            .map_or(indexed_source, |identity| {
+                Source::team(source_file, identity, format!("teams[{team_index}]"))
+            });
         unknown_fields(team, &["teamId", "shellSettings"], &team_source)?;
         let identity_source = Source::root(source_file, &format!("teams[{team_index}].teamId"));
         let identity = team.get("teamId").and_then(Value::as_str).ok_or_else(|| {
@@ -156,13 +163,23 @@ fn team_overrides(
                 "export one nonempty teamId for every team",
             )
         })?;
-        if identity.is_empty() || !identities.insert(identity.to_owned()) {
+        if identity.is_empty() {
             return Err(identity_source.error(
                 MigrationErrorKind::Malformed,
                 None,
-                format!("team identity is empty or duplicated: {identity:?}"),
+                "team identity is empty",
                 "export unique nonempty team identities",
             ));
+        }
+        if !identities.insert(identity.to_owned()) {
+            return Err(
+                Source::team(source_file, identity, format!("teams[{team_index}].teamId")).error(
+                    MigrationErrorKind::Malformed,
+                    None,
+                    format!("team identity is duplicated: {identity:?}"),
+                    "export unique nonempty team identities",
+                ),
+            );
         }
         let Some(settings) = team.get("shellSettings") else {
             continue;
@@ -234,10 +251,11 @@ fn override_value(
 }
 
 fn validate_token(token: &str, source: &Source) -> Result<(), MigrationError> {
-    if token.is_empty() {
+    let normalized = token.trim();
+    if normalized.is_empty() {
         return Ok(());
     }
-    let (kind, message, recovery) = if token.starts_with("rc.") {
+    let (kind, message, recovery) = if normalized.starts_with("rc.") {
         (
             MigrationErrorKind::UnsupportedOverride,
             format!("raw Taskwarrior override {token:?} has no current typed equivalent"),
