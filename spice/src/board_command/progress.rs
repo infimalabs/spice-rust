@@ -71,47 +71,122 @@ fn claim_free(
     }
     committed(bus, write, CommandAnswer::Claim(answer))
 }
-
 fn task_done(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     done: &TaskDone,
+    repository: Option<&Repository>,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone()) {
+    let snapshot = match validated_snapshot(
+        bus,
+        command.actor().clone(),
+    ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let Some(entry) = snapshot
+    let entry = match done_entry(&snapshot, done) {
+        Ok(entry) => entry,
+        Err(outcome) => return outcome,
+    };
+    let (at, transition) = match done_transition(
+        entry,
+        command,
+    ) {
+        Ok(value) => value,
+        Err(outcome) => return outcome,
+    };
+    let origin = match task_origin(&done.task) {
+        Ok(origin) => origin,
+        Err(outcome) => return outcome,
+    };
+    let git = match publish_task_boundary(
+        repository,
+        &snapshot,
+        command,
+        entry,
+    ) {
+        Ok(git) => git,
+        Err(outcome) => return outcome,
+    };
+    let mut write = JournalWrite::new(
+        command.actor().clone(),
+        origin,
+        at,
+        Producer::CommandDoor,
+    );
+    guard(&mut write, command.expected().to_vec());
+    let answer = match append_done(
+        &mut write,
+        done,
+        entry,
+        &transition,
+        git,
+    ) {
+        Ok(answer) => answer,
+        Err(outcome) => return outcome,
+    };
+    if let Err(error) = write.command_result(
+        request(command, done.clone()),
+        command.epoch(),
+        answer.clone(),
+    ) {
+        return store_fault(
+            "task::done-receipt",
+            &error.to_string(),
+        );
+    }
+    committed(bus, write, CommandAnswer::Task(answer))
+}
+
+fn done_entry<'a>(
+    snapshot: &'a ValidatedSnapshot,
+    done: &TaskDone,
+) -> Result<&'a Entry, Outcome<CommandAnswer>> {
+    snapshot
         .entries
         .iter()
         .find(|entry| entry.statement().handle == done.task)
-    else {
-        return refusal(
-            "task::unknown",
-            Some(done.task.to_string()),
-            "read board and complete the task held by this capability",
-        );
-    };
-    let at = match current_instant() {
-        Ok(at) => at,
-        Err(outcome) => return outcome,
-    };
-    let active = match board::Active::admit(entry, command.actor(), at) {
-        Ok(active) => active,
-        Err(error) => {
-            return refusal(
-                "claim::active-refused",
-                Some(error.to_string()),
-                "renew or win a current claim before completing its phase",
-            );
-        }
-    };
+        .ok_or_else(|| {
+            refusal(
+                "task::unknown",
+                Some(done.task.to_string()),
+                concat!(
+                    "read board and complete the task held by ",
+                    "this capability",
+                ),
+            )
+        })
+}
+
+fn done_transition(
+    entry: &Entry,
+    command: &wire::AdmittedCommand,
+) -> Result<(Instant, board::Transition), Outcome<CommandAnswer>> {
+    let at = current_instant()?;
+    let active = board::Active::admit(
+        entry,
+        command.actor(),
+        at,
+    )
+    .map_err(|error| {
+        refusal(
+            "claim::active-refused",
+            Some(error.to_string()),
+            concat!(
+                "renew or win a current claim before ",
+                "completing its phase",
+            ),
+        )
+    })?;
     if active.epoch() != command.epoch() {
-        return refusal(
+        return Err(refusal(
             "claim::epoch-moved",
             Some(active.epoch().to_string()),
-            "win the task again under the current resident generation",
-        );
+            concat!(
+                "win the task again under the current resident ",
+                "generation",
+            ),
+        ));
     }
     let current = entry
         .workflow()
@@ -119,80 +194,85 @@ fn task_done(
         .iter()
         .position(|phase| phase == &entry.workflow().phase)
         .expect("validated workflow contains its phase");
-    let transition = if let Some(next) = entry.workflow().flow.get(current + 1) {
-        board::Transition::advance(entry, &active, next.clone())
-    } else {
-        board::Transition::complete(entry, &active, at)
-    };
-    let transition = match transition {
-        Ok(transition) => transition,
-        Err(error) => {
-            return refusal(
-                "task::phase-refused",
-                Some(error.to_string()),
-                "complete only the currently held workflow phase",
-            );
+    let transition = match entry.workflow().flow.get(current + 1) {
+        Some(next) => {
+            board::Transition::advance(entry, &active, next.clone())
         }
-    };
-    let origin = match task_origin(&done.task) {
-        Ok(origin) => origin,
-        Err(outcome) => return outcome,
-    };
-    let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
-    guard(&mut write, command.expected().to_vec());
-    let completed = match write.fact(
-        body::TaskDone {
-            task: done.task.clone(),
-            validation: done.validation.clone(),
-        },
-        FactCause::Root,
-    ) {
-        Ok(fact) => fact,
-        Err(error) => return store_fault("task::done-build", &error.to_string()),
-    };
-    let workflow_fact = match transition.kind() {
-        board::TransitionKind::Advance { to, .. } => match write.fact(
-            body::TaskPhased {
+        None => board::Transition::complete(entry, &active, at),
+    }
+    .map_err(|error| {
+        refusal(
+            "task::phase-refused",
+            Some(error.to_string()),
+            "complete only the currently held workflow phase",
+        )
+    })?;
+    Ok((at, transition))
+}
+
+fn append_done(
+    write: &mut JournalWrite,
+    done: &TaskDone,
+    entry: &Entry,
+    transition: &board::Transition,
+    git: Option<GitBoundary>,
+) -> Result<wire::intent::TaskAnswer, Outcome<CommandAnswer>> {
+    let completed = write
+        .fact(
+            body::TaskDone {
                 task: done.task.clone(),
-                phase: to.clone(),
+                validation: done.validation.clone(),
+                git,
             },
-            FactCause::Pending(completed),
-        ) {
-            Ok(fact) => fact,
-            Err(error) => return store_fault("task::phase-build", &error.to_string()),
-        },
+            FactCause::Root,
+        )
+        .map_err(|error| {
+            store_fault("task::done-build", &error.to_string())
+        })?;
+    let workflow_fact = match transition.kind() {
+        board::TransitionKind::Advance { to, .. } => write
+            .fact(
+                body::TaskPhased {
+                    task: done.task.clone(),
+                    phase: to.clone(),
+                },
+                FactCause::Pending(completed),
+            )
+            .map_err(|error| {
+                store_fault(
+                    "task::phase-build",
+                    &error.to_string(),
+                )
+            })?,
         board::TransitionKind::Complete { .. } => completed,
     };
     let workflow = transition.next().clone();
-    write.workflow_head(done.task.clone(), workflow_fact, move |_| workflow);
+    write.workflow_head(
+        done.task.clone(),
+        workflow_fact,
+        move |_| workflow,
+    );
     let mut claim = entry
         .claim()
         .expect("Active proof requires a claim head")
         .clone();
     claim.disposition = ClaimDisposition::Freed;
-    write.claim_head(done.task.clone(), completed, move |fact| ClaimHead {
-        fact,
-        ..claim
-    });
-    let status = transition.next().status.clone();
-    let answer = wire::intent::TaskAnswer {
+    write.claim_head(
+        done.task.clone(),
+        completed,
+        move |fact| ClaimHead { fact, ..claim },
+    );
+    Ok(wire::intent::TaskAnswer {
         task: done.task.clone(),
-        status,
-    };
-    if let Err(error) = write.command_result(
-        request(command, done.clone()),
-        command.epoch(),
-        answer.clone(),
-    ) {
-        return store_fault("task::done-receipt", &error.to_string());
-    }
-    committed(bus, write, CommandAnswer::Task(answer))
+        status: transition.next().status.clone(),
+    })
 }
 
 fn task_review(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     review: &TaskReview,
+    repository: Option<&Repository>,
 ) -> Outcome<CommandAnswer> {
     let snapshot = match validated_snapshot(bus, command.actor().clone()) {
         Ok(snapshot) => snapshot,
@@ -255,6 +335,10 @@ fn task_review(
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
+    let git = match publish_task_boundary(repository, &snapshot, command, entry) {
+        Ok(git) => git,
+        Err(outcome) => return outcome,
+    };
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
     let reviewed = match write.fact(
@@ -263,6 +347,7 @@ fn task_review(
             reviewer: command.actor().clone(),
             verdict,
             finding,
+            git,
         },
         FactCause::Root,
     ) {

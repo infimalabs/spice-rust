@@ -26,6 +26,7 @@ fn dispatch_client(
         ["doc", "ledger"] => client_ledger(repository, contract, matches),
         ["task", "next"] => client_next(repository, contract),
         ["task", "add"] => client_add(repository, contract, matches),
+        ["task", "capture"] => client_capture(repository, contract, matches),
         ["task", "oops"] => client_oops(repository, contract, matches),
         ["task", "note"] => client_note(repository, contract, matches),
         ["task", "defer"] => client_defer(repository, contract, matches),
@@ -149,6 +150,83 @@ fn client_add(
     let title = required(matches, "TITLE");
     let project = matches.get_one::<String>("project").cloned();
     submit_add(repository, contract, title, project, None)
+}
+
+fn client_capture(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    let task = match matches.get_one::<String>("HANDLE") {
+        Some(written) => {
+            if matches.contains_id("title") || matches.contains_id("project") {
+                return refusal(
+                    "task::capture-shape",
+                    Some(written.clone()),
+                    "name either an existing HANDLE or new-task title/project fields",
+                );
+            }
+            match written.parse::<TaskHandle>() {
+                Ok(task) => task,
+                Err(error) => {
+                    return refusal(
+                        "task::handle-invalid",
+                        Some(written.clone()),
+                        &error.to_string(),
+                    );
+                }
+            }
+        }
+        None => {
+            let Some(project) = matches.get_one::<String>("project").cloned() else {
+                return refusal(
+                    "task::capture-project-missing",
+                    None,
+                    "supply --project when task capture mints a new task",
+                );
+            };
+            let candidate = match spice::task_git::capture(repository) {
+                Ok(candidate) => candidate,
+                Err(error) => return task_git_outcome(error),
+            };
+            let title = matches
+                .get_one::<String>("title")
+                .cloned()
+                .unwrap_or(candidate.subject);
+            let add_contract = crate::cli::contract(&["task", "add"])
+                .expect("task add contract is registered");
+            match submit_add(repository, add_contract, title, Some(project), None) {
+                Outcome::Reply(Reply {
+                    body: CommandAnswer::Task(answer),
+                    ..
+                }) => answer.task,
+                Outcome::Reply(_) => {
+                    return protocol_fault(
+                        "task::capture-add-answer",
+                        "task add returned another answer shape",
+                    );
+                }
+                Outcome::Refusal(refusal) => return Outcome::Refusal(refusal),
+                Outcome::Fault(fault) => return Outcome::Fault(fault),
+            }
+        }
+    };
+    mutate_from_board(repository, contract, |board| {
+        let heads = task_heads(&board, &task)?;
+        let (lane, occupant) = actor_seat(&board)?;
+        let rule = "capture".parse::<Name>().expect("capture is a wire name");
+        Ok((
+            CommandKind::ClaimWin,
+            vec![
+                statement_witness(heads),
+                workflow_witness(heads),
+                claim_witness(heads),
+                Witness::Eligibility { rule: rule.clone() },
+                residency_witness(&board, lane, occupant),
+            ],
+            serde_json::to_value(ClaimWin { rule }).expect("typed intent encodes"),
+        ))
+    })
 }
 
 fn client_oops(
@@ -829,9 +907,19 @@ fn stem(text: &str) -> String {
 }
 
 /// Dispatch one board-family request after transport admission.
+#[cfg(test)]
 pub(crate) fn dispatch(
     bus: &Bus,
     command: &wire::AdmittedCommand,
+) -> Option<Outcome<CommandAnswer>> {
+    dispatch_with_repository(bus, command, None)
+}
+
+/// Dispatch with the resident repository required by production Git boundaries.
+pub(crate) fn dispatch_with_repository(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    repository: Option<&Repository>,
 ) -> Option<Outcome<CommandAnswer>> {
     let outcome = match command.body() {
         wire::intent::Intent::BoardRead(read) => read_board(bus, read, command.actor().clone()),
@@ -852,9 +940,15 @@ pub(crate) fn dispatch(
             claim_free(bus, command, task)
         }
         wire::intent::Intent::TaskDepends(depends) => task_depends(bus, command, depends),
-        wire::intent::Intent::ClaimWin(win) => claim_win(bus, command, win),
-        wire::intent::Intent::TaskDone(done) => task_done(bus, command, done),
-        wire::intent::Intent::TaskReview(review) => task_review(bus, command, review),
+        wire::intent::Intent::ClaimWin(win) => {
+            claim_win(bus, command, win, repository)
+        }
+        wire::intent::Intent::TaskDone(done) => {
+            task_done(bus, command, done, repository)
+        }
+        wire::intent::Intent::TaskReview(review) => {
+            task_review(bus, command, review, repository)
+        }
         wire::intent::Intent::DocApply(apply) => doc_apply(bus, command, apply),
         _ => return None,
     };

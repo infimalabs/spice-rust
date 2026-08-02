@@ -12,9 +12,9 @@ never reads Python authority bytes.
 
 | Measure | Result |
 | --- | --- |
-| Installed Python registry | 123/123 paths have one disposition; 24 task-owned gaps; no unsupported deletions |
-| Rust contract registry | 63/63 leaves landed; no gaps or unaccounted leaves |
-| Rust process sweep | 126 text/JSON invocations; matching exits and streams; no placeholders |
+| Installed Python registry | 123/123 paths have one disposition; 23 task-owned gaps; no unsupported deletions |
+| Rust contract registry | 64/64 leaves landed; no gaps or unaccounted leaves |
+| Rust process sweep | 128 text/JSON invocations; matching exits and streams; no placeholders |
 | Functional smoke | 39/39 process tests across lifecycle, control, evidence, and recovery |
 | Coexistence | Two Rust generations; Python command, state, hooks, and hook path unchanged |
 
@@ -57,7 +57,7 @@ entrypoint, active hooks, or Python authority.
 
 ## Rust contracts
 
-The closed registry contains 63 leaves and all 63 have executable dispatch.
+The closed registry contains 64 leaves and all 64 have executable dispatch.
 `spice/src/cli.rs::landing` carries the same classification; its tests reject
 registry drift, and the process sweep rejects terminal release or resident
 placeholder outcomes.
@@ -86,6 +86,7 @@ placeholder outcomes.
 - `board handout`
 - `task next`
 - `task add`
+- `task capture`
 - `task done`
 - `task review`
 - `task note`
@@ -273,7 +274,7 @@ and journal foundations but do not yet answer every predecessor query. All
 - `task artifact list`: P -> `ARTIFAC-1kJWSCFm`.
 - `task artifact prune`: P -> `ARTIFAC-1kJWSCFm` for retention preview/apply parity.
 - `task artifact show`: P -> `ARTIFAC-1kJWSCFm`.
-- `task capture`: P -> `GIT-1kJWMPvF` for loose-commit capture and publication.
+- `task capture`: R -> `task capture` with loose-commit capture and boundary publication.
 - `task claim`: R -> allocator-owned `task next`.
 - `task delete`: D -> authored `doc` correction.
 - `task depends`: R -> `task depends`.

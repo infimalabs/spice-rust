@@ -104,7 +104,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 
 #[test]
 fn every_contract_has_an_executable_succession_disposition() {
-    assert_eq!(contracts().len(), 63);
+    assert_eq!(contracts().len(), 64);
 
     let unaccounted = contracts()
         .iter()
@@ -117,7 +117,7 @@ fn every_contract_has_an_executable_succession_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 63);
+    assert_eq!(landed, 64);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
     assert_eq!(landing(&["lock", "run"]), Landing::Landed);
@@ -253,7 +253,7 @@ fn every_python_task_control_has_one_tested_current_disposition() {
         ("task artifact list", Pending("ARTIFAC-1kJWSCFm")),
         ("task artifact prune", Pending("ARTIFAC-1kJWSCFm")),
         ("task artifact show", Pending("ARTIFAC-1kJWSCFm")),
-        ("task capture", Pending("GIT-1kJWMPvF")),
+        ("task capture", Landed(&["task", "capture"])),
         ("task claim", Landed(&["task", "next"])),
         ("task delete", Landed(&["doc"])),
         ("task depends", Landed(&["task", "depends"])),
@@ -591,6 +591,10 @@ fn tool_postures_follow_the_closed_command_order() {
                 "proof replay".to_owned(),
                 vec!["OCI runtime", "sealed battery member"],
             ),
+            ("task next".to_owned(), vec!["git"]),
+            ("task capture".to_owned(), vec!["git"]),
+            ("task done".to_owned(), vec!["git"]),
+            ("task review".to_owned(), vec!["git"]),
             ("run".to_owned(), vec!["CMD"]),
         ]
     );
