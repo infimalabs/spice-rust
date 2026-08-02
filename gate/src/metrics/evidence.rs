@@ -330,7 +330,7 @@ impl MetricMeasurement {
 #[serde(rename_all = "kebab-case", tag = "state")]
 pub enum EvidenceState {
     Measured {
-        measurement: MetricMeasurement,
+        measurement: Box<MetricMeasurement>,
     },
     Unavailable {
         reason: String,
@@ -358,6 +358,14 @@ pub enum EvidenceState {
 }
 
 impl EvidenceState {
+    /// Bind one trusted measurement without exposing representation sizing.
+    #[must_use]
+    pub fn measured(measurement: MetricMeasurement) -> Self {
+        Self::Measured {
+            measurement: Box::new(measurement),
+        }
+    }
+
     /// Exact predecessor-owned refusal for an unrepresentable input.
     pub fn predecessor_unsupported(
         source_field: impl Into<String>,

@@ -1,0 +1,499 @@
+use std::path::Path;
+
+use gate::metrics::{
+    EvidenceState, LatchBinding, MetricEvidence, MetricId, MetricKey, MetricMeasurement,
+    MetricParity, MetricReport, MetricUnit, ParseError, ParserEvidence, ParserId, ParserMode,
+    PredecessorMetricObservation, PredecessorMetricResult, RuleBinding, STRUCTURAL_ARMS,
+    STRUCTURAL_METRICS, StructuralArmEvidence, compare_predecessor_metric, measure_file_shape,
+    measure_repository_document, parse_lizard_csv, resolve_magic_metric, resolve_metric_rule,
+    scan_magic_regressions, scan_markdown_link_case,
+};
+use gate::{GateId, PolicyContext, migrate_predecessor_policy};
+
+const EXISTING_MAGIC_VALUE: u64 = 75;
+const NEW_MAGIC_VALUE: u64 = 100;
+const PYTHON_MAGIC_VALUE: u64 = 50;
+
+const SCOPED_POLICY: &str = r#"
+[policy.limits]
+file_loc = 10
+file_bytes = 100
+routine_ccn = 5
+routine_length = 8
+commit_message_wrap = 72
+repo_truth_doc_chars = 1000
+
+[policy.flex]
+ratio = 2.0
+jitter_percent = 7
+
+[policy.magic]
+examine_threshold = 10
+baseline_ref = "HEAD"
+
+[policy.markdown_depth_budget]
+extensions = [".mdoc"]
+stem_pattern = "[A-Z_]+"
+
+[[policy.rules]]
+scopes = { paths = ["src/**"] }
+multiplier = 2.0
+flex = 2.0
+
+[[policy.rules]]
+scopes = { paths = ["src/strict/**"] }
+[policy.rules.magic]
+examine_threshold = 100
+"#;
+
+#[test]
+fn declarations_freeze_ids_units_parsers_scopes_and_order() {
+    assert_eq!(
+        STRUCTURAL_ARMS.map(|arm| arm.id()),
+        [
+            GateId::FileShape,
+            GateId::Complexity,
+            GateId::MagicNumbers,
+            GateId::MarkdownLinks,
+        ]
+    );
+    assert_eq!(STRUCTURAL_METRICS.map(|metric| metric.id()), MetricId::ALL);
+    assert_eq!(STRUCTURAL_METRICS[0].unit(), MetricUnit::SourceLines);
+    assert_eq!(
+        STRUCTURAL_METRICS[2].key(),
+        gate::metrics::KeyShape::PathFunction
+    );
+    assert_eq!(
+        STRUCTURAL_METRICS[4].owner(),
+        GateId::RepoDocs,
+        "repo-doc owns document-character enforcement"
+    );
+    let complexity = STRUCTURAL_ARMS[1];
+    assert_eq!(complexity.parser().mode(), ParserMode::External);
+    let lizard = complexity
+        .parser()
+        .tool()
+        .expect("complexity declares lizard");
+    assert_eq!(lizard.program(), "lizard");
+    assert_eq!(lizard.version_arguments(), ["--version"]);
+    assert_eq!(lizard.exact_version(), "1.23.0");
+    assert_eq!(lizard.analysis_arguments(), ["--csv"]);
+    assert!(
+        STRUCTURAL_ARMS[0]
+            .scope()
+            .exclusions()
+            .contains(&"repository-truth documents")
+    );
+}
+
+#[test]
+fn native_file_and_document_parsers_preserve_predecessor_counts() {
+    let source = "alpha\r\nbeta\u{2028}gamma\n".as_bytes();
+    let shape = measure_file_shape("src/app.rs", source).expect("UTF-8 source measures");
+    assert_eq!(shape.path(), "src/app.rs");
+    assert_eq!(shape.lines(), 3);
+    assert_eq!(shape.bytes(), u64::try_from(source.len()).unwrap());
+    assert_eq!(
+        measure_file_shape("src/empty.rs", b"")
+            .expect("empty text is measured, not omitted")
+            .lines(),
+        0
+    );
+
+    let document = measure_repository_document("README.md", b"a\xffb")
+        .expect("invalid UTF-8 is decoded with replacement");
+    assert_eq!(document.characters(), 3);
+    assert!(matches!(
+        measure_file_shape("src/image.rs", b"a\0b"),
+        Err(ParseError::Unsupported { source_field, .. })
+            if source_field == "policy.file_shape.source_suffixes"
+    ));
+    assert!(matches!(
+        measure_repository_document("README.md", b"a\0b"),
+        Err(ParseError::Unsupported { source_field, .. })
+            if source_field == "policy.repo_truth.docs"
+    ));
+}
+
+#[test]
+fn lizard_csv_is_strict_per_function_and_never_drops_bad_rows() {
+    let stdout = concat!(
+        "15,5,123,2,17,\"run@1-17@/repo/src/app.rs\",",
+        "\"/repo/src/app.rs\",\"run,worker\",signature,1,17\n"
+    );
+    let records = parse_lizard_csv(
+        Path::new("/repo"),
+        &["src/app.rs".to_owned()],
+        stdout.as_bytes(),
+    )
+    .expect("pinned lizard row parses");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].path(), "src/app.rs");
+    assert_eq!(records[0].function(), "run,worker");
+    assert_eq!(
+        (records[0].ccn(), records[0].length(), records[0].nloc()),
+        (5, 17, 15)
+    );
+
+    let short = b"15,5,123,2,17,location,src/app.rs\n";
+    assert!(matches!(
+        parse_lizard_csv(Path::new("/repo"), &["src/app.rs".to_owned()], short),
+        Err(ParseError::Malformed { reason, .. }) if reason.contains("expected 11 fields")
+    ));
+    let duplicate = format!("{stdout}{stdout}");
+    assert!(matches!(
+        parse_lizard_csv(
+            Path::new("/repo"),
+            &["src/app.rs".to_owned()],
+            duplicate.as_bytes()
+        ),
+        Err(ParseError::Collision { .. })
+    ));
+}
+
+#[test]
+fn magic_delta_matches_supported_comparisons_and_refuses_ast_substitution() {
+    let baseline = format!("if (value > {EXISTING_MAGIC_VALUE}) {{}}\n");
+    let current = format!(
+        concat!(
+            "if (value > {existing}) {{}}\n",
+            "if (count == 5) {{}}\n",
+            "let named = 99;\n",
+            "if (size <= {new}) {{}}\n",
+            "// if (commented > 500) {{}}\n",
+            "let markup = `if (copy > 600) {{}}`;\n",
+        ),
+        existing = EXISTING_MAGIC_VALUE,
+        new = NEW_MAGIC_VALUE
+    );
+    let findings = scan_magic_regressions("src/app.rs", &current, Some(&baseline), 10)
+        .expect("C-grammar source scans");
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].line(), 4);
+    assert_eq!(findings[0].literal(), "100");
+
+    assert!(matches!(
+        scan_magic_regressions(
+            "src/app.py",
+            &format!("if x > {PYTHON_MAGIC_VALUE}: pass"),
+            None,
+            10
+        ),
+        Err(ParseError::Unsupported { source_field, recovery, .. })
+            if source_field == "policy.languages.magic"
+                && recovery.contains("exact native parser")
+    ));
+    assert!(matches!(
+        scan_magic_regressions(
+            "src/app.txt",
+            &format!("x > {PYTHON_MAGIC_VALUE}"),
+            None,
+            10
+        ),
+        Err(ParseError::NotApplicable { .. })
+    ));
+}
+
+#[test]
+fn markdown_links_use_projected_inventory_and_exact_ascii_case() {
+    let tracked = vec![
+        "README.md".to_owned(),
+        "Docs/Guide.md".to_owned(),
+        "images/logo.png".to_owned(),
+    ];
+    let text = concat!(
+        "[Guide](docs/guide.md)\n",
+        "[External](https://example.com)\n",
+        "[Anchor](#local)\n",
+    );
+    let findings =
+        scan_markdown_link_case("README.md", text, &tracked).expect("tracked Markdown scans");
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].resolved_path(), "docs/guide.md");
+    assert_eq!(findings[0].expected_path(), "Docs/Guide.md");
+
+    assert!(matches!(
+        scan_markdown_link_case("README.md", "[x](Döcs.md)", &tracked),
+        Err(ParseError::Unsupported { source_field, .. })
+            if source_field == "markdown link target"
+    ));
+    let collision = vec!["Docs/Guide.md".to_owned(), "docs/guide.md".to_owned()];
+    assert!(matches!(
+        scan_markdown_link_case("README.md", "", &collision),
+        Err(ParseError::Collision { .. })
+    ));
+}
+
+#[test]
+fn policy_binding_preserves_regex_rules_magic_and_markdown_depth() {
+    let policy = migrate_predecessor_policy("fixtures/metrics.toml", SCOPED_POLICY)
+        .expect("predecessor policy migrates once");
+    let file = resolve_metric_rule(
+        &policy,
+        MetricId::FileLines,
+        &PolicyContext::new().with_path("src/app.rs"),
+    )
+    .expect("scoped file rule resolves");
+    assert_eq!((file.base_limit(), file.ratchet_limit()), (20, 40));
+    assert_eq!(file.variation_percent(), 7);
+    assert!(file.binding().rule_id().is_some());
+    assert!(file.binding().match_basis().contains("src/**"));
+
+    let magic = resolve_magic_metric(
+        &policy,
+        &PolicyContext::new().with_path("src/strict/app.rs"),
+    )
+    .expect("scoped magic rule resolves");
+    assert_eq!(magic.threshold(), 100);
+
+    let root = resolve_metric_rule(
+        &policy,
+        MetricId::RepositoryDocumentCharacters,
+        &PolicyContext::new().with_path("DOCS_MAIN.mdoc"),
+    )
+    .expect("root generated Markdown rule resolves");
+    let nested = resolve_metric_rule(
+        &policy,
+        MetricId::RepositoryDocumentCharacters,
+        &PolicyContext::new().with_path("docs/DOCS_MAIN.mdoc"),
+    )
+    .expect("nested generated Markdown rule resolves");
+    let deep = resolve_metric_rule(
+        &policy,
+        MetricId::RepositoryDocumentCharacters,
+        &PolicyContext::new().with_path("docs/reference/DOCS_MAIN.mdoc"),
+    )
+    .expect("deep generated Markdown rule resolves");
+    let unlimited = resolve_metric_rule(
+        &policy,
+        MetricId::RepositoryDocumentCharacters,
+        &PolicyContext::new().with_path("docs/reference/generated/DOCS_MAIN.mdoc"),
+    )
+    .expect("very deep generated Markdown rule resolves");
+    assert_eq!(
+        (root.base_limit(), nested.base_limit(), deep.base_limit()),
+        (10_000, 20_000, 30_000)
+    );
+    assert!(unlimited.unlimited());
+
+    let wrong_stem = resolve_metric_rule(
+        &policy,
+        MetricId::RepositoryDocumentCharacters,
+        &PolicyContext::new().with_path("guide.mdoc"),
+    )
+    .expect("nonmatching stem uses global policy");
+    assert_eq!(wrong_stem.base_limit(), 1000);
+    assert!(wrong_stem.binding().rule_id().is_none());
+}
+
+#[test]
+fn missing_rule_context_refuses_instead_of_selecting_a_global_default() {
+    let policy = migrate_predecessor_policy("fixtures/metrics.toml", SCOPED_POLICY)
+        .expect("predecessor policy migrates once");
+    let error = resolve_metric_rule(&policy, MetricId::FileLines, &PolicyContext::new())
+        .expect_err("path-constrained rule requires path context");
+    assert!(error.to_string().contains("requires path context"));
+}
+
+#[test]
+fn evidence_vocabulary_is_total_and_release_owned() {
+    let states = [
+        EvidenceState::Unavailable {
+            reason: "lizard executable absent".to_owned(),
+        },
+        EvidenceState::predecessor_unsupported(
+            "policy.languages.magic",
+            "Python AST classification is not compiled",
+            "remove .py or compile an exact parser",
+        ),
+        EvidenceState::Unmeasured {
+            reason: "selected bytes were not acquired".to_owned(),
+        },
+        EvidenceState::Timeout {
+            milliseconds: 30_000,
+            reason: "bounded lizard process exceeded runtime".to_owned(),
+        },
+        EvidenceState::Failed {
+            reason: "lizard exited without complete CSV".to_owned(),
+            exit_code: Some(2),
+        },
+        EvidenceState::NotApplicable {
+            reason: "no tracked Markdown sources".to_owned(),
+        },
+    ];
+    for (index, state) in states.into_iter().enumerate() {
+        let row = MetricEvidence::new(
+            MetricId::MarkdownLinkCaseMismatches,
+            MetricKey::path(format!("docs/{index}.md")).unwrap(),
+            state,
+        )
+        .expect("every explicit state is admitted");
+        assert_eq!(row.state().is_failure(), index < 5);
+        assert_eq!(row.state().is_skip(), index == 5);
+    }
+
+    let converted = ParseError::Unsupported {
+        source_field: "policy.languages.magic".to_owned(),
+        reason: "parser class is absent".to_owned(),
+        recovery: "compile the parser".to_owned(),
+    }
+    .into_evidence_state();
+    assert!(matches!(
+        converted,
+        EvidenceState::Unsupported { owning_release, .. } if owning_release == "0.31.0"
+    ));
+}
+
+#[test]
+fn parity_proves_supported_values_and_exact_release_owned_refusals() {
+    let key = MetricKey::path("src/app.rs").unwrap();
+    let current = MetricEvidence::new(
+        MetricId::FileLines,
+        key.clone(),
+        EvidenceState::measured(bounded_measurement(MetricId::FileLines, 12, "file_loc")),
+    )
+    .unwrap();
+    let predecessor = PredecessorMetricObservation::new(
+        MetricId::FileLines,
+        key,
+        PredecessorMetricResult::Measured(12),
+    );
+    assert!(matches!(
+        compare_predecessor_metric(&predecessor, &current).unwrap(),
+        MetricParity::Equivalent {
+            value: Some(12),
+            ..
+        }
+    ));
+
+    let key = MetricKey::path("src/app.py").unwrap();
+    let refused = MetricEvidence::new(
+        MetricId::MagicNumberRegressions,
+        key.clone(),
+        EvidenceState::predecessor_unsupported(
+            "policy.languages.magic",
+            "Python AST classification is not compiled",
+            "remove .py or compile an exact parser",
+        ),
+    )
+    .unwrap();
+    let predecessor = PredecessorMetricObservation::new(
+        MetricId::MagicNumberRegressions,
+        key,
+        PredecessorMetricResult::Measured(1),
+    );
+    assert!(matches!(
+        compare_predecessor_metric(&predecessor, &refused).unwrap(),
+        MetricParity::Refused {
+            source_field,
+            owning_release,
+            ..
+        } if source_field == "policy.languages.magic" && owning_release == "0.31.0"
+    ));
+}
+
+#[test]
+fn reports_require_every_arm_metric_and_paired_scope_key() {
+    let arms = vec![
+        not_applicable_arm(GateId::MarkdownLinks),
+        not_applicable_arm(GateId::FileShape),
+        not_applicable_arm(GateId::MagicNumbers),
+        not_applicable_arm(GateId::Complexity),
+    ];
+    let documents = vec![
+        MetricEvidence::new(
+            MetricId::RepositoryDocumentCharacters,
+            MetricKey::Arm,
+            EvidenceState::NotApplicable {
+                reason: "no repository-truth documents".to_owned(),
+            },
+        )
+        .unwrap(),
+    ];
+    let report = MetricReport::new(arms, documents).expect("complete report admits");
+    assert_eq!(
+        report
+            .arms()
+            .iter()
+            .map(|arm| arm.gate_id())
+            .collect::<Vec<_>>(),
+        STRUCTURAL_ARMS.map(|arm| arm.id())
+    );
+    assert_eq!(report.canonical_json(), report.canonical_json());
+
+    let line = MetricEvidence::new(
+        MetricId::FileLines,
+        MetricKey::path("src/a.rs").unwrap(),
+        EvidenceState::measured(bounded_measurement(MetricId::FileLines, 12, "file_loc")),
+    )
+    .unwrap();
+    let bytes = MetricEvidence::new(
+        MetricId::FileBytes,
+        MetricKey::path("src/b.rs").unwrap(),
+        EvidenceState::measured(bounded_measurement(MetricId::FileBytes, 100, "file_bytes")),
+    )
+    .unwrap();
+    assert!(
+        StructuralArmEvidence::new(GateId::FileShape, vec![line, bytes])
+            .expect_err("file metrics must cover identical path keys")
+            .to_string()
+            .contains("metric keys differ")
+    );
+}
+
+fn not_applicable_arm(gate: GateId) -> StructuralArmEvidence {
+    let declaration = STRUCTURAL_ARMS
+        .into_iter()
+        .find(|arm| arm.id() == gate)
+        .unwrap();
+    let evidence = declaration
+        .metrics()
+        .iter()
+        .map(|metric| {
+            MetricEvidence::new(
+                *metric,
+                MetricKey::Arm,
+                EvidenceState::NotApplicable {
+                    reason: "declared scope has no selected input".to_owned(),
+                },
+            )
+            .unwrap()
+        })
+        .collect();
+    StructuralArmEvidence::new(gate, evidence).unwrap()
+}
+
+fn bounded_measurement(metric: MetricId, value: u64, field: &str) -> MetricMeasurement {
+    let parser = match metric {
+        MetricId::FileLines | MetricId::FileBytes => ParserId::Utf8FileShapeV1,
+        _ => unreachable!("fixture helper only builds file measurements"),
+    };
+    let kind = if metric == MetricId::FileLines {
+        "file_loc"
+    } else {
+        "file_bytes"
+    };
+    MetricMeasurement::new(value, ParserEvidence::Native { parser })
+        .with_rule(
+            RuleBinding::new(
+                field,
+                None::<String>,
+                "compiled policy globals",
+                "no named rule selected",
+            )
+            .unwrap(),
+        )
+        .with_latch(
+            LatchBinding::new(
+                kind,
+                10,
+                15,
+                15,
+                false,
+                "clear",
+                None::<String>,
+                None::<String>,
+            )
+            .unwrap(),
+        )
+}

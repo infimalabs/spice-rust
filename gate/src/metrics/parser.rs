@@ -6,6 +6,8 @@ mod markdown;
 use std::error::Error;
 use std::fmt;
 
+use super::EvidenceState;
+
 pub use complexity::{ComplexityRecord, parse_lizard_csv};
 pub use file::{
     FileShapeMeasurement, RepositoryDocumentMeasurement, measure_file_shape,
@@ -32,6 +34,27 @@ pub enum ParseError {
 }
 
 impl ParseError {
+    /// Convert parser refusal into the closed metric evidence vocabulary.
+    #[must_use]
+    pub fn into_evidence_state(self) -> EvidenceState {
+        match self {
+            Self::NotApplicable { reason } => EvidenceState::NotApplicable { reason },
+            Self::Unsupported {
+                source_field,
+                reason,
+                recovery,
+            } => EvidenceState::predecessor_unsupported(source_field, reason, recovery),
+            Self::Malformed { input, reason } => EvidenceState::Failed {
+                reason: format!("malformed {input}: {reason}"),
+                exit_code: None,
+            },
+            Self::Collision { key, reason } => EvidenceState::Failed {
+                reason: format!("key collision {key:?}: {reason}"),
+                exit_code: None,
+            },
+        }
+    }
+
     pub(super) fn malformed(input: impl Into<String>, reason: impl Into<String>) -> Self {
         Self::Malformed {
             input: input.into(),

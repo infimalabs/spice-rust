@@ -8,7 +8,9 @@
 
 mod declaration;
 mod evidence;
+mod parity;
 mod parser;
+mod policy_binding;
 
 pub use declaration::{
     ArmDeclaration, KeyShape, MetricDeclaration, MetricId, MetricUnit, ParserDeclaration, ParserId,
@@ -19,8 +21,16 @@ pub use evidence::{
     MetricMeasurement, MetricReport, ParserEvidence, RuleBinding, STRUCTURAL_METRIC_REPORT_VERSION,
     StructuralArmEvidence,
 };
+pub use parity::{
+    MetricParity, ParityError, PredecessorMetricObservation, PredecessorMetricResult,
+    compare_predecessor_metric,
+};
 pub use parser::{
     ComplexityRecord, FileShapeMeasurement, MagicFinding, MarkdownLinkFinding, ParseError,
     RepositoryDocumentMeasurement, measure_file_shape, measure_repository_document,
     parse_lizard_csv, scan_magic_regressions, scan_markdown_link_case,
+};
+pub use policy_binding::{
+    PolicyBindingError, ResolvedMagicMetric, ResolvedMetricRule, resolve_magic_metric,
+    resolve_metric_rule,
 };
