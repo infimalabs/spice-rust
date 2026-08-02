@@ -12,6 +12,7 @@
 //! each other, and the qualifier is what keeps a reader from believing
 //! otherwise.
 
+pub mod battery;
 pub mod camp;
 pub mod config;
 pub mod core;
@@ -33,6 +34,15 @@ pub mod toolchain;
 pub mod tree;
 pub mod verdict;
 
+pub use battery::{
+    ActorEvidence, ArmDisposition, ArmEvidence, ArmExecution, ArmFamily, BatteryArmResult,
+    BatteryContext, BatteryError, BatteryExecutor, BatteryInputs, BatteryManifest,
+    BatteryManifestArm, BatteryReport, BatteryScope, BatteryState, BatteryToolEvidence,
+    BoundActorInputsEvidence, BoundEvidence, CANONICAL_BATTERY_MANIFEST, CompiledArm,
+    ConfigurationEvidence, DecisionEvidence, GATE_BATTERY_VERSION, LatchEvidence,
+    MeasurementEvidence, MigrationRefusal as BatteryMigrationRefusal, ResultProvenance,
+    run_battery,
+};
 pub use camp::{
     BoundRelation, CAMP_REPORT_VERSION, Camp, CampError, CampFinding, CampReport, CampRunError,
     CampStanding, DistributionReport, LocusDistance, SharedBound,
