@@ -280,10 +280,11 @@ fn read_ledger(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let Some(entry) = snapshot
-        .entries
+    let Some(task) = snapshot
+        .answer
+        .tasks
         .iter()
-        .find(|entry| entry.statement().handle == ledger.task)
+        .find(|task| task.statement.body.handle == ledger.task)
     else {
         return refusal(
             "doc::task-unknown",
@@ -291,11 +292,11 @@ fn read_ledger(
             "read board and name one current task handle",
         );
     };
-    let statement = entry.statement();
-    let mut source = format!("# {}\n", statement.title);
+    let statement = &task.statement.body;
+    let mut source = format!("# {}\n", task.presentation_title());
     source.push_str(&format!(
         "\nFlow: {}\n",
-        join_phases(&entry.workflow().flow)
+        join_phases(&task.workflow.body.flow)
     ));
     if !statement.tags.is_empty() {
         source.push_str(&format!("Tags: {}\n", statement.tags.join(", ")));
