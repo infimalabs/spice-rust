@@ -11,6 +11,8 @@ use gate::metrics::{
 use gate::{GateId, PolicyContext, migrate_predecessor_policy};
 
 const EXISTING_MAGIC_VALUE: u64 = 75;
+const FIXTURE_BASE_LIMIT: u64 = 1_000;
+const FIXTURE_RATCHET_LIMIT: u64 = 1_500;
 const NEW_MAGIC_VALUE: u64 = 100;
 const PYTHON_MAGIC_VALUE: u64 = 50;
 
@@ -321,15 +323,15 @@ fn evidence_vocabulary_is_total_and_release_owned() {
             reason: "no tracked Markdown sources".to_owned(),
         },
     ];
-    for (index, state) in states.into_iter().enumerate() {
-        let row = MetricEvidence::new(
-            MetricId::MarkdownLinkCaseMismatches,
-            MetricKey::path(format!("docs/{index}.md")).unwrap(),
-            state,
-        )
-        .expect("every explicit state is admitted");
-        assert_eq!(row.state().is_failure(), index < 5);
-        assert_eq!(row.state().is_skip(), index == 5);
+    for metric in MetricId::ALL {
+        for (index, state) in states.iter().cloned().enumerate() {
+            let row = MetricEvidence::new(metric, MetricKey::Arm, state)
+                .expect("every metric admits every explicit nonmeasurement state");
+            assert_eq!(row.state().is_failure(), index < 5);
+            assert_eq!(row.state().is_skip(), index == 5);
+        }
+        let row = measured_evidence(metric);
+        assert!(matches!(row.state(), EvidenceState::Measured { .. }));
     }
 
     let converted = ParseError::Unsupported {
@@ -466,14 +468,29 @@ fn not_applicable_arm(gate: GateId) -> StructuralArmEvidence {
 fn bounded_measurement(metric: MetricId, value: u64, field: &str) -> MetricMeasurement {
     let parser = match metric {
         MetricId::FileLines | MetricId::FileBytes => ParserId::Utf8FileShapeV1,
-        _ => unreachable!("fixture helper only builds file measurements"),
+        MetricId::RoutineCcn | MetricId::RoutineLength => ParserId::LizardCsvV1,
+        MetricId::RepositoryDocumentCharacters => ParserId::Utf8DocumentCharactersV1,
+        _ => unreachable!("fixture helper only builds bounded measurements"),
     };
-    let kind = if metric == MetricId::FileLines {
-        "file_loc"
+    let kind = match metric {
+        MetricId::FileLines => "file_loc",
+        MetricId::FileBytes => "file_bytes",
+        MetricId::RoutineCcn => "complexity_ccn",
+        MetricId::RoutineLength => "complexity_length",
+        MetricId::RepositoryDocumentCharacters => "repo_doc_chars",
+        _ => unreachable!("fixture helper only builds bounded measurements"),
+    };
+    let parser = if parser == ParserId::LizardCsvV1 {
+        ParserEvidence::External {
+            parser,
+            tool: "lizard".to_owned(),
+            version: "1.23.0".to_owned(),
+            executable_digest: "sha256:fixture".to_owned(),
+        }
     } else {
-        "file_bytes"
+        ParserEvidence::Native { parser }
     };
-    MetricMeasurement::new(value, ParserEvidence::Native { parser })
+    MetricMeasurement::new(value, parser)
         .with_rule(
             RuleBinding::new(
                 field,
@@ -486,9 +503,13 @@ fn bounded_measurement(metric: MetricId, value: u64, field: &str) -> MetricMeasu
         .with_latch(
             LatchBinding::new(
                 kind,
-                10,
-                15,
-                15,
+                FIXTURE_BASE_LIMIT,
+                FIXTURE_RATCHET_LIMIT,
+                FIXTURE_RATCHET_LIMIT,
+                FIXTURE_RATCHET_LIMIT,
+                false,
+                false,
+                false,
                 false,
                 "clear",
                 None::<String>,
@@ -496,4 +517,45 @@ fn bounded_measurement(metric: MetricId, value: u64, field: &str) -> MetricMeasu
             )
             .unwrap(),
         )
+}
+
+fn measured_evidence(metric: MetricId) -> MetricEvidence {
+    let key = match metric {
+        MetricId::RoutineCcn | MetricId::RoutineLength => {
+            MetricKey::function("src/app.rs", "run").unwrap()
+        }
+        _ => MetricKey::path("src/app.rs").unwrap(),
+    };
+    let measurement = match metric {
+        MetricId::FileLines => bounded_measurement(metric, 12, "file_loc"),
+        MetricId::FileBytes => bounded_measurement(metric, 100, "file_bytes"),
+        MetricId::RoutineCcn => bounded_measurement(metric, 5, "routine_ccn"),
+        MetricId::RoutineLength => bounded_measurement(metric, 17, "routine_length"),
+        MetricId::RepositoryDocumentCharacters => {
+            bounded_measurement(metric, 100, "repo_truth_doc_chars")
+        }
+        MetricId::MagicNumberRegressions => MetricMeasurement::new(
+            1,
+            ParserEvidence::Native {
+                parser: ParserId::CGrammarMagicDeltaV1,
+            },
+        )
+        .with_rule(
+            RuleBinding::new(
+                "magic.examine_threshold",
+                None::<String>,
+                "compiled policy globals",
+                "no named rule selected",
+            )
+            .unwrap(),
+        )
+        .with_threshold(10),
+        MetricId::MarkdownLinkCaseMismatches => MetricMeasurement::new(
+            1,
+            ParserEvidence::Native {
+                parser: ParserId::MarkdownInlineLinkCaseV1,
+            },
+        ),
+    };
+    MetricEvidence::new(metric, key, EvidenceState::measured(measurement)).unwrap()
 }

@@ -174,9 +174,13 @@ impl RuleBinding {
 pub struct LatchBinding {
     kind: String,
     base_limit: u64,
+    configured_ratchet_limit: u64,
     ratchet_limit: u64,
     active_limit: u64,
     unlimited: bool,
+    over_limit: bool,
+    over_base: bool,
+    ratchet_breach: bool,
     transition: String,
     actor_source: Option<String>,
     actor: Option<String>,
@@ -188,9 +192,13 @@ impl LatchBinding {
     pub fn new(
         kind: impl Into<String>,
         base_limit: u64,
+        configured_ratchet_limit: u64,
         ratchet_limit: u64,
         active_limit: u64,
         unlimited: bool,
+        over_limit: bool,
+        over_base: bool,
+        ratchet_breach: bool,
         transition: impl Into<String>,
         actor_source: Option<impl Into<String>>,
         actor: Option<impl Into<String>>,
@@ -198,9 +206,13 @@ impl LatchBinding {
         let binding = Self {
             kind: kind.into(),
             base_limit,
+            configured_ratchet_limit,
             ratchet_limit,
             active_limit,
             unlimited,
+            over_limit,
+            over_base,
+            ratchet_breach,
             transition: transition.into(),
             actor_source: actor_source.map(Into::into),
             actor: actor.map(Into::into),
@@ -225,6 +237,11 @@ impl LatchBinding {
     }
 
     #[must_use]
+    pub const fn configured_ratchet_limit(&self) -> u64 {
+        self.configured_ratchet_limit
+    }
+
+    #[must_use]
     pub const fn active_limit(&self) -> u64 {
         self.active_limit
     }
@@ -232,6 +249,21 @@ impl LatchBinding {
     #[must_use]
     pub const fn unlimited(&self) -> bool {
         self.unlimited
+    }
+
+    #[must_use]
+    pub const fn over_limit(&self) -> bool {
+        self.over_limit
+    }
+
+    #[must_use]
+    pub const fn over_base(&self) -> bool {
+        self.over_base
+    }
+
+    #[must_use]
+    pub const fn ratchet_breach(&self) -> bool {
+        self.ratchet_breach
     }
 
     #[must_use]
@@ -245,14 +277,66 @@ impl LatchBinding {
                 "latch kind and transition must be non-empty single-line text".to_owned(),
             ));
         }
-        if self.ratchet_limit < self.base_limit || self.active_limit < self.base_limit {
+        if self.configured_ratchet_limit < self.base_limit
+            || self.ratchet_limit < self.base_limit
+            || self.active_limit < self.base_limit
+        {
             return Err(EvidenceError::InvalidBinding(
-                "latch limits must preserve base <= flex and base <= active".to_owned(),
+                "latch limits must preserve base <= configured/effective ratchet and active"
+                    .to_owned(),
+            ));
+        }
+        if !matches!(
+            self.transition.as_str(),
+            "clear" | "latched" | "held" | "healed"
+        ) {
+            return Err(EvidenceError::InvalidBinding(
+                "latch transition must be clear, latched, held, or healed".to_owned(),
+            ));
+        }
+        let prior_latched = matches!(self.transition.as_str(), "held" | "healed");
+        let expected_active = if prior_latched {
+            self.base_limit
+        } else {
+            self.ratchet_limit
+        };
+        if self.active_limit != expected_active {
+            return Err(EvidenceError::InvalidBinding(
+                "active latch limit disagrees with the recorded transition".to_owned(),
+            ));
+        }
+        let flags_match = match self.transition.as_str() {
+            "clear" | "healed" => !self.over_limit && !self.ratchet_breach,
+            "latched" => self.over_limit && self.over_base && self.ratchet_breach,
+            "held" => self.over_limit && self.over_base,
+            _ => false,
+        };
+        if !flags_match || (self.over_limit && !self.over_base) {
+            return Err(EvidenceError::InvalidBinding(
+                "latch outcome flags disagree with the recorded transition".to_owned(),
+            ));
+        }
+        if self.unlimited && (self.over_limit || self.over_base || self.ratchet_breach) {
+            return Err(EvidenceError::InvalidBinding(
+                "an unlimited latch decision cannot report a bound breach".to_owned(),
             ));
         }
         if self.actor_source.is_some() != self.actor.is_some() {
             return Err(EvidenceError::InvalidBinding(
                 "actor source and actor must appear together".to_owned(),
+            ));
+        }
+        if self
+            .actor_source
+            .as_deref()
+            .is_some_and(|value| !valid_text(value))
+            || self
+                .actor
+                .as_deref()
+                .is_some_and(|value| !valid_text(value))
+        {
+            return Err(EvidenceError::InvalidBinding(
+                "actor source and actor must be non-empty single-line text".to_owned(),
             ));
         }
         Ok(())
