@@ -92,7 +92,7 @@ impl Root {
         &self.steer
     }
 
-    /// Vendor executable overrides.
+    /// Vendor-specific launch policy.
     #[must_use]
     pub const fn vendor(&self) -> &vendor::Config {
         &self.vendor
@@ -243,6 +243,7 @@ impl<'de> Deserialize<'de> for TaskMetadata {
 pub struct WorkspacePolicy {
     #[serde(deserialize_with = "unique_names")]
     env_names: Vec<String>,
+    commit_message: gate::CommitMessagePolicy,
 }
 
 impl WorkspacePolicy {
@@ -250,6 +251,12 @@ impl WorkspacePolicy {
     #[must_use]
     pub fn env_names(&self) -> &[String] {
         &self.env_names
+    }
+
+    /// Commit trailer policy shared by launch attribution and the native hook.
+    #[must_use]
+    pub const fn commit_message(&self) -> &gate::CommitMessagePolicy {
+        &self.commit_message
     }
 }
 
@@ -291,6 +298,8 @@ fn unique_names<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<String
 /// Semantic validation still belongs to the domain type named by [`Root`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ValueKind {
+    /// One boolean.
+    Boolean,
     /// One string.
     String,
     /// One ordered string list.
@@ -314,6 +323,7 @@ impl ValueKind {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Boolean => "boolean",
             Self::String => "string",
             Self::StringList => "string-list",
             Self::UnsignedInteger => "unsigned-integer",
@@ -340,6 +350,8 @@ pub enum Builtin {
     UnsignedInteger(u64),
     /// One finite floating-point number.
     Float(f64),
+    /// One boolean.
+    Boolean(bool),
 }
 
 /// Whether a leaf is tracked policy or an admitted machine-local setting.
@@ -604,6 +616,20 @@ registry! {
         class: Policy,
         flag: None,
     }
+    fixed "policy.commit_message.allowed_trailers" {
+        kind: StringList,
+        builtin: Some(Builtin::Absent),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "policy.commit_message.blocked_trailers" {
+        kind: StringList,
+        builtin: Some(Builtin::Absent),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
     named "taste.<name>.words" {
         kind: StringList,
         builtin: None,
@@ -730,9 +756,67 @@ registry! {
         class: Policy,
         flag: None,
     }
-    named "vendor.<name>.binary" {
+    fixed "vendor.claude.binary" {
         kind: String,
-        builtin: None,
+        builtin: Some(Builtin::String("claude")),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "vendor.claude.model" {
+        kind: String,
+        builtin: Some(Builtin::String(vendor::DEFAULT_CLAUDE_MODEL)),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "vendor.claude.effort" {
+        kind: String,
+        builtin: Some(Builtin::String("high")),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "vendor.claude.auto_compact_window_tokens" {
+        kind: UnsignedInteger,
+        builtin: Some(Builtin::UnsignedInteger(
+            vendor::DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS,
+        )),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "vendor.codex.binary" {
+        kind: String,
+        builtin: Some(Builtin::String("codex")),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "vendor.codex.model" {
+        kind: String,
+        builtin: Some(Builtin::String(vendor::DEFAULT_CODEX_MODEL)),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "vendor.codex.effort" {
+        kind: String,
+        builtin: Some(Builtin::String("high")),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "vendor.codex.personality" {
+        kind: String,
+        builtin: Some(Builtin::Absent),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "vendor.codex.fast_mode" {
+        kind: Boolean,
+        builtin: Some(Builtin::Boolean(false)),
         layers: TRACKED,
         class: Policy,
         flag: None,

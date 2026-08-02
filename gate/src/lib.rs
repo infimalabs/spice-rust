@@ -21,8 +21,10 @@ pub mod manifest;
 pub mod measure;
 pub mod message;
 pub mod names;
+pub mod policy;
 pub mod ratchet;
 pub mod report;
+pub mod toolchain;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tree;
 pub mod verdict;
@@ -56,14 +58,31 @@ pub use measure::{
     Bounds, MeasureError, Measurement, Metric, MetricError, Parser, Policy, measurement_digest,
     render_measurements,
 };
-pub use message::{CommitMessageError, OriginTrailer, OriginTrailerError, validate_commit_message};
+pub use message::{
+    CommitMessageError, CommitMessagePolicy, OriginTrailer, OriginTrailerError, TrailerRejection,
+    validate_commit_message,
+};
 pub use names::{RETIRED_NAMES, RetiredMatch, RetiredName, retired_matches};
+pub use policy::{
+    BoundLimits, BoundName, CompileError as PolicyCompileError, GlobalRatchet, MagicRule,
+    MigrationError as PolicyMigrationError, OneLetterBehavior, Policy as RulePolicy, PolicyContext,
+    PolicyDocument, RegexDialect, ResolveError as PolicyResolveError, ResolvedBound, ResolvedMagic,
+    RuleDeclaration, RuleId, RuleSettings, RuleSource, RuleSourceKind, ScopeAxis, ScopeSelector,
+    SelectionProvenance, SelectorSpecificity, migrate_predecessor_policy,
+};
 pub use ratchet::{Finding, Movement, Ratchet, RatchetError};
 pub use report::{
     GATE_REPORT_VERSION, GateReport, KILL_REPORT_VERSION, KillReport, ReportAttempt,
     ReportAttemptKind, ReportCompletion, ReportDecodeError, ReportFloor, ReportMeasurement,
     ReportMutant, ReportMutantDisposition, ReportMutationInventory, ReportMutationMovement,
     ReportOutcome, ReportProcess, ReportRate, ReportStream,
+};
+pub use toolchain::{
+    ArmFinding, ArmMeasurement, ArmObservation, ArmOutcome, ConfigurationSource, FindingDetail,
+    MigrationRefusal as ToolchainMigrationRefusal, PredecessorComparison,
+    PredecessorComparisonError, PredecessorObservation, PredecessorResult, TOOLCHAIN_ARMS,
+    TOOLCHAIN_REPORT_VERSION, ToolEvidence, ToolRequirement, ToolchainDeclaration, ToolchainError,
+    ToolchainReport, TreeJurisdiction, compare_predecessor, measure_toolchain,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use tree::{SelectedTree, Selector, TreeError};

@@ -67,7 +67,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert_eq!(missing.root(), &spice::config::Root::default());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 30);
+    assert_eq!(missing.provenance().len(), 41);
     assert!(
         missing
             .provenance()
@@ -603,19 +603,7 @@ fn proof_executable_paths_refuse_every_non_local_or_non_absolute_route() {
     }
 }
 
-#[test]
-fn tracked_document_can_address_every_registry_descriptor() {
-    let local = format!(
-        concat!(
-            "[say]\ncommand = ['espeak-ng', '--stdout']\n\n",
-            "[proof]\ncontainer = \"{}\"\nrunner = \"{}\"\n",
-        ),
-        absolute("container"),
-        absolute("runner")
-    );
-    let resolved = resolve(documents(
-        Some(
-            r#"
+const TRACKED_ALL_DESCRIPTOR_DOCUMENT: &str = r#"
 [taste.alpha]
 words = ["done*"]
 message = "Done."
@@ -628,6 +616,10 @@ project_max_depth = 3
 
 [policy]
 env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
+
+[policy.commit_message]
+allowed_trailers = ["Spice-Origin"]
+blocked_trailers = ["Co-Authored-By"]
 
 [consent]
 posture = "deny"
@@ -657,8 +649,18 @@ hold = "40m"
 expiry = "12h"
 resend = ["2m"]
 
+[vendor.claude]
+binary = "/opt/claude"
+model = "opus"
+effort = "xhigh"
+auto_compact_window_tokens = 123456
+
 [vendor.codex]
 binary = "/opt/codex"
+model = "gpt-current"
+effort = "max"
+personality = "pragmatic"
+fast_mode = true
 
 [listen]
 window = "2m"
@@ -686,8 +688,20 @@ words_per_minute = 190
 
 [proof]
 image = "sha256:4444444444444444444444444444444444444444444444444444444444444444"
-"#,
+"#;
+
+#[test]
+fn tracked_document_can_address_every_registry_descriptor() {
+    let local = format!(
+        concat!(
+            "[say]\ncommand = ['espeak-ng', '--stdout']\n\n",
+            "[proof]\ncontainer = \"{}\"\nrunner = \"{}\"\n",
         ),
+        absolute("container"),
+        absolute("runner")
+    );
+    let resolved = resolve(documents(
+        Some(TRACKED_ALL_DESCRIPTOR_DOCUMENT),
         Some(&local),
     ))
     .expect("tracked and local descriptors resolve together");

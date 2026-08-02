@@ -81,6 +81,10 @@ pub enum Domain {
     JournalBackupManifest,
     /// The exact bytes of one member in a journal backup bundle.
     JournalBackupMember,
+    /// The exact bytes of one task-addressed sidecar artifact.
+    TaskArtifactPayload,
+    /// One complete manifest-referenced task artifact store generation.
+    TaskArtifactStore,
     /// The exact restore action pinned before authority replacement.
     JournalRestorePlan,
     /// The payload manifest of one release target.
@@ -151,6 +155,8 @@ impl Domain {
             Self::ConfigPlan => "spice.config.plan.v1",
             Self::JournalBackupManifest => "spice.journal.backup-manifest.v1",
             Self::JournalBackupMember => "spice.journal.backup-member.v1",
+            Self::TaskArtifactPayload => "spice.task.artifact-payload.v1",
+            Self::TaskArtifactStore => "spice.task.artifact-store.v1",
             Self::JournalRestorePlan => "spice.journal.restore-plan.v1",
             Self::DistTargetPayload => "spice.dist.target-payload.v1",
             Self::DistArtifact => "spice.dist.artifact.v1",

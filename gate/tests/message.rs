@@ -1,4 +1,4 @@
-use gate::{OriginTrailer, validate_commit_message};
+use gate::{CommitMessagePolicy, OriginTrailer, TrailerRejection, validate_commit_message};
 
 const VALID: &str = "Spice-Origin: v1 repo=018f82d4-6f59-7d06-92e3-bce9131163c7 task=SPICE-aBcD";
 
@@ -75,4 +75,56 @@ fn commit_gate_refuses_spacing_that_only_normalization_would_accept() {
 
     assert_eq!(error.commit(), "d431f90");
     assert_eq!(error.evidence(), malformed);
+}
+
+#[test]
+fn trailer_policy_is_case_insensitive_and_blocking_precedes_allowing() {
+    let policy = toml::from_str::<CommitMessagePolicy>(
+        r#"
+allowed_trailers = ["Spice-Origin", "Reviewed-By", "reviewed-by"]
+blocked_trailers = ["Co-Authored-By", "Reviewed-By"]
+"#,
+    )
+    .expect("trailer policy admits");
+
+    assert_eq!(
+        policy.allowed_trailers().expect("allow set"),
+        ["spice-origin", "reviewed-by"]
+    );
+    assert_eq!(
+        policy.trailer_rejection("CO-AUTHORED-BY"),
+        Some(TrailerRejection::Blocked)
+    );
+    assert_eq!(
+        policy.trailer_rejection("Reviewed-By"),
+        Some(TrailerRejection::Blocked)
+    );
+    assert_eq!(
+        policy.trailer_rejection("Signed-Off-By"),
+        Some(TrailerRejection::Disallowed)
+    );
+    assert_eq!(policy.trailer_rejection("spice-origin"), None);
+}
+
+#[test]
+fn trailer_policy_distinguishes_absent_from_allow_nothing_and_refuses_bad_keys() {
+    assert_eq!(
+        CommitMessagePolicy::default().trailer_rejection("Anything-Goes"),
+        None
+    );
+    let none = toml::from_str::<CommitMessagePolicy>("allowed_trailers = []\n")
+        .expect("empty allow set admits");
+    assert_eq!(
+        none.trailer_rejection("Anything-Goes"),
+        Some(TrailerRejection::Disallowed)
+    );
+
+    for source in [
+        "allowed_trailers = [\"\"]\n",
+        "allowed_trailers = [\"Signed Off By\"]\n",
+        "blocked_trailers = [\"Acked_By\"]\n",
+    ] {
+        toml::from_str::<CommitMessagePolicy>(source)
+            .expect_err("malformed trailer key must refuse");
+    }
 }

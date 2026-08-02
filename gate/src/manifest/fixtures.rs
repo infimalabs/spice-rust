@@ -289,61 +289,69 @@ fn scalar_and_table_forms_replace_one_another_at_layer_boundaries() {
 }
 
 #[test]
-fn every_executable_form_resolves_then_refuses_without_retaining_text() {
-    let fixtures = [
-        (
-            concat!(
-                "[commands]\nstandard = [\"python\", \"gate.py\"]\n",
-                "[policy.pre_commit_builtins]\nformatters = \"standard\"\n"
+fn release_standard_arm_table_is_complete_and_internal() {
+    assert_eq!(PREDECESSOR_STANDARD_ARMS.map(|(id, _arm)| id), GateId::ALL);
+    assert!(
+        PREDECESSOR_STANDARD_ARMS
+            .into_iter()
+            .all(|(_id, arm)| { arm == PredecessorStandardArm::InternalBuiltin })
+    );
+}
+
+#[test]
+fn every_executable_form_resolves_then_refuses_for_every_internal_arm() {
+    for id in GateId::ALL {
+        let name = toml_string(id.predecessor_str());
+        let table = format!("[policy.pre_commit_builtins.{name}]\n");
+        let fixtures = [
+            (
+                format!(
+                    concat!(
+                        "[commands]\nstandard = [\"python\", \"gate.py\"]\n",
+                        "[policy.pre_commit_builtins]\n{name} = \"standard\"\n"
+                    ),
+                    name = name
+                ),
+                id.predecessor_str(),
             ),
-            "pre_commit_builtins.formatters",
-        ),
-        (
-            concat!(
-                "[commands]\nstandard = \"python gate.py\"\n",
-                "[policy.pre_commit_builtins.formatters]\nmount = \"standard\"\n"
+            (
+                format!(
+                    concat!(
+                        "[commands]\nstandard = \"python gate.py\"\n",
+                        "{table}mount = \"standard\"\n"
+                    ),
+                    table = table
+                ),
+                "mount",
             ),
-            "pre_commit_builtins.formatters.mount",
-        ),
-        (
-            "[policy.pre_commit_builtins.formatters]\nrun = \"python gate.py\"\n",
-            "pre_commit_builtins.formatters.run",
-        ),
-        (
-            "[policy.pre_commit_builtins.formatters]\nrun = [\"python\", \"gate.py\"]\n",
-            "pre_commit_builtins.formatters.run",
-        ),
-        (
-            "[policy.pre_commit_builtins.formatters]\nargv = [\"python\", \"gate.py\"]\n",
-            "pre_commit_builtins.formatters.argv",
-        ),
-        (
-            "[policy.pre_commit_builtins.formatters]\nargv = \"python gate.py\"\n",
-            "pre_commit_builtins.formatters.argv",
-        ),
-    ];
-    for (repository, expected_field) in fixtures {
-        let refusal = error(repository, "");
-        assert_eq!(
-            refusal.kind(),
-            MigrationErrorKind::ExecutableReplacement,
-            "{repository}"
-        );
-        assert_eq!(refusal.layer(), OriginLayer::Repository);
-        assert_eq!(refusal.document(), "/repo/spice.toml");
-        assert!(
-            display_path(refusal.field()).contains(expected_field),
-            "{}",
-            refusal
-        );
-        assert!(refusal.recovery().contains("compiled gate ID formatters"));
-        assert!(refusal.to_string().contains("release=0.31.0"));
-        assert!(refusal.to_string().contains("[\"python\", \"gate.py\"]"));
-        assert!(
-            refusal
-                .to_string()
-                .contains("standard arm as an internal builtin")
-        );
+            (format!("{table}run = \"python gate.py\"\n"), "run"),
+            (format!("{table}run = [\"python\", \"gate.py\"]\n"), "run"),
+            (format!("{table}argv = [\"python\", \"gate.py\"]\n"), "argv"),
+        ];
+        for (repository, expected_leaf) in fixtures {
+            let refusal = error(&repository, "");
+            assert_eq!(
+                refusal.kind(),
+                MigrationErrorKind::ExecutableReplacement,
+                "{id}: {repository}"
+            );
+            assert_eq!(refusal.layer(), OriginLayer::Repository);
+            assert_eq!(refusal.document(), "/repo/spice.toml");
+            assert_eq!(
+                refusal.field().last().map(String::as_str),
+                Some(expected_leaf),
+                "{refusal}"
+            );
+            assert!(
+                refusal
+                    .recovery()
+                    .contains(&format!("compiled gate ID {id}"))
+            );
+            let message = refusal.to_string();
+            assert!(message.contains("release=0.31.0"));
+            assert!(message.contains("[\"python\", \"gate.py\"]"));
+            assert!(message.contains("internal PreCommitStep builtin"));
+        }
     }
 }
 

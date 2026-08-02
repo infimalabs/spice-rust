@@ -12,7 +12,7 @@ use crate::{Digest, WireVersion};
 const OCI_SHA256_HEX_LEN: usize = 64;
 
 /// The sole current journal backup bundle schema.
-pub const JOURNAL_BACKUP_VERSION: u16 = 1;
+pub const JOURNAL_BACKUP_VERSION: u16 = 2;
 
 /// One regular file authenticated by a journal backup manifest.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

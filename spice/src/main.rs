@@ -46,7 +46,11 @@ mod resident;
 #[cfg(not(target_arch = "wasm32"))]
 mod restore_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod session_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod steering_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod task_artifact_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod taste_command;
 #[cfg(not(target_arch = "wasm32"))]
@@ -124,6 +128,25 @@ fn main() {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    {
+        dispatch_native_queries(contract, leaf, form);
+        dispatch_native_controls(contract, leaf, form);
+    }
+    #[cfg(target_arch = "wasm32")]
+    deliver_target_refusal(contract.path, form);
+    #[cfg(not(target_arch = "wasm32"))]
+    let outcome = match contract.path {
+        ["up"] => resident::up(),
+        ["down"] => resident::down(contract),
+        _ => not_landed(contract),
+    };
+    #[cfg(target_arch = "wasm32")]
+    let outcome = not_landed(contract);
+    deliver(&outcome, form);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn dispatch_native_queries(contract: &cli::Contract, leaf: &clap::ArgMatches, form: Form) {
     match contract.path {
         ["doctor"] => deliver(&doctor_outcome(), form),
         ["gate"] => deliver(&gate_command::run(leaf), form),
@@ -153,6 +176,12 @@ fn main() {
             }
         },
         ["backup"] => deliver(&journal_command::backup(leaf), form),
+        ["task", "artifact", "add"]
+        | ["task", "artifact", "list"]
+        | ["task", "artifact", "show"]
+        | ["task", "artifact", "prune"] => {
+            deliver(&task_artifact_command::run(leaf, contract), form)
+        }
         ["restore"] => deliver(&restore_command::restore(leaf), form),
         ["journal"] => deliver(&journal_command::report(contract), form),
         ["journal", "replay"] => deliver(&journal_command::replay(leaf, contract), form),
@@ -163,7 +192,31 @@ fn main() {
         ["canvas"] => deliver(&canvas_command::open(), form),
         ["version"] => deliver(&version_outcome(), form),
         ["release", "notes"] => deliver(&release_command::notes(leaf), form),
+        _ => {}
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, form: Form) {
+    match contract.path {
         ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
+        ["session"]
+        | ["session", "briefing"]
+        | ["session", "commands"]
+        | ["session", "commits"]
+        | ["session", "compactions"]
+        | ["session", "messages"]
+        | ["session", "phases"]
+        | ["session", "slices"]
+        | ["session", "summary"]
+        | ["session", "sweep"]
+        | ["session", "thread"]
+        | ["session", "timeline"]
+        | ["session", "tokens"]
+        | ["session", "turns"] => deliver(
+            &session_command::run(leaf, contract.path, &session_environment()),
+            form,
+        ),
         ["lane"] | ["lane", "add"] | ["lane", "drain"] | ["lane", "wake"] | ["recall"] => {
             deliver(&lane_command::run(leaf, contract), form)
         }
@@ -199,17 +252,6 @@ fn main() {
         ["taste", "drop"] => deliver(&taste_command::drop(leaf, contract), form),
         _ => {}
     }
-    #[cfg(target_arch = "wasm32")]
-    deliver_target_refusal(contract.path, form);
-    #[cfg(not(target_arch = "wasm32"))]
-    let outcome = match contract.path {
-        ["up"] => resident::up(),
-        ["down"] => resident::down(contract),
-        _ => not_landed(contract),
-    };
-    #[cfg(target_arch = "wasm32")]
-    let outcome = not_landed(contract);
-    deliver(&outcome, form);
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -246,6 +288,10 @@ fn target_unsupported(path: &[&str]) -> Option<Fault> {
         ["canvas"] => (
             "canvas::target-unsupported",
             "repository discovery and platform browser launch are unavailable on wasm32",
+        ),
+        ["session", ..] => (
+            "session::target-unsupported",
+            "filesystem transcript forensics are unavailable on wasm32",
         ),
         _ => return None,
     };
@@ -669,6 +715,18 @@ fn deliver_config(outcome: &Outcome<config_command::ConfigReport>, form: Form) -
 )]
 pub fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
     std::env::var_os(name)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn session_environment() -> session_command::Environment {
+    session_command::Environment::new(
+        bootstrap_environment("CODEX_THREAD_ID"), // env-policy: allow
+        bootstrap_environment("CLAUDE_CODE_SESSION_ID"), // env-policy: allow
+        bootstrap_environment("SPICE_AGENT_VENDOR"), // env-policy: allow
+        bootstrap_environment("CODEX_HOME"),
+        bootstrap_environment("CLAUDE_CONFIG_DIR"),
+        bootstrap_environment("HOME"),
+    )
 }
 
 #[cfg(not(target_arch = "wasm32"))]

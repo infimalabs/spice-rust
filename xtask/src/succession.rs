@@ -647,9 +647,9 @@ mod tests {
         );
         assert_eq!(
             report.python.pending_paths.len(),
-            23,
+            4,
             concat!(
-                "native Git hooks and task capture must leave only ",
+                "native Git hooks, task capture, and task artifacts must leave only ",
                 "the remaining pending parity paths",
             ),
         );
@@ -658,7 +658,7 @@ mod tests {
                 .python
                 .pending_paths
                 .iter()
-                .all(|path| path.path != "task capture")
+                .all(|path| path.path != "task capture" && !path.path.starts_with("task artifact"))
         );
         assert!(report.python.unconfirmed_deletions.is_empty());
         assert!(report.python.stale_deletion_confirmations.is_empty());

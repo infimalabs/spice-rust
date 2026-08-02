@@ -34,7 +34,7 @@ fn main() -> ExitCode {
             let path = arguments
                 .next()
                 .expect("one commit-message path was admitted");
-            match xtask::commit_message(Path::new(&path)) {
+            match run_commit_message(Path::new(&path)) {
                 Ok(true) => {
                     eprintln!(
                         concat!(
@@ -46,7 +46,7 @@ fn main() -> ExitCode {
                     Ok(())
                 }
                 Ok(false) => Ok(()),
-                Err(error) => Err(error.into()),
+                Err(error) => Err(error),
             }
         }
         Some(value) if value == OsStr::new("reference-transaction") && arguments.len() == 1 => {
@@ -67,6 +67,15 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn run_commit_message(path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+    let repository = spice::repository::Repository::discover(Path::new("."))?;
+    let resolved = spice::config::load_repository(&repository, &[])?;
+    Ok(xtask::commit_message(
+        path,
+        resolved.root().policy().commit_message(),
+    )?)
 }
 
 fn run_reference_transaction(state: &OsStr) -> Result<(), Box<dyn std::error::Error>> {

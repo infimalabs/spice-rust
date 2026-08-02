@@ -49,7 +49,7 @@ authorization is a deployment gate, not deletion authority.
 | JavaScript emission | Landed through browser DTOs compiled from the shared wire crate and app-drift verification. |
 | Source-text UI tests | Landed through shared typed fixtures and rendered browser tests that preserve the tested outcomes. |
 | Vendor files as citations | Landed through owned tape bytes and stable loci; vendor paths remain discovery inputs, not mutable evidence. |
-| Session forensics (`spice session`) | Pending on `FORENSI-1kJWS7G5`; `watch`, `retro`, `recall`, and `thread` are landed foundations but do not yet answer every predecessor query. |
+| Session forensics (`spice session`) | Landed through typed Rust queries over bounded immutable Codex and Claude transcript evidence, including discovery, gzip, filters, compaction windows, accounting, and explicit residue/refusal recovery. |
 | `spice demo` | Pending on `DEMO-1kJWSLwL` for the zero-setup seeded repository, transcript, lane, and canvas lifecycle. |
 | `spice agent import` | Pending on `RECOVER-1kJWSHkc` for team, lineage, session, and claim transfer without admitting stale predecessor authority. |
 | Agent-to-agent messaging | Landed as the predecessor's coordination outcome through board state, directives, facts, and repository evidence; no private transport was an independent authority. |
@@ -63,7 +63,6 @@ authorization is a deployment gate, not deletion authority.
 | Silent skips | Landed as explicit unsupported, unavailable, unmeasured, timeout, failed, and passed result states; the predecessor's ability to continue a report is preserved without a silent success. |
 | Bundled old gate arms | Pending on `PARITY-1kJWSQ7W` until every retained arm is executable in canonical verification and old receipts remain replayable evidence. |
 | Inbox deadletter parking | Pending on `RECOVER-1kJWSHkc` for exact-once directive recovery; durable journal facts and `lane::held` are landed foundations, not proof that requeue behavior is unnecessary. |
-| Task-addressed sidecar artifacts | Pending on `ARTIFAC-1kJWSCFm` for text/binary payloads, manifests, retention, prune preview/apply, citations, and backup recovery. |
 | Manual claim renewal | Pending on `RECOVER-1kJWSHkc` for bounded operator recovery of supervisor-owned or expiring claims. |
 | Task-boundary Git publication and capture | Landed through deterministic merge trees, compare-and-swap publication, bounded race recovery, restart-safe conflict state, and loose-commit capture. |
 | `spice lock` path and directory overrides | Pending on `PARITY-1kJWSV53`; fixed topology alone does not preserve configured placement use cases. |

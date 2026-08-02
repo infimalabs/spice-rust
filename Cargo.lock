@@ -9,6 +9,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "aho-corasick"
+version = "1.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ddd31a130427c27518df266943a5308ed92d4b226cc639f5a8f1002816174301"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -108,6 +117,17 @@ name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
+
+[[package]]
+name = "artifact"
+version = "0.0.0"
+dependencies = [
+ "atomic",
+ "libc",
+ "serde",
+ "sill",
+ "wire",
+]
 
 [[package]]
 name = "atomic"
@@ -721,6 +741,7 @@ dependencies = [
  "atomic",
  "gix",
  "gix-glob",
+ "regex",
  "serde",
  "serde_json",
  "shell-words",
@@ -2510,10 +2531,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "regex"
+version = "1.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
 name = "regex-automata"
 version = "0.4.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fcfdb36bda0c880c5931cdc7a2bcdc8ba4556847b9d912bca70bc94708711ad"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-syntax",
+]
+
+[[package]]
+name = "regex-syntax"
+version = "0.8.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "rusqlite"
@@ -2760,6 +2804,7 @@ dependencies = [
 name = "spice"
 version = "0.0.0"
 dependencies = [
+ "artifact",
  "atomic",
  "board",
  "bus",
@@ -2768,6 +2813,7 @@ dependencies = [
  "consent",
  "dialect",
  "dist",
+ "flate2",
  "fold",
  "gate",
  "gix",
@@ -2784,6 +2830,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "shell-words",
  "signal-hook",
  "sill",
  "socket2",

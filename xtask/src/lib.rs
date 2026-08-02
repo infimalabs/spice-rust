@@ -21,8 +21,11 @@ pub use reference_transaction::ReferenceTransactionError;
 /// # Errors
 ///
 /// Returns an I/O failure or the first commit-message policy refusal.
-pub fn commit_message(path: &Path) -> Result<bool, CommitMessageError> {
-    commit_message::apply(path)
+pub fn commit_message(
+    path: &Path,
+    policy: &gate::CommitMessagePolicy,
+) -> Result<bool, CommitMessageError> {
+    commit_message::apply(path, policy)
 }
 
 /// Guard a Git reference transaction from abandoning upstream-merged commits.

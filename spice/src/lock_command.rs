@@ -114,7 +114,7 @@ fn run_inner(matches: &clap::ArgMatches) -> Result<ExitStatus, Box<Rejection>> {
         .topology
         .try_acquire(name, requested)
         .map_err(|error| Failure::surface(error).standard_rejection())?;
-    let held = match attempt {
+    let mut held = match attempt {
         LockAttempt::Acquired(held) => held,
         LockAttempt::Contended { kind, code } => {
             return Err(contention(name, requested, kind).rejection(code.get()));
@@ -154,7 +154,9 @@ fn run_inner(matches: &clap::ArgMatches) -> Result<ExitStatus, Box<Rejection>> {
         )
         .rejection(1)
     })?;
-    let running = sill::spawn(spec).map_err(|error| launch_failure(program, error))?;
+    let running = held
+        .spawn_protected(spec)
+        .map_err(|error| launch_failure(program, error))?;
     let waited = running.wait().map_err(|error| {
         Failure::fault(
             FaultClass::Environment,
