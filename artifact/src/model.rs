@@ -238,12 +238,19 @@ pub struct BackupFile {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BackupImage {
     pub(crate) files: Vec<BackupFile>,
+    pub(crate) tasks: Vec<TaskHandle>,
 }
 
 impl BackupImage {
     #[must_use]
     pub fn files(&self) -> &[BackupFile] {
         &self.files
+    }
+
+    /// Artifact-bearing tasks named by this admitted generation.
+    #[must_use]
+    pub fn tasks(&self) -> &[TaskHandle] {
+        &self.tasks
     }
 }
 

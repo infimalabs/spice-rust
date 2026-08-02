@@ -436,6 +436,7 @@ impl BackupImage {
             .filter(|path| path.ends_with("/manifest.json"))
             .collect::<Vec<_>>();
         let mut expected = BTreeSet::new();
+        let mut tasks = Vec::new();
         for path in manifest_paths {
             let task_text = path.strip_suffix("/manifest.json").expect("matched suffix");
             if task_text.contains('/') {
@@ -449,6 +450,7 @@ impl BackupImage {
                 .map_err(|error| Error::corrupt(path, error.to_string()))?;
             let manifest = decode_canonical::<Manifest>(&map[path].bytes, path)?;
             validate_manifest_shape(&task, &manifest, path)?;
+            tasks.push(task.clone());
             expected.insert(path.to_owned());
             let mut digests = BTreeSet::new();
             for artifact in &manifest.artifacts {
@@ -482,7 +484,7 @@ impl BackupImage {
                 format!("members {observed:?} do not equal cited inventory {expected:?}"),
             ));
         }
-        Ok(Self { files })
+        Ok(Self { files, tasks })
     }
 }
 
@@ -631,8 +633,16 @@ fn infer_media_type(name: &str, bytes: &[u8]) -> Result<MediaType, Error> {
         _ if std::str::from_utf8(bytes).is_ok() => Some(MediaType::TEXT_PLAIN),
         _ => None,
     };
+    let detected = detected.ok_or_else(|| {
+        Error::refused(
+            "artifact media type",
+            format!(
+                "cannot infer a media type for non-UTF-8 artifact {name:?}; pass --type with one of {}",
+                MediaType::ALL.join(", ")
+            ),
+        )
+    })?;
     detected
-        .expect("media constants are admitted")
         .parse::<MediaType>()
         .map_err(|error| Error::refused("artifact media type", error.to_string()))
 }

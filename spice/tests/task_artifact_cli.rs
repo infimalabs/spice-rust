@@ -4,7 +4,7 @@ use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant as Monotonic};
 
-use artifact::{ArtifactAnswer, ArtifactContent};
+use artifact::{AddRequest, ArtifactAnswer, ArtifactContent, Retention, Store};
 use serde::de::DeserializeOwned;
 use wire::intent::TaskAnswer;
 use wire::{JournalBackup, JournalRestore, Outcome, TaskHandle};
@@ -180,6 +180,114 @@ fn task_artifact_refuses_malformed_project_policy_before_state_access() {
     let observed = refusal.observed.expect("configuration diagnostic");
     assert!(observed.contains("tasks.hidden_stems[1]"), "{observed}");
     assert!(observed.contains("bad-stem"), "{observed}");
+}
+
+#[test]
+fn task_artifact_refuses_opaque_binary_without_panicking_or_publishing() {
+    let fixture = Fixture::new();
+    let resident = Resident::start(&fixture);
+    let task = fixture
+        .reply::<TaskAnswer>(&[
+            "task".to_owned(),
+            "add".to_owned(),
+            "Opaque artifact evidence".to_owned(),
+            "--project".to_owned(),
+            "rim.artifact".to_owned(),
+        ])
+        .body
+        .task;
+    let opaque = fixture.source("opaque", b"\xff\xfe\xfd");
+    let output = fixture.invoke(&[
+        "task".to_owned(),
+        "artifact".to_owned(),
+        "add".to_owned(),
+        task.to_string(),
+        opaque.display().to_string(),
+    ]);
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    let Outcome::<ArtifactAnswer>::Refusal(refusal) =
+        wire::decode(&output.stderr).expect("decode opaque binary refusal")
+    else {
+        panic!("opaque binary did not refuse")
+    };
+    assert_eq!(refusal.reason, "artifact::operation-refused");
+    assert!(
+        refusal
+            .observed
+            .as_deref()
+            .is_some_and(|detail| detail.contains("pass --type")),
+        "{refusal:?}"
+    );
+    let ArtifactAnswer::Listed { artifacts, .. } = fixture
+        .reply::<ArtifactAnswer>(&[
+            "task".to_owned(),
+            "artifact".to_owned(),
+            "list".to_owned(),
+            task.to_string(),
+        ])
+        .body
+    else {
+        panic!("artifact list returned another answer")
+    };
+    assert!(artifacts.is_empty(), "refused input published a citation");
+    resident.stop(&fixture);
+}
+
+#[test]
+fn restore_refuses_an_internally_valid_artifact_for_an_unknown_task_inertly() {
+    let fixture = Fixture::new();
+    let resident = Resident::start(&fixture);
+    resident.stop(&fixture);
+    let runtime = fixture.root.join(".git/.spice-rust");
+    let authority = runtime.join("data/spicejournal.sqlite3");
+    let store = Store::new(
+        runtime.join("artifacts/tasks"),
+        runtime.join("locks/task-artifacts.lock"),
+    );
+    let unknown = "UNKNOWN-12345678"
+        .parse::<TaskHandle>()
+        .expect("unknown task handle");
+    let source = fixture.source("unknown.txt", b"internally valid unknown task artifact\n");
+    store
+        .add(AddRequest {
+            task: &unknown,
+            source: &source,
+            name: None,
+            media_type: None,
+            retention: Retention::Permanent,
+            created_at: "2030-01-01T00:00:00.000Z"
+                .parse()
+                .expect("artifact instant"),
+        })
+        .expect("seed internally valid unknown-task artifact");
+    let backup = fixture
+        .reply::<JournalBackup>(&["backup".to_owned(), fixture.bundle.display().to_string()]);
+    assert!(backup.body.verification.members > 1);
+    let authority_before = fs::read(&authority).expect("read authority before refusal");
+    let artifacts_before = store.capture().expect("capture artifacts before refusal");
+
+    let output = fixture.invoke(&["restore".to_owned(), fixture.bundle.display().to_string()]);
+    assert_eq!(output.status.code(), Some(2));
+    let Outcome::<JournalRestore>::Refusal(refusal) =
+        wire::decode(&output.stderr).expect("decode unknown artifact task refusal")
+    else {
+        panic!("unknown artifact task did not refuse")
+    };
+    assert_eq!(refusal.reason, "restore::artifact-task-unknown");
+    assert_eq!(refusal.observed.as_deref(), Some(unknown.as_str()));
+    assert_eq!(
+        fs::read(&authority).expect("read authority after refusal"),
+        authority_before,
+        "unknown artifact task refusal changed authority"
+    );
+    assert_eq!(
+        store.capture().expect("capture artifacts after refusal"),
+        artifacts_before,
+        "unknown artifact task refusal changed artifact authority"
+    );
 }
 
 fn assert_artifact_surface(
