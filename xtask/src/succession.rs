@@ -8,12 +8,13 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use spice::cli::{self, Landing};
 use spice::config::{Document, Inputs};
 
 pub(super) const LABEL: &str = "succession readiness";
-const REPORT_VERSION: u8 = 1;
+const REPORT_VERSION: u8 = 2;
+const DELETION_DOCTRINE_VERSION: u8 = 1;
 const LANDED_THRESHOLD_PERCENT: usize = 95;
 const PYTHON_INVENTORY_SCRIPT: &str = concat!(
     "from spice.cli.parser import command_path_registry as registry; ",
@@ -59,11 +60,28 @@ struct OwnedGap {
 struct PythonReport {
     installed_total: usize,
     ledger_total: usize,
+    pending_paths: Vec<OwnedGap>,
     installed_duplicates: Vec<String>,
     ledger_duplicates: Vec<String>,
     invalid_ledger_dispositions: Vec<String>,
+    unconfirmed_deletions: Vec<String>,
+    stale_deletion_confirmations: Vec<String>,
     missing_from_ledger: Vec<String>,
     missing_from_installed: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeletionDoctrine {
+    version: u8,
+    operator_confirmed_deletions: Vec<ConfirmedDeletion>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConfirmedDeletion {
+    path: String,
+    evidence: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -89,11 +107,13 @@ struct RustInput {
 pub(super) fn inspect(root: &Path, search_path: Option<&OsStr>) -> Result<Report, Error> {
     let ledger_path = root.join("PORTING.md");
     let ledger = read_text(&ledger_path)?;
+    let doctrine_path = root.join("LATER.md");
+    let doctrine = read_text(&doctrine_path)?;
     let configuration_path = root.join("spice.toml");
     let configuration = read_text(&configuration_path)?;
     let installed = query_installed_python(root, search_path)?;
     let configuration = admit_tracked_configuration(&configuration);
-    evaluate(rust_inputs(), &installed, &ledger, configuration)
+    evaluate(rust_inputs(), &installed, &ledger, &doctrine, configuration)
 }
 
 fn rust_inputs() -> Vec<RustInput> {
@@ -188,6 +208,7 @@ fn evaluate(
     rust: impl IntoIterator<Item = RustInput>,
     installed: &str,
     ledger: &str,
+    doctrine: &str,
     configuration: Result<(), String>,
 ) -> Result<Report, Error> {
     let mut rust_counts = BTreeMap::<String, usize>::new();
@@ -218,6 +239,16 @@ fn evaluate(
 
     let installed = parse_inventory(installed);
     let ledger = parse_python_ledger(ledger)?;
+    let confirmed_deletions = parse_deletion_doctrine(doctrine)?;
+    let unconfirmed_deletions = ledger
+        .deletions
+        .difference(&confirmed_deletions)
+        .cloned()
+        .collect::<Vec<_>>();
+    let stale_deletion_confirmations = confirmed_deletions
+        .difference(&ledger.deletions)
+        .cloned()
+        .collect::<Vec<_>>();
     let missing_from_ledger = installed
         .paths
         .difference(&ledger.paths)
@@ -253,9 +284,12 @@ fn evaluate(
     let python = PythonReport {
         installed_total: installed.total,
         ledger_total: ledger.total,
+        pending_paths: ledger.pending,
         installed_duplicates: installed.duplicates,
         ledger_duplicates: ledger.duplicates,
         invalid_ledger_dispositions: ledger.invalid,
+        unconfirmed_deletions,
+        stale_deletion_confirmations,
         missing_from_ledger,
         missing_from_installed,
     };
@@ -265,6 +299,8 @@ fn evaluate(
         && python.installed_duplicates.is_empty()
         && python.ledger_duplicates.is_empty()
         && python.invalid_ledger_dispositions.is_empty()
+        && python.unconfirmed_deletions.is_empty()
+        && python.stale_deletion_confirmations.is_empty()
         && python.missing_from_ledger.is_empty()
         && python.missing_from_installed.is_empty()
         && configuration.admitted;
@@ -301,6 +337,8 @@ struct LedgerInventory {
     paths: BTreeSet<String>,
     duplicates: Vec<String>,
     invalid: Vec<String>,
+    deletions: BTreeSet<String>,
+    pending: Vec<OwnedGap>,
 }
 
 fn parse_python_ledger(document: &str) -> Result<LedgerInventory, Error> {
@@ -311,6 +349,8 @@ fn parse_python_ledger(document: &str) -> Result<LedgerInventory, Error> {
         .ok_or(Error::PythonLedgerBoundary)?;
     let mut counts = BTreeMap::<String, usize>::new();
     let mut invalid = Vec::new();
+    let mut deletions = BTreeSet::new();
+    let mut pending = Vec::new();
     for line in inventory.lines() {
         let Some(row) = line.strip_prefix("- `") else {
             continue;
@@ -320,22 +360,102 @@ fn parse_python_ledger(document: &str) -> Result<LedgerInventory, Error> {
             continue;
         };
         *counts.entry(path.to_owned()).or_default() += 1;
-        let valid = suffix.strip_prefix(": ").is_some_and(|suffix| {
+        let disposition = suffix.strip_prefix(": ");
+        let valid = disposition.is_some_and(|suffix| {
             matches!(suffix, "R." | "D." | "X.")
-                || ["R -> ", "D -> ", "X -> "]
+                || ["R -> ", "D -> ", "X -> ", "P -> `"]
                     .iter()
                     .any(|prefix| suffix.starts_with(prefix))
         });
         if !valid {
             invalid.push(path.to_owned());
+        } else if disposition.is_some_and(|suffix| suffix.starts_with('X')) {
+            deletions.insert(path.to_owned());
+        } else if let Some(owner) = disposition
+            .and_then(|suffix| suffix.strip_prefix("P -> `"))
+            .and_then(|suffix| suffix.split_once('`').map(|(owner, _)| owner))
+        {
+            if valid_task_handle(owner) {
+                pending.push(OwnedGap {
+                    path: path.to_owned(),
+                    owner: owner.to_owned(),
+                });
+            } else {
+                invalid.push(path.to_owned());
+            }
         }
     }
     invalid.sort();
+    pending.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(LedgerInventory {
         total: counts.values().sum(),
         paths: counts.keys().cloned().collect(),
         duplicates: duplicates(&counts),
         invalid,
+        deletions,
+        pending,
+    })
+}
+
+fn valid_task_handle(value: &str) -> bool {
+    let Some((prefix, suffix)) = value.split_once('-') else {
+        return false;
+    };
+    !prefix.is_empty()
+        && prefix
+            .chars()
+            .all(|character| character.is_ascii_uppercase())
+        && suffix.len() == 8
+        && suffix
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric())
+}
+
+fn parse_deletion_doctrine(document: &str) -> Result<BTreeSet<String>, Error> {
+    let section = document
+        .split_once("## Operator-confirmed deletions")
+        .and_then(|(_, suffix)| suffix.split_once("```json"))
+        .and_then(|(_, suffix)| suffix.split_once("```"))
+        .map(|(json, _)| json.trim())
+        .ok_or_else(|| Error::DeletionDoctrine("missing bounded JSON registry".to_owned()))?;
+    let doctrine = serde_json::from_str::<DeletionDoctrine>(section)
+        .map_err(|error| Error::DeletionDoctrine(error.to_string()))?;
+    if doctrine.version != DELETION_DOCTRINE_VERSION {
+        return Err(Error::DeletionDoctrine(format!(
+            "version {} is not {}",
+            doctrine.version, DELETION_DOCTRINE_VERSION,
+        )));
+    }
+
+    let mut paths = BTreeSet::new();
+    for row in doctrine.operator_confirmed_deletions {
+        if row.path.trim() != row.path || row.path.is_empty() {
+            return Err(Error::DeletionDoctrine(
+                "a confirmed deletion has an empty or non-canonical path".to_owned(),
+            ));
+        }
+        if !valid_ack_evidence(&row.evidence) {
+            return Err(Error::DeletionDoctrine(format!(
+                "{} has no acknowledgment evidence",
+                row.path,
+            )));
+        }
+        if !paths.insert(row.path.clone()) {
+            return Err(Error::DeletionDoctrine(format!(
+                "{} is confirmed more than once",
+                row.path,
+            )));
+        }
+    }
+    Ok(paths)
+}
+
+fn valid_ack_evidence(value: &str) -> bool {
+    value.strip_prefix("ack:").is_some_and(|key| {
+        key.len() == 8
+            && key
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric())
     })
 }
 
@@ -366,9 +486,12 @@ pub(super) fn fixture_report(admitted: bool) -> Report {
         python: PythonReport {
             installed_total: 1,
             ledger_total: 1,
+            pending_paths: Vec::new(),
             installed_duplicates: Vec::new(),
             ledger_duplicates: Vec::new(),
             invalid_ledger_dispositions: Vec::new(),
+            unconfirmed_deletions: Vec::new(),
+            stale_deletion_confirmations: Vec::new(),
             missing_from_ledger: Vec::new(),
             missing_from_installed: Vec::new(),
         },
@@ -401,6 +524,7 @@ pub(super) enum Error {
     PythonDiagnostic(String),
     PythonInventoryNotUtf8,
     PythonLedgerBoundary,
+    DeletionDoctrine(String),
 }
 
 impl fmt::Display for Error {
@@ -447,6 +571,12 @@ impl fmt::Display for Error {
             Self::PythonLedgerBoundary => {
                 formatter.write_str("PORTING.md has no bounded installed Python inventory")
             }
+            Self::DeletionDoctrine(diagnostic) => {
+                write!(
+                    formatter,
+                    "LATER.md deletion doctrine is invalid: {diagnostic}"
+                )
+            }
         }
     }
 }
@@ -471,13 +601,25 @@ mod tests {
 
     #[test]
     fn exact_ninety_five_percent_is_admitted_and_one_less_refuses() {
-        let exact = evaluate(rows(19, 1, 0), "agent\n", &ledger(&["agent"]), Ok(()))
-            .expect("exact threshold evaluates");
+        let exact = evaluate(
+            rows(19, 1, 0),
+            "agent\n",
+            &ledger(&["agent"]),
+            &doctrine(&[]),
+            Ok(()),
+        )
+        .expect("exact threshold evaluates");
         assert!(exact.admitted);
         assert_eq!(exact.rust.landed_basis_points, 9_500);
 
-        let below = evaluate(rows(18, 2, 0), "agent\n", &ledger(&["agent"]), Ok(()))
-            .expect("below threshold evaluates");
+        let below = evaluate(
+            rows(18, 2, 0),
+            "agent\n",
+            &ledger(&["agent"]),
+            &doctrine(&[]),
+            Ok(()),
+        )
+        .expect("below threshold evaluates");
         assert!(!below.admitted);
         assert_eq!(below.rust.landed_basis_points, 9_000);
     }
@@ -489,6 +631,7 @@ mod tests {
             rust_inputs(),
             include_str!("../../spice/tests/fixtures/python-command-registry.txt"),
             include_str!("../../PORTING.md"),
+            include_str!("../../LATER.md"),
             admit_tracked_configuration(configuration),
         )
         .expect("current authorities evaluate");
@@ -502,6 +645,9 @@ mod tests {
             (report.python.installed_total, report.python.ledger_total),
             (123, 123)
         );
+        assert_eq!(report.python.pending_paths.len(), 24);
+        assert!(report.python.unconfirmed_deletions.is_empty());
+        assert!(report.python.stale_deletion_confirmations.is_empty());
         let encoded = serde_json::to_value(&report).expect("report encodes");
         assert_eq!(encoded["version"], REPORT_VERSION);
         assert_eq!(encoded["admitted"], true);
@@ -509,8 +655,14 @@ mod tests {
 
     #[test]
     fn rust_report_distinguishes_owned_terminal_refusal_and_unaccounted_dispatch() {
-        let report = evaluate(rows(18, 1, 1), "agent\n", &ledger(&["agent"]), Ok(()))
-            .expect("Rust classes evaluate");
+        let report = evaluate(
+            rows(18, 1, 1),
+            "agent\n",
+            &ledger(&["agent"]),
+            &doctrine(&[]),
+            Ok(()),
+        )
+        .expect("Rust classes evaluate");
 
         assert!(!report.admitted);
         assert_eq!((report.rust.total, report.rust.landed), (20, 18));
@@ -524,8 +676,14 @@ mod tests {
     fn duplicate_rust_and_python_paths_are_refused_by_name() {
         let mut rust = rows(19, 1, 0);
         rust.push(rust[0].clone());
-        let report = evaluate(rust, "agent\nagent\n", &ledger(&["agent", "agent"]), Ok(()))
-            .expect("duplicate inputs evaluate");
+        let report = evaluate(
+            rust,
+            "agent\nagent\n",
+            &ledger(&["agent", "agent"]),
+            &doctrine(&[]),
+            Ok(()),
+        )
+        .expect("duplicate inputs evaluate");
 
         assert!(!report.admitted);
         assert_eq!(report.rust.duplicate_paths, ["command-0"]);
@@ -539,6 +697,7 @@ mod tests {
             rows(20, 0, 0),
             "agent\ninstalled-only\n",
             &ledger(&["agent", "ledger-only"]),
+            &doctrine(&[]),
             Ok(()),
         )
         .expect("drift evaluates");
@@ -557,6 +716,7 @@ mod tests {
                 "# Ledger\n## Installed Python paths\n",
                 "- `agent`: Rubbish.\n## Reproduce the audit\n",
             ),
+            &doctrine(&[]),
             Ok(()),
         )
         .expect("invalid disposition evaluates");
@@ -565,6 +725,80 @@ mod tests {
         assert_eq!(report.python.invalid_ledger_dispositions, ["agent"]);
         assert!(report.python.missing_from_ledger.is_empty());
         assert!(report.python.missing_from_installed.is_empty());
+    }
+
+    #[test]
+    fn pending_python_path_requires_a_concrete_task_handle() {
+        let report = evaluate(
+            rows(20, 0, 0),
+            "agent\n",
+            concat!(
+                "# Ledger\n## Installed Python paths\n",
+                "- `agent`: P -> `not-a-task` pending.\n## Reproduce the audit\n",
+            ),
+            &doctrine(&[]),
+            Ok(()),
+        )
+        .expect("invalid pending owner evaluates");
+
+        assert!(!report.admitted);
+        assert_eq!(report.python.invalid_ledger_dispositions, ["agent"]);
+        assert!(report.python.pending_paths.is_empty());
+    }
+
+    #[test]
+    fn live_python_deletion_requires_exact_operator_confirmation() {
+        let ledger = concat!(
+            "# Ledger\n## Installed Python paths\n",
+            "- `agent`: X -> clipped.\n## Reproduce the audit\n",
+        );
+        let unconfirmed = evaluate(rows(20, 0, 0), "agent\n", ledger, &doctrine(&[]), Ok(()))
+            .expect("unconfirmed deletion evaluates");
+        assert!(!unconfirmed.admitted);
+        assert_eq!(unconfirmed.python.unconfirmed_deletions, ["agent"]);
+
+        let confirmed = evaluate(
+            rows(20, 0, 0),
+            "agent\n",
+            ledger,
+            &doctrine(&[("agent", "ack:1kJWMcnL")]),
+            Ok(()),
+        )
+        .expect("confirmed deletion evaluates");
+        assert!(confirmed.admitted);
+        assert!(confirmed.python.unconfirmed_deletions.is_empty());
+        assert!(confirmed.python.stale_deletion_confirmations.is_empty());
+    }
+
+    #[test]
+    fn deletion_confirmation_cannot_outlive_its_exact_ledger_path() {
+        let report = evaluate(
+            rows(20, 0, 0),
+            "agent\n",
+            &ledger(&["agent"]),
+            &doctrine(&[("agent", "ack:1kJWMcnL")]),
+            Ok(()),
+        )
+        .expect("stale deletion confirmation evaluates");
+
+        assert!(!report.admitted);
+        assert_eq!(report.python.stale_deletion_confirmations, ["agent"]);
+    }
+
+    #[test]
+    fn malformed_acknowledgment_cannot_enter_deletion_doctrine() {
+        let result = evaluate(
+            rows(20, 0, 0),
+            "agent\n",
+            concat!(
+                "# Ledger\n## Installed Python paths\n",
+                "- `agent`: X -> clipped.\n## Reproduce the audit\n",
+            ),
+            &doctrine(&[("agent", "ack:short")]),
+            Ok(()),
+        );
+
+        assert!(matches!(result, Err(Error::DeletionDoctrine(_))));
     }
 
     #[test]
@@ -627,6 +861,20 @@ mod tests {
                 .iter()
                 .map(|path| format!("- `{path}`: R -> current.\n"))
                 .collect::<String>()
+        )
+    }
+
+    fn doctrine(rows: &[(&str, &str)]) -> String {
+        let rows = rows
+            .iter()
+            .map(|(path, evidence)| serde_json::json!({"path": path, "evidence": evidence}))
+            .collect::<Vec<_>>();
+        format!(
+            "# LATER\n## Operator-confirmed deletions\n```json\n{}\n```\n",
+            serde_json::json!({
+                "version": DELETION_DOCTRINE_VERSION,
+                "operator_confirmed_deletions": rows,
+            })
         )
     }
 

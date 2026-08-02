@@ -213,7 +213,7 @@ fn installed_python_registry_and_ledger_dispositions_are_bijective() {
         .filter_map(|line| line.split_once('`'))
         .map(|(path, disposition)| {
             assert!(
-                [": R", ": D", ": X"]
+                [": R", ": D", ": P", ": X"]
                     .iter()
                     .any(|prefix| disposition.starts_with(prefix)),
                 "Python ledger path has no explicit disposition: {path}",
@@ -238,34 +238,21 @@ fn installed_python_registry_and_ledger_dispositions_are_bijective() {
 #[derive(Clone, Copy, Debug)]
 enum PythonTaskDisposition {
     Landed(&'static [&'static str]),
-    Later(&'static str),
     Pending(&'static str),
 }
 
 #[test]
 fn every_python_task_control_has_one_tested_current_disposition() {
-    use PythonTaskDisposition::{Landed, Later, Pending};
+    use PythonTaskDisposition::{Landed, Pending};
 
     let mappings = [
         ("task", Landed(&["board"])),
         ("task add", Landed(&["task", "add"])),
-        ("task artifact", Later("Task-addressed sidecar artifacts")),
-        (
-            "task artifact add",
-            Later("Task-addressed sidecar artifacts"),
-        ),
-        (
-            "task artifact list",
-            Later("Task-addressed sidecar artifacts"),
-        ),
-        (
-            "task artifact prune",
-            Later("Task-addressed sidecar artifacts"),
-        ),
-        (
-            "task artifact show",
-            Later("Task-addressed sidecar artifacts"),
-        ),
+        ("task artifact", Pending("ARTIFAC-1kJWSCFm")),
+        ("task artifact add", Pending("ARTIFAC-1kJWSCFm")),
+        ("task artifact list", Pending("ARTIFAC-1kJWSCFm")),
+        ("task artifact prune", Pending("ARTIFAC-1kJWSCFm")),
+        ("task artifact show", Pending("ARTIFAC-1kJWSCFm")),
         ("task capture", Pending("GIT-1kJWMPvF")),
         ("task claim", Landed(&["task", "next"])),
         ("task delete", Landed(&["doc"])),
@@ -281,7 +268,7 @@ fn every_python_task_control_has_one_tested_current_disposition() {
         ("task next", Landed(&["task", "next"])),
         ("task note", Landed(&["task", "note"])),
         ("task oops", Landed(&["task", "oops"])),
-        ("task reclaim", Later("Manual claim renewal")),
+        ("task reclaim", Pending("RECOVER-1kJWSHkc")),
         ("task review", Landed(&["task", "review"])),
         ("task reword", Landed(&["doc"])),
         ("task show", Landed(&["board"])),
@@ -304,7 +291,6 @@ fn every_python_task_control_has_one_tested_current_disposition() {
         .filter_map(|line| line.strip_prefix("- `"))
         .filter_map(|line| line.split_once('`').map(|(path, _)| path))
         .collect::<BTreeSet<_>>();
-    let later = include_str!("../../../LATER.md");
     let mapped = mappings
         .iter()
         .map(|(path, _)| *path)
@@ -329,14 +315,6 @@ fn every_python_task_control_has_one_tested_current_disposition() {
                     "Python `{python}` maps to an unlanded Rust leaf: {path:?}",
                 );
             }
-            Later(boundary) => assert!(
-                later.lines().any(|line| {
-                    line.strip_prefix("| ")
-                        .and_then(|line| line.split_once(" |"))
-                        .is_some_and(|(surface, _)| surface == boundary)
-                }),
-                "Python `{python}` names an absent LATER.md boundary: {boundary}",
-            ),
             Pending(owner) => assert!(
                 task_plane.contains(&format!("`{owner}`")),
                 "Python `{python}` does not name its pending owner `{owner}`",
@@ -473,7 +451,7 @@ fn daemonless_local_succession_is_closed_and_explicit() {
 }
 
 #[test]
-fn python_lifecycle_and_session_forensics_name_their_rust_successors() {
+fn python_lifecycle_and_session_forensics_name_successors_and_gap_owner() {
     let ledger = include_str!("../../../PORTING.md");
     let agent = ledger
         .split_once("### Agent lifecycle")
@@ -500,11 +478,20 @@ fn python_lifecycle_and_session_forensics_name_their_rust_successors() {
         .split_once("### Task plane")
         .expect("the session forensics section is bounded")
         .0;
-    let historical_path = format!("- `session {}{}`: X.", "brie", "fing");
-    assert!(sessions.lines().any(|line| line == historical_path));
+    let pending = sessions
+        .lines()
+        .filter(|line| line.starts_with("- `session"))
+        .collect::<Vec<_>>();
+    assert_eq!(pending.len(), 14);
+    assert!(
+        pending
+            .iter()
+            .all(|line| line.contains("P -> `FORENSI-1kJWS7G5`"))
+    );
+    assert!(!sessions.lines().any(|line| line.contains(": X")));
     assert!(sessions.contains(
-        "Their retained questions use `watch`,\n\
-         `retro`, `recall`, and `thread` over owned tape and journal loci."
+        "The landed `watch`, `retro`, `recall`, and `thread` paths provide owned tape\n\
+         and journal foundations but do not yet answer every predecessor query."
     ));
     for path in [&["lane"][..], &["lane", "add"][..], &["recall"][..]] {
         assert_eq!(landing(path), Landing::Landed);

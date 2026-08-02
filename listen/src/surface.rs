@@ -75,6 +75,11 @@ impl fmt::Display for Span {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SurfaceEvent {
+    /// Exact resumable vendor session declaration.
+    Session {
+        /// Vendor spelling of the session identity.
+        identity: String,
+    },
     /// Assistant prose.
     Prose {
         /// Text reported by the vendor.
@@ -139,6 +144,7 @@ impl SurfaceEvent {
     #[must_use]
     pub const fn kind(&self) -> EventKind {
         match self {
+            Self::Session { .. } => EventKind::Session,
             Self::Prose { .. } => EventKind::Prose,
             Self::Reasoning { .. } => EventKind::Reasoning,
             Self::Tool { .. } => EventKind::Tool,
@@ -152,6 +158,9 @@ impl SurfaceEvent {
 impl From<&Event> for SurfaceEvent {
     fn from(event: &Event) -> Self {
         match event {
+            Event::Session(event) => Self::Session {
+                identity: event.identity.clone(),
+            },
             Event::Prose(event) => Self::Prose {
                 text: event.text.clone(),
                 phase: event.phase.clone(),
@@ -181,6 +190,7 @@ impl From<&Event> for SurfaceEvent {
 impl fmt::Display for SurfaceEvent {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Session { identity } => write!(formatter, "session identity={identity:?}"),
             Self::Prose { text, phase } => {
                 write!(formatter, "prose text={text:?} phase={phase:?}")
             }

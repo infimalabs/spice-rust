@@ -780,6 +780,7 @@ fn seed_lane(fixture: &Fixture, lane: wire::CanonicalUuid, capability: wire::Can
         occupant: None,
         lineage: Vec::new(),
         capabilities: vec![capability],
+        session: None,
         disposition: "vacant".to_owned(),
     });
     next.lanes.sort_by_key(|row| row.lane);
@@ -830,3 +831,6 @@ mod cases;
 
 #[path = "resident/lane_process.rs"]
 mod lane_process;
+
+#[path = "resident/lane_continuity.rs"]
+mod lane_continuity;

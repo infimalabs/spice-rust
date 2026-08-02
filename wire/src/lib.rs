@@ -55,6 +55,7 @@ pub mod manifest;
 mod optional;
 pub mod packed;
 pub mod reply;
+pub mod stream;
 pub mod witness;
 
 pub use command::{
@@ -70,9 +71,9 @@ pub use doctor::{
 pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVersion};
 pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{
-    ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency, LeaseHead,
-    ResidencyHead, ResidentState, TaskHead, TrustHead, TrustState, WitnessClass, WitnessHead,
-    WorkflowHead,
+    ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency, LaneSession,
+    LeaseHead, ResidencyHead, ResidentState, TapeLocus, TaskHead, TrustHead, TrustState,
+    WitnessClass, WitnessHead, WorkflowHead,
 };
 pub use hello::{Accepted, CanvasBootstrap, Hello, Rejected, SpeechPlayback, SpeechRequest};
 pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant};
@@ -82,6 +83,10 @@ pub use reply::{
     JournalReport, JournalRestore, JournalVerification, Outcome, ProofEvidence, Refusal,
     ReleaseNotes, ReleaseNotesTarget, ReleasePlan, Reply, ReplyPosition, Response,
     RestoreVerification, SeqRange, SeqRangeError, ThreadReport, Version,
+};
+pub use stream::{
+    StreamAdmissionError, StreamCursor, StreamFact, StreamFrame, StreamRequest, TrustView,
+    ViewSubject,
 };
 pub use witness::{
     Answer, Disposition, Name, NameError, Phase, PhaseError, TaskHandle, TaskHandleError, Witness,

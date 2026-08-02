@@ -460,6 +460,31 @@ pub struct LaneSeated {
     pub vendor: Name,
 }
 
+/// A selected vendor record declared the exact resumable lane session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaneSessionDeclared {
+    /// Lane whose session was declared.
+    pub lane: CanonicalUuid,
+    /// Occupant whose selected stream emitted the declaration.
+    pub occupant: CanonicalUuid,
+    /// Canonical worktree bound to the launch.
+    pub worktree: String,
+    /// Vendor dialect that admitted the declaration.
+    pub vendor: Name,
+    /// Resident generation that observed the declaration.
+    pub epoch: CanonicalUuid,
+    /// Selected child stream carrying records.
+    pub stream: String,
+    /// Exact resumable vendor identity.
+    pub identity: String,
+    /// Durable tape member holding the declaration.
+    pub member: u64,
+    /// Declaration offset within the member.
+    pub offset: u64,
+    /// Number of declaration bytes.
+    pub length: u64,
+}
+
 /// An occupant became live under the lane.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneStarted {
@@ -491,6 +516,14 @@ pub struct LaneCompacted {
     pub lane: CanonicalUuid,
     /// Occupant that compacted.
     pub occupant: CanonicalUuid,
+    /// Selected child stream carrying the boundary record.
+    pub stream: String,
+    /// Durable tape member holding the boundary record.
+    pub member: u64,
+    /// Boundary-record offset within the member.
+    pub offset: u64,
+    /// Number of bytes in the boundary record.
+    pub length: u64,
 }
 
 /// A successor occupant was seated with its ancestor named.

@@ -11,7 +11,7 @@ Cargo. Active `.spice/hooks` still invoke Python. Python owns Git-common
 
 | Measure | Result |
 | --- | --- |
-| Installed Python registry | 123/123 paths have one disposition; no gaps or duplicates |
+| Installed Python registry | 123/123 paths have one disposition; 24 task-owned gaps; no unsupported deletions |
 | Rust contract registry | 63/63 leaves landed; no gaps or unaccounted leaves |
 | Rust process sweep | 126 text/JSON invocations; matching exits and streams; no placeholders |
 | Functional smoke | 39/39 process tests across lifecycle, control, evidence, and recovery |
@@ -22,13 +22,16 @@ The smoke set is `succession`, `coexistence`, `resident`, `steering`,
 and recovery. Python activation, agent/task status, and the live claim were
 exercised in the same worktree with separate authority.
 
-Cutover remains blocked on three risks:
+Cutover remains blocked on three classes of risk:
 
-1. `AUDIT-1kJWNFH0` must re-evaluate every claimed clean-break removal against
-   full predecessor parity, including the task-boundary Git successor tracked
-   by `GIT-1kJWMPvF`.
-2. The clean break has no Python migration; the operator must approve a
-   predecessor backup/export and an empty Rust authority.
+1. `FORENSI-1kJWS7G5`, `ARTIFAC-1kJWSCFm`, `RECOVER-1kJWSHkc`,
+   `DEMO-1kJWSLwL`, `PARITY-1kJWSQ7W`,
+   `PARITY-1kJWSV53`, and `GIT-1kJWMPvF` own retained predecessor behavior
+   that is not yet executable in Rust. Until they land, the active Python
+   hooks and command remain unchanged and the Python policy gate runs last in
+   `cargo xtask verify`.
+2. Predecessor state transfer and recovery must satisfy the parity tasks; an
+   empty Rust authority is not a substitute for retained capability.
 3. Installed entrypoint selection and rollback still require an operator-run
    cutover rehearsal and explicit authorization.
 
@@ -132,18 +135,23 @@ isolated Rust state in both forms.
 
 ## Installed Python paths
 
-The parser has 123 paths. `R` means replacement, `D` intentional regrouping,
-and `X` clean-break removal. A pending owner is a cutover risk, not a fallback.
+The parser has 123 paths. `R` means a landed behavioral replacement, `D` a
+landed regrouping, `P` a retained capability owned by the named public task,
+and `X` an operator-confirmed deletion. `X` is valid only when the exact path
+and acknowledgment evidence appear in the structured deletion registry in
+LATER.md. Under `ack:1kJWMcnL`, cutover authorization does not authorize
+capability deletion, so that registry is empty. A pending owner is a cutover
+risk, not a fallback.
 
 ### Agent lifecycle
 
 - `agent`: D -> resident and lane surfaces.
 - `agent activation`: R -> `lane` and canvas discovery.
 - `agent ensure`: R -> `lane add`.
-- `agent import`: X -> reviewed documents only.
+- `agent import`: P -> `RECOVER-1kJWSHkc` for team, lineage, session, and claim transfer.
 - `agent post-tool-hook`: R -> `run`, `inbox`, and `ack`.
 - `agent reply`: R -> `ack`.
-- `agent requeue-deadletter`: X -> durable directives need no deadletter.
+- `agent requeue-deadletter`: P -> `RECOVER-1kJWSHkc` for exact-once directive recovery.
 - `agent run`: R -> `run`.
 - `agent show`: R -> `lane` and `recall`.
 - `agent supervise`: R -> `up` and `lane`.
@@ -167,7 +175,7 @@ and `X` clean-break removal. A pending owner is a cutover risk, not a fallback.
 ### Installation, locks, and health
 
 - `deinit`: D -> `install --unapply` plus `down`.
-- `demo`: X -> product paths carry executable evidence.
+- `demo`: P -> `DEMO-1kJWSLwL` for the zero-setup seeded canvas environment.
 - `doctor`: R -> `doctor`.
 - `init`: D -> `install` plus `up`.
 - `lock`: D -> Rust `lock` family.
@@ -183,10 +191,10 @@ and `X` clean-break removal. A pending owner is a cutover risk, not a fallback.
 - `dev install-hooks`: D -> `install` plus operator-run `scripts/install-hooks.sh` cutover.
 - `dev pre-commit`: D -> `gate` plus the canonical verifier.
 - `dev pytest`: D -> workspace tests in the canonical verifier.
-- `dev python-typecheck`: X -> strict Rust linting and tests.
+- `dev python-typecheck`: R -> strict Rust linting and workspace tests in the canonical verifier.
 - `dev reference-transaction`: D -> installer-owned `cargo xtask reference-transaction` hook.
 - `dev serve-web-typecheck`: D -> verifier Wasm check.
-- `dev serve-web-types`: X -> shared Rust wire types.
+- `dev serve-web-types`: R -> shared Rust wire types plus verifier app-drift and Wasm checks.
 
 Each `study` path is D -> gate or verifier evidence, not a shipped verb.
 
@@ -236,34 +244,35 @@ Each `study` path is D -> gate or verifier evidence, not a shipped verb.
 
 ### Session forensics
 
-All `session` paths are X as commands. Their retained questions use `watch`,
-`retro`, `recall`, and `thread` over owned tape and journal loci.
+The landed `watch`, `retro`, `recall`, and `thread` paths provide owned tape
+and journal foundations but do not yet answer every predecessor query. All
+`session` paths remain retained under `FORENSI-1kJWS7G5`.
 
-- `session`: X.
-- `session briefing`: X.
-- `session commands`: X.
-- `session commits`: X.
-- `session compactions`: X.
-- `session messages`: X.
-- `session phases`: X.
-- `session slices`: X.
-- `session summary`: X.
-- `session sweep`: X.
-- `session thread`: X.
-- `session timeline`: X.
-- `session tokens`: X.
-- `session turns`: X.
+- `session`: P -> `FORENSI-1kJWS7G5`.
+- `session briefing`: P -> `FORENSI-1kJWS7G5`.
+- `session commands`: P -> `FORENSI-1kJWS7G5`.
+- `session commits`: P -> `FORENSI-1kJWS7G5`.
+- `session compactions`: P -> `FORENSI-1kJWS7G5`.
+- `session messages`: P -> `FORENSI-1kJWS7G5`.
+- `session phases`: P -> `FORENSI-1kJWS7G5`.
+- `session slices`: P -> `FORENSI-1kJWS7G5`.
+- `session summary`: P -> `FORENSI-1kJWS7G5`.
+- `session sweep`: P -> `FORENSI-1kJWS7G5`.
+- `session thread`: P -> `FORENSI-1kJWS7G5`.
+- `session timeline`: P -> `FORENSI-1kJWS7G5`.
+- `session tokens`: P -> `FORENSI-1kJWS7G5`.
+- `session turns`: P -> `FORENSI-1kJWS7G5`.
 
 ### Task plane
 
 - `task`: D -> Rust board/task/doc families.
 - `task add`: R -> `task add`.
-- `task artifact`: X -> journal-cited evidence.
-- `task artifact add`: X -> `task note` evidence references.
-- `task artifact list`: X -> `journal` task-origin facts.
-- `task artifact prune`: X -> immutable evidence has no prune verb.
-- `task artifact show`: X -> `journal` plus `thread`.
-- `task capture`: R -> pending native task-boundary Git publication (`GIT-1kJWMPvF`).
+- `task artifact`: P -> `ARTIFAC-1kJWSCFm` for task-addressed text/binary evidence.
+- `task artifact add`: P -> `ARTIFAC-1kJWSCFm`.
+- `task artifact list`: P -> `ARTIFAC-1kJWSCFm`.
+- `task artifact prune`: P -> `ARTIFAC-1kJWSCFm` for retention preview/apply parity.
+- `task artifact show`: P -> `ARTIFAC-1kJWSCFm`.
+- `task capture`: P -> `GIT-1kJWMPvF` for loose-commit capture and publication.
 - `task claim`: R -> allocator-owned `task next`.
 - `task delete`: D -> authored `doc` correction.
 - `task depends`: R -> `task depends`.
@@ -278,7 +287,7 @@ All `session` paths are X as commands. Their retained questions use `watch`,
 - `task next`: R -> `task next`.
 - `task note`: R -> `task note`.
 - `task oops`: R -> `task oops`.
-- `task reclaim`: X -> renewal is resident-only.
+- `task reclaim`: P -> `RECOVER-1kJWSHkc` for bounded manual claim recovery.
 - `task review`: R -> `task review`.
 - `task reword`: D -> active correction uses `doc`.
 - `task show`: R -> `board`.
@@ -302,9 +311,13 @@ cargo test --locked -p spice \
 cargo test --locked -p spice \
   every_contract_has_an_executable_succession_disposition
 cargo test --locked -p spice --test succession
+cargo test --locked -p xtask \
+  live_python_deletion_requires_exact_operator_confirmation
 ```
 
 `cargo xtask verify` emits the versioned succession-readiness report, enforces
-the 95 percent landed threshold and both registry closures, then runs the
-installed Python `spice dev pre-commit` policy gate. Passing it still does not
+the 95 percent landed threshold and both registry closures, rejects malformed
+pending owners and unsupported or stale deletion claims, then runs the
+installed Python `spice dev pre-commit` policy gate. Passing proves an
+accounted ledger; reported pending paths still block parity and it does not
 grant cutover authority.

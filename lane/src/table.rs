@@ -18,8 +18,12 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
-use journal::crossing::body::{LaneDrained, LaneExited, LaneRenewed, LaneSeated, LaneStarted};
-use journal::crossing::{CanonicalUuid, LaneResidency, ResidencyHead, ResidentState};
+use journal::crossing::body::{
+    LaneDrained, LaneExited, LaneRenewed, LaneSeated, LaneSessionDeclared, LaneStarted,
+};
+use journal::crossing::{
+    CanonicalUuid, LaneResidency, LaneSession, ResidencyHead, ResidentState, TapeLocus,
+};
 use wire::Name;
 
 /// The word a seat's disposition is reported under.
@@ -37,6 +41,7 @@ pub struct Seat {
     vendor: Name,
     occupant: Option<CanonicalUuid>,
     lineage: Vec<CanonicalUuid>,
+    session: Option<LaneSession>,
 }
 
 impl Seat {
@@ -82,6 +87,12 @@ impl Seat {
         &self.lineage
     }
 
+    /// Exact current resumable session authority.
+    #[must_use]
+    pub const fn session(&self) -> Option<&LaneSession> {
+        self.session.as_ref()
+    }
+
     /// Whether an occupant sits in the seat.
     #[must_use]
     pub const fn occupied(&self) -> bool {
@@ -99,6 +110,7 @@ impl Seat {
             occupant: self.occupant,
             lineage: self.lineage.clone(),
             capabilities: vec![self.capability],
+            session: self.session.clone(),
             disposition: if self.occupied() { OCCUPIED } else { VACANT }.to_owned(),
         }
     }
@@ -109,6 +121,8 @@ impl Seat {
 pub enum Seating<'a> {
     /// A lane and its capability were created.
     Seated(&'a LaneSeated),
+    /// A selected record declared the exact resumable session.
+    Session(&'a LaneSessionDeclared),
     /// An occupant became live under the lane.
     Started(&'a LaneStarted),
     /// The occupant ended.
@@ -160,6 +174,54 @@ pub enum Refusal {
         /// Occupant the fact named.
         named: CanonicalUuid,
     },
+    /// A start or renewal had no preceding session declaration.
+    Undeclared {
+        /// Lane whose occupant lacked session authority.
+        lane: CanonicalUuid,
+    },
+    /// A session declaration repeated for the same occupant.
+    DuplicateSession {
+        /// Lane whose declaration repeated.
+        lane: CanonicalUuid,
+        /// Occupant that already declared.
+        occupant: CanonicalUuid,
+    },
+    /// A successor declared another identity instead of the durable one.
+    ConflictingSession {
+        /// Lane whose durable session conflicted.
+        lane: CanonicalUuid,
+        /// Durable identity.
+        expected: String,
+        /// Newly declared identity.
+        observed: String,
+    },
+    /// A declaration named another worktree.
+    WrongWorktree {
+        /// Lane whose worktree is fixed.
+        lane: CanonicalUuid,
+        /// Durable worktree.
+        expected: String,
+        /// Declared worktree.
+        observed: String,
+    },
+    /// A declaration named another vendor.
+    CrossVendor {
+        /// Lane whose vendor is fixed.
+        lane: CanonicalUuid,
+        /// Durable vendor.
+        expected: Name,
+        /// Declared vendor.
+        observed: Name,
+    },
+    /// A start or renewal named a different occupant from its declaration.
+    SessionOccupant {
+        /// Lane whose session was declared.
+        lane: CanonicalUuid,
+        /// Occupant proven by the declaration.
+        expected: CanonicalUuid,
+        /// Occupant the lifecycle fact named.
+        observed: CanonicalUuid,
+    },
 }
 
 impl fmt::Display for Refusal {
@@ -181,6 +243,45 @@ impl fmt::Display for Refusal {
             } => write!(
                 formatter,
                 "lane {lane} is occupied by {sitting}, not {named}"
+            ),
+            Self::Undeclared { lane } => {
+                write!(formatter, "lane {lane} has no declared session authority")
+            }
+            Self::DuplicateSession { lane, occupant } => write!(
+                formatter,
+                "lane {lane} occupant {occupant} declared its session twice"
+            ),
+            Self::ConflictingSession {
+                lane,
+                expected,
+                observed,
+            } => write!(
+                formatter,
+                "lane {lane} session is {expected:?}, not {observed:?}"
+            ),
+            Self::WrongWorktree {
+                lane,
+                expected,
+                observed,
+            } => write!(
+                formatter,
+                "lane {lane} worktree is {expected:?}, not {observed:?}"
+            ),
+            Self::CrossVendor {
+                lane,
+                expected,
+                observed,
+            } => write!(
+                formatter,
+                "lane {lane} vendor is {expected}, not {observed}"
+            ),
+            Self::SessionOccupant {
+                lane,
+                expected,
+                observed,
+            } => write!(
+                formatter,
+                "lane {lane} session belongs to {expected}, not {observed}"
             ),
         }
     }
@@ -233,6 +334,7 @@ impl Table {
     pub fn absorb(&mut self, seating: Seating<'_>) -> Result<(), Refusal> {
         match seating {
             Seating::Seated(fact) => self.seat_lane(fact),
+            Seating::Session(fact) => self.session(fact),
             Seating::Started(fact) => self.start(fact),
             Seating::Renewed(fact) => self.renew(fact),
             Seating::Exited(fact) => self.end(fact.lane, fact.occupant),
@@ -265,8 +367,68 @@ impl Table {
                 vendor: fact.vendor.clone(),
                 occupant: None,
                 lineage: Vec::new(),
+                session: None,
             },
         );
+        Ok(())
+    }
+
+    /// Admits one exact declaration before its occupant lifecycle fact.
+    fn session(&mut self, fact: &LaneSessionDeclared) -> Result<(), Refusal> {
+        if fact.epoch != self.epoch {
+            return Err(Refusal::Stale {
+                epoch: self.epoch,
+                named: fact.epoch,
+            });
+        }
+        let lane = fact.lane;
+        let seat = self
+            .seats
+            .get_mut(&lane)
+            .ok_or(Refusal::Unseated { lane })?;
+        if fact.worktree != seat.worktree {
+            return Err(Refusal::WrongWorktree {
+                lane,
+                expected: seat.worktree.clone(),
+                observed: fact.worktree.clone(),
+            });
+        }
+        if fact.vendor != seat.vendor {
+            return Err(Refusal::CrossVendor {
+                lane,
+                expected: seat.vendor.clone(),
+                observed: fact.vendor.clone(),
+            });
+        }
+        if let Some(current) = &seat.session {
+            if current.occupant == fact.occupant {
+                return Err(Refusal::DuplicateSession {
+                    lane,
+                    occupant: fact.occupant,
+                });
+            }
+            if current.identity != fact.identity {
+                return Err(Refusal::ConflictingSession {
+                    lane,
+                    expected: current.identity.clone(),
+                    observed: fact.identity.clone(),
+                });
+            }
+        }
+        seat.session = Some(LaneSession {
+            lane,
+            occupant: fact.occupant,
+            worktree: fact.worktree.clone(),
+            vendor: fact.vendor.clone(),
+            epoch: fact.epoch,
+            stream: fact.stream.clone(),
+            identity: fact.identity.clone(),
+            locus: TapeLocus {
+                member: fact.member,
+                offset: fact.offset,
+                length: fact.length,
+            },
+        });
         Ok(())
     }
 
@@ -283,6 +445,14 @@ impl Table {
             .seats
             .get_mut(&lane)
             .ok_or(Refusal::Unseated { lane })?;
+        let session = seat.session.as_ref().ok_or(Refusal::Undeclared { lane })?;
+        if session.occupant != fact.occupant {
+            return Err(Refusal::SessionOccupant {
+                lane,
+                expected: session.occupant,
+                observed: fact.occupant,
+            });
+        }
         if let Some(sitting) = seat.occupant {
             return Err(Refusal::Occupied { lane, sitting });
         }
@@ -305,6 +475,14 @@ impl Table {
             .seats
             .get_mut(&lane)
             .ok_or(Refusal::Unseated { lane })?;
+        let session = seat.session.as_ref().ok_or(Refusal::Undeclared { lane })?;
+        if session.occupant != fact.occupant {
+            return Err(Refusal::SessionOccupant {
+                lane,
+                expected: session.occupant,
+                observed: fact.occupant,
+            });
+        }
         let sitting = seat.occupant.ok_or(Refusal::Vacant { lane })?;
         if sitting != fact.ancestor {
             return Err(Refusal::Mismatched {
@@ -343,7 +521,9 @@ impl Table {
 #[cfg(test)]
 mod tests {
     use super::{Refusal, Seating, Table};
-    use journal::crossing::body::{LaneDrained, LaneExited, LaneRenewed, LaneSeated, LaneStarted};
+    use journal::crossing::body::{
+        LaneDrained, LaneExited, LaneRenewed, LaneSeated, LaneSessionDeclared, LaneStarted,
+    };
     use journal::crossing::{CanonicalUuid, ResidentState};
 
     fn uuid(last: u8) -> CanonicalUuid {
@@ -379,13 +559,35 @@ mod tests {
         }
     }
 
+    fn declared(occupant: CanonicalUuid) -> LaneSessionDeclared {
+        LaneSessionDeclared {
+            lane: uuid(1),
+            occupant,
+            worktree: "/worktrees/lane-a".to_owned(),
+            vendor: "claude".parse().expect("fixture vendor"),
+            epoch: uuid(0),
+            stream: "stdout".to_owned(),
+            identity: "session-a".to_owned(),
+            member: 0,
+            offset: 0,
+            length: 42,
+        }
+    }
+
+    fn start(table: &mut Table, occupant: CanonicalUuid) {
+        table
+            .absorb(Seating::Session(&declared(occupant)))
+            .expect("the selected record declares the session");
+        table
+            .absorb(Seating::Started(&started(occupant)))
+            .expect("the declared occupant starts");
+    }
+
     /// Identity, worktree, and capability survive the occupant that sat in them.
     #[test]
     fn a_seat_keeps_its_identity_across_occupants() {
         let mut table = table();
-        table
-            .absorb(Seating::Started(&started(uuid(3))))
-            .expect("an empty seat admits an occupant");
+        start(&mut table, uuid(3));
         table
             .absorb(Seating::Exited(&LaneExited {
                 lane: uuid(1),
@@ -406,9 +608,10 @@ mod tests {
     #[test]
     fn a_seat_holds_exactly_one_occupant() {
         let mut table = table();
+        start(&mut table, uuid(3));
         table
-            .absorb(Seating::Started(&started(uuid(3))))
-            .expect("an empty seat admits an occupant");
+            .absorb(Seating::Session(&declared(uuid(4))))
+            .expect("the successor declares the same session");
 
         let refusal = table
             .absorb(Seating::Started(&started(uuid(4))))
@@ -454,13 +657,82 @@ mod tests {
         assert!(seat.lineage().is_empty());
     }
 
+    /// Session authority is single, exact, and bound before lifecycle advance.
+    #[test]
+    fn session_declarations_refuse_missing_duplicate_conflicting_and_moved_bindings() {
+        let mut table = table();
+        assert_eq!(
+            table.absorb(Seating::Started(&started(uuid(3)))),
+            Err(Refusal::Undeclared { lane: uuid(1) })
+        );
+
+        let first = declared(uuid(3));
+        table
+            .absorb(Seating::Session(&first))
+            .expect("first declaration is admitted");
+        assert_eq!(
+            table.absorb(Seating::Started(&started(uuid(4)))),
+            Err(Refusal::SessionOccupant {
+                lane: uuid(1),
+                expected: uuid(3),
+                observed: uuid(4),
+            })
+        );
+        assert_eq!(
+            table.absorb(Seating::Session(&first)),
+            Err(Refusal::DuplicateSession {
+                lane: uuid(1),
+                occupant: uuid(3),
+            })
+        );
+
+        let mut conflict = declared(uuid(4));
+        conflict.identity = "session-b".to_owned();
+        assert!(matches!(
+            table.absorb(Seating::Session(&conflict)),
+            Err(Refusal::ConflictingSession { .. })
+        ));
+
+        let mut worktree = declared(uuid(4));
+        worktree.worktree = "/worktrees/lane-b".to_owned();
+        assert!(matches!(
+            table.absorb(Seating::Session(&worktree)),
+            Err(Refusal::WrongWorktree { .. })
+        ));
+
+        let mut vendor = declared(uuid(4));
+        vendor.vendor = "codex".parse().expect("fixture vendor");
+        assert!(matches!(
+            table.absorb(Seating::Session(&vendor)),
+            Err(Refusal::CrossVendor { .. })
+        ));
+
+        let mut cross_lane = declared(uuid(4));
+        cross_lane.lane = uuid(8);
+        assert_eq!(
+            table.absorb(Seating::Session(&cross_lane)),
+            Err(Refusal::Unseated { lane: uuid(8) })
+        );
+
+        let mut stale = declared(uuid(4));
+        stale.epoch = uuid(9);
+        assert_eq!(
+            table.absorb(Seating::Session(&stale)),
+            Err(Refusal::Stale {
+                epoch: uuid(0),
+                named: uuid(9),
+            })
+        );
+    }
+
     /// A successor names the occupant it descends from, and the lineage grows.
     #[test]
     fn renewal_succeeds_the_sitting_occupant_and_records_the_lineage() {
         let mut table = table();
+        start(&mut table, uuid(3));
         table
-            .absorb(Seating::Started(&started(uuid(3))))
-            .expect("an empty seat admits an occupant");
+            .absorb(Seating::Session(&declared(uuid(4))))
+            .expect("the successor declares the same session");
         table
             .absorb(Seating::Renewed(&LaneRenewed {
                 lane: uuid(1),
@@ -480,9 +752,10 @@ mod tests {
     #[test]
     fn renewal_refuses_an_ancestor_the_seat_is_not_holding() {
         let mut table = table();
+        start(&mut table, uuid(3));
         table
-            .absorb(Seating::Started(&started(uuid(3))))
-            .expect("an empty seat admits an occupant");
+            .absorb(Seating::Session(&declared(uuid(5))))
+            .expect("the successor declares the same session");
 
         let refusal = table
             .absorb(Seating::Renewed(&LaneRenewed {
@@ -513,9 +786,7 @@ mod tests {
     #[test]
     fn renewal_refuses_the_sitting_occupant_as_its_own_successor() {
         let mut table = table();
-        table
-            .absorb(Seating::Started(&started(uuid(3))))
-            .expect("an empty seat admits an occupant");
+        start(&mut table, uuid(3));
 
         assert_eq!(
             table.absorb(Seating::Renewed(&LaneRenewed {
@@ -537,9 +808,7 @@ mod tests {
     #[test]
     fn ending_refuses_an_occupant_the_seat_is_not_holding() {
         let mut table = table();
-        table
-            .absorb(Seating::Started(&started(uuid(3))))
-            .expect("an empty seat admits an occupant");
+        start(&mut table, uuid(3));
 
         assert_eq!(
             table.absorb(Seating::Drained(&LaneDrained {
@@ -600,9 +869,7 @@ mod tests {
     #[test]
     fn the_table_renders_the_residency_head() {
         let mut table = table();
-        table
-            .absorb(Seating::Started(&started(uuid(3))))
-            .expect("an empty seat admits an occupant");
+        start(&mut table, uuid(3));
 
         let head = table.head(ResidentState::Seated);
 
@@ -614,6 +881,12 @@ mod tests {
         assert_eq!(row.occupant, Some(uuid(3)));
         assert_eq!(row.lineage, vec![uuid(3)]);
         assert_eq!(row.capabilities, vec![uuid(2)]);
+        assert_eq!(
+            row.session
+                .as_ref()
+                .map(|session| session.identity.as_str()),
+            Some("session-a")
+        );
         assert_eq!(row.disposition, "occupied");
     }
 

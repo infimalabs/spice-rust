@@ -122,7 +122,7 @@ macro_rules! vocabulary {
             }
 
             /// Validate an opaque body through the DTO registered for this kind.
-            fn validate_body(
+            pub(crate) fn validate_body(
                 self,
                 body: &serde_json::Map<String, serde_json::Value>,
             ) -> Result<(), serde_json::Error> {
@@ -208,6 +208,8 @@ vocabulary! {
 
     /// A lane and its capability were created.
     LaneSeated = "lane::seated" by ResidentRecognition;
+    /// A selected vendor record declared the exact resumable lane session.
+    LaneSessionDeclared = "lane::declared" by ResidentRecognition;
     /// An occupant became live under the lane.
     LaneStarted = "lane::started" by ResidentRecognition;
     /// The resident observed the occupant end.

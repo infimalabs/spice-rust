@@ -26,6 +26,7 @@
 //! to keep them, and that difference survives every floor above.
 
 pub mod pane;
+pub mod runtime;
 pub mod socket;
 pub mod state;
 pub mod view;
@@ -36,6 +37,9 @@ mod browser;
 mod speech;
 
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
+pub use runtime::{
+    BoardView, CanvasRuntime, FactRow, LaneView, RuntimeEvent, StreamDirective, StreamTerminal,
+};
 pub use socket::{Admitted, Session};
 pub use state::{Answer, Applied, BrowserState, CAUSAL_HEADERS, CausalLink, ChainEnd, ChainWalk};
 pub use view::{Axis, Pane};

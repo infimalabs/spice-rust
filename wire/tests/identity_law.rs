@@ -55,10 +55,12 @@ use wire::{
     DoctorToolCancellation, DoctorToolMode, DoctorToolNetwork, DoctorToolRequirement,
     DoctorToolSource, DurationWord, Envelope, Fact, FactKind, Fault, FaultClass, FindingHead,
     FindingState, FoldName, FoldState, Hello, Instant, JournalReport, JournalRestore,
-    LaneResidency, LeaseHead, Name, Origin, Outcome, Overflow, Packed, Phase, Producer,
-    ProofEvidence, Provenance, Refusal, Reply, ReplyPosition, ResidencyHead, ResidentState,
-    Response, RestoreVerification, Seq, SeqRange, SpiceVariable, TaskHandle, TaskHead, TrustHead,
-    TrustState, WireVersion, Witness, WitnessClass, WitnessHead, WitnessKind, WorkflowHead, body,
+    LaneResidency, LaneSession, LeaseHead, Name, Origin, Outcome, Overflow, Packed, Phase,
+    Producer, ProofEvidence, Provenance, Refusal, Reply, ReplyPosition, ResidencyHead,
+    ResidentState, Response, RestoreVerification, Seq, SeqRange, SpiceVariable, StreamCursor,
+    StreamFact, StreamFrame, StreamRequest, TapeLocus, TaskHandle, TaskHead, TrustHead, TrustState,
+    TrustView, ViewSubject, WireVersion, Witness, WitnessClass, WitnessHead, WitnessKind,
+    WorkflowHead, body,
 };
 
 include!("identity_law/laws.rs");

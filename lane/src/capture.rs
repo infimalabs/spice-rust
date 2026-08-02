@@ -26,6 +26,9 @@ pub struct CaptureRecord {
     pub boundary: RecordBoundary,
     /// Durable location covering exactly the emitted record bytes.
     pub locus: Locus,
+    /// Exact admitted vendor session declaration, when this is the one current
+    /// initialization record.
+    pub declaration: Option<vendor::SessionDeclaration>,
     /// Typed events or accounted residue decoded after the append.
     pub decoded: Decoded,
 }
@@ -127,6 +130,10 @@ impl RecordObserver for LaneObserver {
             .decode(self.record.stream(), bytes, locus)
             .map_err(|error| ObserveError::new(format!("decode contract failed: {error}")))?
             .expect("the selected record stream always decodes");
+        let declaration = self
+            .record
+            .session_declaration(&decoded)
+            .map_err(|error| ObserveError::new(format!("session declaration refused: {error}")))?;
         self.reporter
             .record(CaptureRecord {
                 lane: self.lane,
@@ -134,6 +141,7 @@ impl RecordObserver for LaneObserver {
                 stream: self.record.stream(),
                 boundary: observed.boundary(),
                 locus,
+                declaration,
                 decoded,
             })
             .map_err(|error| ObserveError::new(format!("record reporter refused: {error}")))
@@ -151,7 +159,7 @@ impl RecordObserver for LaneObserver {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Condvar, Mutex};
     use std::time::Duration;
 
     use super::{CaptureFailure, CaptureRecord, CaptureReportError, CaptureReporter, observation};
@@ -169,6 +177,8 @@ mod tests {
     struct Reports {
         records: Mutex<Vec<CaptureRecord>>,
         failures: Mutex<Vec<CaptureFailure>>,
+        reported: Mutex<usize>,
+        reported_change: Condvar,
     }
 
     impl CaptureReporter for Reports {
@@ -177,6 +187,9 @@ mod tests {
                 .lock()
                 .expect("record reports lock")
                 .push(record);
+            let mut reported = self.reported.lock().expect("report count lock");
+            *reported += 1;
+            self.reported_change.notify_all();
             Ok(())
         }
 
@@ -220,6 +233,14 @@ mod tests {
             .wait()
             .expect("capture child reaps");
         assert!(outcome.completion().status().success());
+        let reported = reports.reported.lock().expect("report count lock");
+        let (reported, wait) = reports
+            .reported_change
+            .wait_timeout_while(reported, Duration::from_secs(2), |count| *count < 2)
+            .expect("report wait lock");
+        assert!(!wait.timed_out(), "both observer callbacks complete");
+        assert_eq!(*reported, 2);
+        drop(reported);
 
         let records = reports.records.lock().expect("record reports lock");
         assert_eq!(records.len(), 2);
