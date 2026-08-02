@@ -56,7 +56,10 @@ pub use measure::{
     Bounds, MeasureError, Measurement, Metric, MetricError, Parser, Policy, measurement_digest,
     render_measurements,
 };
-pub use message::{CommitMessageError, OriginTrailer, OriginTrailerError, validate_commit_message};
+pub use message::{
+    CommitMessageError, CommitMessagePolicy, OriginTrailer, OriginTrailerError, TrailerRejection,
+    validate_commit_message,
+};
 pub use names::{RETIRED_NAMES, RetiredMatch, RetiredName, retired_matches};
 pub use ratchet::{Finding, Movement, Ratchet, RatchetError};
 pub use report::{
