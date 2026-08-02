@@ -153,6 +153,93 @@ impl GateId {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PredecessorStandardArm {
+    InternalBuiltin,
+}
+
+// Release 0.31.0's packaged `_builtin_pre_commit_steps` battery declares one
+// in-process `PreCommitStep` callable for each identity in this exact order.
+const PREDECESSOR_STANDARD_ARMS: [(GateId, PredecessorStandardArm); 25] = [
+    (
+        GateId::MergeIntegrity,
+        PredecessorStandardArm::InternalBuiltin,
+    ),
+    (GateId::PlanPhase, PredecessorStandardArm::InternalBuiltin),
+    (GateId::RepoShape, PredecessorStandardArm::InternalBuiltin),
+    (GateId::Staging, PredecessorStandardArm::InternalBuiltin),
+    (GateId::RepoDocs, PredecessorStandardArm::InternalBuiltin),
+    (
+        GateId::ConfigKeyValidity,
+        PredecessorStandardArm::InternalBuiltin,
+    ),
+    (
+        GateId::ConfigFalseDisable,
+        PredecessorStandardArm::InternalBuiltin,
+    ),
+    (
+        GateId::ConfigTrackedTrust,
+        PredecessorStandardArm::InternalBuiltin,
+    ),
+    (GateId::Formatters, PredecessorStandardArm::InternalBuiltin),
+    (GateId::LocalPaths, PredecessorStandardArm::InternalBuiltin),
+    (GateId::Taste, PredecessorStandardArm::InternalBuiltin),
+    (
+        GateId::CanvasWebTypecheck,
+        PredecessorStandardArm::InternalBuiltin,
+    ),
+    (
+        GateId::JavascriptUnused,
+        PredecessorStandardArm::InternalBuiltin,
+    ),
+    (
+        GateId::PythonTypecheck,
+        PredecessorStandardArm::InternalBuiltin,
+    ),
+    (GateId::EnvPolicy, PredecessorStandardArm::InternalBuiltin),
+    (
+        GateId::EnvNameLedger,
+        PredecessorStandardArm::InternalBuiltin,
+    ),
+    (GateId::FileShape, PredecessorStandardArm::InternalBuiltin),
+    (GateId::Complexity, PredecessorStandardArm::InternalBuiltin),
+    (
+        GateId::MagicNumbers,
+        PredecessorStandardArm::InternalBuiltin,
+    ),
+    (
+        GateId::MarkdownLinks,
+        PredecessorStandardArm::InternalBuiltin,
+    ),
+    (
+        GateId::Reachability,
+        PredecessorStandardArm::InternalBuiltin,
+    ),
+    (
+        GateId::SymbolReachability,
+        PredecessorStandardArm::InternalBuiltin,
+    ),
+    (
+        GateId::PythonUnused,
+        PredecessorStandardArm::InternalBuiltin,
+    ),
+    (
+        GateId::AssertionFreeTests,
+        PredecessorStandardArm::InternalBuiltin,
+    ),
+    (
+        GateId::PrivateInternals,
+        PredecessorStandardArm::InternalBuiltin,
+    ),
+];
+
+fn predecessor_standard_arm(id: GateId) -> PredecessorStandardArm {
+    PREDECESSOR_STANDARD_ARMS
+        .into_iter()
+        .find_map(|(candidate, arm)| (candidate == id).then_some(arm))
+        .expect("every compiled gate has one predecessor standard arm")
+}
+
 impl fmt::Display for GateId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
@@ -1143,19 +1230,23 @@ fn interpret_entry(
 }
 
 fn executable_refusal(id: GateId, source: &SourceRef, argv: &[String]) -> MigrationError {
-    source.error(
-        MigrationErrorKind::ExecutableReplacement,
-        format!(
-            concat!(
-                "resolved executable argv {argv:?} cannot normalize to the release-declared ",
-                "standard arm for compiled Rust gate {id}; the predecessor release declares ",
-                "that standard arm as an internal builtin, not executable argv"
+    match predecessor_standard_arm(id) {
+        PredecessorStandardArm::InternalBuiltin => source.error(
+            MigrationErrorKind::ExecutableReplacement,
+            format!(
+                concat!(
+                    "resolved executable argv {argv:?} cannot normalize to the ",
+                    "release-declared standard arm for compiled Rust gate {id}; ",
+                    "release {release} declares that standard arm as an internal ",
+                    "PreCommitStep builtin, not executable argv"
+                ),
+                argv = argv,
+                id = id,
+                release = PREDECESSOR_GATE_RELEASE
             ),
-            argv = argv,
-            id = id
+            format!("remove the executable replacement and select compiled gate ID {id}"),
         ),
-        format!("remove the executable replacement and select compiled gate ID {id}"),
-    )
+    }
 }
 
 fn display_path(path: &[String]) -> String {
