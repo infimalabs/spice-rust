@@ -1,6 +1,11 @@
 //! What every launch carries before a vendor states its own dialect.
 
+use std::error::Error;
+use std::fmt;
 use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
+use sill::SpecError;
 
 use crate::Resume;
 
@@ -14,11 +19,14 @@ pub const POST_TOOL_HOOK_TIMEOUT_SECONDS: u32 = 30;
 pub const POST_TOOL_HOOK_STATUS_MESSAGE: &str = "Checking spice steering";
 
 /// Reasoning effort in the one vocabulary both vendor CLIs accept.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Effort {
     Low,
     Medium,
+    #[default]
     High,
+    #[serde(rename = "xhigh")]
     XHigh,
     Max,
 }
@@ -121,8 +129,8 @@ pub struct Launch {
     pub effort: Effort,
     /// Vendor personality, for a dialect with a launch seam for one.
     pub personality: Option<String>,
-    /// Whether to ask for the vendor's faster output mode.
-    pub fast_mode: bool,
+    /// Explicit fast-mode disposition, or no request for a dialect without it.
+    pub fast_mode: Option<bool>,
     /// Caller-resolved disposition for Claude's native commit attribution.
     ///
     /// The repository-policy read stays outside this I/O-free crate. Codex has
@@ -140,4 +148,53 @@ pub struct Launch {
     pub mcp: McpServer,
     /// Fresh, or resuming one exact session.
     pub resume: Resume,
+}
+
+/// A vendor-neutral launch could not be rendered in the selected dialect.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ContractError {
+    /// One explicit field has no seam in the selected vendor.
+    Unsupported {
+        /// Exact typed configuration path owning the field.
+        path: &'static str,
+        /// Vendor renderer that cannot honor it.
+        vendor: &'static str,
+    },
+    /// One field the selected vendor requires was not made explicit.
+    Missing {
+        /// Exact typed configuration path owning the field.
+        path: &'static str,
+    },
+    /// Common process argument-vector law refused the contract.
+    Spec(SpecError),
+}
+
+impl fmt::Display for ContractError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unsupported { path, vendor } => {
+                write!(
+                    formatter,
+                    "{path} is unsupported by the {vendor} launch dialect"
+                )
+            }
+            Self::Missing { path } => write!(formatter, "{path} must be explicit"),
+            Self::Spec(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for ContractError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Spec(error) => Some(error),
+            Self::Unsupported { .. } | Self::Missing { .. } => None,
+        }
+    }
+}
+
+impl From<SpecError> for ContractError {
+    fn from(error: SpecError) -> Self {
+        Self::Spec(error)
+    }
 }

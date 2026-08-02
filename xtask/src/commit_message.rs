@@ -35,7 +35,7 @@ const PLACEHOLDER_TRAILING: &[char] = &[' ', '\t', '.', ',', ':', ';', '!', '?',
 ///
 /// Returns an I/O failure, a hygiene refusal, or Gate's frozen
 /// `Spice-Origin` grammar refusal.
-pub fn apply(path: &Path) -> Result<bool, CommitMessageError> {
+pub fn apply(path: &Path, policy: &gate::CommitMessagePolicy) -> Result<bool, CommitMessageError> {
     let message = fs::read_to_string(path).map_err(|source| CommitMessageError::Io {
         action: "read",
         path: path.to_path_buf(),
@@ -50,7 +50,7 @@ pub fn apply(path: &Path) -> Result<bool, CommitMessageError> {
             source,
         })?;
     }
-    validate_hygiene(&folded)?;
+    validate_hygiene(&folded, policy)?;
     gate::validate_commit_message(path.display().to_string(), &committed_text(&folded))
         .map_err(CommitMessageError::Origin)?;
     Ok(changed)
@@ -223,7 +223,10 @@ fn committed_text(message: &str) -> String {
     lines.join("\n")
 }
 
-fn validate_hygiene(message: &str) -> Result<(), CommitMessageError> {
+fn validate_hygiene(
+    message: &str,
+    policy: &gate::CommitMessagePolicy,
+) -> Result<(), CommitMessageError> {
     let lines = policy_lines(message);
     let Some((subject_line, subject)) = lines.first().copied() else {
         return Err(CommitMessageError::Hygiene(
@@ -246,6 +249,42 @@ fn validate_hygiene(message: &str) -> Result<(), CommitMessageError> {
         failures.push(
             "literal '\\n' found; write real newlines with `git commit -F <file>`".to_owned(),
         );
+    }
+    for (line_number, line) in lines.iter().skip(1) {
+        let Some(key) = trailer_key(line.trim()) else {
+            continue;
+        };
+        match policy.trailer_rejection(key) {
+            Some(gate::TrailerRejection::Blocked) => {
+                let blocked = policy
+                    .blocked_trailers()
+                    .expect("a blocked verdict names an explicit block set");
+                let mut blocked = blocked.to_vec();
+                blocked.sort();
+                failures.push(format!(
+                    "line {line_number} uses blocked trailer {}; blocked trailers: {}",
+                    key.to_ascii_lowercase(),
+                    blocked.join(", ")
+                ));
+            }
+            Some(gate::TrailerRejection::Disallowed) => {
+                let allowed = policy
+                    .allowed_trailers()
+                    .expect("a disallowed verdict names an explicit allow set");
+                let mut allowed = allowed.to_vec();
+                allowed.sort();
+                failures.push(format!(
+                    "line {line_number} uses disallowed trailer {}; allowed trailers: {}",
+                    key.to_ascii_lowercase(),
+                    if allowed.is_empty() {
+                        "none".to_owned()
+                    } else {
+                        allowed.join(", ")
+                    }
+                ));
+            }
+            None => {}
+        }
     }
 
     let placeholder = subject
@@ -359,7 +398,8 @@ mod tests {
     fn placeholder_literal_newline_and_long_subjects_are_refused_together() {
         let subject = format!("WIP{}", "!".repeat(98));
         let message = format!("{subject}\n\nliteral \\n evidence\n");
-        let error = validate_hygiene(&message).expect_err("hygiene refuses");
+        let error = validate_hygiene(&message, &gate::CommitMessagePolicy::default())
+            .expect_err("hygiene refuses");
         let detail = error.to_string();
 
         assert!(detail.contains("literal '\\n'"));
@@ -381,5 +421,28 @@ mod tests {
         let malformed = "Preserve provenance\n\nSpice-Origin: v2 evidence\n";
         gate::validate_commit_message("pending", &committed_text(malformed))
             .expect_err("committed malformed provenance refuses");
+    }
+
+    #[test]
+    fn native_hook_consumes_the_same_case_insensitive_trailer_policy() {
+        let policy = serde_json::from_str::<gate::CommitMessagePolicy>(
+            r#"{
+                "allowed_trailers": ["Spice-Origin", "Reviewed-By"],
+                "blocked_trailers": ["Co-Authored-By"]
+            }"#,
+        )
+        .expect("fixture trailer policy admits");
+        let message = concat!(
+            "Preserve launch policy\n\n",
+            "Reviewed-By: Operator <operator@example.test>\n",
+            "Co-Authored-By: Agent <agent@example.test>\n",
+            "Signed-Off-By: Other <other@example.test>\n",
+        );
+
+        let error = validate_hygiene(message, &policy).expect_err("policy refuses");
+        let detail = error.to_string();
+        assert!(detail.contains("line 4 uses blocked trailer co-authored-by"));
+        assert!(detail.contains("line 5 uses disallowed trailer signed-off-by"));
+        assert!(!detail.contains("reviewed-by;"));
     }
 }

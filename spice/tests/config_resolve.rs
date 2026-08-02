@@ -67,7 +67,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert_eq!(missing.root(), &spice::config::Root::default());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 29);
+    assert_eq!(missing.provenance().len(), 40);
     assert!(
         missing
             .provenance()
@@ -558,6 +558,10 @@ project_max_depth = 3
 [policy]
 env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
 
+[policy.commit_message]
+allowed_trailers = ["Spice-Origin"]
+blocked_trailers = ["Co-Authored-By"]
+
 [consent]
 posture = "deny"
 
@@ -586,8 +590,18 @@ hold = "40m"
 expiry = "12h"
 resend = ["2m"]
 
+[vendor.claude]
+binary = "/opt/claude"
+model = "opus"
+effort = "xhigh"
+auto_compact_window_tokens = 123456
+
 [vendor.codex]
 binary = "/opt/codex"
+model = "gpt-current"
+effort = "max"
+personality = "pragmatic"
+fast_mode = true
 
 [listen]
 window = "2m"

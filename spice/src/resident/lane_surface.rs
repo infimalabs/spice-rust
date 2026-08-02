@@ -1250,62 +1250,49 @@ fn occupant_launch(
     }
     let resolved = spice::config::load_repository(&repository, &[])
         .map_err(|error| store_fault("lane::configuration-refused", &error.to_string()))?;
-    let binary = resolved
-        .root()
-        .vendor()
-        .entries()
-        .get(name)
-        .map_or(name.as_str(), |entry| entry.binary().as_str());
     let executable = std::env::current_exe()
         .map_err(|error| store_fault("lane::executable-unresolved", &error.to_string()))?;
     let executable = executable.display().to_string();
-    let launch = vendor::Launch {
-        cwd: repository.worktree_root().to_path_buf(),
-        prompt: "[$spice](.agents/skills/spice/SKILL.md)".to_owned(),
-        model: match name.as_str() {
-            "claude" => "sonnet",
-            "codex" => "gpt-5.2-codex",
-            other => {
-                return Err(Outcome::Refusal(Refusal {
-                    reason: "lane::vendor-unsupported".to_owned(),
-                    witness: Some("vendor".to_owned()),
-                    expected: Some("claude or codex".to_owned()),
-                    observed: Some(other.to_owned()),
-                    remedy: "select a vendor with a landed Rust launch dialect".to_owned(),
-                }));
-            }
-        }
-        .to_owned(),
-        effort: vendor::Effort::High,
-        personality: None,
-        fast_mode: false,
-        attribution: vendor::Attribution::Harness,
-        hook: vendor::SteeringHook {
-            command: format!("{} inbox", shell_word(&executable)),
-        },
-        steering_key: Some(vendor::SteeringKey {
-            token: new_uuid().to_string(),
-        }),
-        mcp: vendor::McpServer {
-            name: "spice".to_owned(),
-            command: executable,
-            args: vec!["mcp".to_owned()],
-        },
-        resume,
-    };
-    let record = match name.as_str() {
-        "claude" => vendor::claude::record(binary, &launch),
-        "codex" => vendor::codex::record(binary, &launch),
-        _ => unreachable!("unsupported vendors return above"),
-    }
-    .map_err(|error| store_fault("lane::launch-invalid", &error.to_string()))?;
     let mut environment = ["HOME", "PATH", "SHELL", "TMPDIR", "USER"]
         .into_iter()
         .filter_map(|name| crate::bootstrap_environment(name).map(|value| (name.into(), value)))
         .collect::<Vec<(OsString, OsString)>>();
-    environment.push(("SPICE_LANE".into(), lane.to_string().into())); // env-policy: allow
+    if name.as_str() == "claude"
+        && let Some(value) =
+            crate::bootstrap_environment(spice::agent_launch::CLAUDE_AUTO_COMPACT_WINDOW)
+    {
+        environment.push((
+            spice::agent_launch::CLAUDE_AUTO_COMPACT_WINDOW.into(),
+            value,
+        )); // env-policy: allow
+    }
     let environment = Environment::new(environment)
         .map_err(|error| store_fault("lane::environment-invalid", &error.to_string()))?;
+    let plan = spice::agent_launch::compose(
+        resolved.root(),
+        spice::agent_launch::Inputs {
+            worktree: repository.worktree_root().to_path_buf(),
+            vendor: name.clone(),
+            prompt: "[$spice](.agents/skills/spice/SKILL.md)".to_owned(),
+            executable,
+            environment,
+            lane,
+            resume,
+        },
+    )
+    .map_err(|error| match error {
+        spice::agent_launch::ComposeError::UnsupportedVendor(other) => Outcome::Refusal(Refusal {
+            reason: "lane::vendor-unsupported".to_owned(),
+            witness: Some("lane.vendor".to_owned()),
+            expected: Some("claude or codex".to_owned()),
+            observed: Some(other),
+            remedy: "select a vendor with a landed Rust launch dialect".to_owned(),
+        }),
+        other => store_fault("lane::launch-invalid", &other.to_string()),
+    })?;
+    let record = plan
+        .record()
+        .map_err(|error| store_fault("lane::launch-invalid", &error.to_string()))?;
     let deadlines = Deadlines::new(resolved.root().lane().lease().get(), OUTPUT_DRAIN, REAP)
         .map_err(|error| store_fault("lane::deadlines-invalid", &error.to_string()))?;
     let wait = WaitPolicy::new(
@@ -1316,7 +1303,7 @@ fn occupant_launch(
     .map_err(|error| store_fault("lane::wait-invalid", &error.to_string()))?;
     let process = vendor::Process::new(
         repository.worktree_root(),
-        environment,
+        plan.environment().clone(),
         deadlines,
         wait,
         CAPTURE_LIMIT,
@@ -1823,8 +1810,4 @@ fn typed_environment_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer>
         reason: reason.to_owned(),
         detail: detail.to_owned(),
     })
-}
-
-fn shell_word(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
 }

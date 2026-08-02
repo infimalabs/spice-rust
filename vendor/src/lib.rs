@@ -15,10 +15,13 @@ pub mod launch;
 mod record;
 
 pub use acp::{PermissionRequestError, permission_request};
-pub use config::{Binary, Config, Entry};
+pub use config::{
+    Binary, ClaudeConfig, CodexConfig, Config, DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS,
+    DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL,
+};
 pub use launch::{
-    Attribution, Effort, Launch, McpServer, POST_TOOL_HOOK_EVENT, POST_TOOL_HOOK_STATUS_MESSAGE,
-    POST_TOOL_HOOK_TIMEOUT_SECONDS, SteeringHook, SteeringKey,
+    Attribution, ContractError, Effort, Launch, McpServer, POST_TOOL_HOOK_EVENT,
+    POST_TOOL_HOOK_STATUS_MESSAGE, POST_TOOL_HOOK_TIMEOUT_SECONDS, SteeringHook, SteeringKey,
 };
 pub use record::{
     LaunchError, Process, ProcessError, Record, RecordStream, Resume, SessionDeclaration,

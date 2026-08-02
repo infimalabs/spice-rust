@@ -47,9 +47,16 @@ resend = ["10m", "30m", "2h"]
 
 [vendor.claude]
 binary = "/opt/claude"
+model = "claude-opus"
+effort = "xhigh"
+auto_compact_window_tokens = 123456
 
 [vendor.codex]
 binary = "/opt/codex"
+model = "gpt-codex"
+effort = "max"
+personality = "pragmatic"
+fast_mode = true
 
 [proof]
 image = "registry.example/proof@sha256:4444444444444444444444444444444444444444444444444444444444444444"
@@ -117,17 +124,18 @@ fn every_policy_shape_round_trips_without_losing_order_or_templates() {
             .collect::<Vec<_>>(),
         ["10m", "30m", "2h"]
     );
-    assert_eq!(decoded.vendor().entries().len(), 2);
+    assert_eq!(decoded.vendor().claude().binary().as_str(), "/opt/claude");
+    assert_eq!(decoded.vendor().claude().model(), "claude-opus");
+    assert_eq!(decoded.vendor().claude().effort(), vendor::Effort::XHigh);
     assert_eq!(
-        decoded
-            .vendor()
-            .entries()
-            .get(&"claude".parse().expect("fixture vendor name"))
-            .expect("claude row")
-            .binary()
-            .as_str(),
-        "/opt/claude"
+        decoded.vendor().claude().auto_compact_window_tokens(),
+        123_456
     );
+    assert_eq!(decoded.vendor().codex().binary().as_str(), "/opt/codex");
+    assert_eq!(decoded.vendor().codex().model(), "gpt-codex");
+    assert_eq!(decoded.vendor().codex().effort(), vendor::Effort::Max);
+    assert_eq!(decoded.vendor().codex().personality(), Some("pragmatic"));
+    assert!(decoded.vendor().codex().fast_mode());
     assert_eq!(
         decoded.proof().image().as_str(),
         "registry.example/proof@sha256:4444444444444444444444444444444444444444444444444444444444444444"
@@ -163,7 +171,14 @@ fn an_empty_tree_is_the_complete_compiled_policy() {
             .collect::<Vec<_>>(),
         ["5m", "15m", "1h"]
     );
-    assert!(root.vendor().entries().is_empty());
+    assert_eq!(root.vendor().claude().binary().as_str(), "claude");
+    assert_eq!(root.vendor().claude().model(), vendor::DEFAULT_CLAUDE_MODEL);
+    assert_eq!(root.vendor().claude().effort(), vendor::Effort::High);
+    assert_eq!(root.vendor().codex().binary().as_str(), "codex");
+    assert_eq!(root.vendor().codex().model(), vendor::DEFAULT_CODEX_MODEL);
+    assert_eq!(root.vendor().codex().effort(), vendor::Effort::High);
+    assert_eq!(root.vendor().codex().personality(), None);
+    assert!(!root.vendor().codex().fast_mode());
     assert_eq!(root.proof().image().as_str(), proof::DEFAULT_IMAGE);
     assert!(root.proof().container().is_none());
     assert!(root.proof().runner().is_none());
@@ -197,6 +212,28 @@ fn malformed_policy_values_are_refused_under_their_domain_paths() {
         ("[proof]\ncontainer = \"docker\"\n", "proof.container"),
         ("[proof]\nrunner = \"\"\n", "proof.runner"),
         ("[vendor.Claude]\nbinary = \"claude\"\n", "vendor.Claude"),
+        (
+            "[vendor.claude]\npersonality = \"friendly\"\n",
+            "vendor.claude.personality",
+        ),
+        (
+            "[vendor.claude]\nfast_mode = false\n",
+            "vendor.claude.fast_mode",
+        ),
+        (
+            "[vendor.claude]\neffort = \"max\"\n",
+            "vendor.claude.effort",
+        ),
+        (
+            "[vendor.claude]\nauto_compact_window_tokens = 0\n",
+            "vendor.claude.auto_compact_window_tokens",
+        ),
+        (
+            "[vendor.codex]\nauto_compact_window_tokens = 100\n",
+            "vendor.codex.auto_compact_window_tokens",
+        ),
+        ("[vendor.codex]\nmodel = \"\"\n", "vendor.codex.model"),
+        ("[vendor.gemini]\nbinary = \"gemini\"\n", "vendor.gemini"),
     ] {
         let error = decode(document).expect_err("malformed policy must refuse");
         assert!(
