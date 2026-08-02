@@ -95,6 +95,22 @@ fn native_file_and_document_parsers_preserve_predecessor_counts() {
     assert_eq!(shape.path(), "src/app.rs");
     assert_eq!(shape.lines(), 3);
     assert_eq!(shape.bytes(), u64::try_from(source.len()).unwrap());
+    for separator in [
+        "\n", "\r", "\u{000b}", "\u{000c}", "\u{001c}", "\u{001d}", "\u{001e}", "\u{0085}",
+        "\u{2028}", "\u{2029}",
+    ] {
+        let text = format!("left{separator}right{separator}");
+        assert_eq!(
+            measure_file_shape("src/separators.rs", text.as_bytes())
+                .expect("every Python line separator measures")
+                .lines(),
+            2,
+            "separator {separator:?}"
+        );
+    }
+    let replaced = measure_file_shape("src/replaced.rs", b"a\xffb\nc")
+        .expect("invalid non-NUL UTF-8 follows predecessor replacement decoding");
+    assert_eq!((replaced.lines(), replaced.bytes()), (2, 5));
     assert_eq!(
         measure_file_shape("src/empty.rs", b"")
             .expect("empty text is measured, not omitted")
@@ -173,6 +189,18 @@ fn magic_delta_matches_supported_comparisons_and_refuses_ast_substitution() {
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].line(), 4);
     assert_eq!(findings[0].literal(), "100");
+    let separated = scan_magic_regressions(
+        "src/app.rs",
+        &format!("ignored\u{2028}x > {NEW_MAGIC_VALUE}"),
+        None,
+        10,
+    )
+    .expect("Python line separators retain predecessor line numbers");
+    assert_eq!(separated[0].line(), 2);
+    let unclosed_comment =
+        scan_magic_regressions("src/app.rs", &format!("/* x > {NEW_MAGIC_VALUE}"), None, 10)
+            .expect("predecessor regex leaves an unclosed block-comment marker intact");
+    assert_eq!(unclosed_comment[0].literal(), "100");
 
     assert!(matches!(
         scan_magic_regressions(
@@ -213,6 +241,10 @@ fn markdown_links_use_projected_inventory_and_exact_ascii_case() {
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].resolved_path(), "docs/guide.md");
     assert_eq!(findings[0].expected_path(), "Docs/Guide.md");
+    let separated =
+        scan_markdown_link_case("README.md", "plain\u{2028}[Guide](docs/guide.md)", &tracked)
+            .expect("Python line separators retain predecessor link line numbers");
+    assert_eq!(separated[0].line(), 2);
 
     assert!(matches!(
         scan_markdown_link_case("README.md", "[x](Döcs.md)", &tracked),
@@ -254,6 +286,11 @@ fn policy_binding_preserves_regex_rules_magic_and_markdown_depth() {
         &PolicyContext::new().with_path("DOCS_MAIN.mdoc"),
     )
     .expect("root generated Markdown rule resolves");
+    assert!(
+        root.binding()
+            .match_basis()
+            .contains("dialect=rust-regex-1")
+    );
     let nested = resolve_metric_rule(
         &policy,
         MetricId::RepositoryDocumentCharacters,

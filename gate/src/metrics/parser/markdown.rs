@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-use super::{ParseError, canonical_path};
+use super::{ParseError, canonical_path, python_splitlines};
 
 /// One case-mismatched tracked Markdown target.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -64,7 +64,7 @@ pub fn scan_markdown_link_case(
     require_ascii_path(&source_path, "tracked Markdown source")?;
     let tracked = tracked_case_map(tracked_paths)?;
     let mut findings = Vec::new();
-    for (offset, line) in text.split('\n').enumerate() {
+    for (offset, line) in python_splitlines(text).into_iter().enumerate() {
         for captures in link_regex().captures_iter(line) {
             let raw = captures.get(1).map_or("", |value| value.as_str());
             let destination = destination(raw);

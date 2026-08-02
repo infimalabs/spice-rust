@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-use super::{ParseError, canonical_path};
+use super::{ParseError, canonical_path, python_splitlines};
 
 const SUPPORTED_SUFFIXES: &[&str] = &[
     ".c", ".cc", ".cpp", ".go", ".h", ".hpp", ".java", ".kt", ".m", ".mm", ".rs", ".scala",
@@ -95,7 +95,7 @@ fn admit_suffix(path: &str) -> Result<(), ParseError> {
 fn scan_literals(path: &str, text: &str, threshold: u64) -> Result<Vec<MagicFinding>, ParseError> {
     let mut findings = Vec::new();
     let mut in_template = false;
-    for (offset, raw_line) in text.split('\n').enumerate() {
+    for (offset, raw_line) in python_splitlines(text).into_iter().enumerate() {
         let (line, template) = strip_template_literals(raw_line, in_template);
         in_template = template;
         let line = strip_comments(&line);
@@ -234,6 +234,7 @@ fn strip_comments(line: &str) -> String {
                 if let Some(end) = after.find("*/") {
                     remainder = &after[end + 2..];
                 } else {
+                    kept.push_str(&remainder[block..]);
                     break;
                 }
             }

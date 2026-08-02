@@ -120,3 +120,41 @@ pub(super) fn canonical_path(path: &str) -> Result<String, ParseError> {
         Ok(path.to_owned())
     }
 }
+
+pub(super) fn python_splitlines(text: &str) -> Vec<&str> {
+    let mut lines = Vec::new();
+    let mut start = 0;
+    let mut characters = text.char_indices().peekable();
+    while let Some((offset, character)) = characters.next() {
+        if !line_boundary(character) {
+            continue;
+        }
+        lines.push(&text[start..offset]);
+        start = offset + character.len_utf8();
+        if character == '\r'
+            && let Some(&(next_offset, '\n')) = characters.peek()
+        {
+            characters.next();
+            start = next_offset + 1;
+        }
+    }
+    if start < text.len() {
+        lines.push(&text[start..]);
+    }
+    lines
+}
+
+const fn line_boundary(character: char) -> bool {
+    matches!(
+        character,
+        '\n' | '\r'
+            | '\u{000b}'
+            | '\u{000c}'
+            | '\u{001c}'
+            | '\u{001d}'
+            | '\u{001e}'
+            | '\u{0085}'
+            | '\u{2028}'
+            | '\u{2029}'
+    )
+}

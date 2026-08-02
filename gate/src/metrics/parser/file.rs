@@ -1,4 +1,4 @@
-use super::{ParseError, canonical_path};
+use super::{ParseError, canonical_path, python_splitlines};
 
 /// Native line/byte counts for one source file.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -48,8 +48,8 @@ impl RepositoryDocumentMeasurement {
 ///
 /// # Errors
 ///
-/// Binary and invalid UTF-8 source inputs are explicit unsupported states;
-/// they never become a zero-line measurement.
+/// NUL-bearing binary inputs are explicit unsupported states. Other invalid
+/// UTF-8 is decoded with replacement exactly as in the predecessor.
 pub fn measure_file_shape(path: &str, bytes: &[u8]) -> Result<FileShapeMeasurement, ParseError> {
     let path = canonical_path(path)?;
     if bytes.contains(&0) {
@@ -59,16 +59,10 @@ pub fn measure_file_shape(path: &str, bytes: &[u8]) -> Result<FileShapeMeasureme
             "remove the path from the source file class or replace it with UTF-8 text",
         ));
     }
-    let text = std::str::from_utf8(bytes).map_err(|error| {
-        ParseError::unsupported(
-            "policy.file_shape.source_suffixes",
-            format!("selected source {path:?} is not UTF-8: {error}"),
-            "remove the path from the source file class or encode it as UTF-8",
-        )
-    })?;
+    let text = String::from_utf8_lossy(bytes);
     Ok(FileShapeMeasurement {
         path,
-        lines: python_splitlines_count(text),
+        lines: u64::try_from(python_splitlines(&text).len()).expect("line count fits in u64"),
         bytes: u64::try_from(bytes.len()).expect("file byte length fits in u64"),
     })
 }
@@ -94,39 +88,4 @@ pub fn measure_repository_document(
         path,
         characters: u64::try_from(characters).expect("decoded character count fits in u64"),
     })
-}
-
-fn python_splitlines_count(text: &str) -> u64 {
-    if text.is_empty() {
-        return 0;
-    }
-    let mut count = 0_u64;
-    let mut characters = text.chars().peekable();
-    let mut ended = false;
-    while let Some(character) = characters.next() {
-        ended = line_boundary(character);
-        if character == '\r' && characters.peek() == Some(&'\n') {
-            characters.next();
-            ended = true;
-        }
-        if ended {
-            count += 1;
-        }
-    }
-    if ended { count } else { count + 1 }
-}
-
-const fn line_boundary(character: char) -> bool {
-    matches!(
-        character,
-        '\n' | '\r'
-            | '\u{000b}'
-            | '\u{000c}'
-            | '\u{001c}'
-            | '\u{001d}'
-            | '\u{001e}'
-            | '\u{0085}'
-            | '\u{2028}'
-            | '\u{2029}'
-    )
 }
