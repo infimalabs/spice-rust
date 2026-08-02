@@ -1,4 +1,5 @@
 use super::capture::{CaptureWorker, FailureContext, start_capture};
+use super::launch::spawn_inner_refusing_descriptor_setup;
 use super::{Completion, spawn, spawn_observed};
 use crate::lock::{Acquisition, LockFile, LockName, tests::unique_lock_path};
 use crate::observe::{
@@ -566,6 +567,33 @@ fn exec_child_does_not_inherit_lock_possession() {
     ));
     drop(reacquired);
     fs::remove_file(path).expect("remove lock-inheritance test file");
+}
+
+#[test]
+fn descriptor_setup_failure_refuses_protected_child_admission() {
+    let sentinel = unique_lock_path("guardian-admission");
+    let lock_path = unique_lock_path("guardian-admission-lock");
+    let lock = fs::File::create(&lock_path).expect("guardian lock file creates");
+    let spec = test_spec(
+        "/usr/bin/touch",
+        [&sentinel],
+        Environment::empty(),
+        Cancellation::Never,
+        Duration::from_secs(1),
+        StreamPolicy::Null,
+    );
+
+    let error = spawn_inner_refusing_descriptor_setup(spec, &lock)
+        .expect_err("descriptor setup failure must refuse launch");
+
+    assert!(
+        error
+            .to_string()
+            .contains("lock guardian did not complete descriptor setup"),
+        "unexpected guardian refusal: {error}"
+    );
+    assert!(!sentinel.exists(), "protected child was admitted");
+    fs::remove_file(lock_path).expect("guardian lock fixture removes");
 }
 
 fn test_spec<I, S>(

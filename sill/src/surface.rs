@@ -19,6 +19,11 @@ use crate::{
 #[cfg(unix)]
 use crate::{Running, Spec};
 
+#[cfg(unix)]
+mod process_state;
+#[cfg(unix)]
+use process_state::{process_absent, process_group_terminal, process_terminal};
+
 const OWNER_BYTES_LIMIT: u64 = 64 * 1024;
 
 /// Read-only rendering of the configured lock topology.
@@ -102,11 +107,11 @@ impl LockOwnerEvidence {
 
     #[cfg(unix)]
     fn terminal_guardian_pending(&self) -> bool {
-        self.protected_group.is_some_and(process_group_absent)
+        self.protected_group.is_some_and(process_group_terminal)
             && self
                 .protected_guardian
                 .is_some_and(|pid| !process_absent(pid))
-            && (self.owner_released || process_absent(self.pid))
+            && (self.owner_released || process_terminal(self.pid))
     }
 }
 
@@ -652,30 +657,6 @@ fn synchronized_availability(
     lock.availability_opened(file)
 }
 
-#[cfg(unix)]
-fn process_absent(pid: u32) -> bool {
-    let Ok(pid) = libc::pid_t::try_from(pid) else {
-        return false;
-    };
-    kernel_identity_absent(pid)
-}
-
-#[cfg(unix)]
-fn process_group_absent(pid: u32) -> bool {
-    let Ok(pid) = libc::pid_t::try_from(pid) else {
-        return false;
-    };
-    kernel_identity_absent(-pid)
-}
-
-#[cfg(unix)]
-fn kernel_identity_absent(pid: libc::pid_t) -> bool {
-    // SAFETY: signal zero probes identity existence without delivering a signal.
-    unsafe {
-        libc::kill(pid, 0) == -1 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
-    }
-}
-
 fn owner(protected: Option<(u32, u32)>, owner_released: bool) -> io::Result<LockOwnerEvidence> {
     Ok(LockOwnerEvidence {
         pid: process::id(),
@@ -897,6 +878,7 @@ mod tests {
     use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    use super::process_state::{process_group_terminal, process_terminal, process_zombie};
     use super::{
         Contention, LockAttempt, LockAvailability, LockOwnerEvidence, LockSurfaceError,
         LockTargetKind, LockTopology,
@@ -1128,6 +1110,32 @@ mod tests {
             protected_guardian: Some(pid),
         };
         assert!(!departed_guardian.terminal_guardian_pending());
+    }
+
+    #[test]
+    fn unreaped_zombie_process_and_group_are_terminal() {
+        let mut command = Command::new("/usr/bin/true");
+        command.process_group(0);
+        let mut child = command.spawn().expect("zombie fixture launches");
+        let pid = child.id();
+        let mut information = std::mem::MaybeUninit::<libc::siginfo_t>::uninit();
+        // SAFETY: waitid observes this child without reaping it because WNOWAIT is set.
+        assert_eq!(
+            unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    pid,
+                    information.as_mut_ptr(),
+                    libc::WEXITED | libc::WNOWAIT,
+                )
+            },
+            0
+        );
+
+        assert!(process_zombie(pid));
+        assert!(process_terminal(pid));
+        assert!(process_group_terminal(pid));
+        assert!(child.wait().expect("zombie fixture reaps").success());
     }
 
     #[test]
