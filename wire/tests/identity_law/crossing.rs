@@ -937,6 +937,30 @@ fn cover_refusal_frames(covered: &mut BTreeSet<String>) {
 
 /// The frames a caller reads back after a command lands.
 fn cover_reply_frames(covered: &mut BTreeSet<String>) {
+    law(
+        covered,
+        "DemoAnswer",
+        &[
+            DemoAnswer {
+                root: "/tmp/spice-demo-one".to_owned(),
+                transcript: "/tmp/spice-demo-one/spice-demo-transcript.jsonl".to_owned(),
+                mode: "seed".to_owned(),
+                lifecycle: "preserved".to_owned(),
+                endpoint: None,
+                launch_command: "spice demo --reuse /tmp/spice-demo-one".to_owned(),
+                remove_command: "rm -rf -- /tmp/spice-demo-one".to_owned(),
+            },
+            DemoAnswer {
+                root: "/tmp/spice-demo-two".to_owned(),
+                transcript: "/tmp/spice-demo-two/spice-demo-transcript.jsonl".to_owned(),
+                mode: "canvas".to_owned(),
+                lifecycle: "removed".to_owned(),
+                endpoint: Some("http://127.0.0.1:48213".to_owned()),
+                launch_command: "spice demo --reuse /tmp/spice-demo-two".to_owned(),
+                remove_command: "rm -rf -- /tmp/spice-demo-two".to_owned(),
+            },
+        ],
+    );
     cover_journal_reply_frames(covered);
     cover_restore_reply_frames(covered);
     cover_fold_reply_frames(covered);

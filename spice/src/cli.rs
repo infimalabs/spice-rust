@@ -190,6 +190,16 @@ macro_rules! row {
 /// Every current leaf. Parser registration and help are generated from these rows.
 const CONTRACTS: &[Contract] = &[
     row!(
+        ["demo"],
+        "demo [--root DIR] [--reuse DIR] [--seed-only] [--preserve]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "spice::demo"
+    ),
+    row!(
         ["watch"],
         "watch [ROOT]",
         Local,
@@ -1069,7 +1079,8 @@ pub const fn contracts() -> &'static [Contract] {
 /// classification to distinguish tracked work from a dispatch defect.
 pub fn landing(path: &[&str]) -> Landing {
     match path {
-        ["watch"]
+        ["demo"]
+        | ["watch"]
         | ["retro"]
         | ["session"]
         | ["session", "briefing"]

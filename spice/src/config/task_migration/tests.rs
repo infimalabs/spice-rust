@@ -74,7 +74,7 @@ fn every_nonempty_token_refuses_in_source_order_with_complete_identity() {
     }))
     .expect_err("first raw override refuses");
     assert_eq!(first.kind(), MigrationErrorKind::UnsupportedOverride);
-    assert_eq!(first.team(), Some("red"));
+    assert_eq!(first.lineage(), Some("red"));
     assert_eq!(first.field(), "teams[0].shellSettings.rc[0]");
     assert_eq!(first.list_index(), Some(0));
     assert_eq!(first.token(), Some("rc.report.next.sort=urgency-"));

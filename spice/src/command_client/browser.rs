@@ -11,7 +11,7 @@ pub(crate) fn open_canvas(discovery_path: &Path) -> Outcome<wire::CanvasOpen> {
     open_canvas_with(discovery_path, || {}, system_browser)
 }
 
-pub(super) fn open_canvas_with(
+pub(crate) fn open_canvas_with(
     discovery_path: &Path,
     before_current_check: impl FnOnce(),
     launch: impl FnOnce(&str) -> Result<(), String>,

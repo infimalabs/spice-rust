@@ -158,6 +158,28 @@ impl Fixture {
     fn lock_root(&self) -> PathBuf {
         self.root.join("locks")
     }
+
+    fn wait_until_available(&self, name: &str) -> LockReport {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let report = reply_body(self.invoke(&["lock", "--json"]));
+            let availability = report
+                .pools
+                .iter()
+                .find(|pool| pool.name == name)
+                .unwrap_or_else(|| panic!("lock pool {name:?} is reported"))
+                .entries[0]
+                .availability;
+            if availability == LockAvailability::Available {
+                return report;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "lock guardian retained possession after the protected group exited"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
 }
 
 impl Drop for Fixture {
@@ -529,7 +551,7 @@ fn abrupt_wrapper_death_keeps_possession_until_the_protected_group_exits() {
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    let released = reply_body(fixture.invoke(&["lock", "--json"]));
+    let released = fixture.wait_until_available("solo");
     let entry = &released
         .pools
         .iter()
@@ -610,6 +632,7 @@ fn a_surviving_group_member_retains_possession_after_the_leader_exits() {
         .read_to_string(&mut trailing)
         .expect("surviving group member closes stdout on exit");
     assert!(trailing.is_empty(), "group member output: {trailing:?}");
+    fixture.wait_until_available("solo");
     assert_eq!(
         fixture
             .invoke(&["lock", "run", "solo", "--", "/usr/bin/true"])

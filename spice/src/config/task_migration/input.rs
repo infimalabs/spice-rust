@@ -12,7 +12,7 @@ use super::{
 pub(super) struct Parsed {
     pub(super) configured_hidden: Vec<String>,
     pub(super) hidden_provenance: Vec<Source>,
-    pub(super) team_provenance: Vec<MigrationProvenance>,
+    pub(super) lineage_provenance: Vec<MigrationProvenance>,
 }
 
 pub(super) fn parse(input: PredecessorTaskMigration<'_>) -> Result<Parsed, MigrationError> {
@@ -33,11 +33,11 @@ pub(super) fn parse(input: PredecessorTaskMigration<'_>) -> Result<Parsed, Migra
     exact_version(root, input.source_file)?;
     exact_release(root, input.source_file)?;
     let (configured_hidden, hidden_provenance) = hidden_stems(root, input.source_file)?;
-    let team_provenance = team_overrides(root, input.source_file)?;
+    let lineage_provenance = lineage_overrides(root, input.source_file)?;
     Ok(Parsed {
         configured_hidden,
         hidden_provenance,
-        team_provenance,
+        lineage_provenance,
     })
 }
 
@@ -125,7 +125,7 @@ fn hidden_stems(
     Ok((stems, sources))
 }
 
-fn team_overrides(
+fn lineage_overrides(
     root: &Map<String, Value>,
     source_file: &str,
 ) -> Result<Vec<MigrationProvenance>, MigrationError> {
@@ -167,7 +167,7 @@ fn team_overrides(
         let Some(settings) = team.get("shellSettings") else {
             continue;
         };
-        let settings_source = Source::team(
+        let settings_source = Source::lineage(
             source_file,
             identity,
             format!("teams[{team_index}].shellSettings"),
@@ -182,7 +182,7 @@ fn team_overrides(
         let Some((field, value)) = selected else {
             continue;
         };
-        let selected_source = Source::team(
+        let selected_source = Source::lineage(
             source_file,
             identity,
             format!("teams[{team_index}].shellSettings.{field}"),

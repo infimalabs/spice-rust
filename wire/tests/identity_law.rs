@@ -51,12 +51,12 @@ use syn::{Attribute, Fields, Item, Meta, Token, UseTree, Visibility};
 use wire::manifest::ReleaseTarget;
 use wire::{
     Accepted, Actor, Answer, AnyFact, CanonicalUuid, ClaimDisposition, ClaimHead, Command,
-    CommandKind, CursorHead, Derived, Digest, Disposition, DoctorObservation, DoctorToolBounds,
-    DoctorToolCancellation, DoctorToolMode, DoctorToolNetwork, DoctorToolRequirement,
-    DoctorToolSource, DurationWord, Envelope, Fact, FactKind, Fault, FaultClass, FindingHead,
-    FindingState, FoldName, FoldState, Hello, Instant, JournalReport, JournalRestore,
-    LaneResidency, LaneSession, LeaseHead, Name, Origin, Outcome, Overflow, Packed, Phase,
-    Producer, ProofEvidence, Provenance, Refusal, Reply, ReplyPosition, ResidencyHead,
+    CommandKind, CursorHead, DemoAnswer, Derived, Digest, Disposition, DoctorObservation,
+    DoctorToolBounds, DoctorToolCancellation, DoctorToolMode, DoctorToolNetwork,
+    DoctorToolRequirement, DoctorToolSource, DurationWord, Envelope, Fact, FactKind, Fault,
+    FaultClass, FindingHead, FindingState, FoldName, FoldState, Hello, Instant, JournalReport,
+    JournalRestore, LaneResidency, LaneSession, LeaseHead, Name, Origin, Outcome, Overflow, Packed,
+    Phase, Producer, ProofEvidence, Provenance, Refusal, Reply, ReplyPosition, ResidencyHead,
     ResidentState, Response, RestoreVerification, Seq, SeqRange, SpiceVariable, StreamCursor,
     StreamFact, StreamFrame, StreamRequest, TapeLocus, TaskHandle, TaskHead, TrustHead, TrustState,
     TrustView, ViewSubject, WireVersion, Witness, WitnessClass, WitnessHead, WitnessKind,
