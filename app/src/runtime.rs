@@ -233,6 +233,7 @@ pub struct CanvasRuntime {
     facts: BrowserState<FactRow>,
     thread: BrowserState<FactRow>,
     thread_start: Option<Seq>,
+    thread_next: Option<Seq>,
     resume: Option<StreamCursor>,
     terminal: Option<StreamTerminal>,
     events: Vec<RuntimeEvent>,
@@ -256,6 +257,7 @@ impl CanvasRuntime {
             facts: BrowserState::new(accepted),
             thread: BrowserState::new(accepted),
             thread_start: None,
+            thread_next: None,
             resume: None,
             terminal: None,
             events: Vec::new(),
@@ -322,6 +324,15 @@ impl CanvasRuntime {
     #[must_use]
     pub const fn terminal(&self) -> Option<StreamTerminal> {
         self.terminal
+    }
+
+    /// Exact causal cursor whose response can extend the current walk.
+    #[must_use]
+    pub fn pending_thread(&self) -> Option<StreamCursor> {
+        self.thread_next.map(|seq| StreamCursor {
+            epoch: self.principal.epoch(),
+            seq,
+        })
     }
 
     #[must_use]
@@ -405,12 +416,7 @@ impl CanvasRuntime {
                 if packed.overflow.is_none()
                     && let Some(last) = packed.rows.last()
                 {
-                    directives.push(StreamDirective::Thread {
-                        cursor: StreamCursor {
-                            epoch,
-                            seq: last.seq(),
-                        },
-                    });
+                    directives.push(self.begin_thread(epoch, last.seq()));
                 }
                 directives
             }
@@ -419,20 +425,33 @@ impl CanvasRuntime {
                 continuation(ViewSubject::Trust, epoch, packed)
             }
             StreamFrame::Thread { packed, .. } => {
+                let Some(first) = packed.rows.first().map(wire::StreamFact::seq) else {
+                    return Vec::new();
+                };
+                if self.thread_next != Some(first) {
+                    return Vec::new();
+                }
                 if self.thread_start.is_none() {
-                    self.thread_start = packed.rows.first().map(wire::StreamFact::seq);
+                    self.thread_start = Some(first);
                 }
                 self.observe_fact_rows(admitted, &packed.rows, true);
                 self.thread_pages
                     .push(self.page(admitted, project_page(packed)));
-                packed.overflow.map_or_else(Vec::new, |overflow| {
-                    vec![StreamDirective::Thread {
-                        cursor: StreamCursor {
-                            epoch,
-                            seq: overflow.continuation,
-                        },
-                    }]
-                })
+                match packed.overflow {
+                    None => {
+                        self.thread_next = None;
+                        Vec::new()
+                    }
+                    Some(overflow) => {
+                        self.thread_next = Some(overflow.continuation);
+                        vec![StreamDirective::Thread {
+                            cursor: StreamCursor {
+                                epoch,
+                                seq: overflow.continuation,
+                            },
+                        }]
+                    }
+                }
             }
             StreamFrame::Fact { fact, .. } => {
                 self.observe_fact_rows(admitted, std::slice::from_ref(fact), false);
@@ -446,15 +465,7 @@ impl CanvasRuntime {
                     epoch,
                     seq: fact.seq(),
                 });
-                self.thread = BrowserState::new(&self.accepted);
-                self.thread_pages.clear();
-                self.thread_start = None;
-                vec![StreamDirective::Thread {
-                    cursor: StreamCursor {
-                        epoch,
-                        seq: fact.seq(),
-                    },
-                }]
+                vec![self.begin_thread(epoch, fact.seq())]
             }
             StreamFrame::Refusal { refusal, .. } => {
                 self.push_event("refusal", refusal.reason.clone(), refusal.remedy.clone());
@@ -607,6 +618,16 @@ impl CanvasRuntime {
         };
         for row in rows {
             state.observe_stream(admitted, row.seq(), row.origin().clone(), row.cause());
+        }
+    }
+
+    fn begin_thread(&mut self, epoch: CanonicalUuid, seq: Seq) -> StreamDirective {
+        self.thread = BrowserState::new(&self.accepted);
+        self.thread_pages.clear();
+        self.thread_start = None;
+        self.thread_next = Some(seq);
+        StreamDirective::Thread {
+            cursor: StreamCursor { epoch, seq },
         }
     }
 
