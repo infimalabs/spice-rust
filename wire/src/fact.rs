@@ -122,7 +122,7 @@ macro_rules! vocabulary {
             }
 
             /// Validate an opaque body through the DTO registered for this kind.
-            fn validate_body(
+            pub(crate) fn validate_body(
                 self,
                 body: &serde_json::Map<String, serde_json::Value>,
             ) -> Result<(), serde_json::Error> {

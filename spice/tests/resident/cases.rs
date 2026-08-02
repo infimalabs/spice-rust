@@ -34,7 +34,13 @@ fn read_process_stream(
 
 fn open_process_stream(
     discovery: &canvas::Discovery,
-) -> (WebSocket<TcpStream>, wire::CanonicalUuid, wire::Seq, String) {
+    lane_capability: wire::CanonicalUuid,
+) -> (
+    WebSocket<TcpStream>,
+    wire::CanonicalUuid,
+    wire::Seq,
+    [String; 2],
+) {
     let (mut socket, accepted) = authenticate(discovery, discovery.capability);
     assert_eq!(accepted.actor, Actor::Operator);
     let subscription = uuid("018f82d4-6f59-7d06-92e3-bce9131163d0");
@@ -55,34 +61,37 @@ fn open_process_stream(
         panic!("resident must begin with facts");
     };
     let initial_horizon = packed.horizon;
-    assert_eq!(packed.rows.len(), 3, "startup facts share one barrier");
+    assert!(packed.overflow.is_none(), "fixture remains one packed page");
+    assert!(packed.rows.iter().any(|fact| {
+        fact.kind() == FactKind::LaneSeated && !fact.body().contains_key("capability")
+    }));
     assert!(matches!(
         initial_trust,
         wire::StreamFrame::Trust { ref packed, .. }
             if packed.horizon == initial_horizon && packed.rows.len() == 1
     ));
-    let capability_text = discovery.capability.to_string();
-    assert!(!String::from_utf8_lossy(&facts_bytes).contains(&capability_text));
-    assert!(!String::from_utf8_lossy(&trust_bytes).contains(&capability_text));
+    let capability_text = [
+        discovery.capability.to_string(),
+        lane_capability.to_string(),
+    ];
+    for credential in &capability_text {
+        assert!(!String::from_utf8_lossy(&facts_bytes).contains(credential));
+        assert!(!String::from_utf8_lossy(&trust_bytes).contains(credential));
+    }
     (socket, subscription, initial_horizon, capability_text)
 }
 
-fn grant_and_close_process_stream(
+fn mutate_and_close_process_stream(
     fixture: &Fixture,
     discovery: &canvas::Discovery,
     socket: &mut WebSocket<TcpStream>,
     subscription: wire::CanonicalUuid,
     initial_horizon: wire::Seq,
 ) -> wire::Seq {
-    let digest = trust_pended(fixture)
-        .into_iter()
-        .next()
-        .expect("startup trust pends")
-        .digest;
-    let granted = invoke_args(fixture, &["trust", "grant", digest.as_str()], true);
+    let granted = invoke_args(fixture, &["task", "add", "Drive the canvas stream"], true);
     assert!(
         granted.status.success(),
-        "trust grant failed: {}",
+        "task mutation failed: {}",
         String::from_utf8_lossy(&granted.stderr)
     );
     let (live, _) = read_process_stream(socket, "live fact");
@@ -90,14 +99,15 @@ fn grant_and_close_process_stream(
         panic!("Bus commit must produce one live fact");
     };
     assert_eq!(id, subscription);
-    assert!(fact.seq > initial_horizon);
-    let live_cursor = fact.seq;
+    assert!(fact.seq() > initial_horizon);
+    let live_cursor = fact.seq();
     let (trust_update, _) = read_process_stream(socket, "trust update");
     assert!(matches!(
         trust_update,
         wire::StreamFrame::Trust { packed, .. }
             if packed.horizon == live_cursor
-                && packed.rows.iter().any(|row| row.head.state == wire::TrustState::Granted)
+                && !packed.rows.is_empty()
+                && packed.rows.iter().all(|row| row.head.state == wire::TrustState::Granted)
     ));
 
     let thread_id = uuid("018f82d4-6f59-7d06-92e3-bce9131163d1");
@@ -118,7 +128,7 @@ fn grant_and_close_process_stream(
     assert!(matches!(
         thread,
         wire::StreamFrame::Thread { id, ref packed, .. }
-            if id == thread_id && packed.rows.first().is_some_and(|row| row.seq == live_cursor)
+            if id == thread_id && packed.rows.first().is_some_and(|row| row.seq() == live_cursor)
     ));
     socket.close(None).expect("first stream closes");
     live_cursor
@@ -181,7 +191,7 @@ fn finish_process_stream(
     resumed: &mut WebSocket<TcpStream>,
     live_cursor: wire::Seq,
     resident: RunningResident,
-    capability_text: &str,
+    capability_text: &[String; 2],
 ) {
     let down = invoke(fixture, "down");
     assert!(down.status.success(), "down failed: {:?}", down.stderr);
@@ -191,8 +201,8 @@ fn finish_process_stream(
         let (frame, _) = read_process_stream(resumed, "shutdown stream frame");
         match frame {
             wire::StreamFrame::Fact { fact, .. } => {
-                assert!(fact.seq > last, "shutdown facts stay monotone");
-                last = fact.seq;
+                assert!(fact.seq() > last, "shutdown facts stay monotone");
+                last = fact.seq();
             }
             wire::StreamFrame::Closing { after, .. } => {
                 assert_eq!(after.epoch, discovery.epoch);
@@ -209,19 +219,45 @@ fn finish_process_stream(
     );
     let up = resident.wait();
     assert!(up.status.success(), "resident failed: {:?}", up.stderr);
-    assert!(!String::from_utf8_lossy(&up.stdout).contains(capability_text));
-    assert!(!String::from_utf8_lossy(&up.stderr).contains(capability_text));
+    for credential in capability_text {
+        assert!(!String::from_utf8_lossy(&up.stdout).contains(credential));
+        assert!(!String::from_utf8_lossy(&up.stderr).contains(credential));
+    }
 }
 
 #[test]
 fn resident_process_streams_snapshot_bus_update_thread_resume_stale_and_shutdown_boundaries() {
     let fixture = Fixture::new("canvas-stream");
+    let mut initial = RunningResident::spawn(&fixture);
+    initial.assert_ready(&fixture);
+    let digest = trust_pended(&fixture)
+        .into_iter()
+        .next()
+        .expect("startup trust pends")
+        .digest;
+    let granted = invoke_args(&fixture, &["trust", "grant", digest.as_str()], true);
+    assert!(
+        granted.status.success(),
+        "initial trust grant failed: {}",
+        String::from_utf8_lossy(&granted.stderr)
+    );
+    let down = invoke(&fixture, "down");
+    assert!(
+        down.status.success(),
+        "initial down failed: {:?}",
+        down.stderr
+    );
+    assert!(initial.wait().status.success(), "initial resident failed");
+
+    let lane = uuid("00000000-0000-4000-8000-000000000041");
+    let lane_capability = uuid("00000000-0000-4000-8000-000000000042");
+    seed_lane(&fixture, lane, lane_capability);
     let mut resident = RunningResident::spawn(&fixture);
     resident.assert_ready(&fixture);
     let discovery = fixture.discovery();
     let (mut socket, subscription, initial_horizon, capability_text) =
-        open_process_stream(&discovery);
-    let live_cursor = grant_and_close_process_stream(
+        open_process_stream(&discovery, lane_capability);
+    let live_cursor = mutate_and_close_process_stream(
         &fixture,
         &discovery,
         &mut socket,

@@ -9,8 +9,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AnyFact, CanonicalUuid, Envelope, Fault, FaultClass, Packed, Refusal, Seq, TrustHead,
-    WireVersion,
+    Actor, AnyFact, CanonicalUuid, Envelope, FactKind, Fault, FaultClass, Instant, Name, Origin,
+    Packed, Refusal, Seq, TrustHead, WireVersion,
 };
 
 /// A resumable journal position bound to one resident generation.
@@ -167,6 +167,180 @@ pub struct TrustView {
     pub head: TrustHead,
 }
 
+/// One credential-free fact rendered for an authenticated canvas view.
+///
+/// Journal facts retain their complete durable identity internally. This
+/// projection carries the same version, position, instant, actor, origin,
+/// cause, kind, and non-credential body fields, but `lane::seated` deliberately
+/// omits the capability that is valid only in [`crate::Hello`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct StreamFact(Envelope<StreamFactBody>);
+
+impl StreamFact {
+    /// Wire version stored with the durable fact.
+    #[must_use]
+    pub const fn wire(&self) -> WireVersion {
+        self.0.v
+    }
+
+    /// Durable journal position, unchanged by presentation.
+    #[must_use]
+    pub const fn seq(&self) -> Seq {
+        self.0.seq
+    }
+
+    /// Commit instant, unchanged by presentation.
+    #[must_use]
+    pub const fn at(&self) -> &Instant {
+        &self.0.at
+    }
+
+    /// Principal that caused the durable append.
+    #[must_use]
+    pub const fn actor(&self) -> &Actor {
+        &self.0.actor
+    }
+
+    /// Root attribution carried through the durable append.
+    #[must_use]
+    pub const fn origin(&self) -> &Origin {
+        &self.0.origin
+    }
+
+    /// Immediately provoking fact, if this is not a causal root.
+    #[must_use]
+    pub const fn cause(&self) -> Option<Seq> {
+        self.0.cause
+    }
+
+    /// Closed fact kind retained by the credential-free projection.
+    #[must_use]
+    pub const fn kind(&self) -> FactKind {
+        self.0.fact.kind
+    }
+
+    /// Strict kind-specific body fields retained for presentation.
+    #[must_use]
+    pub const fn body(&self) -> &serde_json::Map<String, serde_json::Value> {
+        &self.0.fact.body
+    }
+}
+
+impl From<Envelope<AnyFact>> for StreamFact {
+    fn from(envelope: Envelope<AnyFact>) -> Self {
+        let Envelope {
+            v,
+            seq,
+            at,
+            actor,
+            origin,
+            cause,
+            fact,
+        } = envelope;
+        let kind = fact.kind();
+        let body = stream_fact_body(&fact);
+        Self(Envelope {
+            v,
+            seq,
+            at,
+            actor,
+            origin,
+            cause,
+            fact: StreamFactBody { kind, body },
+        })
+    }
+}
+
+fn stream_fact_body(fact: &AnyFact) -> serde_json::Map<String, serde_json::Value> {
+    if fact.kind() != FactKind::LaneSeated {
+        return fact.body().clone();
+    }
+    let durable: crate::body::LaneSeated =
+        serde_json::from_value(serde_json::Value::Object(fact.body().clone()))
+            .expect("validated lane::seated decodes through its registered DTO");
+    let crate::body::LaneSeated {
+        lane,
+        capability: _,
+        worktree,
+        life,
+        vendor,
+    } = durable;
+    let visible = StreamLaneSeated {
+        lane,
+        worktree,
+        life,
+        vendor,
+    };
+    let serde_json::Value::Object(body) =
+        serde_json::to_value(visible).expect("stream lane::seated body encodes")
+    else {
+        unreachable!("stream lane::seated is an object DTO");
+    };
+    body
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct StreamFactBody {
+    kind: FactKind,
+    #[serde(flatten)]
+    body: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+struct UncheckedStreamFactBody {
+    kind: FactKind,
+    #[serde(flatten)]
+    body: serde_json::Map<String, serde_json::Value>,
+}
+
+impl<'de> Deserialize<'de> for StreamFactBody {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let unchecked = UncheckedStreamFactBody::deserialize(deserializer)?;
+        if unchecked.kind == FactKind::LaneSeated {
+            validate_exact_body::<StreamLaneSeated>(&unchecked.body)
+                .map_err(serde::de::Error::custom)?;
+        } else {
+            unchecked
+                .kind
+                .validate_body(&unchecked.body)
+                .map_err(serde::de::Error::custom)?;
+        }
+        Ok(Self {
+            kind: unchecked.kind,
+            body: unchecked.body,
+        })
+    }
+}
+
+/// Public fields of `lane::seated`; the socket credential is intentionally absent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StreamLaneSeated {
+    lane: CanonicalUuid,
+    worktree: String,
+    life: String,
+    vendor: Name,
+}
+
+fn validate_exact_body<T>(
+    body: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), serde_json::Error>
+where
+    T: Serialize + serde::de::DeserializeOwned,
+{
+    let supplied = serde_json::Value::Object(body.clone());
+    let decoded: T = serde_json::from_value(supplied.clone())?;
+    let registered = serde_json::to_value(decoded)?;
+    if supplied == registered {
+        Ok(())
+    } else {
+        Err(<serde_json::Error as serde::de::Error>::custom(
+            "body fields do not exactly match the stream DTO",
+        ))
+    }
+}
+
 /// One strict resident-to-client stream frame.
 ///
 /// Successful packed answers keep their overflow, continuation, and horizon.
@@ -180,7 +354,7 @@ pub enum StreamFrame {
         v: WireVersion,
         id: CanonicalUuid,
         epoch: CanonicalUuid,
-        packed: Packed<Envelope<AnyFact>>,
+        packed: Packed<StreamFact>,
     },
     /// Initial, continued, or refreshed trust-head page.
     Trust {
@@ -194,14 +368,14 @@ pub enum StreamFrame {
         v: WireVersion,
         id: CanonicalUuid,
         epoch: CanonicalUuid,
-        packed: Packed<Envelope<AnyFact>>,
+        packed: Packed<StreamFact>,
     },
     /// One later durable fact for an active subscription.
     Fact {
         v: WireVersion,
         id: CanonicalUuid,
         epoch: CanonicalUuid,
-        fact: Envelope<AnyFact>,
+        fact: StreamFact,
     },
     /// The authenticated principal cannot admit the request as written.
     Refusal {

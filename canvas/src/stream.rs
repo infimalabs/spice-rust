@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bus::{BusReader, CanvasSnapshot, JournalCommit};
 use wire::{
-    Accepted, Actor, Fault, FaultClass, Overflow, Packed, Refusal, Seq, StreamCursor, StreamFrame,
-    StreamRequest, TrustView, ViewSubject, WireVersion,
+    Accepted, Actor, Fault, FaultClass, Overflow, Packed, Refusal, Seq, StreamCursor, StreamFact,
+    StreamFrame, StreamRequest, TrustView, ViewSubject, WireVersion,
 };
 
 use crate::thread::{ThreadError, ThreadIndex};
@@ -109,7 +109,8 @@ impl Source {
                     &format!("causal position {position} is absent at this barrier"),
                 )),
                 other => thread_fault(other),
-            })?;
+            })
+            .map(present_facts)?;
         Ok(StreamFrame::Thread {
             v: WireVersion::CURRENT,
             id: *id,
@@ -225,6 +226,7 @@ impl Subscription {
                     .iter()
                     .filter(|fact| fact.seq.get() > after)
                     .cloned()
+                    .map(StreamFact::from)
                     .map(|fact| StreamFrame::Fact {
                         v: WireVersion::CURRENT,
                         id: self.id,
@@ -309,9 +311,10 @@ impl Subscription {
                         continuation.is_some() || self.cursor.is_none_or(|cursor| fact.seq > cursor)
                     })
                     .cloned()
+                    .map(StreamFact::from)
                     .collect::<Vec<_>>();
-                let packed = pack_unique(facts, self.rows, horizon, |fact| fact.seq)?;
-                self.record_page(subject, &packed, |fact| fact.seq);
+                let packed = pack_unique(facts, self.rows, horizon, StreamFact::seq)?;
+                self.record_page(subject, &packed, StreamFact::seq);
                 StreamFrame::Facts {
                     v: WireVersion::CURRENT,
                     id: request_id,
@@ -459,6 +462,14 @@ fn trust_rows(snapshot: &CanvasSnapshot) -> Vec<TrustView> {
             .then_with(|| left.head.digest.cmp(&right.head.digest))
     });
     rows
+}
+
+fn present_facts(packed: Packed<wire::Envelope<wire::AnyFact>>) -> Packed<StreamFact> {
+    Packed {
+        rows: packed.rows.into_iter().map(StreamFact::from).collect(),
+        overflow: packed.overflow,
+        horizon: packed.horizon,
+    }
 }
 
 fn pack_unique<T>(
@@ -644,7 +655,7 @@ mod tests {
         }
     }
 
-    fn facts(frame: &StreamFrame) -> &Packed<wire::Envelope<wire::AnyFact>> {
+    fn facts(frame: &StreamFrame) -> &Packed<StreamFact> {
         let StreamFrame::Facts { packed, .. } = frame else {
             panic!("expected facts, found {frame:?}");
         };
@@ -666,7 +677,7 @@ mod tests {
             facts(&frames[0])
                 .rows
                 .iter()
-                .map(|fact| fact.seq)
+                .map(StreamFact::seq)
                 .collect::<Vec<_>>(),
             [seq(1), seq(2)]
         );
@@ -730,7 +741,7 @@ mod tests {
             facts(&frames[0])
                 .rows
                 .iter()
-                .map(|fact| fact.seq)
+                .map(StreamFact::seq)
                 .collect::<Vec<_>>(),
             [seq(5), seq(6)]
         );
@@ -761,7 +772,7 @@ mod tests {
         let StreamFrame::Fact { fact, .. } = &frames[0] else {
             panic!("expected live fact: {frames:?}");
         };
-        assert_eq!(fact.seq, seq(3));
+        assert_eq!(fact.seq(), seq(3));
         assert_eq!(subscription.cursor(), Some(seq(3)));
         drop(source);
         bus.shutdown().expect("bus shuts down");
@@ -870,7 +881,7 @@ mod tests {
         };
 
         assert_eq!(
-            packed.rows.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
+            packed.rows.iter().map(StreamFact::seq).collect::<Vec<_>>(),
             [seq(5), seq(4)]
         );
         assert_eq!(packed.overflow.expect("overflow").continuation, seq(3));

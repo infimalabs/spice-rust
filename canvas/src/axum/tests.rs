@@ -78,8 +78,43 @@ fn commit_stream(bus: &bus::Bus, note: &str, trust: bool) -> bus::JournalCommit 
     }
 }
 
+fn commit_lane_stream(
+    bus: &bus::Bus,
+    lane: wire::CanonicalUuid,
+    capability: wire::CanonicalUuid,
+) -> bus::JournalCommit {
+    let mut write = journal::JournalWrite::new(
+        wire::Actor::Spice,
+        format!("resident:{}", epoch()).parse().expect("origin"),
+        "2030-04-12T18:44:09.272Z".parse().expect("instant"),
+        wire::Producer::ResidentRecognition,
+    );
+    write
+        .fact(
+            wire::body::LaneSeated {
+                lane,
+                capability,
+                worktree: "/tmp/canvas-stream-lane".to_owned(),
+                life: "drive".to_owned(),
+                vendor: "claude".parse().expect("vendor"),
+            },
+            journal::FactCause::Root,
+        )
+        .expect("lane fact builds");
+    match bus.commit(write).expect("bus answers") {
+        bus::CommitOutcome::Committed(commit) => commit,
+        other => panic!("lane stream fixture failed: {other:?}"),
+    }
+}
+
 async fn stream_frame(socket: &mut ClientSocket) -> wire::StreamFrame {
-    wire::decode(&next_frame(socket).await).expect("current stream frame")
+    stream_frame_bytes(socket).await.0
+}
+
+async fn stream_frame_bytes(socket: &mut ClientSocket) -> (wire::StreamFrame, Vec<u8>) {
+    let bytes = next_frame(socket).await;
+    let frame = wire::decode(&bytes).expect("current stream frame");
+    (frame, bytes)
 }
 
 fn speech() -> crate::SpeechConfig {
@@ -177,11 +212,106 @@ async fn assert_socket_terminated(socket: &mut ClientSocket) {
     );
 }
 
+async fn assert_initial_stream(
+    socket: &mut ClientSocket,
+    subscription: wire::CanonicalUuid,
+    lane_capability: wire::CanonicalUuid,
+) {
+    send_client(
+        socket,
+        &wire::StreamRequest::Subscribe {
+            v: wire::WireVersion::CURRENT,
+            id: subscription,
+            epoch: epoch(),
+            subjects: vec![wire::ViewSubject::Facts, wire::ViewSubject::Trust],
+            after: None,
+        },
+    )
+    .await;
+    let (facts, fact_bytes) = stream_frame_bytes(socket).await;
+    let (trust, trust_bytes) = stream_frame_bytes(socket).await;
+    let wire::StreamFrame::Facts { packed, .. } = &facts else {
+        panic!("expected initial facts: {facts:?}");
+    };
+    let horizon = packed.horizon;
+    assert_eq!(packed.rows.len(), 3);
+    assert!(
+        packed
+            .rows
+            .iter()
+            .any(|fact| fact.kind() == wire::FactKind::LaneSeated)
+    );
+    assert!(matches!(
+        trust,
+        wire::StreamFrame::Trust { ref packed, .. }
+            if packed.horizon == horizon && packed.rows.len() == 1
+    ));
+    let returned = [fact_bytes, trust_bytes].concat();
+    assert!(!String::from_utf8_lossy(&returned).contains(&operator().to_string()));
+    assert!(!String::from_utf8_lossy(&returned).contains(&lane_capability.to_string()));
+}
+
+async fn assert_live_stream(
+    socket: &mut ClientSocket,
+    bus: &bus::Bus,
+    subscription: wire::CanonicalUuid,
+) -> u64 {
+    let update = commit_stream(bus, "later", false);
+    let live = stream_frame(socket).await;
+    assert!(matches!(
+        live,
+        wire::StreamFrame::Fact { ref fact, id, .. }
+            if id == subscription && fact.seq().get() == update.last()
+    ));
+    assert!(matches!(
+        stream_frame(socket).await,
+        wire::StreamFrame::Trust { .. }
+    ));
+    let lane_capability = identity(0xe6);
+    let lane = commit_lane_stream(bus, identity(0xe5), lane_capability);
+    let (lane_frame, lane_bytes) = stream_frame_bytes(socket).await;
+    assert!(matches!(
+        lane_frame,
+        wire::StreamFrame::Fact { ref fact, .. }
+            if fact.seq().get() == lane.last() && fact.kind() == wire::FactKind::LaneSeated
+    ));
+    assert!(!String::from_utf8_lossy(&lane_bytes).contains(&lane_capability.to_string()));
+    assert!(matches!(
+        stream_frame(socket).await,
+        wire::StreamFrame::Trust { .. }
+    ));
+    send_client(
+        socket,
+        &wire::StreamRequest::Thread {
+            v: wire::WireVersion::CURRENT,
+            id: identity(0xd2),
+            epoch: epoch(),
+            cursor: wire::StreamCursor {
+                epoch: epoch(),
+                seq: seq(lane.last()),
+            },
+        },
+    )
+    .await;
+    let (thread, bytes) = stream_frame_bytes(socket).await;
+    assert!(matches!(
+        thread,
+        wire::StreamFrame::Thread { ref packed, .. }
+            if packed.rows.first().is_some_and(|fact| {
+                fact.seq().get() == lane.last() && fact.kind() == wire::FactKind::LaneSeated
+            })
+    ));
+    assert!(!String::from_utf8_lossy(&bytes).contains(&lane_capability.to_string()));
+    lane.last()
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn authenticated_socket_streams_one_bus_snapshot_updates_resume_and_typed_shutdown() {
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
     commit_stream(&bus, "initial", true);
+    let initial_lane_capability = identity(0xe8);
+    commit_lane_stream(&bus, identity(0xe7), initial_lane_capability);
     let capabilities = Capabilities::default();
     capabilities
         .insert(operator(), wire::Actor::Operator)
@@ -197,48 +327,8 @@ async fn authenticated_socket_streams_one_bus_snapshot_updates_resume_and_typed_
     }));
     let (mut socket, _) = authenticate(address, operator(), epoch()).await;
     let subscription = identity(0xd0);
-    send_client(
-        &mut socket,
-        &wire::StreamRequest::Subscribe {
-            v: wire::WireVersion::CURRENT,
-            id: subscription,
-            epoch: epoch(),
-            subjects: vec![wire::ViewSubject::Facts, wire::ViewSubject::Trust],
-            after: None,
-        },
-    )
-    .await;
-    let initial_facts = stream_frame(&mut socket).await;
-    let initial_trust = stream_frame(&mut socket).await;
-    let wire::StreamFrame::Facts { packed, .. } = &initial_facts else {
-        panic!("expected initial facts: {initial_facts:?}");
-    };
-    let horizon = packed.horizon;
-    assert_eq!(packed.rows.len(), 2);
-    assert!(matches!(
-        initial_trust,
-        wire::StreamFrame::Trust { ref packed, .. }
-            if packed.horizon == horizon && packed.rows.len() == 1
-    ));
-    let returned = [
-        wire::encode(&initial_facts).expect("facts encode"),
-        wire::encode(&initial_trust).expect("trust encodes"),
-    ]
-    .concat();
-    assert!(!String::from_utf8_lossy(&returned).contains(&operator().to_string()));
-
-    let update = commit_stream(&bus, "later", false);
-    let live = stream_frame(&mut socket).await;
-    assert!(matches!(
-        live,
-        wire::StreamFrame::Fact { ref fact, id, .. }
-            if id == subscription && fact.seq.get() == update.last()
-    ));
-    // Trust is a replacement view and follows the same broadcast barrier.
-    assert!(matches!(
-        stream_frame(&mut socket).await,
-        wire::StreamFrame::Trust { .. }
-    ));
+    assert_initial_stream(&mut socket, subscription, initial_lane_capability).await;
+    let live_cursor = assert_live_stream(&mut socket, &bus, subscription).await;
     socket.close(None).await.expect("first socket closes");
 
     let (mut resumed, _) = authenticate(address, operator(), epoch()).await;
@@ -251,7 +341,7 @@ async fn authenticated_socket_streams_one_bus_snapshot_updates_resume_and_typed_
             subjects: vec![wire::ViewSubject::Facts],
             after: Some(wire::StreamCursor {
                 epoch: epoch(),
-                seq: seq(update.last()),
+                seq: seq(live_cursor),
             }),
         },
     )
@@ -259,14 +349,14 @@ async fn authenticated_socket_streams_one_bus_snapshot_updates_resume_and_typed_
     assert!(matches!(
         stream_frame(&mut resumed).await,
         wire::StreamFrame::Facts { packed, .. }
-            if packed.rows.is_empty() && packed.horizon == seq(update.last())
+            if packed.rows.is_empty() && packed.horizon == seq(live_cursor)
     ));
 
     shutdown.send(()).expect("shutdown signals");
     assert!(matches!(
         stream_frame(&mut resumed).await,
         wire::StreamFrame::Closing { after, .. }
-            if after.seq == seq(update.last()) && after.epoch == epoch()
+            if after.seq == seq(live_cursor) && after.epoch == epoch()
     ));
     assert_socket_terminated(&mut resumed).await;
     server_task
