@@ -11,10 +11,15 @@ use serde::Serialize;
 
 use crate::manifest::GateId;
 
+mod analyze;
 mod measure;
 mod predecessor;
 
-pub use measure::measure_hygiene;
+pub use analyze::{
+    HygieneAnalysisError, HygieneConfiguration, HygieneExclusion, PrivateCouplingException,
+    analyze_hygiene,
+};
+pub(crate) use measure::measure_hygiene;
 pub use predecessor::{
     MigrationRefusal, PredecessorComparison, PredecessorComparisonError, PredecessorObservation,
     PredecessorResult, compare_predecessor,
@@ -436,12 +441,13 @@ impl AnalyzerEvidence {
             Self::Identified {
                 name,
                 requested,
+                resolved,
                 declared_version,
                 observed_version,
                 digest,
-                ..
             } if name == declaration.analyzer.evidence_name()
                 && requested == declaration.analyzer.component()
+                && !resolved.is_empty()
                 && declared_version == NATIVE_ANALYZER_VERSION
                 && observed_version == NATIVE_ANALYZER_VERSION
                 && !digest.is_empty()
@@ -785,17 +791,17 @@ impl HygieneOutcome {
 
 /// Raw native-run observation measured against one declaration.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HygieneObservation {
+pub(crate) struct HygieneObservation {
     /// Stable current gate identity.
-    pub gate_id: GateId,
+    pub(crate) gate_id: GateId,
     /// Typed terminal outcome.
-    pub outcome: HygieneOutcome,
+    pub(crate) outcome: HygieneOutcome,
     /// Exact one-line cause.
-    pub reason: String,
+    pub(crate) reason: String,
     /// Typed stage evidence in any input order.
-    pub evidence: Vec<AnalysisEvidence>,
+    pub(crate) evidence: Vec<AnalysisEvidence>,
     /// Structured findings in any input order.
-    pub findings: Vec<HygieneFinding>,
+    pub(crate) findings: Vec<HygieneFinding>,
 }
 
 /// Canonical retained measurement of one hygiene arm.
