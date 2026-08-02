@@ -364,6 +364,26 @@ tbody tr:last-child td { border-bottom: 0; }
 .event p { margin: 4px 0 0; color: var(--muted); font-size: .78rem; overflow-wrap: anywhere; }
 .event.refusal strong { color: var(--warning); }
 .event.fault strong { color: var(--danger); }
+.event.overflow strong { color: var(--warning); }
+
+.packed-page + .packed-page { margin-top: 18px; }
+
+.packed-provenance {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 0 0 8px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .72rem;
+}
+
+.overflow-marker {
+  color: var(--warning);
+  font-weight: 700;
+}
+
+.trust-history { margin-top: 14px; }
 
 .form {
   display: grid;

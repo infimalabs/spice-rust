@@ -12,13 +12,14 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use wire::intent::{
-    BoardAnswer, BoardRead, ConsentPolicy, ConsentPolicyAnswer, ConsentQueueAnswer, ConsentRead,
-    InboxAnswer, LaneAnswer, LaneRead, SteerInbox, TaskAnswer, TaskNote,
+    BoardRead, ConsentPolicy, ConsentRead, LaneRead, SteerInbox, TaskAnswer, TaskNote,
 };
-use wire::{Answer, CanonicalUuid, CommandKind, Outcome, Response, TaskHandle, Witness};
+use wire::{
+    Answer, CanonicalUuid, CommandKind, Response, StreamRequest, TaskHandle, WireVersion, Witness,
+};
 use yew::prelude::*;
 
-use crate::{Axis, Principal, Session, SteerPane};
+use crate::{Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective};
 
 type SenderHandle = Rc<RefCell<Option<UnboundedSender<ClientAction>>>>;
 
@@ -90,29 +91,7 @@ impl Connection {
     }
 }
 
-#[derive(Clone, PartialEq)]
-struct EventRow {
-    class: &'static str,
-    title: String,
-    detail: String,
-}
-
-#[derive(Clone, Default, PartialEq)]
-struct SurfaceData {
-    board: Option<BoardAnswer>,
-    lanes: Option<LaneAnswer>,
-    inbox: Option<InboxAnswer>,
-    consent: Option<ConsentQueueAnswer>,
-    policy: Option<ConsentPolicyAnswer>,
-    events: Vec<EventRow>,
-}
-
-impl SurfaceData {
-    fn push(&mut self, row: EventRow) {
-        self.events.insert(0, row);
-        self.events.truncate(12);
-    }
-}
+type SurfaceData = Option<CanvasRuntime>;
 
 #[derive(Clone)]
 enum ClientAction {
@@ -128,14 +107,14 @@ enum ClientAction {
     },
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum PendingKind {
     Board,
     Lanes,
     Inbox,
     Consent,
     Policy,
-    Note,
+    Note(TaskHandle),
     ConsentDecision,
 }
 
@@ -342,10 +321,10 @@ fn render_canvas(
     toggle_speech: Callback<MouseEvent>,
 ) -> Html {
     let active_axis = **axis;
-    let cursor = surface
-        .board
+    let cursor = (**surface)
         .as_ref()
-        .map(|board| board.cursor.to_string())
+        .and_then(CanvasRuntime::resume)
+        .map(|cursor| cursor.seq.to_string())
         .unwrap_or_else(|| "-".to_owned());
     html! {
         <div class="shell">
@@ -409,23 +388,26 @@ fn render_workspace(
     speech_status: &SpeechStatus,
     toggle_speech: Callback<MouseEvent>,
 ) -> Html {
-    let task_count = surface.board.as_ref().map_or(0, |board| board.tasks.len());
-    let active_tasks = surface.board.as_ref().map_or(0, |board| {
+    let runtime = (**surface).as_ref();
+    let task_count = runtime
+        .and_then(CanvasRuntime::board)
+        .map_or(0, |board| board.tasks.len());
+    let active_tasks = runtime.and_then(CanvasRuntime::board).map_or(0, |board| {
         board
             .tasks
             .iter()
             .filter(|task| task.workflow.body.status != "completed")
             .count()
     });
-    let lane_count = surface.lanes.as_ref().map_or(0, |lanes| lanes.lanes.len());
-    let pending_count = surface
-        .consent
-        .as_ref()
+    let lane_count = runtime
+        .and_then(CanvasRuntime::lanes)
+        .map_or(0, |lanes| lanes.lanes.len());
+    let pending_count = runtime
+        .and_then(CanvasRuntime::consent)
         .map_or(0, |consent| consent.pending.len());
-    let cursor = surface
-        .board
-        .as_ref()
-        .map(|board| board.cursor.to_string())
+    let cursor = runtime
+        .and_then(CanvasRuntime::resume)
+        .map(|cursor| cursor.seq.to_string())
         .unwrap_or_else(|| "-".to_owned());
     html! {
         <div class="workspace">
@@ -455,7 +437,7 @@ fn render_workspace(
                         pending_count.to_string(),
                         "pending decisions".to_owned(),
                     )}
-                    {metric("Journal", cursor, "snapshot cursor".to_owned())}
+                    {metric("Journal", cursor, "admitted stream cursor".to_owned())}
                 </section>
                 <div class="pane-strip" aria-label="Panes on this axis">
                     {for active_axis.panes().map(|pane| html! {
@@ -465,6 +447,7 @@ fn render_workspace(
                 {render_axis(
                     active_axis,
                     surface,
+                    connection,
                     sender,
                     note_task,
                     note_text,
@@ -521,6 +504,7 @@ fn speech_control(
 fn render_axis(
     axis: Axis,
     surface: &SurfaceData,
+    connection: &Connection,
     sender: &SenderHandle,
     note_task: &UseStateHandle<String>,
     note_text: &UseStateHandle<String>,
@@ -530,12 +514,12 @@ fn render_axis(
         Axis::Magnitude => render_magnitude(surface),
         Axis::Flow => render_flow(surface, note_task, note_text, submit_note),
         Axis::Topology => render_topology(surface),
-        Axis::Chronology => render_chronology(surface, sender),
+        Axis::Chronology => render_chronology(surface, sender, connection),
     }
 }
 
 fn render_magnitude(surface: &SurfaceData) -> Html {
-    let Some(consent) = &surface.consent else {
+    let Some(consent) = surface.as_ref().and_then(CanvasRuntime::consent) else {
         return empty("No magnitude snapshot is available.");
     };
     html! {
@@ -570,9 +554,12 @@ fn render_flow(
     note_text: &UseStateHandle<String>,
     submit_note: Callback<SubmitEvent>,
 ) -> Html {
-    let Some(board) = &surface.board else {
+    let Some(board) = surface.as_ref().and_then(CanvasRuntime::board) else {
         return empty("No board snapshot is available.");
     };
+    let can_note = surface
+        .as_ref()
+        .is_some_and(|runtime| runtime.offers(CommandKind::TaskNote));
     let selected = (**note_task).clone();
     let note = (**note_text).clone();
     html! {
@@ -611,9 +598,10 @@ fn render_flow(
                     })}</tbody>
                 </table></div>
             </section>
-            <section class="section">
-                <div class="section-heading"><h2>{"Append observation"}</h2></div>
-                <form class="form" onsubmit={submit_note}>
+            if can_note {
+                <section class="section">
+                    <div class="section-heading"><h2>{"Append observation"}</h2></div>
+                    <form class="form" onsubmit={submit_note}>
                     <label for="note-task">{"Task"}</label>
                     <input
                         id="note-task"
@@ -642,59 +630,73 @@ fn render_flow(
                         type="submit"
                         disabled={note_task.is_empty() || note_text.trim().is_empty()}
                     >{"Add note"}</button>
-                </form>
-            </section>
+                    </form>
+                </section>
+            }
         </div>
     }
 }
 
 fn render_topology(surface: &SurfaceData) -> Html {
-    let Some(lanes) = &surface.lanes else {
+    let Some(runtime) = surface.as_ref() else {
+        return empty("No admitted topology is available.");
+    };
+    let Some(lanes) = runtime.lanes() else {
         return empty("No lane snapshot is available.");
     };
     html! {
-        <section class="section">
-            <div class="section-heading">
-                <h2>{"Resident topology"}</h2>
-                <span class="section-count">{format!("{} lanes", lanes.lanes.len())}</span>
-            </div>
-            if lanes.lanes.is_empty() {
-                {empty("No lanes are seated.")}
-            } else {
-                <div class="table-wrap"><table>
-                    <thead><tr>
-                        <th>{"Lane"}</th><th>{"Standing"}</th><th>{"Occupant"}</th>
-                        <th>{"Worktree"}</th><th>{"Vendor"}</th>
-                    </tr></thead>
-                    <tbody>{for lanes.lanes.iter().map(|lane| html! {
-                        <tr>
-                            <td class="mono">{short(&lane.lane.to_string())}</td>
-                            <td><span class="tag active">{lane.disposition.clone()}</span></td>
-                            <td class="mono">{
-                                lane
-                                    .occupant
-                                    .map(|value| short(&value.to_string()))
-                                    .unwrap_or_else(|| "vacant".to_owned())
-                            }</td>
-                            <td class="mono">{lane.worktree.clone()}</td>
-                            <td>{lane.vendor.to_string()}</td>
-                        </tr>
-                    })}</tbody>
-                </table></div>
-            }
-        </section>
+        <>
+            <section class="section">
+                <div class="section-heading">
+                    <h2>{"Resident topology"}</h2>
+                    <span class="section-count">{format!("{} lanes", lanes.lanes.len())}</span>
+                </div>
+                if lanes.lanes.is_empty() {
+                    {empty("No lanes are seated.")}
+                } else {
+                    <div class="table-wrap"><table>
+                        <thead><tr>
+                            <th>{"Lane"}</th><th>{"Standing"}</th><th>{"Occupant"}</th>
+                            <th>{"Worktree"}</th><th>{"Vendor"}</th>
+                        </tr></thead>
+                        <tbody>{for lanes.lanes.iter().map(|lane| html! {
+                            <tr>
+                                <td class="mono">{short(&lane.lane.to_string())}</td>
+                                <td><span class="tag active">{lane.disposition.clone()}</span></td>
+                                <td class="mono">{
+                                    lane
+                                        .occupant
+                                        .map(|value| short(&value.to_string()))
+                                        .unwrap_or_else(|| "vacant".to_owned())
+                                }</td>
+                                <td class="mono">{lane.worktree.clone()}</td>
+                                <td>{lane.vendor.to_string()}</td>
+                            </tr>
+                        })}</tbody>
+                    </table></div>
+                }
+            </section>
+            {render_causal_thread(runtime)}
+        </>
     }
 }
 
-fn render_chronology(surface: &SurfaceData, sender: &SenderHandle) -> Html {
+fn render_chronology(
+    surface: &SurfaceData,
+    sender: &SenderHandle,
+    connection: &Connection,
+) -> Html {
+    let runtime = surface.as_ref();
+    let can_decide = runtime
+        .is_some_and(|runtime| runtime.grants() && runtime.offers(CommandKind::ConsentDecide));
     let pending = surface
-        .consent
         .as_ref()
+        .and_then(CanvasRuntime::consent)
         .map(|value| value.pending.as_slice())
         .unwrap_or(&[]);
     let directives = surface
-        .inbox
         .as_ref()
+        .and_then(CanvasRuntime::inbox)
         .map(|inbox| {
             inbox
                 .lanes
@@ -703,18 +705,23 @@ fn render_chronology(surface: &SurfaceData, sender: &SenderHandle) -> Html {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let events = surface
+        .iter()
+        .flat_map(|runtime| runtime.events())
+        .collect::<Vec<_>>();
     html! {
         <div class="split">
             <div>
-                <section class="section">
-                    <div class="section-heading">
-                        <h2>{"Pending consent"}</h2>
-                        <span class="section-count">{pending.len()}</span>
-                    </div>
-                    if pending.is_empty() {
-                        {empty("No consent decisions are pending.")}
-                    } else {
-                        <div class="table-wrap"><table>
+                if can_decide {
+                    <section class="section">
+                        <div class="section-heading">
+                            <h2>{"Pending consent"}</h2>
+                            <span class="section-count">{pending.len()}</span>
+                        </div>
+                        if pending.is_empty() {
+                            {empty("No consent decisions are pending.")}
+                        } else {
+                            <div class="table-wrap"><table>
                             <thead><tr>
                                 <th>{"Operation"}</th><th>{"Rule"}</th>
                                 <th>{"Lane"}</th><th>{"Decision"}</th>
@@ -755,9 +762,10 @@ fn render_chronology(surface: &SurfaceData, sender: &SenderHandle) -> Html {
                                     </tr>
                                 }
                             })}</tbody>
-                        </table></div>
-                    }
-                </section>
+                            </table></div>
+                        }
+                    </section>
+                }
                 <section class="section">
                     <div class="section-heading">
                         <h2>{"Pending direction"}</h2>
@@ -777,19 +785,224 @@ fn render_chronology(surface: &SurfaceData, sender: &SenderHandle) -> Html {
                     }
                 </section>
             </div>
-            <section class="section">
-                <div class="section-heading"><h2>{"Command outcomes"}</h2></div>
-                if surface.events.is_empty() {
-                    {empty("No command outcomes have been recorded.")}
-                } else {
-                    <div class="event-list">{for surface.events.iter().map(|event| html! {
-                        <article class={classes!("event", event.class)}>
-                            <strong>{event.title.clone()}</strong>
-                            <p>{event.detail.clone()}</p>
-                        </article>
-                    })}</div>
-                }
-            </section>
+            <div>
+                {runtime.map_or_else(Html::default, render_trust)}
+                <section class="section">
+                    <div class="section-heading"><h2>{"Command outcomes"}</h2></div>
+                    if !matches!(connection, Connection::Offline(_)) && events.is_empty() {
+                        {empty("No command outcomes have been recorded.")}
+                    } else {
+                        <div class="event-list">
+                            if let Connection::Offline(reason) = connection {
+                                <article class="event fault">
+                                    <strong>{"Canvas connection reset"}</strong>
+                                    <p>{reason}</p>
+                                </article>
+                            }
+                            {for events.iter().map(|event| html! {
+                                <article class={classes!("event", event.class())}>
+                                    <strong>{event.title()}</strong>
+                                    <p>{event.detail()}</p>
+                                </article>
+                            })}
+                        </div>
+                    }
+                </section>
+                {runtime.map_or_else(Html::default, render_fact_chronology)}
+            </div>
+        </div>
+    }
+}
+
+fn render_causal_thread(runtime: &CanvasRuntime) -> Html {
+    let pages = runtime.thread_pages();
+    let walk = runtime.thread_walk();
+    let end = walk.as_ref().map(|walk| match walk.end() {
+        ChainEnd::Root => "root".to_owned(),
+        ChainEnd::Dangling(position) => format!("dangling at {position}"),
+        ChainEnd::Cycle(position) => format!("cycle at {position}"),
+    });
+    let end_label = end.unwrap_or_else(|| "awaiting thread".to_owned());
+    html! {
+        <section class="section" data-pane="lineage">
+            <div class="section-heading">
+                <h2>{"Causal thread"}</h2>
+                <span class="section-count">{end_label}</span>
+            </div>
+            if pages.is_empty() {
+                {empty("No causal thread has been admitted.")}
+            } else {
+                {for pages.iter().enumerate().map(|(index, page)| {
+                    let provenance = packed_provenance(
+                        "thread",
+                        index + 1,
+                        page.rows().len(),
+                        page.overflow(),
+                        page.horizon(),
+                    );
+                    html! {
+                        <div class="packed-page">
+                            {provenance}
+                            <div class="table-wrap"><table>
+                                <thead><tr>
+                                    <th>{"Seq"}</th>
+                                    <th>{"Kind"}</th>
+                                    <th>{"Origin"}</th>
+                                    <th>{"Cause"}</th>
+                                </tr></thead>
+                                <tbody>{for page.rows().iter().map(|row| {
+                                    let cause = row.cause().map_or_else(
+                                        || "root".to_owned(),
+                                        |cause| cause.to_string(),
+                                    );
+                                    html! {
+                                        <tr>
+                                            <td class="mono">{row.seq().to_string()}</td>
+                                            <td>{row.kind().to_string()}</td>
+                                            <td class="mono">{row.origin().to_string()}</td>
+                                            <td class="mono">{cause}</td>
+                                        </tr>
+                                    }
+                                })}</tbody>
+                            </table></div>
+                        </div>
+                    }
+                })}
+            }
+        </section>
+    }
+}
+
+fn render_trust(runtime: &CanvasRuntime) -> Html {
+    let pages = runtime.trust_pages();
+    let history = runtime
+        .fact_pages()
+        .into_iter()
+        .flat_map(|page| page.rows().to_vec())
+        .filter(|row| {
+            matches!(
+                row.kind(),
+                wire::FactKind::TrustPended
+                    | wire::FactKind::TrustGranted
+                    | wire::FactKind::TrustRevoked
+            )
+        })
+        .collect::<Vec<_>>();
+    if !runtime.grants() {
+        return Html::default();
+    }
+    html! {
+        <section class="section" data-pane="trust">
+            <div class="section-heading">
+                <h2>{"Trust"}</h2>
+                <span class="section-count">{format!("{} transitions", history.len())}</span>
+            </div>
+            if pages.is_empty() {
+                {empty("No trust heads have been admitted.")}
+            } else {
+                {for pages.iter().enumerate().map(|(index, page)| {
+                    let provenance = packed_provenance(
+                        "trust",
+                        index + 1,
+                        page.rows().len(),
+                        page.overflow(),
+                        page.horizon(),
+                    );
+                    html! {
+                        <div class="packed-page">
+                            {provenance}
+                            <div class="table-wrap"><table>
+                                <thead><tr>
+                                    <th>{"Digest"}</th>
+                                    <th>{"Standing"}</th>
+                                    <th>{"Position"}</th>
+                                </tr></thead>
+                                <tbody>{for page.rows().iter().map(|row| {
+                                    let standing = format!("{:?}", row.head.state).to_lowercase();
+                                    html! {
+                                        <tr>
+                                            <td class="mono">
+                                                {short(&row.head.digest.to_string())}
+                                            </td>
+                                            <td><span class="tag active">{standing}</span></td>
+                                            <td class="mono">{row.position.to_string()}</td>
+                                        </tr>
+                                    }
+                                })}</tbody>
+                            </table></div>
+                        </div>
+                    }
+                })}
+            }
+            if !history.is_empty() {
+                <div class="event-list trust-history">{for history.iter().rev().map(|row| html! {
+                    <article class="event">
+                        <strong>{row.kind().to_string()}</strong>
+                        <p>{format!("{} / {} / {}", row.seq(), row.actor(), row.origin())}</p>
+                    </article>
+                })}</div>
+            }
+        </section>
+    }
+}
+
+fn render_fact_chronology(runtime: &CanvasRuntime) -> Html {
+    let pages = runtime.fact_pages();
+    html! {
+        <section class="section" data-pane="commands">
+            <div class="section-heading">
+                <h2>{"Admitted journal"}</h2>
+                <span class="section-count">{format!("{} packed pages", pages.len())}</span>
+            </div>
+            if pages.is_empty() {
+                {empty("No journal page has been admitted.")}
+            } else {
+                {for pages.iter().enumerate().map(|(index, page)| {
+                    let provenance = packed_provenance(
+                        "facts",
+                        index + 1,
+                        page.rows().len(),
+                        page.overflow(),
+                        page.horizon(),
+                    );
+                    html! {
+                        <div class="packed-page">
+                            {provenance}
+                            <div class="event-list">
+                                {for page.rows().iter().rev().map(|row| html! {
+                                    <article class="event">
+                                        <strong>
+                                            {format!("{} / {}", row.seq(), row.kind())}
+                                        </strong>
+                                        <p>{format!("{} / {}", row.actor(), row.origin())}</p>
+                                    </article>
+                                })}
+                            </div>
+                        </div>
+                    }
+                })}
+            }
+        </section>
+    }
+}
+
+fn packed_provenance(
+    subject: &'static str,
+    page: usize,
+    rows: usize,
+    overflow: Option<wire::Overflow>,
+    horizon: Option<wire::Seq>,
+) -> Html {
+    let horizon = horizon.map_or_else(|| "-".to_owned(), |value| value.to_string());
+    html! {
+        <div class="packed-provenance" data-subject={subject}>
+            <span>{format!("page {page} / {rows} rows")}</span>
+            <span>{format!("horizon {horizon}")}</span>
+            if let Some(overflow) = overflow {
+                <span class="overflow-marker">
+                    {format!("{} omitted / continue {}", overflow.omitted, overflow.continuation)}
+                </span>
+            }
         </div>
     }
 }
@@ -803,7 +1016,9 @@ async fn run_surface(
 ) {
     let data = Rc::new(RefCell::new(SurfaceData::default()));
     while active.get() {
-        connection.set(Connection::Connecting);
+        if matches!(&*connection, Connection::Starting) {
+            connection.set(Connection::Connecting);
+        }
         let result =
             run_connection(&active, &connection, &surface, &speech, &data, &mut actions).await;
         if !active.get() {
@@ -811,12 +1026,6 @@ async fn run_surface(
         }
         let reason = result.unwrap_err_or_else();
         connection.set(Connection::Offline(reason.clone()));
-        data.borrow_mut().push(EventRow {
-            class: "fault",
-            title: "Canvas connection reset".to_owned(),
-            detail: reason,
-        });
-        surface.set(data.borrow().clone());
         TimeoutFuture::new(1_200).await;
     }
 }
@@ -874,28 +1083,44 @@ async fn run_connection(
     let accepted = session
         .admit_accepted(&accepted_bytes)
         .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
-    let principal = Principal::admitted(&accepted);
-    *data.borrow_mut() = SurfaceData::default();
+    let principal = {
+        let mut data = data.borrow_mut();
+        match data.as_mut() {
+            Some(runtime) => {
+                runtime.reconnect(&accepted);
+            }
+            None => *data = Some(CanvasRuntime::new(&accepted)),
+        }
+        data.as_ref()
+            .expect("accepted connection creates runtime")
+            .principal()
+            .clone()
+    };
     surface.set(data.borrow().clone());
     connection.set(Connection::Online {
         actor: principal.actor().to_string(),
         epoch: principal.epoch().to_string(),
     });
     let mut pending = BTreeMap::new();
+    send_subscription(&principal, data, &mut writer).await?;
     send_refresh(&principal, &mut writer, &mut pending).await?;
 
     while active.get() {
         let incoming = reader.next().fuse();
         let action = actions.next().fuse();
-        let refresh = TimeoutFuture::new(2_000).fuse();
-        futures_util::pin_mut!(incoming, action, refresh);
+        futures_util::pin_mut!(incoming, action);
         select! {
             frame = incoming => {
                 let frame = frame
                     .ok_or_else(|| "resident closed the socket".to_owned())?
                     .map_err(websocket_error)?;
                 let bytes = binary_message(frame)?;
-                handle_response(&session, surface, data, &mut pending, &bytes)?;
+                let directives = handle_incoming(&session, surface, data, &mut pending, &bytes)?;
+                for directive in directives {
+                    if send_stream_directive(&principal, &mut writer, directive).await? {
+                        return Err("resident stream requested reconnect".to_owned());
+                    }
+                }
             },
             action = action => {
                 let action = action.ok_or_else(|| "canvas command channel closed".to_owned())?;
@@ -905,12 +1130,12 @@ async fn run_connection(
                     }
                     ClientAction::Note { task, note } => {
                         let body = TaskNote { task: task.clone(), note };
-                        let expected = vec![Witness::Existence { task }];
+                        let expected = vec![Witness::Existence { task: task.clone() }];
                         send_typed(
                             &principal,
                             &mut writer,
                             &mut pending,
-                            PendingKind::Note,
+                            PendingKind::Note(task),
                             CommandKind::TaskNote,
                             expected,
                             body,
@@ -933,9 +1158,6 @@ async fn run_connection(
                         ).await?;
                     }
                 }
-            },
-            () = refresh => {
-                send_refresh(&principal, &mut writer, &mut pending).await?;
             }
         }
     }
@@ -991,7 +1213,7 @@ async fn send_refresh(
     writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
 ) -> Result<(), String> {
-    send_typed(
+    send_if_offered(
         principal,
         writer,
         pending,
@@ -1001,7 +1223,7 @@ async fn send_refresh(
         BoardRead { family: None },
     )
     .await?;
-    send_typed(
+    send_if_offered(
         principal,
         writer,
         pending,
@@ -1011,7 +1233,7 @@ async fn send_refresh(
         LaneRead {},
     )
     .await?;
-    send_typed(
+    send_if_offered(
         principal,
         writer,
         pending,
@@ -1021,7 +1243,7 @@ async fn send_refresh(
         SteerInbox { lane: None },
     )
     .await?;
-    send_typed(
+    send_if_offered(
         principal,
         writer,
         pending,
@@ -1031,7 +1253,7 @@ async fn send_refresh(
         ConsentRead {},
     )
     .await?;
-    send_typed(
+    send_if_offered(
         principal,
         writer,
         pending,
@@ -1039,6 +1261,30 @@ async fn send_refresh(
         CommandKind::ConsentPolicy,
         vec![],
         ConsentPolicy {},
+    )
+    .await
+}
+
+async fn send_if_offered<B: Serialize>(
+    principal: &Principal,
+    writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    pending_kind: PendingKind,
+    kind: CommandKind,
+    expected: Vec<Witness>,
+    body: B,
+) -> Result<(), String> {
+    if !SteerPane::over(principal).offers(kind) {
+        return Ok(());
+    }
+    send_typed(
+        principal,
+        writer,
+        pending,
+        pending_kind,
+        kind,
+        expected,
+        body,
     )
     .await
 }
@@ -1064,91 +1310,124 @@ async fn send_typed<B: Serialize>(
         .map_err(websocket_error)
 }
 
-fn handle_response(
+async fn send_subscription(
+    principal: &Principal,
+    data: &Rc<RefCell<SurfaceData>>,
+    writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+) -> Result<(), String> {
+    let (subjects, after) = {
+        let data = data.borrow();
+        let runtime = data
+            .as_ref()
+            .ok_or_else(|| "canvas runtime is absent".to_owned())?;
+        (runtime.subjects(), runtime.resume())
+    };
+    send_stream_request(
+        writer,
+        &StreamRequest::Subscribe {
+            v: WireVersion::CURRENT,
+            id: random_uuid()?,
+            epoch: principal.epoch(),
+            subjects,
+            after,
+        },
+    )
+    .await
+}
+
+async fn send_stream_directive(
+    principal: &Principal,
+    writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    directive: StreamDirective,
+) -> Result<bool, String> {
+    let request = match directive {
+        StreamDirective::Continue { subject, cursor } => StreamRequest::Continue {
+            v: WireVersion::CURRENT,
+            id: random_uuid()?,
+            epoch: principal.epoch(),
+            subject,
+            cursor,
+        },
+        StreamDirective::Thread { cursor } => StreamRequest::Thread {
+            v: WireVersion::CURRENT,
+            id: random_uuid()?,
+            epoch: principal.epoch(),
+            cursor,
+        },
+        StreamDirective::Reconnect => return Ok(true),
+    };
+    send_stream_request(writer, &request).await?;
+    Ok(false)
+}
+
+async fn send_stream_request(
+    writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    request: &StreamRequest,
+) -> Result<(), String> {
+    writer
+        .send(Message::Bytes(
+            wire::encode(request).map_err(|error| error.to_string())?,
+        ))
+        .await
+        .map_err(websocket_error)
+}
+
+fn handle_incoming(
     session: &Session,
     surface: &UseStateHandle<SurfaceData>,
     data: &Rc<RefCell<SurfaceData>>,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     bytes: &[u8],
-) -> Result<(), String> {
+) -> Result<Vec<StreamDirective>, String> {
+    let crossing: serde_json::Value = wire::decode(bytes).map_err(|error| error.to_string())?;
+    if crossing.get("stream").is_some() {
+        let admitted = session
+            .admit_stream(bytes)
+            .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
+        let directives = data
+            .borrow_mut()
+            .as_mut()
+            .ok_or_else(|| "stream frame arrived before runtime acceptance".to_owned())?
+            .apply_stream(&admitted);
+        surface.set(data.borrow().clone());
+        return Ok(directives);
+    }
+
     let identity: ResponseIdentity = wire::decode(bytes).map_err(|error| error.to_string())?;
     let kind = pending
         .remove(&identity.id)
         .ok_or_else(|| format!("response named unknown command {}", identity.id))?;
-    match kind {
-        PendingKind::Board => apply(session, surface, data, bytes, |data, body: BoardAnswer| {
-            data.board = Some(body)
-        }),
-        PendingKind::Lanes => apply(session, surface, data, bytes, |data, body: LaneAnswer| {
-            data.lanes = Some(body)
-        }),
-        PendingKind::Inbox => apply(session, surface, data, bytes, |data, body: InboxAnswer| {
-            data.inbox = Some(body)
-        }),
-        PendingKind::Consent => apply(
-            session,
-            surface,
-            data,
-            bytes,
-            |data, body: ConsentQueueAnswer| data.consent = Some(body),
-        ),
-        PendingKind::Policy => apply(
-            session,
-            surface,
-            data,
-            bytes,
-            |data, body: ConsentPolicyAnswer| data.policy = Some(body),
-        ),
-        PendingKind::Note => apply(session, surface, data, bytes, |data, body: TaskAnswer| {
-            data.push(EventRow {
-                class: "reply",
-                title: format!("Note appended to {}", body.task),
-                detail: body.status,
-            });
-        }),
-        PendingKind::ConsentDecision => apply(
-            session,
-            surface,
-            data,
-            bytes,
-            |data, body: wire::intent::ConsentAnswer| {
-                data.push(EventRow {
-                    class: "reply",
-                    title: format!("Consent {:?}", body.answer).to_lowercase(),
-                    detail: body.request.to_string(),
-                });
-            },
-        ),
-    }
-}
-
-fn apply<T: for<'de> Deserialize<'de>>(
-    session: &Session,
-    surface: &UseStateHandle<SurfaceData>,
-    data: &Rc<RefCell<SurfaceData>>,
-    bytes: &[u8],
-    reply: impl FnOnce(&mut SurfaceData, T),
-) -> Result<(), String> {
-    let response: Response<T> = session
-        .admit_frame(bytes)
-        .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?
-        .into_inner();
     let mut data = data.borrow_mut();
-    match response.outcome {
-        Outcome::Reply(answer) => reply(&mut data, answer.body),
-        Outcome::Refusal(refusal) => data.push(EventRow {
-            class: "refusal",
-            title: refusal.reason,
-            detail: refusal.remedy,
-        }),
-        Outcome::Fault(fault) => data.push(EventRow {
-            class: "fault",
-            title: fault.reason,
-            detail: fault.detail,
-        }),
+    let runtime = data
+        .as_mut()
+        .ok_or_else(|| "response arrived before runtime acceptance".to_owned())?;
+    match kind {
+        PendingKind::Board => runtime.apply_board(&admit_response(session, bytes)?),
+        PendingKind::Lanes => runtime.apply_lanes(&admit_response(session, bytes)?),
+        PendingKind::Inbox => runtime.apply_inbox(&admit_response(session, bytes)?),
+        PendingKind::Consent => runtime.apply_consent(&admit_response(session, bytes)?),
+        PendingKind::Policy => runtime.apply_policy(&admit_response(session, bytes)?),
+        PendingKind::Note(task) => {
+            let admitted: crate::Admitted<Response<TaskAnswer>> = admit_response(session, bytes)?;
+            runtime.apply_note(&admitted, &task.to_string());
+        }
+        PendingKind::ConsentDecision => {
+            let admitted: crate::Admitted<Response<wire::intent::ConsentAnswer>> =
+                admit_response(session, bytes)?;
+            runtime.apply_decision(&admitted);
+        }
     }
     surface.set(data.clone());
-    Ok(())
+    Ok(Vec::new())
+}
+
+fn admit_response<T: for<'de> Deserialize<'de>>(
+    session: &Session,
+    bytes: &[u8],
+) -> Result<crate::Admitted<Response<T>>, String> {
+    session
+        .admit_frame(bytes)
+        .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))
 }
 
 fn random_uuid() -> Result<CanonicalUuid, String> {
@@ -1239,8 +1518,8 @@ fn short(value: &str) -> String {
 
 fn resident_state(surface: &SurfaceData) -> String {
     surface
-        .lanes
         .as_ref()
+        .and_then(CanvasRuntime::lanes)
         .map(|lanes| format!("{:?}", lanes.state).to_lowercase())
         .unwrap_or_else(|| "resident state".to_owned())
 }
