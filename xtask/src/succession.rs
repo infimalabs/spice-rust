@@ -653,6 +653,13 @@ mod tests {
                 "the remaining pending parity paths",
             ),
         );
+        assert!(
+            report
+                .python
+                .pending_paths
+                .iter()
+                .all(|path| path.path != "task capture")
+        );
         assert!(report.python.unconfirmed_deletions.is_empty());
         assert!(report.python.stale_deletion_confirmations.is_empty());
         let encoded = serde_json::to_value(&report).expect("report encodes");
