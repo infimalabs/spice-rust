@@ -72,6 +72,30 @@ impl ActorInputs {
         &self.candidate_path
     }
 
+    /// Published task-session actor candidate.
+    #[must_use]
+    pub fn published_task_session(&self) -> Option<&str> {
+        self.published_task_session.as_deref()
+    }
+
+    /// Published commit provenance candidate.
+    #[must_use]
+    pub fn published_commit(&self) -> Option<&str> {
+        self.published_commit.as_deref()
+    }
+
+    /// Active worktree actor candidate.
+    #[must_use]
+    pub fn active_actor(&self) -> Option<&str> {
+        self.active_actor.as_deref()
+    }
+
+    /// Candidate blob provenance identity.
+    #[must_use]
+    pub fn candidate_blob(&self) -> Option<&str> {
+        self.candidate_blob.as_deref()
+    }
+
     /// Resolve the deterministic jitter seed through the documented order.
     #[must_use]
     pub fn resolve_seed(&self) -> ActorResolution {

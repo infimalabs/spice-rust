@@ -142,14 +142,21 @@ impl GateId {
         let normalized = name.trim().to_ascii_lowercase().replace(['_', ' '], "-");
         Self::ALL
             .into_iter()
-            .find(|id| id.predecessor_str() == normalized)
+            .find(|id| id.predecessor_name() == normalized)
     }
 
-    fn predecessor_str(self) -> &'static str {
+    /// Exact release 0.31.0 standard-arm spelling.
+    #[must_use]
+    pub const fn predecessor_name(self) -> &'static str {
         match self {
             Self::CanvasWebTypecheck => concat!("ser", "ve-web-typecheck"),
             _ => self.as_str(),
         }
+    }
+
+    #[cfg(test)]
+    const fn predecessor_str(self) -> &'static str {
+        self.predecessor_name()
     }
 }
 
