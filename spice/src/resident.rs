@@ -17,6 +17,7 @@ use wire::{
 
 type CommandResult<T> = Result<T, Outcome<()>>;
 
+mod capture;
 mod command_surface;
 mod lane_surface;
 mod policy_surface;

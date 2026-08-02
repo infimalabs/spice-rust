@@ -17,8 +17,7 @@ pub(super) struct Surface<'a> {
     repository: &'a Repository,
     paths: &'a RuntimePaths,
     epoch: CanonicalUuid,
-    capabilities: &'a canvas::axum::Capabilities,
-    discovery: &'a canvas::Discovery,
+    lane: lane_surface::Runtime<'a>,
     config: &'a SurfaceConfig,
 }
 
@@ -28,8 +27,7 @@ impl<'a> Surface<'a> {
         repository: &'a Repository,
         paths: &'a RuntimePaths,
         epoch: CanonicalUuid,
-        capabilities: &'a canvas::axum::Capabilities,
-        discovery: &'a canvas::Discovery,
+        lane: lane_surface::Runtime<'a>,
         config: &'a SurfaceConfig,
     ) -> Self {
         Self {
@@ -37,8 +35,7 @@ impl<'a> Surface<'a> {
             repository,
             paths,
             epoch,
-            capabilities,
-            discovery,
+            lane,
             config,
         }
     }
@@ -62,17 +59,11 @@ impl<'a> Surface<'a> {
                 lane_surface::read(self.bus, self.paths, self.epoch, command)
             }
             (CommandKind::LaneSeat, Intent::LaneSeat(seat)) => lane_surface::seat(
-                self.bus,
-                self.paths,
-                self.epoch,
-                seats,
-                &lane_surface::Runtime::new(self.capabilities, self.discovery),
-                command,
-                seat,
+                self.bus, self.paths, self.epoch, seats, &self.lane, command, seat,
             ),
-            (CommandKind::LaneState, Intent::LaneState(state)) => {
-                lane_surface::state(self.bus, self.paths, self.epoch, seats, command, state)
-            }
+            (CommandKind::LaneState, Intent::LaneState(state)) => lane_surface::state(
+                self.bus, self.paths, self.epoch, seats, &self.lane, command, state,
+            ),
             (CommandKind::LaneRecall, Intent::LaneRecall(recall)) => {
                 lane_surface::recall(self.bus, self.paths, self.epoch, command, recall)
             }
