@@ -55,7 +55,7 @@ allowed_trailers = ["Spice-Origin"]
 [vendor.claude]
 binary = "/opt/claude"
 model = "opus"
-effort = "xhigh"
+effort = "max"
 auto_compact_window_tokens = 123456
 "#,
     );
@@ -72,7 +72,7 @@ auto_compact_window_tokens = 123456
 
     assert_eq!(plan.binary(), "/opt/claude");
     assert_eq!(launch.model, "opus");
-    assert_eq!(launch.effort, Effort::XHigh);
+    assert_eq!(launch.effort, Effort::Max);
     assert_eq!(launch.attribution, Attribution::Withheld);
     assert_eq!(
         root.policy()
@@ -110,6 +110,13 @@ auto_compact_window_tokens = 123456
     );
 
     let rendered = arguments(&plan.record().expect("Claude plan renders"));
+    assert_eq!(
+        rendered
+            .windows(2)
+            .filter(|pair| pair == &["--effort", "max"])
+            .count(),
+        1
+    );
     let settings = rendered
         .windows(2)
         .find_map(|pair| (pair[0] == "--settings").then_some(pair[1].as_str()))
