@@ -645,7 +645,7 @@ mod tests {
             (report.python.installed_total, report.python.ledger_total),
             (123, 123)
         );
-        assert_eq!(report.python.pending_paths.len(), 27);
+        assert_eq!(report.python.pending_paths.len(), 24);
         assert!(report.python.unconfirmed_deletions.is_empty());
         assert!(report.python.stale_deletion_confirmations.is_empty());
         let encoded = serde_json::to_value(&report).expect("report encodes");

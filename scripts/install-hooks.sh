@@ -5,9 +5,10 @@ set -eu
 root=$(git rev-parse --show-toplevel)
 cd "$root" # env-policy: allow
 
+hooks=.spice/rust/git-hooks
 for hook in pre-commit commit-msg reference-transaction; do
-    if [ ! -x ".githooks/$hook" ]; then # env-policy: allow
-        printf 'hook installation failed: .githooks/%s is not executable\n' "$hook" >&2 # env-policy: allow
+    if [ ! -x "$hooks/$hook" ]; then # env-policy: allow
+        printf 'hook installation failed: %s/%s is not executable\n' "$hooks" "$hook" >&2 # env-policy: allow
         exit 1
     fi
 done
@@ -18,12 +19,12 @@ if [ "$git_dir" != "$common_dir" ]; then # env-policy: allow
     git config --local extensions.worktreeConfig true
 fi
 
-git config --worktree core.hooksPath .githooks
+git config --worktree core.hooksPath "$hooks" # env-policy: allow
 
 configured=$(git config --worktree --get core.hooksPath)
-if [ "$configured" != ".githooks" ]; then # env-policy: allow
-    printf 'hook installation failed: expected .githooks, found %s\n' "$configured" >&2 # env-policy: allow
+if [ "$configured" != "$hooks" ]; then # env-policy: allow
+    printf 'hook installation failed: expected %s, found %s\n' "$hooks" "$configured" >&2 # env-policy: allow
     exit 1
 fi
 
-printf 'installed tracked hooks from %s/.githooks\n' "$root" # env-policy: allow
+printf 'activated Rust hooks from %s/%s\n' "$root" "$hooks" # env-policy: allow
