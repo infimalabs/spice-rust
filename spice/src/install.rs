@@ -39,6 +39,7 @@ const LEGACY_RECORDS: [(&str, &str); 2] = [
     (".spice/install", "SURFACE-1kJQkpFs"),
     (".spice/rust/install.json", "SURFACE-1kJRGpf2"),
 ];
+const LEGACY_RECORD_VERSIONS: [(u16, &str); 1] = [(2, "SURFACE-1kJRGpf2")];
 const RECORD_NAME: &str = "install.json";
 const RECORD_PATH: &str = ".spice-rust/install.json";
 const RECORD_MODE: u32 = 0o600;
@@ -64,9 +65,9 @@ const EXCLUDE_BLOCK: &str = concat!(
     "# END spice-rust coexistence\n",
 );
 const SKILL: &str = include_str!("install/skill.md");
-const GIT_PRE_COMMIT: &str = include_str!("../../.githooks/pre-commit");
-const GIT_COMMIT_MESSAGE: &str = include_str!("../../.githooks/commit-msg");
-const GIT_REFERENCE_TRANSACTION: &str = include_str!("../../.githooks/reference-transaction");
+const GIT_PRE_COMMIT: &str = include_str!("install/git-hooks/pre-commit");
+const GIT_COMMIT_MESSAGE: &str = include_str!("install/git-hooks/commit-msg");
+const GIT_REFERENCE_TRANSACTION: &str = include_str!("install/git-hooks/reference-transaction");
 
 #[cfg(debug_assertions)]
 #[doc(hidden)]

@@ -2,6 +2,4 @@
 
 set -eu
 
-root=$(git rev-parse --show-toplevel)
-cd "$root" # env-policy: allow
-exec cargo xtask commit-msg "$1"
+exec spice dev commit-msg "$1"

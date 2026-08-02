@@ -329,6 +329,32 @@ fn legacy_record_names_its_owning_release_and_refuses_without_mutation() {
 }
 
 #[test]
+fn prior_current_path_record_names_its_owning_release_before_mutation() {
+    let scratch = Scratch::new("prior-current-record");
+    let repository = scratch.repository();
+    let planned = plan(&repository, None).unwrap();
+    apply(&repository, None, &planned.digest().unwrap()).unwrap();
+    let installed = images(&repository, &planned);
+    let mut record = read_record(&repository).unwrap().unwrap().record;
+    record.version = LEGACY_RECORD_VERSIONS[0].0;
+    fs::write(
+        record_path(&repository).unwrap(),
+        wire::encode(&record).unwrap(),
+    )
+    .unwrap();
+
+    let error = plan(&repository, None).unwrap_err();
+    assert!(matches!(
+        &error,
+        InstallError::LegacyRecord { path, owner }
+            if path == &record_path(&repository).unwrap()
+                && owner == &LEGACY_RECORD_VERSIONS[0].1
+    ));
+    assert!(error.to_string().contains(LEGACY_RECORD_VERSIONS[0].1));
+    assert_eq!(images(&repository, &planned), installed);
+}
+
+#[test]
 fn record_digest_tampering_refuses_before_unapply_mutation() {
     let scratch = Scratch::new("record-digest");
     let repository = scratch.repository();
