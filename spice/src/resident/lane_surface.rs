@@ -1249,7 +1249,7 @@ fn occupant_launch(
         ));
     }
     let resolved = spice::config::load_repository(&repository, &[])
-        .map_err(|error| store_fault("lane::configuration-refused", &error.to_string()))?;
+        .map_err(|error| configuration_refusal(&error))?;
     let executable = std::env::current_exe()
         .map_err(|error| store_fault("lane::executable-unresolved", &error.to_string()))?;
     let executable = executable.display().to_string();
@@ -1344,6 +1344,18 @@ fn occupant_launch(
         spec,
         observation,
         session,
+    })
+}
+
+fn configuration_refusal(error: &spice::config::LoadError) -> Outcome<()> {
+    Outcome::Refusal(Refusal {
+        reason: "lane::configuration-refused".to_owned(),
+        witness: Some("effective-configuration".to_owned()),
+        expected: Some(
+            "tracked and local inputs admitted by the configuration registry".to_owned(),
+        ),
+        observed: Some(error.diagnostic()),
+        remedy: "correct the named configuration inputs before launching the lane".to_owned(),
     })
 }
 
