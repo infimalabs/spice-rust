@@ -101,7 +101,7 @@ fn launch_plan(
         .map_err(|error| store_fault("lane::executable-unresolved", &error.to_string()))?
         .display()
         .to_string();
-    let environment = launch_environment(name)?;
+    let environment = launch_environment()?;
     spice::agent_launch::compose(
         resolved.root(),
         spice::agent_launch::Inputs {
@@ -127,20 +127,11 @@ fn launch_plan(
 }
 
 /// Carry only the ambient variables a supervised occupant is admitted to see.
-fn launch_environment(name: &wire::Name) -> CommandResult<Environment> {
-    let mut values = ["HOME", "PATH", "SHELL", "TMPDIR", "USER"]
+fn launch_environment() -> CommandResult<Environment> {
+    let values = ["HOME", "PATH", "SHELL", "TMPDIR", "USER"]
         .into_iter()
         .filter_map(|key| crate::bootstrap_environment(key).map(|value| (key.into(), value)))
         .collect::<Vec<(OsString, OsString)>>();
-    if name.as_str() == "claude"
-        && let Some(value) =
-            crate::bootstrap_environment(spice::agent_launch::CLAUDE_AUTO_COMPACT_WINDOW)
-    {
-        values.push((
-            spice::agent_launch::CLAUDE_AUTO_COMPACT_WINDOW.into(),
-            value,
-        )); // env-policy: allow
-    }
     Environment::new(values)
         .map_err(|error| store_fault("lane::environment-invalid", &error.to_string()))
 }
