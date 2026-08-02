@@ -416,7 +416,13 @@ impl Corpus {
     fn production_packages(&self) -> BTreeSet<String> {
         self.production_reachable
             .iter()
-            .filter_map(|module| module.split('.').next().map(str::to_owned))
+            .filter_map(|module| {
+                module
+                    .split('.')
+                    .next()
+                    .filter(|package| !package.is_empty())
+                    .map(str::to_owned)
+            })
             .collect()
     }
 

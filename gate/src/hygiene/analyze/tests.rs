@@ -159,6 +159,40 @@ mod tests {
         tree
     }
 
+    fn root_package_tree() -> FixtureTree {
+        let tree = FixtureTree::new();
+        tree.write(
+            "__init__.py",
+            concat!(
+                "from .used import live\n",
+                "\n",
+                "def package_live():\n",
+                "    return live()\n",
+            ),
+        );
+        tree.write(
+            "used.py",
+            concat!(
+                "def live():\n",
+                "    return 1\n",
+                "\n",
+                "def test_only():\n",
+                "    return 2\n",
+            ),
+        );
+        tree.write(
+            "tests/test_root.py",
+            concat!(
+                "from used import live, test_only\n",
+                "\n",
+                "def test_live():\n",
+                "    assert live() == 1\n",
+                "    assert test_only() == 2\n",
+            ),
+        );
+        tree
+    }
+
     fn arm(report: &HygieneReport, gate: GateId) -> &HygieneMeasurement {
         report
             .arms
@@ -181,6 +215,8 @@ mod tests {
     #[test]
     fn relative_imports_anchor_to_the_containing_package_identity() {
         for (path, current, initializer, level, expected) in [
+            ("__init__.py", "", true, 1, "used"),
+            ("__init__.pyi", "", true, 1, "used"),
             ("app/main.py", "app.main", false, 1, "app.used"),
             ("app/main.pyi", "app.main", false, 1, "app.used"),
             (
@@ -220,6 +256,60 @@ mod tests {
                 "path={path} current={current} level={level}"
             );
         }
+    }
+
+    #[test]
+    fn root_package_relative_imports_retain_known_modules_and_symbols() {
+        let tree = root_package_tree();
+        let configuration = HygieneConfiguration::new(["__init__.py"], ["tests"])
+            .expect("root-package fixture roots are admitted");
+        let jurisdiction = tree.jurisdiction();
+        let (_, corpus, terminal) =
+            Corpus::load(&jurisdiction, &configuration, Instant::now());
+        assert!(matches!(terminal, Terminal::Parsed));
+        assert!(corpus.edges.contains(&(String::new(), "used".to_owned())));
+        assert!(corpus.resolved_references().iter().any(|reference| {
+            reference.source_module.is_empty()
+                && reference.target_module == "used"
+                && reference.symbol == "live"
+        }));
+
+        let report = analyze_hygiene(&jurisdiction, &configuration)
+            .expect("root-package source-derived hygiene report");
+        let reachability = arm(&report, GateId::Reachability);
+        assert!(!reachability.findings.iter().any(|finding| {
+            matches!(
+                &finding.detail,
+                HygieneFindingDetail::ModuleReachability { subject, .. }
+                    if subject == "used"
+            )
+        }));
+        let symbols = arm(&report, GateId::SymbolReachability);
+        assert!(!symbols.findings.iter().any(|finding| {
+            matches!(
+                &finding.detail,
+                HygieneFindingDetail::SymbolReachability { symbol, .. }
+                    if symbol == "live"
+            )
+        }));
+        let unused = arm(&report, GateId::PythonUnused);
+        assert!(!unused.findings.iter().any(|finding| {
+            matches!(
+                &finding.detail,
+                HygieneFindingDetail::PythonUnused { symbol, .. }
+                    if symbol == "live"
+            )
+        }));
+        assert!(unused.findings.iter().any(|finding| {
+            matches!(
+                &finding.detail,
+                HygieneFindingDetail::PythonUnused {
+                    symbol,
+                    status: PythonUnusedStatus::TestOnly,
+                    ..
+                } if symbol == "test_only"
+            )
+        }));
     }
 
     fn assert_relative_package_graph(corpus: &Corpus) {

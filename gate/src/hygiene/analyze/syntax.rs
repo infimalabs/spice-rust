@@ -459,7 +459,11 @@ fn resolve_relative_module(
     if level == 0 {
         return module.unwrap_or_default();
     }
-    let mut parts: Vec<_> = current.split('.').map(str::to_owned).collect();
+    let mut parts: Vec<_> = if current.is_empty() {
+        Vec::new()
+    } else {
+        current.split('.').map(str::to_owned).collect()
+    };
     if !is_package_initializer && !parts.is_empty() {
         parts.pop();
     }
