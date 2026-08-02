@@ -80,7 +80,7 @@ fn add(
     }
     let resolved = match spice::config::load_repository(&worktree, &[]) {
         Ok(resolved) => resolved,
-        Err(error) => return environment_fault("lane::configuration-refused", &error.to_string()),
+        Err(error) => return configuration_refusal(&error),
     };
     let life = matches.get_one::<String>("life").map_or_else(
         || resolved.root().lane().life().as_str().to_owned(),
@@ -100,6 +100,18 @@ fn add(
         vendor,
     };
     command_client::execute(canvas, contract, SelectedCommand::LaneSeat { body: &body })
+}
+
+fn configuration_refusal(error: &spice::config::LoadError) -> Outcome<CommandAnswer> {
+    Outcome::Refusal(Refusal {
+        reason: "lane::configuration-refused".to_owned(),
+        witness: Some("effective-configuration".to_owned()),
+        expected: Some(
+            "tracked and local inputs admitted by the configuration registry".to_owned(),
+        ),
+        observed: Some(error.diagnostic()),
+        remedy: "correct the named configuration inputs before seating the lane".to_owned(),
+    })
 }
 
 fn state(
