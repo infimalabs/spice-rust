@@ -780,6 +780,7 @@ fn seed_lane(fixture: &Fixture, lane: wire::CanonicalUuid, capability: wire::Can
         occupant: None,
         lineage: Vec::new(),
         capabilities: vec![capability],
+        session: None,
         disposition: "vacant".to_owned(),
     });
     next.lanes.sort_by_key(|row| row.lane);

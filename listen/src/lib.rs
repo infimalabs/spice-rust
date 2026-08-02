@@ -18,8 +18,8 @@ mod surface;
 pub use canary::{Alarm, Canary};
 pub use config::{Config, ConfigError};
 pub use event::{
-    Compaction, Event, EventKind, Failure, Prose, Reasoning, ReasoningContent, Tool, ToolMoment,
-    ToolResult, Usage,
+    Compaction, Event, EventKind, Failure, Prose, Reasoning, ReasoningContent, SessionDeclaration,
+    Tool, ToolMoment, ToolResult, Usage,
 };
 pub use residue::{Decoded, LocusLengthError, Residue, ResidueKind};
 pub use surface::{

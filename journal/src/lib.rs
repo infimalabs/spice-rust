@@ -40,8 +40,9 @@ pub mod crossing {
     pub use wire::intent;
     pub use wire::{
         Actor, CanonicalUuid, ClaimHead, Command, CommandKind, Digest, Fact, FactKind, FindingHead,
-        Instant, LaneResidency, LeaseHead, Origin, Phase, Producer, ResidencyHead, ResidentState,
-        Seq, TaskHandle, TaskHead, TrustHead, WireVersion, Witness, WitnessHead, WorkflowHead,
+        Instant, LaneResidency, LaneSession, LeaseHead, Origin, Phase, Producer, ResidencyHead,
+        ResidentState, Seq, TapeLocus, TaskHandle, TaskHead, TrustHead, WireVersion, Witness,
+        WitnessHead, WorkflowHead,
     };
 }
 
