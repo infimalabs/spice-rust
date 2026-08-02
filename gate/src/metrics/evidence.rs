@@ -5,8 +5,8 @@ use std::fmt;
 use serde::Serialize;
 
 use super::declaration::{
-    KeyShape, MetricDeclaration, MetricId, MetricUnit, ParserId, STRUCTURAL_ARMS,
-    STRUCTURAL_METRICS,
+    KeyShape, MetricDeclaration, MetricId, MetricUnit, ParserDeclaration, ParserId, ParserMode,
+    STRUCTURAL_ARMS, STRUCTURAL_METRICS, metric_parser_declaration,
 };
 use crate::manifest::{GateId, PREDECESSOR_GATE_RELEASE};
 
@@ -98,17 +98,28 @@ impl ParserEvidence {
         }
     }
 
-    pub(crate) fn validate(&self) -> bool {
-        match self {
-            Self::Native { .. } => true,
-            Self::External {
-                tool,
-                version,
-                executable_digest,
-                ..
-            } => [tool, version, executable_digest]
-                .into_iter()
-                .all(|value| valid_text(value)),
+    pub(crate) fn matches_declaration(&self, declaration: ParserDeclaration) -> bool {
+        if self.parser() != declaration.id() {
+            return false;
+        }
+        match (declaration.mode(), declaration.tool(), self) {
+            (ParserMode::Native, None, Self::Native { .. }) => true,
+            (
+                ParserMode::External,
+                Some(requirement),
+                Self::External {
+                    tool,
+                    version,
+                    executable_digest,
+                    ..
+                },
+            ) => {
+                tool == requirement.name()
+                    && tool == requirement.program()
+                    && version == requirement.exact_version()
+                    && valid_text(executable_digest)
+            }
+            _ => false,
         }
     }
 }
@@ -738,7 +749,10 @@ fn validate_measurement(
     declaration: MetricDeclaration,
     measurement: &MetricMeasurement,
 ) -> Result<(), EvidenceError> {
-    if !measurement.parser.validate() || measurement.parser.parser() != declaration.parser() {
+    if !measurement
+        .parser
+        .matches_declaration(metric_parser_declaration(declaration.id()))
+    {
         return invalid_state(
             declaration.id(),
             "parser evidence does not match declaration",
