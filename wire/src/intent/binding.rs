@@ -52,7 +52,7 @@ pub enum BodyShape {
     ClaimWin,
     /// [`ClaimCarry`]
     ClaimCarry,
-    /// [`ClaimRenew`]
+    /// [`ClaimRenew`], which carries a lease duration beyond a plain task reference.
     ClaimRenew,
     /// [`DocApply`]
     DocApply,
