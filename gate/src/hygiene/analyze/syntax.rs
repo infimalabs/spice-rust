@@ -2,6 +2,7 @@
 struct Module {
     path: String,
     name: String,
+    is_package_initializer: bool,
     is_test: bool,
     line_starts: Vec<usize>,
     imports: Vec<ImportRecord>,
@@ -13,6 +14,7 @@ struct Module {
 
 impl Module {
     fn new(path: String, name: String, is_test: bool, source: &str) -> Self {
+        let is_package_initializer = is_package_initializer_path(&path);
         let mut line_starts = vec![0];
         line_starts.extend(
             source
@@ -24,6 +26,7 @@ impl Module {
         Self {
             path,
             name,
+            is_package_initializer,
             is_test,
             line_starts,
             imports: Vec::new(),
@@ -362,6 +365,7 @@ impl Visitor for AstCollector<'_> {
         let line = self.module.line(node.range.start());
         let module = resolve_relative_module(
             &self.module.name,
+            self.module.is_package_initializer,
             node.level.as_ref().map_or(0, rustpython_ast::Int::to_usize),
             node.module.as_ref().map(ToString::to_string),
         );
@@ -446,12 +450,21 @@ fn expression_path(expression: &Expr) -> Option<String> {
     }
 }
 
-fn resolve_relative_module(current: &str, level: usize, module: Option<String>) -> String {
+fn resolve_relative_module(
+    current: &str,
+    is_package_initializer: bool,
+    level: usize,
+    module: Option<String>,
+) -> String {
     if level == 0 {
         return module.unwrap_or_default();
     }
-    let mut parts: Vec<_> = current.split('.').map(str::to_owned).collect();
-    if !parts.is_empty() {
+    let mut parts: Vec<_> = if current.is_empty() {
+        Vec::new()
+    } else {
+        current.split('.').map(str::to_owned).collect()
+    };
+    if !is_package_initializer && !parts.is_empty() {
         parts.pop();
     }
     for _ in 1..level {
@@ -461,6 +474,13 @@ fn resolve_relative_module(current: &str, level: usize, module: Option<String>) 
         parts.extend(module.split('.').map(str::to_owned));
     }
     parts.join(".")
+}
+
+fn is_package_initializer_path(path: &str) -> bool {
+    matches!(
+        path.rsplit('/').next(),
+        Some("__init__.py" | "__init__.pyi")
+    )
 }
 
 fn module_name(path: &str) -> String {

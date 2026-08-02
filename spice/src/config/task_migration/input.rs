@@ -9,6 +9,9 @@ use super::{
     PREDECESSOR_TASK_RELEASE, PredecessorTaskMigration, Source, TASK_MIGRATION_SCHEMA_VERSION,
 };
 
+const PREDECESSOR_LINEAGES_KEY: &str = "teams";
+const PREDECESSOR_LINEAGE_ID_KEY: &str = "teamId";
+
 pub(super) struct Parsed {
     pub(super) configured_hidden: Vec<String>,
     pub(super) hidden_provenance: Vec<Source>,
@@ -27,7 +30,7 @@ pub(super) fn parse(input: PredecessorTaskMigration<'_>) -> Result<Parsed, Migra
     let root = object(&value, &Source::root(input.source_file, "<document>"))?;
     unknown_fields(
         root,
-        &["version", "release", "tasks", "teams"],
+        &["version", "release", "tasks", PREDECESSOR_LINEAGES_KEY],
         &Source::root(input.source_file, "<document>"),
     )?;
     exact_version(root, input.source_file)?;
@@ -129,41 +132,57 @@ fn lineage_overrides(
     root: &Map<String, Value>,
     source_file: &str,
 ) -> Result<Vec<MigrationProvenance>, MigrationError> {
-    let Some(teams) = root.get("teams") else {
+    let Some(lineages) = root.get(PREDECESSOR_LINEAGES_KEY) else {
         return Ok(Vec::new());
     };
-    let source = Source::root(source_file, "teams");
-    let teams = teams.as_array().ok_or_else(|| {
+    let source = Source::root(source_file, PREDECESSOR_LINEAGES_KEY);
+    let lineages = lineages.as_array().ok_or_else(|| {
         source.error(
             MigrationErrorKind::Malformed,
             None,
-            format!("expected a lineage list, observed {}", value_kind(teams)),
-            "export teams as a JSON list",
+            format!("expected a lineage list, observed {}", value_kind(lineages)),
+            format!("export predecessor field {PREDECESSOR_LINEAGES_KEY:?} as a JSON list"),
         )
     })?;
     let mut identities = HashSet::new();
     let mut provenance = Vec::new();
-    for (lineage_index, lineage) in teams.iter().enumerate() {
-        let indexed_source = Source::root(source_file, &format!("teams[{lineage_index}]"));
+    for (lineage_index, lineage) in lineages.iter().enumerate() {
+        let indexed_source = Source::root(
+            source_file,
+            &format!("{PREDECESSOR_LINEAGES_KEY}[{lineage_index}]"),
+        );
         let lineage = object(lineage, &indexed_source)?;
         let lineage_source = lineage
-            .get("teamId")
+            .get(PREDECESSOR_LINEAGE_ID_KEY)
             .and_then(Value::as_str)
             .filter(|identity| !identity.is_empty())
             .map_or(indexed_source, |identity| {
-                Source::lineage(source_file, identity, format!("teams[{lineage_index}]"))
+                Source::lineage(
+                    source_file,
+                    identity,
+                    format!("{PREDECESSOR_LINEAGES_KEY}[{lineage_index}]"),
+                )
             });
-        unknown_fields(lineage, &["teamId", "shellSettings"], &lineage_source)?;
-        let identity_source = Source::root(source_file, &format!("teams[{lineage_index}].teamId"));
+        unknown_fields(
+            lineage,
+            &[PREDECESSOR_LINEAGE_ID_KEY, "shellSettings"],
+            &lineage_source,
+        )?;
+        let identity_source = Source::root(
+            source_file,
+            &format!("{PREDECESSOR_LINEAGES_KEY}[{lineage_index}].{PREDECESSOR_LINEAGE_ID_KEY}"),
+        );
         let identity = lineage
-            .get("teamId")
+            .get(PREDECESSOR_LINEAGE_ID_KEY)
             .and_then(Value::as_str)
             .ok_or_else(|| {
                 identity_source.error(
                     MigrationErrorKind::Malformed,
                     None,
-                    "required teamId must be a string",
-                    "export one nonempty teamId for every lineage",
+                    format!(
+                        "required predecessor field {PREDECESSOR_LINEAGE_ID_KEY:?} must be a string"
+                    ),
+                    format!("export one nonempty {PREDECESSOR_LINEAGE_ID_KEY:?} for every lineage"),
                 )
             })?;
         if identity.is_empty() {
@@ -178,7 +197,7 @@ fn lineage_overrides(
             return Err(Source::lineage(
                 source_file,
                 identity,
-                format!("teams[{lineage_index}].teamId"),
+                format!("{PREDECESSOR_LINEAGES_KEY}[{lineage_index}].{PREDECESSOR_LINEAGE_ID_KEY}"),
             )
             .error(
                 MigrationErrorKind::Malformed,
@@ -193,7 +212,7 @@ fn lineage_overrides(
         let settings_source = Source::lineage(
             source_file,
             identity,
-            format!("teams[{lineage_index}].shellSettings"),
+            format!("{PREDECESSOR_LINEAGES_KEY}[{lineage_index}].shellSettings"),
         );
         let settings = object(settings, &settings_source)?;
         unknown_fields(settings, &["rc", "taskRc"], &settings_source)?;
@@ -208,7 +227,7 @@ fn lineage_overrides(
         let selected_source = Source::lineage(
             source_file,
             identity,
-            format!("teams[{lineage_index}].shellSettings.{field}"),
+            format!("{PREDECESSOR_LINEAGES_KEY}[{lineage_index}].shellSettings.{field}"),
         );
         provenance.extend(override_value(value, selected_source)?);
     }

@@ -55,14 +55,32 @@ mod tests {
         let tree = FixtureTree::new();
         tree.write("pyproject.toml", "[project]\nname = 'fixture'\n");
         tree.write("spice.toml", "[policy]\n");
-        tree.write("app/__init__.py", "");
+        tree.write(
+            "app/__init__.py",
+            concat!(
+                "from .used import live\n",
+                "\n",
+                "def package_live():\n",
+                "    return live()\n",
+            ),
+        );
+        tree.write(
+            "app/nested/__init__.py",
+            concat!(
+                "from ..used import live\n",
+                "\n",
+                "def nested_live():\n",
+                "    return live()\n",
+            ),
+        );
         tree.write(
             "app/main.py",
             concat!(
-                "from app.used import live\n",
+                "from app import package_live\n",
+                "from app.nested import nested_live\n",
                 "\n",
                 "def entry():\n",
-                "    return live()\n",
+                "    return package_live() + nested_live()\n",
             ),
         );
         tree.write(
@@ -121,10 +139,10 @@ mod tests {
         tree.write(
             "app/main.py",
             concat!(
-                "import app.used\n",
+                "from .used import live\n",
                 "\n",
                 "def entry():\n",
-                "    return app.used.live()\n",
+                "    return live()\n",
                 "\n",
                 "entry()\n",
             ),
@@ -136,6 +154,40 @@ mod tests {
                 "\n",
                 "def test_entry():\n",
                 "    assert entry() == 1\n",
+            ),
+        );
+        tree
+    }
+
+    fn root_package_tree() -> FixtureTree {
+        let tree = FixtureTree::new();
+        tree.write(
+            "__init__.py",
+            concat!(
+                "from .used import live\n",
+                "\n",
+                "def package_live():\n",
+                "    return live()\n",
+            ),
+        );
+        tree.write(
+            "used.py",
+            concat!(
+                "def live():\n",
+                "    return 1\n",
+                "\n",
+                "def test_only():\n",
+                "    return 2\n",
+            ),
+        );
+        tree.write(
+            "tests/test_root.py",
+            concat!(
+                "from used import live, test_only\n",
+                "\n",
+                "def test_live():\n",
+                "    assert live() == 1\n",
+                "    assert test_only() == 2\n",
             ),
         );
         tree
@@ -161,12 +213,123 @@ mod tests {
     }
 
     #[test]
-    fn native_run_derives_all_five_arms_from_multifile_python() {
-        let tree = multifile_tree();
-        let jurisdiction = tree.jurisdiction();
-        let report = analyze_hygiene(&jurisdiction, &configuration())
-            .expect("source-derived hygiene report");
+    fn relative_imports_anchor_to_the_containing_package_identity() {
+        for (path, current, initializer, level, expected) in [
+            ("__init__.py", "", true, 1, "used"),
+            ("__init__.pyi", "", true, 1, "used"),
+            ("app/main.py", "app.main", false, 1, "app.used"),
+            ("app/main.pyi", "app.main", false, 1, "app.used"),
+            (
+                "app/nested/main.py",
+                "app.nested.main",
+                false,
+                2,
+                "app.used",
+            ),
+            ("app/__init__.py", "app", true, 1, "app.used"),
+            ("app/__init__.pyi", "app", true, 1, "app.used"),
+            (
+                "app/nested/__init__.py",
+                "app.nested",
+                true,
+                1,
+                "app.nested.used",
+            ),
+            (
+                "app/nested/__init__.pyi",
+                "app.nested",
+                true,
+                2,
+                "app.used",
+            ),
+        ] {
+            let parsed = Module::new(path.to_owned(), current.to_owned(), false, "");
+            assert_eq!(parsed.is_package_initializer, initializer, "{path}");
+            assert_eq!(
+                resolve_relative_module(
+                    &parsed.name,
+                    parsed.is_package_initializer,
+                    level,
+                    Some("used".to_owned()),
+                ),
+                expected,
+                "path={path} current={current} level={level}"
+            );
+        }
+    }
 
+    #[test]
+    fn root_package_relative_imports_retain_known_modules_and_symbols() {
+        let tree = root_package_tree();
+        let configuration = HygieneConfiguration::new(["__init__.py"], ["tests"])
+            .expect("root-package fixture roots are admitted");
+        let jurisdiction = tree.jurisdiction();
+        let (_, corpus, terminal) =
+            Corpus::load(&jurisdiction, &configuration, Instant::now());
+        assert!(matches!(terminal, Terminal::Parsed));
+        assert!(corpus.edges.contains(&(String::new(), "used".to_owned())));
+        assert!(corpus.resolved_references().iter().any(|reference| {
+            reference.source_module.is_empty()
+                && reference.target_module == "used"
+                && reference.symbol == "live"
+        }));
+
+        let report = analyze_hygiene(&jurisdiction, &configuration)
+            .expect("root-package source-derived hygiene report");
+        let reachability = arm(&report, GateId::Reachability);
+        assert!(!reachability.findings.iter().any(|finding| {
+            matches!(
+                &finding.detail,
+                HygieneFindingDetail::ModuleReachability { subject, .. }
+                    if subject == "used"
+            )
+        }));
+        let symbols = arm(&report, GateId::SymbolReachability);
+        assert!(!symbols.findings.iter().any(|finding| {
+            matches!(
+                &finding.detail,
+                HygieneFindingDetail::SymbolReachability { symbol, .. }
+                    if symbol == "live"
+            )
+        }));
+        let unused = arm(&report, GateId::PythonUnused);
+        assert!(!unused.findings.iter().any(|finding| {
+            matches!(
+                &finding.detail,
+                HygieneFindingDetail::PythonUnused { symbol, .. }
+                    if symbol == "live"
+            )
+        }));
+        assert!(unused.findings.iter().any(|finding| {
+            matches!(
+                &finding.detail,
+                HygieneFindingDetail::PythonUnused {
+                    symbol,
+                    status: PythonUnusedStatus::TestOnly,
+                    ..
+                } if symbol == "test_only"
+            )
+        }));
+    }
+
+    fn assert_relative_package_graph(corpus: &Corpus) {
+        let references = corpus.resolved_references();
+        for source in ["app", "app.nested"] {
+            assert!(
+                corpus
+                    .edges
+                    .contains(&(source.to_owned(), "app.used".to_owned())),
+                "{source} keeps its relative import edge to app.used"
+            );
+            assert!(references.iter().any(|reference| {
+                reference.source_module == source
+                    && reference.target_module == "app.used"
+                    && reference.symbol == "live"
+            }));
+        }
+    }
+
+    fn assert_multifile_graph(report: &HygieneReport) {
         assert_eq!(
             report
                 .arms
@@ -175,13 +338,15 @@ mod tests {
                 .collect::<Vec<_>>(),
             HYGIENE_ARMS.map(|declaration| declaration.id)
         );
-        assert_eq!(graph_counts(arm(&report, GateId::Reachability)), (6, 4));
+        assert_eq!(graph_counts(arm(report, GateId::Reachability)), (7, 7));
         assert_eq!(
-            graph_counts(arm(&report, GateId::SymbolReachability)),
-            (6, 4)
+            graph_counts(arm(report, GateId::SymbolReachability)),
+            (7, 7)
         );
+    }
 
-        let reachability = arm(&report, GateId::Reachability);
+    fn assert_reachability_and_symbol_findings(report: &HygieneReport) {
+        let reachability = arm(report, GateId::Reachability);
         assert_eq!(reachability.outcome, HygieneOutcome::Findings);
         assert!(reachability.findings.iter().any(|finding| {
             matches!(
@@ -191,7 +356,7 @@ mod tests {
             )
         }));
 
-        let symbols = arm(&report, GateId::SymbolReachability);
+        let symbols = arm(report, GateId::SymbolReachability);
         assert_eq!(symbols.outcome, HygieneOutcome::Findings);
         assert!(symbols.findings.iter().any(|finding| {
             matches!(
@@ -200,20 +365,34 @@ mod tests {
                     if symbol == "test_only"
             )
         }));
+        for symbol in ["live", "package_live", "nested_live"] {
+            assert!(!symbols.findings.iter().any(|finding| {
+                matches!(
+                    &finding.detail,
+                    HygieneFindingDetail::SymbolReachability {
+                        symbol: observed,
+                        ..
+                    } if observed == symbol
+                )
+            }));
+        }
+    }
 
-        let unused = arm(&report, GateId::PythonUnused);
+    fn assert_unused_findings(report: &HygieneReport) {
+        let unused = arm(report, GateId::PythonUnused);
         assert_eq!(unused.outcome, HygieneOutcome::Findings);
-        assert!(unused.findings.iter().any(|finding| {
-            matches!(
-                &finding.detail,
-                HygieneFindingDetail::PythonUnused {
-                    symbol,
-                    status: PythonUnusedStatus::CandidateUnused,
-                    ..
-                } if symbol == "orphan"
-            )
-        }));
-        for symbol in ["dead_a", "dead_b"] {
+        for symbol in ["live", "package_live", "nested_live"] {
+            assert!(!unused.findings.iter().any(|finding| {
+                matches!(
+                    &finding.detail,
+                    HygieneFindingDetail::PythonUnused {
+                        symbol: observed,
+                        ..
+                    } if observed == symbol
+                )
+            }));
+        }
+        for symbol in ["orphan", "dead_a", "dead_b"] {
             assert!(unused.findings.iter().any(|finding| {
                 matches!(
                     &finding.detail,
@@ -235,8 +414,10 @@ mod tests {
                 } if symbol == "test_only"
             )
         }));
+    }
 
-        let assertions = arm(&report, GateId::AssertionFreeTests);
+    fn assert_test_policy_findings(report: &HygieneReport) {
+        let assertions = arm(report, GateId::AssertionFreeTests);
         assert_eq!(assertions.outcome, HygieneOutcome::Findings);
         assert!(assertions.findings.iter().any(|finding| {
             matches!(
@@ -246,7 +427,7 @@ mod tests {
             )
         }));
 
-        let private = arm(&report, GateId::PrivateInternals);
+        let private = arm(report, GateId::PrivateInternals);
         assert_eq!(private.outcome, HygieneOutcome::Findings);
         assert!(private.findings.iter().any(|finding| {
             matches!(
@@ -259,6 +440,22 @@ mod tests {
                     && target == "app._internal._secret"
             )
         }));
+    }
+
+    #[test]
+    fn native_run_derives_all_five_arms_from_multifile_python() {
+        let tree = multifile_tree();
+        let jurisdiction = tree.jurisdiction();
+        let (_, corpus, terminal) =
+            Corpus::load(&jurisdiction, &configuration(), Instant::now());
+        assert!(matches!(terminal, Terminal::Parsed));
+        assert_relative_package_graph(&corpus);
+        let report = analyze_hygiene(&jurisdiction, &configuration())
+            .expect("source-derived hygiene report");
+        assert_multifile_graph(&report);
+        assert_reachability_and_symbol_findings(&report);
+        assert_unused_findings(&report);
+        assert_test_policy_findings(&report);
 
         let clean = clean_tree();
         let clean_report = analyze_hygiene(&clean.jurisdiction(), &configuration())

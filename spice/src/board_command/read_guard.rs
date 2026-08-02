@@ -228,12 +228,14 @@ fn read_graph(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
+    let entries = match actor_entries(&snapshot.answer) {
+        Ok(entries) => entries,
+        Err(outcome) => return outcome,
+    };
     snapshot_reply(
         snapshot.cursor,
         CommandAnswer::Text(TextAnswer {
-            text: board::graph::render(view, &snapshot.entries)
-                .text()
-                .to_owned(),
+            text: board::graph::render(view, &entries).text().to_owned(),
         }),
     )
 }
@@ -262,10 +264,14 @@ fn read_handout(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
+    let entries = match actor_entries(&snapshot.answer) {
+        Ok(entries) => entries,
+        Err(outcome) => return outcome,
+    };
     snapshot_reply(
         snapshot.cursor,
         CommandAnswer::Text(TextAnswer {
-            text: board::handout::compose(&snapshot.entries),
+            text: board::handout::compose(&entries),
         }),
     )
 }
@@ -280,10 +286,11 @@ fn read_ledger(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let Some(entry) = snapshot
-        .entries
+    let Some(task) = snapshot
+        .answer
+        .tasks
         .iter()
-        .find(|entry| entry.statement().handle == ledger.task)
+        .find(|task| task.statement.body.handle == ledger.task)
     else {
         return refusal(
             "doc::task-unknown",
@@ -291,11 +298,11 @@ fn read_ledger(
             "read board and name one current task handle",
         );
     };
-    let statement = entry.statement();
-    let mut source = format!("# {}\n", statement.title);
+    let statement = &task.statement.body;
+    let mut source = format!("# {}\n", task.presentation_title());
     source.push_str(&format!(
         "\nFlow: {}\n",
-        join_phases(&entry.workflow().flow)
+        join_phases(&task.workflow.body.flow)
     ));
     if !statement.tags.is_empty() {
         source.push_str(&format!("Tags: {}\n", statement.tags.join(", ")));
