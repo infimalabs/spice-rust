@@ -213,7 +213,7 @@ fn installed_python_registry_and_ledger_dispositions_are_bijective() {
         .filter_map(|line| line.split_once('`'))
         .map(|(path, disposition)| {
             assert!(
-                [": R", ": D", ": X"]
+                [": R", ": D", ": P", ": X"]
                     .iter()
                     .any(|prefix| disposition.starts_with(prefix)),
                 "Python ledger path has no explicit disposition: {path}",
@@ -471,7 +471,7 @@ fn daemonless_local_succession_is_closed_and_explicit() {
 }
 
 #[test]
-fn python_lifecycle_and_session_forensics_name_their_rust_successors() {
+fn python_lifecycle_and_session_forensics_name_successors_and_gap_owner() {
     let ledger = include_str!("../../../PORTING.md");
     let agent = ledger
         .split_once("### Agent lifecycle")
@@ -498,11 +498,20 @@ fn python_lifecycle_and_session_forensics_name_their_rust_successors() {
         .split_once("### Task plane")
         .expect("the session forensics section is bounded")
         .0;
-    let historical_path = format!("- `session {}{}`: X.", "brie", "fing");
-    assert!(sessions.lines().any(|line| line == historical_path));
+    let pending = sessions
+        .lines()
+        .filter(|line| line.starts_with("- `session"))
+        .collect::<Vec<_>>();
+    assert_eq!(pending.len(), 14);
+    assert!(
+        pending
+            .iter()
+            .all(|line| line.contains("P -> `FORENSI-1kJWS7G5`"))
+    );
+    assert!(!sessions.lines().any(|line| line.contains(": X")));
     assert!(sessions.contains(
-        "Their retained questions use `watch`,\n\
-         `retro`, `recall`, and `thread` over owned tape and journal loci."
+        "The landed `watch`, `retro`, `recall`, and `thread` paths provide owned tape\n\
+         and journal foundations but do not yet answer every predecessor query."
     ));
     for path in [&["lane"][..], &["lane", "add"][..], &["recall"][..]] {
         assert_eq!(landing(path), Landing::Landed);
