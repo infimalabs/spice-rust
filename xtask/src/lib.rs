@@ -21,6 +21,7 @@ const WASM_TARGET: &str = "wasm32-unknown-unknown";
 const CARGO_HOME: &str = concat!(env!("HOME"), "/.cargo");
 
 const APP_FILES: [&str; 4] = ["app.module", "app_bg.wasm", "canvas-app.html", "style.css"];
+const RELEASE_STAGE_DIRECTORIES: [&str; 2] = ["objects", "targets"];
 const GENERATED_MODULE_REFERENCES: usize = 2;
 
 const VERIFY_STEPS: [Step; 6] = [
@@ -172,7 +173,29 @@ fn remapped_rustflags(root: &Path) -> Result<String, AppBuildError> {
 fn compare_stage(expected: &Path, observed: &Path) -> Result<(), AppBuildError> {
     let expected_names = stage_names(expected)?;
     let observed_names = stage_names(observed)?;
-    if expected_names != APP_FILES || observed_names != APP_FILES {
+    let expected_app_names = expected_names
+        .iter()
+        .filter(|name| APP_FILES.contains(&name.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut expected_release_shape_is_valid = true;
+    for name in expected_names
+        .iter()
+        .filter(|name| !APP_FILES.contains(&name.as_str()))
+    {
+        if !RELEASE_STAGE_DIRECTORIES.contains(&name.as_str()) {
+            expected_release_shape_is_valid = false;
+            continue;
+        }
+        let path = expected.join(name);
+        let metadata =
+            fs::symlink_metadata(&path).map_err(|source| AppBuildError::Io { path, source })?;
+        expected_release_shape_is_valid &= metadata.file_type().is_dir();
+    }
+    if expected_app_names != APP_FILES
+        || observed_names != APP_FILES
+        || !expected_release_shape_is_valid
+    {
         return Err(AppBuildError::Inventory {
             expected: expected_names,
             observed: observed_names,
@@ -460,6 +483,46 @@ mod tests {
                 "/stage",
             ]
         );
+    }
+
+    #[test]
+    fn app_comparison_admits_only_release_owned_stage_directories() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-xtask-app-stage-inventory-{}",
+            std::process::id()
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        let expected = root.join("expected");
+        let observed = root.join("observed");
+        fs::create_dir_all(&expected).expect("create expected stage");
+        fs::create_dir_all(&observed).expect("create observed stage");
+        for name in APP_FILES {
+            fs::write(expected.join(name), name).expect("write expected app file");
+            fs::write(observed.join(name), name).expect("write observed app file");
+        }
+        for name in RELEASE_STAGE_DIRECTORIES {
+            fs::create_dir(expected.join(name)).expect("create release stage directory");
+        }
+
+        compare_stage(&expected, &observed).expect("release directories are separate ownership");
+
+        fs::write(expected.join("unowned"), b"bytes").expect("write unowned stage entry");
+        assert!(matches!(
+            compare_stage(&expected, &observed),
+            Err(AppBuildError::Inventory { .. })
+        ));
+        fs::remove_file(expected.join("unowned")).expect("remove unowned stage entry");
+        fs::remove_dir(expected.join("objects")).expect("remove release stage directory");
+        fs::write(expected.join("objects"), b"not a directory")
+            .expect("replace release directory with file");
+        assert!(matches!(
+            compare_stage(&expected, &observed),
+            Err(AppBuildError::Inventory { .. })
+        ));
+
+        fs::remove_dir_all(root).expect("remove fixture");
     }
 
     #[test]
