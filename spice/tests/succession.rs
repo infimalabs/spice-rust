@@ -158,6 +158,8 @@ fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
         let text = invoke(scratch.path(), case, false);
         let json = invoke(scratch.path(), case, true);
         assert_eq!(text.status.code(), json.status.code(), "{}", case.path);
+        assert_exit(case, &text, "text");
+        assert_exit(case, &json, "JSON");
         assert_one_stream(&text, case.path);
         assert_one_stream(&json, case.path);
         assert_no_placeholder(&text, case.path);
@@ -173,6 +175,23 @@ fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
                 panic!("{} JSON outcome did not decode: {error}", case.path)
             });
         }
+    }
+}
+
+fn assert_exit(case: &Case, output: &Output, form: &str) {
+    match case.output {
+        OutputKind::Document => assert!(
+            matches!(output.status.code(), Some(0..=2)),
+            "{} {form} used undeclared exit {:?}",
+            case.path,
+            output.status.code(),
+        ),
+        OutputKind::ChildStream => assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{} {form} did not preserve the selected child exit",
+            case.path,
+        ),
     }
 }
 
