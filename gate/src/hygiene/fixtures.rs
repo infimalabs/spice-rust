@@ -555,6 +555,25 @@ mod tests {
                 ..
             })
         ));
+
+        let mut unresolved: Vec<_> = HYGIENE_ARMS
+            .into_iter()
+            .map(|arm| observation(arm.id, HygieneOutcome::Passed))
+            .collect();
+        let analyzer = unresolved[0].evidence.iter_mut().find_map(|item| match item {
+            AnalysisEvidence::Analyzer(AnalyzerEvidence::Identified { resolved, .. }) => {
+                Some(resolved)
+            }
+            _ => None,
+        });
+        analyzer.expect("native analyzer evidence").clear();
+        assert!(matches!(
+            measure_hygiene(unresolved),
+            Err(HygieneError::InvalidEvidence {
+                gate: GateId::Reachability,
+                ..
+            })
+        ));
     }
 
     #[test]
