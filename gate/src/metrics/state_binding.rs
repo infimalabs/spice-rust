@@ -101,7 +101,7 @@ impl MetricStateBinding {
             self.bound.clone(),
             self.value,
             actor_inputs,
-            self.variation_percent.into(),
+            self.variation_percent,
         )
         .map_err(StateBindingError::Bound)
     }
