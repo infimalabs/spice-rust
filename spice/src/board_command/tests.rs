@@ -296,6 +296,65 @@ mod tests {
         clean(&root, bus);
     }
 
+    fn assert_hidden_actor_document(
+        answer: &BoardAnswer,
+        actor: &Actor,
+        hidden: &TaskHandle,
+        public: &TaskHandle,
+        secret: &str,
+    ) {
+        assert_eq!(&answer.principal, actor);
+        let hidden_heads = at(answer, hidden);
+        assert_eq!(hidden_heads.visibility.hidden_stem(), Some("oops"));
+        assert_eq!(hidden_heads.statement.body.handle, *hidden);
+        assert_eq!(hidden_heads.statement.body.project, ".oops.correctness");
+        assert_eq!(hidden_heads.presentation_title(), "Hidden task");
+        assert_eq!(hidden_heads.workflow.body.status, "pending");
+        let public_heads = at(answer, public);
+        assert_eq!(public_heads.presentation_title(), "Visible allocator work");
+
+        let json = serde_json::to_value(answer).expect("board answer encodes");
+        let hidden_json = json["tasks"]
+            .as_array()
+            .expect("task rows")
+            .iter()
+            .find(|task| task["statement"]["body"]["handle"] == hidden.to_string())
+            .expect("hidden JSON row");
+        assert_eq!(
+            hidden_json["visibility"],
+            serde_json::json!({"kind": "hidden", "stem": "oops"})
+        );
+        assert_eq!(hidden_json["presentation_title"], "Hidden task");
+        assert!(hidden_json["statement"]["body"].get("title").is_none());
+        assert_eq!(hidden_json["workflow"]["body"]["status"], "pending");
+        let public_json = json["tasks"]
+            .as_array()
+            .expect("task rows")
+            .iter()
+            .find(|task| task["statement"]["body"]["handle"] == public.to_string())
+            .expect("public JSON row");
+        assert_eq!(public_json["presentation_title"], "Visible allocator work");
+        assert!(public_json["statement"]["body"].get("title").is_none());
+
+        let rendered = Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(answer.cursor),
+            body: CommandAnswer::Board(Box::new(answer.clone())),
+        });
+        for form in [crate::render::Form::Text, crate::render::Form::Json] {
+            let document = crate::render::render(&rendered, form)
+                .expect("board presentation renders")
+                .document()
+                .to_vec();
+            let document = String::from_utf8(document).expect("presentation is UTF-8");
+            assert!(!document.contains(secret), "{form:?} leaked hidden prose");
+            assert!(document.contains("Hidden task"), "{form:?} presentation");
+            assert!(
+                document.contains("Visible allocator work"),
+                "{form:?} public title"
+            );
+        }
+    }
+
     #[test]
     fn board_read_retains_hidden_evidence_while_next_and_presentation_stay_public() {
         let (root, bus, epoch, seats) = fixture("hidden-visibility", 1);
@@ -322,40 +381,32 @@ mod tests {
             Some("todo"),
         );
 
-        let available = board(&bus, epoch, lane.clone());
-        let hidden_heads = at(&available, &hidden);
-        assert_eq!(hidden_heads.visibility.hidden_stem(), Some("oops"));
-        assert_eq!(hidden_heads.statement.body.project, ".oops.correctness");
-        assert_eq!(hidden_heads.presentation_title(), "Hidden task");
-        assert_eq!(at(&available, &public).presentation_title(), "Visible allocator work");
-        let json = serde_json::to_value(&available).expect("board answer encodes");
-        let hidden_json = json["tasks"]
-            .as_array()
-            .expect("task rows")
-            .iter()
-            .find(|task| task["statement"]["body"]["handle"] == hidden.to_string())
-            .expect("hidden JSON row");
-        assert_eq!(
-            hidden_json["visibility"],
-            serde_json::json!({"kind": "hidden", "stem": "oops"})
+        let operator = board(&bus, epoch, Actor::Operator);
+        assert_hidden_actor_document(
+            &operator,
+            &Actor::Operator,
+            &hidden,
+            &public,
+            "secret allocator failure details",
         );
-        assert_eq!(hidden_json["presentation_title"], "Hidden task");
-        let rendered = Outcome::Reply(Reply {
-            position: ReplyPosition::Snapshot(available.cursor),
-            body: CommandAnswer::Board(Box::new(available.clone())),
-        });
-        for form in [crate::render::Form::Text, crate::render::Form::Json] {
-            let document = crate::render::render(&rendered, form)
-                .expect("board presentation renders")
-                .document()
-                .to_vec();
-            assert!(
-                String::from_utf8(document)
-                    .expect("presentation is UTF-8")
-                    .contains("Hidden task"),
-                "{form:?} presentation"
-            );
-        }
+        let available = board(&bus, epoch, lane.clone());
+        assert_hidden_actor_document(
+            &available,
+            &lane,
+            &hidden,
+            &public,
+            "secret allocator failure details",
+        );
+        let observed = bus.task_snapshot().expect("task authority is readable");
+        let authoritative = observed
+            .tasks()
+            .iter()
+            .find(|heads| heads.statement().body().handle == hidden)
+            .expect("hidden authoritative statement remains present");
+        assert_eq!(
+            authoritative.statement().body().title,
+            "secret allocator failure details"
+        );
 
         let rule: Name = "next".parse().expect("allocator rule");
         assert_committed(issue(

@@ -462,6 +462,21 @@ pub const STRUCTURAL_ARMS: [ArmDeclaration; 4] = [
     },
 ];
 
+pub(crate) const fn metric_parser_declaration(metric: MetricId) -> ParserDeclaration {
+    match metric {
+        MetricId::FileLines | MetricId::FileBytes => STRUCTURAL_ARMS[0].parser(),
+        MetricId::RoutineCcn | MetricId::RoutineLength => STRUCTURAL_ARMS[1].parser(),
+        MetricId::RepositoryDocumentCharacters => parser(
+            ParserId::Utf8DocumentCharactersV1,
+            ParserMode::Native,
+            "repository-truth document bytes",
+            None,
+        ),
+        MetricId::MagicNumberRegressions => STRUCTURAL_ARMS[2].parser(),
+        MetricId::MarkdownLinkCaseMismatches => STRUCTURAL_ARMS[3].parser(),
+    }
+}
+
 const fn parser(
     id: ParserId,
     mode: ParserMode,

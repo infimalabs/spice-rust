@@ -1,9 +1,10 @@
 use std::error::Error;
 use std::fmt;
 
+use super::declaration::metric_parser_declaration;
 use super::{
     EvidenceError, EvidenceState, LatchBinding, MetricEvidence, MetricId, MetricKey,
-    MetricMeasurement, ParserEvidence, ResolvedMetricRule, STRUCTURAL_METRICS,
+    MetricMeasurement, ParserEvidence, ResolvedMetricRule,
 };
 use crate::state::{
     ActorInputs, ActorSource, BoundDecision, BoundError, BoundRule, KeyError, LatchEntry,
@@ -39,16 +40,12 @@ impl MetricStateBinding {
                 observed: rule.metric(),
             });
         }
-        let expected_parser = STRUCTURAL_METRICS
-            .into_iter()
-            .find(|declaration| declaration.id() == metric)
-            .expect("every structural metric has one declaration")
-            .parser();
-        if !parser.validate() || parser.parser() != expected_parser {
+        let expected_parser = metric_parser_declaration(metric);
+        if !parser.matches_declaration(expected_parser) {
             return Err(StateBindingError::Parser(format!(
                 "{} parser evidence does not match {}",
                 parser.parser().as_str(),
-                expected_parser.as_str()
+                expected_parser.id().as_str()
             )));
         }
         let kind = latch_kind(metric).ok_or(StateBindingError::UnboundedMetric(metric))?;
@@ -132,6 +129,7 @@ impl MetricStateBinding {
             latch_kind_name(self.entry.kind()),
             decision.base_limit(),
             decision.configured_elastic_limit(),
+            decision.variation_percent(),
             decision.elastic_limit(),
             decision.active_limit(),
             decision.unlimited(),
@@ -154,6 +152,7 @@ impl MetricStateBinding {
             && decision.measured() == self.value
             && decision.base_limit() == self.rule.base_limit()
             && decision.configured_elastic_limit() == self.rule.ratchet_limit()
+            && decision.variation_percent() == self.variation_percent
             && decision.unlimited() == self.rule.unlimited();
         if matches {
             Ok(())
