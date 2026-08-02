@@ -49,7 +49,7 @@ const REFUSAL: &str = r#"{
 #[test]
 fn absent_head_fields_are_omitted_and_null_is_refused() {
     assert_canonical_absence::<WorkflowHead>(WORKFLOW, &["assignment", "deferral", "completion"]);
-    assert_canonical_absence::<LaneResidency>(LANE, &["occupant"]);
+    assert_canonical_absence::<LaneResidency>(LANE, &["occupant", "session"]);
     assert_canonical_absence::<CursorHead>(CURSOR, &["seq", "wake"]);
 }
 

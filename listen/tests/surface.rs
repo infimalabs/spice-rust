@@ -509,6 +509,9 @@ fn finite_retro_accounts_one_terminal_partial_over_every_member() {
 #[test]
 fn every_surface_event_has_one_closed_canonical_wire_shape() {
     let events = vec![
+        SurfaceEvent::Session {
+            identity: "0192f806-a22e-708b-bef1-0573a7d27786".to_owned(),
+        },
         SurfaceEvent::Prose {
             text: "hello".to_owned(),
             phase: Some("final".to_owned()),
@@ -566,6 +569,7 @@ fn every_surface_event_has_one_closed_canonical_wire_shape() {
     assert_eq!(
         events.iter().map(SurfaceEvent::kind).collect::<Vec<_>>(),
         vec![
+            EventKind::Session,
             EventKind::Prose,
             EventKind::Reasoning,
             EventKind::Reasoning,

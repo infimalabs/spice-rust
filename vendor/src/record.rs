@@ -54,6 +54,15 @@ impl fmt::Display for SessionIdError {
 
 impl Error for SessionIdError {}
 
+/// One exact session declaration admitted from a selected vendor record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SessionDeclaration {
+    /// Identity accepted for an explicit successor resume.
+    pub session: SessionId,
+    /// Durable record bytes that declared the identity.
+    pub locus: Locus,
+}
+
 /// Whether a launch begins or resumes an exact session.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Resume {
@@ -167,6 +176,35 @@ impl Record {
             return Ok(None);
         }
         listen::decode(self.dialect, bytes, locus).map(Some)
+    }
+
+    /// Admit the session declaration carried by one decoded selected record.
+    ///
+    /// Diagnostic streams and records of every other event kind return no
+    /// declaration. The current Claude and Codex decoders each emit at most one
+    /// declaration from their exact initialization record.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionIdError`] when the vendor declared an empty identity.
+    pub fn session_declaration(
+        &self,
+        decoded: &Decoded,
+    ) -> Result<Option<SessionDeclaration>, SessionIdError> {
+        decoded
+            .events()
+            .iter()
+            .find_map(|event| match event {
+                listen::Event::Session(declaration) => Some(declaration),
+                _ => None,
+            })
+            .map(|declaration| {
+                Ok(SessionDeclaration {
+                    session: SessionId::new(declaration.identity.clone())?,
+                    locus: declaration.locus,
+                })
+            })
+            .transpose()
     }
 }
 

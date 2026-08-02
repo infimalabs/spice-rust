@@ -128,6 +128,7 @@ const fn is_lane(kind: wire::FactKind) -> bool {
     matches!(
         kind,
         wire::FactKind::LaneSeated
+            | wire::FactKind::LaneSessionDeclared
             | wire::FactKind::LaneStarted
             | wire::FactKind::LaneExited
             | wire::FactKind::LaneCompacted

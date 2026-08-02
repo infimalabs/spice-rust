@@ -448,6 +448,20 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
         occupant: Some(second_uuid),
         lineage: vec![first_uuid],
         capabilities: vec![second_uuid],
+        session: Some(LaneSession {
+            lane: first_uuid,
+            occupant: second_uuid,
+            worktree: "/worktrees/lane-a".to_owned(),
+            vendor: "claude".parse().expect("fixture vendor"),
+            epoch: first_uuid,
+            stream: "stdout".to_owned(),
+            identity: "018f7777-7777-7444-8888-999999999999".to_owned(),
+            locus: TapeLocus {
+                member: 7,
+                offset: 31,
+                length: 93,
+            },
+        }),
         disposition: "seated".to_owned(),
     };
     let empty = LaneResidency {
@@ -458,6 +472,7 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
         occupant: None,
         lineage: Vec::new(),
         capabilities: Vec::new(),
+        session: None,
         disposition: "empty".to_owned(),
     };
     law(covered, "LaneResidency", &[occupied.clone(), empty.clone()]);

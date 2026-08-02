@@ -341,6 +341,7 @@ fn seed_lane(bus: &Bus, epoch: CanonicalUuid, lane: CanonicalUuid, occupant: Can
         occupant: Some(occupant),
         lineage: vec![occupant],
         capabilities: vec![test_uuid(9)],
+        session: None,
         disposition: "occupied".to_owned(),
     });
     head.lanes.sort_by_key(|lane| lane.lane);

@@ -222,6 +222,40 @@ pub enum ResidentState {
     Dark,
 }
 
+/// Exact durable bytes that declared one vendor session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TapeLocus {
+    /// Tape member holding the declaration.
+    pub member: u64,
+    /// Byte offset within the member.
+    pub offset: u64,
+    /// Number of declaration bytes.
+    pub length: u64,
+}
+
+/// Current resumable session authority for one lane.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaneSession {
+    /// Lane whose successor may resume this session.
+    pub lane: CanonicalUuid,
+    /// Occupant whose selected stream proved the identity.
+    pub occupant: CanonicalUuid,
+    /// Canonical worktree bound to the launch.
+    pub worktree: String,
+    /// Vendor dialect that admitted the declaration.
+    pub vendor: crate::Name,
+    /// Resident generation that observed the declaration.
+    pub epoch: CanonicalUuid,
+    /// Selected child stream carrying the declaration.
+    pub stream: String,
+    /// Exact vendor session identity.
+    pub identity: String,
+    /// Durable bytes that declared the identity.
+    pub locus: TapeLocus,
+}
+
 /// One lane's current place in the resident generation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -245,6 +279,13 @@ pub struct LaneResidency {
     pub lineage: Vec<CanonicalUuid>,
     /// Capabilities currently bound to this lane and occupant.
     pub capabilities: Vec<CanonicalUuid>,
+    /// Exact session authority, absent only for legacy or never-started seats.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub session: Option<LaneSession>,
     /// Current lane disposition.
     pub disposition: String,
 }

@@ -538,7 +538,7 @@ const CONTRACTS: &[Contract] = &[
         "lane add [WORKTREE] [--life Steer|Drive|Drain] [--vendor NAME]",
         Operator,
         Command,
-        [LaneSeated, LaneStarted],
+        [LaneSeated, LaneSessionDeclared, LaneStarted],
         [Resident, OperatorCapability],
         Reply,
         "lane::add"
@@ -558,7 +558,7 @@ const CONTRACTS: &[Contract] = &[
         "lane wake ID",
         Operator,
         Command,
-        [LaneStarted],
+        [LaneSessionDeclared, LaneStarted],
         [Resident, OperatorCapability],
         Reply,
         "lane::wake"

@@ -21,5 +21,6 @@ pub use launch::{
     POST_TOOL_HOOK_TIMEOUT_SECONDS, SteeringHook, SteeringKey,
 };
 pub use record::{
-    LaunchError, Process, ProcessError, Record, RecordStream, Resume, SessionId, SessionIdError,
+    LaunchError, Process, ProcessError, Record, RecordStream, Resume, SessionDeclaration,
+    SessionId, SessionIdError,
 };

@@ -587,7 +587,7 @@ async fn run_surface(
                     "lane::capture-records-closed",
                     "lane capture record receiver closed",
                 ))?;
-                lane_surface::capture_record(seats, &record)?;
+                lane_surface::capture_record(bus, epoch, seats, &record)?;
             }
             failure = failures.recv() => {
                 let failure = failure.ok_or_else(|| environment_fault(

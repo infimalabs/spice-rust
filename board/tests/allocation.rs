@@ -69,6 +69,7 @@ fn residency() -> ResidencyHead {
             occupant: Some(uuid(21)),
             lineage: Vec::new(),
             capabilities: Vec::new(),
+            session: None,
             disposition: "occupied".to_owned(),
         }],
     }

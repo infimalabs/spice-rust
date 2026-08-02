@@ -1138,6 +1138,7 @@ fn residency_head() -> ResidencyHead {
             occupant: Some(uuid("018f82d4-6f59-7d06-92e3-bce913116303")),
             lineage: Vec::new(),
             capabilities: Vec::new(),
+            session: None,
             disposition: "active".to_owned(),
         }],
     }

@@ -1,9 +1,8 @@
 //! Codex's current exec launch contract.
 //!
-//! The launch asks for no structured stream. Codex writes its own
-//! `rollout-*.jsonl` transcript for the thread, which is where its records are
-//! read from, so a `--json` flag here would only duplicate onto stdout what is
-//! already being recorded — and spice never launched Codex with one.
+//! The launch selects Codex's JSONL stdout so the supervisor receives the
+//! `thread.started` declaration and every subsequent record through its sole
+//! selected-stream capture path.
 
 use std::ffi::OsString;
 
@@ -35,6 +34,7 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Sp
         launch.cwd.clone().into_os_string(),
         OsString::from("--model"),
         OsString::from(launch.model.as_str()),
+        OsString::from("--json"),
     ];
     for override_ in config_overrides(launch) {
         arguments.push(OsString::from("--config"));
