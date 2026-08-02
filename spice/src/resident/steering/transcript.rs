@@ -10,11 +10,12 @@ pub(super) struct TranscriptRecognition {
 pub(super) fn transcript_recognition(
     paths: &RuntimePaths,
     lane: CanonicalUuid,
+    vendor: &wire::Name,
     token: &str,
     disposition: Disposition,
     standing: &steer::Ledger,
 ) -> Result<TranscriptRecognition, Outcome<CommandAnswer>> {
-    let path = paths.tape.join(lane.to_string());
+    let path = paths.tape.join(lane.to_string()).join(vendor.as_str());
     match fs::metadata(&path) {
         Ok(metadata) if metadata.is_dir() => {}
         Ok(_) => {

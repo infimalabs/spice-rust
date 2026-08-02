@@ -2,13 +2,16 @@
 
 use std::ffi::OsString;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use bus::Bus;
 use journal::{FactCause, JournalWrite};
+use lane::capture::{CaptureFailure, CaptureRecord, CaptureReporter};
 use lane::occupant::{Occupant, OccupantWait, Seats};
 use sill::{
-    Cancellation, Deadlines, Environment, RestartDisposition, Spec, WaitOutcome, WaitPolicy,
+    Cancellation, Deadlines, Environment, Observation, RestartDisposition, Spec, WaitOutcome,
+    WaitPolicy,
 };
 use spice::repository::Repository;
 use wire::intent::{
@@ -28,25 +31,30 @@ use super::{
 
 const OCCUPIED: &str = "occupied";
 const VACANT: &str = "vacant";
+const DEGRADED: &str = "degraded";
 const RECALL_LIMIT: usize = 16;
 const CAPTURE_LIMIT: usize = 1024 * 1024;
 const OUTPUT_DRAIN: Duration = Duration::from_secs(2);
 const REAP: Duration = Duration::from_secs(2);
 const TERMINATION_GRACE: Duration = Duration::from_secs(1);
+const RECORD_QUEUE: usize = 64;
 
 pub(super) struct Runtime<'a> {
     capabilities: &'a canvas::axum::Capabilities,
     discovery: &'a canvas::Discovery,
+    capture: Arc<dyn CaptureReporter>,
 }
 
 impl<'a> Runtime<'a> {
     pub(super) const fn new(
         capabilities: &'a canvas::axum::Capabilities,
         discovery: &'a canvas::Discovery,
+        capture: Arc<dyn CaptureReporter>,
     ) -> Self {
         Self {
             capabilities,
             discovery,
+            capture,
         }
     }
 }
@@ -57,6 +65,7 @@ pub(super) fn restore_seats(
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &mut Seats,
+    capture: &Arc<dyn CaptureReporter>,
 ) -> CommandResult<()> {
     let durable = current_residency(bus, epoch)?.body().lanes.clone();
     for row in durable {
@@ -65,9 +74,16 @@ pub(super) fn restore_seats(
         }
         super::steering::lane_capability(&row)?;
         let occupant = new_uuid();
-        let spec = occupant_spec(paths, &row.worktree, &row.vendor, row.lane)?;
+        let launch = occupant_launch(
+            paths,
+            &row.worktree,
+            &row.vendor,
+            row.lane,
+            occupant,
+            Arc::clone(capture),
+        )?;
         let group = seats
-            .seat(row.lane, occupant, spec)
+            .seat_observed(row.lane, occupant, launch.spec, launch.observation)
             .map_err(|error| store_fault("lane::restart-launch-failed", &error.to_string()))?
             .group();
         if let Err(outcome) = commit_restored(bus, epoch, &row, occupant, group) {
@@ -111,83 +127,13 @@ pub(super) fn seat(
     if !matches!(command.actor(), Actor::Operator) {
         return authority_refusal(command.actor(), "operator");
     }
-    if !matches!(request.life.as_str(), "steer" | "drive" | "drain") {
-        return lane_refusal(
-            "lane::life-invalid",
-            Some("steer, drive, or drain".to_owned()),
-            Some(request.life.clone()),
-            "select one closed lane life",
-        );
-    }
-    let observed = match current_residency(bus, epoch) {
-        Ok(head) => head,
-        Err(outcome) => return typed_outcome(outcome),
+    let observed = match admit_seat(bus, paths, epoch, request) {
+        Ok(observed) => observed,
+        Err(outcome) => return outcome,
     };
-    if observed.body().state != ResidentState::Seated {
-        return lane_refusal(
-            "lane::resident-not-seated",
-            Some("seated".to_owned()),
-            Some(format!("{:?}", observed.body().state).to_lowercase()),
-            "wait for a seated resident generation before adding a lane",
-        );
-    }
-    if observed
-        .body()
-        .lanes
-        .iter()
-        .any(|row| row.lane == request.lane)
-    {
-        return lane_refusal(
-            "lane::already-seated",
-            None,
-            Some(request.lane.to_string()),
-            "retry lane add so the client mints a fresh lane identity",
-        );
-    }
-    if observed
-        .body()
-        .lanes
-        .iter()
-        .any(|row| row.worktree == request.worktree)
-    {
-        return lane_refusal(
-            "lane::worktree-occupied",
-            Some("one lane per worktree".to_owned()),
-            Some(request.worktree.clone()),
-            "drain the existing lane or choose another linked worktree",
-        );
-    }
-    if let Err(outcome) = validate_worktree(paths, &request.worktree) {
-        return typed_outcome(outcome);
-    }
-
-    let capability = new_uuid();
-    let actor = Actor::Lane(request.lane);
-    if let Err(error) = runtime.capabilities.insert(capability, actor.clone()) {
-        return typed_environment_fault("lane::capability-unavailable", &error.to_string());
-    }
-    if let Err(outcome) =
-        super::steering::publish_lane_surface(paths, runtime.discovery, request.lane, capability)
-    {
-        runtime.capabilities.remove(capability, &actor);
-        return typed_outcome(outcome);
-    }
-    let occupant = new_uuid();
-    let spec = match occupant_spec(paths, &request.worktree, &request.vendor, request.lane) {
-        Ok(spec) => spec,
-        Err(outcome) => {
-            runtime.capabilities.remove(capability, &actor);
-            super::steering::remove_lane_surface(paths, request.lane);
-            return typed_outcome(outcome);
-        }
-    };
-    let group = match seats.seat(request.lane, occupant, spec) {
-        Ok(occupant) => occupant.group(),
-        Err(error) => {
-            runtime.capabilities.remove(capability, &actor);
-            super::steering::remove_lane_surface(paths, request.lane);
-            return typed_environment_fault("lane::launch-failed", &error.to_string());
-        }
+    let prepared = match prepare_seat(paths, seats, runtime, request) {
+        Ok(prepared) => prepared,
+        Err(outcome) => return outcome,
     };
     let answer = LaneChangeAnswer {
         lane: request.lane,
@@ -195,26 +141,155 @@ pub(super) fn seat(
         to: OCCUPIED.to_owned(),
     };
     let proposal = propose_seat(
-        command, request, &observed, epoch, capability, occupant, group,
+        command,
+        request,
+        &observed,
+        epoch,
+        prepared.capability,
+        prepared.occupant,
+        prepared.group,
     );
     let proposal = match proposal {
         Ok(proposal) => proposal,
         Err(outcome) => {
-            drop(seats.vacate(request.lane));
-            runtime.capabilities.remove(capability, &actor);
-            super::steering::remove_lane_surface(paths, request.lane);
+            compensate_seat(paths, seats, runtime, request.lane, prepared.capability);
             return typed_outcome(outcome);
         }
     };
     match commit(bus, proposal) {
         Ok(committed) => committed_lane_reply(committed, answer),
         Err(outcome) => {
-            drop(seats.vacate(request.lane));
-            runtime.capabilities.remove(capability, &actor);
-            super::steering::remove_lane_surface(paths, request.lane);
+            compensate_seat(paths, seats, runtime, request.lane, prepared.capability);
             typed_outcome(outcome)
         }
     }
+}
+
+fn admit_seat(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    request: &LaneSeat,
+) -> Result<journal::JournalHead<wire::ResidencyHead>, Outcome<CommandAnswer>> {
+    if !matches!(request.life.as_str(), "steer" | "drive" | "drain") {
+        return Err(lane_refusal(
+            "lane::life-invalid",
+            Some("steer, drive, or drain".to_owned()),
+            Some(request.life.clone()),
+            "select one closed lane life",
+        ));
+    }
+    let observed = current_residency(bus, epoch).map_err(typed_outcome)?;
+    if observed.body().state != ResidentState::Seated {
+        return Err(lane_refusal(
+            "lane::resident-not-seated",
+            Some("seated".to_owned()),
+            Some(format!("{:?}", observed.body().state).to_lowercase()),
+            "wait for a seated resident generation before adding a lane",
+        ));
+    }
+    if observed
+        .body()
+        .lanes
+        .iter()
+        .any(|row| row.lane == request.lane)
+    {
+        return Err(lane_refusal(
+            "lane::already-seated",
+            None,
+            Some(request.lane.to_string()),
+            "retry lane add so the client mints a fresh lane identity",
+        ));
+    }
+    if observed
+        .body()
+        .lanes
+        .iter()
+        .any(|row| row.worktree == request.worktree)
+    {
+        return Err(lane_refusal(
+            "lane::worktree-occupied",
+            Some("one lane per worktree".to_owned()),
+            Some(request.worktree.clone()),
+            "drain the existing lane or choose another linked worktree",
+        ));
+    }
+    validate_worktree(paths, &request.worktree).map_err(typed_outcome)?;
+    Ok(observed)
+}
+
+struct PreparedSeat {
+    capability: CanonicalUuid,
+    occupant: CanonicalUuid,
+    group: u32,
+}
+
+fn prepare_seat(
+    paths: &RuntimePaths,
+    seats: &mut Seats,
+    runtime: &Runtime<'_>,
+    request: &LaneSeat,
+) -> Result<PreparedSeat, Outcome<CommandAnswer>> {
+    let capability = new_uuid();
+    let actor = Actor::Lane(request.lane);
+    runtime
+        .capabilities
+        .insert(capability, actor.clone())
+        .map_err(|error| {
+            typed_environment_fault("lane::capability-unavailable", &error.to_string())
+        })?;
+    if let Err(outcome) =
+        super::steering::publish_lane_surface(paths, runtime.discovery, request.lane, capability)
+    {
+        runtime.capabilities.remove(capability, &actor);
+        return Err(typed_outcome(outcome));
+    }
+    let occupant = new_uuid();
+    let launch = occupant_launch(
+        paths,
+        &request.worktree,
+        &request.vendor,
+        request.lane,
+        occupant,
+        Arc::clone(&runtime.capture),
+    )
+    .map_err(|outcome| {
+        remove_seat_surface(paths, runtime, request.lane, capability);
+        typed_outcome(outcome)
+    })?;
+    let group = seats
+        .seat_observed(request.lane, occupant, launch.spec, launch.observation)
+        .map(lane::occupant::Occupant::group)
+        .map_err(|error| {
+            remove_seat_surface(paths, runtime, request.lane, capability);
+            typed_environment_fault("lane::launch-failed", &error.to_string())
+        })?;
+    Ok(PreparedSeat {
+        capability,
+        occupant,
+        group,
+    })
+}
+
+fn compensate_seat(
+    paths: &RuntimePaths,
+    seats: &mut Seats,
+    runtime: &Runtime<'_>,
+    lane: CanonicalUuid,
+    capability: CanonicalUuid,
+) {
+    drop(seats.vacate(lane));
+    remove_seat_surface(paths, runtime, lane, capability);
+}
+
+fn remove_seat_surface(
+    paths: &RuntimePaths,
+    runtime: &Runtime<'_>,
+    lane: CanonicalUuid,
+    capability: CanonicalUuid,
+) {
+    runtime.capabilities.remove(capability, &Actor::Lane(lane));
+    super::steering::remove_lane_surface(paths, lane);
 }
 
 /// Drain or wake one current lane.
@@ -223,6 +298,7 @@ pub(super) fn state(
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &mut Seats,
+    runtime: &Runtime<'_>,
     command: &wire::AdmittedCommand,
     request: &LaneState,
 ) -> Outcome<CommandAnswer> {
@@ -231,8 +307,74 @@ pub(super) fn state(
     }
     match request.action {
         LaneAction::Drain => drain(bus, epoch, seats, command, request),
-        LaneAction::Wake => wake(bus, paths, epoch, seats, command, request),
+        LaneAction::Wake => wake(bus, paths, epoch, seats, runtime, command, request),
     }
+}
+
+/// Admit one already-durable capture report from the current occupant.
+///
+/// Stale reports can race a completed drain or renewal and are discarded by
+/// exact occupant identity. Session recognition consumes this same event seam.
+pub(super) fn capture_record(seats: &Seats, record: &CaptureRecord) -> CommandResult<()> {
+    if seats
+        .occupant(record.lane)
+        .is_some_and(|occupant| occupant.occupant() == record.occupant)
+    {
+        return Ok(());
+    }
+    Ok(())
+}
+
+/// Vacate and durably degrade an occupant whose selected capture path failed.
+pub(super) fn capture_failed(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    failure: &CaptureFailure,
+) -> CommandResult<()> {
+    let observed = current_residency(bus, epoch)?;
+    let Some(row) = observed
+        .body()
+        .lanes
+        .iter()
+        .find(|row| row.lane == failure.lane)
+    else {
+        return Ok(());
+    };
+    if row.occupant != Some(failure.occupant) {
+        return Ok(());
+    }
+
+    if seats
+        .occupant(failure.lane)
+        .is_some_and(|occupant| occupant.occupant() == failure.occupant)
+    {
+        drop(seats.vacate(failure.lane));
+    }
+    let mut next = observed.body().clone();
+    let row = next
+        .lanes
+        .iter_mut()
+        .find(|row| row.lane == failure.lane)
+        .expect("observed capture lane remains in its cloned head");
+    row.occupant = None;
+    row.disposition = DEGRADED.to_owned();
+    let mut write = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
+    guard_residency(&mut write, &observed);
+    let fact = write
+        .fact(
+            wire::body::LaneDegraded {
+                lane: failure.lane,
+                marker: format!(
+                    "occupant {} capture failed: {}",
+                    failure.occupant, failure.failure
+                ),
+            },
+            FactCause::Existing(observed.position()),
+        )
+        .map_err(|error| store_fault("lane::capture-fact-invalid", &error.to_string()))?;
+    write.residency_head(fact, move |_| next);
+    commit(bus, write).map(|_| ())
 }
 
 /// Build a bounded continuity account under the authenticated principal.
@@ -374,6 +516,7 @@ fn wake(
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &mut Seats,
+    runtime: &Runtime<'_>,
     command: &wire::AdmittedCommand,
     request: &LaneState,
 ) -> Outcome<CommandAnswer> {
@@ -409,11 +552,18 @@ fn wake(
         return typed_outcome(outcome);
     }
     let occupant = new_uuid();
-    let spec = match occupant_spec(paths, &row.worktree, &row.vendor, row.lane) {
-        Ok(spec) => spec,
+    let launch = match occupant_launch(
+        paths,
+        &row.worktree,
+        &row.vendor,
+        row.lane,
+        occupant,
+        Arc::clone(&runtime.capture),
+    ) {
+        Ok(launch) => launch,
         Err(outcome) => return typed_outcome(outcome),
     };
-    let group = match seats.seat(request.lane, occupant, spec) {
+    let group = match seats.seat_observed(request.lane, occupant, launch.spec, launch.observation) {
         Ok(occupant) => occupant.group(),
         Err(error) => return typed_environment_fault("lane::wake-failed", &error.to_string()),
     };
@@ -684,12 +834,19 @@ fn command_result<B: serde::Serialize>(
         .map_err(|error| store_fault("lane::receipt-invalid", &error.to_string()))
 }
 
-fn occupant_spec(
+struct OccupantLaunch {
+    spec: Spec,
+    observation: Observation,
+}
+
+fn occupant_launch(
     paths: &RuntimePaths,
     worktree: &str,
     name: &wire::Name,
     lane: CanonicalUuid,
-) -> CommandResult<Spec> {
+    occupant: CanonicalUuid,
+    reporter: Arc<dyn CaptureReporter>,
+) -> CommandResult<OccupantLaunch> {
     let repository = Repository::discover(worktree)
         .map_err(|error| store_fault("lane::worktree-unresolved", &error.to_string()))?;
     if repository.common_dir() != paths.common || repository.worktree_root() != Path::new(worktree)
@@ -774,7 +931,20 @@ fn occupant_spec(
         TERMINATION_GRACE,
     )
     .map_err(|error| store_fault("lane::process-invalid", &error.to_string()))?;
-    Ok(record.spec(&process))
+    let spec = record.spec(&process);
+    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join(name.as_str()))
+        .map_err(|error| store_fault("lane::capture-tape-unavailable", &error.to_string()))?;
+    let observation = lane::capture::observation(
+        lane,
+        occupant,
+        record,
+        tape,
+        CAPTURE_LIMIT,
+        RECORD_QUEUE,
+        reporter,
+    )
+    .map_err(|error| store_fault("lane::capture-invalid", &error.to_string()))?;
+    Ok(OccupantLaunch { spec, observation })
 }
 
 fn validate_worktree(paths: &RuntimePaths, worktree: &str) -> CommandResult<()> {

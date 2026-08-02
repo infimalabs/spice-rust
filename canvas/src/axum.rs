@@ -7,6 +7,7 @@ use std::fmt;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::pin::Pin;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -15,20 +16,27 @@ use std::time::Duration;
 
 use ::axum::Router;
 use ::axum::body::Body;
+use ::axum::extract::DefaultBodyLimit;
 use ::axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use ::axum::extract::{OriginalUri, State};
+use ::axum::extract::{Json, OriginalUri, State};
 use ::axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, ETAG, HOST, ORIGIN};
 use ::axum::http::{HeaderMap, HeaderValue, StatusCode};
 use ::axum::response::{IntoResponse, Response};
-use ::axum::routing::get;
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use ::axum::routing::{get, post};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
-use tokio::sync::{Mutex, Notify, mpsc, oneshot, watch};
+use tokio::sync::{Mutex, Notify, Semaphore, mpsc, oneshot, watch};
+use tokio::time::timeout;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 
 use crate::{Discovery, EMBEDDED_APP};
 
 const SESSION_DRAIN_GRACE: Duration = Duration::from_secs(1);
+const SPEECH_REQUEST_BYTES: usize = 64 * 1_024;
+const SPEECH_TEXT_BYTES: usize = 32 * 1_024;
+const SPEECH_AUDIO_BYTES: u64 = 16 * 1_024 * 1_024;
+const SPEECH_DIAGNOSTIC_BYTES: u64 = 8 * 1_024;
+const SPEECH_RUNTIME: Duration = Duration::from_secs(30);
 
 /// Closed capability-to-principal map for one resident generation.
 #[derive(Clone, Default)]
@@ -200,6 +208,8 @@ struct SurfaceState {
     origin: String,
     epoch: wire::CanonicalUuid,
     capabilities: Capabilities,
+    speech: crate::SpeechConfig,
+    speech_slot: Semaphore,
     admission: Mutex<Admission>,
     commands: mpsc::Sender<ControlRequest>,
     stream: Option<crate::stream::Source>,
@@ -480,20 +490,23 @@ impl Server {
     pub async fn bind(
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
+        speech: crate::SpeechConfig,
     ) -> Result<(Self, Control), std::io::Error> {
-        Self::bind_with_capacity(epoch, capabilities, None, 64).await
+        Self::bind_with_capacity(epoch, capabilities, speech, None, 64).await
     }
 
     /// Bind the command socket and Bus-backed canvas stream to one generation.
     pub async fn bind_streaming(
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
+        speech: crate::SpeechConfig,
         bus: bus::BusReader,
         rows: usize,
     ) -> Result<(Self, Control), std::io::Error> {
         Self::bind_with_capacity(
             epoch,
             capabilities,
+            speech,
             Some(crate::stream::Source::new(bus, epoch, rows)),
             64,
         )
@@ -503,6 +516,7 @@ impl Server {
     async fn bind_with_capacity(
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
+        speech: crate::SpeechConfig,
         stream: Option<crate::stream::Source>,
         capacity: usize,
     ) -> Result<(Self, Control), std::io::Error> {
@@ -526,6 +540,8 @@ impl Server {
                     origin,
                     epoch,
                     capabilities,
+                    speech,
+                    speech_slot: Semaphore::new(1),
                     admission: Mutex::new(Admission::Open),
                     commands,
                     stream,
@@ -573,6 +589,8 @@ impl Server {
         let router = Router::new()
             .route("/socket", get(socket))
             .route("/bootstrap", get(bootstrap))
+            .route("/speech", post(speech))
+            .layer(DefaultBodyLimit::max(SPEECH_REQUEST_BYTES))
             .fallback(app)
             .with_state(state);
         let connections = closing.connections.clone();
@@ -625,6 +643,7 @@ async fn bootstrap(State(state): State<Arc<SurfaceState>>, headers: HeaderMap) -
         endpoint: state.origin.clone(),
         capability,
         epoch: state.epoch,
+        speech: state.speech.playback(),
     };
     let Ok(bytes) = wire::encode(&discovery) else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -641,6 +660,158 @@ async fn bootstrap(State(state): State<Arc<SurfaceState>>, headers: HeaderMap) -
     response
 }
 
+async fn speech(
+    State(state): State<Arc<SurfaceState>>,
+    headers: HeaderMap,
+    Json(request): Json<wire::SpeechRequest>,
+) -> Response {
+    if admit_headers(&state, &headers, true).is_err() {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if request.text.is_empty() || request.text.len() > SPEECH_TEXT_BYTES {
+        return speech_error(
+            StatusCode::BAD_REQUEST,
+            "speech text must be nonempty and at most 32768 bytes",
+        );
+    }
+    if state.speech.backend() != crate::SpeechBackend::External || state.speech.command().is_none()
+    {
+        return speech_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "external speech backend is unavailable",
+        );
+    }
+    let Ok(_permit) = state.speech_slot.try_acquire() else {
+        return speech_error(StatusCode::TOO_MANY_REQUESTS, "speech renderer is busy");
+    };
+    let bytes = match render_external_speech(&state.speech, request.text.as_bytes()).await {
+        Ok(bytes) => bytes,
+        Err(error) => return speech_error(error.status(), error.message()),
+    };
+    let Ok(content_type) = HeaderValue::from_str(state.speech.content_type()) else {
+        return speech_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "speech media type became unavailable",
+        );
+    };
+    let mut response = Response::new(Body::from(bytes));
+    response.headers_mut().insert(CONTENT_TYPE, content_type);
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    install_browser_headers(&mut response);
+    response
+}
+
+async fn render_external_speech(
+    speech: &crate::SpeechConfig,
+    text: &[u8],
+) -> Result<Vec<u8>, SpeechRenderError> {
+    let argv = speech
+        .resolved_command()
+        .ok_or(SpeechRenderError::Unavailable)?;
+    let mut command = tokio::process::Command::new(&argv[0]);
+    command
+        .args(&argv[1..])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = command
+        .spawn()
+        .map_err(|_| SpeechRenderError::Unavailable)?;
+    let mut stdin = child.stdin.take().ok_or(SpeechRenderError::Io)?;
+    let stdout = child.stdout.take().ok_or(SpeechRenderError::Io)?;
+    let stderr = child.stderr.take().ok_or(SpeechRenderError::Io)?;
+    let rendered = timeout(SPEECH_RUNTIME, async {
+        let write = async {
+            stdin.write_all(text).await?;
+            stdin.shutdown().await?;
+            drop(stdin);
+            Ok::<_, std::io::Error>(())
+        };
+        let read_audio = async {
+            let mut bytes = Vec::new();
+            stdout
+                .take(SPEECH_AUDIO_BYTES + 1)
+                .read_to_end(&mut bytes)
+                .await?;
+            Ok::<_, std::io::Error>(bytes)
+        };
+        let read_diagnostic = async {
+            let mut bytes = Vec::new();
+            stderr
+                .take(SPEECH_DIAGNOSTIC_BYTES + 1)
+                .read_to_end(&mut bytes)
+                .await?;
+            Ok::<_, std::io::Error>(bytes)
+        };
+        let ((), audio, _diagnostic, status) =
+            tokio::try_join!(write, read_audio, read_diagnostic, child.wait())?;
+        Ok::<_, std::io::Error>((audio, status))
+    })
+    .await;
+    let (audio, status) = match rendered {
+        Ok(Ok(outcome)) => outcome,
+        Ok(Err(_)) => return Err(SpeechRenderError::Io),
+        Err(_) => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Err(SpeechRenderError::TimedOut);
+        }
+    };
+    if !status.success() {
+        return Err(SpeechRenderError::Failed);
+    }
+    if audio.is_empty() {
+        return Err(SpeechRenderError::Empty);
+    }
+    if u64::try_from(audio.len()).is_err() || audio.len() as u64 > SPEECH_AUDIO_BYTES {
+        return Err(SpeechRenderError::TooLarge);
+    }
+    Ok(audio)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SpeechRenderError {
+    Unavailable,
+    TimedOut,
+    Failed,
+    Empty,
+    TooLarge,
+    Io,
+}
+
+impl SpeechRenderError {
+    const fn status(self) -> StatusCode {
+        match self {
+            Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+            Self::TimedOut => StatusCode::GATEWAY_TIMEOUT,
+            Self::Failed | Self::Empty | Self::TooLarge | Self::Io => StatusCode::BAD_GATEWAY,
+        }
+    }
+
+    const fn message(self) -> &'static str {
+        match self {
+            Self::Unavailable => "external speech backend is unavailable",
+            Self::TimedOut => "external speech backend timed out",
+            Self::Failed => "external speech backend failed",
+            Self::Empty => "external speech backend produced no audio",
+            Self::TooLarge => "external speech backend exceeded the audio limit",
+            Self::Io => "external speech backend I/O failed",
+        }
+    }
+}
+
+fn speech_error(status: StatusCode, message: &'static str) -> Response {
+    let mut response = (status, message).into_response();
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    install_browser_headers(&mut response);
+    response
+}
+
 fn install_browser_headers(response: &mut Response) {
     response.headers_mut().insert(
         "content-security-policy",
@@ -648,6 +819,7 @@ fn install_browser_headers(response: &mut Response) {
             "default-src 'self'; connect-src 'self' ws:; img-src 'self'; object-src 'none'; \
              script-src 'self' 'wasm-unsafe-eval' \
              'sha256-B50SC8VLF+K2T0Re7VCfyZ3PqVhYIkg+OlhW+7PQyTU='; style-src 'self'; \
+             media-src 'self' blob:; \
              base-uri 'none'; \
              frame-ancestors 'none'",
         ),

@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 #[cfg(test)]
 use super::{Contract, Guard};
-pub(crate) use wire::{
+pub use wire::{
     DoctorToolBounds as ToolBounds, DoctorToolCancellation as ToolCancellation,
     DoctorToolMode as ToolMode, DoctorToolNetwork as ToolNetwork,
     DoctorToolRequirement as ToolRequirement, DoctorToolSource as ToolSource,
@@ -13,15 +13,15 @@ pub(crate) use wire::{
 
 /// One external tool declaration carried by the closed command registry.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct ExternalTool {
-    pub(crate) name: &'static str,
-    pub(crate) owner: &'static str,
-    pub(crate) mode: ToolMode,
-    pub(crate) requirement: ToolRequirement,
-    pub(crate) source: ToolSource,
-    pub(crate) bounds: ToolBounds,
-    pub(crate) cancellation: ToolCancellation,
-    pub(crate) network: ToolNetwork,
+pub struct ExternalTool {
+    pub name: &'static str,
+    pub owner: &'static str,
+    pub mode: ToolMode,
+    pub requirement: ToolRequirement,
+    pub source: ToolSource,
+    pub bounds: ToolBounds,
+    pub cancellation: ToolCancellation,
+    pub network: ToolNetwork,
 }
 
 pub(super) const NO_TOOLS: &[ExternalTool] = &[];

@@ -66,7 +66,10 @@ impl Fixture {
     }
 
     fn tape(&self, lane: wire::CanonicalUuid) -> PathBuf {
-        self.runtime.join("tape").join(lane.to_string())
+        self.runtime
+            .join("tape")
+            .join(lane.to_string())
+            .join("claude")
     }
 }
 

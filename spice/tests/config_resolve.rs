@@ -67,7 +67,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert_eq!(missing.root(), &spice::config::Root::default());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 24);
+    assert_eq!(missing.provenance().len(), 29);
     assert!(
         missing
             .provenance()
@@ -90,6 +90,84 @@ fn missing_and_empty_documents_are_empty_intent() {
     let default_json = serde_json::to_value(missing.root()).expect("default JSON renders");
     assert!(default_json["proof"].get("container").is_none());
     assert!(default_json["proof"].get("runner").is_none());
+}
+
+#[test]
+fn speech_backends_resolve_with_local_only_external_argv() {
+    let disabled = resolve(documents(Some("[say]\nbackend = 'disabled'\n"), None))
+        .expect("tracked disabled speech resolves");
+    assert_eq!(
+        disabled.root().say().backend(),
+        canvas::SpeechBackend::Disabled
+    );
+    assert!(disabled.root().say().command().is_none());
+    assert_eq!(path_source(&disabled, "say.backend"), ConfigSource::Tracked);
+
+    let system = resolve(documents(
+        Some("[say]\nvoice = 'Samantha'\nwords_per_minute = 205\n"),
+        None,
+    ))
+    .expect("tracked system speech resolves");
+    assert_eq!(system.root().say().voice(), "Samantha");
+    assert_eq!(system.root().say().words_per_minute(), 205);
+
+    let external = resolve(documents(
+        Some("[say]\nbackend = 'external'\n"),
+        Some(concat!(
+            "[say]\n",
+            "command = ['espeak-ng', '--stdout', '-s', '{words_per_minute}']\n",
+            "content_type = 'audio/wav'\n",
+        )),
+    ))
+    .expect("tracked selection and local command resolve together");
+    assert_eq!(
+        external
+            .root()
+            .say()
+            .resolved_command()
+            .expect("external argv"),
+        ["espeak-ng", "--stdout", "-s", "175"]
+    );
+    assert_eq!(path_source(&external, "say.command"), ConfigSource::Local);
+}
+
+#[test]
+fn speech_configuration_refuses_untrusted_or_malformed_execution() {
+    let tracked_command = resolve(documents(
+        Some("[say]\nbackend = 'external'\ncommand = ['espeak-ng']\n"),
+        None,
+    ))
+    .expect_err("tracked documents cannot install executable argv");
+    assert!(tracked_command.issues().iter().any(|issue| {
+        issue
+            .path()
+            .is_some_and(|path| path.to_string() == "say.command")
+            && issue.source() == ConfigSource::Tracked
+            && issue.kind() == IssueKind::Policy
+    }));
+
+    for (document, path) in [
+        ("[say]\nbackend = 'mystery'\n", "say.backend"),
+        ("[say]\nvoice = ''\n", "say.voice"),
+        (
+            "[say]\ncontent_type = 'audio/wav; charset=utf-8'\n",
+            "say.content_type",
+        ),
+        ("[say]\nwords_per_minute = 0\n", "say.words_per_minute"),
+    ] {
+        let error = resolve(documents(Some(document), None))
+            .expect_err("malformed speech configuration must be refused");
+        assert!(
+            error.issues().iter().any(|issue| {
+                issue
+                    .path()
+                    .is_some_and(|candidate| candidate.to_string() == path)
+                    && issue.kind() == IssueKind::Malformed
+            }),
+            "missing malformed issue for {path}: {:?}",
+            error.issues()
+        );
+    }
 }
 
 #[test]
@@ -458,7 +536,10 @@ fn proof_executable_paths_refuse_every_non_local_or_non_absolute_route() {
 #[test]
 fn tracked_document_can_address_every_registry_descriptor() {
     let local = format!(
-        "[proof]\ncontainer = \"{}\"\nrunner = \"{}\"\n",
+        concat!(
+            "[say]\ncommand = ['espeak-ng', '--stdout']\n\n",
+            "[proof]\ncontainer = \"{}\"\nrunner = \"{}\"\n",
+        ),
         absolute("container"),
         absolute("runner")
     );
@@ -522,6 +603,12 @@ shards = 2
 [canvas.pack]
 rows = 50
 
+[say]
+backend = "external"
+voice = "Samantha"
+content_type = "audio/wav"
+words_per_minute = 190
+
 [proof]
 image = "sha256:4444444444444444444444444444444444444444444444444444444444444444"
 "#,
@@ -532,7 +619,10 @@ image = "sha256:4444444444444444444444444444444444444444444444444444444444444444
 
     for row in resolved.provenance() {
         let path = row.path().to_string();
-        let expected = if matches!(path.as_str(), "proof.container" | "proof.runner") {
+        let expected = if matches!(
+            path.as_str(),
+            "say.command" | "proof.container" | "proof.runner"
+        ) {
             ConfigSource::Local
         } else {
             ConfigSource::Tracked

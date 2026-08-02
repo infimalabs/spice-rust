@@ -419,9 +419,24 @@ pub(super) fn dispose(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
+    let Some(vendor) = residency
+        .body()
+        .lanes
+        .iter()
+        .find(|lane| lane.lane == *actor_lane)
+        .map(|lane| &lane.vendor)
+    else {
+        return refusal(
+            "steer::lane-missing",
+            Some("current durable lane".to_owned()),
+            Some(actor_lane.to_string()),
+            "use a capability belonging to one current lane",
+        );
+    };
     let recognition = match transcript_recognition(
         paths,
         *actor_lane,
+        vendor,
         &dispose.token,
         dispose.disposition,
         &snapshot.ledger,

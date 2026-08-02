@@ -1,7 +1,5 @@
 use std::os::raw::{c_int, c_short};
 
-pub const F_GETFL: c_int = 3;
-pub const F_SETFL: c_int = 4;
 pub const SIGKILL: c_int = 9;
 pub const SIGTERM: c_int = 15;
 pub const ESRCH: c_int = 3;
@@ -10,11 +8,7 @@ pub const WEXITED: c_int = 0x4;
 const POLLIN: c_short = 0x1;
 
 #[cfg(target_os = "macos")]
-pub const O_NONBLOCK: c_int = 0x4;
-#[cfg(target_os = "macos")]
 pub const WNOWAIT: c_int = 0x20;
-#[cfg(target_os = "linux")]
-pub const O_NONBLOCK: c_int = 0x8_00;
 #[cfg(target_os = "linux")]
 pub const WNOWAIT: c_int = 0x01_00_00_00;
 
@@ -44,7 +38,6 @@ impl PollFd {
 }
 
 unsafe extern "C" {
-    pub fn fcntl(descriptor: c_int, command: c_int, ...) -> c_int;
     pub fn kill(pid: c_int, signal: c_int) -> c_int;
     pub fn poll(descriptors: *mut PollFd, count: Nfds, timeout: c_int) -> c_int;
     pub fn waitid(kind: c_int, id: u32, information: *mut SignalInfo, options: c_int) -> c_int;

@@ -22,15 +22,13 @@ The smoke set is `succession`, `coexistence`, `resident`, `steering`,
 and recovery. Python activation, agent/task status, and the live claim were
 exercised in the same worktree with separate authority.
 
-Cutover remains blocked on four risks:
+Cutover remains blocked on three risks:
 
-1. `HOOKS-1kJQnmG8` and `VERIFY-1kJQlH5b` must land native hooks and put the
-   installed Python policy step plus readiness threshold in one verifier.
-2. `SURFACE-1kJQmdKN` and `SPEECH-1kJQnmkd` must replace the empty canvas shell
-   and close the retained `config say` behavior.
-3. The clean break has no Python migration; the operator must approve a
+1. `HOOKS-1kJQnmG8` must land native hooks; until then the active Python hook
+   remains unchanged and its policy gate runs last in `cargo xtask verify`.
+2. The clean break has no Python migration; the operator must approve a
    predecessor backup/export and an empty Rust authority.
-4. Installed entrypoint selection and rollback still require an operator-run
+3. Installed entrypoint selection and rollback still require an operator-run
    cutover rehearsal and explicit authorization.
 
 ## Rust coexistence
@@ -146,7 +144,7 @@ and `X` clean-break removal. A pending owner is a cutover risk, not a fallback.
 - `config defaults`: R -> `config` provenance.
 - `config judge`: R -> `taste`.
 - `config personality`: D -> `config` plus vendor launch.
-- `config say`: D -> pending canvas speech (`SPEECH-1kJQnmkd`).
+- `config say`: D -> typed `[say]` configuration and canvas speech playback.
 - `config set`: R -> digest-bound `config` apply.
 - `config show`: R -> `config`.
 - `config system`: R -> `config` provenance.
@@ -295,5 +293,7 @@ cargo test --locked -p spice \
 cargo test --locked -p spice --test succession
 ```
 
-`VERIFY-1kJQlH5b` owns integrating the readiness threshold into the one
-canonical verifier. Passing it still does not grant cutover authority.
+`cargo xtask verify` emits the versioned succession-readiness report, enforces
+the 95 percent landed threshold and both registry closures, then runs the
+installed Python `spice dev pre-commit` policy gate. Passing it still does not
+grant cutover authority.

@@ -18,6 +18,7 @@ struct SurfaceConfig {
     canvas: canvas::Config,
     steering: steer::Config,
     consent: consent::Policy,
+    speech: canvas::SpeechConfig,
 }
 
 // Runtime policy and trust identity are projections of this one captured generation.
@@ -46,6 +47,7 @@ where
             canvas: *loaded.resolved().root().canvas(),
             steering: loaded.resolved().root().steer().clone(),
             consent: loaded.resolved().root().consent().policy().clone(),
+            speech: loaded.resolved().root().say().clone(),
         },
         trust: crate::trust_command::Surface::from_loaded(&loaded),
     })
@@ -521,6 +523,7 @@ async fn run_surface(
     let (server, mut control) = canvas::axum::Server::bind_streaming(
         epoch,
         capabilities.clone(),
+        config.speech.clone(),
         bus.reader(),
         config.canvas.rows(),
     )
@@ -542,40 +545,60 @@ async fn run_surface(
     let mut server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;
     }));
-    lane_surface::restore_seats(bus, paths, epoch, seats)?;
+    let capture::Channels {
+        reporter,
+        mut records,
+        mut failures,
+    } = capture::channels();
+    lane_surface::restore_seats(bus, paths, epoch, seats, &reporter)?;
     let command_surface = command_surface::Surface::new(
         bus,
         repository,
         paths,
         epoch,
-        &capabilities,
-        &discovery,
+        lane_surface::Runtime::new(&capabilities, &discovery, reporter),
         config,
     );
     loop {
-        let request = tokio::select! {
-            request = control.recv() => request.ok_or_else(|| {
-                environment_fault("canvas::control-closed", "canvas control receiver closed")
-            })?,
+        tokio::select! {
+            request = control.recv() => {
+                let request = request.ok_or_else(|| {
+                    environment_fault("canvas::control-closed", "canvas control receiver closed")
+                })?;
+                let dark = is_dark_command(request.command());
+                let outcome = command_surface.dispatch(seats, request.command());
+                let reached_dark = dark && matches!(outcome, Outcome::Reply(_));
+                let response = request.respond(outcome);
+                if reached_dark {
+                    if let Ok(response) = response {
+                        response.wait().await;
+                    }
+                    control.close();
+                    drop(published);
+                    let _ = shutdown.send(());
+                    return match server_task.await {
+                        Ok(Ok(())) => Ok(()),
+                        served => Err(server_outcome(served)),
+                    };
+                }
+            }
+            record = records.recv() => {
+                let record = record.ok_or_else(|| environment_fault(
+                    "lane::capture-records-closed",
+                    "lane capture record receiver closed",
+                ))?;
+                lane_surface::capture_record(seats, &record)?;
+            }
+            failure = failures.recv() => {
+                let failure = failure.ok_or_else(|| environment_fault(
+                    "lane::capture-failures-closed",
+                    "lane capture failure receiver closed",
+                ))?;
+                lane_surface::capture_failed(bus, epoch, seats, &failure)?;
+            }
             served = &mut server_task => {
                 return Err(server_outcome(served));
             }
-        };
-        let dark = is_dark_command(request.command());
-        let outcome = command_surface.dispatch(seats, request.command());
-        let reached_dark = dark && matches!(outcome, Outcome::Reply(_));
-        let response = request.respond(outcome);
-        if reached_dark {
-            if let Ok(response) = response {
-                response.wait().await;
-            }
-            control.close();
-            drop(published);
-            let _ = shutdown.send(());
-            return match server_task.await {
-                Ok(Ok(())) => Ok(()),
-                served => Err(server_outcome(served)),
-            };
         }
     }
 }
