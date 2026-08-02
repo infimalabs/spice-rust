@@ -7,7 +7,7 @@ use wire::{Digest, Domain};
 use super::fixtures;
 use super::*;
 use crate::RulePolicy;
-use crate::manifest::{GateId, OriginLayer};
+use crate::manifest::{GateId, OriginLayer, PREDECESSOR_GATE_RELEASE};
 use crate::state::{
     ActorInputs, ActorResolution, BoundDecision, BoundRule, CurrentState, PredecessorSources,
 };
@@ -27,11 +27,8 @@ fn canonical_manifest_is_the_exact_25_arm_compiled_contract() {
             gate_id,
             family,
             declaration,
-        } = arm.disposition()
-        else {
-            panic!("canonical arm {position} must be compiled");
-        };
-        assert_eq!(*gate_id, expected);
+        } = arm.disposition();
+        assert_eq!(*gate_id, expected, "canonical arm {position}");
         assert_eq!(
             (*family, declaration.clone()),
             declaration_identity(expected).expect("compiled identity")
@@ -85,6 +82,26 @@ fn manifest_rejects_every_noncanonical_shape_and_runtime_escape() {
         "disposition = \"alternate-runtime\"",
         1,
     );
+    // A complete, internally valid refusal arm: every field the deleted
+    // `migration-refusal` disposition required, including the owning release its
+    // own validator demanded. This decoded before that disposition was deleted,
+    // so the case fails the moment the variant returns as an untested path.
+    let migration_refusal = source.replacen(
+        concat!(
+            "disposition = \"compiled\"\n",
+            "gate_id = \"merge-integrity\"\n",
+            "family = \"core\"\n",
+            "declaration = \"gate::core::merge-integrity::merge-tree-comparison-v1\""
+        ),
+        concat!(
+            "disposition = \"migration-refusal\"\n",
+            "source_field = [\"battery\", \"merge-integrity\"]\n",
+            "owning_release = \"0.31.0\"\n",
+            "reason = \"predecessor arm has no compiled successor\"\n",
+            "recovery = \"run the 0.31.0 battery for this arm\""
+        ),
+        1,
+    );
     let unknown_shell_field = source.replacen(
         "declaration = \"gate::core::merge-integrity::merge-tree-comparison-v1\"",
         concat!(
@@ -102,8 +119,13 @@ fn manifest_rejects_every_noncanonical_shape_and_runtime_escape() {
         ("shell-backed", shell_backed),
         ("indirect", indirect),
         ("alternate-runtime", alternate_runtime),
+        ("migration-refusal", migration_refusal),
         ("unknown-shell-field", unknown_shell_field),
     ] {
+        assert_ne!(
+            candidate, source,
+            "{name} candidate must differ from the canonical manifest to test anything"
+        );
         assert!(
             BatteryManifest::decode(&candidate).is_err(),
             "{name} manifest must be refused"
@@ -189,9 +211,9 @@ fn runner_executes_all_25_once_in_order_with_complete_context() {
     for (position, (result, expected)) in report.results().iter().zip(GateId::ALL).enumerate() {
         assert_eq!(result.position(), position);
         assert_eq!(result.predecessor(), expected.predecessor_name());
-        assert_eq!(result.gate_id(), Some(expected));
+        assert_eq!(result.gate_id(), expected);
         assert_eq!(result.state(), BatteryState::Passed);
-        assert_eq!(result.evidence().gate_id(), Some(expected));
+        assert_eq!(result.evidence().gate_id(), expected);
         assert_eq!(
             result.evidence().state().expect("typed state"),
             BatteryState::Passed
@@ -270,7 +292,7 @@ fn executor_refusals_and_invalid_evidence_stay_visible_and_total() {
     );
     assert_eq!(
         report.results().last().expect("last result").gate_id(),
-        Some(GateId::PrivateInternals)
+        GateId::PrivateInternals
     );
 
     let value: serde_json::Value =
@@ -670,7 +692,7 @@ fn assert_family_evidence(evidence: &ArmEvidence, source: &Digest) {
                 ) if !digest.is_empty()
             )));
         }
-        ArmEvidence::ExecutorFailure { .. } | ArmEvidence::MigrationRefusal { .. } => {
+        ArmEvidence::ExecutorFailure { .. } => {
             panic!("passing fixture must retain family-owned evidence")
         }
     }

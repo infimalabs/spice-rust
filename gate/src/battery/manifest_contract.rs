@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ArmFamily, BatteryError, MigrationRefusal};
+use super::{ArmFamily, BatteryError};
 use crate::core::core_declarations;
 use crate::hygiene::HYGIENE_ARMS;
 use crate::manifest::{GateId, PREDECESSOR_GATE_RELEASE};
@@ -21,12 +21,6 @@ pub enum ArmDisposition {
         family: ArmFamily,
         declaration: String,
     },
-    MigrationRefusal {
-        source_field: Vec<String>,
-        owning_release: String,
-        reason: String,
-        recovery: String,
-    },
 }
 
 /// One ordered canonical manifest row.
@@ -44,7 +38,7 @@ impl BatteryManifestArm {
         &self.predecessor
     }
 
-    /// Compiled declaration or exact migration refusal.
+    /// Compiled declaration bound to this row.
     #[must_use]
     pub const fn disposition(&self) -> &ArmDisposition {
         &self.disposition
@@ -130,39 +124,24 @@ fn validate_arm(
             arm.predecessor
         )));
     }
-    match &arm.disposition {
-        ArmDisposition::Compiled {
-            gate_id,
-            family,
-            declaration,
-        } => {
-            let (expected_family, expected_declaration) = declaration_identity(expected)?;
-            if *gate_id != expected {
-                return Err(BatteryError::new(format!(
-                    "battery arm {position} must compile as {expected}, received {gate_id}"
-                )));
-            }
-            if *family != expected_family || declaration != &expected_declaration {
-                return Err(BatteryError::new(format!(
-                    "battery arm {position} declaration must be \
-                     {expected_family:?} {expected_declaration:?}"
-                )));
-            }
-            Ok(())
-        }
-        ArmDisposition::MigrationRefusal {
-            source_field,
-            owning_release,
-            reason,
-            recovery,
-        } => MigrationRefusal {
-            source_field: source_field.clone(),
-            owning_release: owning_release.clone(),
-            reason: reason.clone(),
-            recovery: recovery.clone(),
-        }
-        .validate(position),
+    let ArmDisposition::Compiled {
+        gate_id,
+        family,
+        declaration,
+    } = &arm.disposition;
+    let (expected_family, expected_declaration) = declaration_identity(expected)?;
+    if *gate_id != expected {
+        return Err(BatteryError::new(format!(
+            "battery arm {position} must compile as {expected}, received {gate_id}"
+        )));
     }
+    if *family != expected_family || declaration != &expected_declaration {
+        return Err(BatteryError::new(format!(
+            "battery arm {position} declaration must be \
+             {expected_family:?} {expected_declaration:?}"
+        )));
+    }
+    Ok(())
 }
 
 pub(super) fn declaration_identity(id: GateId) -> Result<(ArmFamily, String), BatteryError> {

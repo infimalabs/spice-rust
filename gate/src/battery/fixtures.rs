@@ -38,7 +38,7 @@ fn evidence(source: &Digest, nonpassing: bool) -> Vec<ArmEvidence> {
     assert_eq!(
         evidence
             .iter()
-            .map(|item| item.gate_id().expect("compiled fixture"))
+            .map(ArmEvidence::gate_id)
             .collect::<Vec<_>>(),
         GateId::ALL
     );
