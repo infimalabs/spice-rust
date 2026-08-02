@@ -13,6 +13,10 @@ use sill::{
 };
 use wire::Outcome;
 
+#[path = "support/process_exit.rs"]
+mod process_exit;
+use process_exit::ProcessExitObserver;
+
 const BUSY_EXIT: i32 = 70;
 const TAKEN_EXIT: i32 = 71;
 const FULL_EXIT: i32 = 72;
@@ -245,12 +249,13 @@ impl AbruptProtected {
             .parse()
             .expect("child PID parses");
 
+        let exited = ProcessExitObserver::new(wrapper_pid);
         // SAFETY: SIGKILL terminates only the wrapper retained by this fixture.
         assert_eq!(
             unsafe { libc::kill(wrapper_pid as libc::pid_t, libc::SIGKILL) },
             0
         );
-        observe_unreaped_exit(wrapper_pid);
+        exited.wait();
         assert_process_zombie(wrapper_pid);
 
         Self {
@@ -274,7 +279,7 @@ impl AbruptProtected {
             "abrupt child output: {trailing:?}"
         );
         assert_process_terminal(self.child_pid);
-        observe_unreaped_exit(self.wrapper_pid);
+        assert_process_zombie(self.wrapper_pid);
     }
 
     fn reap(mut self) {
@@ -315,28 +320,6 @@ fn wait_for_close_fds_ready(output: &mut impl BufRead) {
         if ready.contains(CLOSE_FDS_READY) {
             return;
         }
-    }
-}
-
-fn observe_unreaped_exit(pid: u32) {
-    let mut information = std::mem::MaybeUninit::<libc::siginfo_t>::uninit();
-    loop {
-        // SAFETY: WNOWAIT observes this direct child's exit without reaping it.
-        let result = unsafe {
-            libc::waitid(
-                libc::P_PID,
-                pid,
-                information.as_mut_ptr(),
-                libc::WEXITED | libc::WNOWAIT,
-            )
-        };
-        if result == 0 {
-            return;
-        }
-        assert_eq!(
-            std::io::Error::last_os_error().kind(),
-            std::io::ErrorKind::Interrupted
-        );
     }
 }
 
