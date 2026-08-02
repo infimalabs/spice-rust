@@ -79,6 +79,37 @@ pub struct LockOwnerReport {
     pub cwd: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LockOwnerEvidence {
+    pid: u32,
+    cwd: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    owner_released: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    protected_group: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    protected_guardian: Option<u32>,
+}
+
+impl LockOwnerEvidence {
+    fn report(&self) -> Option<LockOwnerReport> {
+        (!self.owner_released).then(|| LockOwnerReport {
+            pid: self.pid,
+            cwd: self.cwd.clone(),
+        })
+    }
+
+    #[cfg(unix)]
+    fn terminal_guardian_pending(&self) -> bool {
+        self.protected_group.is_some_and(process_group_absent)
+            && self
+                .protected_guardian
+                .is_some_and(|pid| !process_absent(pid))
+            && (self.owner_released || process_absent(self.pid))
+    }
+}
+
 /// Whether a nonblocking acquisition would have succeeded when observed.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -269,12 +300,10 @@ impl LockTopology {
                 path: path.clone(),
                 source: io::Error::new(io::ErrorKind::NotFound, "lock shard was not created"),
             })?;
-        match lock
-            .try_acquire_opened(file)
-            .map_err(|source| LockSurfaceError::Acquire {
-                path: path.clone(),
-                source,
-            })? {
+        match synchronized_acquire(&lock, file).map_err(|source| LockSurfaceError::Acquire {
+            path: path.clone(),
+            source,
+        })? {
             Acquisition::Acquired(possession) => HeldShard::new(shard, possession)
                 .map(Some)
                 .map_err(|source| LockSurfaceError::Acquire { path, source }),
@@ -298,12 +327,10 @@ impl LockTopology {
                 source: io::Error::new(io::ErrorKind::NotFound, "lock file was not created"),
             })?;
         let lock = LockFile::new(name, path);
-        match lock
-            .try_acquire_opened(file)
-            .map_err(|source| LockSurfaceError::Acquire {
-                path: path.to_path_buf(),
-                source,
-            })? {
+        match synchronized_acquire(&lock, file).map_err(|source| LockSurfaceError::Acquire {
+            path: path.to_path_buf(),
+            source,
+        })? {
             Acquisition::Acquired(possession) => HeldShard::new(shard, possession)
                 .map(Some)
                 .map_err(|source| LockSurfaceError::Acquire {
@@ -362,16 +389,20 @@ impl LockTopology {
                 owner_stale: false,
             });
         };
-        let owner = read_owner(&file).map_err(|source| LockSurfaceError::Inspect {
+        let owner_evidence = read_owner(&file).map_err(|source| LockSurfaceError::Inspect {
             path: path.clone(),
             source,
         })?;
-        let availability = LockFile::new(name.clone(), &path)
-            .availability_opened(file)
-            .map_err(|source| LockSurfaceError::Inspect {
-                path: path.clone(),
-                source,
-            })?;
+        let availability = synchronized_availability(
+            &LockFile::new(name.clone(), &path),
+            file,
+            owner_evidence.as_ref(),
+        )
+        .map_err(|source| LockSurfaceError::Inspect {
+            path: path.clone(),
+            source,
+        })?;
+        let owner = owner_evidence.as_ref().and_then(LockOwnerEvidence::report);
         Ok(LockShardReport {
             shard,
             path: path.display().to_string(),
@@ -575,15 +606,92 @@ fn invalid_topology_path() -> io::Error {
     )
 }
 
-fn owner() -> io::Result<LockOwnerReport> {
-    Ok(LockOwnerReport {
+#[cfg(unix)]
+fn synchronized_acquire(lock: &LockFile, file: fs::File) -> io::Result<Acquisition> {
+    let owner = read_owner(&file)?;
+    match lock.try_acquire_opened(file.try_clone()?)? {
+        Acquisition::Acquired(possession) => Ok(Acquisition::Acquired(possession)),
+        Acquisition::Contended
+            if owner
+                .as_ref()
+                .is_some_and(LockOwnerEvidence::terminal_guardian_pending) =>
+        {
+            lock.acquire_opened(file).map(Acquisition::Acquired)
+        }
+        Acquisition::Contended => Ok(Acquisition::Contended),
+    }
+}
+
+#[cfg(not(unix))]
+fn synchronized_acquire(lock: &LockFile, file: fs::File) -> io::Result<Acquisition> {
+    lock.try_acquire_opened(file)
+}
+
+#[cfg(unix)]
+fn synchronized_availability(
+    lock: &LockFile,
+    file: fs::File,
+    owner: Option<&LockOwnerEvidence>,
+) -> io::Result<Availability> {
+    let availability = lock.availability_opened(file.try_clone()?)?;
+    if availability == Availability::Held
+        && owner.is_some_and(LockOwnerEvidence::terminal_guardian_pending)
+    {
+        drop(lock.acquire_opened(file)?);
+        return Ok(Availability::Available);
+    }
+    Ok(availability)
+}
+
+#[cfg(not(unix))]
+fn synchronized_availability(
+    lock: &LockFile,
+    file: fs::File,
+    _owner: Option<&LockOwnerEvidence>,
+) -> io::Result<Availability> {
+    lock.availability_opened(file)
+}
+
+#[cfg(unix)]
+fn process_absent(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    kernel_identity_absent(pid)
+}
+
+#[cfg(unix)]
+fn process_group_absent(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    kernel_identity_absent(-pid)
+}
+
+#[cfg(unix)]
+fn kernel_identity_absent(pid: libc::pid_t) -> bool {
+    // SAFETY: signal zero probes identity existence without delivering a signal.
+    unsafe {
+        libc::kill(pid, 0) == -1 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+    }
+}
+
+fn owner(protected: Option<(u32, u32)>, owner_released: bool) -> io::Result<LockOwnerEvidence> {
+    Ok(LockOwnerEvidence {
         pid: process::id(),
         cwd: std::env::current_dir()?.display().to_string(),
+        owner_released,
+        protected_group: protected.map(|(group, _)| group),
+        protected_guardian: protected.map(|(_, guardian)| guardian),
     })
 }
 
-fn write_owner(file: &fs::File) -> io::Result<()> {
-    let bytes = serde_json::to_vec(&owner()?).map_err(io::Error::other)?;
+fn write_owner(
+    file: &fs::File,
+    protected: Option<(u32, u32)>,
+    owner_released: bool,
+) -> io::Result<()> {
+    let bytes = serde_json::to_vec(&owner(protected, owner_released)?).map_err(io::Error::other)?;
     file.set_len(0)?;
     let mut writer = file;
     writer.seek(SeekFrom::Start(0))?;
@@ -598,7 +706,7 @@ fn clear_owner(file: &fs::File) -> io::Result<()> {
     file.sync_data()
 }
 
-fn read_owner(file: &fs::File) -> io::Result<Option<LockOwnerReport>> {
+fn read_owner(file: &fs::File) -> io::Result<Option<LockOwnerEvidence>> {
     let length = file.metadata()?.len();
     if length == 0 || length > OWNER_BYTES_LIMIT {
         return Ok(None);
@@ -630,12 +738,19 @@ pub enum LockAttempt {
 pub struct HeldShard {
     shard: u32,
     possession: Possession,
+    #[cfg(unix)]
+    protected: Option<(u32, u32)>,
 }
 
 impl HeldShard {
     fn new(shard: u32, possession: Possession) -> io::Result<Self> {
-        write_owner(possession.file())?;
-        Ok(Self { shard, possession })
+        write_owner(possession.file(), None, false)?;
+        Ok(Self {
+            shard,
+            possession,
+            #[cfg(unix)]
+            protected: None,
+        })
     }
 
     #[must_use]
@@ -655,6 +770,16 @@ impl HeldShard {
     #[cfg(unix)]
     pub fn spawn_protected(&mut self, spec: Spec) -> io::Result<Running> {
         let running = crate::spawn::spawn_guarded(spec, self.possession.file())?;
+        let guardian = running
+            .guardian_id()
+            .expect("protected spawn retains a guardian");
+        let protected = (running.id(), guardian);
+        if let Err(error) = write_owner(self.possession.file(), Some(protected), false) {
+            let _signal_result = running.signal_kill();
+            let _wait_result = running.wait();
+            return Err(error);
+        }
+        self.protected = Some(protected);
         self.possession.retain_until_last_close();
         Ok(running)
     }
@@ -662,6 +787,13 @@ impl HeldShard {
 
 impl Drop for HeldShard {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some((group, guardian)) = self.protected
+            && !process_absent(guardian)
+        {
+            let _ = write_owner(self.possession.file(), Some((group, guardian)), true);
+            return;
+        }
         let _ = clear_owner(self.possession.file());
     }
 }
@@ -760,11 +892,14 @@ impl Error for LockSurfaceError {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::os::unix::process::CommandExt;
     use std::path::{Path, PathBuf};
+    use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::{
-        Contention, LockAttempt, LockAvailability, LockSurfaceError, LockTargetKind, LockTopology,
+        Contention, LockAttempt, LockAvailability, LockOwnerEvidence, LockSurfaceError,
+        LockTargetKind, LockTopology,
     };
     use crate::LockConfig;
 
@@ -941,6 +1076,58 @@ mod tests {
         );
         assert!(!entry.owner_stale);
         drop(held);
+    }
+
+    #[test]
+    fn guardian_synchronization_requires_terminal_group_and_live_guardian() {
+        let mut departed = Command::new("/usr/bin/true");
+        departed.process_group(0);
+        let mut departed = departed.spawn().expect("departed process launches");
+        let pid = departed.id();
+        assert!(departed.wait().expect("departed process reaps").success());
+
+        let completed = LockOwnerEvidence {
+            pid,
+            cwd: "/departed".to_owned(),
+            owner_released: false,
+            protected_group: Some(pid),
+            protected_guardian: Some(std::process::id()),
+        };
+        assert!(completed.terminal_guardian_pending());
+
+        let live_owner = LockOwnerEvidence {
+            pid: std::process::id(),
+            cwd: "/current".to_owned(),
+            owner_released: false,
+            protected_group: Some(pid),
+            protected_guardian: Some(std::process::id()),
+        };
+        assert!(!live_owner.terminal_guardian_pending());
+
+        let released_owner = LockOwnerEvidence {
+            owner_released: true,
+            ..live_owner
+        };
+        assert!(released_owner.report().is_none());
+        assert!(released_owner.terminal_guardian_pending());
+
+        let unguarded = LockOwnerEvidence {
+            pid,
+            cwd: "/departed".to_owned(),
+            owner_released: false,
+            protected_group: None,
+            protected_guardian: None,
+        };
+        assert!(!unguarded.terminal_guardian_pending());
+
+        let departed_guardian = LockOwnerEvidence {
+            pid,
+            cwd: "/departed".to_owned(),
+            owner_released: false,
+            protected_group: Some(pid),
+            protected_guardian: Some(pid),
+        };
+        assert!(!departed_guardian.terminal_guardian_pending());
     }
 
     #[test]

@@ -57,7 +57,7 @@ entrypoint, active hooks, or Python authority.
 
 ## Rust contracts
 
-The closed registry contains 82 leaves and all 82 have executable dispatch.
+The closed registry contains 83 leaves and all 83 have executable dispatch.
 `spice/src/cli.rs::landing` carries the same classification; its tests reject
 registry drift, and the process sweep rejects terminal release or resident
 placeholder outcomes.
@@ -146,6 +146,7 @@ placeholder outcomes.
 - `run`
 - `ack`
 - `config`
+- `config migrate-tasks`
 
 `install`, `config`, `restore`, and `release publish` are digest-bound plans.
 Rust installation remains namespaced and never replaces the ambient command or
