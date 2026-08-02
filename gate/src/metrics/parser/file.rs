@@ -48,8 +48,8 @@ impl RepositoryDocumentMeasurement {
 ///
 /// # Errors
 ///
-/// NUL-bearing binary inputs are explicit unsupported states. Other invalid
-/// UTF-8 is decoded with replacement exactly as in the predecessor.
+/// NUL-bearing binary inputs and invalid UTF-8 are explicit unsupported
+/// states, matching the predecessor source-file admission boundary.
 pub fn measure_file_shape(path: &str, bytes: &[u8]) -> Result<FileShapeMeasurement, ParseError> {
     let path = canonical_path(path)?;
     if bytes.contains(&0) {
@@ -59,10 +59,16 @@ pub fn measure_file_shape(path: &str, bytes: &[u8]) -> Result<FileShapeMeasureme
             "remove the path from the source file class or replace it with UTF-8 text",
         ));
     }
-    let text = String::from_utf8_lossy(bytes);
+    let text = std::str::from_utf8(bytes).map_err(|error| {
+        ParseError::unsupported(
+            "policy.file_shape.source_suffixes",
+            format!("selected source {path:?} is not UTF-8: {error}"),
+            "remove the path from the source file class or encode it as UTF-8",
+        )
+    })?;
     Ok(FileShapeMeasurement {
         path,
-        lines: u64::try_from(python_splitlines(&text).len()).expect("line count fits in u64"),
+        lines: u64::try_from(python_splitlines(text).len()).expect("line count fits in u64"),
         bytes: u64::try_from(bytes.len()).expect("file byte length fits in u64"),
     })
 }
