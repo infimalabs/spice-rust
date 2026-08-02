@@ -425,7 +425,22 @@ fn artifact_image(capture: &journal::RestoreCapture) -> Result<artifact::BackupI
             bytes: member.bytes().to_vec(),
         });
     }
-    artifact::BackupImage::admit(files).map_err(artifact_failure)
+    let image = artifact::BackupImage::admit(files).map_err(artifact_failure)?;
+    let unknown = image
+        .tasks()
+        .iter()
+        .filter(|task| capture.tasks().binary_search(task).is_err())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if !unknown.is_empty() {
+        return Err(refusal(
+            "restore::artifact-task-unknown",
+            "every artifact manifest task to exist in the captured journal task set",
+            unknown.join(", "),
+            "restore a bundle whose artifact manifests were captured with their task authority",
+        ));
+    }
+    Ok(image)
 }
 
 fn artifact_identity(image: &artifact::BackupImage) -> Result<Digest, Failure> {
