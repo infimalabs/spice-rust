@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::declaration::{
     KeyShape, MetricDeclaration, MetricId, MetricUnit, ParserDeclaration, ParserId, ParserMode,
@@ -14,7 +14,7 @@ use crate::manifest::{GateId, PREDECESSOR_GATE_RELEASE};
 pub const STRUCTURAL_METRIC_REPORT_VERSION: u64 = 1;
 
 /// Canonical path/function key.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct FunctionKey {
     path: String,
     function: String,
@@ -33,7 +33,7 @@ impl FunctionKey {
 }
 
 /// Complete metric key vocabulary.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case", tag = "shape", content = "key")]
 pub enum MetricKey {
     /// Whole-arm evidence used only when no concrete key can be measured.
@@ -75,7 +75,7 @@ impl MetricKey {
 }
 
 /// Exact parser identity retained with a successful measurement.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case", tag = "mode")]
 pub enum ParserEvidence {
     Native {
@@ -125,7 +125,7 @@ impl ParserEvidence {
 }
 
 /// Typed policy-selection evidence consumed by one measurement.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RuleBinding {
     field: String,
     rule_id: Option<String>,
@@ -181,7 +181,7 @@ impl RuleBinding {
 }
 
 /// Exact durable-bound and latch evidence consumed by one measurement.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct LatchBinding {
     kind: String,
     base_limit: u64,
@@ -374,7 +374,7 @@ impl LatchBinding {
 }
 
 /// One trusted number with every declaration/state input that produced it.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MetricMeasurement {
     value: u64,
     parser: ParserEvidence,
@@ -440,7 +440,7 @@ impl MetricMeasurement {
 }
 
 /// Complete acquisition state; absence is not a member of this vocabulary.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case", tag = "state")]
 pub enum EvidenceState {
     Measured {
@@ -508,7 +508,7 @@ impl EvidenceState {
 }
 
 /// One explicit state for one metric key.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MetricEvidence {
     metric: MetricId,
     unit: MetricUnit,
@@ -556,7 +556,7 @@ impl MetricEvidence {
 }
 
 /// Canonical evidence for one of the four named arms.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct StructuralArmEvidence {
     gate_id: GateId,
     metrics: Vec<MetricEvidence>,
@@ -589,10 +589,28 @@ impl StructuralArmEvidence {
     pub fn metrics(&self) -> &[MetricEvidence] {
         &self.metrics
     }
+
+    pub(crate) fn validate(&self) -> Result<(), EvidenceError> {
+        let mut metrics = Vec::with_capacity(self.metrics.len());
+        for metric in &self.metrics {
+            metrics.push(MetricEvidence::new(
+                metric.metric,
+                metric.key.clone(),
+                metric.state.clone(),
+            )?);
+        }
+        let expected = Self::new(self.gate_id, metrics)?;
+        if expected != *self {
+            return Err(EvidenceError::InvalidBinding(
+                "retained structural arm disagrees with its compiled declaration".to_owned(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Complete report: four ordered arms plus the shared repo-doc metric.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MetricReport {
     version: u64,
     arms: Vec<StructuralArmEvidence>,
@@ -791,6 +809,16 @@ fn validate_bounded(
         return invalid_state(declaration.id(), "latch kind does not match declaration");
     }
     latch.validate()?;
+    let enabled = !latch.unlimited();
+    if latch.over_limit() != (enabled && measurement.value > latch.active_limit())
+        || latch.over_base() != (enabled && measurement.value > latch.base_limit())
+        || latch.ratchet_breach() != (enabled && measurement.value > latch.ratchet_limit())
+    {
+        return invalid_state(
+            declaration.id(),
+            "latch flags disagree with the retained measurement value",
+        );
+    }
     if measurement.threshold.is_some() {
         return invalid_state(declaration.id(), "bounded metric carries a magic threshold");
     }

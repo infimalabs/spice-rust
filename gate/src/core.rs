@@ -643,6 +643,23 @@ pub struct CoreArmReport {
 }
 
 impl CoreArmReport {
+    pub(crate) fn validate(&self) -> Result<(), CoreReportDecodeError> {
+        let input = CoreArmInput::new(
+            self.id,
+            self.tree.clone(),
+            self.provenance.clone(),
+            self.observation.clone(),
+        )
+        .map_err(|error| CoreReportDecodeError::Inconsistent(error.to_string()))?;
+        if evaluate::evaluate_arm(&input) != *self {
+            return Err(CoreReportDecodeError::Inconsistent(format!(
+                "{} standing or diagnostic disagrees with its observation",
+                self.id
+            )));
+        }
+        Ok(())
+    }
+
     /// Stable gate identity.
     #[must_use]
     pub const fn id(&self) -> GateId {
@@ -775,19 +792,7 @@ impl CoreReport {
                     "core report arm {index} is out of order or bound to another tree"
                 )));
             }
-            let input = CoreArmInput::new(
-                arm.id,
-                arm.tree.clone(),
-                arm.provenance.clone(),
-                arm.observation.clone(),
-            )
-            .map_err(|error| CoreReportDecodeError::Inconsistent(error.to_string()))?;
-            if evaluate::evaluate_arm(&input) != *arm {
-                return Err(CoreReportDecodeError::Inconsistent(format!(
-                    "{} standing or diagnostic disagrees with its observation",
-                    arm.id
-                )));
-            }
+            arm.validate()?;
         }
         Ok(())
     }

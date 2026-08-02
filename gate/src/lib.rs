@@ -39,9 +39,8 @@ pub use battery::{
     BatteryContext, BatteryError, BatteryExecutor, BatteryInputs, BatteryManifest,
     BatteryManifestArm, BatteryReport, BatteryScope, BatteryState, BatteryToolEvidence,
     BoundActorInputsEvidence, BoundEvidence, CANONICAL_BATTERY_MANIFEST, CompiledArm,
-    ConfigurationEvidence, DecisionEvidence, GATE_BATTERY_VERSION, LatchEvidence,
-    MeasurementEvidence, MigrationRefusal as BatteryMigrationRefusal, ResultProvenance,
-    run_battery,
+    ConfigurationEvidence, GATE_BATTERY_VERSION, LatchEvidence,
+    MigrationRefusal as BatteryMigrationRefusal, ResultProvenance, run_battery,
 };
 pub use camp::{
     BoundRelation, CAMP_REPORT_VERSION, Camp, CampError, CampFinding, CampReport, CampRunError,

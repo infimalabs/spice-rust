@@ -6,328 +6,10 @@ use super::manifest_contract::{
     GATE_BATTERY_VERSION,
 };
 use super::{
-    ArmFamily, BatteryContext, BatteryError, BatteryInputs, MigrationRefusal, inline_evidence,
-    valid_text,
+    ArmEvidence, ArmFamily, BatteryContext, BatteryError, BatteryInputs, BatteryState,
+    MigrationRefusal, ResultProvenance, inline_evidence,
 };
 use crate::manifest::GateId;
-
-/// Exact common battery result vocabulary.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum BatteryState {
-    Passed,
-    Failed,
-    Unavailable,
-    Unsupported,
-    Unmeasured,
-    TimedOut,
-    ExplicitSkip,
-    NotApplicable,
-    Excluded,
-}
-
-impl BatteryState {
-    /// Only pass and contract-owned absence/exclusion admit publication.
-    #[must_use]
-    pub const fn admits(self) -> bool {
-        matches!(self, Self::Passed | Self::NotApplicable | Self::Excluded)
-    }
-
-    pub(super) const fn requires_provenance(self) -> bool {
-        matches!(self, Self::NotApplicable | Self::Excluded)
-    }
-}
-
-/// Exact provenance required for an admitted non-execution.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ResultProvenance {
-    release: String,
-    source: String,
-    field: Vec<String>,
-}
-
-impl ResultProvenance {
-    /// Bind an applicability/exclusion decision to its exact source field.
-    pub fn new(
-        release: impl Into<String>,
-        source: impl Into<String>,
-        field: Vec<String>,
-    ) -> Result<Self, BatteryError> {
-        let provenance = Self {
-            release: release.into(),
-            source: source.into(),
-            field,
-        };
-        provenance.validate()?;
-        Ok(provenance)
-    }
-
-    fn validate(&self) -> Result<(), BatteryError> {
-        if !valid_text(&self.release)
-            || !valid_text(&self.source)
-            || self.field.is_empty()
-            || self.field.iter().any(|part| !valid_text(part))
-        {
-            return Err(BatteryError::new(
-                "result provenance requires release, source, and exact field path",
-            ));
-        }
-        Ok(())
-    }
-
-    /// Release that owns the decision grammar.
-    #[must_use]
-    pub fn release(&self) -> &str {
-        &self.release
-    }
-
-    /// Exact policy or declaration source.
-    #[must_use]
-    pub fn source(&self) -> &str {
-        &self.source
-    }
-
-    /// Exact structurally segmented field.
-    #[must_use]
-    pub fn field(&self) -> &[String] {
-        &self.field
-    }
-}
-
-/// One family-owned named decision retained without flattening it to text.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct DecisionEvidence {
-    name: String,
-    decision: bool,
-    source: String,
-}
-
-impl DecisionEvidence {
-    /// Retain one named boolean decision and its owning component.
-    pub fn new(
-        name: impl Into<String>,
-        decision: bool,
-        source: impl Into<String>,
-    ) -> Result<Self, BatteryError> {
-        let evidence = Self {
-            name: name.into(),
-            decision,
-            source: source.into(),
-        };
-        evidence.validate()?;
-        Ok(evidence)
-    }
-
-    /// Stable decision name.
-    #[must_use]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// Family-owned boolean result.
-    #[must_use]
-    pub const fn decision(&self) -> bool {
-        self.decision
-    }
-
-    /// Component that made this decision.
-    #[must_use]
-    pub fn source(&self) -> &str {
-        &self.source
-    }
-
-    fn validate(&self) -> Result<(), BatteryError> {
-        if !valid_text(&self.name) || !valid_text(&self.source) {
-            return Err(BatteryError::new(
-                "decision name and source must be non-empty single-line text",
-            ));
-        }
-        Ok(())
-    }
-}
-
-/// One family-owned measured quantity retained with unit and source.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MeasurementEvidence {
-    name: String,
-    value: u64,
-    unit: String,
-    source: String,
-}
-
-impl MeasurementEvidence {
-    /// Retain one measured value.
-    pub fn new(
-        name: impl Into<String>,
-        value: u64,
-        unit: impl Into<String>,
-        source: impl Into<String>,
-    ) -> Result<Self, BatteryError> {
-        let evidence = Self {
-            name: name.into(),
-            value,
-            unit: unit.into(),
-            source: source.into(),
-        };
-        evidence.validate()?;
-        Ok(evidence)
-    }
-
-    /// Stable measured quantity.
-    #[must_use]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// Exact unsigned measured value.
-    #[must_use]
-    pub const fn value(&self) -> u64 {
-        self.value
-    }
-
-    /// Canonical measurement unit.
-    #[must_use]
-    pub fn unit(&self) -> &str {
-        &self.unit
-    }
-
-    /// Parser or component that produced the value.
-    #[must_use]
-    pub fn source(&self) -> &str {
-        &self.source
-    }
-
-    fn validate(&self) -> Result<(), BatteryError> {
-        if !valid_text(&self.name) || !valid_text(&self.unit) || !valid_text(&self.source) {
-            return Err(BatteryError::new(
-                "measurement name, unit, and source must be non-empty single-line text",
-            ));
-        }
-        Ok(())
-    }
-}
-
-/// Family-qualified typed evidence returned by one executor call.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case", tag = "family")]
-pub enum ArmEvidence {
-    Core {
-        decisions: Vec<DecisionEvidence>,
-        measurements: Vec<MeasurementEvidence>,
-    },
-    Toolchain {
-        decisions: Vec<DecisionEvidence>,
-        measurements: Vec<MeasurementEvidence>,
-    },
-    Metrics {
-        decisions: Vec<DecisionEvidence>,
-        measurements: Vec<MeasurementEvidence>,
-    },
-    Hygiene {
-        decisions: Vec<DecisionEvidence>,
-        measurements: Vec<MeasurementEvidence>,
-    },
-    MigrationRefusal {
-        refusal: MigrationRefusal,
-    },
-}
-
-impl ArmEvidence {
-    /// Family represented by compiled evidence, absent for a migration refusal.
-    #[must_use]
-    pub const fn family(&self) -> Option<ArmFamily> {
-        match self {
-            Self::Core { .. } => Some(ArmFamily::Core),
-            Self::Toolchain { .. } => Some(ArmFamily::Toolchain),
-            Self::Metrics { .. } => Some(ArmFamily::Metrics),
-            Self::Hygiene { .. } => Some(ArmFamily::Hygiene),
-            Self::MigrationRefusal { .. } => None,
-        }
-    }
-
-    /// Decisions in family order, empty for a migration refusal.
-    #[must_use]
-    pub fn decisions(&self) -> &[DecisionEvidence] {
-        match self {
-            Self::Core { decisions, .. }
-            | Self::Toolchain { decisions, .. }
-            | Self::Metrics { decisions, .. }
-            | Self::Hygiene { decisions, .. } => decisions,
-            Self::MigrationRefusal { .. } => &[],
-        }
-    }
-
-    /// Measurements in family order, empty for a migration refusal.
-    #[must_use]
-    pub fn measurements(&self) -> &[MeasurementEvidence] {
-        match self {
-            Self::Core { measurements, .. }
-            | Self::Toolchain { measurements, .. }
-            | Self::Metrics { measurements, .. }
-            | Self::Hygiene { measurements, .. } => measurements,
-            Self::MigrationRefusal { .. } => &[],
-        }
-    }
-
-    fn validate(&self) -> Result<(), BatteryError> {
-        match self {
-            Self::Core {
-                decisions,
-                measurements,
-            }
-            | Self::Toolchain {
-                decisions,
-                measurements,
-            }
-            | Self::Metrics {
-                decisions,
-                measurements,
-            }
-            | Self::Hygiene {
-                decisions,
-                measurements,
-            } => {
-                for decision in decisions {
-                    decision.validate()?;
-                }
-                for measurement in measurements {
-                    measurement.validate()?;
-                }
-            }
-            Self::MigrationRefusal { refusal } => refusal.validate(0)?,
-        }
-        Ok(())
-    }
-
-    fn empty(family: ArmFamily, source: &str) -> Self {
-        let decision = DecisionEvidence {
-            name: "executor-contract".to_owned(),
-            decision: false,
-            source: source.to_owned(),
-        };
-        match family {
-            ArmFamily::Core => Self::Core {
-                decisions: vec![decision],
-                measurements: vec![],
-            },
-            ArmFamily::Toolchain => Self::Toolchain {
-                decisions: vec![decision],
-                measurements: vec![],
-            },
-            ArmFamily::Metrics => Self::Metrics {
-                decisions: vec![decision],
-                measurements: vec![],
-            },
-            ArmFamily::Hygiene => Self::Hygiene {
-                decisions: vec![decision],
-                measurements: vec![],
-            },
-        }
-    }
-}
 
 /// Complete executor output for one compiled arm.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -359,22 +41,20 @@ impl ArmExecution {
     }
 
     fn validate(&self) -> Result<(), BatteryError> {
-        if !valid_text(&self.reason) {
-            return Err(BatteryError::new(
-                "arm result reason must be non-empty single-line text",
-            ));
-        }
-        if self.state.requires_provenance() && self.provenance.is_none() {
-            return Err(BatteryError::new(format!(
-                "{:?} requires exact reason provenance",
-                self.state
-            )));
-        }
-        if let Some(provenance) = &self.provenance {
-            provenance.validate()?;
-        }
-        self.evidence.validate()?;
-        Ok(())
+        self.evidence
+            .validate_execution(self.state, &self.reason, self.provenance.as_ref())
+    }
+
+    fn validate_expected(
+        &self,
+        family: ArmFamily,
+        gate_id: GateId,
+        declaration: &str,
+        source: &Digest,
+    ) -> Result<(), BatteryError> {
+        self.validate()?;
+        self.evidence
+            .validate_expected(family, gate_id, declaration, source)
     }
 }
 
@@ -587,7 +267,7 @@ impl BatteryReport {
             )));
         }
         for (position, (result, arm)) in self.results.iter().zip(&manifest.arms).enumerate() {
-            validate_result(position, result, arm)?;
+            validate_result(position, result, arm, self.context.source())?;
         }
         Ok(())
     }
@@ -680,9 +360,11 @@ fn execute_compiled(
         declaration: declaration.to_owned(),
     };
     let execution = match executor.execute(&compiled, inputs) {
-        Ok(execution) => admit_execution(execution, family),
+        Ok(execution) => admit_execution(execution, family, gate_id, declaration, inputs.source()),
         Err(error) => failed_execution(
+            gate_id,
             family,
+            declaration,
             &format!("executor refused arm: {}", inline_evidence(error.detail())),
         ),
     };
@@ -699,15 +381,19 @@ fn execute_compiled(
     }
 }
 
-fn admit_execution(execution: ArmExecution, family: ArmFamily) -> ArmExecution {
-    match execution.validate() {
-        Ok(()) if execution.evidence.family() == Some(family) => execution,
-        Ok(()) => failed_execution(
-            family,
-            "executor returned evidence for a different declaration family",
-        ),
+fn admit_execution(
+    execution: ArmExecution,
+    family: ArmFamily,
+    gate_id: GateId,
+    declaration: &str,
+    source: &Digest,
+) -> ArmExecution {
+    match execution.validate_expected(family, gate_id, declaration, source) {
+        Ok(()) => execution,
         Err(error) => failed_execution(
+            gate_id,
             family,
+            declaration,
             &format!(
                 "executor returned invalid evidence: {}",
                 inline_evidence(error.detail())
@@ -716,12 +402,22 @@ fn admit_execution(execution: ArmExecution, family: ArmFamily) -> ArmExecution {
     }
 }
 
-fn failed_execution(family: ArmFamily, reason: &str) -> ArmExecution {
+fn failed_execution(
+    gate_id: GateId,
+    family: ArmFamily,
+    declaration: &str,
+    reason: &str,
+) -> ArmExecution {
     ArmExecution {
         state: BatteryState::Failed,
         reason: reason.to_owned(),
         provenance: None,
-        evidence: ArmEvidence::empty(family, "gate::battery::run_battery"),
+        evidence: ArmEvidence::ExecutorFailure {
+            gate_id,
+            arm_family: family,
+            declaration: declaration.to_owned(),
+            reason: reason.to_owned(),
+        },
     }
 }
 
@@ -729,40 +425,46 @@ fn validate_result(
     position: usize,
     result: &BatteryArmResult,
     arm: &BatteryManifestArm,
+    source: &Digest,
 ) -> Result<(), BatteryError> {
     if result.position != position || result.predecessor != arm.predecessor {
         return Err(BatteryError::new(format!(
             "battery result {position} is missing or reordered"
         )));
     }
-    ArmExecution {
+    let execution = ArmExecution {
         state: result.state,
         reason: result.reason.clone(),
         provenance: result.provenance.clone(),
         evidence: result.evidence.clone(),
-    }
-    .validate()?;
+    };
     match &arm.disposition {
         ArmDisposition::Compiled {
             gate_id,
             family,
             declaration,
-        } => validate_compiled_result(position, result, *gate_id, *family, declaration),
+        } => {
+            execution.validate_expected(*family, *gate_id, declaration, source)?;
+            validate_compiled_result(position, result, *gate_id, *family, declaration)
+        }
         ArmDisposition::MigrationRefusal {
             source_field,
             owning_release,
             reason,
             recovery,
-        } => validate_refusal_result(
-            position,
-            result,
-            MigrationRefusal {
-                source_field: source_field.clone(),
-                owning_release: owning_release.clone(),
-                reason: reason.clone(),
-                recovery: recovery.clone(),
-            },
-        ),
+        } => {
+            execution.validate()?;
+            validate_refusal_result(
+                position,
+                result,
+                MigrationRefusal {
+                    source_field: source_field.clone(),
+                    owning_release: owning_release.clone(),
+                    reason: reason.clone(),
+                    recovery: recovery.clone(),
+                },
+            )
+        }
     }
 }
 

@@ -6,6 +6,7 @@
 
 mod context;
 mod execution;
+mod family_evidence;
 mod manifest_contract;
 
 use std::error::Error;
@@ -20,9 +21,9 @@ pub use context::{
     BoundActorInputsEvidence, BoundEvidence, ConfigurationEvidence, LatchEvidence,
 };
 pub use execution::{
-    ArmEvidence, ArmExecution, BatteryArmResult, BatteryExecutor, BatteryReport, BatteryState,
-    CompiledArm, DecisionEvidence, MeasurementEvidence, ResultProvenance, run_battery,
+    ArmExecution, BatteryArmResult, BatteryExecutor, BatteryReport, CompiledArm, run_battery,
 };
+pub use family_evidence::{ArmEvidence, BatteryState, ResultProvenance};
 #[cfg(test)]
 use manifest_contract::declaration_identity;
 pub use manifest_contract::{
@@ -130,5 +131,7 @@ impl fmt::Display for BatteryError {
 
 impl Error for BatteryError {}
 
+#[cfg(test)]
+mod fixtures;
 #[cfg(test)]
 mod tests;

@@ -7,7 +7,7 @@
 use std::error::Error;
 use std::fmt;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::manifest::GateId;
 
@@ -96,7 +96,7 @@ impl HygieneJurisdiction {
 }
 
 /// Native traversal performed by an arm.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum HygieneTraversal {
     /// Construct production and test import graphs.
@@ -112,7 +112,7 @@ pub enum HygieneTraversal {
 }
 
 /// Versioned compiled analyzer selected by one declaration.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum HygieneAnalyzer {
     /// Python import graph and importer analysis.
@@ -385,7 +385,7 @@ pub const HYGIENE_ARMS: [HygieneDeclaration; 5] = [
 ];
 
 /// State retained by a typed analysis stage.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum EvidenceState {
     /// Stage completed and its counts are usable.
@@ -401,7 +401,7 @@ pub enum EvidenceState {
 }
 
 /// Analyzer or provider discovery retained before analysis begins.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(tag = "discovery", rename_all = "kebab-case")]
 pub enum AnalyzerEvidence {
     /// A compiled analyzer or declared provider was unavailable.
@@ -490,7 +490,7 @@ impl AnalyzerEvidence {
 }
 
 /// Exact origin of one applicability or exclusion decision.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct HygieneProvenance {
     /// Release that owns the source grammar.
     pub release: String,
@@ -512,7 +512,7 @@ impl HygieneProvenance {
 }
 
 /// Evidence that a compiled or tracked exclusion selected an explicit skip.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct ExclusionEvidence {
     /// Exact release, layer, document, and field.
     pub provenance: HygieneProvenance,
@@ -521,7 +521,7 @@ pub struct ExclusionEvidence {
 }
 
 /// Typed evidence from one analysis stage.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(tag = "evidence", rename_all = "kebab-case")]
 pub enum AnalysisEvidence {
     /// File-language applicability was measured.
@@ -624,7 +624,7 @@ pub enum AnalysisEvidence {
 }
 
 /// Classification of one unused Python declaration.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PythonUnusedStatus {
     /// No production or test references exist.
@@ -634,7 +634,7 @@ pub enum PythonUnusedStatus {
 }
 
 /// Closed finding identity for the five hygiene arms.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum HygieneFindingDetail {
     /// A module is reachable only from tests.
@@ -739,7 +739,7 @@ impl HygieneFindingDetail {
 }
 
 /// One structured finding with stable selected-tree identity.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct HygieneFinding {
     /// Selected-tree-relative path.
     pub path: String,
@@ -750,7 +750,7 @@ pub struct HygieneFinding {
 }
 
 /// Typed result of one hygiene arm.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum HygieneOutcome {
     /// Analysis completed without findings.
@@ -805,7 +805,7 @@ pub(crate) struct HygieneObservation {
 }
 
 /// Canonical retained measurement of one hygiene arm.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct HygieneMeasurement {
     /// Stable current gate identity.
     pub gate_id: GateId,
@@ -836,6 +836,10 @@ pub struct HygieneMeasurement {
 }
 
 impl HygieneMeasurement {
+    pub(crate) fn validate(&self) -> Result<(), HygieneError> {
+        measure::validate_measurement(self)
+    }
+
     fn has_external_provider(&self) -> bool {
         self.findings
             .iter()
@@ -844,7 +848,7 @@ impl HygieneMeasurement {
 }
 
 /// Canonical ordered report for the complete five-arm family.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct HygieneReport {
     /// Current report schema.
     pub version: u64,

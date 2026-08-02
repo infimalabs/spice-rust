@@ -4,10 +4,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use wire::{Digest, Domain};
 
+use super::fixtures;
 use super::*;
 use crate::RulePolicy;
 use crate::manifest::{GateId, OriginLayer};
-use crate::policy::{BoundLimits, GlobalRatchet, PolicyDocument};
 use crate::state::{
     ActorInputs, ActorResolution, BoundDecision, BoundRule, CurrentState, PredecessorSources,
 };
@@ -115,7 +115,7 @@ fn manifest_rejects_every_noncanonical_shape_and_runtime_escape() {
 fn runner_executes_all_25_once_in_order_with_complete_context() {
     let fixture = Fixture::new();
     let inputs = fixture.inputs();
-    let mut executor = RecordingExecutor::all_passed();
+    let mut executor = RecordingExecutor::all_passed(&fixture.source);
     let report = run_battery(&inputs, &mut executor).expect("complete battery");
 
     assert_eq!(executor.calls, GateId::ALL);
@@ -191,26 +191,13 @@ fn runner_executes_all_25_once_in_order_with_complete_context() {
         assert_eq!(result.predecessor(), expected.predecessor_name());
         assert_eq!(result.gate_id(), Some(expected));
         assert_eq!(result.state(), BatteryState::Passed);
-        assert_eq!(result.evidence().decisions().len(), 1);
-        assert!(result.evidence().decisions()[0].decision());
+        assert_eq!(result.evidence().gate_id(), Some(expected));
         assert_eq!(
-            result.evidence().decisions()[0].name(),
-            format!("{expected}-decision")
+            result.evidence().state().expect("typed state"),
+            BatteryState::Passed
         );
-        assert_eq!(
-            result.evidence().decisions()[0].source(),
-            result.declaration().expect("declaration")
-        );
-        assert_eq!(result.evidence().measurements().len(), 1);
-        assert_eq!(
-            result.evidence().measurements()[0].value(),
-            u64::try_from(position).expect("position fits u64")
-        );
-        assert_eq!(result.evidence().measurements()[0].unit(), "ordinal");
-        assert_eq!(
-            result.evidence().measurements()[0].source(),
-            result.declaration().expect("declaration")
-        );
+        assert!(!result.evidence().reason().expect("typed reason").is_empty());
+        assert_family_evidence(result.evidence(), &fixture.source);
     }
 
     let encoded = report.encode().expect("canonical report");
@@ -221,17 +208,7 @@ fn runner_executes_all_25_once_in_order_with_complete_context() {
 fn every_nonpass_state_refuses_without_erasing_later_results() {
     let fixture = Fixture::new();
     let inputs = fixture.inputs();
-    let mut executor = RecordingExecutor::states(vec![
-        BatteryState::Passed,
-        BatteryState::Failed,
-        BatteryState::Unavailable,
-        BatteryState::Unsupported,
-        BatteryState::Unmeasured,
-        BatteryState::TimedOut,
-        BatteryState::ExplicitSkip,
-        BatteryState::NotApplicable,
-        BatteryState::Excluded,
-    ]);
+    let mut executor = RecordingExecutor::nonpassing(&fixture.source);
     let report = run_battery(&inputs, &mut executor).expect("total nonpass report");
 
     assert_eq!(executor.calls.len(), 25);
@@ -262,9 +239,12 @@ fn every_nonpass_state_refuses_without_erasing_later_results() {
         )
     }) {
         let provenance = result.provenance().expect("admitted skip provenance");
-        assert_eq!(provenance.release(), "current");
-        assert_eq!(provenance.source(), "fixture-declaration");
-        assert_eq!(provenance.field(), &[result.predecessor().to_owned()]);
+        let expected = result
+            .evidence()
+            .provenance()
+            .expect("typed provenance")
+            .expect("skip provenance");
+        assert_eq!(provenance, &expected);
     }
 }
 
@@ -272,7 +252,7 @@ fn every_nonpass_state_refuses_without_erasing_later_results() {
 fn executor_refusals_and_invalid_evidence_stay_visible_and_total() {
     let fixture = Fixture::new();
     let inputs = fixture.inputs();
-    let mut executor = RecordingExecutor::faulting(3, 4);
+    let mut executor = RecordingExecutor::faulting(&fixture.source, 3, 4);
     let report = run_battery(&inputs, &mut executor).expect("total executor-failure report");
 
     assert_eq!(executor.calls, GateId::ALL);
@@ -292,86 +272,234 @@ fn executor_refusals_and_invalid_evidence_stay_visible_and_total() {
         report.results().last().expect("last result").gate_id(),
         Some(GateId::PrivateInternals)
     );
+
+    let value: serde_json::Value =
+        serde_json::from_slice(&report.encode().expect("encode")).expect("report JSON");
+    assert_refusals(vec![(
+        "executor failure names a different compiled declaration",
+        mutate(&value, |candidate| {
+            candidate["results"][3]["evidence"]["declaration"] =
+                serde_json::json!("gate::core::staging::forged-v1")
+        }),
+    )]);
 }
 
 #[test]
 fn partial_and_reordered_vectors_cannot_decode_as_complete() {
     let fixture = Fixture::new();
     let inputs = fixture.inputs();
-    let mut executor = RecordingExecutor::all_passed();
+    let mut executor = RecordingExecutor::all_passed(&fixture.source);
     let report = run_battery(&inputs, &mut executor).expect("complete report");
     let value: serde_json::Value =
         serde_json::from_slice(&report.encode().expect("encode")).expect("report JSON");
 
-    let mut partial = value.clone();
-    partial["results"]
-        .as_array_mut()
-        .expect("result array")
-        .pop();
-    let partial = serde_json::to_vec(&partial).expect("partial JSON");
-    assert!(BatteryReport::decode(&partial).is_err());
-
-    let mut reordered = value;
-    reordered["results"]
-        .as_array_mut()
-        .expect("result array")
-        .swap(0, 1);
-    let reordered = serde_json::to_vec(&reordered).expect("reordered JSON");
-    assert!(BatteryReport::decode(&reordered).is_err());
+    assert_refusals(vec![
+        (
+            "complete battery report requires 25 results, received 24",
+            mutate(&value, |candidate| {
+                candidate["results"]
+                    .as_array_mut()
+                    .expect("result array")
+                    .pop();
+            }),
+        ),
+        (
+            "battery result 0 is missing or reordered",
+            mutate(&value, |candidate| {
+                candidate["results"]
+                    .as_array_mut()
+                    .expect("result array")
+                    .swap(0, 1);
+            }),
+        ),
+    ]);
 }
 
 #[test]
-fn decoded_context_and_family_evidence_cannot_be_forged() {
+fn decoded_run_context_cannot_be_forged() {
     let fixture = Fixture::new();
     let inputs = fixture.inputs();
-    let mut executor = RecordingExecutor::all_passed();
+    let mut executor = RecordingExecutor::all_passed(&fixture.source);
+    let report = run_battery(&inputs, &mut executor).expect("complete report");
+    let value: serde_json::Value =
+        serde_json::from_slice(&report.encode().expect("encode")).expect("report JSON");
+    assert!(value["context"]["latches"][0].get("function").is_none());
+
+    assert_refusals(vec![
+        (
+            "battery actor must be an explicit task-session or active-actor identity",
+            mutate(&value, |candidate| {
+                candidate["context"]["actor"]["source"] = serde_json::json!("candidate-path")
+            }),
+        ),
+        (
+            "bound evidence flags disagree with its limits or latch transition",
+            mutate(&value, |candidate| {
+                candidate["context"]["bounds"][0]["active_limit"] = serde_json::json!(999)
+            }),
+        ),
+        (
+            "bound evidence flags disagree with its limits or latch transition",
+            mutate(&value, |candidate| {
+                candidate["context"]["bounds"][0]["measured"] = serde_json::json!(999)
+            }),
+        ),
+        (
+            "bound candidate path must already be canonical",
+            mutate(&value, |candidate| {
+                candidate["context"]["bounds"][0]["actor_inputs"]["candidate_path"] =
+                    serde_json::json!("./src/lib.rs")
+            }),
+        ),
+        (
+            "invalid latch key shape",
+            mutate(&value, |candidate| {
+                candidate["context"]["latches"][0]["function"] = serde_json::json!("forged")
+            }),
+        ),
+        (
+            "battery context repeats configuration key",
+            mutate(&value, |candidate| {
+                let first = candidate["context"]["configuration"][0].clone();
+                candidate["context"]["configuration"]
+                    .as_array_mut()
+                    .expect("configuration array")
+                    .push(first);
+            }),
+        ),
+        (
+            "battery context repeats tool evidence",
+            mutate(&value, |candidate| {
+                let first = candidate["context"]["tools"][0].clone();
+                candidate["context"]["tools"]
+                    .as_array_mut()
+                    .expect("tool array")
+                    .push(first);
+            }),
+        ),
+    ]);
+}
+
+#[test]
+fn decoded_family_evidence_cannot_be_forged() {
+    let fixture = Fixture::new();
+    let inputs = fixture.inputs();
+    let mut executor = RecordingExecutor::all_passed(&fixture.source);
     let report = run_battery(&inputs, &mut executor).expect("complete report");
     let value: serde_json::Value =
         serde_json::from_slice(&report.encode().expect("encode")).expect("report JSON");
     assert!(value["results"][0].get("provenance").is_none());
-    assert!(value["context"]["latches"][0].get("function").is_none());
 
-    let mut candidates = Vec::new();
-    candidates.push(mutate(&value, |candidate| {
-        candidate["context"]["actor"]["source"] = serde_json::json!("candidate-path")
-    }));
-    candidates.push(mutate(&value, |candidate| {
-        candidate["context"]["bounds"][0]["active_limit"] = serde_json::json!(999)
-    }));
-    candidates.push(mutate(&value, |candidate| {
-        candidate["context"]["bounds"][0]["measured"] = serde_json::json!(999)
-    }));
-    candidates.push(mutate(&value, |candidate| {
-        candidate["context"]["bounds"][0]["actor_inputs"]["candidate_path"] =
-            serde_json::json!("./src/lib.rs")
-    }));
-    candidates.push(mutate(&value, |candidate| {
-        candidate["context"]["latches"][0]["function"] = serde_json::json!("forged")
-    }));
-    candidates.push(mutate(&value, |candidate| {
-        let first = candidate["context"]["configuration"][0].clone();
-        candidate["context"]["configuration"]
-            .as_array_mut()
-            .expect("configuration array")
-            .push(first);
-    }));
-    candidates.push(mutate(&value, |candidate| {
-        let first = candidate["context"]["tools"][0].clone();
-        candidate["context"]["tools"]
-            .as_array_mut()
-            .expect("tool array")
-            .push(first);
-    }));
-    candidates.push(mutate(&value, |candidate| {
-        candidate["results"][0]["evidence"]["decisions"][0]["name"] = serde_json::json!("")
-    }));
+    assert_refusals(vec![
+        (
+            "invalid core evidence",
+            mutate(&value, |candidate| {
+                candidate["results"][0]["evidence"]["report"]["standing"] =
+                    serde_json::json!("failed")
+            }),
+        ),
+        (
+            "core arm evidence belongs to a different immutable tree",
+            mutate(&value, |candidate| {
+                candidate["results"][0]["evidence"]["report"]["tree"] = serde_json::json!(
+                    Digest::compute(Domain::GateTree, b"another fixture tree").as_str()
+                )
+            }),
+        ),
+        (
+            "invalid toolchain evidence",
+            mutate(&value, |candidate| {
+                candidate["results"][8]["evidence"]["report"]["configuration_source"] =
+                    serde_json::json!("")
+            }),
+        ),
+        (
+            "arm evidence belongs to a different compiled gate or family",
+            mutate(&value, |candidate| {
+                candidate["results"][8]["evidence"] = candidate["results"][9]["evidence"].clone();
+                candidate["results"][8]["reason"] = candidate["results"][9]["reason"].clone();
+            }),
+        ),
+        (
+            "invalid toolchain evidence",
+            mutate(&value, |candidate| {
+                candidate["results"][8]["evidence"]["report"]["tools"] = serde_json::json!([])
+            }),
+        ),
+        (
+            "invalid metric evidence",
+            mutate(&value, |candidate| {
+                candidate["results"][16]["evidence"]["report"]["metrics"] = serde_json::json!([])
+            }),
+        ),
+        (
+            "invalid metric evidence",
+            mutate(&value, |candidate| {
+                candidate["results"][16]["evidence"]["report"]["metrics"][0]["state"]["measurement"]
+                    ["value"] = serde_json::json!(999)
+            }),
+        ),
+        (
+            "invalid hygiene evidence",
+            mutate(&value, |candidate| {
+                candidate["results"][20]["evidence"]["report"]["evidence"] = serde_json::json!([])
+            }),
+        ),
+        (
+            "arm state or reason disagrees with its retained family evidence",
+            mutate(&value, |candidate| {
+                candidate["results"][0]["state"] = serde_json::json!("failed")
+            }),
+        ),
+    ]);
+}
 
-    for candidate in candidates {
-        assert!(
-            BatteryReport::decode(&serde_json::to_vec(&candidate).expect("candidate JSON"))
-                .is_err()
-        );
-    }
+#[test]
+fn admitted_skip_provenance_and_reason_cannot_be_forged() {
+    let fixture = Fixture::new();
+    let inputs = fixture.inputs();
+    let mut executor = RecordingExecutor::nonpassing(&fixture.source);
+    let report = run_battery(&inputs, &mut executor).expect("typed nonpass report");
+    let value: serde_json::Value =
+        serde_json::from_slice(&report.encode().expect("encode")).expect("report JSON");
+
+    assert_refusals(vec![
+        (
+            "arm provenance disagrees with its declaration-owned skip evidence",
+            mutate(&value, |candidate| {
+                candidate["results"][20]["provenance"]["source"] = serde_json::json!("forged")
+            }),
+        ),
+        (
+            "arm state or reason disagrees with its retained family evidence",
+            mutate(&value, |candidate| {
+                candidate["results"][21]["reason"] = serde_json::json!("forged exclusion")
+            }),
+        ),
+    ]);
+}
+
+#[test]
+fn metric_arms_cannot_assemble_mixed_terminal_evidence() {
+    let fixture = Fixture::new();
+    let ArmEvidence::Metrics { report } = fixtures::passing(&fixture.source)[16].clone() else {
+        panic!("the seventeenth compiled arm retains structural metric evidence")
+    };
+    let mut metrics = report.metrics().to_vec();
+    metrics[1] = crate::metrics::MetricEvidence::new(
+        metrics[1].metric(),
+        crate::metrics::MetricKey::Arm,
+        crate::metrics::EvidenceState::Unavailable {
+            reason: "structural parser was not admitted".to_owned(),
+        },
+    )
+    .expect("unavailable metric evidence");
+    let error = crate::metrics::StructuralArmEvidence::new(report.gate_id(), metrics)
+        .expect_err("one arm cannot pair a measured key with an unmeasured arm key");
+    assert_eq!(
+        error.to_string(),
+        "file-shape metric keys differ: left={Path(\"src/app.rs\")} right={Arm}"
+    );
 }
 
 #[test]
@@ -380,6 +508,7 @@ fn execution_boundary_contains_no_shell_or_alternate_runtime() {
         include_str!("../battery.rs"),
         include_str!("context.rs"),
         include_str!("execution.rs"),
+        include_str!("family_evidence.rs"),
         include_str!("manifest_contract.rs"),
     );
     for forbidden in [
@@ -398,30 +527,34 @@ fn execution_boundary_contains_no_shell_or_alternate_runtime() {
 
 struct RecordingExecutor {
     calls: Vec<GateId>,
-    states: Vec<BatteryState>,
+    evidence: Vec<ArmEvidence>,
     refusal: Option<usize>,
     invalid: Option<usize>,
 }
 
 impl RecordingExecutor {
-    fn all_passed() -> Self {
-        Self::states(vec![BatteryState::Passed])
+    fn all_passed(source: &Digest) -> Self {
+        Self::with_evidence(fixtures::passing(source))
     }
 
-    fn states(states: Vec<BatteryState>) -> Self {
+    fn nonpassing(source: &Digest) -> Self {
+        Self::with_evidence(fixtures::nonpassing(source))
+    }
+
+    fn with_evidence(evidence: Vec<ArmEvidence>) -> Self {
         Self {
             calls: vec![],
-            states,
+            evidence,
             refusal: None,
             invalid: None,
         }
     }
 
-    fn faulting(refusal: usize, invalid: usize) -> Self {
+    fn faulting(source: &Digest, refusal: usize, invalid: usize) -> Self {
         Self {
             refusal: Some(refusal),
             invalid: Some(invalid),
-            ..Self::all_passed()
+            ..Self::all_passed(source)
         }
     }
 }
@@ -436,7 +569,15 @@ impl BatteryExecutor for RecordingExecutor {
         assert_eq!(inputs.actor().value(), "fixture-actor");
         assert_eq!(inputs.scope().name(), "selected-index");
         assert_eq!(inputs.configuration().len(), 1);
-        assert_eq!(inputs.policy().document().rules().len(), 0);
+        assert!(!inputs.policy().document().rules().is_empty());
+        assert!(
+            inputs
+                .policy()
+                .document()
+                .rules()
+                .iter()
+                .any(|rule| rule.id().as_str().starts_with("legacy-rule:"))
+        );
         assert_eq!(inputs.state().latches().len(), 1);
         assert_eq!(inputs.bounds().len(), 1);
         assert_eq!(inputs.tools().len(), 1);
@@ -445,32 +586,11 @@ impl BatteryExecutor for RecordingExecutor {
         if self.refusal == Some(arm.position()) {
             return Err(BatteryError::new("provider\nlost"));
         }
-        let state = self.states[arm.position() % self.states.len()];
-        let provenance = state.requires_provenance().then(|| {
-            ResultProvenance::new(
-                "current",
-                "fixture-declaration",
-                vec![arm.predecessor().to_owned()],
-            )
-            .expect("skip provenance")
-        });
-        let decision = DecisionEvidence::new(
-            format!("{}-decision", arm.gate_id()),
-            state.admits(),
-            arm.declaration(),
-        )?;
-        let measurement = MeasurementEvidence::new(
-            "report-position",
-            u64::try_from(arm.position()).expect("position fits u64"),
-            "ordinal",
-            arm.declaration(),
-        )?;
-        let execution = ArmExecution::new(
-            state,
-            format!("{} reached {state:?}", arm.gate_id()),
-            provenance,
-            family_evidence(arm.family(), decision, measurement),
-        )?;
+        let evidence = self.evidence[arm.position()].clone();
+        let state = evidence.state()?;
+        let provenance = evidence.provenance()?;
+        let reason = evidence.reason()?;
+        let execution = ArmExecution::new(state, reason, provenance, evidence)?;
         if self.invalid == Some(arm.position()) {
             let mut value = serde_json::to_value(execution).expect("execution JSON");
             value["reason"] = serde_json::json!("forged\nreason");
@@ -480,30 +600,79 @@ impl BatteryExecutor for RecordingExecutor {
     }
 }
 
-fn family_evidence(
-    family: ArmFamily,
-    decision: DecisionEvidence,
-    measurement: MeasurementEvidence,
-) -> ArmEvidence {
-    let decisions = vec![decision];
-    let measurements = vec![measurement];
-    match family {
-        ArmFamily::Core => ArmEvidence::Core {
-            decisions,
-            measurements,
-        },
-        ArmFamily::Toolchain => ArmEvidence::Toolchain {
-            decisions,
-            measurements,
-        },
-        ArmFamily::Metrics => ArmEvidence::Metrics {
-            decisions,
-            measurements,
-        },
-        ArmFamily::Hygiene => ArmEvidence::Hygiene {
-            decisions,
-            measurements,
-        },
+fn assert_family_evidence(evidence: &ArmEvidence, source: &Digest) {
+    match evidence {
+        ArmEvidence::Core { report } => {
+            assert_eq!(report.tree(), source);
+            assert!(report.evidence().is_some());
+        }
+        ArmEvidence::Toolchain { report } => {
+            assert_eq!(report.outcome, crate::toolchain::ArmOutcome::Passed);
+            assert!(!report.configuration_source.is_empty());
+            assert!(!report.configuration_field.is_empty());
+            assert!(!report.applicability.is_empty());
+            let declaration = crate::toolchain::TOOLCHAIN_ARMS
+                .into_iter()
+                .find(|arm| arm.id() == report.gate_id)
+                .expect("toolchain declaration");
+            assert_eq!(report.tools.len(), declaration.tools().len());
+            for (evidence, required) in report.tools.iter().zip(declaration.tools()) {
+                let crate::toolchain::ToolEvidence::Identified {
+                    name,
+                    requested_program,
+                    version,
+                    digest,
+                    ..
+                } = evidence
+                else {
+                    panic!("passing toolchain evidence must identify every declared tool")
+                };
+                assert_eq!(name, required.name());
+                assert_eq!(requested_program, required.program());
+                assert_eq!(version, required.exact_version());
+                assert!(!digest.is_empty());
+            }
+        }
+        ArmEvidence::Metrics { report } => {
+            assert!(!report.metrics().is_empty());
+            for metric in report.metrics() {
+                let crate::metrics::EvidenceState::Measured { measurement } = metric.state() else {
+                    panic!("passing metric evidence must be measured")
+                };
+                if matches!(
+                    metric.metric(),
+                    crate::metrics::MetricId::FileLines
+                        | crate::metrics::MetricId::FileBytes
+                        | crate::metrics::MetricId::RoutineCcn
+                        | crate::metrics::MetricId::RoutineLength
+                ) {
+                    let rule = measurement.rule().expect("selected metric policy rule");
+                    assert_eq!(rule.rule_id(), Some("fixture-source-rule"));
+                    let latch = measurement.latch().expect("metric threshold and latch");
+                    assert_eq!(latch.transition(), "clear");
+                    assert!(!latch.over_limit());
+                }
+            }
+        }
+        ArmEvidence::Hygiene { report } => {
+            assert_eq!(report.outcome, crate::hygiene::HygieneOutcome::Passed);
+            assert!(!report.configuration.is_empty());
+            assert!(!report.evidence.is_empty());
+            assert!(!report.traversals.is_empty());
+            assert!(report.evidence.iter().any(|evidence| matches!(
+                evidence,
+                crate::hygiene::AnalysisEvidence::PolicyDecision { .. }
+            )));
+            assert!(report.evidence.iter().any(|evidence| matches!(
+                evidence,
+                crate::hygiene::AnalysisEvidence::Analyzer(
+                    crate::hygiene::AnalyzerEvidence::Identified { digest, .. }
+                ) if !digest.is_empty()
+            )));
+        }
+        ArmEvidence::ExecutorFailure { .. } | ArmEvidence::MigrationRefusal { .. } => {
+            panic!("passing fixture must retain family-owned evidence")
+        }
     }
 }
 
@@ -514,6 +683,26 @@ fn mutate(
     let mut changed = value.clone();
     change(&mut changed);
     changed
+}
+
+/// Every forged report must be refused by the exact invariant it violates.
+///
+/// A re-serialized candidate no longer carries canonical field order, so decode
+/// would refuse all of them on bytes alone; naming the expected refusal is what
+/// proves each mutation is actually caught by the contract it targets.
+fn assert_refusals(candidates: Vec<(&str, serde_json::Value)>) {
+    let mut unproven = Vec::new();
+    for (invariant, candidate) in candidates {
+        let bytes = serde_json::to_vec(&candidate).expect("candidate JSON");
+        let error = BatteryReport::decode(&bytes).expect_err("forged report must be refused");
+        if !error.detail().contains(invariant) {
+            unproven.push(format!(
+                "expected a refusal naming {invariant:?}, observed {:?}",
+                error.detail()
+            ));
+        }
+    }
+    assert!(unproven.is_empty(), "{}", unproven.join("\n"));
 }
 
 struct Fixture {
@@ -568,13 +757,17 @@ impl Fixture {
             )
             .expect("configuration provenance"),
         ];
-        let policy = RulePolicy::compile(PolicyDocument::predecessor(
-            BoundLimits::PREDECESSOR,
-            GlobalRatchet::PREDECESSOR,
-            2,
-            vec![],
-        ))
-        .expect("compiled policy");
+        let policy = crate::migrate_predecessor_policy(
+            "spice.toml",
+            r#"
+                [[policy.rules]]
+                scopes = { paths = ["src/**"] }
+
+                [policy.rules.file_loc]
+                multiplier = 1.0
+            "#,
+        )
+        .expect("compiled fixture policy");
         let tools = vec![
             BatteryToolEvidence::identified(
                 "cargo",
