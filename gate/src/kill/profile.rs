@@ -42,6 +42,8 @@ impl MutationTool {
             if key == OsStr::new(SEED_ENVIRONMENT)
                 || key == OsStr::new(ATTEMPT_ENVIRONMENT)
                 || key == OsStr::new(CARGO_ENVIRONMENT)
+                || key == OsStr::new(CARGO_BUILD_DIRECTORY_ENVIRONMENT)
+                || key == OsStr::new(CARGO_TARGET_DIRECTORY_ENVIRONMENT)
             {
                 return Err(RateError::ReservedEnvironment {
                     key: key.to_string_lossy().into_owned(),
@@ -96,6 +98,16 @@ impl MutationTool {
             "kill environment {CARGO_ENVIRONMENT} {}",
             self.cargo_program.display()
         );
+        let _ = writeln!(
+            into,
+            "kill environment {CARGO_BUILD_DIRECTORY_ENVIRONMENT} \
+             selected-snapshot/{MUTATION_BUILD_DIRECTORY}"
+        );
+        let _ = writeln!(
+            into,
+            "kill environment {CARGO_TARGET_DIRECTORY_ENVIRONMENT} \
+             selected-snapshot/{MUTATION_TARGET_DIRECTORY}"
+        );
         for (name, value) in self.environment.entries() {
             let _ = writeln!(
                 into,
@@ -127,11 +139,24 @@ impl MutationTool {
         ))
     }
 
-    fn environment(&self, seed: u64, attempt: Option<usize>) -> Result<Environment, SpecError> {
+    fn environment(
+        &self,
+        build_root: &Path,
+        seed: u64,
+        attempt: Option<usize>,
+    ) -> Result<Environment, SpecError> {
         let mut entries = self.environment.entries().to_vec();
         entries.push((
             OsString::from(CARGO_ENVIRONMENT),
             self.cargo_program.as_os_str().to_owned(),
+        ));
+        entries.push((
+            OsString::from(CARGO_BUILD_DIRECTORY_ENVIRONMENT),
+            build_root.join(MUTATION_BUILD_DIRECTORY).into_os_string(),
+        ));
+        entries.push((
+            OsString::from(CARGO_TARGET_DIRECTORY_ENVIRONMENT),
+            build_root.join(MUTATION_TARGET_DIRECTORY).into_os_string(),
         ));
         entries.push((
             OsString::from(SEED_ENVIRONMENT),

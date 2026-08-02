@@ -28,6 +28,9 @@ exit 71
 "#;
 
 const FAKE_MUTANTS: &str = r#"#!/bin/sh
+[ "$1" = "mutants" ] || exit 73
+shift
+
 if [ "$1" = "--version" ]; then
     printf 'cargo-mutants 27.1.0\n'
     exit 0
@@ -54,8 +57,8 @@ for argument in "$@"; do
 done
 
 write_outcome() {
-    /bin/mkdir -p "$output_dir"
-    printf '%s\n' "$1" > "$output_dir/outcomes.json"
+    /bin/mkdir -p "$output_dir/mutants.out"
+    printf '%s\n' "$1" > "$output_dir/mutants.out/outcomes.json"
 }
 
 caught='{"cargo_mutants_version":"27.1.0","total_mutants":1,"missed":0,"caught":1,"timeout":0,"unviable":0,"outcomes":[{"summary":"CaughtMutant"}]}'
