@@ -831,3 +831,6 @@ mod cases;
 
 #[path = "resident/lane_process.rs"]
 mod lane_process;
+
+#[path = "resident/lane_continuity.rs"]
+mod lane_continuity;

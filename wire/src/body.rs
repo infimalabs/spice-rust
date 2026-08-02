@@ -516,6 +516,14 @@ pub struct LaneCompacted {
     pub lane: CanonicalUuid,
     /// Occupant that compacted.
     pub occupant: CanonicalUuid,
+    /// Selected child stream carrying the boundary record.
+    pub stream: String,
+    /// Durable tape member holding the boundary record.
+    pub member: u64,
+    /// Boundary-record offset within the member.
+    pub offset: u64,
+    /// Number of bytes in the boundary record.
+    pub length: u64,
 }
 
 /// A successor occupant was seated with its ancestor named.
