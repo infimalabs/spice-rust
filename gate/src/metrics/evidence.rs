@@ -175,6 +175,7 @@ pub struct LatchBinding {
     kind: String,
     base_limit: u64,
     configured_ratchet_limit: u64,
+    variation_percent: u64,
     ratchet_limit: u64,
     active_limit: u64,
     unlimited: bool,
@@ -193,6 +194,7 @@ impl LatchBinding {
         kind: impl Into<String>,
         base_limit: u64,
         configured_ratchet_limit: u64,
+        variation_percent: u64,
         ratchet_limit: u64,
         active_limit: u64,
         unlimited: bool,
@@ -207,6 +209,7 @@ impl LatchBinding {
             kind: kind.into(),
             base_limit,
             configured_ratchet_limit,
+            variation_percent,
             ratchet_limit,
             active_limit,
             unlimited,
@@ -239,6 +242,11 @@ impl LatchBinding {
     #[must_use]
     pub const fn configured_ratchet_limit(&self) -> u64 {
         self.configured_ratchet_limit
+    }
+
+    #[must_use]
+    pub const fn variation_percent(&self) -> u64 {
+        self.variation_percent
     }
 
     #[must_use]

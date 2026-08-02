@@ -132,6 +132,7 @@ impl MetricStateBinding {
             latch_kind_name(self.entry.kind()),
             decision.base_limit(),
             decision.configured_elastic_limit(),
+            decision.variation_percent(),
             decision.elastic_limit(),
             decision.active_limit(),
             decision.unlimited(),
@@ -154,6 +155,7 @@ impl MetricStateBinding {
             && decision.measured() == self.value
             && decision.base_limit() == self.rule.base_limit()
             && decision.configured_elastic_limit() == self.rule.ratchet_limit()
+            && decision.variation_percent() == self.variation_percent
             && decision.unlimited() == self.rule.unlimited();
         if matches {
             Ok(())

@@ -391,6 +391,7 @@ fn bounded_metrics_cross_current_state_with_every_latch_transition_and_actor_var
     let latch = measured_latch(&latched);
     assert_eq!(latch.transition(), "latched");
     assert_eq!(latch.configured_ratchet_limit(), 40);
+    assert_eq!(latch.variation_percent(), 7);
     assert_eq!(latch.ratchet_limit(), 41);
     assert_eq!(latch.active_limit(), 41);
     assert_eq!(latch.actor_source(), Some("active-actor"));
@@ -481,6 +482,7 @@ fn state_binding_preserves_function_keys_and_unlimited_document_rules() {
     let row = reconcile_binding(&fixture, &binding, document_path, STATE_TEST_CLOCK);
     let latch = measured_latch(&row);
     assert!(latch.unlimited());
+    assert_eq!(latch.variation_percent(), 7);
     assert!(!latch.over_limit());
     assert!(!latch.over_base());
     assert!(!latch.ratchet_breach());
@@ -529,6 +531,73 @@ fn state_binding_preserves_the_current_u64_variation_domain() {
         .reconcile([observation])
         .expect("reconcile large variation observation");
     assert_eq!(decisions[0].bound().variation_percent(), ABOVE_U32);
+    let evidence = binding
+        .evidence(&decisions[0])
+        .expect("large variation decision binds to metric evidence");
+    assert_eq!(measured_latch(&evidence).variation_percent(), ABOVE_U32);
+    let json = serde_json::to_value(&evidence).expect("metric evidence serializes");
+    assert_eq!(
+        json["state"]["measurement"]["latch"]["variation_percent"],
+        ABOVE_U32
+    );
+}
+
+#[test]
+fn state_binding_refuses_a_decision_from_another_variation_policy() {
+    const ABOVE_U32: u64 = 4_294_967_296;
+    let large_policy = migrate_predecessor_policy(
+        "fixtures/large-variation.toml",
+        "[policy.flex]\nratio = 2.0\njitter_percent = 4294967296\n",
+    )
+    .expect("large predecessor variation migrates");
+    let small_policy = migrate_predecessor_policy(
+        "fixtures/small-variation.toml",
+        "[policy.flex]\nratio = 2.0\njitter_percent = 7\n",
+    )
+    .expect("small predecessor variation migrates");
+    let context = PolicyContext::new().with_path("src/lib.rs");
+    let large_rule = resolve_metric_rule(&large_policy, MetricId::FileLines, &context)
+        .expect("large variation rule resolves");
+    let small_rule = resolve_metric_rule(&small_policy, MetricId::FileLines, &context)
+        .expect("small variation rule resolves");
+    assert_eq!(large_rule.variation_percent(), ABOVE_U32);
+    assert_eq!(small_rule.variation_percent(), 7);
+
+    let key = MetricKey::path("src/lib.rs").expect("metric path");
+    let parser = ParserEvidence::Native {
+        parser: ParserId::Utf8FileShapeV1,
+    };
+    let large_binding = MetricStateBinding::new(
+        MetricId::FileLines,
+        key.clone(),
+        1,
+        parser.clone(),
+        large_rule,
+    )
+    .expect("large variation binding");
+    let small_binding = MetricStateBinding::new(MetricId::FileLines, key, 1, parser, small_rule)
+        .expect("small variation binding");
+    let observation = small_binding
+        .observation(
+            ActorInputs::new("src/lib.rs")
+                .expect("actor path")
+                .with_active_actor("actor-a"),
+        )
+        .expect("small variation observation");
+
+    let fixture = MetricStateFixture::new();
+    let mut state = CurrentState::load(&fixture.destination, &fixture.sources)
+        .expect("load current metric state");
+    state
+        .begin_run(&RenameMap::default(), ["src/lib.rs"], STATE_TEST_CLOCK)
+        .expect("begin metric-state run");
+    let decisions = state
+        .reconcile([observation])
+        .expect("reconcile small variation observation");
+    let error = large_binding
+        .evidence(&decisions[0])
+        .expect_err("another variation policy cannot supply metric evidence");
+    assert!(error.to_string().contains("resolved rule"));
 }
 
 #[test]
@@ -739,6 +808,7 @@ fn bounded_measurement(metric: MetricId, value: u64, field: &str) -> MetricMeasu
                 kind,
                 FIXTURE_BASE_LIMIT,
                 FIXTURE_RATCHET_LIMIT,
+                0,
                 FIXTURE_RATCHET_LIMIT,
                 FIXTURE_RATCHET_LIMIT,
                 false,
