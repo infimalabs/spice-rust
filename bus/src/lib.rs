@@ -75,7 +75,7 @@ mod runtime {
         residency: Option<JournalHead<journal::crossing::ResidencyHead>>,
     }
 
-    /// Facts and trust heads observed inside one immutable authority snapshot.
+    /// Facts, trust heads, and residency observed inside one immutable authority snapshot.
     ///
     /// Canvas views consume this instead of issuing independent reads whose
     /// cursors could disagree. The cursor, stream, and heads are all captured
@@ -85,6 +85,7 @@ mod runtime {
         cursor: Option<journal::crossing::Seq>,
         facts: FactSnapshot,
         trust: Vec<JournalHead<journal::crossing::TrustHead>>,
+        residency: Option<JournalHead<journal::crossing::ResidencyHead>>,
     }
 
     impl CanvasSnapshot {
@@ -104,6 +105,12 @@ mod runtime {
         #[must_use]
         pub fn trust(&self) -> &[JournalHead<journal::crossing::TrustHead>] {
             &self.trust
+        }
+
+        /// Current resident and lane head at this same barrier.
+        #[must_use]
+        pub const fn residency(&self) -> Option<&JournalHead<journal::crossing::ResidencyHead>> {
+            self.residency.as_ref()
         }
     }
 
@@ -441,10 +448,12 @@ mod runtime {
                             let cursor = read.cursor().map_err(BusReadError::Head)?;
                             let facts = read.fact_snapshot().map_err(BusReadError::Snapshot)?;
                             let trust = read.trust_heads().map_err(BusReadError::Head)?;
+                            let residency = read.residency_head().map_err(BusReadError::Head)?;
                             Ok(CanvasSnapshot {
                                 cursor,
                                 facts,
                                 trust,
+                                residency,
                             })
                         })
                         .map_err(|error| match error {
