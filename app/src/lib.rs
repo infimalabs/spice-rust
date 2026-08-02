@@ -32,6 +32,8 @@ pub mod view;
 
 #[cfg(target_arch = "wasm32")]
 mod browser;
+#[cfg(target_arch = "wasm32")]
+mod speech;
 
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
 pub use socket::{Admitted, Session};
