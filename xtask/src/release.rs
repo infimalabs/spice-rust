@@ -290,15 +290,7 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
         self.run(CommandSpec::new(
             "embed-build",
             &self.programs.cargo,
-            [
-                "build",
-                "--locked",
-                "--release",
-                "-p",
-                "canvas",
-                "--target",
-                self.target.as_str(),
-            ],
+            cargo_build_arguments("canvas", self.target, self.target_dir),
         ))?;
         read_regular(&self.root.join(EMBEDDED_ARTIFACT)).map_err(build_error)
     }
@@ -323,19 +315,26 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
         self.run(CommandSpec::new(
             "native-build",
             &self.programs.cargo,
-            [
-                "build",
-                "--locked",
-                "--release",
-                "-p",
-                "spice",
-                "--target",
-                target.as_str(),
-            ],
+            cargo_build_arguments("spice", target, self.target_dir),
         ))?;
         read_regular(&self.target_dir.join(target.as_str()).join("release/spice"))
             .map_err(build_error)
     }
+}
+
+fn cargo_build_arguments(package: &str, target: ReleaseTarget, target_dir: &Path) -> Vec<OsString> {
+    [
+        OsString::from("build"),
+        OsString::from("--locked"),
+        OsString::from("--release"),
+        OsString::from("-p"),
+        OsString::from(package),
+        OsString::from("--target"),
+        OsString::from(target.as_str()),
+        OsString::from("--target-dir"),
+        target_dir.as_os_str().to_owned(),
+    ]
+    .into()
 }
 
 impl<E: Executor> CommandBuilder<'_, E> {
@@ -590,10 +589,6 @@ impl SystemExecutor {
                 root.join("target/release-appliance-build").into_os_string(),
             ),
             (OsString::from("CARGO_INCREMENTAL"), OsString::from("0")),
-            (
-                OsString::from("CARGO_TARGET_DIR"),
-                root.join("target/release-appliance").into_os_string(),
-            ),
             (OsString::from("CARGO_NET_OFFLINE"), OsString::from("true")),
             (OsString::from("NO_COLOR"), OsString::from("true")),
             (
@@ -1089,9 +1084,12 @@ mod tests {
             assert_eq!(build_records[0].arguments, [OsString::from("check-app")]);
             assert_eq!(
                 build_records[1].arguments,
-                cargo_arguments("canvas", target)
+                cargo_arguments(&fixture.root, "canvas", target)
             );
-            assert_eq!(build_records[2].arguments, cargo_arguments("spice", target));
+            assert_eq!(
+                build_records[2].arguments,
+                cargo_arguments(&fixture.root, "spice", target)
+            );
             let mutants = build
                 .commands
                 .iter()
@@ -1161,9 +1159,10 @@ mod tests {
                 .as_os_str()
         );
         assert_eq!(value("CARGO_INCREMENTAL"), "0");
-        assert_eq!(
-            value("CARGO_TARGET_DIR"),
-            fixture.root.join("target/release-appliance").as_os_str()
+        assert!(
+            entries
+                .iter()
+                .all(|(key, _)| key != OsStr::new("CARGO_TARGET_DIR"))
         );
         assert_eq!(value("RUSTC_WRAPPER"), "");
         assert_eq!(value("RUSTC_WORKSPACE_WRAPPER"), "");
@@ -1290,18 +1289,7 @@ mod tests {
         );
     }
 
-    fn cargo_arguments(package: &str, target: ReleaseTarget) -> Vec<OsString> {
-        [
-            "build",
-            "--locked",
-            "--release",
-            "-p",
-            package,
-            "--target",
-            target.as_str(),
-        ]
-        .into_iter()
-        .map(OsString::from)
-        .collect()
+    fn cargo_arguments(root: &Path, package: &str, target: ReleaseTarget) -> Vec<OsString> {
+        cargo_build_arguments(package, target, &root.join("target/release-appliance"))
     }
 }
