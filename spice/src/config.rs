@@ -39,6 +39,7 @@ pub struct Root {
     listen: listen::Config,
     lock: sill::LockConfig,
     canvas: canvas::Config,
+    say: canvas::SpeechConfig,
     proof: proof::Config,
 }
 
@@ -113,6 +114,12 @@ impl Root {
     #[must_use]
     pub const fn canvas(&self) -> &canvas::Config {
         &self.canvas
+    }
+
+    /// Browser-owned speech playback and its optional local renderer.
+    #[must_use]
+    pub const fn say(&self) -> &canvas::SpeechConfig {
+        &self.say
     }
 
     /// Proof image policy and machine-local executable locations.
@@ -728,6 +735,43 @@ registry! {
     fixed "canvas.pack.rows" {
         kind: UnsignedInteger,
         builtin: Some(Builtin::UnsignedInteger(40)),
+        layers: TRACKED_LOCAL,
+        class: MachineLocal,
+        flag: None,
+    }
+    fixed "say.backend" {
+        kind: String,
+        builtin: Some(Builtin::String("system")),
+        layers: TRACKED_LOCAL,
+        class: MachineLocal,
+        flag: None,
+    }
+    fixed "say.command" {
+        kind: StringList,
+        builtin: Some(Builtin::Strings(&[])),
+        layers: LOCAL,
+        class: MachineLocal,
+        flag: None,
+    }
+    fixed "say.voice" {
+        kind: String,
+        builtin: Some(Builtin::String(canvas::speech::DEFAULT_VOICE)),
+        layers: TRACKED_LOCAL,
+        class: MachineLocal,
+        flag: None,
+    }
+    fixed "say.content_type" {
+        kind: String,
+        builtin: Some(Builtin::String(canvas::speech::DEFAULT_CONTENT_TYPE)),
+        layers: TRACKED_LOCAL,
+        class: MachineLocal,
+        flag: None,
+    }
+    fixed "say.words_per_minute" {
+        kind: UnsignedInteger,
+        builtin: Some(Builtin::UnsignedInteger(
+            canvas::speech::DEFAULT_WORDS_PER_MINUTE as u64,
+        )),
         layers: TRACKED_LOCAL,
         class: MachineLocal,
         flag: None,

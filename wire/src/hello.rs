@@ -21,6 +21,40 @@ pub struct CanvasBootstrap {
     pub capability: CanonicalUuid,
     /// Resident generation the endpoint and capability address.
     pub epoch: CanonicalUuid,
+    /// Browser-safe playback contract for this resident generation.
+    pub speech: SpeechPlayback,
+}
+
+/// The one browser-owned speech path selected at resident startup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", tag = "backend", deny_unknown_fields)]
+pub enum SpeechPlayback {
+    /// Playback controls are absent and no renderer is reachable.
+    Disabled {},
+    /// The browser speaks through its system synthesis implementation.
+    System {
+        /// Exact system voice name selected by configuration.
+        voice: String,
+        /// Base speaking rate projected into the browser API.
+        words_per_minute: u32,
+    },
+    /// The browser requests rendered bytes from the same-origin endpoint.
+    External {
+        /// Media type the configured renderer promises to return.
+        content_type: String,
+        /// Base rate substituted into the server-owned argv contract.
+        words_per_minute: u32,
+        /// Whether this generation has a nonempty renderer argv.
+        available: bool,
+    },
+}
+
+/// One same-origin request for externally rendered speech audio.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpeechRequest {
+    /// Rendered canvas text; executable selection remains server-owned.
+    pub text: String,
 }
 
 /// The first frame of every socket.
