@@ -35,7 +35,7 @@ pub use next::{Selection, eligible_entry, select};
 pub use phase::{PhaseRefusal, Transition, TransitionKind};
 pub use task::{
     BUILTIN_HIDDEN_STEMS, BUILTIN_PUBLIC_STEMS, Dependency, Entry, Family, Project, ProjectError,
-    ProjectPolicy, ProjectPolicyError, TaskError,
+    ProjectPolicy, ProjectPolicyError, SystemTaskRoute, TaskError,
 };
 pub use urgency::Urgency;
 

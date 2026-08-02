@@ -57,7 +57,7 @@ pub(super) fn kind_for(path: &[&str]) -> Option<CommandKind> {
         ["task", "reclaim"] => CommandKind::ClaimRenew,
         ["task", "capture"] => CommandKind::ClaimWin,
         ["task", "add"] => CommandKind::TaskAdd,
-        ["task", "oops"] => CommandKind::TaskSystemAdd,
+        ["task", "oops"] => CommandKind::TaskOopsAdd,
         ["taste", "add"] | ["taste", "drop"] => CommandKind::TaskAdd,
         ["task", "done"] => CommandKind::TaskDone,
         ["task", "review"] => CommandKind::TaskReview,

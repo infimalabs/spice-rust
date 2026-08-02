@@ -168,7 +168,7 @@ fn every_landed_task_mutation_leaf_uses_one_current_command_kind() {
         (&["task", "defer"][..], CommandKind::TaskDefer),
         (&["task", "wake"][..], CommandKind::TaskWake),
         (&["task", "free"][..], CommandKind::ClaimFree),
-        (&["task", "oops"][..], CommandKind::TaskSystemAdd),
+        (&["task", "oops"][..], CommandKind::TaskOopsAdd),
         (&["task", "depends"][..], CommandKind::TaskDepends),
         (&["doc"][..], CommandKind::DocApply),
         (&["doc", "ledger"][..], CommandKind::DocLedger),

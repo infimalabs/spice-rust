@@ -1,7 +1,6 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use wire::TaskCreationAuthority;
 use wire::intent::ProjectVisibility;
 use wire::{ClaimHead, LeaseHead, TaskHandle, TaskHead, WorkflowHead};
 
@@ -10,6 +9,75 @@ pub const BUILTIN_PUBLIC_STEMS: [&str; 2] = ["task", "serve"];
 
 /// Hidden system roots compiled into every project policy, in declaration order.
 pub const BUILTIN_HIDDEN_STEMS: [&str; 2] = ["oops", "maxim_proposal"];
+
+/// One non-serializable, server-owned hidden task creation route.
+///
+/// Each constructor fixes the hidden stem. Callers may supply only a
+/// route-owned descendant, never a free-form project that could cross-target
+/// another hidden creator.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SystemTaskRoute {
+    owner: SystemTaskOwner,
+    descendants: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum SystemTaskOwner {
+    Oops,
+    Proposal,
+    Configured(String),
+}
+
+impl SystemTaskOwner {
+    fn stem(&self) -> &str {
+        match self {
+            Self::Oops => "oops",
+            Self::Proposal => "maxim_proposal",
+            Self::Configured(stem) => stem,
+        }
+    }
+}
+
+impl SystemTaskRoute {
+    /// The fixed root used by `task oops`.
+    #[must_use]
+    pub fn oops() -> Self {
+        Self {
+            owner: SystemTaskOwner::Oops,
+            descendants: Vec::new(),
+        }
+    }
+
+    /// One server-owned proposal route and its derived descendant.
+    #[must_use]
+    pub fn proposal(descendants: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            owner: SystemTaskOwner::Proposal,
+            descendants: descendants.into_iter().collect(),
+        }
+    }
+
+    /// One configured server-owned route and its derived descendant.
+    #[must_use]
+    pub fn configured(
+        stem: impl Into<String>,
+        descendants: impl IntoIterator<Item = String>,
+    ) -> Self {
+        Self {
+            owner: SystemTaskOwner::Configured(stem.into()),
+            descendants: descendants.into_iter().collect(),
+        }
+    }
+
+    fn project(&self) -> String {
+        let mut project = format!(".{}", self.owner.stem());
+        for descendant in &self.descendants {
+            project.push('.');
+            project.push_str(descendant);
+        }
+        project
+    }
+}
 
 /// One captured project vocabulary shared by admission and allocation.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -107,20 +175,23 @@ impl ProjectPolicy {
         }
     }
 
-    /// Admit one project under the authority selected at the task-creation
-    /// command boundary.
-    pub fn admit_creation(
-        &self,
-        text: &str,
-        authority: TaskCreationAuthority,
-    ) -> Result<Project, ProjectError> {
+    /// Admit one caller-authored project for manual task creation.
+    pub fn admit_manual_creation(&self, text: &str) -> Result<Project, ProjectError> {
         let project = self.admit(text)?;
-        if authority == TaskCreationAuthority::Manual
-            && let ProjectVisibility::Hidden { stem } = project.visibility()
-        {
+        if let ProjectVisibility::Hidden { stem } = project.visibility() {
             return Err(ProjectError::SystemReserved(stem.clone()));
         }
         Ok(project)
+    }
+
+    /// Derive and admit the exact hidden project owned by a server route.
+    pub fn admit_system_creation(&self, route: &SystemTaskRoute) -> Result<Project, ProjectError> {
+        if let SystemTaskOwner::Configured(stem) = &route.owner
+            && BUILTIN_HIDDEN_STEMS.contains(&stem.as_str())
+        {
+            return Err(ProjectError::SystemRouteCollision(stem.clone()));
+        }
+        self.admit(&route.project())
     }
 
     /// Fully resolved hidden roots in allocator classification order.
@@ -229,6 +300,8 @@ pub enum ProjectError {
     UnknownHiddenStem(String),
     /// Hidden roots are addressable only by typed system creation routes.
     SystemReserved(String),
+    /// A configured creator cannot impersonate a compiled route owner.
+    SystemRouteCollision(String),
     VisibilityMismatch {
         project: String,
         classified_stem: String,
@@ -264,6 +337,10 @@ impl fmt::Display for ProjectError {
             Self::SystemReserved(stem) => write!(
                 formatter,
                 "hidden project stem {stem:?} is reserved for system task creation"
+            ),
+            Self::SystemRouteCollision(stem) => write!(
+                formatter,
+                "configured system task route conflicts with compiled owner {stem:?}"
             ),
             Self::VisibilityMismatch {
                 project,

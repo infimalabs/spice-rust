@@ -2,7 +2,7 @@
 
 use std::io::Read as _;
 
-use board::{Entry, ProjectError, ProjectPolicy, View};
+use board::{Entry, Project, ProjectError, ProjectPolicy, SystemTaskRoute, View};
 use bus::{Bus, CommitOutcome};
 use clap::ArgMatches;
 use journal::{FactCause, GuardError, JournalGuard, JournalRead, JournalWrite, PendingFact};
@@ -11,7 +11,7 @@ use wire::body::GitBoundary;
 use wire::intent::{
     BoardAnswer, BoardGraph, BoardHandout, BoardRead, BoardTask, ClaimRenew, ClaimWin,
     CommandAnswer, DocApply, DocLedger, Positioned, TaskAdd, TaskDefer, TaskDepends, TaskDone,
-    TaskNote, TaskRef, TaskReview, TextAnswer,
+    TaskNote, TaskOopsAdd, TaskRef, TaskReview, TextAnswer,
 };
 use wire::{
     Actor, ClaimDisposition, ClaimHead, Command, CommandKind, Digest, Domain, Fault, FaultClass,
