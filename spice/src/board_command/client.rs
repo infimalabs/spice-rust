@@ -116,7 +116,7 @@ fn client_ledger(
 
 fn client_next(repository: &Repository, contract: &Contract) -> Outcome<CommandAnswer> {
     mutate_from_board(repository, contract, |board| {
-        let entries = entries(&board)?;
+        let entries = actor_entries(&board)?;
         let selected = board::select(&entries, &board.principal).ok_or_else(|| {
             refusal(
                 "board::allocator-empty",
@@ -712,7 +712,7 @@ fn current_board(repository: &Repository) -> Result<BoardAnswer, Outcome<Command
     }
 }
 
-fn entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<CommandAnswer>> {
+fn actor_entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<CommandAnswer>> {
     board
         .tasks
         .iter()
