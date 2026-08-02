@@ -51,7 +51,7 @@ pub struct MigrationProvenance {
     decision: MigrationDecision,
     source_file: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    team: Option<String>,
+    lineage: Option<String>,
     field: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     list_index: Option<usize>,
@@ -102,10 +102,10 @@ impl MigrationProvenance {
         &self.source_file
     }
 
-    /// Team identity for one selected shell setting.
+    /// Lineage identity for one selected shell setting.
     #[must_use]
-    pub fn team(&self) -> Option<&str> {
-        self.team.as_deref()
+    pub fn lineage(&self) -> Option<&str> {
+        self.lineage.as_deref()
     }
 
     /// Exact predecessor field path.
@@ -194,7 +194,7 @@ pub struct MigrationError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct MigrationErrorDetail {
     source_file: String,
-    team: Option<String>,
+    lineage: Option<String>,
     field: String,
     list_index: Option<usize>,
     token: Option<String>,
@@ -215,10 +215,10 @@ impl MigrationError {
         &self.detail.source_file
     }
 
-    /// Team owning a shell setting, when the refusal is team-scoped.
+    /// Lineage owning a shell setting, when the refusal is lineage-scoped.
     #[must_use]
-    pub fn team(&self) -> Option<&str> {
-        self.detail.team.as_deref()
+    pub fn lineage(&self) -> Option<&str> {
+        self.detail.lineage.as_deref()
     }
 
     /// Exact predecessor field path.
@@ -251,13 +251,13 @@ impl fmt::Display for MigrationError {
         write!(
             formatter,
             concat!(
-                "predecessor task migration release={} kind={} source={} team={} ",
+                "predecessor task migration release={} kind={} source={} lineage={} ",
                 "field={} index={} token={}: {}; recovery={}"
             ),
             PREDECESSOR_TASK_RELEASE,
             self.kind,
             self.detail.source_file,
-            self.detail.team.as_deref().unwrap_or("-"),
+            self.detail.lineage.as_deref().unwrap_or("-"),
             self.detail.field,
             self.detail
                 .list_index
@@ -274,7 +274,7 @@ impl Error for MigrationError {}
 #[derive(Clone, Debug)]
 struct Source {
     source_file: String,
-    team: Option<String>,
+    lineage: Option<String>,
     field: String,
     list_index: Option<usize>,
 }
@@ -283,16 +283,16 @@ impl Source {
     fn root(source_file: &str, field: &str) -> Self {
         Self {
             source_file: source_file.to_owned(),
-            team: None,
+            lineage: None,
             field: field.to_owned(),
             list_index: None,
         }
     }
 
-    fn team(source_file: &str, team: &str, field: String) -> Self {
+    fn lineage(source_file: &str, lineage: &str, field: String) -> Self {
         Self {
             source_file: source_file.to_owned(),
-            team: Some(team.to_owned()),
+            lineage: Some(lineage.to_owned()),
             field,
             list_index: None,
         }
@@ -315,7 +315,7 @@ impl Source {
             kind,
             detail: Box::new(MigrationErrorDetail {
                 source_file: self.source_file.clone(),
-                team: self.team.clone(),
+                lineage: self.lineage.clone(),
                 field: self.field.clone(),
                 list_index: self.list_index,
                 token,
@@ -335,7 +335,7 @@ impl Source {
             source_kind: MigrationSource::Export,
             decision,
             source_file: self.source_file.clone(),
-            team: self.team.clone(),
+            lineage: self.lineage.clone(),
             field: self.field.clone(),
             list_index: self.list_index,
             target,
@@ -350,7 +350,7 @@ pub fn migrate_predecessor_tasks(
     let input::Parsed {
         configured_hidden,
         hidden_provenance,
-        team_provenance,
+        lineage_provenance,
     } = input::parse(input)?;
     let tasks = TaskMetadata::migrated(configured_hidden.clone()).map_err(|error| {
         let index = match error {
@@ -376,7 +376,7 @@ pub fn migrate_predecessor_tasks(
         tasks.hidden_stems(),
         hidden_provenance,
     );
-    provenance.extend(team_provenance);
+    provenance.extend(lineage_provenance);
     Ok(TaskMigrationReport {
         schema_version: TASK_MIGRATION_SCHEMA_VERSION,
         source_release: PREDECESSOR_TASK_RELEASE,
@@ -404,7 +404,7 @@ fn resolved_hidden_provenance(
             source_kind: MigrationSource::Packaged,
             decision: MigrationDecision::Packaged,
             source_file: source_file.to_owned(),
-            team: None,
+            lineage: None,
             field: "tasks.hidden_stems::<builtin>".to_owned(),
             list_index: None,
             target: Some(format!("tasks.hidden_stems[{target_index}]")),
