@@ -28,6 +28,24 @@ fn task_add(
         .project
         .clone()
         .unwrap_or_else(|| "task.private".to_owned());
+    let Some(creation_authority) = command.kind().task_creation_authority() else {
+        return protocol_fault(
+            "task::creation-authority-missing",
+            "task-add intent did not cross a task-creation command boundary",
+        );
+    };
+    if let Err(error) = projects.admit_creation(&project, creation_authority) {
+        let reason = if matches!(error, ProjectError::SystemReserved(_)) {
+            "task::project-system-reserved"
+        } else {
+            "task::add-refused"
+        };
+        return refusal(
+            reason,
+            Some(error.to_string()),
+            "use a public project for manual creation or the owning typed system route",
+        );
+    }
     let flow = match phases(add.flow.as_deref()) {
         Ok(flow) => flow,
         Err(outcome) => return outcome,
@@ -94,7 +112,7 @@ fn task_add(
         ..statement_head
     });
     write.workflow_head(task.clone(), added, move |_| workflow);
-    if add.project.as_deref() == Some("board.oops")
+    if add.project.as_deref() == Some(".oops")
         && let Some(note) = &add.description
         && let Err(error) = write.fact(
             body::TaskNoted {

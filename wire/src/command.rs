@@ -35,6 +35,8 @@ pub enum CommandKind {
     DocLedger,
     /// Add one task as direct intent.
     TaskAdd,
+    /// Add one task through a system-owned creation route.
+    TaskSystemAdd,
     /// Replace an unsettled task statement.
     TaskEdit,
     /// Append an observation without replacing the statement.
@@ -153,6 +155,21 @@ pub enum Authority {
     Connected,
     /// Only an operator connection may submit.
     Operator,
+}
+
+/// Project admission authority carried by a task-creation command kind.
+///
+/// identity-law: non-crossing - registry metadata held in static process memory.
+///
+/// Ordinary callers cannot place this authority in a [`Command`] body. The
+/// closed command discriminant selects it, and board mutation consumes that
+/// selection before validating the requested project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskCreationAuthority {
+    /// User-authored add and new-task capture may create only public projects.
+    Manual,
+    /// A named system creation route may address resolved hidden projects.
+    System,
 }
 
 /// The law one command carries.
@@ -456,6 +473,7 @@ impl CommandKind {
         Self::BoardHandout,
         Self::DocLedger,
         Self::TaskAdd,
+        Self::TaskSystemAdd,
         Self::TaskEdit,
         Self::TaskNote,
         Self::TaskDefer,
@@ -506,6 +524,7 @@ impl CommandKind {
             Self::BoardHandout => "board::handout",
             Self::DocLedger => "doc::ledger",
             Self::TaskAdd => "task::add",
+            Self::TaskSystemAdd => "task::system-add",
             Self::TaskEdit => "task::edit",
             Self::TaskNote => "task::note",
             Self::TaskDefer => "task::defer",
@@ -557,7 +576,7 @@ impl CommandKind {
         match self {
             Self::BoardRead | Self::BoardGraph | Self::DocLedger => Law::READ,
             Self::BoardHandout => Law::OPERATOR_READ,
-            Self::TaskAdd => Law::ADD,
+            Self::TaskAdd | Self::TaskSystemAdd => Law::ADD,
             Self::TaskEdit => Law::EDIT,
             Self::TaskNote => Law::NOTE,
             Self::TaskDefer | Self::TaskWake => Law::DEFER,
@@ -607,6 +626,16 @@ impl CommandKind {
                 | Self::LaneRead
                 | Self::LaneRecall
         )
+    }
+
+    /// Creation authority selected by a task-add command boundary.
+    #[must_use]
+    pub const fn task_creation_authority(self) -> Option<TaskCreationAuthority> {
+        match self {
+            Self::TaskAdd => Some(TaskCreationAuthority::Manual),
+            Self::TaskSystemAdd => Some(TaskCreationAuthority::System),
+            _ => None,
+        }
     }
 }
 

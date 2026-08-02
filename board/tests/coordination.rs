@@ -269,6 +269,16 @@ fn project_policy_admits_only_resolved_hidden_roots_without_broadening_public_la
         let admitted = projects.admit(project).expect("resolved hidden project");
         assert_eq!(admitted.as_str(), project);
         assert_eq!(admitted.visibility().hidden_stem(), Some(stem));
+        assert!(matches!(
+            projects.admit_creation(project, wire::TaskCreationAuthority::Manual),
+            Err(board::ProjectError::SystemReserved(ref reserved)) if reserved == stem
+        ));
+        assert_eq!(
+            projects
+                .admit_creation(project, wire::TaskCreationAuthority::System)
+                .expect("system creation admits resolved hidden project"),
+            admitted,
+        );
     }
     assert!(matches!(
         projects.admit(".unknown.work"),
@@ -284,6 +294,12 @@ fn project_policy_admits_only_resolved_hidden_roots_without_broadening_public_la
     for public in ["board.work", "board.deep_work.unit2"] {
         let admitted = projects.admit(public).expect("current public project");
         assert!(!admitted.visibility().is_hidden());
+        assert_eq!(
+            projects
+                .admit_creation(public, wire::TaskCreationAuthority::Manual)
+                .expect("manual creation keeps public admission"),
+            admitted,
+        );
     }
     for refused in ["board", "board.one.two.three", "board.bad-stem"] {
         assert!(projects.admit(refused).is_err(), "{refused}");

@@ -153,12 +153,29 @@ mod tests {
         project: &str,
         flow: Option<&str>,
     ) -> TaskHandle {
+        add_project_with_kind(
+            bus,
+            epoch,
+            actor,
+            CommandKind::TaskAdd,
+            (task, title, project, flow),
+        )
+    }
+
+    fn add_project_with_kind(
+        bus: &Bus,
+        epoch: CanonicalUuid,
+        actor: Actor,
+        kind: CommandKind,
+        task: (&str, &str, &str, Option<&str>),
+    ) -> TaskHandle {
+        let (task, title, project, flow) = task;
         let task = task.parse::<TaskHandle>().expect("fixture task handle");
         assert_committed(issue(
             bus,
             epoch,
             actor,
-            CommandKind::TaskAdd,
+            kind,
             vec![Witness::Absence { task: task.clone() }],
             &TaskAdd {
                 title: title.to_owned(),
@@ -283,14 +300,17 @@ mod tests {
     fn board_read_retains_hidden_evidence_while_next_and_presentation_stay_public() {
         let (root, bus, epoch, seats) = fixture("hidden-visibility", 1);
         let lane = Actor::Lane(seats[0].lane);
-        let hidden = add_project(
+        let hidden = add_project_with_kind(
             &bus,
             epoch,
             Actor::Operator,
-            "HIDDEN-oops1",
-            "secret allocator failure details",
-            ".oops.correctness",
-            Some("todo"),
+            CommandKind::TaskSystemAdd,
+            (
+                "HIDDEN-oops1",
+                "secret allocator failure details",
+                ".oops.correctness",
+                Some("todo"),
+            ),
         );
         let public = add_project(
             &bus,
@@ -352,6 +372,75 @@ mod tests {
         clean(&root, bus);
     }
 
+    #[test]
+    fn manual_hidden_creation_is_zero_write_and_system_routes_are_explicit() {
+        let (root, bus, epoch, seats) = fixture("hidden-creation", 1);
+        let lane = Actor::Lane(seats[0].lane);
+        let manual = [
+            (Actor::Operator, "MANUAL-oops1", ".oops"),
+            (lane, "MANUAL-maxim1", ".maxim_proposal.theme_2"),
+            (Actor::Operator, "MANUAL-sand1", ".sandbox.audit"),
+        ];
+        for (actor, handle, project) in manual {
+            let task = handle.parse::<TaskHandle>().expect("manual fixture handle");
+            let before = bus
+                .fact_snapshot()
+                .expect("facts read before manual refusal")
+                .facts()
+                .len();
+            let outcome = issue(
+                &bus,
+                epoch,
+                actor,
+                CommandKind::TaskAdd,
+                vec![Witness::Absence { task }],
+                &TaskAdd {
+                    title: "Manual hidden creation must refuse".to_owned(),
+                    project: Some(project.to_owned()),
+                    description: None,
+                    acceptance: Vec::new(),
+                    flow: None,
+                    depends: Vec::new(),
+                },
+            );
+            assert!(matches!(
+                outcome,
+                Outcome::Refusal(Refusal { ref reason, ref observed, .. })
+                    if reason == "task::project-system-reserved"
+                        && observed.as_deref().is_some_and(|detail| {
+                            detail.contains("reserved for system task creation")
+                        })
+            ));
+            assert_eq!(
+                bus.fact_snapshot()
+                    .expect("facts read after manual refusal")
+                    .facts()
+                    .len(),
+                before,
+                "manual hidden creation mutated the journal for {project}",
+            );
+        }
+
+        for (handle, project) in [
+            ("SYSTEM-oops1", ".oops"),
+            ("SYSTEM-maxim1", ".maxim_proposal.theme_2"),
+            ("SYSTEM-sand1", ".sandbox.audit"),
+        ] {
+            add_project_with_kind(
+                &bus,
+                epoch,
+                Actor::Operator,
+                CommandKind::TaskSystemAdd,
+                (handle, "Typed system creation", project, Some("todo")),
+            );
+        }
+
+        let answer = board(&bus, epoch, Actor::Operator);
+        assert_eq!(answer.tasks.len(), 3);
+        assert!(answer.tasks.iter().all(|task| task.visibility.is_hidden()));
+        clean(&root, bus);
+    }
+
     fn seed_edit_tasks(
         bus: &Bus,
         epoch: CanonicalUuid,
@@ -377,11 +466,11 @@ mod tests {
             bus,
             epoch,
             Actor::Operator,
-            CommandKind::TaskAdd,
+            CommandKind::TaskSystemAdd,
             vec![Witness::Absence { task: oops.clone() }],
             &TaskAdd {
                 title: "A command was unexpectedly awkward".to_owned(),
-                project: Some("board.oops".to_owned()),
+                project: Some(".oops".to_owned()),
                 description: Some("captured once as durable work".to_owned()),
                 acceptance: Vec::new(),
                 flow: None,

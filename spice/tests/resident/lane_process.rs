@@ -70,10 +70,27 @@ fn initialize_task_git_fixture(fixture: &Fixture) {
     fixture_git(fixture, &["init", "-b", "main"]);
     fixture_git(fixture, &["config", "user.name", "Resident Task Fixture"]);
     fixture_git(fixture, &["config", "user.email", "resident@example.test"]);
-    fs::write(fixture.root.join(".gitignore"), "vendor-launches\n")
-        .expect("task fixture ignore writes");
+    fs::write(
+        fixture.root.join(".gitignore"),
+        "vendor-launches\norigin.git\n",
+    )
+    .expect("task fixture ignore writes");
     fixture_git(fixture, &["add", ".gitignore", "fake-claude", "spice.toml"]);
     fixture_git(fixture, &["commit", "-m", "resident fixture"]);
+}
+
+fn establish_task_baseline(fixture: &Fixture) {
+    fixture_git(fixture, &["init", "--bare", "origin.git"]);
+    fixture_git(
+        fixture,
+        &[
+            "remote",
+            "add",
+            "origin",
+            &fixture.root.join("origin.git").display().to_string(),
+        ],
+    );
+    fixture_git(fixture, &["push", "--set-upstream", "origin", "main"]);
 }
 
 fn fixture_git(fixture: &Fixture, arguments: &[&str]) {
@@ -587,6 +604,109 @@ fn lane_lifecycle_and_recall_cross_the_resident_in_both_forms() {
 }
 
 #[test]
+fn manual_hidden_task_creation_refuses_for_operator_and_lane_processes() {
+    let fixture = Fixture::new("hidden-task-creation");
+    configure_fake_vendor(&fixture);
+    let mut config = fs::read_to_string(fixture.root.join("spice.toml"))
+        .expect("task fixture configuration reads");
+    config.push_str("\n[tasks]\nhidden_stems = [\"scratch\"]\n");
+    fs::write(fixture.root.join("spice.toml"), config).expect("task fixture project policy writes");
+    initialize_task_git_fixture(&fixture);
+    establish_task_baseline(&fixture);
+    let mut resident = RunningResident::spawn(&fixture);
+    resident.assert_ready(&fixture);
+
+    let added_lane = reply_body::<wire::intent::LaneChangeAnswer>(&invoke_args(
+        &fixture,
+        &["lane", "add", "--life", "Drive", "--vendor", "claude"],
+        true,
+        None,
+    ));
+    fs::write(fixture.root.join("capture.txt"), "one loose task commit\n")
+        .expect("capture candidate writes");
+    fixture_git(&fixture, &["add", "capture.txt"]);
+    fixture_git(&fixture, &["commit", "-m", "capture candidate"]);
+    for (arguments, actor) in [
+        (
+            vec!["task", "add", "Manual oops", "--project", ".oops"],
+            None,
+        ),
+        (
+            vec![
+                "task",
+                "add",
+                "Manual configured hidden",
+                "--project",
+                ".scratch.audit",
+            ],
+            Some(added_lane.lane),
+        ),
+        (
+            vec![
+                "task",
+                "capture",
+                "--title",
+                "Captured oops",
+                "--project",
+                ".oops.correctness",
+            ],
+            None,
+        ),
+        (
+            vec![
+                "task",
+                "capture",
+                "--title",
+                "Captured configured hidden",
+                "--project",
+                ".scratch.audit",
+            ],
+            Some(added_lane.lane),
+        ),
+    ] {
+        let before = journal_cursor(&fixture);
+        let refused = invoke_args(&fixture, &arguments, true, actor);
+        assert_eq!(refusal_reason(&refused), "task::project-system-reserved",);
+        assert_eq!(
+            journal_cursor(&fixture),
+            before,
+            "{arguments:?} wrote facts"
+        );
+    }
+
+    let system_task = reply_body::<wire::intent::TaskAnswer>(&invoke_args(
+        &fixture,
+        &["task", "oops", "System-owned oops"],
+        true,
+        None,
+    ));
+    let visible =
+        reply_body::<wire::intent::BoardAnswer>(&invoke_args(&fixture, &["board"], true, None));
+    let hidden = visible
+        .tasks
+        .iter()
+        .find(|task| task.statement.body.handle == system_task.task)
+        .expect("system-created hidden task remains typed board evidence");
+    assert_eq!(hidden.statement.body.project, ".oops");
+    assert_eq!(hidden.visibility.hidden_stem(), Some("oops"));
+
+    let drained = invoke_args(
+        &fixture,
+        &["lane", "drain", &added_lane.lane.to_string()],
+        true,
+        None,
+    );
+    assert!(
+        drained.status.success(),
+        "drain failed: {:?}",
+        drained.stderr
+    );
+    let down = invoke(&fixture, "down");
+    assert!(down.status.success(), "down failed: {:?}", down.stderr);
+    assert!(resident.wait().status.success(), "resident failed");
+}
+
+#[test]
 fn typed_task_commands_retain_the_ambient_lane_principal() {
     let fixture = Fixture::new("lane-task-principal");
     configure_fake_vendor(&fixture);
@@ -604,6 +724,7 @@ fn typed_task_commands_retain_the_ambient_lane_principal() {
         true,
         None,
     ));
+
     let added_task = reply_body::<wire::intent::TaskAnswer>(&invoke_args(
         &fixture,
         &[
