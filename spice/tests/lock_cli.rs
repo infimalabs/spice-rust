@@ -7,7 +7,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sill::{Acquisition, LockAvailability, LockFile, LockName, LockReport, Possession};
+use sill::{
+    Acquisition, Contention, LockAttempt, LockAvailability, LockConfig, LockFile, LockName,
+    LockReport, LockTopology, Possession,
+};
 use wire::Outcome;
 
 const BUSY_EXIT: i32 = 70;
@@ -15,6 +18,8 @@ const TAKEN_EXIT: i32 = 71;
 const FULL_EXIT: i32 = 72;
 const CLOSE_FDS_READY: &str = "LOCK-CLOSE-FDS-READY";
 const CLOSE_FDS_PID_FILE: &str = "abrupt-child-pid";
+const ACQUIRE_FIXTURE: &str = "unreaped_wrapper_synchronizes_first_topology_acquisition_fixture";
+const REPORT_FIXTURE: &str = "terminal_zombie_owner_never_exposes_held_availability_fixture";
 
 #[test]
 #[ignore = "subprocess fixture for the abrupt wrapper death test"]
@@ -157,6 +162,18 @@ impl Fixture {
     fn lock_root(&self) -> PathBuf {
         self.root.join("locks")
     }
+
+    fn topology(&self) -> LockTopology {
+        let config: LockConfig = toml::from_str(concat!(
+            "busy = 70\n",
+            "taken = 71\n",
+            "full = 72\n",
+            "[solo]\n",
+            "path = 'locks/solo.lock'\n",
+        ))
+        .expect("fixture lock topology is admitted");
+        LockTopology::new(&self.root, &config)
+    }
 }
 
 impl Drop for Fixture {
@@ -189,6 +206,182 @@ impl HeldProcess {
         assert!(output.status.success(), "held lock process: {output:?}");
         assert!(output.stderr.is_empty(), "held lock stderr: {output:?}");
     }
+}
+
+struct AbruptProtected {
+    wrapper: Child,
+    wrapper_pid: u32,
+    release: Option<std::process::ChildStdin>,
+    output: BufReader<std::process::ChildStdout>,
+    child_pid: libc::pid_t,
+    reaped: bool,
+}
+
+impl AbruptProtected {
+    fn start(fixture: &Fixture) -> Self {
+        let helper = std::env::current_exe().expect("locate lock CLI test executable");
+        let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+        command
+            .args(["lock", "run", "solo", "--"])
+            .arg(helper)
+            .args([
+                "--exact",
+                "close_all_non_stdio_descriptors_and_wait",
+                "--ignored",
+                "--nocapture",
+            ])
+            .current_dir(&fixture.root)
+            .env_remove(steer::hook::INBOX)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut wrapper = command.spawn().expect("abrupt wrapper launches");
+        let wrapper_pid = wrapper.id();
+        let release = wrapper.stdin.take().expect("wrapper stdin is piped");
+        let mut output = BufReader::new(wrapper.stdout.take().expect("wrapper stdout is piped"));
+        wait_for_close_fds_ready(&mut output);
+        let child_pid = fs::read_to_string(fixture.root.join(CLOSE_FDS_PID_FILE))
+            .expect("child PID reads")
+            .parse()
+            .expect("child PID parses");
+
+        // SAFETY: SIGKILL terminates only the wrapper retained by this fixture.
+        assert_eq!(
+            unsafe { libc::kill(wrapper_pid as libc::pid_t, libc::SIGKILL) },
+            0
+        );
+        observe_unreaped_exit(wrapper_pid);
+        assert_process_zombie(wrapper_pid);
+
+        Self {
+            wrapper,
+            wrapper_pid,
+            release: Some(release),
+            output,
+            child_pid,
+            reaped: false,
+        }
+    }
+
+    fn terminate_group(&mut self) {
+        drop(self.release.take());
+        let mut trailing = String::new();
+        self.output
+            .read_to_string(&mut trailing)
+            .expect("protected process group closes stdout on exit");
+        assert!(
+            trailing.contains("test result: ok"),
+            "abrupt child output: {trailing:?}"
+        );
+        assert_process_terminal(self.child_pid);
+        observe_unreaped_exit(self.wrapper_pid);
+    }
+
+    fn reap(mut self) {
+        assert!(
+            !self
+                .wrapper
+                .wait()
+                .expect("wrapper reaps after assertions")
+                .success()
+        );
+        self.reaped = true;
+    }
+}
+
+impl Drop for AbruptProtected {
+    fn drop(&mut self) {
+        drop(self.release.take());
+        if !self.reaped {
+            // SAFETY: cleanup targets only this fixture's wrapper.
+            unsafe {
+                libc::kill(self.wrapper_pid as libc::pid_t, libc::SIGKILL);
+            }
+            let _ = self.wrapper.wait();
+        }
+    }
+}
+
+fn wait_for_close_fds_ready(output: &mut impl BufRead) {
+    loop {
+        let mut ready = String::new();
+        assert_ne!(
+            output
+                .read_line(&mut ready)
+                .expect("abrupt child reaches execution"),
+            0,
+            "close-fds helper exited before readiness"
+        );
+        if ready.contains(CLOSE_FDS_READY) {
+            return;
+        }
+    }
+}
+
+fn observe_unreaped_exit(pid: u32) {
+    let mut information = std::mem::MaybeUninit::<libc::siginfo_t>::uninit();
+    loop {
+        // SAFETY: WNOWAIT observes this direct child's exit without reaping it.
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid,
+                information.as_mut_ptr(),
+                libc::WEXITED | libc::WNOWAIT,
+            )
+        };
+        if result == 0 {
+            return;
+        }
+        assert_eq!(
+            std::io::Error::last_os_error().kind(),
+            std::io::ErrorKind::Interrupted
+        );
+    }
+}
+
+fn retain_unreaped_children() {
+    // SAFETY: the isolated fixture has no concurrent child lifecycle and installs
+    // ordinary waitable-child semantics before it spawns the wrapper.
+    let mut action = unsafe { std::mem::zeroed::<libc::sigaction>() };
+    action.sa_sigaction = libc::SIG_DFL;
+    // SAFETY: the signal mask belongs exclusively to this local action.
+    assert_eq!(unsafe { libc::sigemptyset(&mut action.sa_mask) }, 0);
+    // SAFETY: this process-local fixture intentionally clears SA_NOCLDWAIT.
+    assert_eq!(
+        unsafe { libc::sigaction(libc::SIGCHLD, &action, std::ptr::null_mut()) },
+        0
+    );
+}
+
+fn run_isolated_lifecycle_fixture(name: &str) {
+    let output = Command::new(std::env::current_exe().expect("locate lock CLI test executable"))
+        .args(["--exact", name, "--ignored", "--nocapture"])
+        .output()
+        .expect("launch isolated lock lifecycle fixture");
+    assert!(
+        output.status.success(),
+        "lock lifecycle fixture: {output:?}"
+    );
+}
+
+fn assert_process_terminal(pid: libc::pid_t) {
+    // SAFETY: signal zero only probes whether the process remains present.
+    if unsafe { libc::kill(pid, 0) } == -1 {
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    } else {
+        assert_process_zombie(pid as u32);
+    }
+}
+
+fn assert_process_zombie(pid: u32) {
+    #[cfg(target_os = "linux")]
+    assert_linux_process_zombie(pid);
+    #[cfg(target_os = "macos")]
+    assert_macos_process_zombie(pid);
 }
 
 struct Spoken {
@@ -434,103 +627,53 @@ fn a_signal_to_the_wrapper_terminates_the_child_group_and_releases_the_lock() {
 }
 
 #[test]
-fn abrupt_wrapper_death_keeps_possession_until_the_protected_group_exits() {
-    let fixture = Fixture::new("abrupt");
-    let child_pid_path = fixture.root.join(CLOSE_FDS_PID_FILE);
-    let helper = std::env::current_exe().expect("locate lock CLI test executable");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_spice"));
-    child
-        .args(["lock", "run", "solo", "--"])
-        .arg(helper)
-        .args([
-            "--exact",
-            "close_all_non_stdio_descriptors_and_wait",
-            "--ignored",
-            "--nocapture",
-        ])
-        .current_dir(&fixture.root)
-        .env_remove(steer::hook::INBOX)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut wrapper = child.spawn().expect("abrupt wrapper launches");
-    let wrapper_pid = wrapper.id();
-    let release = wrapper.stdin.take().expect("wrapper stdin is piped");
-    let mut output = BufReader::new(wrapper.stdout.take().expect("wrapper stdout is piped"));
-    loop {
-        let mut ready = String::new();
-        assert_ne!(
-            output
-                .read_line(&mut ready)
-                .expect("abrupt child reaches execution"),
-            0,
-            "close-fds helper exited before readiness"
-        );
-        if ready.contains(CLOSE_FDS_READY) {
-            break;
-        }
-    }
+fn unreaped_wrapper_synchronizes_first_topology_acquisition_after_group_completion() {
+    run_isolated_lifecycle_fixture(ACQUIRE_FIXTURE);
+}
 
-    let killed = Command::new("/bin/kill")
-        .args(["-KILL", &wrapper_pid.to_string()])
-        .output()
-        .expect("kill abrupt wrapper");
-    assert!(killed.status.success(), "kill wrapper: {killed:?}");
-    assert!(!wrapper.wait().expect("wrapper is reaped").success());
+#[test]
+#[ignore = "subprocess fixture isolates unreaped-child signal policy"]
+fn unreaped_wrapper_synchronizes_first_topology_acquisition_fixture() {
+    retain_unreaped_children();
+    let fixture = Fixture::new("abrupt-acquire");
+    let topology = fixture.topology();
+    let mut protected = AbruptProtected::start(&fixture);
 
-    let child_pid: i32 = fs::read_to_string(&child_pid_path)
-        .expect("child PID reads")
-        .parse()
-        .expect("child PID parses");
-    // SAFETY: signal zero only probes whether the protected helper remains present.
-    assert_eq!(unsafe { libc::kill(child_pid, 0) }, 0);
+    assert!(matches!(
+        topology.try_acquire("solo", None).expect("live group contention is observable"),
+        LockAttempt::Contended { kind: Contention::Busy, code } if code.get() == BUSY_EXIT
+    ));
+    protected.terminate_group();
 
-    let report = reply_body(fixture.invoke(&["lock", "--json"]));
+    let acquired = topology
+        .try_acquire("solo", None)
+        .expect("terminal group completion synchronizes");
+    let LockAttempt::Acquired(held) = acquired else {
+        panic!("first terminal-group acquisition remained contended");
+    };
+    assert_eq!(held.shard(), 0);
+    drop(held);
+    protected.reap();
+}
+
+#[test]
+fn terminal_zombie_owner_never_exposes_held_availability() {
+    run_isolated_lifecycle_fixture(REPORT_FIXTURE);
+}
+
+#[test]
+#[ignore = "subprocess fixture isolates unreaped-child signal policy"]
+fn terminal_zombie_owner_never_exposes_held_availability_fixture() {
+    retain_unreaped_children();
+    let fixture = Fixture::new("abrupt-report");
+    let topology = fixture.topology();
+    let mut protected = AbruptProtected::start(&fixture);
+    protected.terminate_group();
+
+    let report = topology
+        .report()
+        .expect("terminal zombie owner synchronizes");
     let entry = &report
-        .pools
-        .iter()
-        .find(|pool| pool.name == "solo")
-        .expect("single lock is reported")
-        .entries[0];
-    assert_eq!(entry.availability, LockAvailability::Held);
-    assert_eq!(
-        entry.owner.as_ref().map(|owner| owner.pid),
-        Some(wrapper_pid)
-    );
-    assert!(!entry.owner_stale);
-    assert_contention(
-        fixture.invoke(&["--json", "lock", "run", "solo", "--", "/usr/bin/true"]),
-        BUSY_EXIT,
-        "lock::busy",
-    );
-
-    drop(release);
-    let mut trailing = String::new();
-    output
-        .read_to_string(&mut trailing)
-        .expect("protected process group closes stdout on exit");
-    assert!(
-        trailing.contains("test result: ok"),
-        "abrupt child output: {trailing:?}"
-    );
-    let completion_lock = LockFile::new(
-        LockName::new("solo").expect("completion lock name"),
-        fixture.lock_root().join("solo.lock"),
-    );
-    let completion = completion_lock
-        .acquire()
-        .expect("kernel lock completion follows terminal group absence");
-    // SAFETY: signal zero only probes whether the protected helper remains present.
-    assert_eq!(unsafe { libc::kill(child_pid, 0) }, -1);
-    assert_eq!(
-        std::io::Error::last_os_error().raw_os_error(),
-        Some(libc::ESRCH),
-        "guardian released before the protected child became terminally absent"
-    );
-    drop(completion);
-
-    let released = reply_body(fixture.invoke(&["lock", "--json"]));
-    let entry = &released
         .pools
         .iter()
         .find(|pool| pool.name == "solo")
@@ -539,20 +682,10 @@ fn abrupt_wrapper_death_keeps_possession_until_the_protected_group_exits() {
     assert_eq!(entry.availability, LockAvailability::Available);
     assert_eq!(
         entry.owner.as_ref().map(|owner| owner.pid),
-        Some(wrapper_pid)
+        Some(protected.wrapper_pid)
     );
     assert!(entry.owner_stale);
-
-    assert_eq!(
-        fixture
-            .invoke(&["lock", "run", "solo", "--", "/usr/bin/true"])
-            .code,
-        Some(0)
-    );
-    assert_eq!(
-        fs::read(fixture.lock_root().join("solo.lock")).expect("released metadata reads"),
-        b""
-    );
+    protected.reap();
 }
 
 #[test]
@@ -835,4 +968,33 @@ fn walk_tree(root: &Path, directory: &Path, state: &mut BTreeMap<String, (u32, S
             panic!("snapshot encountered an unsupported file type at {relative}");
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn assert_linux_process_zombie(pid: u32) {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).expect("zombie stat reads");
+    let (_, fields) = stat.rsplit_once(") ").expect("zombie stat fields split");
+    assert_eq!(fields.as_bytes().first(), Some(&b'Z'));
+}
+
+#[cfg(target_os = "macos")]
+fn assert_macos_process_zombie(pid: u32) {
+    let mut information = std::mem::MaybeUninit::<libc::proc_bsdshortinfo>::uninit();
+    let size = libc::c_int::try_from(size_of::<libc::proc_bsdshortinfo>())
+        .expect("process information size fits c_int");
+    // SAFETY: the process information destination is writable for its complete size.
+    let bytes = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDT_SHORTBSDINFO,
+            0,
+            information.as_mut_ptr().cast(),
+            size,
+        )
+    };
+    assert_eq!(bytes, 0);
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ESRCH)
+    );
 }

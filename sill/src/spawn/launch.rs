@@ -18,6 +18,28 @@ pub(super) fn spawn_inner(
     observation: Option<Observation>,
     guarded: Option<&File>,
 ) -> io::Result<Running> {
+    spawn_inner_with_guardian(spec, observation, guarded, PendingGuardian::start)
+}
+
+#[cfg(test)]
+pub(super) fn spawn_inner_refusing_descriptor_setup(
+    spec: Spec,
+    guarded: &File,
+) -> io::Result<Running> {
+    spawn_inner_with_guardian(
+        spec,
+        None,
+        Some(guarded),
+        PendingGuardian::start_refusing_descriptor_setup,
+    )
+}
+
+fn spawn_inner_with_guardian(
+    spec: Spec,
+    observation: Option<Observation>,
+    guarded: Option<&File>,
+    start_guardian: fn(&File) -> io::Result<PendingGuardian>,
+) -> io::Result<Running> {
     validate_observation(&spec, observation.as_ref())?;
     if guarded.is_some() && spec.group != ProcessGroup::New {
         return Err(io::Error::new(
@@ -26,7 +48,7 @@ pub(super) fn spawn_inner(
         ));
     }
     let wakes = SpawnWakes::new(&spec, observation.as_ref())?;
-    let guardian = guarded.map(PendingGuardian::start).transpose()?;
+    let guardian = guarded.map(start_guardian).transpose()?;
     let mut child = command(&spec, guardian.as_ref()).spawn()?;
     let started = Instant::now();
     let pid = child.id();
