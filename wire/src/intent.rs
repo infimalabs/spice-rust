@@ -115,7 +115,58 @@ impl ProjectVisibility {
     }
 }
 
-/// One complete current task-head bundle in a board read answer.
+/// Actor-facing task statement evidence, excluding authored title prose.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoardStatement {
+    /// Public task name.
+    pub handle: crate::TaskHandle,
+    /// Stable task identity.
+    pub uuid: crate::CanonicalUuid,
+    /// Scheduler project grouping.
+    pub project: String,
+    /// Authored task labels.
+    pub tags: Vec<String>,
+    /// Tasks that must complete first.
+    pub dependencies: Vec<crate::TaskHandle>,
+    /// Creation provenance, immutable across statement revisions.
+    pub provenance: crate::Origin,
+    /// Fact that established this statement revision.
+    pub revision: crate::Seq,
+}
+
+impl From<&crate::TaskHead> for BoardStatement {
+    fn from(statement: &crate::TaskHead) -> Self {
+        Self {
+            handle: statement.handle.clone(),
+            uuid: statement.uuid,
+            project: statement.project.clone(),
+            tags: statement.tags.clone(),
+            dependencies: statement.dependencies.clone(),
+            provenance: statement.provenance.clone(),
+            revision: statement.revision,
+        }
+    }
+}
+
+impl BoardStatement {
+    /// Reconstruct a client-side statement using its actor-facing title.
+    #[must_use]
+    pub fn with_title(&self, title: &str) -> crate::TaskHead {
+        crate::TaskHead {
+            handle: self.handle.clone(),
+            uuid: self.uuid,
+            title: title.to_owned(),
+            project: self.project.clone(),
+            tags: self.tags.clone(),
+            dependencies: self.dependencies.clone(),
+            provenance: self.provenance.clone(),
+            revision: self.revision,
+        }
+    }
+}
+
+/// One complete current task evidence bundle in a board read answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BoardTask {
@@ -123,7 +174,8 @@ pub struct BoardTask {
     pub visibility: ProjectVisibility,
     /// Actor-facing title derived from that classification.
     pub presentation_title: String,
-    pub statement: Positioned<crate::TaskHead>,
+    /// Current statement evidence projected without authored title prose.
+    pub statement: Positioned<BoardStatement>,
     pub workflow: Positioned<crate::WorkflowHead>,
     #[serde(
         default,
@@ -140,6 +192,19 @@ pub struct BoardTask {
 }
 
 impl BoardTask {
+    /// Normalize a hidden row to the sole actor-facing title.
+    pub fn redact_hidden_title(&mut self) {
+        if self.visibility.is_hidden() {
+            self.presentation_title = "Hidden task".to_owned();
+        }
+    }
+
+    /// Client-side statement reconstructed from actor-facing evidence.
+    #[must_use]
+    pub fn statement_head(&self) -> crate::TaskHead {
+        self.statement.body.with_title(&self.presentation_title)
+    }
+
     /// Actor-facing title that does not expose hidden system task prose.
     #[must_use]
     pub fn presentation_title(&self) -> &str {
@@ -165,7 +230,7 @@ pub struct BoardAnswer {
     pub cursor: crate::Seq,
     /// Principal derived from the capability that requested this snapshot.
     pub principal: Actor,
-    /// Complete current task-head bundles in ascending handle order.
+    /// Complete current task evidence bundles in ascending handle order.
     pub tasks: Vec<BoardTask>,
     /// Current resident and lane head used by possession witnesses.
     pub residency: Positioned<crate::ResidencyHead>,
