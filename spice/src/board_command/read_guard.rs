@@ -228,12 +228,14 @@ fn read_graph(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
+    let entries = match actor_entries(&snapshot.answer) {
+        Ok(entries) => entries,
+        Err(outcome) => return outcome,
+    };
     snapshot_reply(
         snapshot.cursor,
         CommandAnswer::Text(TextAnswer {
-            text: board::graph::render(view, &snapshot.entries)
-                .text()
-                .to_owned(),
+            text: board::graph::render(view, &entries).text().to_owned(),
         }),
     )
 }
@@ -262,10 +264,14 @@ fn read_handout(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
+    let entries = match actor_entries(&snapshot.answer) {
+        Ok(entries) => entries,
+        Err(outcome) => return outcome,
+    };
     snapshot_reply(
         snapshot.cursor,
         CommandAnswer::Text(TextAnswer {
-            text: board::handout::compose(&snapshot.entries),
+            text: board::handout::compose(&entries),
         }),
     )
 }
