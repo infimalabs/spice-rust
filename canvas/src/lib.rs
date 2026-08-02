@@ -8,6 +8,8 @@ pub mod axum;
 pub mod config;
 pub mod speech;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod stream;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod thread;
 pub mod view;
 

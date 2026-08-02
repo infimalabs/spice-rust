@@ -223,6 +223,7 @@ impl<'de> Deserialize<'de> for Origin {
 /// runtime and names [`crate::AnyFact`], which keeps the header meaningful without
 /// pretending to a body type it cannot know. Both spell the same header once.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Envelope<T> {
     /// Current wire version.
     pub v: WireVersion,

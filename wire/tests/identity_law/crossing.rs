@@ -48,6 +48,7 @@ fn every_crossing_type_obeys_the_identity_law() {
     cover_residency_heads(&mut covered);
     cover_head_enums(&mut covered);
     cover_command_frames(&mut covered);
+    cover_stream_frames(&mut covered);
     cover_packed_frames(&mut covered);
     cover_refusal_frames(&mut covered);
     cover_reply_frames(&mut covered);
@@ -590,6 +591,192 @@ fn cover_command_frames(covered: &mut BTreeSet<String>) {
             },
         ],
     );
+}
+
+/// Every client request and resident frame in the closed canvas stream family.
+///
+/// Both enums carry serde narrowing: the request omits an absent reconnect
+/// cursor and a fault omits an unavailable correlation id. Sampling every arm,
+/// both optional states, and both packed row types proves those renderings are
+/// the complete value rather than an identity-losing projection.
+fn cover_stream_frames(covered: &mut BTreeSet<String>) {
+    let epoch = uuid("018f82d4-6f59-7d06-92e3-bce9131163c3");
+    let next_epoch = uuid("018f82d4-6f59-7d06-92e3-bce9131163c4");
+    let first_id = uuid("018f82d4-6f59-7d06-92e3-bce9131163d1");
+    let second_id = uuid("018f82d4-6f59-7d06-92e3-bce9131163d2");
+    let cursor = StreamCursor {
+        epoch,
+        seq: seq(48213),
+    };
+    let requests = stream_request_samples(epoch, first_id, second_id, cursor);
+    law(covered, "StreamRequest", &requests);
+
+    let first_fact = opaque_stream_envelope(48213, None, "checked");
+    let second_fact = opaque_stream_envelope(48214, Some(48213), "verified");
+    let facts = Packed {
+        rows: vec![first_fact.clone(), second_fact.clone()],
+        overflow: Some(Overflow {
+            omitted: 3,
+            continuation: seq(48215),
+        }),
+        horizon: seq(48220),
+    };
+    let trust = Packed {
+        rows: vec![TrustView {
+            position: seq(48213),
+            head: TrustHead {
+                digest: digest("a"),
+                state: TrustState::Granted,
+            },
+        }],
+        overflow: None,
+        horizon: seq(48220),
+    };
+    let mut frames = stream_data_samples(epoch, first_id, second_id, second_fact, facts, trust);
+    frames.extend(stream_boundary_samples(
+        epoch, next_epoch, first_id, second_id, cursor,
+    ));
+    law(covered, "StreamFrame", &frames);
+}
+
+fn stream_request_samples(
+    epoch: CanonicalUuid,
+    first_id: CanonicalUuid,
+    second_id: CanonicalUuid,
+    cursor: StreamCursor,
+) -> [StreamRequest; 4] {
+    [
+        StreamRequest::Subscribe {
+            v: WireVersion::CURRENT,
+            id: first_id,
+            epoch,
+            subjects: vec![ViewSubject::Facts],
+            after: None,
+        },
+        StreamRequest::Subscribe {
+            v: WireVersion::CURRENT,
+            id: second_id,
+            epoch,
+            subjects: vec![ViewSubject::Facts, ViewSubject::Trust],
+            after: Some(cursor),
+        },
+        StreamRequest::Continue {
+            v: WireVersion::CURRENT,
+            id: first_id,
+            epoch,
+            subject: ViewSubject::Trust,
+            cursor,
+        },
+        StreamRequest::Thread {
+            v: WireVersion::CURRENT,
+            id: second_id,
+            epoch,
+            cursor,
+        },
+    ]
+}
+
+fn stream_data_samples(
+    epoch: CanonicalUuid,
+    first_id: CanonicalUuid,
+    second_id: CanonicalUuid,
+    fact: Envelope<AnyFact>,
+    facts: Packed<Envelope<AnyFact>>,
+    trust: Packed<TrustView>,
+) -> Vec<StreamFrame> {
+    vec![
+        StreamFrame::Facts {
+            v: WireVersion::CURRENT,
+            id: first_id,
+            epoch,
+            packed: facts.clone(),
+        },
+        StreamFrame::Trust {
+            v: WireVersion::CURRENT,
+            id: first_id,
+            epoch,
+            packed: trust,
+        },
+        StreamFrame::Thread {
+            v: WireVersion::CURRENT,
+            id: second_id,
+            epoch,
+            packed: facts,
+        },
+        StreamFrame::Fact {
+            v: WireVersion::CURRENT,
+            id: first_id,
+            epoch,
+            fact,
+        },
+    ]
+}
+
+fn stream_boundary_samples(
+    epoch: CanonicalUuid,
+    next_epoch: CanonicalUuid,
+    first_id: CanonicalUuid,
+    second_id: CanonicalUuid,
+    cursor: StreamCursor,
+) -> Vec<StreamFrame> {
+    vec![
+        StreamFrame::Refusal {
+            v: WireVersion::CURRENT,
+            id: first_id,
+            epoch,
+            refusal: stale_witness(),
+        },
+        StreamFrame::Fault {
+            v: WireVersion::CURRENT,
+            epoch,
+            id: None,
+            fault: moved_epoch(),
+        },
+        StreamFrame::Fault {
+            v: WireVersion::CURRENT,
+            epoch,
+            id: Some(second_id),
+            fault: Fault {
+                class: FaultClass::Store,
+                reason: "stream::snapshot-failed".to_owned(),
+                detail: "authority snapshot failed".to_owned(),
+            },
+        },
+        StreamFrame::Overflow {
+            v: WireVersion::CURRENT,
+            id: first_id,
+            epoch,
+            after: cursor,
+            dropped: 7,
+        },
+        StreamFrame::Closing {
+            v: WireVersion::CURRENT,
+            id: second_id,
+            epoch: next_epoch,
+            after: StreamCursor {
+                epoch: next_epoch,
+                seq: seq(48220),
+            },
+        },
+    ]
+}
+
+fn opaque_stream_envelope(
+    position: u64,
+    cause: Option<u64>,
+    validation: &str,
+) -> Envelope<AnyFact> {
+    let typed = Envelope {
+        v: WireVersion::CURRENT,
+        seq: seq(position),
+        at: at("2030-04-12T18:44:09.271Z"),
+        actor: Actor::Operator,
+        origin: "task:SPICE-aBcD".parse().expect("origin"),
+        cause: cause.map(seq),
+        fact: Fact::new(body(validation)),
+    };
+    wire::decode(&wire::encode(&typed).expect("typed envelope encodes"))
+        .expect("opaque envelope decodes")
 }
 
 /// Concrete command predicates and their nested state vocabularies.

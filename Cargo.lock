@@ -276,6 +276,7 @@ dependencies = [
  "fold",
  "jiff",
  "journal",
+ "tokio",
 ]
 
 [[package]]

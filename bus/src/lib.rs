@@ -17,6 +17,7 @@ mod runtime {
     };
 
     const REQUEST_CAPACITY: usize = 64;
+    const BROADCAST_CAPACITY: usize = 64;
 
     /// One successful journal transaction, constructable only by the bus
     /// writer after durability.
@@ -74,6 +75,38 @@ mod runtime {
         residency: Option<JournalHead<journal::crossing::ResidencyHead>>,
     }
 
+    /// Facts and trust heads observed inside one immutable authority snapshot.
+    ///
+    /// Canvas views consume this instead of issuing independent reads whose
+    /// cursors could disagree. The cursor, stream, and heads are all captured
+    /// by the writer thread after every earlier queued transaction settled.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct CanvasSnapshot {
+        cursor: Option<journal::crossing::Seq>,
+        facts: FactSnapshot,
+        trust: Vec<JournalHead<journal::crossing::TrustHead>>,
+    }
+
+    impl CanvasSnapshot {
+        /// Last durable position visible to the complete capture.
+        #[must_use]
+        pub const fn cursor(&self) -> Option<journal::crossing::Seq> {
+            self.cursor
+        }
+
+        /// Complete fact stream at this barrier.
+        #[must_use]
+        pub const fn facts(&self) -> &FactSnapshot {
+            &self.facts
+        }
+
+        /// Current trust heads at this barrier, ordered by digest.
+        #[must_use]
+        pub fn trust(&self) -> &[JournalHead<journal::crossing::TrustHead>] {
+            &self.trust
+        }
+    }
+
     impl TaskSnapshot {
         #[must_use]
         pub const fn cursor(&self) -> Option<journal::crossing::Seq> {
@@ -97,6 +130,59 @@ mod runtime {
         receiver: Receiver<JournalCommit>,
     }
 
+    /// Async, bounded cursor broadcast for generation-resident consumers.
+    ///
+    /// Tokio's broadcast receiver names lag explicitly. A consumer that falls
+    /// behind never receives a silently repaired sequence: it observes
+    /// [`tokio::sync::broadcast::error::RecvError::Lagged`] and can resume from
+    /// its own last admitted cursor.
+    #[derive(Debug)]
+    pub struct BroadcastSubscriber {
+        receiver: tokio::sync::broadcast::Receiver<JournalCommit>,
+    }
+
+    impl BroadcastSubscriber {
+        /// Wait for the next durable commit or a typed closed/lagged boundary.
+        pub async fn recv(
+            &mut self,
+        ) -> Result<JournalCommit, tokio::sync::broadcast::error::RecvError> {
+            self.receiver.recv().await
+        }
+    }
+
+    /// Cloneable read/broadcast door into the one resident-owned bus.
+    ///
+    /// Cloning this handle does not create another journal connection or
+    /// writer. Every snapshot request is serialized through the same queue as
+    /// commits, and every subscription listens to that writer's one bounded
+    /// post-durability broadcast.
+    #[derive(Clone, Debug)]
+    pub struct BusReader {
+        requests: SyncSender<Request>,
+        broadcasts: tokio::sync::broadcast::Sender<JournalCommit>,
+    }
+
+    impl BusReader {
+        /// Capture facts and trust heads at one queued authority barrier.
+        pub fn canvas_snapshot(&self) -> Result<CanvasSnapshot, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::Canvas { answer })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+        }
+
+        /// Subscribe to the writer's bounded post-durability cursor broadcast.
+        #[must_use]
+        pub fn subscribe(&self) -> BroadcastSubscriber {
+            BroadcastSubscriber {
+                receiver: self.broadcasts.subscribe(),
+            }
+        }
+    }
+
     impl CommitSubscriber {
         /// Wait for the next durable commit notification.
         pub fn recv(&self) -> Result<JournalCommit, mpsc::RecvError> {
@@ -113,6 +199,7 @@ mod runtime {
     #[derive(Debug)]
     pub struct Bus {
         requests: SyncSender<Request>,
+        broadcasts: tokio::sync::broadcast::Sender<JournalCommit>,
         writer: Option<JoinHandle<()>>,
     }
 
@@ -125,14 +212,26 @@ mod runtime {
         /// created.
         pub fn start(journal: Journal) -> Result<Self, BusError> {
             let (requests, receiver) = mpsc::sync_channel(REQUEST_CAPACITY);
+            let (broadcasts, _) = tokio::sync::broadcast::channel(BROADCAST_CAPACITY);
+            let writer_broadcasts = broadcasts.clone();
             let writer = thread::Builder::new()
                 .name("spice-journal-writer".to_owned())
-                .spawn(move || run_writer(journal, receiver))
+                .spawn(move || run_writer(journal, receiver, writer_broadcasts))
                 .map_err(BusError::Start)?;
             Ok(Self {
                 requests,
+                broadcasts,
                 writer: Some(writer),
             })
+        }
+
+        /// Clone a read/broadcast door into this exact bus generation.
+        #[must_use]
+        pub fn reader(&self) -> BusReader {
+            BusReader {
+                requests: self.requests.clone(),
+                broadcasts: self.broadcasts.clone(),
+            }
         }
 
         /// Submit one guarded transaction to the dedicated writer.
@@ -181,6 +280,11 @@ mod runtime {
                 .recv()
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?
                 .map_err(BusReadError::Head)
+        }
+
+        /// Capture the canvas fact and trust planes at one authority barrier.
+        pub fn canvas_snapshot(&self) -> Result<CanvasSnapshot, BusReadError> {
+            self.reader().canvas_snapshot()
         }
 
         /// Read the current resident and lane head through the writer queue.
@@ -270,6 +374,9 @@ mod runtime {
         Tasks {
             answer: SyncSender<Result<TaskSnapshot, GuardError>>,
         },
+        Canvas {
+            answer: SyncSender<Result<CanvasSnapshot, BusReadError>>,
+        },
         Residency {
             answer: SyncSender<
                 Result<Option<JournalHead<journal::crossing::ResidencyHead>>, GuardError>,
@@ -288,7 +395,11 @@ mod runtime {
         },
     }
 
-    fn run_writer(mut journal: Journal, requests: Receiver<Request>) {
+    fn run_writer(
+        mut journal: Journal,
+        requests: Receiver<Request>,
+        broadcasts: tokio::sync::broadcast::Sender<JournalCommit>,
+    ) {
         let mut subscribers = Vec::<mpsc::Sender<JournalCommit>>::new();
         while let Ok(request) = requests.recv() {
             match request {
@@ -297,6 +408,7 @@ mod runtime {
                         Ok(applied) => {
                             let commit = JournalCommit::from_applied(applied);
                             subscribers.retain(|subscriber| subscriber.send(commit).is_ok());
+                            let _ = broadcasts.send(commit);
                             CommitOutcome::Committed(commit)
                         }
                         Err(journal::CommitError::Refused(refusal)) => {
@@ -321,6 +433,24 @@ mod runtime {
                             residency: read.residency_head()?,
                         })
                     });
+                    let _ = answer.send(snapshot);
+                }
+                Request::Canvas { answer } => {
+                    let snapshot = journal
+                        .read_with(|read| {
+                            let cursor = read.cursor().map_err(BusReadError::Head)?;
+                            let facts = read.fact_snapshot().map_err(BusReadError::Snapshot)?;
+                            let trust = read.trust_heads().map_err(BusReadError::Head)?;
+                            Ok(CanvasSnapshot {
+                                cursor,
+                                facts,
+                                trust,
+                            })
+                        })
+                        .map_err(|error| match error {
+                            journal::ReadError::Journal(error) => BusReadError::Head(error),
+                            journal::ReadError::Answer(error) => error,
+                        });
                     let _ = answer.send(snapshot);
                 }
                 Request::Residency { answer } => {
@@ -411,6 +541,6 @@ mod runtime {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use runtime::{
-    Bus, BusError, BusReadError, BusVerifyError, CommitOutcome, CommitSubscriber, JournalCommit,
-    TaskSnapshot,
+    BroadcastSubscriber, Bus, BusError, BusReadError, BusReader, BusVerifyError, CanvasSnapshot,
+    CommitOutcome, CommitSubscriber, JournalCommit, TaskSnapshot,
 };

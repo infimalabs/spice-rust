@@ -5,6 +5,241 @@
 
 use super::*;
 
+fn send_process_stream(
+    socket: &mut WebSocket<TcpStream>,
+    request: &wire::StreamRequest,
+    label: &str,
+) {
+    socket
+        .send(Message::Binary(
+            wire::encode(request)
+                .unwrap_or_else(|error| panic!("{label} encodes: {error}"))
+                .into(),
+        ))
+        .unwrap_or_else(|error| panic!("{label} sends: {error}"));
+}
+
+fn read_process_stream(
+    socket: &mut WebSocket<TcpStream>,
+    label: &str,
+) -> (wire::StreamFrame, Vec<u8>) {
+    let bytes = socket
+        .read()
+        .unwrap_or_else(|error| panic!("{label} arrives: {error}"))
+        .into_data()
+        .to_vec();
+    let frame = wire::decode(&bytes).unwrap_or_else(|error| panic!("{label} decodes: {error}"));
+    (frame, bytes)
+}
+
+fn open_process_stream(
+    discovery: &canvas::Discovery,
+) -> (WebSocket<TcpStream>, wire::CanonicalUuid, wire::Seq, String) {
+    let (mut socket, accepted) = authenticate(discovery, discovery.capability);
+    assert_eq!(accepted.actor, Actor::Operator);
+    let subscription = uuid("018f82d4-6f59-7d06-92e3-bce9131163d0");
+    send_process_stream(
+        &mut socket,
+        &wire::StreamRequest::Subscribe {
+            v: wire::WireVersion::CURRENT,
+            id: subscription,
+            epoch: discovery.epoch,
+            subjects: vec![wire::ViewSubject::Facts, wire::ViewSubject::Trust],
+            after: None,
+        },
+        "subscription",
+    );
+    let (initial_facts, facts_bytes) = read_process_stream(&mut socket, "initial facts");
+    let (initial_trust, trust_bytes) = read_process_stream(&mut socket, "initial trust");
+    let wire::StreamFrame::Facts { packed, .. } = initial_facts else {
+        panic!("resident must begin with facts");
+    };
+    let initial_horizon = packed.horizon;
+    assert_eq!(packed.rows.len(), 3, "startup facts share one barrier");
+    assert!(matches!(
+        initial_trust,
+        wire::StreamFrame::Trust { ref packed, .. }
+            if packed.horizon == initial_horizon && packed.rows.len() == 1
+    ));
+    let capability_text = discovery.capability.to_string();
+    assert!(!String::from_utf8_lossy(&facts_bytes).contains(&capability_text));
+    assert!(!String::from_utf8_lossy(&trust_bytes).contains(&capability_text));
+    (socket, subscription, initial_horizon, capability_text)
+}
+
+fn grant_and_close_process_stream(
+    fixture: &Fixture,
+    discovery: &canvas::Discovery,
+    socket: &mut WebSocket<TcpStream>,
+    subscription: wire::CanonicalUuid,
+    initial_horizon: wire::Seq,
+) -> wire::Seq {
+    let digest = trust_pended(fixture)
+        .into_iter()
+        .next()
+        .expect("startup trust pends")
+        .digest;
+    let granted = invoke_args(fixture, &["trust", "grant", digest.as_str()], true);
+    assert!(
+        granted.status.success(),
+        "trust grant failed: {}",
+        String::from_utf8_lossy(&granted.stderr)
+    );
+    let (live, _) = read_process_stream(socket, "live fact");
+    let wire::StreamFrame::Fact { fact, id, .. } = live else {
+        panic!("Bus commit must produce one live fact");
+    };
+    assert_eq!(id, subscription);
+    assert!(fact.seq > initial_horizon);
+    let live_cursor = fact.seq;
+    let (trust_update, _) = read_process_stream(socket, "trust update");
+    assert!(matches!(
+        trust_update,
+        wire::StreamFrame::Trust { packed, .. }
+            if packed.horizon == live_cursor
+                && packed.rows.iter().any(|row| row.head.state == wire::TrustState::Granted)
+    ));
+
+    let thread_id = uuid("018f82d4-6f59-7d06-92e3-bce9131163d1");
+    send_process_stream(
+        socket,
+        &wire::StreamRequest::Thread {
+            v: wire::WireVersion::CURRENT,
+            id: thread_id,
+            epoch: discovery.epoch,
+            cursor: wire::StreamCursor {
+                epoch: discovery.epoch,
+                seq: live_cursor,
+            },
+        },
+        "thread request",
+    );
+    let (thread, _) = read_process_stream(socket, "thread");
+    assert!(matches!(
+        thread,
+        wire::StreamFrame::Thread { id, ref packed, .. }
+            if id == thread_id && packed.rows.first().is_some_and(|row| row.seq == live_cursor)
+    ));
+    socket.close(None).expect("first stream closes");
+    live_cursor
+}
+
+fn resume_process_stream(
+    discovery: &canvas::Discovery,
+    live_cursor: wire::Seq,
+) -> WebSocket<TcpStream> {
+    let (mut resumed, _) = authenticate(discovery, discovery.capability);
+    send_process_stream(
+        &mut resumed,
+        &wire::StreamRequest::Subscribe {
+            v: wire::WireVersion::CURRENT,
+            id: uuid("018f82d4-6f59-7d06-92e3-bce9131163d2"),
+            epoch: discovery.epoch,
+            subjects: vec![wire::ViewSubject::Facts],
+            after: Some(wire::StreamCursor {
+                epoch: discovery.epoch,
+                seq: live_cursor,
+            }),
+        },
+        "resume",
+    );
+    let (resumed_frame, _) = read_process_stream(&mut resumed, "resume");
+    assert!(matches!(
+        resumed_frame,
+        wire::StreamFrame::Facts { packed, .. }
+            if packed.rows.is_empty() && packed.horizon == live_cursor
+    ));
+    resumed
+}
+
+fn assert_stale_process_stream(discovery: &canvas::Discovery) {
+    let (mut stale, _) = authenticate(discovery, discovery.capability);
+    let stale_epoch = uuid("018f82d4-6f59-7d06-92e3-bce9131163d9");
+    send_process_stream(
+        &mut stale,
+        &wire::StreamRequest::Subscribe {
+            v: wire::WireVersion::CURRENT,
+            id: uuid("018f82d4-6f59-7d06-92e3-bce9131163d3"),
+            epoch: stale_epoch,
+            subjects: vec![wire::ViewSubject::Facts],
+            after: None,
+        },
+        "stale request",
+    );
+    let (stale_frame, _) = read_process_stream(&mut stale, "stale fault");
+    assert!(matches!(
+        stale_frame,
+        wire::StreamFrame::Fault { ref fault, .. }
+            if fault.reason == "stream::epoch-mismatch"
+    ));
+    stale.close(None).expect("stale socket closes");
+}
+
+fn finish_process_stream(
+    fixture: &Fixture,
+    discovery: &canvas::Discovery,
+    resumed: &mut WebSocket<TcpStream>,
+    live_cursor: wire::Seq,
+    resident: RunningResident,
+    capability_text: &str,
+) {
+    let down = invoke(fixture, "down");
+    assert!(down.status.success(), "down failed: {:?}", down.stderr);
+    let mut last = live_cursor;
+    let mut closed_at = None;
+    for _ in 0..16 {
+        let (frame, _) = read_process_stream(resumed, "shutdown stream frame");
+        match frame {
+            wire::StreamFrame::Fact { fact, .. } => {
+                assert!(fact.seq > last, "shutdown facts stay monotone");
+                last = fact.seq;
+            }
+            wire::StreamFrame::Closing { after, .. } => {
+                assert_eq!(after.epoch, discovery.epoch);
+                closed_at = Some(after.seq);
+                break;
+            }
+            other => panic!("unexpected shutdown stream frame: {other:?}"),
+        }
+    }
+    assert_eq!(closed_at, Some(last));
+    assert!(
+        last > live_cursor,
+        "shutdown cursor includes lifecycle facts"
+    );
+    let up = resident.wait();
+    assert!(up.status.success(), "resident failed: {:?}", up.stderr);
+    assert!(!String::from_utf8_lossy(&up.stdout).contains(capability_text));
+    assert!(!String::from_utf8_lossy(&up.stderr).contains(capability_text));
+}
+
+#[test]
+fn resident_process_streams_snapshot_bus_update_thread_resume_stale_and_shutdown_boundaries() {
+    let fixture = Fixture::new("canvas-stream");
+    let mut resident = RunningResident::spawn(&fixture);
+    resident.assert_ready(&fixture);
+    let discovery = fixture.discovery();
+    let (mut socket, subscription, initial_horizon, capability_text) =
+        open_process_stream(&discovery);
+    let live_cursor = grant_and_close_process_stream(
+        &fixture,
+        &discovery,
+        &mut socket,
+        subscription,
+        initial_horizon,
+    );
+    let mut resumed = resume_process_stream(&discovery, live_cursor);
+    assert_stale_process_stream(&discovery);
+    finish_process_stream(
+        &fixture,
+        &discovery,
+        &mut resumed,
+        live_cursor,
+        resident,
+        &capability_text,
+    );
+}
+
 #[test]
 fn resident_lock_precedes_journal_open_and_names_the_holder() {
     let fixture = Fixture::new("lock-first");
