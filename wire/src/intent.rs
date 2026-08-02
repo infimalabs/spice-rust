@@ -16,7 +16,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::body::{ConsentQueueCause, TranscriptLocus};
+use crate::body::{ConsentQueueCause, DirectiveAttachment, TranscriptLocus};
 use crate::command::CommandKind;
 use crate::envelope::{Actor, Origin, Seq};
 use crate::fact::FactKind;
@@ -354,6 +354,16 @@ pub struct ClaimCarry {
     pub successor: Actor,
 }
 
+/// Extend the authenticated actor's active claim within its durable maximum.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimRenew {
+    /// Task whose possession is refreshed.
+    pub task: TaskHandle,
+    /// Requested positive lease duration in whole seconds.
+    pub lease_seconds: u64,
+}
+
 /// Commit the exact normalized preview at its witnessed board barrier.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -372,6 +382,9 @@ pub struct SteerSend {
     pub lane: CanonicalUuid,
     /// The intent being sent.
     pub message: String,
+    /// Opaque typed attachments retained with the directive.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<DirectiveAttachment>,
 }
 
 /// Read pending direction visible to the authenticated principal.
@@ -475,6 +488,13 @@ pub struct LaneState {
     pub lane: CanonicalUuid,
     /// Lifecycle action the operator selected.
     pub action: LaneAction,
+    /// Fresh linked worktree required only by import.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub worktree: Option<String>,
 }
 
 /// Select one lane's continuity account, or the operator-wide account.
@@ -590,6 +610,9 @@ pub struct PendingDirective {
         deserialize_with = "crate::optional::present"
     )]
     pub control: Option<String>,
+    /// Exact attachments retained with the directive.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<DirectiveAttachment>,
     /// Instant at which the directive lapses.
     pub expires: Instant,
 }
@@ -948,6 +971,8 @@ pub enum BodyShape {
     ClaimWin,
     /// [`ClaimCarry`]
     ClaimCarry,
+    /// [`ClaimRenew`]
+    ClaimRenew,
     /// [`DocApply`]
     DocApply,
     /// [`SteerSend`]
@@ -1166,9 +1191,8 @@ impl CommandKind {
             Self::TaskAssign => Binding::of(B::TaskAssign, A::Task),
             Self::ClaimWin => Binding::of(B::ClaimWin, A::Claim),
             Self::ClaimCarry => Binding::of(B::ClaimCarry, A::Claim),
-            Self::ClaimRenew | Self::ClaimFree | Self::ClaimLapse => {
-                Binding::of(B::TaskRef, A::Claim)
-            }
+            Self::ClaimRenew => Binding::of(B::ClaimRenew, A::Claim),
+            Self::ClaimFree | Self::ClaimLapse => Binding::of(B::TaskRef, A::Claim),
             Self::DocApply => Binding::of(B::DocApply, A::Doc),
             Self::SteerSend => Binding::of(B::SteerSend, A::Directive),
             Self::SteerInbox => Binding::of(B::SteerInbox, A::Inbox),
@@ -1234,6 +1258,8 @@ pub enum Intent {
     ClaimWin(ClaimWin),
     /// [`BodyShape::ClaimCarry`]
     ClaimCarry(ClaimCarry),
+    /// [`BodyShape::ClaimRenew`]
+    ClaimRenew(ClaimRenew),
     /// [`BodyShape::DocApply`]
     DocApply(DocApply),
     /// [`BodyShape::SteerSend`]
@@ -1291,6 +1317,7 @@ impl Intent {
             Self::TaskAssign(_) => BodyShape::TaskAssign,
             Self::ClaimWin(_) => BodyShape::ClaimWin,
             Self::ClaimCarry(_) => BodyShape::ClaimCarry,
+            Self::ClaimRenew(_) => BodyShape::ClaimRenew,
             Self::DocApply(_) => BodyShape::DocApply,
             Self::SteerSend(_) => BodyShape::SteerSend,
             Self::SteerInbox(_) => BodyShape::SteerInbox,
@@ -1347,6 +1374,7 @@ impl BodyShape {
                 | Self::TaskAssign
                 | Self::ClaimWin
                 | Self::ClaimCarry
+                | Self::ClaimRenew
                 | Self::DocApply
         )
     }
@@ -1369,6 +1397,7 @@ impl BodyShape {
             Self::TaskAssign => Intent::TaskAssign(crate::decode(bytes)?),
             Self::ClaimWin => Intent::ClaimWin(crate::decode(bytes)?),
             Self::ClaimCarry => Intent::ClaimCarry(crate::decode(bytes)?),
+            Self::ClaimRenew => Intent::ClaimRenew(crate::decode(bytes)?),
             Self::DocApply => Intent::DocApply(crate::decode(bytes)?),
             _ => unreachable!("board body partition is closed"),
         })

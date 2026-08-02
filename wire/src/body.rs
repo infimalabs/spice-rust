@@ -294,8 +294,23 @@ pub struct SteerSent {
         deserialize_with = "crate::optional::present"
     )]
     pub control: Option<String>,
+    /// Opaque attachment payloads carried with this direction.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<DirectiveAttachment>,
     /// Instant the directive expires without a disposition.
     pub expires: Instant,
+}
+
+/// One exact attachment carried by a durable directive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DirectiveAttachment {
+    /// Operator-facing attachment name.
+    pub name: String,
+    /// Declared media type.
+    pub content_type: String,
+    /// Exact opaque data URL admitted with the directive.
+    pub data_url: String,
 }
 
 /// The same intent was sent again with lineage and escalation carried.
@@ -311,6 +326,21 @@ pub struct SteerResent {
     pub lane: CanonicalUuid,
     /// Escalation level the lineage has reached.
     pub escalation: u32,
+}
+
+/// A lapsed directive was restored to live standing exactly once.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SteerRecovered {
+    /// Durable directive identity retained by the recovery.
+    pub directive: CanonicalUuid,
+    /// Human-sized key retained by the recovery.
+    pub key: String,
+    /// Lane the directive remains addressed to.
+    pub lane: CanonicalUuid,
+    /// Expiry that proves the failed standing being recovered.
+    pub lapsed_at: Instant,
+    /// Fresh bounded expiry assigned to the restored directive.
+    pub expires: Instant,
 }
 
 /// Exact assistant-prose evidence inside one durable lane-tape record.
@@ -543,6 +573,25 @@ pub struct LaneStarted {
     pub epoch: CanonicalUuid,
     /// Process-group identity returned by the sole process door.
     pub group: u32,
+}
+
+/// A vacant lane seat moved to a fresh linked worktree before exact-session seating.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaneImported {
+    /// Lane whose team seat is retained.
+    pub lane: CanonicalUuid,
+    /// Latest occupant in the retained lineage.
+    pub ancestor: CanonicalUuid,
+    /// Worktree the seat was authoritatively bound to.
+    pub from_worktree: String,
+    /// Fresh linked worktree receiving the seat.
+    pub worktree: String,
+    /// Driver dialect retained by the transfer.
+    pub vendor: Name,
+    /// Exact resumable identity proved before the transfer.
+    pub identity: String,
+    /// Resident generation that admitted the transfer.
+    pub epoch: CanonicalUuid,
 }
 
 /// The resident observed the occupant end.

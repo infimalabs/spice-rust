@@ -302,6 +302,7 @@ fn ledger() -> Ledger {
                 lane: lane(addressee),
                 text: text.to_owned(),
                 control: control.map(str::to_owned),
+                attachments: Vec::new(),
                 expires: expires.parse().expect("instant"),
             }))
             .expect("directive absorbs");
