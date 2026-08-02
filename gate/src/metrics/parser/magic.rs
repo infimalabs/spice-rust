@@ -116,21 +116,28 @@ fn line_findings(
     line: &str,
     threshold: u64,
 ) -> Result<Vec<MagicFinding>, ParseError> {
+    let mut candidates = Vec::new();
+    for number in number_regex().find_iter(line) {
+        if number_end_admitted(line, number.end())
+            && let Some(operator) = comparison_before(line, number.start())
+        {
+            candidates.push((operator, number.end(), number.as_str()));
+        }
+        if number_start_admitted(line, number.start())
+            && let Some(operator_end) = comparison_after(line, number.end())
+        {
+            candidates.push((number.start(), operator_end, number.as_str()));
+        }
+    }
+    candidates.sort_by_key(|candidate| (candidate.0, candidate.1));
     let mut findings = Vec::new();
-    let mut operators = BTreeSet::new();
-    for candidate in number_regex().find_iter(line) {
-        if !token_boundaries(line, candidate.start(), candidate.end()) {
+    let mut cursor = 0;
+    for (start, end, candidate) in candidates {
+        if start < cursor {
             continue;
         }
-        let operator = comparison_before(line, candidate.start())
-            .or_else(|| comparison_after(line, candidate.end()));
-        let Some(operator) = operator else {
-            continue;
-        };
-        if !operators.insert(operator) {
-            continue;
-        }
-        let literal = candidate.as_str().replace('_', "");
+        cursor = end;
+        let literal = candidate.replace('_', "");
         let value = literal.parse::<f64>().map_err(|_| {
             ParseError::malformed(
                 format!("{path}:{line_number}"),
@@ -155,11 +162,14 @@ fn number_regex() -> &'static Regex {
     })
 }
 
-fn token_boundaries(line: &str, start: usize, end: usize) -> bool {
+fn number_start_admitted(line: &str, start: usize) -> bool {
     let before = line[..start].chars().next_back();
-    let after = line[end..].chars().next();
     !before.is_some_and(|value| value == '.' || value == '_' || value.is_alphanumeric())
-        && !after.is_some_and(|value| value == '.' || value == '_' || value.is_alphanumeric())
+}
+
+fn number_end_admitted(line: &str, end: usize) -> bool {
+    let after = line[end..].chars().next();
+    !after.is_some_and(|value| value == '.' || value == '_' || value.is_alphanumeric())
 }
 
 fn comparison_before(line: &str, number_start: usize) -> Option<usize> {
@@ -191,7 +201,7 @@ fn comparison_after(line: &str, number_end: usize) -> Option<usize> {
         let compound = matches!(operator, "<" | ">")
             && after.is_some_and(|value| matches!(value, '<' | '>' | '='));
         if !compound {
-            return Some(number_end + leading);
+            return Some(number_end + leading + operator.len());
         }
     }
     None

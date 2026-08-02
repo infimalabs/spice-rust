@@ -1,12 +1,12 @@
 use std::path::Path;
 
 use gate::metrics::{
-    EvidenceState, LatchBinding, MetricEvidence, MetricId, MetricKey, MetricMeasurement,
-    MetricParity, MetricReport, MetricUnit, ParseError, ParserEvidence, ParserId, ParserMode,
-    PredecessorMetricObservation, PredecessorMetricResult, RuleBinding, STRUCTURAL_ARMS,
-    STRUCTURAL_METRICS, StructuralArmEvidence, compare_predecessor_metric, measure_file_shape,
-    measure_repository_document, parse_lizard_csv, resolve_magic_metric, resolve_metric_rule,
-    scan_magic_regressions, scan_markdown_link_case,
+    EvidenceState, LatchBinding, MagicFinding, MetricEvidence, MetricId, MetricKey,
+    MetricMeasurement, MetricParity, MetricReport, MetricUnit, ParseError, ParserEvidence,
+    ParserId, ParserMode, PredecessorMetricObservation, PredecessorMetricResult, RuleBinding,
+    STRUCTURAL_ARMS, STRUCTURAL_METRICS, StructuralArmEvidence, compare_predecessor_metric,
+    measure_file_shape, measure_repository_document, parse_lizard_csv, resolve_magic_metric,
+    resolve_metric_rule, scan_magic_regressions, scan_markdown_link_case,
 };
 use gate::{GateId, PolicyContext, migrate_predecessor_policy};
 
@@ -201,6 +201,29 @@ fn magic_delta_matches_supported_comparisons_and_refuses_ast_substitution() {
         scan_magic_regressions("src/app.rs", &format!("/* x > {NEW_MAGIC_VALUE}"), None, 10)
             .expect("predecessor regex leaves an unclosed block-comment marker intact");
     assert_eq!(unclosed_comment[0].literal(), "100");
+    let pair = format!("{EXISTING_MAGIC_VALUE} < {NEW_MAGIC_VALUE}");
+    let pair = scan_magic_regressions("src/app.rs", &pair, None, 10)
+        .expect("one comparison follows predecessor non-overlapping matching");
+    assert_eq!(
+        pair.iter().map(MagicFinding::literal).collect::<Vec<_>>(),
+        [EXISTING_MAGIC_VALUE.to_string()]
+    );
+    let chain = format!("{PYTHON_MAGIC_VALUE} < {EXISTING_MAGIC_VALUE} < {NEW_MAGIC_VALUE}");
+    let chain = scan_magic_regressions("src/app.rs", &chain, None, 10)
+        .expect("comparison chains follow predecessor non-overlapping matching");
+    assert_eq!(
+        chain.iter().map(MagicFinding::literal).collect::<Vec<_>>(),
+        [
+            PYTHON_MAGIC_VALUE.to_string(),
+            EXISTING_MAGIC_VALUE.to_string()
+        ]
+    );
+    let consumed = format!("5 < {NEW_MAGIC_VALUE}");
+    assert!(
+        scan_magic_regressions("src/app.rs", &consumed, None, 10)
+            .expect("a below-threshold match still consumes its comparison")
+            .is_empty()
+    );
 
     assert!(matches!(
         scan_magic_regressions(
