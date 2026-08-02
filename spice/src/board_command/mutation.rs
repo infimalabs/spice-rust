@@ -3,12 +3,36 @@ struct ValidatedSnapshot {
     answer: BoardAnswer,
     entries: Vec<Entry>,
 }
+
+struct TaskAddition {
+    task: TaskHandle,
+    project: String,
+    origin: wire::Origin,
+    at: Instant,
+    statement: TaskHead,
+    workflow: WorkflowHead,
+    flow: Vec<wire::Phase>,
+    phase: wire::Phase,
+}
+
 fn task_add(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
     projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
+    let addition = match prepare_task_add(command, add, projects) {
+        Ok(addition) => addition,
+        Err(outcome) => return outcome,
+    };
+    commit_task_add(bus, command, add, addition)
+}
+
+fn prepare_task_add(
+    command: &wire::AdmittedCommand,
+    add: &TaskAdd,
+    projects: &ProjectPolicy,
+) -> Result<TaskAddition, Outcome<CommandAnswer>> {
     let handles = command
         .expected()
         .iter()
@@ -18,29 +42,38 @@ fn task_add(
         })
         .collect::<Vec<_>>();
     let [task] = handles.as_slice() else {
-        return protocol_fault(
+        return Err(protocol_fault(
             "task::add-witness-invalid",
             "task add requires exactly one intended absent handle",
-        );
+        ));
     };
     let task = task.clone();
     let project = add
         .project
         .clone()
         .unwrap_or_else(|| "task.private".to_owned());
-    let flow = match phases(add.flow.as_deref()) {
-        Ok(flow) => flow,
-        Err(outcome) => return outcome,
+    let Some(creation_authority) = command.kind().task_creation_authority() else {
+        return Err(protocol_fault(
+            "task::creation-authority-missing",
+            "task-add intent did not cross a task-creation command boundary",
+        ));
     };
+    if let Err(error) = projects.admit_creation(&project, creation_authority) {
+        let reason = if matches!(error, ProjectError::SystemReserved(_)) {
+            "task::project-system-reserved"
+        } else {
+            "task::add-refused"
+        };
+        return Err(refusal(
+            reason,
+            Some(error.to_string()),
+            "use a public project for manual creation or the owning typed system route",
+        ));
+    }
+    let flow = phases(add.flow.as_deref())?;
     let phase = flow[0].clone();
-    let origin = match task_origin(&task) {
-        Ok(origin) => origin,
-        Err(outcome) => return outcome,
-    };
-    let at = match current_instant() {
-        Ok(at) => at,
-        Err(outcome) => return outcome,
-    };
+    let origin = task_origin(&task)?;
+    let at = current_instant()?;
     let statement = TaskHead {
         handle: task.clone(),
         uuid: command.id(),
@@ -60,15 +93,41 @@ fn task_add(
         deferral: None,
         completion: None,
     };
-    if let Err(error) =
-        Entry::new(statement.clone(), workflow.clone(), None, None, projects)
-    {
-        return refusal(
+    Entry::new(statement.clone(), workflow.clone(), None, None, projects).map_err(|error| {
+        refusal(
             "task::add-refused",
             Some(error.to_string()),
             "correct the task project, dependencies, or phase flow and retry",
-        );
-    }
+        )
+    })?;
+    Ok(TaskAddition {
+        task,
+        project,
+        origin,
+        at,
+        statement,
+        workflow,
+        flow,
+        phase,
+    })
+}
+
+fn commit_task_add(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    add: &TaskAdd,
+    addition: TaskAddition,
+) -> Outcome<CommandAnswer> {
+    let TaskAddition {
+        task,
+        project,
+        origin,
+        at,
+        statement,
+        workflow,
+        flow,
+        phase,
+    } = addition;
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
     let added = match write.fact(
@@ -94,7 +153,7 @@ fn task_add(
         ..statement_head
     });
     write.workflow_head(task.clone(), added, move |_| workflow);
-    if add.project.as_deref() == Some("board.oops")
+    if add.project.as_deref() == Some(".oops")
         && let Some(note) = &add.description
         && let Err(error) = write.fact(
             body::TaskNoted {

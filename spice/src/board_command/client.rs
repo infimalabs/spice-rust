@@ -117,7 +117,7 @@ fn client_ledger(
 
 fn client_next(repository: &Repository, contract: &Contract) -> Outcome<CommandAnswer> {
     mutate_from_board(repository, contract, |board| {
-        let entries = entries(&board)?;
+        let entries = actor_entries(&board)?;
         let selected = board::select(&entries, &board.principal).ok_or_else(|| {
             refusal(
                 "board::allocator-empty",
@@ -314,11 +314,11 @@ fn client_oops(
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
     let text = required(matches, "TEXT");
-    submit_add(
+    submit_system_add(
         repository,
         contract,
         text.clone(),
-        Some("board.oops".to_owned()),
+        ".oops".to_owned(),
         Some(text),
     )
 }
@@ -656,9 +656,40 @@ fn submit_add(
     )
 }
 
+fn submit_system_add(
+    repository: &Repository,
+    contract: &Contract,
+    title: String,
+    project: String,
+    description: Option<String>,
+) -> Outcome<CommandAnswer> {
+    submit_task_add_with_kind(
+        repository,
+        contract,
+        CommandKind::TaskSystemAdd,
+        TaskAdd {
+            title,
+            project: Some(project),
+            description,
+            acceptance: Vec::new(),
+            flow: None,
+            depends: Vec::new(),
+        },
+    )
+}
+
 pub(crate) fn submit_task_add(
     repository: &Repository,
     contract: &Contract,
+    body: TaskAdd,
+) -> Outcome<CommandAnswer> {
+    submit_task_add_with_kind(repository, contract, CommandKind::TaskAdd, body)
+}
+
+fn submit_task_add_with_kind(
+    repository: &Repository,
+    contract: &Contract,
+    kind: CommandKind,
     body: TaskAdd,
 ) -> Outcome<CommandAnswer> {
     mutate_from_board(repository, contract, |board| {
@@ -675,7 +706,7 @@ pub(crate) fn submit_task_add(
             ));
         }
         Ok((
-            CommandKind::TaskAdd,
+            kind,
             vec![Witness::Absence { task: handle }],
             serde_json::to_value(body).expect("typed intent encodes"),
         ))
@@ -760,13 +791,13 @@ fn current_board(repository: &Repository) -> Result<BoardAnswer, Outcome<Command
     }
 }
 
-fn entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<CommandAnswer>> {
+fn actor_entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<CommandAnswer>> {
     board
         .tasks
         .iter()
         .map(|heads| {
             Entry::from_answer(
-                heads.statement.body.clone(),
+                heads.client_statement(),
                 heads.workflow.body.clone(),
                 heads.claim.as_ref().map(|head| head.body.clone()),
                 heads.lease.as_ref().map(|head| head.body.clone()),
@@ -995,7 +1026,7 @@ pub(crate) fn dispatch(
 ) -> Option<Outcome<CommandAnswer>> {
     let projects = ProjectPolicy::new(
         ["board".to_owned(), "rim".to_owned()],
-        Vec::new(),
+        ["sandbox".to_owned()],
         dialect::PROJECT_MIN_DEPTH as u64,
         dialect::PROJECT_MAX_DEPTH as u64,
     )

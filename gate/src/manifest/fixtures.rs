@@ -326,6 +326,7 @@ fn every_executable_form_resolves_then_refuses_for_every_internal_arm() {
             ),
             (format!("{table}run = \"python gate.py\"\n"), "run"),
             (format!("{table}run = [\"python\", \"gate.py\"]\n"), "run"),
+            (format!("{table}argv = \"python gate.py\"\n"), "argv"),
             (format!("{table}argv = [\"python\", \"gate.py\"]\n"), "argv"),
         ];
         for (repository, expected_leaf) in fixtures {

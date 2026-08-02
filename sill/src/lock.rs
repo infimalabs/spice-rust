@@ -73,6 +73,12 @@ impl LockFile {
         try_acquire_opened(self, file)
     }
 
+    /// Block on a caller-opened descriptor until the kernel grants possession.
+    #[cfg(unix)]
+    pub(crate) fn acquire_opened(&self, file: File) -> io::Result<Possession> {
+        acquire_opened(self, file, platform::LOCK_EX)
+    }
+
     /// Observe whether the kernel would grant this existing lock now.
     ///
     /// Missing lock files are available. This operation never creates a file;

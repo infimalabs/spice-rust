@@ -52,6 +52,8 @@ mod steering_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod task_artifact_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod task_migration_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod taste_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod trust_command;
@@ -158,6 +160,9 @@ fn dispatch_native_queries(contract: &cli::Contract, leaf: &clap::ArgMatches, fo
             install_command::Answer::Receipt(outcome) => deliver(&outcome, form),
         },
         ["config"] => deliver_config(&config_command::run(leaf), form),
+        ["config", "migrate-tasks"] => {
+            deliver_task_migration(&task_migration_command::run(leaf), form)
+        }
         ["consent"] => deliver(&consent_command::read(contract), form),
         ["consent", "allow"] => deliver(
             &consent_command::decide(leaf, contract, wire::Answer::Granted),
@@ -292,6 +297,10 @@ fn target_unsupported(path: &[&str]) -> Option<Fault> {
         ["canvas"] => (
             "canvas::target-unsupported",
             "repository discovery and platform browser launch are unavailable on wasm32",
+        ),
+        ["config", "migrate-tasks"] => (
+            "task-migration::target-unsupported",
+            "reading a predecessor task export is unavailable on wasm32",
         ),
         ["session", ..] => (
             "session::target-unsupported",
@@ -711,6 +720,24 @@ fn deliver_config(outcome: &Outcome<config_command::ConfigReport>, form: Form) -
     deliver(outcome, form)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn deliver_task_migration(outcome: &Outcome<spice::config::TaskMigrationReport>, form: Form) -> ! {
+    if form == Form::Text
+        && let Outcome::Reply(reply) = outcome
+    {
+        match reply.body.text() {
+            Ok(document) => {
+                let mut stdout = io::stdout().lock();
+                let _ = stdout.write_all(&document);
+                let _ = stdout.flush();
+                terminate_code(REPLY_EXIT);
+            }
+            Err(error) => deliver_fault(render_fault(error.to_string()), Form::Text),
+        }
+    }
+    deliver(outcome, form)
+}
+
 /// Acquire one ambient bootstrap value before typed configuration crosses
 /// into the library graph.
 #[expect(
@@ -817,6 +844,10 @@ mod tests {
             (&["lock", "run"][..], "lock::target-unsupported"),
             (&["restore", "verify"][..], "restore::target-unsupported"),
             (&["release", "notes"][..], "release::target-unsupported"),
+            (
+                &["config", "migrate-tasks"][..],
+                "task-migration::target-unsupported",
+            ),
         ] {
             let fault = target_unsupported(path)
                 .unwrap_or_else(|| panic!("{} needs a wasm refusal", path.join(" ")));

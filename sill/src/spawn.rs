@@ -6,6 +6,8 @@ use crate::spec::ProcessGroup;
 use crate::spec::Spec;
 use std::error::Error;
 use std::fmt;
+#[cfg(unix)]
+use std::fs::File;
 use std::io;
 #[cfg(unix)]
 use std::process::Child;
@@ -17,8 +19,6 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 #[cfg(unix)]
 use std::time::Instant;
-#[cfg(unix)]
-use std::{fs::File, os::fd::AsRawFd};
 
 #[cfg(unix)]
 const WAKE_BYTE: &[u8] = &[1];
@@ -154,6 +154,7 @@ pub struct Running {
     process: Arc<ProcessState>,
     stdout: Option<CaptureHandle>,
     stderr: Option<CaptureHandle>,
+    guardian: Option<guardian::Guardian>,
 }
 
 #[cfg(unix)]
@@ -206,8 +207,8 @@ pub fn spawn(spec: Spec) -> io::Result<Running> {
 }
 
 #[cfg(unix)]
-pub(crate) fn spawn_inheriting(spec: Spec, file: &File) -> io::Result<Running> {
-    spawn_inner(spec, None, Some(file.as_raw_fd()))
+pub(crate) fn spawn_guarded(spec: Spec, file: &File) -> io::Result<Running> {
+    spawn_inner(spec, None, Some(file))
 }
 
 /// Spawn one child with a bounded selected-stream observer.
@@ -283,6 +284,10 @@ fn wait_for_exit(pid: u32) -> io::Result<()> {
 impl Running {
     pub fn id(&self) -> u32 {
         self.pid
+    }
+
+    pub(crate) fn guardian_id(&self) -> Option<u32> {
+        self.guardian.as_ref().map(guardian::Guardian::id)
     }
 
     pub fn spec(&self) -> &Spec {
@@ -406,7 +411,7 @@ impl Running {
             )?;
         }
 
-        Ok(WaitOutcome {
+        let outcome = WaitOutcome {
             completion,
             observation_failure: self.observation_failure()?,
             stdout: self
@@ -421,7 +426,15 @@ impl Running {
                 .map(CaptureHandle::finish)
                 .transpose()
                 .map_err(|source| self.io_error("finishing stderr capture", source))?,
-        })
+        };
+        if guardian::group_absent(self.pid)
+            && let Some(guardian) = self.guardian.take()
+        {
+            guardian
+                .wait()
+                .map_err(|source| self.io_error("reaping lock guardian", source))?;
+        }
+        Ok(outcome)
     }
 
     fn take_child_exit(&mut self) -> Result<Option<ExitStatus>, WaitError> {
@@ -775,6 +788,8 @@ fn poll_timeout(duration: Duration) -> i32 {
 
 #[cfg(unix)]
 mod capture;
+#[cfg(unix)]
+mod guardian;
 #[cfg(unix)]
 mod launch;
 #[cfg(unix)]

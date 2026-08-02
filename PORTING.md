@@ -13,8 +13,8 @@ never reads Python authority bytes.
 | Measure | Result |
 | --- | --- |
 | Installed Python registry | 123/123 paths have one disposition; 1 task-owned gap; no unsupported deletions |
-| Rust contract registry | 85/85 leaves landed; no gaps or unaccounted leaves |
-| Rust process sweep | 170 text/JSON invocations; matching exits and streams; no placeholders |
+| Rust contract registry | 86/86 leaves landed; no gaps or unaccounted leaves |
+| Rust process sweep | 172 text/JSON invocations; matching exits and streams; no placeholders |
 | Functional smoke | 48/48 process tests across lifecycle, control, evidence, and recovery |
 | Coexistence | Two Rust generations; Python command, state, hooks, and hook path unchanged |
 
@@ -56,7 +56,7 @@ entrypoint, active hooks, or Python authority.
 
 ## Rust contracts
 
-The closed registry contains 85 leaves and all 85 have executable dispatch.
+The closed registry contains 86 leaves and all 86 have executable dispatch.
 `spice/src/cli.rs::landing` carries the same classification; its tests reject
 registry drift, and the process sweep rejects terminal release or resident
 placeholder outcomes.
@@ -148,6 +148,7 @@ placeholder outcomes.
 - `run`
 - `ack`
 - `config`
+- `config migrate-tasks`
 
 `install`, `config`, `restore`, and `release publish` are digest-bound plans.
 Rust installation remains namespaced and never replaces the ambient command or

@@ -31,6 +31,13 @@ const BODIES: &[(CommandKind, &str)] = &[
 }"#,
     ),
     (
+        CommandKind::TaskSystemAdd,
+        r#"{
+  "title": "Create one system-owned hidden task",
+  "project": ".oops"
+}"#,
+    ),
+    (
         CommandKind::TaskEdit,
         r#"{ "task": "SPICE-aBcD", "title": "a replacement statement" }"#,
     ),

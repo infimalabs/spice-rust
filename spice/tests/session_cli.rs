@@ -342,7 +342,10 @@ fn codex_second_turn_rows() -> Vec<Value> {
             json!({
                 "type": "task_complete",
                 "turn_id": "turn-two",
-                "last_agent_message": "Commit 1234abc completes the port.",
+                "last_agent_message": concat!(
+                    "Commit 1234abc remains visible in a distinct ",
+                    "task-complete final.",
+                ),
             }),
         ),
     ]
@@ -746,6 +749,170 @@ fn every_session_query_accepts_current_filters_and_crosses_both_forms() {
     scratch.remove();
 }
 
+fn assert_codex_final_rows(codex: &str) {
+    let finals = reply_forms(
+        &strings(&[
+            "session",
+            "messages",
+            codex,
+            "--side",
+            "assistant",
+            "--phase-kind",
+            "final_answer",
+            "--oldest-first",
+        ]),
+        &[],
+        "messages",
+    );
+    assert_eq!(finals["rows"].as_array().map(Vec::len), Some(3));
+    assert_eq!(
+        finals["rows"][0]["text"],
+        "Committed abcdef1 after verification."
+    );
+    assert_eq!(
+        finals["rows"][1]["text"],
+        "Commit 1234abc completes the port."
+    );
+    assert_eq!(
+        finals["rows"][2]["text"],
+        "Commit 1234abc remains visible in a distinct task-complete final."
+    );
+
+    let summary = reply_forms(
+        &strings(&["session", "summary", codex, "--recent", "8"]),
+        &[],
+        "summary",
+    );
+    assert_eq!(summary["recent_finals"].as_array().map(Vec::len), Some(3));
+}
+
+fn assert_codex_turn_and_recall_rows(codex: &str) {
+    let codex_turns = reply_forms(
+        &strings(&["session", "turns", codex, "--view", "full"]),
+        &[],
+        "turns",
+    );
+    let codex_turns = codex_turns["rows"]
+        .as_array()
+        .expect("Codex turns are typed");
+    assert_eq!(codex_turns.len(), 2);
+    let first_final_count = codex_turns[0]["dialogue"]
+        .as_array()
+        .expect("turn dialogue is typed")
+        .iter()
+        .filter(|message| message["text"] == "Committed abcdef1 after verification.")
+        .count();
+    assert_eq!(
+        first_final_count, 1,
+        "the repeated Codex final crosses once"
+    );
+    let second_assistant = codex_turns[1]["dialogue"]
+        .as_array()
+        .expect("turn dialogue is typed")
+        .iter()
+        .filter(|message| message["side"] == "assistant")
+        .map(|message| message["text"].as_str().expect("dialogue text is typed"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        second_assistant,
+        [
+            "Commit 1234abc completes the port.",
+            "Commit 1234abc remains visible in a distinct task-complete final.",
+        ]
+    );
+
+    let codex_recall = reply_forms(
+        &strings(&[
+            "session",
+            "briefing",
+            codex,
+            "--start",
+            "2026-01-01T00:00:00Z",
+            "--turn-id",
+            "turn-one",
+        ]),
+        &[],
+        "recall",
+    );
+    let recall_dialogue = codex_recall["window"]["turns"][0]["dialogue"]
+        .as_array()
+        .expect("recall dialogue is typed");
+    assert_eq!(
+        recall_dialogue
+            .iter()
+            .filter(|message| message["text"] == "Committed abcdef1 after verification.")
+            .count(),
+        1,
+        "recall projects the repeated Codex final once"
+    );
+}
+
+fn assert_claude_identity_rows(claude: &str) {
+    let claude_messages = reply_forms(
+        &strings(&[
+            "session",
+            "messages",
+            claude,
+            "--turn-id",
+            "prompt-one",
+            "--side",
+            "user",
+            "--oldest-first",
+        ]),
+        &[],
+        "messages",
+    );
+    assert_eq!(claude_messages["rows"].as_array().map(Vec::len), Some(1));
+    assert_eq!(claude_messages["rows"][0]["turn_id"], "prompt-one");
+
+    let claude_turns = reply_forms(
+        &strings(&[
+            "session",
+            "turns",
+            claude,
+            "--turn-id",
+            "prompt-one",
+            "--view",
+            "full",
+        ]),
+        &[],
+        "turns",
+    );
+    assert_eq!(claude_turns["rows"].as_array().map(Vec::len), Some(1));
+    assert_eq!(claude_turns["rows"][0]["turn_id"], "prompt-one");
+
+    let timeline = reply_forms(
+        &strings(&["session", "timeline", claude, "--turn-id", "prompt-two"]),
+        &[],
+        "timeline",
+    );
+    assert_eq!(timeline["rows"].as_array().map(Vec::len), Some(1));
+    assert_eq!(timeline["rows"][0]["turn_id"], "prompt-two");
+
+    let recall = reply_forms(
+        &strings(&["session", "briefing", claude, "--turn-id", "prompt-two"]),
+        &[],
+        "recall",
+    );
+    assert_eq!(recall["window"]["turns"].as_array().map(Vec::len), Some(1));
+    assert_eq!(recall["window"]["turns"][0]["turn_id"], "prompt-two");
+}
+
+#[test]
+fn provider_turn_identity_and_final_deduplication_cross_query_projections() {
+    let scratch = Scratch::new("provider-identity");
+    let codex_path = scratch.path().join("codex.jsonl");
+    let claude_path = scratch.path().join("claude.jsonl");
+    write_jsonl(&codex_path, &codex_rows());
+    write_jsonl(&claude_path, &claude_rows());
+
+    assert_codex_final_rows(&codex_path.to_string_lossy());
+    assert_codex_turn_and_recall_rows(&codex_path.to_string_lossy());
+    assert_claude_identity_rows(&claude_path.to_string_lossy());
+
+    scratch.remove();
+}
+
 #[test]
 fn root_thread_discovery_gzip_and_deduplication_preserve_identity() {
     let scratch = Scratch::new("discovery");
@@ -800,7 +967,10 @@ fn root_thread_discovery_gzip_and_deduplication_preserve_identity() {
     );
     assert_eq!(claude_thread["thread"]["id"], CLAUDE_THREAD);
     assert_eq!(claude_thread["thread"]["vendor"], "claude");
-    assert!(claude_thread["thread"]["latest_turn"]["turn_id"].is_null());
+    assert_eq!(
+        claude_thread["thread"]["latest_turn"]["turn_id"],
+        "prompt-two"
+    );
 
     let resolved_as_input = reply_forms(
         &strings(&["session", "summary", CLAUDE_THREAD_DASHED]),
@@ -954,7 +1124,13 @@ fn assert_unavailable_files(scratch: &Scratch) {
 
 fn assert_unavailable_turn_identity(scratch: &Scratch) {
     let claude_path = scratch.path().join("claude.jsonl");
-    write_jsonl(&claude_path, &claude_rows());
+    let mut rows = claude_rows();
+    for row in &mut rows {
+        row.as_object_mut()
+            .expect("fixture row is an object")
+            .remove("promptId");
+    }
+    write_jsonl(&claude_path, &rows);
     let claude = claude_path.to_string_lossy().into_owned();
     let unavailable_turn = refusal(
         &strings(&["session", "turns", &claude, "--turn-id", "codex-only-id"]),

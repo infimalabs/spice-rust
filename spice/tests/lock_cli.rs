@@ -13,6 +13,58 @@ use wire::Outcome;
 const BUSY_EXIT: i32 = 70;
 const TAKEN_EXIT: i32 = 71;
 const FULL_EXIT: i32 = 72;
+const CLOSE_FDS_READY: &str = "LOCK-CLOSE-FDS-READY";
+const CLOSE_FDS_PID_FILE: &str = "abrupt-child-pid";
+
+#[test]
+#[ignore = "subprocess fixture for the abrupt wrapper death test"]
+fn close_all_non_stdio_descriptors_and_wait() {
+    let pid_path = std::env::current_dir()
+        .expect("close-fds helper reads its working directory")
+        .join(CLOSE_FDS_PID_FILE);
+    fs::write(pid_path, std::process::id().to_string()).expect("close-fds helper records its PID");
+    close_non_stdio_descriptors();
+    println!("{CLOSE_FDS_READY}");
+    std::io::stdout()
+        .flush()
+        .expect("close-fds helper flushes readiness");
+    std::io::copy(&mut std::io::stdin(), &mut std::io::sink())
+        .expect("close-fds helper waits for stdin closure");
+}
+
+#[cfg(target_os = "linux")]
+fn close_non_stdio_descriptors() {
+    // SAFETY: the helper deliberately closes its complete non-stdio descriptor range.
+    if unsafe { libc::syscall(libc::SYS_close_range, 3, libc::c_uint::MAX, 0) } == 0 {
+        return;
+    }
+    close_descriptor_snapshot();
+}
+
+#[cfg(target_os = "macos")]
+fn close_non_stdio_descriptors() {
+    close_descriptor_snapshot();
+}
+
+fn close_descriptor_snapshot() {
+    let descriptors = fs::read_dir("/dev/fd")
+        .expect("close-fds helper reads its descriptor directory")
+        .map(|entry| {
+            entry
+                .expect("close-fds helper reads a descriptor entry")
+                .file_name()
+                .to_string_lossy()
+                .parse::<libc::c_int>()
+                .expect("descriptor directory entries are numeric")
+        })
+        .collect::<Vec<_>>();
+    for descriptor in descriptors.into_iter().filter(|descriptor| *descriptor > 2) {
+        // SAFETY: the helper deliberately closes every inherited non-stdio descriptor.
+        unsafe {
+            libc::close(descriptor);
+        }
+    }
+}
 
 struct Fixture {
     root: PathBuf,
@@ -384,20 +436,18 @@ fn a_signal_to_the_wrapper_terminates_the_child_group_and_releases_the_lock() {
 #[test]
 fn abrupt_wrapper_death_keeps_possession_until_the_protected_group_exits() {
     let fixture = Fixture::new("abrupt");
-    let child_pid_path = fixture.root.join("abrupt-child-pid");
+    let child_pid_path = fixture.root.join(CLOSE_FDS_PID_FILE);
+    let helper = std::env::current_exe().expect("locate lock CLI test executable");
     let mut child = Command::new(env!("CARGO_BIN_EXE_spice"));
     child
+        .args(["lock", "run", "solo", "--"])
+        .arg(helper)
         .args([
-            "lock",
-            "run",
-            "solo",
-            "--",
-            "/bin/sh",
-            "-c",
-            "printf '%s' \"$$\" > \"$1\"; printf 'READY\\n'; /bin/cat >/dev/null",
-            "lock-child",
+            "--exact",
+            "close_all_non_stdio_descriptors_and_wait",
+            "--ignored",
+            "--nocapture",
         ])
-        .arg(&child_pid_path)
         .current_dir(&fixture.root)
         .env_remove(steer::hook::INBOX)
         .stdin(Stdio::piped())
@@ -407,11 +457,19 @@ fn abrupt_wrapper_death_keeps_possession_until_the_protected_group_exits() {
     let wrapper_pid = wrapper.id();
     let release = wrapper.stdin.take().expect("wrapper stdin is piped");
     let mut output = BufReader::new(wrapper.stdout.take().expect("wrapper stdout is piped"));
-    let mut ready = String::new();
-    output
-        .read_line(&mut ready)
-        .expect("abrupt child reaches execution");
-    assert_eq!(ready, "READY\n");
+    loop {
+        let mut ready = String::new();
+        assert_ne!(
+            output
+                .read_line(&mut ready)
+                .expect("abrupt child reaches execution"),
+            0,
+            "close-fds helper exited before readiness"
+        );
+        if ready.contains(CLOSE_FDS_READY) {
+            break;
+        }
+    }
 
     let killed = Command::new("/bin/kill")
         .args(["-KILL", &wrapper_pid.to_string()])
@@ -419,6 +477,13 @@ fn abrupt_wrapper_death_keeps_possession_until_the_protected_group_exits() {
         .expect("kill abrupt wrapper");
     assert!(killed.status.success(), "kill wrapper: {killed:?}");
     assert!(!wrapper.wait().expect("wrapper is reaped").success());
+
+    let child_pid: i32 = fs::read_to_string(&child_pid_path)
+        .expect("child PID reads")
+        .parse()
+        .expect("child PID parses");
+    // SAFETY: signal zero only probes whether the protected helper remains present.
+    assert_eq!(unsafe { libc::kill(child_pid, 0) }, 0);
 
     let report = reply_body(fixture.invoke(&["lock", "--json"]));
     let entry = &report
@@ -444,18 +509,25 @@ fn abrupt_wrapper_death_keeps_possession_until_the_protected_group_exits() {
     output
         .read_to_string(&mut trailing)
         .expect("protected process group closes stdout on exit");
-    assert!(trailing.is_empty(), "abrupt child output: {trailing:?}");
-
-    let child_pid: i32 = fs::read_to_string(&child_pid_path)
-        .expect("child PID reads")
-        .parse()
-        .expect("child PID parses");
+    assert!(
+        trailing.contains("test result: ok"),
+        "abrupt child output: {trailing:?}"
+    );
+    let completion_lock = LockFile::new(
+        LockName::new("solo").expect("completion lock name"),
+        fixture.lock_root().join("solo.lock"),
+    );
+    let completion = completion_lock
+        .acquire()
+        .expect("kernel lock completion follows terminal group absence");
+    // SAFETY: signal zero only probes whether the protected helper remains present.
     assert_eq!(unsafe { libc::kill(child_pid, 0) }, -1);
     assert_eq!(
         std::io::Error::last_os_error().raw_os_error(),
         Some(libc::ESRCH),
-        "protected child remains after its process group closed stdout"
+        "guardian released before the protected child became terminally absent"
     );
+    drop(completion);
 
     let released = reply_body(fixture.invoke(&["lock", "--json"]));
     let entry = &released

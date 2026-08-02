@@ -662,6 +662,12 @@ fn every_command_states_an_authority_and_most_need_no_operator() {
     let mut operator = 0;
     let mut connected = 0;
 
+    assert_eq!(
+        CommandKind::TaskSystemAdd.law().authority,
+        Authority::Connected,
+        "the typed system route authenticates its caller without granting operator control",
+    );
+
     // The match is exhaustive over `Authority`, so a third capability cannot
     // enter the vocabulary without this count being confronted with it. Summing
     // the two arms back to `ALL.len()` would prove nothing instead: every kind
@@ -674,10 +680,10 @@ fn every_command_states_an_authority_and_most_need_no_operator() {
     }
 
     assert_eq!(operator, 13);
-    assert_eq!(connected, 29);
+    assert_eq!(connected, 30);
     assert_eq!(
         CommandKind::ALL.len(),
-        42,
+        43,
         "a command joined or left the registry; the counts above are the claim \
          to re-make, not the number to bump"
     );
