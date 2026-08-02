@@ -49,7 +49,7 @@ authorization is a deployment gate, not deletion authority.
 | JavaScript emission | Landed through browser DTOs compiled from the shared wire crate and app-drift verification. |
 | Source-text UI tests | Landed through shared typed fixtures and rendered browser tests that preserve the tested outcomes. |
 | Vendor files as citations | Landed through owned tape bytes and stable loci; vendor paths remain discovery inputs, not mutable evidence. |
-| Session forensics (`spice session`) | Pending on `FORENSI-1kJWS7G5`; `watch`, `retro`, `recall`, and `thread` are landed foundations but do not yet answer every predecessor query. |
+| Session forensics (`spice session`) | Landed through typed Rust queries over bounded immutable Codex and Claude transcript evidence, including discovery, gzip, filters, compaction windows, accounting, and explicit residue/refusal recovery. |
 | `spice demo` | Pending on `DEMO-1kJWSLwL` for the zero-setup seeded repository, transcript, lane, and canvas lifecycle. |
 | `spice agent import` | Pending on `RECOVER-1kJWSHkc` for team, lineage, session, and claim transfer without admitting stale predecessor authority. |
 | Agent-to-agent messaging | Landed as the predecessor's coordination outcome through board state, directives, facts, and repository evidence; no private transport was an independent authority. |

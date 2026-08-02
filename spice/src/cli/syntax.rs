@@ -175,10 +175,17 @@ fn option(parts: &[&'static str]) -> Result<Arg, String> {
     match parts {
         [_] => Ok(argument.action(ArgAction::SetTrue)),
         [_, value] if !value.starts_with('-') && !is_optional(value) => {
-            argument = argument
-                .value_name(*value)
-                .num_args(1)
-                .action(ArgAction::Set);
+            let (value, repeated) = value
+                .strip_suffix("...")
+                .map_or((*value, false), |value| (value, true));
+            if value.is_empty() {
+                return Err(format!("invalid repeated option value: {}", parts[1]));
+            }
+            argument = argument.value_name(value).num_args(1).action(if repeated {
+                ArgAction::Append
+            } else {
+                ArgAction::Set
+            });
             if value.contains('|') && value.chars().any(char::is_lowercase) {
                 argument = argument.value_parser(PossibleValuesParser::new(value.split('|')));
             }

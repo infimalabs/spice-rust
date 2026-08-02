@@ -27,6 +27,23 @@ const DIGEST: &str = "0000000000000000000000000000000000000000000000000000000000
 const CASES: &[Case] = &[
     case("watch", &["watch", "missing"]),
     case("retro", &["retro", "missing"]),
+    case("session", &["session"]),
+    case("session briefing", &["session", "briefing"]),
+    case("session commands", &["session", "commands"]),
+    case("session commits", &["session", "commits"]),
+    case("session compactions", &["session", "compactions"]),
+    case("session messages", &["session", "messages"]),
+    case("session phases", &["session", "phases"]),
+    case("session slices", &["session", "slices"]),
+    case("session summary", &["session", "summary"]),
+    case("session sweep", &["session", "sweep"]),
+    case(
+        "session thread",
+        &["session", "thread", "00000000-0000-4000-8000-000000000002"],
+    ),
+    case("session timeline", &["session", "timeline"]),
+    case("session tokens", &["session", "tokens"]),
+    case("session turns", &["session", "turns"]),
     case("doctor", &["doctor"]),
     case("version", &["version"]),
     case("install", &["install"]),
@@ -145,8 +162,8 @@ impl Drop for Scratch {
 fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
     let registered = landed_ledger_paths();
     let exercised = CASES.iter().map(|case| case.path).collect::<BTreeSet<_>>();
-    assert_eq!(registered.len(), 63);
-    assert_eq!(CASES.len(), 63);
+    assert_eq!(registered.len(), 77);
+    assert_eq!(CASES.len(), 77);
     assert_eq!(exercised.len(), CASES.len(), "process case repeated");
     assert_eq!(
         exercised, registered,
@@ -218,6 +235,11 @@ fn invoke(root: &Path, case: &Case, json: bool) -> Output {
         .args(case.arguments)
         .current_dir(root)
         .env_remove(steer::hook::INBOX)
+        .env_remove("CODEX_THREAD_ID") // env-policy: allow
+        .env_remove("CLAUDE_CODE_SESSION_ID") // env-policy: allow
+        .env_remove("SPICE_AGENT_VENDOR") // env-policy: allow
+        .env("CODEX_HOME", root.join("absent-codex-home"))
+        .env("CLAUDE_CONFIG_DIR", root.join("absent-claude-home"))
         .output()
         .unwrap_or_else(|error| panic!("{} process did not launch: {error}", case.path))
 }

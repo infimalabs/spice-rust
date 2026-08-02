@@ -209,6 +209,158 @@ const CONTRACTS: &[Contract] = &[
         "listen::retro"
     ),
     row!(
+        ["session"],
+        "session",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_briefing"
+    ),
+    row!(
+        ["session", "briefing"],
+        "session briefing [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
+         [--turn-id ID...] [--tool NAME...] [--max-lines N] [--max-bytes N] \
+         [--explain-pruning] [--deadline-seconds SECONDS]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_briefing"
+    ),
+    row!(
+        ["session", "commands"],
+        "session commands [FILES...] [--limit N] [--newest-first] \
+         [--since-compaction] [--failed] [--pipelines] [--noncanonical-pipelines] \
+         [--summary] [--max-text N]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_commands"
+    ),
+    row!(
+        ["session", "commits"],
+        "session commits [FILES...] [--limit N]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_commits"
+    ),
+    row!(
+        ["session", "compactions"],
+        "session compactions [FILES...] [--limit N]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_compactions"
+    ),
+    row!(
+        ["session", "messages"],
+        "session messages [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
+         [--turn-id ID...] [--side user|assistant...] \
+         [--phase-kind prompt|commentary|final_answer...] [--flavor FLAVOR...] \
+         [--limit N] [--oldest-first] [--max-text N]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_messages"
+    ),
+    row!(
+        ["session", "phases"],
+        "session phases [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
+         [--turn-id ID...] [--tool NAME...] [--limit N] [--examples N] [--max-text N]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_phases"
+    ),
+    row!(
+        ["session", "slices"],
+        "session slices [FILES...] [--limit N] [--slice-id ID...] \
+         [--view summary|full] [--max-text N]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_slices"
+    ),
+    row!(
+        ["session", "summary"],
+        "session summary [FILES...] [--recent N]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_summary"
+    ),
+    row!(
+        ["session", "sweep"],
+        "session sweep [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
+         [--turn-id ID...] [--tool NAME...] [--count N] [--deadline-seconds SECONDS]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_sweep"
+    ),
+    row!(
+        ["session", "thread"],
+        "session thread THREAD_ID",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_thread"
+    ),
+    row!(
+        ["session", "timeline"],
+        "session timeline [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
+         [--turn-id ID...] [--tool NAME...] [--limit N] [--max-text N]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_timeline"
+    ),
+    row!(
+        ["session", "tokens"],
+        "session tokens [FILES...] [--by-file]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_tokens"
+    ),
+    row!(
+        ["session", "turns"],
+        "session turns [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
+         [--turn-id ID...] [--tool NAME...] [--limit N] [--view dialogue|full]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_turns"
+    ),
+    row!(
         ["doctor"],
         "doctor",
         Local,
@@ -854,6 +1006,20 @@ pub fn landing(path: &[&str]) -> Landing {
     match path {
         ["watch"]
         | ["retro"]
+        | ["session"]
+        | ["session", "briefing"]
+        | ["session", "commands"]
+        | ["session", "commits"]
+        | ["session", "compactions"]
+        | ["session", "messages"]
+        | ["session", "phases"]
+        | ["session", "slices"]
+        | ["session", "summary"]
+        | ["session", "sweep"]
+        | ["session", "thread"]
+        | ["session", "timeline"]
+        | ["session", "tokens"]
+        | ["session", "turns"]
         | ["doctor"]
         | ["version"]
         | ["gate"]
