@@ -6,8 +6,8 @@ use crate::repository::Repository;
 
 use super::handle::AdmittedPath;
 use super::{
-    Asset, FileImage, Generation, InstallError, ObservedFile, Operation, ParentObservation, SKILL,
-    exclusions, read_binary,
+    Asset, FileImage, GIT_COMMIT_MESSAGE, GIT_PRE_COMMIT, GIT_REFERENCE_TRANSACTION, Generation,
+    InstallError, ObservedFile, Operation, ParentObservation, SKILL, exclusions, read_binary,
 };
 
 pub(super) fn publish_operation(
@@ -47,6 +47,9 @@ pub(super) fn materialize_generated(
                 .as_ref()
                 .map(|previous| previous.image.bytes()),
         )?,
+        Asset::GitPreCommit => GIT_PRE_COMMIT.as_bytes().to_vec(),
+        Asset::GitCommitMessage => GIT_COMMIT_MESSAGE.as_bytes().to_vec(),
+        Asset::GitReferenceTransaction => GIT_REFERENCE_TRANSACTION.as_bytes().to_vec(),
         Asset::HookEntry => steer::hook::STAGES[0].bytes().as_bytes().to_vec(),
         Asset::HookStatic => steer::hook::STAGES[1].bytes().as_bytes().to_vec(),
         Asset::Skill => SKILL.as_bytes().to_vec(),

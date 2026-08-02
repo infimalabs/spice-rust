@@ -11,7 +11,7 @@ Cargo. Active `.spice/hooks` still invoke Python. Python owns Git-common
 
 | Measure | Result |
 | --- | --- |
-| Installed Python registry | 123/123 paths have one disposition; 27 task-owned gaps; no unsupported deletions |
+| Installed Python registry | 123/123 paths have one disposition; 24 task-owned gaps; no unsupported deletions |
 | Rust contract registry | 63/63 leaves landed; no gaps or unaccounted leaves |
 | Rust process sweep | 126 text/JSON invocations; matching exits and streams; no placeholders |
 | Functional smoke | 39/39 process tests across lifecycle, control, evidence, and recovery |
@@ -24,8 +24,8 @@ exercised in the same worktree with separate authority.
 
 Cutover remains blocked on three classes of risk:
 
-1. `HOOKS-1kJQnmG8`, `FORENSI-1kJWS7G5`, `ARTIFAC-1kJWSCFm`,
-   `RECOVER-1kJWSHkc`, `DEMO-1kJWSLwL`, `PARITY-1kJWSQ7W`,
+1. `FORENSI-1kJWS7G5`, `ARTIFAC-1kJWSCFm`, `RECOVER-1kJWSHkc`,
+   `DEMO-1kJWSLwL`, `PARITY-1kJWSQ7W`,
    `PARITY-1kJWSV53`, and `GIT-1kJWMPvF` own retained predecessor behavior
    that is not yet executable in Rust. Until they land, the active Python
    hooks and command remain unchanged and the Python policy gate runs last in
@@ -34,6 +34,16 @@ Cutover remains blocked on three classes of risk:
    empty Rust authority is not a substitute for retained capability.
 3. Installed entrypoint selection and rollback still require an operator-run
    cutover rehearsal and explicit authorization.
+
+The version-three Rust install plan publishes executable `pre-commit`,
+`commit-msg`, and `reference-transaction` artifacts beneath
+`.spice/rust/git-hooks`. The first invokes only the canonical verifier; the
+second preserves current commit-message hygiene and additionally enforces the
+frozen `Spice-Origin` v1 grammar; the third preserves the independent guard
+against abandoning commits already merged into the current branch's upstream.
+Git remains on the Python-owned `.spice/hooks` path until the operator
+explicitly runs `scripts/install-hooks.sh`, which activates the complete Rust
+namespace.
 
 ## Rust coexistence
 
@@ -176,13 +186,13 @@ risk, not a fallback.
 ### Development gates
 
 - `dev`: D -> `gate`, `proof`, and `cargo xtask verify`.
-- `dev commit-msg`: P -> `HOOKS-1kJQnmG8` for native commit-message parity.
+- `dev commit-msg`: D -> installer-owned `cargo xtask commit-msg` hook.
 - `dev doctor`: R -> `doctor`.
-- `dev install-hooks`: P -> `HOOKS-1kJQnmG8` for the complete inactive native hook set.
+- `dev install-hooks`: D -> `install` plus operator-run `scripts/install-hooks.sh` cutover.
 - `dev pre-commit`: D -> `gate` plus the canonical verifier.
 - `dev pytest`: D -> workspace tests in the canonical verifier.
 - `dev python-typecheck`: R -> strict Rust linting and workspace tests in the canonical verifier.
-- `dev reference-transaction`: P -> `HOOKS-1kJQnmG8` for the native upstream-history guard.
+- `dev reference-transaction`: D -> installer-owned `cargo xtask reference-transaction` hook.
 - `dev serve-web-typecheck`: D -> verifier Wasm check.
 - `dev serve-web-types`: R -> shared Rust wire types plus verifier app-drift and Wasm checks.
 

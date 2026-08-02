@@ -33,8 +33,8 @@ use record::read_record;
 #[cfg(test)]
 use record::record_path;
 
-const PLAN_VERSION: u16 = 2;
-const RECORD_VERSION: u16 = 2;
+const PLAN_VERSION: u16 = 3;
+const RECORD_VERSION: u16 = 3;
 const LEGACY_RECORDS: [(&str, &str); 2] = [
     (".spice/install", "SURFACE-1kJQkpFs"),
     (".spice/rust/install.json", "SURFACE-1kJRGpf2"),
@@ -47,6 +47,9 @@ const DATA_MODE: u32 = 0o644;
 const EXECUTABLE_MODE: u32 = 0o755;
 
 const EXCLUDE_PATH: &str = "info/exclude";
+const GIT_PRE_COMMIT_PATH: &str = ".spice/rust/git-hooks/pre-commit";
+const GIT_COMMIT_MESSAGE_PATH: &str = ".spice/rust/git-hooks/commit-msg";
+const GIT_REFERENCE_TRANSACTION_PATH: &str = ".spice/rust/git-hooks/reference-transaction";
 const ENTRY_PATH: &str = ".spice/rust/hooks/entry.sh";
 const STATIC_PATH: &str = ".spice/rust/hooks/static/stage.sh";
 const SKILL_PATH: &str = ".agents/skills/spice-rust/SKILL.md";
@@ -61,6 +64,9 @@ const EXCLUDE_BLOCK: &str = concat!(
     "# END spice-rust coexistence\n",
 );
 const SKILL: &str = include_str!("install/skill.md");
+const GIT_PRE_COMMIT: &str = include_str!("../../.githooks/pre-commit");
+const GIT_COMMIT_MESSAGE: &str = include_str!("../../.githooks/commit-msg");
+const GIT_REFERENCE_TRANSACTION: &str = include_str!("../../.githooks/reference-transaction");
 
 #[cfg(debug_assertions)]
 #[doc(hidden)]
@@ -88,6 +94,9 @@ pub fn configure_test_mutation_rendezvous(
 #[serde(rename_all = "kebab-case")]
 pub enum Asset {
     Exclusions,
+    GitPreCommit,
+    GitCommitMessage,
+    GitReferenceTransaction,
     HookEntry,
     HookStatic,
     Skill,
@@ -337,6 +346,9 @@ impl InstallPlan {
         }
         let expected = [
             Asset::Exclusions,
+            Asset::GitPreCommit,
+            Asset::GitCommitMessage,
+            Asset::GitReferenceTransaction,
             Asset::HookEntry,
             Asset::HookStatic,
             Asset::Skill,
@@ -547,6 +559,24 @@ fn build_plan(
     )?);
 
     for (asset, path, bytes, mode) in [
+        (
+            Asset::GitPreCommit,
+            GIT_PRE_COMMIT_PATH,
+            GIT_PRE_COMMIT.as_bytes(),
+            EXECUTABLE_MODE,
+        ),
+        (
+            Asset::GitCommitMessage,
+            GIT_COMMIT_MESSAGE_PATH,
+            GIT_COMMIT_MESSAGE.as_bytes(),
+            EXECUTABLE_MODE,
+        ),
+        (
+            Asset::GitReferenceTransaction,
+            GIT_REFERENCE_TRANSACTION_PATH,
+            GIT_REFERENCE_TRANSACTION.as_bytes(),
+            EXECUTABLE_MODE,
+        ),
         (
             Asset::HookEntry,
             ENTRY_PATH,
@@ -776,6 +806,30 @@ fn validate_generated_content(
                 "entry hook differs from this build".to_owned(),
             ));
         }
+        Asset::GitPreCommit
+            if operation.generated
+                != GeneratedImage::new(EXECUTABLE_MODE, GIT_PRE_COMMIT.as_bytes()) =>
+        {
+            return Err(InstallError::InvalidRecord(
+                "Git pre-commit hook differs from this build".to_owned(),
+            ));
+        }
+        Asset::GitCommitMessage
+            if operation.generated
+                != GeneratedImage::new(EXECUTABLE_MODE, GIT_COMMIT_MESSAGE.as_bytes()) =>
+        {
+            return Err(InstallError::InvalidRecord(
+                "Git commit-msg hook differs from this build".to_owned(),
+            ));
+        }
+        Asset::GitReferenceTransaction
+            if operation.generated
+                != GeneratedImage::new(EXECUTABLE_MODE, GIT_REFERENCE_TRANSACTION.as_bytes()) =>
+        {
+            return Err(InstallError::InvalidRecord(
+                "Git reference-transaction hook differs from this build".to_owned(),
+            ));
+        }
         Asset::HookStatic
             if operation.generated
                 != GeneratedImage::new(
@@ -838,6 +892,13 @@ fn validate_introduced_parents(
 fn asset_contract(asset: Asset) -> (Location, &'static str, u32) {
     match asset {
         Asset::Exclusions => (Location::CommonGit, EXCLUDE_PATH, DATA_MODE),
+        Asset::GitPreCommit => (Location::Worktree, GIT_PRE_COMMIT_PATH, EXECUTABLE_MODE),
+        Asset::GitCommitMessage => (Location::Worktree, GIT_COMMIT_MESSAGE_PATH, EXECUTABLE_MODE),
+        Asset::GitReferenceTransaction => (
+            Location::Worktree,
+            GIT_REFERENCE_TRANSACTION_PATH,
+            EXECUTABLE_MODE,
+        ),
         Asset::HookEntry => (Location::Worktree, ENTRY_PATH, EXECUTABLE_MODE),
         Asset::HookStatic => (Location::Worktree, STATIC_PATH, EXECUTABLE_MODE),
         Asset::Skill => (Location::Worktree, SKILL_PATH, DATA_MODE),

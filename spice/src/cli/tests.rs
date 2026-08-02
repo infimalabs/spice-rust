@@ -238,37 +238,22 @@ fn installed_python_registry_and_ledger_dispositions_are_bijective() {
 #[derive(Clone, Copy, Debug)]
 enum PythonTaskDisposition {
     Landed(&'static [&'static str]),
-    Later(&'static str),
+    Pending(&'static str),
 }
 
 #[test]
 fn every_python_task_control_has_one_tested_current_disposition() {
-    use PythonTaskDisposition::{Landed, Later};
+    use PythonTaskDisposition::{Landed, Pending};
 
     let mappings = [
         ("task", Landed(&["board"])),
         ("task add", Landed(&["task", "add"])),
-        ("task artifact", Later("Task-addressed sidecar artifacts")),
-        (
-            "task artifact add",
-            Later("Task-addressed sidecar artifacts"),
-        ),
-        (
-            "task artifact list",
-            Later("Task-addressed sidecar artifacts"),
-        ),
-        (
-            "task artifact prune",
-            Later("Task-addressed sidecar artifacts"),
-        ),
-        (
-            "task artifact show",
-            Later("Task-addressed sidecar artifacts"),
-        ),
-        (
-            "task capture",
-            Later("Task-boundary Git publication and capture"),
-        ),
+        ("task artifact", Pending("ARTIFAC-1kJWSCFm")),
+        ("task artifact add", Pending("ARTIFAC-1kJWSCFm")),
+        ("task artifact list", Pending("ARTIFAC-1kJWSCFm")),
+        ("task artifact prune", Pending("ARTIFAC-1kJWSCFm")),
+        ("task artifact show", Pending("ARTIFAC-1kJWSCFm")),
+        ("task capture", Pending("GIT-1kJWMPvF")),
         ("task claim", Landed(&["task", "next"])),
         ("task delete", Landed(&["doc"])),
         ("task depends", Landed(&["task", "depends"])),
@@ -283,7 +268,7 @@ fn every_python_task_control_has_one_tested_current_disposition() {
         ("task next", Landed(&["task", "next"])),
         ("task note", Landed(&["task", "note"])),
         ("task oops", Landed(&["task", "oops"])),
-        ("task reclaim", Later("Manual claim renewal")),
+        ("task reclaim", Pending("RECOVER-1kJWSHkc")),
         ("task review", Landed(&["task", "review"])),
         ("task reword", Landed(&["doc"])),
         ("task show", Landed(&["board"])),
@@ -306,7 +291,6 @@ fn every_python_task_control_has_one_tested_current_disposition() {
         .filter_map(|line| line.strip_prefix("- `"))
         .filter_map(|line| line.split_once('`').map(|(path, _)| path))
         .collect::<BTreeSet<_>>();
-    let later = include_str!("../../../LATER.md");
     let mapped = mappings
         .iter()
         .map(|(path, _)| *path)
@@ -331,13 +315,9 @@ fn every_python_task_control_has_one_tested_current_disposition() {
                     "Python `{python}` maps to an unlanded Rust leaf: {path:?}",
                 );
             }
-            Later(boundary) => assert!(
-                later.lines().any(|line| {
-                    line.strip_prefix("| ")
-                        .and_then(|line| line.split_once(" |"))
-                        .is_some_and(|(surface, _)| surface == boundary)
-                }),
-                "Python `{python}` names an absent LATER.md boundary: {boundary}",
+            Pending(owner) => assert!(
+                task_plane.contains(&format!("`{owner}`")),
+                "Python `{python}` does not name its pending owner `{owner}`",
             ),
         }
     }
