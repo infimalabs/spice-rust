@@ -48,8 +48,8 @@ pub const DENIED_TOOLS: &[&str] = &[
 ///
 /// # Errors
 ///
-/// Returns a path-specific refusal for unsupported fields, or the common
-/// argument-vector refusal when the binary is empty.
+/// Returns a path-specific refusal for unsupported cross-vendor fields, or the
+/// common argument-vector refusal when the binary is empty.
 pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, ContractError> {
     if launch.personality.is_some() {
         return Err(ContractError::Unsupported {
@@ -60,12 +60,6 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
     if launch.fast_mode.is_some() {
         return Err(ContractError::Unsupported {
             path: "vendor.claude.fast_mode",
-            vendor: "Claude",
-        });
-    }
-    if launch.effort == crate::Effort::Max {
-        return Err(ContractError::Unsupported {
-            path: "vendor.claude.effort",
             vendor: "Claude",
         });
     }
