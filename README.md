@@ -3,10 +3,10 @@
 ## Development hooks
 
 During coexistence, Git remains configured to the Python-owned `.spice/hooks`
-directory. A digest-bound Rust install publishes inactive `pre-commit`,
-`commit-msg`, and `reference-transaction` artifacts under
-`.spice/rust/git-hooks` without changing those active files or
-`core.hooksPath`.
+directory or the legacy tracked `.githooks` wrappers. A digest-bound Rust
+install publishes inactive `pre-commit`, `commit-msg`, and
+`reference-transaction` artifacts under `.spice/rust/git-hooks` without
+changing either Python hook set or `core.hooksPath`.
 
 At an explicitly authorized hook cutover, preview and apply the current Rust
 install plan, then activate its exact hook directory once per checkout or

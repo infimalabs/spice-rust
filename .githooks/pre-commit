@@ -4,4 +4,5 @@ set -eu
 
 root=$(git rev-parse --show-toplevel)
 cd "$root" # env-policy: allow
-exec cargo xtask verify
+cargo xtask verify
+exec spice dev pre-commit

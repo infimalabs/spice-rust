@@ -6,8 +6,9 @@ Python remains the installed scaffold until the operator explicitly changes it.
 ## Authority and readiness
 
 The ambient `~/.local/bin/spice` is Python `0.31.0`; Rust runs explicitly via
-Cargo. Active `.spice/hooks` still invoke Python. Python owns Git-common
-`.spice`; Rust owns `.spice-rust` and never reads Python authority bytes.
+Cargo. Active `.spice/hooks` and legacy tracked `.githooks` wrappers still
+invoke Python. Python owns Git-common `.spice`; Rust owns `.spice-rust` and
+never reads Python authority bytes.
 
 | Measure | Result |
 | --- | --- |
@@ -41,9 +42,9 @@ The version-three Rust install plan publishes executable `pre-commit`,
 second preserves current commit-message hygiene and additionally enforces the
 frozen `Spice-Origin` v1 grammar; the third preserves the independent guard
 against abandoning commits already merged into the current branch's upstream.
-Git remains on the Python-owned `.spice/hooks` path until the operator
-explicitly runs `scripts/install-hooks.sh`, which activates the complete Rust
-namespace.
+Git remains on its Python-owned `.spice/hooks` or `.githooks` path until the
+operator explicitly runs `scripts/install-hooks.sh`, which activates the
+complete Rust namespace.
 
 ## Rust coexistence
 
