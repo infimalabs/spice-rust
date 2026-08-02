@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use wire::{
     Accepted, Body, CanonicalUuid, Derived, Envelope, Fact, FoldName, Origin, Outcome, Overflow,
-    Packed, Response, Seq,
+    Packed, Response, Seq, StreamFrame,
 };
 
 use crate::socket::{Admitted, SessionScope};
@@ -320,31 +320,7 @@ impl<T> BrowserState<T> {
             return Applied::ForeignScope;
         }
         let envelope = admitted.get();
-        let below_retention_floor = self.causal.len() == CAUSAL_HEADERS
-            && self
-                .causal
-                .first_key_value()
-                .is_some_and(|(lowest, _)| envelope.seq < *lowest);
-        if !below_retention_floor {
-            self.causal
-                .entry(envelope.seq)
-                .or_insert_with(|| CausalLink {
-                    seq: envelope.seq,
-                    origin: envelope.origin.clone(),
-                    cause: envelope.cause,
-                });
-            while self.causal.len() > CAUSAL_HEADERS {
-                self.causal.pop_first();
-            }
-        }
-        match self.cursor {
-            Some(cursor) if envelope.seq == cursor => Applied::Duplicate,
-            Some(cursor) if envelope.seq < cursor => Applied::Stale,
-            _ => {
-                self.cursor = Some(envelope.seq);
-                Applied::Advanced
-            }
-        }
+        self.observe_header(envelope.seq, envelope.origin.clone(), envelope.cause)
     }
 
     /// Walk received cause links from `start` toward a root.
@@ -476,6 +452,61 @@ impl<T> BrowserState<T> {
             self.cursor = None;
             self.answer = None;
             self.causal.clear();
+        }
+    }
+
+    /// Retain one packed projection derived from an admitted stream frame.
+    ///
+    /// This stays crate-private because only the runtime knows how a strict
+    /// stream variant projects to a pane row. The admission receipt supplies
+    /// scope; callers outside the crate cannot inject a packed answer.
+    pub(crate) fn replace_stream(
+        &mut self,
+        admitted: &Admitted<StreamFrame>,
+        packed: Packed<T>,
+    ) -> bool {
+        if admitted.scope() != self.scope {
+            return false;
+        }
+        self.answer = Some(Answer::HeadDirect(packed));
+        true
+    }
+
+    /// Retain one projected causal header from an admitted stream frame.
+    pub(crate) fn observe_stream(
+        &mut self,
+        admitted: &Admitted<StreamFrame>,
+        seq: Seq,
+        origin: Origin,
+        cause: Option<Seq>,
+    ) -> Applied {
+        if admitted.scope() != self.scope {
+            return Applied::ForeignScope;
+        }
+        self.observe_header(seq, origin, cause)
+    }
+
+    fn observe_header(&mut self, seq: Seq, origin: Origin, cause: Option<Seq>) -> Applied {
+        let below_retention_floor = self.causal.len() == CAUSAL_HEADERS
+            && self
+                .causal
+                .first_key_value()
+                .is_some_and(|(lowest, _)| seq < *lowest);
+        if !below_retention_floor {
+            self.causal
+                .entry(seq)
+                .or_insert(CausalLink { seq, origin, cause });
+            while self.causal.len() > CAUSAL_HEADERS {
+                self.causal.pop_first();
+            }
+        }
+        match self.cursor {
+            Some(cursor) if seq == cursor => Applied::Duplicate,
+            Some(cursor) if seq < cursor => Applied::Stale,
+            _ => {
+                self.cursor = Some(seq);
+                Applied::Advanced
+            }
         }
     }
 }

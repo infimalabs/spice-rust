@@ -10,7 +10,8 @@ use std::fmt;
 
 use serde::de::DeserializeOwned;
 use wire::{
-    Accepted, Body, CanonicalUuid, Envelope, Fact, Fault, FaultClass, Hello, Response, WireVersion,
+    Accepted, Body, CanonicalUuid, Envelope, Fact, Fault, FaultClass, Hello, Response, StreamFrame,
+    WireVersion,
 };
 
 /// Reasons this door names when it turns a frame away.
@@ -232,6 +233,57 @@ impl Session {
         let frame: Response<B> = decode_frame(bytes)?;
         admit_wire(frame.v)?;
         self.admit_epoch(frame.epoch)?;
+        Ok(Admitted {
+            frame,
+            scope: self.scope(),
+        })
+    }
+
+    /// Decode one multiplexed canvas stream frame and admit every generation
+    /// and wire marker it carries.
+    ///
+    /// The outer frame is not enough for fact pages: their envelopes carry the
+    /// current wire independently, and terminal cursors restate the generation
+    /// they can resume. This door checks each marker before returning the sole
+    /// receipt browser runtime state accepts.
+    ///
+    /// # Errors
+    ///
+    /// Returns a protocol fault when the frame is undecodable, any wire marker
+    /// is foreign, or the frame or one of its cursors names another generation.
+    pub fn admit_stream(&self, bytes: &[u8]) -> Result<Admitted<StreamFrame>, Fault> {
+        let frame: StreamFrame = decode_frame(bytes)?;
+        let (wire, epoch) = match &frame {
+            StreamFrame::Facts {
+                v, epoch, packed, ..
+            }
+            | StreamFrame::Thread {
+                v, epoch, packed, ..
+            } => {
+                for envelope in &packed.rows {
+                    admit_wire(envelope.wire())?;
+                }
+                (*v, *epoch)
+            }
+            StreamFrame::Fact { v, epoch, fact, .. } => {
+                admit_wire(fact.wire())?;
+                (*v, *epoch)
+            }
+            StreamFrame::Trust { v, epoch, .. }
+            | StreamFrame::Refusal { v, epoch, .. }
+            | StreamFrame::Fault { v, epoch, .. } => (*v, *epoch),
+            StreamFrame::Overflow {
+                v, epoch, after, ..
+            }
+            | StreamFrame::Closing {
+                v, epoch, after, ..
+            } => {
+                self.admit_epoch(after.epoch)?;
+                (*v, *epoch)
+            }
+        };
+        admit_wire(wire)?;
+        self.admit_epoch(epoch)?;
         Ok(Admitted {
             frame,
             scope: self.scope(),
