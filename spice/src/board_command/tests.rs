@@ -153,29 +153,12 @@ mod tests {
         project: &str,
         flow: Option<&str>,
     ) -> TaskHandle {
-        add_project_with_kind(
-            bus,
-            epoch,
-            actor,
-            CommandKind::TaskAdd,
-            (task, title, project, flow),
-        )
-    }
-
-    fn add_project_with_kind(
-        bus: &Bus,
-        epoch: CanonicalUuid,
-        actor: Actor,
-        kind: CommandKind,
-        task: (&str, &str, &str, Option<&str>),
-    ) -> TaskHandle {
-        let (task, title, project, flow) = task;
         let task = task.parse::<TaskHandle>().expect("fixture task handle");
         assert_committed(issue(
             bus,
             epoch,
             actor,
-            kind,
+            CommandKind::TaskAdd,
             vec![Witness::Absence { task: task.clone() }],
             &TaskAdd {
                 title: title.to_owned(),
@@ -184,6 +167,28 @@ mod tests {
                 acceptance: Vec::new(),
                 flow: flow.map(str::to_owned),
                 depends: Vec::new(),
+            },
+        ));
+        task
+    }
+
+    fn add_oops(
+        bus: &Bus,
+        epoch: CanonicalUuid,
+        actor: Actor,
+        task: &str,
+        title: &str,
+    ) -> TaskHandle {
+        let task = task.parse::<TaskHandle>().expect("oops fixture handle");
+        assert_committed(issue(
+            bus,
+            epoch,
+            actor,
+            CommandKind::TaskOopsAdd,
+            vec![Witness::Absence { task: task.clone() }],
+            &TaskOopsAdd {
+                title: title.to_owned(),
+                description: title.to_owned(),
             },
         ));
         task
@@ -300,17 +305,12 @@ mod tests {
     fn board_read_retains_hidden_evidence_while_next_and_presentation_stay_public() {
         let (root, bus, epoch, seats) = fixture("hidden-visibility", 1);
         let lane = Actor::Lane(seats[0].lane);
-        let hidden = add_project_with_kind(
+        let hidden = add_oops(
             &bus,
             epoch,
             Actor::Operator,
-            CommandKind::TaskSystemAdd,
-            (
-                "HIDDEN-oops1",
-                "secret allocator failure details",
-                ".oops.correctness",
-                Some("todo"),
-            ),
+            "HIDDEN-oops1",
+            "secret allocator failure details",
         );
         let public = add_project(
             &bus,
@@ -325,7 +325,7 @@ mod tests {
         let available = board(&bus, epoch, lane.clone());
         let hidden_heads = at(&available, &hidden);
         assert_eq!(hidden_heads.visibility.hidden_stem(), Some("oops"));
-        assert_eq!(hidden_heads.statement.body.project, ".oops.correctness");
+        assert_eq!(hidden_heads.statement.body.project, ".oops");
         assert_eq!(hidden_heads.presentation_title(), "Hidden task");
         assert_eq!(at(&available, &public).presentation_title(), "Visible allocator work");
         let json = serde_json::to_value(&available).expect("board answer encodes");
@@ -378,7 +378,7 @@ mod tests {
         let lane = Actor::Lane(seats[0].lane);
         let manual = [
             (Actor::Operator, "MANUAL-oops1", ".oops"),
-            (lane, "MANUAL-maxim1", ".maxim_proposal.theme_2"),
+            (lane.clone(), "MANUAL-maxim1", ".maxim_proposal.theme_2"),
             (Actor::Operator, "MANUAL-sand1", ".sandbox.audit"),
         ];
         for (actor, handle, project) in manual {
@@ -421,23 +421,76 @@ mod tests {
             );
         }
 
-        for (handle, project) in [
-            ("SYSTEM-oops1", ".oops"),
-            ("SYSTEM-maxim1", ".maxim_proposal.theme_2"),
-            ("SYSTEM-sand1", ".sandbox.audit"),
-        ] {
-            add_project_with_kind(
-                &bus,
-                epoch,
-                Actor::Operator,
-                CommandKind::TaskSystemAdd,
-                (handle, "Typed system creation", project, Some("todo")),
-            );
+        for actor in [Actor::Operator, lane.clone()] {
+            for project in [".oops", ".maxim_proposal.theme_2", ".sandbox.audit"] {
+                let task: TaskHandle = format!(
+                    "FORGED-{:08}",
+                    NEXT_COMMAND.fetch_add(1, Ordering::Relaxed)
+                )
+                .parse()
+                .expect("forged fixture handle");
+                let before = bus
+                    .fact_snapshot()
+                    .expect("facts before route decode refusal")
+                    .facts()
+                    .len();
+                let rejection = Command {
+                    v: WireVersion::CURRENT,
+                    id: uuid(NEXT_COMMAND.fetch_add(1, Ordering::Relaxed)),
+                    epoch,
+                    kind: CommandKind::TaskOopsAdd,
+                    expected: vec![Witness::Absence { task }],
+                    body: serde_json::json!({
+                        "title": "forged hidden route",
+                        "description": "caller-selected project must not cross",
+                        "project": project,
+                    }),
+                }
+                .admit(&Accepted {
+                    wire: WireVersion::CURRENT,
+                    actor: actor.clone(),
+                    epoch,
+                })
+                .expect_err("route DTO rejects a caller-selected project");
+                assert!(
+                    matches!(rejection, wire::CommandRejection::Fault(_)),
+                    "unexpected rejection for {project}: {rejection:?}",
+                );
+                assert_eq!(
+                    bus.fact_snapshot()
+                        .expect("facts after route decode refusal")
+                        .facts()
+                        .len(),
+                    before,
+                    "forged route mutated the journal for {project}",
+                );
+            }
         }
 
+        add_oops(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "SYSTEM-oops1",
+            "Operator oops route",
+        );
+        add_oops(
+            &bus,
+            epoch,
+            lane,
+            "SYSTEM-oops2",
+            "Lane oops route",
+        );
+
         let answer = board(&bus, epoch, Actor::Operator);
-        assert_eq!(answer.tasks.len(), 3);
+        assert_eq!(answer.tasks.len(), 2);
         assert!(answer.tasks.iter().all(|task| task.visibility.is_hidden()));
+        assert!(
+            answer
+                .tasks
+                .iter()
+                .all(|task| task.statement.body.project == ".oops")
+        );
         clean(&root, bus);
     }
 
@@ -461,22 +514,13 @@ mod tests {
             "Beta prerequisite",
             Some("todo"),
         );
-        let oops: TaskHandle = "OOPS-oops0001".parse().expect("oops handle");
-        assert_committed(issue(
+        let oops = add_oops(
             bus,
             epoch,
             Actor::Operator,
-            CommandKind::TaskSystemAdd,
-            vec![Witness::Absence { task: oops.clone() }],
-            &TaskAdd {
-                title: "A command was unexpectedly awkward".to_owned(),
-                project: Some(".oops".to_owned()),
-                description: Some("captured once as durable work".to_owned()),
-                acceptance: Vec::new(),
-                flow: None,
-                depends: Vec::new(),
-            },
-        ));
+            "OOPS-oops0001",
+            "A command was unexpectedly awkward",
+        );
         assert_committed(issue(
             bus,
             epoch,

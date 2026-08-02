@@ -270,15 +270,40 @@ fn project_policy_admits_only_resolved_hidden_roots_without_broadening_public_la
         assert_eq!(admitted.as_str(), project);
         assert_eq!(admitted.visibility().hidden_stem(), Some(stem));
         assert!(matches!(
-            projects.admit_creation(project, wire::TaskCreationAuthority::Manual),
+            projects.admit_manual_creation(project),
             Err(board::ProjectError::SystemReserved(ref reserved)) if reserved == stem
         ));
+    }
+    for (route, expected) in [
+        (board::SystemTaskRoute::oops(), ".oops"),
+        (
+            board::SystemTaskRoute::proposal(["theme_2".to_owned()]),
+            ".maxim_proposal.theme_2",
+        ),
+        (
+            board::SystemTaskRoute::configured(
+                "sandbox",
+                ["deep".to_owned(), "audit_1".to_owned()],
+            ),
+            ".sandbox.deep.audit_1",
+        ),
+    ] {
         assert_eq!(
             projects
-                .admit_creation(project, wire::TaskCreationAuthority::System)
-                .expect("system creation admits resolved hidden project"),
-            admitted,
+                .admit_system_creation(&route)
+                .expect("server route derives one resolved hidden project")
+                .as_str(),
+            expected,
         );
+    }
+    for stem in ["oops", "maxim_proposal"] {
+        assert!(matches!(
+            projects.admit_system_creation(&board::SystemTaskRoute::configured(
+                stem,
+                ["cross_target".to_owned()],
+            )),
+            Err(board::ProjectError::SystemRouteCollision(ref owner)) if owner == stem
+        ));
     }
     assert!(matches!(
         projects.admit(".unknown.work"),
@@ -296,7 +321,7 @@ fn project_policy_admits_only_resolved_hidden_roots_without_broadening_public_la
         assert!(!admitted.visibility().is_hidden());
         assert_eq!(
             projects
-                .admit_creation(public, wire::TaskCreationAuthority::Manual)
+                .admit_manual_creation(public)
                 .expect("manual creation keeps public admission"),
             admitted,
         );

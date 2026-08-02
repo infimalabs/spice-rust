@@ -1,9 +1,9 @@
 //! Authentication, generation, law, and body checks at the command door.
 
-use wire::intent::{CommandAnswer, Intent, StateAnswer};
+use wire::intent::{BodyShape, CommandAnswer, Intent, StateAnswer};
 use wire::{
     Accepted, Actor, CanonicalUuid, Command, CommandKind, CommandRejection, Outcome, Reply,
-    ReplyPosition, ResidentState, TaskCreationAuthority, WireVersion, Witness,
+    ReplyPosition, ResidentState, WireVersion, Witness,
 };
 
 fn uuid(last: u8) -> CanonicalUuid {
@@ -120,20 +120,12 @@ fn lane_cannot_submit_operator_direction() {
 }
 
 #[test]
-fn task_creation_authority_is_closed_over_the_two_add_routes() {
+fn task_creation_routes_are_closed_over_distinct_body_contracts() {
+    assert_eq!(CommandKind::TaskAdd.binding().body, BodyShape::TaskAdd,);
     assert_eq!(
-        CommandKind::TaskAdd.task_creation_authority(),
-        Some(TaskCreationAuthority::Manual),
+        CommandKind::TaskOopsAdd.binding().body,
+        BodyShape::TaskOopsAdd,
     );
-    assert_eq!(
-        CommandKind::TaskSystemAdd.task_creation_authority(),
-        Some(TaskCreationAuthority::System),
-    );
-    for kind in CommandKind::ALL {
-        if !matches!(kind, CommandKind::TaskAdd | CommandKind::TaskSystemAdd) {
-            assert_eq!(kind.task_creation_authority(), None, "{kind}");
-        }
-    }
 }
 
 #[test]

@@ -9,6 +9,59 @@ fn task_add(
     add: &TaskAdd,
     projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
+    let requested = add.project.as_deref().unwrap_or("task.private");
+    let project = match projects.admit_manual_creation(requested) {
+        Ok(project) => project,
+        Err(error) => {
+            let reason = if matches!(error, ProjectError::SystemReserved(_)) {
+                "task::project-system-reserved"
+            } else {
+                "task::add-refused"
+            };
+            return refusal(
+                reason,
+                Some(error.to_string()),
+                "use a public project for manual creation or the owning typed system route",
+            );
+        }
+    };
+    create_task(bus, command, add, project, add.clone(), projects)
+}
+
+fn task_oops_add(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    add: &TaskOopsAdd,
+    projects: &ProjectPolicy,
+) -> Outcome<CommandAnswer> {
+    let project = match projects.admit_system_creation(&SystemTaskRoute::oops()) {
+        Ok(project) => project,
+        Err(error) => {
+            return protocol_fault(
+                "task::oops-route-invalid",
+                &format!("resident-owned .oops route is not admitted: {error}"),
+            );
+        }
+    };
+    let normalized = TaskAdd {
+        title: add.title.clone(),
+        project: None,
+        description: Some(add.description.clone()),
+        acceptance: Vec::new(),
+        flow: None,
+        depends: Vec::new(),
+    };
+    create_task(bus, command, &normalized, project, add.clone(), projects)
+}
+
+fn create_task<B: serde::Serialize>(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    add: &TaskAdd,
+    project: Project,
+    request_body: B,
+    projects: &ProjectPolicy,
+) -> Outcome<CommandAnswer> {
     let handles = command
         .expected()
         .iter()
@@ -24,28 +77,7 @@ fn task_add(
         );
     };
     let task = task.clone();
-    let project = add
-        .project
-        .clone()
-        .unwrap_or_else(|| "task.private".to_owned());
-    let Some(creation_authority) = command.kind().task_creation_authority() else {
-        return protocol_fault(
-            "task::creation-authority-missing",
-            "task-add intent did not cross a task-creation command boundary",
-        );
-    };
-    if let Err(error) = projects.admit_creation(&project, creation_authority) {
-        let reason = if matches!(error, ProjectError::SystemReserved(_)) {
-            "task::project-system-reserved"
-        } else {
-            "task::add-refused"
-        };
-        return refusal(
-            reason,
-            Some(error.to_string()),
-            "use a public project for manual creation or the owning typed system route",
-        );
-    }
+    let project_text = project.as_str().to_owned();
     let flow = match phases(add.flow.as_deref()) {
         Ok(flow) => flow,
         Err(outcome) => return outcome,
@@ -63,7 +95,7 @@ fn task_add(
         handle: task.clone(),
         uuid: command.id(),
         title: add.title.clone(),
-        project: project.clone(),
+        project: project_text.clone(),
         tags: Vec::new(),
         dependencies: add.depends.clone(),
         provenance: origin.clone(),
@@ -94,7 +126,7 @@ fn task_add(
             task: task.clone(),
             uuid: command.id(),
             title: add.title.clone(),
-            project,
+            project: project_text,
             tags: Vec::new(),
             depends: add.depends.clone(),
             flow,
@@ -112,7 +144,7 @@ fn task_add(
         ..statement_head
     });
     write.workflow_head(task.clone(), added, move |_| workflow);
-    if add.project.as_deref() == Some(".oops")
+    if project.visibility().hidden_stem() == Some("oops")
         && let Some(note) = &add.description
         && let Err(error) = write.fact(
             body::TaskNoted {
@@ -129,7 +161,7 @@ fn task_add(
         status: "pending".to_owned(),
     };
     if let Err(error) = write.command_result(
-        request(command, add.clone()),
+        request(command, request_body),
         command.epoch(),
         answer.clone(),
     ) {
