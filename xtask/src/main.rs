@@ -1,13 +1,13 @@
 use std::env;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::io::{self, Read};
 use std::path::Path;
 use std::process::ExitCode;
 
 const USAGE_EXIT: u8 = 2;
 const USAGE: &str = concat!(
-    "usage: cargo xtask <verify|stage-app|check-app|commit-msg MESSAGE_FILE|",
-    "reference-transaction STATE>"
+    "usage: cargo xtask <verify|stage-app|check-app|stage-target TARGET|",
+    "commit-msg MESSAGE_FILE|reference-transaction STATE>"
 );
 
 #[allow(
@@ -29,6 +29,16 @@ fn main() -> ExitCode {
         }
         Some(value) if value == OsStr::new("check-app") && arguments.len() == 0 => {
             xtask::check_app(&mut output).map_err(Into::into)
+        }
+        Some(value) if value == OsStr::new("stage-target") && arguments.len() == 1 => {
+            let target = arguments.next().expect("one release target was admitted");
+            let Some(target) = target.to_str() else {
+                eprintln!("{USAGE}");
+                return ExitCode::from(USAGE_EXIT);
+            };
+            xtask::stage_target(target, release_environment(), &mut output)
+                .map(|_| ())
+                .map_err(Into::into)
         }
         Some(value) if value == OsStr::new("commit-msg") && arguments.len() == 1 => {
             let path = arguments
@@ -67,6 +77,26 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn release_environment() -> xtask::ReleaseEnvironment {
+    xtask::ReleaseEnvironment::new(
+        bootstrap_environment("PATH"),
+        bootstrap_environment("HOME"),
+        bootstrap_environment("CARGO_HOME"),
+        bootstrap_environment("RUSTUP_HOME"),
+        bootstrap_environment("TMPDIR"),
+        bootstrap_environment("SDKROOT"),
+        bootstrap_environment("DEVELOPER_DIR"),
+    )
+}
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the xtask binary rim owns ambient release-build acquisition"
+)]
+fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
+    env::var_os(name)
 }
 
 fn run_commit_message(path: &Path) -> Result<bool, Box<dyn std::error::Error>> {

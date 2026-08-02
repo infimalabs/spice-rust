@@ -60,13 +60,29 @@ fn tracked_inputs_load_one_operational_current_contract() {
         300
     );
     assert_eq!(contract.kill().bounds().grace().as_secs(), 1);
-    assert_eq!(contract.kill().bounds().capture(), 256 * 1024);
+    assert_eq!(contract.kill().bounds().capture(), 512 * 1024);
     assert_eq!(contract.kill().floor().numerator(), 0);
     assert_eq!(contract.kill().floor().denominator(), 1);
     let declaration = contract.gate_set().render();
     assert!(declaration.contains("kill identity cargo-mutants 27.1.0\n"));
     assert!(declaration.contains("kill environment clear\n"));
+    assert!(declaration.contains("kill environment AR /usr/bin/ar\n"));
     assert!(declaration.contains("kill environment CARGO "));
+    assert!(declaration.contains(
+        "kill environment CARGO_BUILD_BUILD_DIR selected-snapshot/target/mutation-build\n"
+    ));
+    assert!(declaration.contains("kill environment CARGO_INCREMENTAL 0\n"));
+    assert!(
+        declaration.contains(
+            "kill environment CARGO_TARGET_DIR selected-snapshot/target/mutation-target\n"
+        )
+    );
+    assert!(declaration.contains("kill environment CC /usr/bin/cc\n"));
+    assert!(declaration.contains("kill environment HOME "));
+    assert!(declaration.contains(":/usr/bin:/bin\nkill environment RUSTFLAGS "));
+    assert!(declaration.contains("kill environment RUSTFLAGS -C linker=/usr/bin/cc\n"));
+    assert!(declaration.contains("kill environment RUSTC_WORKSPACE_WRAPPER \n"));
+    assert!(declaration.contains("kill environment RUSTC_WRAPPER \n"));
     assert!(declaration.contains("kill environment SPICE_MUTATION_SEED compiled-seed\n"));
     assert!(declaration.contains("kill environment SPICE_MUTATION_ATTEMPT one-based-attempt\n"));
     let target_lines = declaration

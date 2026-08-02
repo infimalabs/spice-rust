@@ -9,10 +9,12 @@ use std::process::Command;
 
 mod commit_message;
 mod reference_transaction;
+mod release;
 mod succession;
 
 pub use commit_message::{CommitMessageError, WRAP_LIMIT as COMMIT_MESSAGE_WRAP_LIMIT};
 pub use reference_transaction::ReferenceTransactionError;
+pub use release::{CommandRecord, ReleaseEnvironment, TargetBuild, TargetBuildError, stage_target};
 
 /// Apply the repository's native commit-message law to one Git message file.
 ///
@@ -56,6 +58,7 @@ const WASM_TARGET: &str = "wasm32-unknown-unknown";
 const CARGO_HOME: &str = concat!(env!("HOME"), "/.cargo");
 
 const APP_FILES: [&str; 4] = ["app.module", "app_bg.wasm", "canvas-app.html", "style.css"];
+const RELEASE_STAGE_DIRECTORIES: [&str; 2] = ["objects", "targets"];
 const GENERATED_MODULE_REFERENCES: usize = 2;
 
 const VERIFY_ACTIONS: [Action; 8] = [
@@ -132,11 +135,29 @@ fn run_trunk(root: &Path, stage: &Path, output: &mut impl Write) -> Result<(), A
     writeln!(output, "[app] trunk 0.21.14 -> {}", stage.display())
         .map_err(AppBuildError::Output)?;
     let rustflags = remapped_rustflags(root)?;
-    let status = Command::new("trunk")
+    let status = trunk_command(root, stage, rustflags)
+        .status()
+        .map_err(AppBuildError::Launch)?;
+    if !status.success() {
+        return Err(AppBuildError::Exit(status.code()));
+    }
+    finalize_stage(stage)
+}
+
+fn trunk_command(root: &Path, stage: &Path, rustflags: String) -> Command {
+    let target = root.join("target/xtask-app");
+    let build = root.join("target/xtask-app-build");
+    let mut command = Command::new("trunk");
+    command
         .current_dir(root.join("app"))
+        .env("CARGO_BUILD_BUILD_DIR", build)
         .env("CARGO_ENCODED_RUSTFLAGS", rustflags)
         .env("CARGO_HOME", CARGO_HOME)
+        .env("CARGO_INCREMENTAL", "0")
+        .env("CARGO_TARGET_DIR", target)
         .env("NO_COLOR", "true")
+        .env("RUSTC_WORKSPACE_WRAPPER", "")
+        .env("RUSTC_WRAPPER", "")
         .args([
             "build",
             "index.html",
@@ -147,13 +168,8 @@ fn run_trunk(root: &Path, stage: &Path, output: &mut impl Write) -> Result<(), A
             "canvas-app.html",
             "--dist",
         ])
-        .arg(stage)
-        .status()
-        .map_err(AppBuildError::Launch)?;
-    if !status.success() {
-        return Err(AppBuildError::Exit(status.code()));
-    }
-    finalize_stage(stage)
+        .arg(stage);
+    command
 }
 
 fn finalize_stage(stage: &Path) -> Result<(), AppBuildError> {
@@ -203,7 +219,29 @@ fn remapped_rustflags(root: &Path) -> Result<String, AppBuildError> {
 fn compare_stage(expected: &Path, observed: &Path) -> Result<(), AppBuildError> {
     let expected_names = stage_names(expected)?;
     let observed_names = stage_names(observed)?;
-    if expected_names != APP_FILES || observed_names != APP_FILES {
+    let expected_app_names = expected_names
+        .iter()
+        .filter(|name| APP_FILES.contains(&name.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut expected_release_shape_is_valid = true;
+    for name in expected_names
+        .iter()
+        .filter(|name| !APP_FILES.contains(&name.as_str()))
+    {
+        if !RELEASE_STAGE_DIRECTORIES.contains(&name.as_str()) {
+            expected_release_shape_is_valid = false;
+            continue;
+        }
+        let path = expected.join(name);
+        let metadata =
+            fs::symlink_metadata(&path).map_err(|source| AppBuildError::Io { path, source })?;
+        expected_release_shape_is_valid &= metadata.file_type().is_dir();
+    }
+    if expected_app_names != APP_FILES
+        || observed_names != APP_FILES
+        || !expected_release_shape_is_valid
+    {
         return Err(AppBuildError::Inventory {
             expected: expected_names,
             observed: observed_names,
@@ -465,7 +503,7 @@ impl std::error::Error for VerifyError {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
+    use std::collections::{BTreeMap, VecDeque};
 
     use super::*;
 
@@ -503,6 +541,104 @@ mod tests {
                 .take()
                 .expect("fixture has one readiness outcome")
         }
+    }
+
+    #[test]
+    fn app_build_command_owns_cache_and_wrapper_inputs() {
+        let root = Path::new("/workspace");
+        let stage = Path::new("/stage");
+        let command = trunk_command(root, stage, "remapped-flags".to_owned());
+        let environment = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(
+            environment,
+            BTreeMap::from([
+                (
+                    "CARGO_BUILD_BUILD_DIR".to_owned(),
+                    Some("/workspace/target/xtask-app-build".to_owned()),
+                ),
+                (
+                    "CARGO_ENCODED_RUSTFLAGS".to_owned(),
+                    Some("remapped-flags".to_owned()),
+                ),
+                ("CARGO_HOME".to_owned(), Some(CARGO_HOME.to_owned())),
+                ("CARGO_INCREMENTAL".to_owned(), Some("0".to_owned())),
+                (
+                    "CARGO_TARGET_DIR".to_owned(),
+                    Some("/workspace/target/xtask-app".to_owned()),
+                ),
+                ("NO_COLOR".to_owned(), Some("true".to_owned())),
+                ("RUSTC_WORKSPACE_WRAPPER".to_owned(), Some(String::new())),
+                ("RUSTC_WRAPPER".to_owned(), Some(String::new())),
+            ])
+        );
+        assert_eq!(command.get_current_dir(), Some(Path::new("/workspace/app")));
+        assert_eq!(command.get_program(), "trunk");
+        assert_eq!(
+            command
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            [
+                "build",
+                "index.html",
+                "--release",
+                "--locked",
+                "--filehash=false",
+                "--html-output",
+                "canvas-app.html",
+                "--dist",
+                "/stage",
+            ]
+        );
+    }
+
+    #[test]
+    fn app_comparison_admits_only_release_owned_stage_directories() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-xtask-app-stage-inventory-{}",
+            std::process::id()
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        let expected = root.join("expected");
+        let observed = root.join("observed");
+        fs::create_dir_all(&expected).expect("create expected stage");
+        fs::create_dir_all(&observed).expect("create observed stage");
+        for name in APP_FILES {
+            fs::write(expected.join(name), name).expect("write expected app file");
+            fs::write(observed.join(name), name).expect("write observed app file");
+        }
+        for name in RELEASE_STAGE_DIRECTORIES {
+            fs::create_dir(expected.join(name)).expect("create release stage directory");
+        }
+
+        compare_stage(&expected, &observed).expect("release directories are separate ownership");
+
+        fs::write(expected.join("unowned"), b"bytes").expect("write unowned stage entry");
+        assert!(matches!(
+            compare_stage(&expected, &observed),
+            Err(AppBuildError::Inventory { .. })
+        ));
+        fs::remove_file(expected.join("unowned")).expect("remove unowned stage entry");
+        fs::remove_dir(expected.join("objects")).expect("remove release stage directory");
+        fs::write(expected.join("objects"), b"not a directory")
+            .expect("replace release directory with file");
+        assert!(matches!(
+            compare_stage(&expected, &observed),
+            Err(AppBuildError::Inventory { .. })
+        ));
+
+        fs::remove_dir_all(root).expect("remove fixture");
     }
 
     #[test]
