@@ -127,9 +127,7 @@ fn snapshot() -> Result<Snapshot, Failure> {
             error.to_string(),
         )
     })?;
-    let resolved = spice::config::load_coexisting_repository(&repository, &[])
-        .map_err(Failure::configuration)?;
-    let projects = resolved.root().tasks().project_policy();
+    let projects = task_project_policy(&repository)?;
     let state = repository.admit_state().map_err(state_failure)?;
     let reader = journal::JournalReader::open(state.journal()).map_err(|error| {
         Failure::fault(
@@ -175,6 +173,12 @@ fn snapshot() -> Result<Snapshot, Failure> {
         cursor,
         statuses,
     })
+}
+
+fn task_project_policy(repository: &Repository) -> Result<board::ProjectPolicy, Failure> {
+    let resolved = spice::config::load_coexisting_repository(repository, &[])
+        .map_err(Failure::configuration)?;
+    Ok(resolved.root().tasks().project_policy())
 }
 
 fn selected_task(matches: &clap::ArgMatches, snapshot: &Snapshot) -> Result<TaskHandle, Failure> {
