@@ -153,29 +153,12 @@ mod tests {
         project: &str,
         flow: Option<&str>,
     ) -> TaskHandle {
-        add_project_with_kind(
-            bus,
-            epoch,
-            actor,
-            CommandKind::TaskAdd,
-            (task, title, project, flow),
-        )
-    }
-
-    fn add_project_with_kind(
-        bus: &Bus,
-        epoch: CanonicalUuid,
-        actor: Actor,
-        kind: CommandKind,
-        task: (&str, &str, &str, Option<&str>),
-    ) -> TaskHandle {
-        let (task, title, project, flow) = task;
         let task = task.parse::<TaskHandle>().expect("fixture task handle");
         assert_committed(issue(
             bus,
             epoch,
             actor,
-            kind,
+            CommandKind::TaskAdd,
             vec![Witness::Absence { task: task.clone() }],
             &TaskAdd {
                 title: title.to_owned(),
@@ -184,6 +167,28 @@ mod tests {
                 acceptance: Vec::new(),
                 flow: flow.map(str::to_owned),
                 depends: Vec::new(),
+            },
+        ));
+        task
+    }
+
+    fn add_oops(
+        bus: &Bus,
+        epoch: CanonicalUuid,
+        actor: Actor,
+        task: &str,
+        title: &str,
+    ) -> TaskHandle {
+        let task = task.parse::<TaskHandle>().expect("oops fixture handle");
+        assert_committed(issue(
+            bus,
+            epoch,
+            actor,
+            CommandKind::TaskOopsAdd,
+            vec![Witness::Absence { task: task.clone() }],
+            &TaskOopsAdd {
+                title: title.to_owned(),
+                description: title.to_owned(),
             },
         ));
         task
@@ -255,7 +260,7 @@ mod tests {
         );
         let available = board(&bus, epoch, lane.clone());
         assert_eq!(available.active_public_tasks().count(), 2);
-        let entries = entries(&available)
+        let entries = actor_entries(&available)
             .expect("capture board entries are valid");
         assert_eq!(
             board::select(&entries, &lane)
@@ -307,7 +312,7 @@ mod tests {
         let hidden_heads = at(answer, hidden);
         assert_eq!(hidden_heads.visibility.hidden_stem(), Some("oops"));
         assert_eq!(hidden_heads.statement.body.handle, *hidden);
-        assert_eq!(hidden_heads.statement.body.project, ".oops.correctness");
+        assert_eq!(hidden_heads.statement.body.project, ".oops");
         assert_eq!(hidden_heads.presentation_title(), "Hidden task");
         assert_eq!(hidden_heads.workflow.body.status, "pending");
         let public_heads = at(answer, public);
@@ -359,17 +364,12 @@ mod tests {
     fn board_read_retains_hidden_evidence_while_next_and_presentation_stay_public() {
         let (root, bus, epoch, seats) = fixture("hidden-visibility", 1);
         let lane = Actor::Lane(seats[0].lane);
-        let hidden = add_project_with_kind(
+        let hidden = add_oops(
             &bus,
             epoch,
             Actor::Operator,
-            CommandKind::TaskSystemAdd,
-            (
-                "HIDDEN-oops1",
-                "secret allocator failure details",
-                ".oops.correctness",
-                Some("todo"),
-            ),
+            "HIDDEN-oops1",
+            "secret allocator failure details",
         );
         let public = add_project(
             &bus,
@@ -424,12 +424,223 @@ mod tests {
     }
 
     #[test]
+    fn document_ledgers_keep_hidden_titles_actor_facing_and_public_bytes_stable() {
+        let (root, bus, epoch, seats) = fixture("hidden-ledger", 1);
+        let secret = "secret document ledger details";
+        let hidden = add_oops(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "HIDDEN-ledger1",
+            secret,
+        );
+        let public = add_project(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "PUBLIC-ledger1",
+            "Visible document ledger",
+            "board.visibility",
+            Some("todo"),
+        );
+
+        let mut public_ledgers = Vec::new();
+        for actor in [Actor::Operator, Actor::Lane(seats[0].lane)] {
+            let actor_board = board(&bus, epoch, actor.clone());
+            let retained_hidden = actor_board
+                .tasks
+                .iter()
+                .find(|task| task.statement.body.handle == hidden)
+                .expect("actor retains hidden board row")
+                .statement
+                .body
+                .handle
+                .clone();
+            let hidden_ledger = issue(
+                &bus,
+                epoch,
+                actor.clone(),
+                CommandKind::DocLedger,
+                Vec::new(),
+                &DocLedger {
+                    task: retained_hidden,
+                },
+            );
+            let Outcome::Reply(Reply {
+                body: CommandAnswer::Text(ref answer),
+                ..
+            }) = hidden_ledger
+            else {
+                panic!("hidden ledger was not a text snapshot: {hidden_ledger:?}");
+            };
+            assert_eq!(answer.text, "# Hidden task\nFlow: todo, review\n");
+            for form in [crate::render::Form::Text, crate::render::Form::Json] {
+                let document = crate::render::render(&hidden_ledger, form)
+                    .expect("hidden ledger renders")
+                    .document()
+                    .to_vec();
+                let document = String::from_utf8(document).expect("ledger rendering is UTF-8");
+                assert!(!document.contains(secret), "{form:?} leaked hidden title");
+                assert!(
+                    document.contains("Hidden task"),
+                    "{form:?} omitted actor-facing title"
+                );
+            }
+
+            let retained_public = actor_board
+                .tasks
+                .iter()
+                .find(|task| task.statement.body.handle == public)
+                .expect("actor retains public board row")
+                .statement
+                .body
+                .handle
+                .clone();
+            let public_ledger = issue(
+                &bus,
+                epoch,
+                actor,
+                CommandKind::DocLedger,
+                Vec::new(),
+                &DocLedger {
+                    task: retained_public,
+                },
+            );
+            let Outcome::Reply(Reply {
+                body: CommandAnswer::Text(answer),
+                ..
+            }) = public_ledger
+            else {
+                panic!("public ledger was not a text snapshot: {public_ledger:?}");
+            };
+            assert_eq!(answer.text.as_bytes(), b"# Visible document ledger\nFlow: todo\n");
+            public_ledgers.push(answer.text);
+        }
+        assert_eq!(public_ledgers[0], public_ledgers[1]);
+        clean(&root, bus);
+    }
+
+    #[test]
+    fn graph_and_handout_reads_never_cross_the_hidden_title_boundary() {
+        let (root, bus, epoch, seats) = fixture("hidden-board-documents", 1);
+        let secret = "secret graph and handout details";
+        add_oops(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "HIDDEN-graph1",
+            secret,
+        );
+        add_project(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "PUBLIC-graph1",
+            "Visible graph work",
+            "board.visibility",
+            Some("todo"),
+        );
+
+        let expected_graph = concat!(
+            "graph workflow\n",
+            "HIDDEN-graph1: todo [pending]\n",
+            "PUBLIC-graph1: todo [pending]\n",
+        );
+        let mut actor_graphs = Vec::new();
+        for actor in [Actor::Operator, Actor::Lane(seats[0].lane)] {
+            let graph = issue(
+                &bus,
+                epoch,
+                actor,
+                CommandKind::BoardGraph,
+                Vec::new(),
+                &BoardGraph {
+                    view: "workflow".to_owned(),
+                    at: None,
+                },
+            );
+            let Outcome::Reply(Reply {
+                body: CommandAnswer::Text(ref answer),
+                ..
+            }) = graph
+            else {
+                panic!("graph was not a text snapshot: {graph:?}");
+            };
+            assert_eq!(answer.text.as_bytes(), expected_graph.as_bytes());
+            actor_graphs.push(answer.text.clone());
+            for form in [crate::render::Form::Text, crate::render::Form::Json] {
+                let document = crate::render::render(&graph, form)
+                    .expect("graph renders")
+                    .document()
+                    .to_vec();
+                let document = String::from_utf8(document).expect("graph rendering is UTF-8");
+                assert!(!document.contains(secret), "{form:?} leaked hidden title");
+                assert!(
+                    document.contains("PUBLIC-graph1: todo [pending]"),
+                    "{form:?} changed public graph row"
+                );
+            }
+        }
+        assert_eq!(actor_graphs[0], actor_graphs[1]);
+
+        let expected_handout = concat!(
+            "# Board handout\n\n",
+            "## dependencies\n\n",
+            "```text\n",
+            "graph dependencies\n",
+            "```\n\n",
+            "## workflow\n\n",
+            "```text\n",
+            "graph workflow\n",
+            "HIDDEN-graph1: todo [pending]\n",
+            "PUBLIC-graph1: todo [pending]\n",
+            "```\n\n",
+            "## claims\n\n",
+            "```text\n",
+            "graph claims\n",
+            "```\n\n",
+        );
+        let handout = issue(
+            &bus,
+            epoch,
+            Actor::Operator,
+            CommandKind::BoardHandout,
+            Vec::new(),
+            &BoardHandout {
+                output: "-".to_owned(),
+                at: None,
+            },
+        );
+        let Outcome::Reply(Reply {
+            body: CommandAnswer::Text(ref answer),
+            ..
+        }) = handout
+        else {
+            panic!("handout was not a text snapshot: {handout:?}");
+        };
+        assert_eq!(answer.text.as_bytes(), expected_handout.as_bytes());
+        for form in [crate::render::Form::Text, crate::render::Form::Json] {
+            let document = crate::render::render(&handout, form)
+                .expect("handout renders")
+                .document()
+                .to_vec();
+            let document = String::from_utf8(document).expect("handout rendering is UTF-8");
+            assert!(!document.contains(secret), "{form:?} leaked hidden title");
+            assert!(
+                document.contains("PUBLIC-graph1: todo [pending]"),
+                "{form:?} changed public handout row"
+            );
+        }
+        clean(&root, bus);
+    }
+
+    #[test]
     fn manual_hidden_creation_is_zero_write_and_system_routes_are_explicit() {
         let (root, bus, epoch, seats) = fixture("hidden-creation", 1);
         let lane = Actor::Lane(seats[0].lane);
         let manual = [
             (Actor::Operator, "MANUAL-oops1", ".oops"),
-            (lane, "MANUAL-maxim1", ".maxim_proposal.theme_2"),
+            (lane.clone(), "MANUAL-maxim1", ".maxim_proposal.theme_2"),
             (Actor::Operator, "MANUAL-sand1", ".sandbox.audit"),
         ];
         for (actor, handle, project) in manual {
@@ -472,23 +683,76 @@ mod tests {
             );
         }
 
-        for (handle, project) in [
-            ("SYSTEM-oops1", ".oops"),
-            ("SYSTEM-maxim1", ".maxim_proposal.theme_2"),
-            ("SYSTEM-sand1", ".sandbox.audit"),
-        ] {
-            add_project_with_kind(
-                &bus,
-                epoch,
-                Actor::Operator,
-                CommandKind::TaskSystemAdd,
-                (handle, "Typed system creation", project, Some("todo")),
-            );
+        for actor in [Actor::Operator, lane.clone()] {
+            for project in [".oops", ".maxim_proposal.theme_2", ".sandbox.audit"] {
+                let task: TaskHandle = format!(
+                    "FORGED-{:08}",
+                    NEXT_COMMAND.fetch_add(1, Ordering::Relaxed)
+                )
+                .parse()
+                .expect("forged fixture handle");
+                let before = bus
+                    .fact_snapshot()
+                    .expect("facts before route decode refusal")
+                    .facts()
+                    .len();
+                let rejection = Command {
+                    v: WireVersion::CURRENT,
+                    id: uuid(NEXT_COMMAND.fetch_add(1, Ordering::Relaxed)),
+                    epoch,
+                    kind: CommandKind::TaskOopsAdd,
+                    expected: vec![Witness::Absence { task }],
+                    body: serde_json::json!({
+                        "title": "forged hidden route",
+                        "description": "caller-selected project must not cross",
+                        "project": project,
+                    }),
+                }
+                .admit(&Accepted {
+                    wire: WireVersion::CURRENT,
+                    actor: actor.clone(),
+                    epoch,
+                })
+                .expect_err("route DTO rejects a caller-selected project");
+                assert!(
+                    matches!(rejection, wire::CommandRejection::Fault(_)),
+                    "unexpected rejection for {project}: {rejection:?}",
+                );
+                assert_eq!(
+                    bus.fact_snapshot()
+                        .expect("facts after route decode refusal")
+                        .facts()
+                        .len(),
+                    before,
+                    "forged route mutated the journal for {project}",
+                );
+            }
         }
 
+        add_oops(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "SYSTEM-oops1",
+            "Operator oops route",
+        );
+        add_oops(
+            &bus,
+            epoch,
+            lane,
+            "SYSTEM-oops2",
+            "Lane oops route",
+        );
+
         let answer = board(&bus, epoch, Actor::Operator);
-        assert_eq!(answer.tasks.len(), 3);
+        assert_eq!(answer.tasks.len(), 2);
         assert!(answer.tasks.iter().all(|task| task.visibility.is_hidden()));
+        assert!(
+            answer
+                .tasks
+                .iter()
+                .all(|task| task.statement.body.project == ".oops")
+        );
         clean(&root, bus);
     }
 
@@ -512,22 +776,13 @@ mod tests {
             "Beta prerequisite",
             Some("todo"),
         );
-        let oops: TaskHandle = "OOPS-oops0001".parse().expect("oops handle");
-        assert_committed(issue(
+        let oops = add_oops(
             bus,
             epoch,
             Actor::Operator,
-            CommandKind::TaskSystemAdd,
-            vec![Witness::Absence { task: oops.clone() }],
-            &TaskAdd {
-                title: "A command was unexpectedly awkward".to_owned(),
-                project: Some(".oops".to_owned()),
-                description: Some("captured once as durable work".to_owned()),
-                acceptance: Vec::new(),
-                flow: None,
-                depends: Vec::new(),
-            },
-        ));
+            "OOPS-oops0001",
+            "A command was unexpectedly awkward",
+        );
         assert_committed(issue(
             bus,
             epoch,

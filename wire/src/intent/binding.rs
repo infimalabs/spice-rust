@@ -11,8 +11,8 @@ use super::{
     LaneAnswer, LaneChangeAnswer, LaneRead, LaneRecall, LaneSeat, LaneState, RecallAnswer,
     RecognitionAnswer, Recognize, ReleasePublish, StateAnswer, SteerDispose, SteerInbox, SteerSend,
     TaskAdd, TaskAnswer, TaskAssign, TaskDefer, TaskDepends, TaskDone, TaskEdit, TaskNote,
-    TaskPhase, TaskRef, TaskReview, TasteAnswer, TasteRecord, TextAnswer, TrustAnswer, TrustRef,
-    UpChange,
+    TaskOopsAdd, TaskPhase, TaskRef, TaskReview, TasteAnswer, TasteRecord, TextAnswer, TrustAnswer,
+    TrustRef, UpChange,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -28,6 +28,8 @@ pub enum BodyShape {
     DocLedger,
     /// [`TaskAdd`]
     TaskAdd,
+    /// [`TaskOopsAdd`], the strict body for the server-owned `.oops` route.
+    TaskOopsAdd,
     /// [`TaskEdit`]
     TaskEdit,
     /// [`TaskNote`]
@@ -256,7 +258,8 @@ impl CommandKind {
             Self::BoardGraph => Binding::of(B::BoardGraph, A::Text),
             Self::BoardHandout => Binding::of(B::BoardHandout, A::Text),
             Self::DocLedger => Binding::of(B::DocLedger, A::Text),
-            Self::TaskAdd | Self::TaskSystemAdd => Binding::of(B::TaskAdd, A::Task),
+            Self::TaskAdd => Binding::of(B::TaskAdd, A::Task),
+            Self::TaskOopsAdd => Binding::of(B::TaskOopsAdd, A::Task),
             Self::TaskEdit => Binding::of(B::TaskEdit, A::Task),
             Self::TaskNote => Binding::of(B::TaskNote, A::Task),
             Self::TaskDefer => Binding::of(B::TaskDefer, A::Task),
@@ -314,6 +317,8 @@ pub enum Intent {
     DocLedger(DocLedger),
     /// [`BodyShape::TaskAdd`]
     TaskAdd(TaskAdd),
+    /// [`BodyShape::TaskOopsAdd`]
+    TaskOopsAdd(TaskOopsAdd),
     /// [`BodyShape::TaskEdit`]
     TaskEdit(TaskEdit),
     /// [`BodyShape::TaskNote`]
@@ -382,6 +387,7 @@ impl Intent {
             Self::BoardHandout(_) => BodyShape::BoardHandout,
             Self::DocLedger(_) => BodyShape::DocLedger,
             Self::TaskAdd(_) => BodyShape::TaskAdd,
+            Self::TaskOopsAdd(_) => BodyShape::TaskOopsAdd,
             Self::TaskEdit(_) => BodyShape::TaskEdit,
             Self::TaskNote(_) => BodyShape::TaskNote,
             Self::TaskDefer(_) => BodyShape::TaskDefer,
@@ -438,6 +444,7 @@ impl BodyShape {
                 | Self::BoardHandout
                 | Self::DocLedger
                 | Self::TaskAdd
+                | Self::TaskOopsAdd
                 | Self::TaskEdit
                 | Self::TaskNote
                 | Self::TaskDefer
@@ -460,6 +467,7 @@ impl BodyShape {
             Self::BoardHandout => Intent::BoardHandout(crate::decode(bytes)?),
             Self::DocLedger => Intent::DocLedger(crate::decode(bytes)?),
             Self::TaskAdd => Intent::TaskAdd(crate::decode(bytes)?),
+            Self::TaskOopsAdd => Intent::TaskOopsAdd(crate::decode(bytes)?),
             Self::TaskEdit => Intent::TaskEdit(crate::decode(bytes)?),
             Self::TaskNote => Intent::TaskNote(crate::decode(bytes)?),
             Self::TaskDefer => Intent::TaskDefer(crate::decode(bytes)?),

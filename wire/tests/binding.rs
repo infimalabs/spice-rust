@@ -31,10 +31,10 @@ const BODIES: &[(CommandKind, &str)] = &[
 }"#,
     ),
     (
-        CommandKind::TaskSystemAdd,
+        CommandKind::TaskOopsAdd,
         r#"{
   "title": "Create one system-owned hidden task",
-  "project": ".oops"
+  "description": "The server fixes this route to .oops"
 }"#,
     ),
     (
@@ -183,6 +183,26 @@ const BODIES: &[(CommandKind, &str)] = &[
     ),
     (CommandKind::UpChange, r#"{ "state": "quiescing" }"#),
 ];
+
+#[test]
+fn oops_route_body_cannot_name_or_cross_target_a_hidden_project() {
+    assert!(
+        "task::system-add".parse::<CommandKind>().is_err(),
+        "the retired generic hidden-creation discriminant still crosses the wire",
+    );
+    for project in [".oops", ".maxim_proposal.theme_2", ".sandbox.audit"] {
+        let body =
+            format!(r#"{{"title":"forged route","description":"detail","project":"{project}"}}"#);
+        assert!(
+            CommandKind::TaskOopsAdd
+                .binding()
+                .body
+                .decode(body.as_bytes())
+                .is_err(),
+            "oops route decoded caller-selected project {project}",
+        );
+    }
+}
 
 /// One successful reply body for every declared answer shape.
 const ANSWERS: &[(AnswerShape, &str)] = &[
@@ -446,6 +466,7 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::BoardHandout,
     BodyShape::DocLedger,
     BodyShape::TaskAdd,
+    BodyShape::TaskOopsAdd,
     BodyShape::TaskEdit,
     BodyShape::TaskNote,
     BodyShape::TaskDefer,

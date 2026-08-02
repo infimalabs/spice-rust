@@ -286,6 +286,10 @@ impl Running {
         self.pid
     }
 
+    pub(crate) fn guardian_id(&self) -> Option<u32> {
+        self.guardian.as_ref().map(guardian::Guardian::id)
+    }
+
     pub fn spec(&self) -> &Spec {
         &self.spec
     }

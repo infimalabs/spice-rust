@@ -35,8 +35,7 @@ pub use board::{
 pub struct TaskAdd {
     /// One-line statement of the work.
     pub title: String,
-    /// One resolved project, or absent for private work. The command kind's
-    /// non-crossing creation authority decides whether a hidden root is legal.
+    /// One resolved public project, or absent for private work.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -63,6 +62,19 @@ pub struct TaskAdd {
     /// Handles this task must follow.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends: Vec<TaskHandle>,
+}
+
+/// Add one task through the fixed server-owned `.oops` route.
+///
+/// The route owns the project, flow, and dependency policy. None crosses the
+/// wire, so a caller cannot turn this DTO into generic hidden-project creation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskOopsAdd {
+    /// One-line account of the unexpected behavior.
+    pub title: String,
+    /// Durable detail attached as the first note.
+    pub description: String,
 }
 
 /// Replace an unsettled task statement.

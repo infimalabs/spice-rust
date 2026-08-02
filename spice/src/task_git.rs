@@ -29,6 +29,9 @@ const MERGE_STATE_FILES: &[&str] =
     &["ORIG_HEAD", "MERGE_MODE", "MERGE_MSG", "MERGE_HEAD"];
 const LOCAL_COMMAND_LIMIT: Duration = Duration::from_secs(10);
 const NETWORK_COMMAND_LIMIT: Duration = Duration::from_secs(30);
+const OUTPUT_DRAIN_LIMIT: Duration = Duration::from_secs(1);
+const PROCESS_GROUP_GRACE: Duration = Duration::from_millis(100);
+const PROCESS_GROUP_REAP_LIMIT: Duration = Duration::from_secs(1);
 const OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
 
 /// Task facts used to build one durable integration commit message.

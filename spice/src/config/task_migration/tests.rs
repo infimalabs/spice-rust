@@ -47,8 +47,10 @@ fn absent_and_empty_override_forms_follow_exact_precedence() {
     for shell_settings in [
         json!({}),
         json!({"rc": ""}),
+        json!({"rc": "   "}),
         json!({"rc": []}),
         json!({"taskRc": ""}),
+        json!({"taskRc": ["", "  "]}),
         json!({"taskRc": []}),
         json!({"rc": "rc.unsupported=yes", "taskRc": ""}),
         json!({"rc": ["rc.unsupported=yes"], "taskRc": []}),
@@ -56,10 +58,37 @@ fn absent_and_empty_override_forms_follow_exact_precedence() {
         migrate(json!({
             "version": 1,
             "release": "0.31.0",
-            "teams": [{"teamId": "team-a", "shellSettings": shell_settings}]
+            "teams": [{"teamId": "lineage-a", "shellSettings": shell_settings}]
         }))
         .unwrap_or_else(|error| panic!("selected empty override must migrate: {error}"));
     }
+}
+
+#[test]
+fn override_prefix_classification_uses_predecessor_trimmed_text() {
+    let unsupported = migrate(json!({
+        "version": 1,
+        "release": "0.31.0",
+        "teams": [{
+            "teamId": "red",
+            "shellSettings": {"rc": "  rc.gc=off  "}
+        }]
+    }))
+    .expect_err("a padded raw override remains an unsupported rc token");
+    assert_eq!(unsupported.kind(), MigrationErrorKind::UnsupportedOverride);
+    assert_eq!(unsupported.token(), Some("  rc.gc=off  "));
+
+    let malformed = migrate(json!({
+        "version": 1,
+        "release": "0.31.0",
+        "teams": [{
+            "teamId": "red",
+            "shellSettings": {"taskRc": "  report.next=yes  "}
+        }]
+    }))
+    .expect_err("a padded token without an rc prefix remains malformed");
+    assert_eq!(malformed.kind(), MigrationErrorKind::MalformedOverride);
+    assert_eq!(malformed.token(), Some("  report.next=yes  "));
 }
 
 #[test]
@@ -80,6 +109,7 @@ fn every_nonempty_token_refuses_in_source_order_with_complete_identity() {
     assert_eq!(first.token(), Some("rc.report.next.sort=urgency-"));
     assert_eq!(first.source_file(), SOURCE);
     assert!(first.to_string().contains("release=0.31.0"));
+    assert!(first.to_string().contains("lineage=red"));
     assert!(first.recovery().contains("future named Rust task field"));
 
     let second = migrate(json!({
@@ -127,6 +157,29 @@ fn malformed_prefix_and_every_wrong_shape_are_typed_refusals() {
         assert_eq!(error.list_index(), index);
         assert!(error.token().is_none());
     }
+}
+
+#[test]
+fn lineage_scoped_schema_and_duplicate_refusals_retain_known_identity() {
+    let unknown = migrate(json!({
+        "version": 1,
+        "release": "0.31.0",
+        "teams": [{"teamId": "red", "extra": true}]
+    }))
+    .expect_err("unknown lineage field refuses");
+    assert_eq!(unknown.kind(), MigrationErrorKind::Schema);
+    assert_eq!(unknown.lineage(), Some("red"));
+    assert_eq!(unknown.field(), "teams[0].extra");
+
+    let duplicate = migrate(json!({
+        "version": 1,
+        "release": "0.31.0",
+        "teams": [{"teamId": "red"}, {"teamId": "red"}]
+    }))
+    .expect_err("duplicate lineage identity refuses");
+    assert_eq!(duplicate.kind(), MigrationErrorKind::Malformed);
+    assert_eq!(duplicate.lineage(), Some("red"));
+    assert_eq!(duplicate.field(), "teams[1].teamId");
 }
 
 #[test]

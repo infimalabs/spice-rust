@@ -13,12 +13,19 @@ struct Case {
     path: &'static str,
     arguments: &'static [&'static str],
     output: OutputKind,
+    expected: ExpectedOutcome,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum OutputKind {
     Document,
     ChildStream,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ExpectedOutcome {
+    Generic,
+    TaskMigration,
 }
 
 const UUID: &str = "00000000-0000-4000-8000-000000000001";
@@ -136,13 +143,16 @@ const CASES: &[Case] = &[
         path: "run",
         arguments: &["run", "--", "/bin/echo", "run"],
         output: OutputKind::ChildStream,
+        expected: ExpectedOutcome::Generic,
     },
     case("ack", &["ack", "ready"]),
     case("config", &["config"]),
-    case(
-        "config migrate-tasks",
-        &["config", "migrate-tasks", "missing-task-export.json"],
-    ),
+    Case {
+        path: "config migrate-tasks",
+        arguments: &["config", "migrate-tasks", "task-export.json"],
+        output: OutputKind::Document,
+        expected: ExpectedOutcome::TaskMigration,
+    },
 ];
 
 const fn case(path: &'static str, arguments: &'static [&'static str]) -> Case {
@@ -150,6 +160,7 @@ const fn case(path: &'static str, arguments: &'static [&'static str]) -> Case {
         path,
         arguments,
         output: OutputKind::Document,
+        expected: ExpectedOutcome::Generic,
     }
 }
 
@@ -183,6 +194,7 @@ fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
     let exercised = CASES.iter().map(|case| case.path).collect::<BTreeSet<_>>();
     assert_eq!(registered.len(), 84);
     assert_eq!(CASES.len(), 84);
+    assert_eq!(exercised.len(), 84);
     assert_eq!(exercised.len(), CASES.len(), "process case repeated");
     assert_eq!(
         exercised, registered,
@@ -190,6 +202,7 @@ fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
     );
 
     let scratch = Scratch::new();
+    write_task_export(scratch.path());
     for case in CASES {
         let text = invoke(scratch.path(), case, false);
         let json = invoke(scratch.path(), case, true);
@@ -200,6 +213,7 @@ fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
         assert_one_stream(&json, case.path);
         assert_no_placeholder(&text, case.path);
         assert_no_placeholder(&json, case.path);
+        assert_expected_outcome(case, &text, &json);
 
         if case.output == OutputKind::Document {
             let document = if json.status.success() {
@@ -212,6 +226,42 @@ fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
             });
         }
     }
+}
+
+fn write_task_export(root: &Path) {
+    fs::write(
+        root.join("task-export.json"),
+        concat!(
+            "{\n",
+            "  \"version\": 1,\n",
+            "  \"release\": \"0.31.0\",\n",
+            "  \"tasks\": {\"hidden_stems\": [\"sandbox\"]}\n",
+            "}\n",
+        ),
+    )
+    .expect("write explicit predecessor task export");
+}
+
+fn assert_expected_outcome(case: &Case, text: &Output, json: &Output) {
+    if case.expected == ExpectedOutcome::Generic {
+        return;
+    }
+    assert!(text.status.success(), "{} text: {text:?}", case.path);
+    let text = String::from_utf8(text.stdout.clone()).expect("migration text is UTF-8");
+    assert!(text.contains("source_release = \"0.31.0\""), "{text}");
+    assert!(text.contains("\"maxim_proposal\""), "{text}");
+    assert!(text.contains("\"sandbox\""), "{text}");
+
+    let outcome: wire::Outcome<serde_json::Value> =
+        wire::decode(&json.stdout).expect("migration JSON is a typed outcome");
+    let wire::Outcome::Reply(reply) = outcome else {
+        panic!("{} must return a typed reply: {outcome:?}", case.path);
+    };
+    assert_eq!(reply.body["source_release"], "0.31.0");
+    assert_eq!(
+        reply.body["tasks"]["hidden_stems"],
+        serde_json::json!(["oops", "maxim_proposal", "sandbox"]),
+    );
 }
 
 fn assert_exit(case: &Case, output: &Output, form: &str) {

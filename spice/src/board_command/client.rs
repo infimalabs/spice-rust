@@ -116,7 +116,7 @@ fn client_ledger(
 
 fn client_next(repository: &Repository, contract: &Contract) -> Outcome<CommandAnswer> {
     mutate_from_board(repository, contract, |board| {
-        let entries = entries(&board)?;
+        let entries = actor_entries(&board)?;
         let selected = board::select(&entries, &board.principal).ok_or_else(|| {
             refusal(
                 "board::allocator-empty",
@@ -235,12 +235,13 @@ fn client_oops(
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
     let text = required(matches, "TEXT");
-    submit_system_add(
+    submit_oops_add(
         repository,
         contract,
-        text.clone(),
-        ".oops".to_owned(),
-        Some(text),
+        TaskOopsAdd {
+            title: text.clone(),
+            description: text,
+        },
     )
 }
 
@@ -577,40 +578,35 @@ fn submit_add(
     )
 }
 
-fn submit_system_add(
+fn submit_oops_add(
     repository: &Repository,
     contract: &Contract,
-    title: String,
-    project: String,
-    description: Option<String>,
+    body: TaskOopsAdd,
 ) -> Outcome<CommandAnswer> {
-    submit_task_add_with_kind(
-        repository,
-        contract,
-        CommandKind::TaskSystemAdd,
-        TaskAdd {
-            title,
-            project: Some(project),
-            description,
-            acceptance: Vec::new(),
-            flow: None,
-            depends: Vec::new(),
-        },
-    )
+    mutate_from_board(repository, contract, |board| {
+        let handle = mint_handle(Some(".oops"), &body.title);
+        if board
+            .tasks
+            .iter()
+            .any(|task| task.statement.body.handle == handle)
+        {
+            return Err(refusal(
+                "task::identity-collision",
+                Some(handle.to_string()),
+                "retry task oops so the authority can mint a fresh handle",
+            ));
+        }
+        Ok((
+            CommandKind::TaskOopsAdd,
+            vec![Witness::Absence { task: handle }],
+            serde_json::to_value(body).expect("typed intent encodes"),
+        ))
+    })
 }
 
 pub(crate) fn submit_task_add(
     repository: &Repository,
     contract: &Contract,
-    body: TaskAdd,
-) -> Outcome<CommandAnswer> {
-    submit_task_add_with_kind(repository, contract, CommandKind::TaskAdd, body)
-}
-
-fn submit_task_add_with_kind(
-    repository: &Repository,
-    contract: &Contract,
-    kind: CommandKind,
     body: TaskAdd,
 ) -> Outcome<CommandAnswer> {
     mutate_from_board(repository, contract, |board| {
@@ -627,7 +623,7 @@ fn submit_task_add_with_kind(
             ));
         }
         Ok((
-            kind,
+            CommandKind::TaskAdd,
             vec![Witness::Absence { task: handle }],
             serde_json::to_value(body).expect("typed intent encodes"),
         ))
@@ -712,7 +708,7 @@ fn current_board(repository: &Repository) -> Result<BoardAnswer, Outcome<Command
     }
 }
 
-fn entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<CommandAnswer>> {
+fn actor_entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<CommandAnswer>> {
     board
         .tasks
         .iter()
@@ -976,6 +972,7 @@ pub(crate) fn dispatch_with_repository(
             read_ledger(bus, ledger, command.actor().clone(), projects)
         }
         wire::intent::Intent::TaskAdd(add) => task_add(bus, command, add, projects),
+        wire::intent::Intent::TaskOopsAdd(add) => task_oops_add(bus, command, add, projects),
         wire::intent::Intent::TaskNote(note) => task_note(bus, command, note),
         wire::intent::Intent::TaskDefer(defer) => task_defer(bus, command, defer, projects),
         wire::intent::Intent::TaskRef(task) if command.kind() == CommandKind::TaskWake => {

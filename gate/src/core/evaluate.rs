@@ -104,7 +104,8 @@ fn evaluate_merge(evidence: &MergeIntegrityEvidence) -> (CoreStanding, String) {
         MergeIntegrityEvidence::Compared {
             head_tree,
             expected_tree,
-            ..
+            completion: MergeTreeCompletion::Clean,
+            conflicted_paths: _,
         } if expected_tree == head_tree => passed(format!(
             "merge integrity: merge-tree result equals HEAD {head_tree}"
         )),

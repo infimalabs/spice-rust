@@ -536,20 +536,21 @@ fn abrupt_wrapper_death_keeps_possession_until_the_protected_group_exits() {
         trailing.contains("test result: ok"),
         "abrupt child output: {trailing:?}"
     );
-    let absent_deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        // SAFETY: signal zero only probes whether the protected helper remains present.
-        if unsafe { libc::kill(child_pid, 0) } == -1
-            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
-        {
-            break;
-        }
-        assert!(
-            Instant::now() < absent_deadline,
-            "protected child remains after its process group closed stdout"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    let completion_lock = LockFile::new(
+        LockName::new("solo").expect("completion lock name"),
+        fixture.lock_root().join("solo.lock"),
+    );
+    let completion = completion_lock
+        .acquire()
+        .expect("kernel lock completion follows terminal group absence");
+    // SAFETY: signal zero only probes whether the protected helper remains present.
+    assert_eq!(unsafe { libc::kill(child_pid, 0) }, -1);
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ESRCH),
+        "guardian released before the protected child became terminally absent"
+    );
+    drop(completion);
 
     let released = fixture.wait_until_available("solo");
     let entry = &released

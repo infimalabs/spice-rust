@@ -3,6 +3,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt as _;
     use std::process::Output;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{Duration, Instant};
 
     use super::*;
 
@@ -333,6 +334,64 @@ mod tests {
             !transaction_path(&fixture.agent)
                 .expect("transaction path")
                 .exists()
+        );
+    }
+
+    #[test]
+    fn reference_hook_pipe_descendant_is_bounded_and_reaped() {
+        let fixture = Fixture::new("hook-descendant");
+        let head = stdout(&fixture.agent, &["rev-parse", "HEAD"]);
+        let descendant_pid = fixture.agent.join(".git/hook-descendant-pid");
+        let hook = git_state_path(
+            &fixture.agent,
+            "hooks/reference-transaction",
+        )
+        .expect("reference hook path");
+        let script = format!(
+            concat!(
+                "#!/bin/sh\n",
+                "case \"$1\" in\n",
+                "prepared)\n",
+                "  /bin/sh -c 'trap \"\" HUP TERM; ",
+                "printf \"%s\\n\" \"$$\" > {pid}; ",
+                "exec /usr/bin/tail -f /dev/null' &\n",
+                "  while [ ! -s {pid} ]; do sleep 0.01; done\n",
+                ";;\n",
+                "esac\n",
+                "exit 0\n",
+            ),
+            pid = path(&descendant_pid),
+        );
+        fs::write(&hook, script).expect("write descendant hook");
+        let mut permissions =
+            fs::metadata(&hook).expect("hook metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&hook, permissions).expect("make hook executable");
+
+        let started = Instant::now();
+        let error = run(
+            &fixture.agent,
+            &["update-ref", "refs/heads/hook-descendant", &head],
+        )
+        .expect_err("a hook descendant cannot outlive Git");
+
+        assert_eq!(error.reason(), "git::descendant-survived");
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "task Git exceeded its descendant cleanup bound: {:?}",
+            started.elapsed(),
+        );
+        let pid = fs::read_to_string(&descendant_pid)
+            .expect("read descendant pid")
+            .trim()
+            .parse::<i32>()
+            .expect("descendant pid is numeric");
+        let pid = rustix::process::Pid::from_raw(pid)
+            .expect("descendant pid is positive");
+        assert_eq!(
+            rustix::process::test_kill_process(pid),
+            Err(rustix::io::Errno::SRCH),
+            "hook descendant remained alive after task Git returned",
         );
     }
 
