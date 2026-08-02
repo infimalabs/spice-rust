@@ -104,7 +104,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 
 #[test]
 fn every_contract_has_an_executable_succession_disposition() {
-    assert_eq!(contracts().len(), 68);
+    assert_eq!(contracts().len(), 82);
 
     let unaccounted = contracts()
         .iter()
@@ -117,7 +117,7 @@ fn every_contract_has_an_executable_succession_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 68);
+    assert_eq!(landed, 82);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
     assert_eq!(landing(&["lock", "run"]), Landing::Landed);
@@ -467,7 +467,7 @@ fn daemonless_local_succession_is_closed_and_explicit() {
 }
 
 #[test]
-fn python_lifecycle_and_session_forensics_name_successors_and_gap_owner() {
+fn python_lifecycle_and_session_forensics_name_landed_successors() {
     let ledger = include_str!("../../../PORTING.md");
     let agent = ledger
         .split_once("### Agent lifecycle")
@@ -494,22 +494,31 @@ fn python_lifecycle_and_session_forensics_name_successors_and_gap_owner() {
         .split_once("### Task plane")
         .expect("the session forensics section is bounded")
         .0;
-    let pending = sessions
+    let landed = sessions
         .lines()
         .filter(|line| line.starts_with("- `session"))
         .collect::<Vec<_>>();
-    assert_eq!(pending.len(), 14);
+    assert_eq!(landed.len(), 14);
     assert!(
-        pending
+        landed
             .iter()
-            .all(|line| line.contains("P -> `FORENSI-1kJWS7G5`"))
+            .all(|line| line.contains(": R -> `rim::session"))
     );
     assert!(!sessions.lines().any(|line| line.contains(": X")));
     assert!(sessions.contains(
-        "The landed `watch`, `retro`, `recall`, and `thread` paths provide owned tape\n\
-         and journal foundations but do not yet answer every predecessor query."
+        "The Rust rim now reads immutable Codex and Claude transcript evidence directly,\n\
+         including gzip, ambient/thread discovery, compaction reconstruction, usage and\n\
+         tool accounting, deterministic residue, and bounded filtered projections."
     ));
-    for path in [&["lane"][..], &["lane", "add"][..], &["recall"][..]] {
+    for path in [
+        &["lane"][..],
+        &["lane", "add"][..],
+        &["recall"][..],
+        &["session"][..],
+        &["session", "briefing"][..],
+        &["session", "commands"][..],
+        &["session", "thread"][..],
+    ] {
         assert_eq!(landing(path), Landing::Landed);
     }
 }

@@ -278,25 +278,11 @@ fn journal_open_failure(error: journal::OpenError) -> Outcome<()> {
 }
 
 fn configuration_refusal(error: &spice::config::LoadError) -> Outcome<()> {
-    let mut diagnostics = error
-        .acquisition()
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>();
-    if let Some(resolution) = error.resolution() {
-        diagnostics.extend(resolution.issues().iter().map(ToString::to_string));
-    }
-    if let Some(repository) = error.repository() {
-        diagnostics.push(repository.to_string());
-    }
-    if diagnostics.is_empty() {
-        diagnostics.push(error.to_string());
-    }
     Outcome::Refusal(Refusal {
         reason: "resident::configuration-refused".to_owned(),
         witness: Some("effective-configuration".to_owned()),
         expected: Some("one admitted effective repository configuration".to_owned()),
-        observed: Some(diagnostics.join(" | ")),
+        observed: Some(error.diagnostic()),
         remedy: "repair tracked or local configuration before starting the resident".to_owned(),
     })
 }

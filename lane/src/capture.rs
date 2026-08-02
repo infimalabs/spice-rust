@@ -352,7 +352,7 @@ mod tests {
             model: "fixture".to_owned(),
             effort: Effort::High,
             personality: None,
-            fast_mode: false,
+            fast_mode: Some(false),
             attribution: Attribution::Harness,
             hook: SteeringHook {
                 command: "true".to_owned(),

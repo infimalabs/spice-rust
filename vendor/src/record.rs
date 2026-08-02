@@ -11,6 +11,8 @@ use sill::{
     StreamPolicy, WaitPolicy,
 };
 
+use crate::ContractError;
+
 /// Stable identity of a session that can be resumed explicitly.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct SessionId(String);
@@ -296,7 +298,7 @@ impl Error for ProcessError {}
 #[derive(Debug)]
 pub enum LaunchError {
     /// The executable and argument contract was invalid.
-    Contract(SpecError),
+    Contract(ContractError),
     /// `sill` could not create the child.
     Spawn(io::Error),
 }

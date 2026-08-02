@@ -146,6 +146,23 @@ fn exercise_commit_message(scratch: &Scratch) {
     let diagnostic = String::from_utf8(malformed.stderr).unwrap();
     assert!(diagnostic.contains("malformed Spice-Origin trailer"));
     assert!(diagnostic.contains("Spice-Origin: v2 unresolved"));
+
+    fs::write(
+        scratch.join("spice.toml"),
+        "[policy.commit_message]\nblocked_trailers = [\"Co-Authored-By\"]\n",
+    )
+    .expect("write tracked trailer policy");
+    fs::write(
+        &message,
+        "Preserve native attribution\n\nCo-Authored-By: Agent <agent@example.test>\n",
+    )
+    .expect("write policy-refused attribution");
+    let blocked = invoke(&commit_message, scratch.path(), &[message.as_os_str()]);
+    assert_eq!(blocked.status.code(), Some(1));
+    assert!(blocked.stdout.is_empty());
+    let diagnostic = String::from_utf8(blocked.stderr).unwrap();
+    assert!(diagnostic.contains("uses blocked trailer co-authored-by"));
+    assert!(diagnostic.contains("blocked trailers: co-authored-by"));
 }
 
 fn assert_coexistence_unchanged(scratch: &Scratch, evidence: &CoexistenceEvidence) {

@@ -10,6 +10,7 @@ publish.workspace = true
 atomic = { path = "../atomic" }
 blake2 = "0.10.6"
 gix-glob = "0.27.0"
+regex = "1.12.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 shell-words = "1.1.1"

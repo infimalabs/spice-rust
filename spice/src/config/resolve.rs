@@ -676,6 +676,7 @@ fn is_scaffold_root(path: &ConcretePath) -> bool {
 
 fn compatible(kind: ValueKind, value: &Value) -> bool {
     match kind {
+        ValueKind::Boolean => value.is_bool(),
         ValueKind::String | ValueKind::Duration | ValueKind::Answer | ValueKind::Life => {
             value.is_str()
         }

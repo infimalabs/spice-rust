@@ -10,6 +10,15 @@ use crate::ConfigSource;
 /// enter the report.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub enum SpiceVariable {
+    /// Claude session identity selected for transcript forensics.
+    #[serde(rename = "CLAUDE_CODE_SESSION_ID")] // env-policy: allow
+    ClaudeSession,
+    /// Codex thread identity selected for transcript forensics.
+    #[serde(rename = "CODEX_THREAD_ID")] // env-policy: allow
+    CodexThread,
+    /// Preferred agent vendor selected for transcript forensics.
+    #[serde(rename = "SPICE_AGENT_VENDOR")] // env-policy: allow
+    AgentVendor,
     /// Installed shell-hook directory.
     #[serde(rename = "SPICE_HOOKS")] // env-policy: allow
     Hooks,
@@ -42,6 +51,9 @@ pub enum SpiceVariable {
 impl SpiceVariable {
     /// The complete vocabulary in stable report order.
     pub const ALL: &[Self] = &[
+        Self::ClaudeSession,
+        Self::CodexThread,
+        Self::AgentVendor,
         Self::Hooks,
         Self::Inbox,
         Self::InstallTestPauseAction,
@@ -57,8 +69,11 @@ impl SpiceVariable {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Hooks => "SPICE_HOOKS", // env-policy: allow
-            Self::Inbox => "SPICE_INBOX", // env-policy: allow
+            Self::ClaudeSession => "CLAUDE_CODE_SESSION_ID", // env-policy: allow
+            Self::CodexThread => "CODEX_THREAD_ID",          // env-policy: allow
+            Self::AgentVendor => "SPICE_AGENT_VENDOR",       // env-policy: allow
+            Self::Hooks => "SPICE_HOOKS",                    // env-policy: allow
+            Self::Inbox => "SPICE_INBOX",                    // env-policy: allow
             Self::InstallTestPauseAction => {
                 "SPICE_INSTALL_TEST_PAUSE_ACTION" // env-policy: allow
             }

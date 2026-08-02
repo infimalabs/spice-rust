@@ -16,6 +16,7 @@ clap = "4.6.5"
 consent = { path = "../consent" }
 dialect = { path = "../dialect" }
 dist = { path = "../dist" }
+flate2 = "1.1.8"
 fold = { path = "../fold" }
 gate = { path = "../gate" }
 journal = { path = "../journal" }
@@ -25,6 +26,7 @@ proof = { path = "../proof" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 serde_path_to_error = "0.1.20"
+shell-words = "1.1.1"
 sill = { path = "../sill" }
 steer = { path = "../steer" }
 tape = { path = "../tape" }
@@ -39,6 +41,7 @@ gix-config = "0.59.0"
 jiff = "0.2.35"
 libc = "0.2.189"
 notify = "8.2.0"
+rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
 signal-hook = "0.3.18"
 tokio = { version = "1.53.1", features = ["macros", "net", "rt", "sync"] }
 tungstenite = "0.29.0"
@@ -50,7 +53,6 @@ libc = "0.2.189"
 rustix = { version = "1.1.4", features = ["fs", "process"] }
 
 [dev-dependencies]
-rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
 socket2 = "0.6.5"
 
 [lints]

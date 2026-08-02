@@ -309,6 +309,31 @@ impl LoadError {
         self.resolution.as_ref()
     }
 
+    /// Every exact acquisition, resolution, or repository diagnostic in one
+    /// stable human-readable line.
+    ///
+    /// The summary [`Display`](fmt::Display) implementation is useful for
+    /// counts, but command rims must retain the named document and typed path
+    /// so an operator can repair the refused input without another read.
+    #[must_use]
+    pub fn diagnostic(&self) -> String {
+        let mut diagnostics = self
+            .acquisition
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        if let Some(resolution) = &self.resolution {
+            diagnostics.extend(resolution.issues().iter().map(ToString::to_string));
+        }
+        if let Some(repository) = &self.repository {
+            diagnostics.push(repository.to_string());
+        }
+        if diagnostics.is_empty() {
+            diagnostics.push(self.to_string());
+        }
+        diagnostics.join(" | ")
+    }
+
     fn repository_failure(source: RepositoryError) -> Self {
         Self {
             repository: Some(source),

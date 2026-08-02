@@ -5,13 +5,13 @@ use std::ffi::OsString;
 
 use listen::Dialect;
 use serde::Serialize;
-use sill::{Running, SpecError};
+use sill::Running;
 
 use crate::launch::{
     Attribution, Launch, McpServer, POST_TOOL_HOOK_EVENT, POST_TOOL_HOOK_STATUS_MESSAGE,
     POST_TOOL_HOOK_TIMEOUT_SECONDS, SteeringHook,
 };
-use crate::{LaunchError, Process, Record, RecordStream};
+use crate::{ContractError, LaunchError, Process, Record, RecordStream};
 
 /// Preamble that makes the linked skill read as binding, not as background.
 ///
@@ -48,8 +48,21 @@ pub const DENIED_TOOLS: &[&str] = &[
 ///
 /// # Errors
 ///
-/// Returns [`SpecError`] when `binary` is empty.
-pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, SpecError> {
+/// Returns a path-specific refusal for unsupported cross-vendor fields, or the
+/// common argument-vector refusal when the binary is empty.
+pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, ContractError> {
+    if launch.personality.is_some() {
+        return Err(ContractError::Unsupported {
+            path: "vendor.claude.personality",
+            vendor: "Claude",
+        });
+    }
+    if launch.fast_mode.is_some() {
+        return Err(ContractError::Unsupported {
+            path: "vendor.claude.fast_mode",
+            vendor: "Claude",
+        });
+    }
     let system_prompt = system_prompt(launch);
     let mut arguments = vec![
         OsString::from("--print"),
@@ -81,13 +94,13 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Sp
     // re-grounds in the skill every turn rather than only at launch.
     arguments.push(OsString::from(system_prompt));
 
-    Record::new(
+    Ok(Record::new(
         binary,
         arguments,
         Dialect::Claude,
         RecordStream::Stdout,
         launch.resume.clone(),
-    )
+    )?)
 }
 
 /// The skill preamble, the start prompt, and this worktree's steering anchor.

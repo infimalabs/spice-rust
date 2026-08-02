@@ -8,8 +8,8 @@ use sill::{
     StreamPolicy, WaitPolicy,
 };
 use vendor::{
-    Attribution, Effort, Launch, McpServer, Process, Record, RecordStream, Resume, SessionId,
-    SteeringHook, SteeringKey, claude, codex, permission_request,
+    Attribution, ContractError, Effort, Launch, McpServer, Process, Record, RecordStream, Resume,
+    SessionId, SteeringHook, SteeringKey, claude, codex, permission_request,
 };
 use wire::CanonicalUuid;
 
@@ -133,7 +133,7 @@ fn codex_carries_every_launch_knob_and_resumes_after_its_flags() {
         CODEX_MODEL,
         Resume::Session(SessionId::new("codex-thread").expect("session identity")),
     );
-    resuming.fast_mode = true;
+    resuming.fast_mode = Some(true);
     resuming.personality = Some("terse".to_owned());
     let resumed = codex::record("/opt/codex", &resuming).expect("valid resumed record");
     assert_record(
@@ -177,10 +177,11 @@ fn codex_carries_every_launch_knob_and_resumes_after_its_flags() {
 #[test]
 fn every_launch_closes_the_steering_path_end_to_end() {
     let launch = fixture(CLAUDE_MODEL, Resume::Fresh);
+    let codex_launch = fixture(CODEX_MODEL, Resume::Fresh);
 
     // Delivery: both dialects install the hook that carries steering back in.
     let claude = claude::record("/opt/claude", &launch).expect("valid record");
-    let codex = codex::record("/opt/codex", &launch).expect("valid record");
+    let codex = codex::record("/opt/codex", &codex_launch).expect("valid record");
     assert!(
         arguments(&claude)
             .iter()
@@ -235,18 +236,73 @@ fn a_repository_that_refuses_claudes_trailer_gets_attribution_withheld() {
 }
 
 #[test]
-fn both_vendors_carry_every_configured_effort() {
+fn vendor_effort_rendering_carries_every_shared_value_once() {
     for effort in Effort::ALL {
-        let mut launch = fixture(CLAUDE_MODEL, Resume::Fresh);
-        launch.effort = *effort;
-        let record = claude::record("/opt/claude", &launch).expect("valid record");
-        assert_arguments_contain(&record, &["--effort", effort.as_str()]);
+        let mut claude_launch = fixture(CLAUDE_MODEL, Resume::Fresh);
+        claude_launch.effort = *effort;
+        let record = claude::record("/opt/claude", &claude_launch).expect("valid Claude record");
+        let rendered = arguments(&record);
+        assert_eq!(
+            rendered
+                .windows(2)
+                .filter(|pair| pair == &["--effort", effort.as_str()])
+                .count(),
+            1,
+            "Claude effort {:?} must render exactly once",
+            effort
+        );
 
-        let codex = codex::record("/opt/codex", &launch).expect("valid record");
+        let mut codex_launch = fixture(CODEX_MODEL, Resume::Fresh);
+        codex_launch.effort = *effort;
+        let codex = codex::record("/opt/codex", &codex_launch).expect("valid Codex record");
         assert!(
             arguments(&codex).contains(&format!("model_reasoning_effort=\"{}\"", effort.as_str())),
         );
     }
+}
+
+#[test]
+fn vendor_specific_knobs_refuse_instead_of_being_silently_ignored() {
+    let mut claude_launch = fixture(CLAUDE_MODEL, Resume::Fresh);
+    claude_launch.personality = Some("friendly".to_owned());
+    assert_eq!(
+        claude::record("/opt/claude", &claude_launch).expect_err("personality refuses"),
+        ContractError::Unsupported {
+            path: "vendor.claude.personality",
+            vendor: "Claude",
+        }
+    );
+
+    claude_launch.personality = None;
+    claude_launch.fast_mode = Some(false);
+    assert_eq!(
+        claude::record("/opt/claude", &claude_launch).expect_err("fast mode refuses"),
+        ContractError::Unsupported {
+            path: "vendor.claude.fast_mode",
+            vendor: "Claude",
+        }
+    );
+
+    let mut codex_launch = fixture(CODEX_MODEL, Resume::Fresh);
+    codex_launch.fast_mode = None;
+    assert_eq!(
+        codex::record("/opt/codex", &codex_launch).expect_err("omitted fast mode refuses"),
+        ContractError::Missing {
+            path: "vendor.codex.fast_mode",
+        }
+    );
+}
+
+#[test]
+fn codex_personality_is_rendered_as_one_toml_string() {
+    let mut launch = fixture(CODEX_MODEL, Resume::Fresh);
+    launch.personality = Some("direct \"operator\"\\nvoice".to_owned());
+
+    let record = codex::record("/opt/codex", &launch).expect("personality renders");
+    assert_arguments_contain(
+        &record,
+        &["personality=\"direct \\\"operator\\\"\\\\nvoice\""],
+    );
 }
 
 #[test]
@@ -385,7 +441,7 @@ fn fixture(model: &str, resume: Resume) -> Launch {
         model: model.to_owned(),
         effort: Effort::High,
         personality: None,
-        fast_mode: false,
+        fast_mode: (model == CODEX_MODEL).then_some(false),
         attribution: Attribution::Harness,
         hook: SteeringHook {
             command: HOOK_COMMAND.to_owned(),

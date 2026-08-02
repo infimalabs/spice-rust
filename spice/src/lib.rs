@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod agent_launch;
 pub mod cli;
 pub mod config;
 #[cfg(not(target_arch = "wasm32"))]

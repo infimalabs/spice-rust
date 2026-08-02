@@ -13,6 +13,10 @@ project_max_depth = 3
 [policy]
 env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
 
+[policy.commit_message]
+allowed_trailers = ["Spice-Origin", "Reviewed-By"]
+blocked_trailers = ["Co-Authored-By"]
+
 [taste.zeta]
 words = ["delay*", "slept"]
 message = "Wait on the real event."
@@ -56,9 +60,16 @@ resend = ["10m", "30m", "2h"]
 
 [vendor.claude]
 binary = "/opt/claude"
+model = "opus"
+effort = "xhigh"
+auto_compact_window_tokens = 123456
 
 [vendor.codex]
 binary = "/opt/codex"
+model = "gpt-current"
+effort = "max"
+personality = "pragmatic"
+fast_mode = true
 
 [listen]
 window = "10m"
@@ -178,6 +189,7 @@ fn builtin_matches(builtin: Builtin, value: &Value) -> bool {
             u64::try_from(*actual) == Ok(expected)
         }
         (Builtin::Float(expected), Value::Float(actual)) => actual == &expected,
+        (Builtin::Boolean(expected), Value::Boolean(actual)) => actual == &expected,
         _ => false,
     }
 }
@@ -332,6 +344,8 @@ fn templates_are_unique_canonical_non_overlapping_and_stably_ordered() {
         "tasks.project_min_depth",
         "tasks.project_max_depth",
         "policy.env_names",
+        "policy.commit_message.allowed_trailers",
+        "policy.commit_message.blocked_trailers",
         "taste.<name>.words",
         "taste.<name>.message",
         "consent.posture",
@@ -350,7 +364,15 @@ fn templates_are_unique_canonical_non_overlapping_and_stably_ordered() {
         "lane.hold",
         "steer.expiry",
         "steer.resend",
-        "vendor.<name>.binary",
+        "vendor.claude.binary",
+        "vendor.claude.model",
+        "vendor.claude.effort",
+        "vendor.claude.auto_compact_window_tokens",
+        "vendor.codex.binary",
+        "vendor.codex.model",
+        "vendor.codex.effort",
+        "vendor.codex.personality",
+        "vendor.codex.fast_mode",
         "listen.window",
         "lock.busy",
         "lock.taken",
@@ -502,7 +524,8 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
         let compatible = matches!(
             (entry.kind(), entry.builtin()),
             (_, None)
-                | (ValueKind::String, Some(Builtin::Absent))
+                | (_, Some(Builtin::Absent))
+                | (ValueKind::Boolean, Some(Builtin::Boolean(_)))
                 | (
                     ValueKind::String | ValueKind::Duration | ValueKind::Answer | ValueKind::Life,
                     Some(Builtin::String(_)),

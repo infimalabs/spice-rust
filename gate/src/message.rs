@@ -4,10 +4,106 @@ use std::error::Error;
 use std::fmt;
 use std::str::FromStr;
 
+use serde::de::{Deserializer, Error as _};
+use serde::{Deserialize, Serialize};
 use wire::{CanonicalUuid, TaskHandle};
 
 const PREFIX: &str = "Spice-Origin: v1 repo=";
 const TASK_FIELD: &str = " task=";
+
+/// Repository policy governing ordinary Git trailer keys.
+///
+/// Keys are admitted and stored in lower case because Git trailer identity is
+/// case-insensitive. `None` means that side of the policy is unrestricted;
+/// `Some([])` is therefore a meaningful allow-nothing declaration.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CommitMessagePolicy {
+    #[serde(
+        default,
+        deserialize_with = "optional_trailer_keys",
+        skip_serializing_if = "Option::is_none"
+    )]
+    allowed_trailers: Option<Vec<String>>,
+    #[serde(
+        default,
+        deserialize_with = "optional_trailer_keys",
+        skip_serializing_if = "Option::is_none"
+    )]
+    blocked_trailers: Option<Vec<String>>,
+}
+
+impl CommitMessagePolicy {
+    /// Why this policy rejects one case-insensitive trailer key, if it does.
+    #[must_use]
+    pub fn trailer_rejection(&self, key: &str) -> Option<TrailerRejection> {
+        if self
+            .blocked_trailers
+            .as_ref()
+            .is_some_and(|keys| contains_key(keys, key))
+        {
+            return Some(TrailerRejection::Blocked);
+        }
+        if self
+            .allowed_trailers
+            .as_ref()
+            .is_some_and(|keys| !contains_key(keys, key))
+        {
+            return Some(TrailerRejection::Disallowed);
+        }
+        None
+    }
+
+    /// Explicit allow set, normalized to lower case, or no allow restriction.
+    #[must_use]
+    pub fn allowed_trailers(&self) -> Option<&[String]> {
+        self.allowed_trailers.as_deref()
+    }
+
+    /// Explicit block set, normalized to lower case, or no block restriction.
+    #[must_use]
+    pub fn blocked_trailers(&self) -> Option<&[String]> {
+        self.blocked_trailers.as_deref()
+    }
+}
+
+/// The two reasons an admitted trailer policy can reject a key.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrailerRejection {
+    /// An explicit block set names the key.
+    Blocked,
+    /// An explicit allow set omits the key.
+    Disallowed,
+}
+
+fn optional_trailer_keys<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Vec<String>>, D::Error> {
+    let Some(raw) = Option::<Vec<String>>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    let mut admitted = Vec::new();
+    for key in raw {
+        let normalized = key.trim().to_ascii_lowercase();
+        if normalized.is_empty()
+            || !normalized
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        {
+            return Err(D::Error::custom(
+                "commit trailer policy entries must be nonempty trailer keys",
+            ));
+        }
+        if !admitted.contains(&normalized) {
+            admitted.push(normalized);
+        }
+    }
+    Ok(Some(admitted))
+}
+
+fn contains_key(keys: &[String], candidate: &str) -> bool {
+    keys.iter().any(|key| key.eq_ignore_ascii_case(candidate))
+}
 
 /// A valid `Spice-Origin` v1 trailer.
 #[derive(Debug, Clone, PartialEq, Eq)]
