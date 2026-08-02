@@ -81,7 +81,10 @@ const BODIES: &[(CommandKind, &str)] = &[
   "successor": "lane:018f82d4-6f59-7d06-92e3-bce9131163c2"
 }"#,
     ),
-    (CommandKind::ClaimRenew, r#"{ "task": "SPICE-aBcD" }"#),
+    (
+        CommandKind::ClaimRenew,
+        r#"{ "task": "SPICE-aBcD", "lease_seconds": 900 }"#,
+    ),
     (CommandKind::ClaimFree, r#"{ "task": "SPICE-aBcD" }"#),
     (CommandKind::ClaimLapse, r#"{ "task": "SPICE-aBcD" }"#),
     (
@@ -144,7 +147,11 @@ const BODIES: &[(CommandKind, &str)] = &[
     ),
     (
         CommandKind::LaneState,
-        r#"{ "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2", "action": "drain" }"#,
+        r#"{
+  "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "action": "wake",
+  "worktree": "/worktrees/successor"
+}"#,
     ),
     (
         CommandKind::LaneRecall,
@@ -478,6 +485,7 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::TaskAssign,
     BodyShape::ClaimWin,
     BodyShape::ClaimCarry,
+    BodyShape::ClaimRenew,
     BodyShape::DocApply,
     BodyShape::SteerSend,
     BodyShape::SteerInbox,

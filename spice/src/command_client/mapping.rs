@@ -26,6 +26,7 @@ impl MappedCommand {
             SelectedCommand::LaneState { body } => Self::lane_state(contract, body),
             SelectedCommand::LaneRecall { body } => Self::lane_recall(contract, body),
             SelectedCommand::SteerCancel { directive } => Self::steer_cancel(contract, directive),
+            SelectedCommand::SteerRecover { directive } => Self::steer_recover(contract, directive),
             SelectedCommand::SteerSend { .. }
             | SelectedCommand::SteerInbox { .. }
             | SelectedCommand::SteerAck { .. } => Err(protocol_fault(
@@ -171,6 +172,22 @@ impl MappedCommand {
                 steer: directive,
                 disposition: Disposition::Live,
             }],
+            &wire::intent::DirectiveRef { directive },
+        )
+    }
+
+    fn steer_recover(contract: &Contract, directive: CanonicalUuid) -> ClientResult<Self> {
+        Self::new(
+            contract,
+            &["steer", "recover"],
+            CommandKind::SteerResend,
+            vec![
+                Witness::Directive {
+                    steer: directive,
+                    disposition: Disposition::Lapsed,
+                },
+                Witness::Lineage { steer: directive },
+            ],
             &wire::intent::DirectiveRef { directive },
         )
     }

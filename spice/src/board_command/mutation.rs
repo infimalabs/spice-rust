@@ -1,8 +1,10 @@
+/// One actor-filtered board snapshot whose cursor and entries were validated together.
 struct ValidatedSnapshot {
     cursor: wire::Seq,
     answer: BoardAnswer,
     entries: Vec<Entry>,
 }
+
 fn task_add(
     bus: &Bus,
     command: &wire::AdmittedCommand,

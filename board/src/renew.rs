@@ -32,7 +32,7 @@ pub struct Request {
     /// Proposed strict extension of the current expiry.
     pub until: Instant,
     /// Exact task named by the renewal command.
-    pub intent: intent::TaskRef,
+    pub intent: intent::ClaimRenew,
 }
 
 /// The renewed task and its one-fact committed range.
@@ -492,7 +492,10 @@ mod tests {
             epoch: uuid(22),
             at: instant(10),
             until: instant(25),
-            intent: intent::TaskRef { task: task() },
+            intent: intent::ClaimRenew {
+                task: task(),
+                lease_seconds: 15,
+            },
         }
     }
 

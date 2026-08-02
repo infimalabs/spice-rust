@@ -77,6 +77,7 @@ const CASES: &[Case] = &[
         &["board", "handout", "readiness-handout.json"],
     ),
     case("task next", &["task", "next"]),
+    case("task reclaim", &["task", "reclaim"]),
     case("task add", &["task", "add", "readiness task"]),
     case("task capture", &["task", "capture"]),
     case("task done", &["task", "done"]),
@@ -115,8 +116,10 @@ const CASES: &[Case] = &[
     case("lane add", &["lane", "add"]),
     case("lane drain", &["lane", "drain", UUID]),
     case("lane wake", &["lane", "wake", UUID]),
+    case("lane import", &["lane", "import", UUID, "."]),
     case("steer", &["steer", UUID, "readiness direction"]),
     case("steer cancel", &["steer", "cancel", UUID]),
+    case("steer recover", &["steer", "recover", UUID]),
     case("inbox", &["inbox"]),
     case("recall", &["recall"]),
     case("consent", &["consent"]),
@@ -192,9 +195,9 @@ impl Drop for Scratch {
 fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
     let registered = landed_ledger_paths();
     let exercised = CASES.iter().map(|case| case.path).collect::<BTreeSet<_>>();
-    assert_eq!(registered.len(), 84);
-    assert_eq!(CASES.len(), 84);
-    assert_eq!(exercised.len(), 84);
+    assert_eq!(registered.len(), 87);
+    assert_eq!(CASES.len(), 87);
+    assert_eq!(exercised.len(), 87);
     assert_eq!(exercised.len(), CASES.len(), "process case repeated");
     assert_eq!(
         exercised, registered,

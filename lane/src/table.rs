@@ -19,7 +19,8 @@ use std::error::Error;
 use std::fmt;
 
 use journal::crossing::body::{
-    LaneDrained, LaneExited, LaneRenewed, LaneSeated, LaneSessionDeclared, LaneStarted,
+    LaneDrained, LaneExited, LaneImported, LaneRenewed, LaneSeated, LaneSessionDeclared,
+    LaneStarted,
 };
 use journal::crossing::{
     CanonicalUuid, LaneResidency, LaneSession, ResidencyHead, ResidentState, TapeLocus,
@@ -125,6 +126,8 @@ pub enum Seating<'a> {
     Session(&'a LaneSessionDeclared),
     /// An occupant became live under the lane.
     Started(&'a LaneStarted),
+    /// A vacant team seat moved to another linked worktree.
+    Imported(&'a LaneImported),
     /// The occupant ended.
     Exited(&'a LaneExited),
     /// A successor occupant was seated with its ancestor named.
@@ -222,6 +225,27 @@ pub enum Refusal {
         /// Occupant the lifecycle fact named.
         observed: CanonicalUuid,
     },
+    /// An import had no retained occupant lineage to descend from.
+    LineageMissing {
+        /// Lane lacking its predecessor occupant.
+        lane: CanonicalUuid,
+    },
+    /// An import named another predecessor than the retained lineage.
+    Lineage {
+        /// Lane being transferred.
+        lane: CanonicalUuid,
+        /// Latest occupant retained by the seat.
+        expected: CanonicalUuid,
+        /// Ancestor named by the transfer.
+        observed: CanonicalUuid,
+    },
+    /// An import restated the seat's current worktree.
+    UnmovedWorktree {
+        /// Lane whose worktree did not move.
+        lane: CanonicalUuid,
+        /// Existing worktree.
+        worktree: String,
+    },
 }
 
 impl fmt::Display for Refusal {
@@ -283,6 +307,20 @@ impl fmt::Display for Refusal {
                 formatter,
                 "lane {lane} session belongs to {expected}, not {observed}"
             ),
+            Self::LineageMissing { lane } => {
+                write!(formatter, "lane {lane} has no predecessor occupant lineage")
+            }
+            Self::Lineage {
+                lane,
+                expected,
+                observed,
+            } => write!(
+                formatter,
+                "lane {lane} latest occupant is {expected}, not ancestor {observed}"
+            ),
+            Self::UnmovedWorktree { lane, worktree } => {
+                write!(formatter, "lane {lane} is already bound to {worktree:?}")
+            }
         }
     }
 }
@@ -336,6 +374,7 @@ impl Table {
             Seating::Seated(fact) => self.seat_lane(fact),
             Seating::Session(fact) => self.session(fact),
             Seating::Started(fact) => self.start(fact),
+            Seating::Imported(fact) => self.import(fact),
             Seating::Renewed(fact) => self.renew(fact),
             Seating::Exited(fact) => self.end(fact.lane, fact.occupant),
             Seating::Drained(fact) => self.end(fact.lane, fact.occupant),
@@ -461,6 +500,80 @@ impl Table {
         Ok(())
     }
 
+    /// Move a vacant seat only after re-proving its retained lineage and session.
+    fn import(&mut self, fact: &LaneImported) -> Result<(), Refusal> {
+        if fact.epoch != self.epoch {
+            return Err(Refusal::Stale {
+                epoch: self.epoch,
+                named: fact.epoch,
+            });
+        }
+        let lane = fact.lane;
+        let seat = self
+            .seats
+            .get_mut(&lane)
+            .ok_or(Refusal::Unseated { lane })?;
+        if let Some(sitting) = seat.occupant {
+            return Err(Refusal::Occupied { lane, sitting });
+        }
+        if seat.worktree != fact.from_worktree {
+            return Err(Refusal::WrongWorktree {
+                lane,
+                expected: seat.worktree.clone(),
+                observed: fact.from_worktree.clone(),
+            });
+        }
+        if fact.worktree == seat.worktree {
+            return Err(Refusal::UnmovedWorktree {
+                lane,
+                worktree: seat.worktree.clone(),
+            });
+        }
+        if fact.vendor != seat.vendor {
+            return Err(Refusal::CrossVendor {
+                lane,
+                expected: seat.vendor.clone(),
+                observed: fact.vendor.clone(),
+            });
+        }
+        let ancestor = seat
+            .lineage
+            .last()
+            .copied()
+            .ok_or(Refusal::LineageMissing { lane })?;
+        if ancestor != fact.ancestor {
+            return Err(Refusal::Lineage {
+                lane,
+                expected: ancestor,
+                observed: fact.ancestor,
+            });
+        }
+        let session = seat.session.as_ref().ok_or(Refusal::Undeclared { lane })?;
+        if session.occupant != ancestor {
+            return Err(Refusal::SessionOccupant {
+                lane,
+                expected: ancestor,
+                observed: session.occupant,
+            });
+        }
+        if session.worktree != fact.from_worktree {
+            return Err(Refusal::WrongWorktree {
+                lane,
+                expected: fact.from_worktree.clone(),
+                observed: session.worktree.clone(),
+            });
+        }
+        if session.identity != fact.identity {
+            return Err(Refusal::ConflictingSession {
+                lane,
+                expected: session.identity.clone(),
+                observed: fact.identity.clone(),
+            });
+        }
+        seat.worktree.clone_from(&fact.worktree);
+        Ok(())
+    }
+
     /// Succeeds one occupant with another, naming the ancestor it descends
     /// from, which must be the occupant the seat is actually holding.
     fn renew(&mut self, fact: &LaneRenewed) -> Result<(), Refusal> {
@@ -522,7 +635,8 @@ impl Table {
 mod tests {
     use super::{Refusal, Seating, Table};
     use journal::crossing::body::{
-        LaneDrained, LaneExited, LaneRenewed, LaneSeated, LaneSessionDeclared, LaneStarted,
+        LaneDrained, LaneExited, LaneImported, LaneRenewed, LaneSeated, LaneSessionDeclared,
+        LaneStarted,
     };
     use journal::crossing::{CanonicalUuid, ResidentState};
 
@@ -602,6 +716,51 @@ mod tests {
         assert_eq!(seat.occupant(), None);
         assert!(!seat.occupied());
         assert_eq!(seat.lineage(), [uuid(3)]);
+    }
+
+    #[test]
+    fn import_moves_one_vacant_seat_only_after_reproving_its_session_lineage() {
+        let mut table = table();
+        start(&mut table, uuid(3));
+        table
+            .absorb(Seating::Drained(&LaneDrained {
+                lane: uuid(1),
+                occupant: uuid(3),
+            }))
+            .expect("predecessor drains");
+        let imported = LaneImported {
+            lane: uuid(1),
+            ancestor: uuid(3),
+            from_worktree: "/worktrees/lane-a".to_owned(),
+            worktree: "/worktrees/lane-b".to_owned(),
+            vendor: "claude".parse().expect("fixture vendor"),
+            identity: "session-a".to_owned(),
+            epoch: uuid(0),
+        };
+
+        table
+            .absorb(Seating::Imported(&imported))
+            .expect("vacant seat imports with exact retained authority");
+        let mut successor = declared(uuid(4));
+        successor.worktree = "/worktrees/lane-b".to_owned();
+        table
+            .absorb(Seating::Session(&successor))
+            .expect("successor re-declares the retained session in the target worktree");
+        table
+            .absorb(Seating::Started(&started(uuid(4))))
+            .expect("successor occupies the imported seat");
+
+        let seat = table.seat(uuid(1)).expect("imported seat remains seated");
+        assert_eq!(seat.worktree(), "/worktrees/lane-b");
+        assert_eq!(seat.occupant(), Some(uuid(4)));
+        assert_eq!(seat.lineage(), [uuid(3), uuid(4)]);
+
+        let mut stale = imported;
+        stale.worktree = "/worktrees/lane-c".to_owned();
+        assert!(matches!(
+            table.absorb(Seating::Imported(&stale)),
+            Err(Refusal::Occupied { .. })
+        ));
     }
 
     /// One occupant per seat: a second start is refused and changes nothing.

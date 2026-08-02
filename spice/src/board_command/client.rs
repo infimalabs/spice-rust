@@ -25,6 +25,7 @@ fn dispatch_client(
         ["doc"] => run_doc(repository, contract, matches),
         ["doc", "ledger"] => client_ledger(repository, contract, matches),
         ["task", "next"] => client_next(repository, contract),
+        ["task", "reclaim"] => client_reclaim(repository, contract, matches),
         ["task", "add"] => client_add(repository, contract, matches),
         ["task", "capture"] => client_capture(repository, contract, matches),
         ["task", "oops"] => client_oops(repository, contract, matches),
@@ -138,6 +139,84 @@ fn client_next(repository: &Repository, contract: &Contract) -> Outcome<CommandA
                 residency_witness(&board, lane, occupant),
             ],
             serde_json::to_value(ClaimWin { rule }).expect("typed intent encodes"),
+        ))
+    })
+}
+
+fn client_reclaim(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    mutate_from_board(repository, contract, |board| {
+        let (task, heads) = match matches.get_one::<String>("HANDLE") {
+            Some(written) => {
+                let task = written.parse::<TaskHandle>().map_err(|error| {
+                    refusal("task::handle-invalid", Some(written.clone()), &error.to_string())
+                })?;
+                let heads = task_heads(&board, &task)?;
+                (task, heads)
+            }
+            None => sole_active(&board)?,
+        };
+        let seconds = matches
+            .get_one::<String>("lease-seconds")
+            .map_or(Ok(60 * 60), |written| {
+                written.parse::<u64>().map_err(|error| {
+                    refusal(
+                        "claim::lease-seconds-invalid",
+                        Some(written.clone()),
+                        &error.to_string(),
+                    )
+                })
+            })?;
+        if seconds == 0 {
+            return Err(refusal(
+                "claim::lease-seconds-zero",
+                Some(seconds.to_string()),
+                "request a positive bounded lease extension",
+            ));
+        }
+        let claim = heads.claim.as_ref().ok_or_else(|| {
+            refusal(
+                "claim::head-missing",
+                Some(task.to_string()),
+                "reclaim only the current lane's active task",
+            )
+        })?;
+        if claim.body.disposition != ClaimDisposition::Active || claim.body.actor != board.principal
+        {
+            return Err(refusal(
+                "claim::ownership-refused",
+                Some(task.to_string()),
+                "reclaim only an active claim owned by this lane capability",
+            ));
+        }
+        let lease = heads.lease.as_ref().ok_or_else(|| {
+            protocol_fault(
+                "claim::lease-missing",
+                "an active claim head has no durable lease head",
+            )
+        })?;
+        let (lane, occupant) = actor_seat(&board)?;
+        Ok((
+            CommandKind::ClaimRenew,
+            vec![
+                Witness::Claim {
+                    task: task.clone(),
+                    head: Some(claim.position),
+                },
+                Witness::Lease {
+                    task: task.clone(),
+                    head: lease.position,
+                },
+                residency_witness(&board, lane, occupant),
+            ],
+            serde_json::to_value(ClaimRenew {
+                task,
+                lease_seconds: seconds,
+            })
+            .expect("typed intent encodes"),
         ))
     })
 }
@@ -986,6 +1065,11 @@ pub(crate) fn dispatch_with_repository(
         }
         wire::intent::Intent::ClaimWin(win) => {
             claim_win(bus, command, win, repository, projects)
+        }
+        wire::intent::Intent::ClaimRenew(renew)
+            if command.kind() == CommandKind::ClaimRenew =>
+        {
+            claim_reclaim(bus, command, renew, projects)
         }
         wire::intent::Intent::TaskDone(done) => {
             task_done(bus, command, done, repository, projects)

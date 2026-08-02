@@ -23,7 +23,8 @@ use std::fmt;
 #[cfg(not(target_arch = "wasm32"))]
 use serde::de::DeserializeOwned;
 use wire::body::{
-    SteerAcked, SteerCanceled, SteerDeclined, SteerLapsed, SteerMissed, SteerResent, SteerSent,
+    DirectiveAttachment, SteerAcked, SteerCanceled, SteerDeclined, SteerLapsed, SteerMissed,
+    SteerRecovered, SteerResent, SteerSent,
 };
 use wire::{CanonicalUuid, Disposition, Instant};
 
@@ -45,6 +46,7 @@ pub struct Directive {
     lane: CanonicalUuid,
     text: String,
     control: Option<String>,
+    attachments: Vec<DirectiveAttachment>,
     expires: Instant,
     escalation: u32,
     ancestor: Option<Key>,
@@ -82,6 +84,12 @@ impl Directive {
         self.control.as_deref()
     }
 
+    /// Exact typed attachments retained with this directive.
+    #[must_use]
+    pub fn attachments(&self) -> &[DirectiveAttachment] {
+        &self.attachments
+    }
+
     /// When this directive lapses if nothing retires it first.
     #[must_use]
     pub const fn expires(&self) -> Instant {
@@ -114,6 +122,8 @@ pub enum Steering<'a> {
     Sent(&'a SteerSent),
     /// A live directive climbed a rung.
     Resent(&'a SteerResent),
+    /// A lapsed directive was restored to live standing.
+    Recovered(&'a SteerRecovered),
     /// A lineage was heard.
     Acked(&'a SteerAcked),
     /// A lineage was refused with a reason.
@@ -305,6 +315,10 @@ impl Ledger {
                     let body = decode_body::<SteerResent>(envelope)?;
                     ledger.absorb(Steering::Resent(&body))
                 }
+                wire::FactKind::SteerRecovered => {
+                    let body = decode_body::<SteerRecovered>(envelope)?;
+                    ledger.absorb(Steering::Recovered(&body))
+                }
                 wire::FactKind::SteerAcked => {
                     let body = decode_body::<SteerAcked>(envelope)?;
                     ledger.absorb(Steering::Acked(&body))
@@ -346,6 +360,7 @@ impl Ledger {
         match steering {
             Steering::Sent(body) => self.send(body),
             Steering::Resent(body) => self.resend(body),
+            Steering::Recovered(body) => self.recover(body),
             Steering::Acked(body) => {
                 self.dispose(&body.key, body.directive, body.lane, Disposition::Acked)
             }
@@ -436,6 +451,7 @@ impl Ledger {
             lane: body.lane,
             text: body.text.clone(),
             control: body.control.clone(),
+            attachments: body.attachments.clone(),
             expires: body.expires,
             escalation: 0,
             ancestor: None,
@@ -497,11 +513,84 @@ impl Ledger {
             lane: below.lane,
             text: below.text,
             control: below.control,
+            attachments: below.attachments,
             expires: below.expires,
             escalation: next,
             ancestor: Some(ancestor),
             disposition: Disposition::Live,
         });
+        Ok(())
+    }
+
+    fn recover(&mut self, body: &SteerRecovered) -> Result<(), Refusal> {
+        let key = read("key", &body.key)?;
+        let directive = self
+            .directives
+            .get(&key)
+            .ok_or_else(|| Refusal::Unknown { key: key.clone() })?;
+        if directive.directive != body.directive {
+            return Err(Refusal::Identity {
+                key,
+                expected: directive.directive,
+                observed: body.directive,
+            });
+        }
+        if directive.lane != body.lane {
+            return Err(Refusal::Lane {
+                key,
+                expected: directive.lane,
+                observed: body.lane,
+            });
+        }
+        if directive.disposition != Disposition::Lapsed {
+            return Err(Refusal::Retired {
+                key,
+                disposition: directive.disposition,
+            });
+        }
+        if directive.expires != body.lapsed_at {
+            return Err(Refusal::Expiry {
+                key,
+                expected: directive.expires,
+                observed: body.lapsed_at,
+            });
+        }
+        let root = self
+            .root(&key)
+            .ok_or_else(|| Refusal::Unknown { key: key.clone() })?;
+        let members = self
+            .directives
+            .values()
+            .filter(|member| self.root(&member.key).as_ref() == Some(&root))
+            .map(|member| member.key.clone())
+            .collect::<Vec<_>>();
+        for member in &members {
+            let directive = self
+                .directives
+                .get(member)
+                .expect("lineage member came from the directive map");
+            if directive.disposition != Disposition::Lapsed {
+                return Err(Refusal::Retired {
+                    key: member.clone(),
+                    disposition: directive.disposition,
+                });
+            }
+            if directive.expires != body.lapsed_at {
+                return Err(Refusal::Expiry {
+                    key: member.clone(),
+                    expected: directive.expires,
+                    observed: body.lapsed_at,
+                });
+            }
+        }
+        for member in members {
+            let directive = self
+                .directives
+                .get_mut(&member)
+                .expect("validated lineage member remains present");
+            directive.disposition = Disposition::Live;
+            directive.expires = body.expires;
+        }
         Ok(())
     }
 
@@ -659,8 +748,8 @@ mod tests {
     use crate::ack::keys::Key;
     use crate::ack::scan::Standing;
     use wire::body::{
-        AcknowledgmentMiss, SteerAcked, SteerCanceled, SteerDeclined, SteerLapsed, SteerMissed,
-        SteerResent, SteerSent, TranscriptLocus,
+        AcknowledgmentMiss, DirectiveAttachment, SteerAcked, SteerCanceled, SteerDeclined,
+        SteerLapsed, SteerMissed, SteerRecovered, SteerResent, SteerSent, TranscriptLocus,
     };
     use wire::{CanonicalUuid, Disposition, Instant};
 
@@ -912,6 +1001,65 @@ mod tests {
         assert_eq!(ledger.disposition(&key(ROOT)), Some(Disposition::Lapsed));
     }
 
+    #[test]
+    fn recovery_restores_only_the_exact_lapsed_directive_without_losing_payload() {
+        let mut ledger = Ledger::new();
+        let original = sent(ROOT);
+        ledger.absorb(Steering::Sent(&original)).expect("sent");
+        ledger
+            .absorb(Steering::Resent(&resent(SECOND, ROOT, 1)))
+            .expect("resent");
+        ledger
+            .absorb(Steering::Lapsed(&SteerLapsed {
+                key: SECOND.to_owned(),
+                lane: lane(),
+                expires: expires(),
+            }))
+            .expect("lapsed at its own expiry");
+        let recovered_expiry: Instant = "2026-08-01T08:07:19.000Z"
+            .parse()
+            .expect("recovery instant");
+        let recovered = SteerRecovered {
+            directive: directive(SECOND),
+            key: SECOND.to_owned(),
+            lane: lane(),
+            lapsed_at: expires(),
+            expires: recovered_expiry,
+        };
+
+        ledger
+            .absorb(Steering::Recovered(&recovered))
+            .expect("exact lapsed directive recovers");
+
+        let restored = ledger
+            .directive(directive(SECOND))
+            .expect("recovered directive retains identity");
+        assert_eq!(restored.text(), original.text);
+        assert_eq!(restored.control(), original.control.as_deref());
+        assert_eq!(restored.attachments(), original.attachments);
+        assert_eq!(restored.expires(), recovered_expiry);
+        assert_eq!(restored.disposition(), Disposition::Live);
+        assert_eq!(ledger.pending(lane()), vec![restored]);
+        for member in ledger.lineage(&key(SECOND)) {
+            assert_eq!(member.disposition(), Disposition::Live);
+            assert_eq!(member.expires(), recovered_expiry);
+        }
+        assert_eq!(
+            ledger.absorb(Steering::Recovered(&recovered)),
+            Err(Refusal::Retired {
+                key: key(SECOND),
+                disposition: Disposition::Live,
+            }),
+            "the same failed directive cannot be recovered twice",
+        );
+        ledger
+            .absorb(Steering::Acked(&acked(SECOND)))
+            .expect("the recovered lineage can retire normally");
+        for member in ledger.lineage(&key(SECOND)) {
+            assert_eq!(member.disposition(), Disposition::Acked);
+        }
+    }
+
     /// A missed acknowledgment is a diagnostic, never a retirement. Its key is
     /// not even read, because the fact exists precisely when the key was
     /// unknown or malformed.
@@ -1031,6 +1179,11 @@ mod tests {
             lane: lane(),
             text: "hold the line".to_owned(),
             control: Some("drive-drain-queue".to_owned()),
+            attachments: vec![DirectiveAttachment {
+                name: "operator-note.txt".to_owned(),
+                content_type: "text/plain".to_owned(),
+                data_url: "data:text/plain;base64,aG9sZCB0aGUgbGluZQ==".to_owned(),
+            }],
             expires: expires(),
         }
     }

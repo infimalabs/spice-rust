@@ -10,13 +10,13 @@
 //! epoch, journal position, result, or fact envelope, because the commit door
 //! assigns all of those; a body that named one would let a caller forge it.
 //!
-//! Several kinds share one shape on purpose. Renewing, freeing, and lapsing a
-//! claim all name a task and nothing else, so they share [`TaskRef`] rather
-//! than carrying three identical structs that could drift apart.
+//! Several kinds share one shape on purpose. Freeing and lapsing a claim both
+//! name a task and nothing else, so they share [`TaskRef`]; renewal has its
+//! own shape because it also names the requested lease duration.
 
 use serde::{Deserialize, Serialize};
 
-use crate::body::{ConsentQueueCause, TranscriptLocus};
+use crate::body::{ConsentQueueCause, DirectiveAttachment, TranscriptLocus};
 use crate::envelope::{Actor, Origin, Seq};
 use crate::fact::FactKind;
 use crate::head::{LaneResidency, ResidentState, TapeLocus, TrustState};
@@ -211,6 +211,16 @@ pub struct ClaimCarry {
     pub successor: Actor,
 }
 
+/// Extend the authenticated actor's active claim within its durable maximum.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimRenew {
+    /// Task whose possession is refreshed.
+    pub task: TaskHandle,
+    /// Requested positive lease duration in whole seconds.
+    pub lease_seconds: u64,
+}
+
 /// Commit the exact normalized preview at its witnessed board barrier.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -229,6 +239,9 @@ pub struct SteerSend {
     pub lane: CanonicalUuid,
     /// The intent being sent.
     pub message: String,
+    /// Opaque typed attachments retained with the directive.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<DirectiveAttachment>,
 }
 
 /// Read pending direction visible to the authenticated principal.
@@ -332,6 +345,13 @@ pub struct LaneState {
     pub lane: CanonicalUuid,
     /// Lifecycle action the operator selected.
     pub action: LaneAction,
+    /// Fresh linked worktree required only by import.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub worktree: Option<String>,
 }
 
 /// Select one lane's continuity account, or the operator-wide account.
@@ -447,6 +467,9 @@ pub struct PendingDirective {
         deserialize_with = "crate::optional::present"
     )]
     pub control: Option<String>,
+    /// Exact attachments retained with the directive.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<DirectiveAttachment>,
     /// Instant at which the directive lapses.
     pub expires: Instant,
 }

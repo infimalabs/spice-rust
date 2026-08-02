@@ -12,9 +12,9 @@ never reads Python authority bytes.
 
 | Measure | Result |
 | --- | --- |
-| Installed Python registry | 123/123 paths have one disposition; 3 task-owned gaps; no unsupported deletions |
-| Rust contract registry | 84/84 leaves landed; no gaps or unaccounted leaves |
-| Rust process sweep | 168 text/JSON invocations; matching exits and streams; no placeholders |
+| Installed Python registry | 123/123 paths have one disposition; no task-owned gaps or unsupported deletions |
+| Rust contract registry | 87/87 leaves landed; no gaps or unaccounted leaves |
+| Rust process sweep | 174 text/JSON invocations; matching exits and streams; no placeholders |
 | Functional smoke | 59/59 process tests across lifecycle, control, evidence, and recovery |
 | Coexistence | Two Rust generations; Python command, state, hooks, and hook path unchanged |
 
@@ -27,7 +27,7 @@ worktree with separate authority.
 
 Cutover remains blocked on three classes of risk:
 
-1. `RECOVER-1kJWSHkc`, `PARITY-1kJWSQ7W`, and `PARITY-1kJWSV53` own retained predecessor behavior
+1. `PARITY-1kJWSQ7W` and `PARITY-1kJWSV53` own retained predecessor behavior
    that is not yet executable in Rust. Until they land, the active Python
    hooks and command remain unchanged and the Python policy gate runs last in
    `cargo xtask verify`.
@@ -57,7 +57,7 @@ entrypoint, active hooks, or Python authority.
 
 ## Rust contracts
 
-The closed registry contains 83 leaves and all 83 have executable dispatch.
+The closed registry contains 87 leaves and all 87 have executable dispatch.
 `spice/src/cli.rs::landing` carries the same classification; its tests reject
 registry drift, and the process sweep rejects terminal release or resident
 placeholder outcomes.
@@ -100,6 +100,7 @@ placeholder outcomes.
 - `board graph`
 - `board handout`
 - `task next`
+- `task reclaim`
 - `task add`
 - `task capture`
 - `task done`
@@ -120,8 +121,10 @@ placeholder outcomes.
 - `lane add`
 - `lane drain`
 - `lane wake`
+- `lane import`
 - `steer`
 - `steer cancel`
+- `steer recover`
 - `inbox`
 - `recall`
 - `consent`
@@ -172,10 +175,10 @@ risk, not a fallback.
 - `agent`: D -> resident and lane surfaces.
 - `agent activation`: R -> `lane` and canvas discovery.
 - `agent ensure`: R -> `lane add`.
-- `agent import`: P -> `RECOVER-1kJWSHkc` for team, lineage, session, and claim transfer.
+- `agent import`: R -> `lane import` for atomic team-seat, lineage, exact session, and active-claim transfer.
 - `agent post-tool-hook`: R -> `run`, `inbox`, and `ack`.
 - `agent reply`: R -> `ack`.
-- `agent requeue-deadletter`: P -> `RECOVER-1kJWSHkc` for exact-once directive recovery.
+- `agent requeue-deadletter`: R -> `steer recover` for exact-once lapsed directive recovery with payload and provenance retained.
 - `agent run`: R -> `run`.
 - `agent show`: R -> `lane` and `recall`.
 - `agent supervise`: R -> `up` and `lane`.
@@ -311,7 +314,7 @@ tool accounting, deterministic residue, and bounded filtered projections.
 - `task next`: R -> `task next`.
 - `task note`: R -> `task note`.
 - `task oops`: R -> `task oops`.
-- `task reclaim`: P -> `RECOVER-1kJWSHkc` for bounded manual claim recovery.
+- `task reclaim`: R -> `task reclaim` for bounded lane-owned lease recovery.
 - `task review`: R -> `task review`.
 - `task reword`: D -> active correction uses `doc`.
 - `task show`: R -> `board`.

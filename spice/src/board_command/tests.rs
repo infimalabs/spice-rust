@@ -301,6 +301,123 @@ mod tests {
         clean(&root, bus);
     }
 
+    #[test]
+    fn reclaim_renews_only_the_lane_owned_claim_and_survives_restart() {
+        let (root, bus, epoch, seats) = fixture("reclaim", 1);
+        let lane = Actor::Lane(seats[0].lane);
+        let held_task = add(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "RECLAIM-held1",
+            "Held recovery work",
+            Some("todo"),
+        );
+        let available_task = add(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "RECLAIM-next1",
+            "Next allocator work",
+            Some("todo"),
+        );
+        let available = board(&bus, epoch, lane.clone());
+        assert_committed(issue(
+            &bus,
+            epoch,
+            lane.clone(),
+            CommandKind::ClaimWin,
+            claim_expected(&available, &held_task, &seats[0]),
+            &ClaimWin {
+                rule: "next".parse().expect("allocator rule"),
+            },
+        ));
+        let held = board(&bus, epoch, lane.clone());
+        let before = at(&held, &held_task).clone();
+        let claim = before.claim.as_ref().expect("active claim");
+        let lease = before.lease.as_ref().expect("active lease");
+        let expected = vec![
+            Witness::Claim {
+                task: held_task.clone(),
+                head: Some(claim.position),
+            },
+            Witness::Lease {
+                task: held_task.clone(),
+                head: lease.position,
+            },
+            residency(&held, &seats[0]),
+        ];
+        assert_committed(issue(
+            &bus,
+            epoch,
+            lane.clone(),
+            CommandKind::ClaimRenew,
+            expected.clone(),
+            &ClaimRenew {
+                task: held_task.clone(),
+                lease_seconds: 30 * 60,
+            },
+        ));
+
+        let renewed = board(&bus, epoch, lane.clone());
+        let after = at(&renewed, &held_task);
+        assert_eq!(after.statement, before.statement);
+        assert_eq!(after.workflow, before.workflow);
+        assert_eq!(after.claim, before.claim);
+        assert_ne!(
+            after.lease.as_ref().expect("renewed lease").position,
+            lease.position
+        );
+        assert_eq!(
+            after.lease.as_ref().expect("renewed lease").body.maximum,
+            lease.body.maximum,
+        );
+        assert!(after.lease.as_ref().expect("renewed lease").body.expiry > lease.body.expiry);
+        assert!(
+            after.lease.as_ref().expect("renewed lease").body.expiry
+                <= after.lease.as_ref().expect("renewed lease").body.maximum
+        );
+        assert!(matches!(
+            issue(
+                &bus,
+                epoch,
+                lane.clone(),
+                CommandKind::ClaimRenew,
+                expected,
+                &ClaimRenew {
+                    task: held_task.clone(),
+                    lease_seconds: 30 * 60,
+                },
+            ),
+            Outcome::Refusal(Refusal { ref reason, .. }) if reason == "board::witness-moved"
+        ));
+        assert!(bus
+            .fact_snapshot()
+            .expect("reclaim facts read")
+            .facts()
+            .iter()
+            .any(|fact| fact.fact.kind() == wire::FactKind::ClaimRenewed));
+
+        bus.verify().expect("reclaimed authority verifies");
+        bus.shutdown().expect("reclaim fixture bus stops");
+        let reopened = journal::Journal::open(root.join("authority.sqlite3"))
+            .expect("reclaim journal reopens");
+        let reopened = Bus::start(reopened).expect("reclaim bus restarts");
+        let after_restart = board(&reopened, epoch, lane.clone());
+        assert_eq!(at(&after_restart, &held_task), after);
+        let entries = actor_entries(&after_restart).expect("restarted board validates");
+        assert_eq!(
+            board::select(&entries, &lane)
+                .expect("allocator still has unclaimed work")
+                .entry()
+                .statement()
+                .handle,
+            available_task,
+            "the renewed claim remains excluded from allocation after restart",
+        );
+        clean(&root, reopened);
+    }
+
     fn assert_hidden_actor_document(
         answer: &BoardAnswer,
         actor: &Actor,

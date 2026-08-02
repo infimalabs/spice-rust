@@ -169,7 +169,7 @@ vocabulary! {
     /// Exclusive possession was minted from current eligibility and claim heads.
     ClaimWon = "claim::won" by CommandDoor;
     /// Possession passed to a successor with ancestor lineage preserved.
-    ClaimCarried = "claim::carried" by CommandDoor;
+    ClaimCarried = "claim::carried" by ResidentRecognition;
     /// Possession was released and the task became eligible again.
     ClaimFreed = "claim::freed" by CommandDoor;
     /// The lease deadline passed and the resident expired possession.
@@ -184,6 +184,8 @@ vocabulary! {
     SteerSent = "steer::sent" by CommandDoor;
     /// The same intent was sent again with lineage and escalation carried.
     SteerResent = "steer::resent" by CommandDoor;
+    /// A lapsed directive returned to live standing under operator recovery.
+    SteerRecovered = "steer::recovered" by CommandDoor;
     /// A live directive was acknowledged at a transcript locus.
     SteerAcked = "steer::acked" by AckScanner;
     /// A live directive was declined at a transcript locus.
@@ -212,6 +214,8 @@ vocabulary! {
     LaneSessionDeclared = "lane::declared" by ResidentRecognition;
     /// An occupant became live under the lane.
     LaneStarted = "lane::started" by ResidentRecognition;
+    /// A vacant lane seat moved to another linked worktree.
+    LaneImported = "lane::imported" by ResidentRecognition;
     /// The resident observed the occupant end.
     LaneExited = "lane::exited" by ResidentRecognition;
     /// The occupant crossed a context compaction boundary.

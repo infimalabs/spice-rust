@@ -104,7 +104,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 
 #[test]
 fn every_contract_has_an_executable_succession_disposition() {
-    assert_eq!(contracts().len(), 84);
+    assert_eq!(contracts().len(), 87);
 
     let unaccounted = contracts()
         .iter()
@@ -117,7 +117,7 @@ fn every_contract_has_an_executable_succession_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 84);
+    assert_eq!(landed, 87);
     assert_eq!(landing(&["demo"]), Landing::Landed);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
@@ -129,6 +129,9 @@ fn every_contract_has_an_executable_succession_disposition() {
     assert_eq!(landing(&["lane", "add"]), Landing::Landed);
     assert_eq!(landing(&["lane", "drain"]), Landing::Landed);
     assert_eq!(landing(&["lane", "wake"]), Landing::Landed);
+    assert_eq!(landing(&["lane", "import"]), Landing::Landed);
+    assert_eq!(landing(&["steer", "recover"]), Landing::Landed);
+    assert_eq!(landing(&["task", "reclaim"]), Landing::Landed);
     assert_eq!(landing(&["recall"]), Landing::Landed);
     assert_eq!(landing(&["steer"]), Landing::Landed);
     assert_eq!(landing(&["steer", "cancel"]), Landing::Landed);
@@ -241,12 +244,11 @@ fn installed_python_registry_and_ledger_dispositions_are_bijective() {
 enum PythonTaskDisposition {
     Landed(&'static [&'static str]),
     Branch(&'static [&'static str]),
-    Pending(&'static str),
 }
 
 #[test]
 fn every_python_task_control_has_one_tested_current_disposition() {
-    use PythonTaskDisposition::{Branch, Landed, Pending};
+    use PythonTaskDisposition::{Branch, Landed};
 
     let mappings = [
         ("task", Landed(&["board"])),
@@ -274,7 +276,7 @@ fn every_python_task_control_has_one_tested_current_disposition() {
         ("task next", Landed(&["task", "next"])),
         ("task note", Landed(&["task", "note"])),
         ("task oops", Landed(&["task", "oops"])),
-        ("task reclaim", Pending("RECOVER-1kJWSHkc")),
+        ("task reclaim", Landed(&["task", "reclaim"])),
         ("task review", Landed(&["task", "review"])),
         ("task reword", Landed(&["doc"])),
         ("task show", Landed(&["board"])),
@@ -333,10 +335,6 @@ fn every_python_task_control_has_one_tested_current_disposition() {
                     "Python `{python}` branch unexpectedly names a leaf: {path:?}",
                 );
             }
-            Pending(owner) => assert!(
-                task_plane.contains(&format!("`{owner}`")),
-                "Python `{python}` does not name its pending owner `{owner}`",
-            ),
         }
     }
 }
@@ -481,6 +479,14 @@ fn python_lifecycle_and_session_forensics_name_landed_successors() {
     for mapping in [
         "- `agent activation`: R -> `lane` and canvas discovery.",
         "- `agent ensure`: R -> `lane add`.",
+        concat!(
+            "- `agent import`: R -> `lane import` for atomic team-seat, lineage, ",
+            "exact session, and active-claim transfer."
+        ),
+        concat!(
+            "- `agent requeue-deadletter`: R -> `steer recover` for exact-once ",
+            "lapsed directive recovery with payload and provenance retained."
+        ),
         "- `agent show`: R -> `lane` and `recall`.",
     ] {
         assert!(
