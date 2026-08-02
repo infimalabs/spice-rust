@@ -78,11 +78,15 @@ pub use report::{
     ReportOutcome, ReportProcess, ReportRate, ReportStream,
 };
 pub use toolchain::{
-    ArmFinding, ArmMeasurement, ArmObservation, ArmOutcome, ConfigurationSource, FindingDetail,
-    MigrationRefusal as ToolchainMigrationRefusal, PredecessorComparison,
-    PredecessorComparisonError, PredecessorObservation, PredecessorResult, TOOLCHAIN_ARMS,
+    ArmFinding, ArmMeasurement, ArmObservation, ArmOutcome, ConfigurationSource,
+    EnvironmentLedgerKind, FindingDetail, JavascriptUnusedStatus, LOCAL_PATH_MARKER,
+    MeasurementEngine, MigrationRefusal as ToolchainMigrationRefusal, PACKAGED_ENV_INCLUDES,
+    PACKAGED_ENV_PROFILE, PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_SCANNER_EXCLUDES,
+    PACKAGED_TASTE_WORDS, PACKAGED_TEST_PATHS, PackagedEnvironmentProfile, PredecessorComparison,
+    PredecessorComparisonError, PredecessorConfiguration, PredecessorFinding,
+    PredecessorObservation, PredecessorResult, SourceLocus, TOOLCHAIN_ARMS,
     TOOLCHAIN_REPORT_VERSION, ToolEvidence, ToolRequirement, ToolchainDeclaration, ToolchainError,
-    ToolchainReport, TreeJurisdiction, compare_predecessor, measure_toolchain,
+    ToolchainReport, TreeInput, TreeJurisdiction, compare_predecessor, measure_toolchain,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use tree::{SelectedTree, Selector, TreeError};

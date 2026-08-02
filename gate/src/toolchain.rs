@@ -1,10 +1,10 @@
 //! Compiled declarations and typed measurements for the toolchain arm family.
 //!
 //! These eight arms occupy one closed interval in the canonical battery.  A
-//! declaration fixes tree jurisdiction, configuration provenance, native
-//! component identity, and every external executable/version contract.  A run
-//! contributes observations only; it cannot select a program, alter an
-//! argument vector, or route policy through the predecessor Python package.
+//! declaration fixes tree jurisdiction, configuration provenance, measurement
+//! ownership, and every external executable/version contract. A later runner
+//! contributes observations only; this module never claims that normalization
+//! executed the scanner which produced them.
 
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -12,11 +12,10 @@ use std::fmt;
 
 use serde::Serialize;
 
-use crate::manifest::{GateId, PREDECESSOR_GATE_RELEASE};
+use crate::manifest::GateId;
 
 /// The only report schema emitted by this compiled arm family.
 pub const TOOLCHAIN_REPORT_VERSION: u64 = 1;
-const NATIVE_ENGINE_VERSION: &str = "spice-gate-toolchain-v1";
 
 /// A compiled source of configuration admitted by one arm.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -42,6 +41,7 @@ impl ConfigurationSource {
 /// Complete tree jurisdiction of one compiled arm.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TreeJurisdiction {
+    input: TreeInput,
     roots: &'static [&'static str],
     includes: &'static [&'static str],
     excludes: &'static [&'static str],
@@ -49,6 +49,12 @@ pub struct TreeJurisdiction {
 }
 
 impl TreeJurisdiction {
+    /// Which immutable selected-tree view supplies candidate paths.
+    #[must_use]
+    pub const fn input(self) -> TreeInput {
+        self.input
+    }
+
     /// Roots from which matching begins.
     #[must_use]
     pub const fn roots(self) -> &'static [&'static str] {
@@ -72,6 +78,24 @@ impl TreeJurisdiction {
     pub const fn applicability(self) -> &'static str {
         self.applicability
     }
+}
+
+/// Candidate-path source consumed by one arm.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TreeInput {
+    /// Paths changed in the selected index relative to its parent.
+    SelectedChanges,
+    /// Every tracked path in the immutable selected tree.
+    CompleteSelectedTree,
+}
+
+/// Compiled evidence-normalization implementation recorded in every report arm.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MeasurementEngine {
+    /// Version-one validation and ordering implemented by this module.
+    ToolchainV1,
 }
 
 /// One external executable whose identity is fixed by a declaration.
@@ -116,11 +140,11 @@ impl ToolRequirement {
     }
 }
 
-/// One native arm declaration in canonical predecessor-relative order.
+/// One arm declaration in canonical predecessor-relative order.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ToolchainDeclaration {
     id: GateId,
-    native_component: &'static str,
+    measurement_engine: MeasurementEngine,
     jurisdiction: TreeJurisdiction,
     configuration: ConfigurationSource,
     tools: &'static [ToolRequirement],
@@ -134,10 +158,10 @@ impl ToolchainDeclaration {
         self.id
     }
 
-    /// Compiled Rust component that owns policy and parsing.
+    /// Compiled Rust implementation that validates and orders supplied evidence.
     #[must_use]
-    pub const fn native_component(self) -> &'static str {
-        self.native_component
+    pub const fn measurement_engine(self) -> MeasurementEngine {
+        self.measurement_engine
     }
 
     /// Closed selected-tree jurisdiction.
@@ -152,222 +176,21 @@ impl ToolchainDeclaration {
         self.configuration
     }
 
-    /// External tool requirements, empty for native scanners.
+    /// External tool requirements, empty for tool-free observation contracts.
     #[must_use]
     pub const fn tools(self) -> &'static [ToolRequirement] {
         self.tools
     }
 
-    /// Fixed direct analysis invocations or native operation names.
+    /// Fixed external invocations or supplied-observation categories.
     #[must_use]
     pub const fn analysis(self) -> &'static [&'static str] {
         self.analysis
     }
 }
 
-const COMMON_EXCLUDES: &[&str] = &[
-    ".git/**",
-    "target/**",
-    "dist/**",
-    "node_modules/**",
-    ".venv/**",
-    "vendor/**",
-];
-const FORMATTER_TOOLS: &[ToolRequirement] = &[
-    ToolRequirement {
-        name: "cargo",
-        program: "cargo",
-        version_argv: &["--version"],
-        exact_version: "cargo 1.97.1 (c980f4866 2026-06-30)",
-        role: "workspace formatter driver",
-    },
-    ToolRequirement {
-        name: "rustfmt",
-        program: "rustfmt",
-        version_argv: &["--version"],
-        exact_version: "rustfmt 1.9.0-stable (8bab26f4f6 2026-07-14)",
-        role: "Rust formatter",
-    },
-];
-const CANVAS_TOOLS: &[ToolRequirement] = &[
-    ToolRequirement {
-        name: "cargo",
-        program: "cargo",
-        version_argv: &["--version"],
-        exact_version: "cargo 1.97.1 (c980f4866 2026-06-30)",
-        role: "wasm32 typecheck driver",
-    },
-    ToolRequirement {
-        name: "trunk",
-        program: "trunk",
-        version_argv: &["--version"],
-        exact_version: "trunk 0.21.14",
-        role: "canvas asset graph validator",
-    },
-];
-const PYRIGHT_TOOLS: &[ToolRequirement] = &[ToolRequirement {
-    name: "pyright",
-    program: "pyright",
-    version_argv: &["--version"],
-    exact_version: "pyright 1.1.411",
-    role: "Python type analyzer",
-}];
-
-/// All eight declarations in their fixed interval of the predecessor battery.
-pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 8] = [
-    ToolchainDeclaration {
-        id: GateId::Formatters,
-        native_component: "gate::toolchain::formatters",
-        jurisdiction: TreeJurisdiction {
-            roots: &["."],
-            includes: &["**/*.rs", "Cargo.toml"],
-            excludes: COMMON_EXCLUDES,
-            applicability: "at least one selected **/*.rs file",
-        },
-        configuration: ConfigurationSource {
-            source: "rust-toolchain.toml",
-            field: "toolchain.channel + toolchain.components[rustfmt]",
-        },
-        tools: FORMATTER_TOOLS,
-        analysis: &["cargo fmt --all -- --check"],
-    },
-    ToolchainDeclaration {
-        id: GateId::LocalPaths,
-        native_component: "gate::toolchain::local_paths",
-        jurisdiction: TreeJurisdiction {
-            roots: &["."],
-            includes: &["tracked UTF-8 text"],
-            excludes: COMMON_EXCLUDES,
-            applicability: "at least one selected UTF-8 text file",
-        },
-        configuration: ConfigurationSource {
-            source: "compiled",
-            field: "gate::toolchain::LOCAL_PATH_POLICY_V1",
-        },
-        tools: &[],
-        analysis: &["native scan for absolute workstation path forms"],
-    },
-    ToolchainDeclaration {
-        id: GateId::Taste,
-        native_component: "gate::toolchain::taste",
-        jurisdiction: TreeJurisdiction {
-            roots: &["."],
-            includes: &["**/*.md", "**/*.txt", "**/*.rst"],
-            excludes: COMMON_EXCLUDES,
-            applicability: "at least one selected prose file",
-        },
-        configuration: ConfigurationSource {
-            source: "compiled",
-            field: "gate::toolchain::TASTE_POLICY_V1",
-        },
-        tools: &[],
-        analysis: &["native token-aware prose scan"],
-    },
-    ToolchainDeclaration {
-        id: GateId::CanvasWebTypecheck,
-        native_component: "gate::toolchain::canvas_web_typecheck",
-        jurisdiction: TreeJurisdiction {
-            roots: &["app", "canvas"],
-            includes: &[
-                "app/Cargo.toml",
-                "app/src/**/*.rs",
-                "app/index.html",
-                "app/**/*.css",
-                "canvas/Cargo.toml",
-                "canvas/src/**/*.rs",
-            ],
-            excludes: COMMON_EXCLUDES,
-            applicability: "app/Cargo.toml and app/index.html are selected",
-        },
-        configuration: ConfigurationSource {
-            source: "rust-toolchain.toml",
-            field: "toolchain.channel + toolchain.targets[wasm32-unknown-unknown]",
-        },
-        tools: CANVAS_TOOLS,
-        analysis: &[
-            "cargo check --locked --workspace --target wasm32-unknown-unknown",
-            "trunk build index.html --release --locked --filehash=false",
-        ],
-    },
-    ToolchainDeclaration {
-        id: GateId::JavascriptUnused,
-        native_component: "gate::toolchain::javascript_unused",
-        jurisdiction: TreeJurisdiction {
-            roots: &["."],
-            includes: &["**/*.js", "**/*.mjs", "**/*.cjs"],
-            excludes: COMMON_EXCLUDES,
-            applicability: "at least one selected JavaScript module",
-        },
-        configuration: ConfigurationSource {
-            source: "compiled",
-            field: "gate::toolchain::JAVASCRIPT_UNUSED_POLICY_V1",
-        },
-        tools: &[],
-        analysis: &["native JavaScript declaration/reference analysis"],
-    },
-    ToolchainDeclaration {
-        id: GateId::PythonTypecheck,
-        native_component: "gate::toolchain::python_typecheck",
-        jurisdiction: TreeJurisdiction {
-            roots: &["."],
-            includes: &["pyproject.toml", "**/*.py", "**/*.pyi"],
-            excludes: COMMON_EXCLUDES,
-            applicability: "pyproject.toml and at least one selected Python source file",
-        },
-        configuration: ConfigurationSource {
-            source: "pyproject.toml",
-            field: "tool.pyright",
-        },
-        tools: PYRIGHT_TOOLS,
-        analysis: &["pyright --level error"],
-    },
-    ToolchainDeclaration {
-        id: GateId::EnvPolicy,
-        native_component: "gate::toolchain::env_policy",
-        jurisdiction: TreeJurisdiction {
-            roots: &["."],
-            includes: &[
-                "**/*.rs",
-                "**/*.py",
-                "**/*.js",
-                "**/*.mjs",
-                "**/*.cjs",
-                "**/*.toml",
-            ],
-            excludes: COMMON_EXCLUDES,
-            applicability: "at least one selected source or TOML file",
-        },
-        configuration: ConfigurationSource {
-            source: "compiled",
-            field: "gate::toolchain::ENV_ACCESS_POLICY_V1",
-        },
-        tools: &[],
-        analysis: &["native environment access and waiver scan"],
-    },
-    ToolchainDeclaration {
-        id: GateId::EnvNameLedger,
-        native_component: "gate::toolchain::env_name_ledger",
-        jurisdiction: TreeJurisdiction {
-            roots: &["."],
-            includes: &[
-                "**/*.rs",
-                "**/*.py",
-                "**/*.js",
-                "**/*.mjs",
-                "**/*.cjs",
-                "**/*.toml",
-            ],
-            excludes: COMMON_EXCLUDES,
-            applicability: "at least one selected source or TOML file",
-        },
-        configuration: ConfigurationSource {
-            source: "compiled",
-            field: "gate::toolchain::ENV_NAME_LEDGER_POLICY_V1",
-        },
-        tools: &[],
-        analysis: &["native environment declaration/reference ledger"],
-    },
-];
+mod declarations;
+pub use declarations::*;
 
 /// Operational evidence for one declared external tool.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -414,11 +237,11 @@ impl ToolEvidence {
     }
 }
 
-/// One structured finding produced by a native arm.
+/// One structured finding produced by a declared arm.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct ArmFinding {
-    /// Selected-tree-relative path.
-    pub path: String,
+    /// Selected-tree-relative path, absent only for a repository-wide finding.
+    pub path: Option<String>,
     /// One-based line, when the analyzer has a source locus.
     pub line: Option<u32>,
     /// One-based column, when the analyzer has a source locus.
@@ -434,7 +257,7 @@ pub enum FindingDetail {
     /// Source differs from the formatter's canonical bytes.
     Formatting { formatter: String },
     /// Workstation-local absolute path entered tracked text.
-    LocalPath { fragment: String },
+    LocalPath,
     /// A discouraged prose token has a compiled replacement.
     Taste { word: String, replacement: String },
     /// Rust/Wasm canvas analysis diagnostic.
@@ -442,26 +265,58 @@ pub enum FindingDetail {
     /// JavaScript declaration has no admitted references.
     JavascriptUnused {
         symbol: String,
-        declaration_line: u32,
-        references: u32,
+        declaration_kind: String,
+        status: JavascriptUnusedStatus,
+        reason: String,
+        reference_count: u32,
+        test_reference_count: u32,
     },
     /// Pyright diagnostic.
     PythonType { code: String, message: String },
     /// Environment access violates the compiled access law.
-    EnvironmentAccess { name: String, access: String },
+    EnvironmentAccess { name: String, source: String },
     /// Environment name has inconsistent declaration/reference evidence.
     EnvironmentLedger {
+        mismatch: EnvironmentLedgerKind,
         name: String,
-        declarations: u32,
-        references: u32,
+        references: Vec<SourceLocus>,
     },
+}
+
+/// Finding-bearing predecessor status for a JavaScript declaration.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum JavascriptUnusedStatus {
+    /// No production or test reference remains after declaration accounting.
+    CandidateUnused,
+    /// References exist only in configured test paths.
+    TestOnly,
+}
+
+/// Exact predecessor environment-ledger mismatch kind.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EnvironmentLedgerKind {
+    /// A source reference has no configured declaration.
+    Unaccounted,
+    /// A configured declaration has no source reference.
+    Stale,
+}
+
+/// One retained source locus nested beneath a repository-wide finding.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct SourceLocus {
+    /// Selected-tree-relative path.
+    pub path: String,
+    /// One-based source line.
+    pub line: u32,
 }
 
 impl FindingDetail {
     const fn gate(&self) -> GateId {
         match self {
             Self::Formatting { .. } => GateId::Formatters,
-            Self::LocalPath { .. } => GateId::LocalPaths,
+            Self::LocalPath => GateId::LocalPaths,
             Self::Taste { .. } => GateId::Taste,
             Self::CanvasType { .. } => GateId::CanvasWebTypecheck,
             Self::JavascriptUnused { .. } => GateId::JavascriptUnused,
@@ -510,7 +365,7 @@ impl ArmOutcome {
     }
 }
 
-/// Raw native-run observation to be measured against the compiled declaration.
+/// Raw runner observation to be measured against the compiled declaration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArmObservation {
     /// Stable current gate identity.
@@ -540,8 +395,10 @@ pub struct ArmMeasurement {
     pub configuration_source: String,
     /// Exact field or compiled symbol used from the source.
     pub configuration_field: String,
-    /// Native Rust component and schema that performed policy/parsing.
-    pub native_engine: String,
+    /// Rust component and schema that validated and ordered this evidence.
+    pub measurement_engine: MeasurementEngine,
+    /// Candidate-path source fixed by the declaration.
+    pub tree_input: TreeInput,
     /// Complete roots retained in declaration order.
     pub roots: Vec<String>,
     /// Complete includes retained in declaration order.
@@ -691,6 +548,7 @@ fn measure_arm(
         return Err(ToolchainError::InvalidReason(gate));
     }
     validate_exit_code(gate, observation.outcome, observation.exit_code)?;
+    normalize_findings(&mut observation.findings);
     validate_findings(gate, observation.outcome, &observation.findings)?;
     order_and_validate_tools(declaration, &observation.outcome, &mut observation.tools)?;
     observation.findings.sort();
@@ -713,7 +571,8 @@ fn measure_arm(
         reason: observation.reason,
         configuration_source: configuration.source.to_owned(),
         configuration_field: configuration.field.to_owned(),
-        native_engine: format!("{}@{NATIVE_ENGINE_VERSION}", declaration.native_component),
+        measurement_engine: declaration.measurement_engine,
+        tree_input: jurisdiction.input,
         roots: owned(jurisdiction.roots),
         includes: owned(jurisdiction.includes),
         excludes: owned(jurisdiction.excludes),
@@ -756,12 +615,15 @@ fn validate_findings(
         });
     }
     for finding in findings {
-        if finding.path.is_empty()
-            || finding.path.starts_with('/')
-            || finding.path.split('/').any(|part| part == "..")
+        let path_is_valid = finding.path.as_deref().is_some_and(valid_relative_path);
+        let is_repository_wide = matches!(finding.detail, FindingDetail::EnvironmentLedger { .. });
+        if path_is_valid == is_repository_wide
             || finding.line == Some(0)
             || finding.column == Some(0)
+            || (finding.column.is_some() && finding.line.is_none())
+            || (is_repository_wide && (finding.line.is_some() || finding.column.is_some()))
             || finding.detail.gate() != gate
+            || !valid_finding_detail(&finding.detail)
         {
             return Err(ToolchainError::InvalidFindings {
                 gate,
@@ -772,6 +634,81 @@ fn validate_findings(
     Ok(())
 }
 
+fn normalize_findings(findings: &mut [ArmFinding]) {
+    for finding in findings {
+        if let FindingDetail::EnvironmentLedger { references, .. } = &mut finding.detail {
+            references.sort();
+        }
+    }
+}
+
+fn valid_relative_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with(['/', '\\'])
+        && !path.starts_with("./")
+        && !path.contains(['\\', '\n', '\r'])
+        && !path
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+}
+
+fn valid_finding_detail(detail: &FindingDetail) -> bool {
+    match detail {
+        FindingDetail::Formatting { formatter } => !formatter.is_empty(),
+        FindingDetail::LocalPath => true,
+        FindingDetail::Taste { word, replacement } => {
+            !word.is_empty() && !replacement.contains(['\n', '\r'])
+        }
+        FindingDetail::CanvasType { code, message }
+        | FindingDetail::PythonType { code, message } => !code.is_empty() && !message.is_empty(),
+        FindingDetail::JavascriptUnused {
+            symbol,
+            declaration_kind,
+            status,
+            reason,
+            reference_count,
+            test_reference_count,
+            ..
+        } => {
+            let kind_is_valid = matches!(
+                declaration_kind.as_str(),
+                "class" | "function" | "constant" | "let" | "variable"
+            );
+            let status_is_valid = match status {
+                JavascriptUnusedStatus::CandidateUnused => {
+                    reason == "no_references_outside_declaration"
+                        && matches!((*reference_count, *test_reference_count), (1, 0) | (0, 1))
+                }
+                JavascriptUnusedStatus::TestOnly => {
+                    reason == "references_only_in_tests"
+                        && *reference_count == 1
+                        && *test_reference_count > 0
+                }
+            };
+            !symbol.is_empty() && kind_is_valid && status_is_valid
+        }
+        FindingDetail::EnvironmentAccess { name, source } => {
+            !name.is_empty() && !source.is_empty() && !source.contains(['\n', '\r'])
+        }
+        FindingDetail::EnvironmentLedger {
+            mismatch,
+            name,
+            references,
+        } => {
+            let loci_are_valid = references
+                .iter()
+                .all(|reference| valid_relative_path(&reference.path) && reference.line > 0);
+            !name.is_empty()
+                && loci_are_valid
+                && references.windows(2).all(|pair| pair[0] < pair[1])
+                && match mismatch {
+                    EnvironmentLedgerKind::Unaccounted => !references.is_empty(),
+                    EnvironmentLedgerKind::Stale => references.is_empty(),
+                }
+        }
+    }
+}
+
 fn order_and_validate_tools(
     declaration: ToolchainDeclaration,
     outcome: &ArmOutcome,
@@ -780,14 +717,14 @@ fn order_and_validate_tools(
     let gate = declaration.id;
     let declared = declaration.tools;
     if declared.is_empty() {
-        return validate_native_tool_state(gate, outcome, evidence);
+        return validate_tool_free_state(gate, outcome, evidence);
     }
     validate_tool_rows(gate, declared, evidence)?;
     evidence.sort_by_key(|item| declared_tool_position(declared, item));
     validate_external_tool_outcome(gate, declared, outcome, evidence)
 }
 
-fn validate_native_tool_state(
+fn validate_tool_free_state(
     gate: GateId,
     outcome: &ArmOutcome,
     evidence: &[ToolEvidence],
@@ -795,7 +732,7 @@ fn validate_native_tool_state(
     if !evidence.is_empty() {
         return Err(ToolchainError::InvalidToolEvidence {
             gate,
-            evidence: "native scanner declared no external executable".to_owned(),
+            evidence: "tool-free arm declared no external executable".to_owned(),
         });
     }
     if matches!(
@@ -804,7 +741,7 @@ fn validate_native_tool_state(
     ) {
         return Err(ToolchainError::InvalidToolEvidence {
             gate,
-            evidence: "native scanner cannot report an external-tool state".to_owned(),
+            evidence: "tool-free arm cannot report an external-tool state".to_owned(),
         });
     }
     Ok(())
@@ -866,18 +803,34 @@ fn validate_external_tool_outcome(
     evidence: &[ToolEvidence],
 ) -> Result<(), ToolchainError> {
     match outcome {
-        ArmOutcome::NotApplicable | ArmOutcome::Excluded => Ok(()),
-        ArmOutcome::ToolUnavailable => {
-            require_all_declared(gate, declared, evidence)?;
-            if evidence
-                .iter()
-                .any(|item| matches!(item, ToolEvidence::Missing { .. }))
-            {
+        ArmOutcome::NotApplicable | ArmOutcome::Excluded => {
+            if evidence.is_empty() {
                 Ok(())
             } else {
                 Err(ToolchainError::InvalidToolEvidence {
                     gate,
-                    evidence: "tool-unavailable result has no missing program".to_owned(),
+                    evidence: "pre-discovery skip state carried tool evidence".to_owned(),
+                })
+            }
+        }
+        ArmOutcome::ToolUnavailable => {
+            require_all_declared(gate, declared, evidence)?;
+            let missing = evidence
+                .iter()
+                .any(|item| matches!(item, ToolEvidence::Missing { .. }));
+            let identified_are_exact = evidence.iter().zip(declared).all(|(item, tool)| {
+                identified_version(item).is_none_or(|version| version == tool.exact_version)
+            });
+            if missing && identified_are_exact {
+                Ok(())
+            } else {
+                Err(ToolchainError::InvalidToolEvidence {
+                    gate,
+                    evidence: concat!(
+                        "tool-unavailable result requires a missing program and exact versions ",
+                        "for every identified program"
+                    )
+                    .to_owned(),
                 })
             }
         }
@@ -959,170 +912,8 @@ fn identified_version(evidence: &ToolEvidence) -> Option<&str> {
     }
 }
 
-/// Normalized result retained from one supported predecessor scanner.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PredecessorResult {
-    /// Predecessor scanner completed cleanly.
-    Passed,
-    /// Predecessor scanner emitted normalized structured findings.
-    Findings(Vec<ArmFinding>),
-}
-
-/// One normalized release-owned predecessor observation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PredecessorObservation {
-    /// Exact 0.31.0 arm name, including `serve-web-typecheck`.
-    pub gate_name: String,
-    /// Normalized retained result.
-    pub result: PredecessorResult,
-}
-
-/// Exact refusal and recovery for a predecessor observation without parity.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MigrationRefusal {
-    /// Release that owned the incompatible behavior.
-    pub release: &'static str,
-    /// Current stable identity that supersedes the old arm.
-    pub gate_id: GateId,
-    /// Exact predecessor configuration field.
-    pub source_field: String,
-    /// Why old evidence cannot be interpreted as current evidence.
-    pub reason: &'static str,
-    /// Exact current recovery action.
-    pub recovery: &'static str,
-}
-
-/// Result of comparing one predecessor observation with a current measurement.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PredecessorComparison {
-    /// Normalized scanner result is identical.
-    Equivalent,
-    /// Incompatible execution semantics are retained as an explicit boundary.
-    Refused(MigrationRefusal),
-}
-
-/// Why a supported predecessor comparison was malformed or unequal.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PredecessorComparisonError {
-    /// Name was not one of the eight release-owned predecessor arms.
-    UnknownGate(String),
-    /// Current measurement named a different stable gate.
-    GateMismatch { expected: GateId, actual: GateId },
-    /// Supported pure-scanner results differed.
-    ResultMismatch(GateId),
-}
-
-impl fmt::Display for PredecessorComparisonError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::UnknownGate(gate) => write!(
-                formatter,
-                "release {PREDECESSOR_GATE_RELEASE} has no toolchain arm {gate:?}"
-            ),
-            Self::GateMismatch { expected, actual } => write!(
-                formatter,
-                "predecessor {} observation was compared with current {}",
-                expected.as_str(),
-                actual.as_str()
-            ),
-            Self::ResultMismatch(gate) => {
-                write!(
-                    formatter,
-                    "{} predecessor/current results differ",
-                    gate.as_str()
-                )
-            }
-        }
-    }
-}
-
-impl Error for PredecessorComparisonError {}
-
-/// Compare a supported normalized scanner observation or return the exact
-/// release boundary for an incompatible predecessor executor.
-///
-/// # Errors
-///
-/// Returns an unknown name, gate mismatch, or unequal supported result.
-pub fn compare_predecessor(
-    predecessor: &PredecessorObservation,
-    current: &ArmMeasurement,
-) -> Result<PredecessorComparison, PredecessorComparisonError> {
-    let Some(gate) = predecessor_gate(&predecessor.gate_name) else {
-        return Err(PredecessorComparisonError::UnknownGate(
-            predecessor.gate_name.clone(),
-        ));
-    };
-    if current.gate_id != gate {
-        return Err(PredecessorComparisonError::GateMismatch {
-            expected: gate,
-            actual: current.gate_id,
-        });
-    }
-    if let Some(refusal) = predecessor_refusal(gate) {
-        return Ok(PredecessorComparison::Refused(refusal));
-    }
-
-    let equivalent = match (&predecessor.result, current.outcome) {
-        (PredecessorResult::Passed, ArmOutcome::Passed) => true,
-        (PredecessorResult::Findings(findings), ArmOutcome::Findings) => {
-            let mut normalized = findings.clone();
-            normalized.sort();
-            normalized == current.findings
-        }
-        _ => false,
-    };
-    if equivalent {
-        Ok(PredecessorComparison::Equivalent)
-    } else {
-        Err(PredecessorComparisonError::ResultMismatch(gate))
-    }
-}
-
-fn predecessor_gate(name: &str) -> Option<GateId> {
-    match name {
-        "formatters" => Some(GateId::Formatters),
-        "local-paths" => Some(GateId::LocalPaths),
-        "taste" => Some(GateId::Taste),
-        "serve-web-typecheck" => Some(GateId::CanvasWebTypecheck),
-        "javascript-unused" => Some(GateId::JavascriptUnused),
-        "python-typecheck" => Some(GateId::PythonTypecheck),
-        "env-policy" => Some(GateId::EnvPolicy),
-        "env-name-ledger" => Some(GateId::EnvNameLedger),
-        _ => None,
-    }
-}
-
-fn predecessor_refusal(gate: GateId) -> Option<MigrationRefusal> {
-    let (name, reason, recovery) = match gate {
-        GateId::Formatters => (
-            "formatters",
-            "0.31.0 mutated and re-staged Python files through a range-selected ruff",
-            concat!(
-                "rerun formatters with cargo 1.97.1 and rustfmt 1.9.0-stable ",
-                "under the current declaration"
-            ),
-        ),
-        GateId::CanvasWebTypecheck => (
-            "serve-web-typecheck",
-            "0.31.0 checked removed serve JavaScript with an unpinned npm TypeScript package",
-            "rerun canvas-web-typecheck against app/canvas with cargo 1.97.1 and trunk 0.21.14",
-        ),
-        GateId::PythonTypecheck => (
-            "python-typecheck",
-            "0.31.0 selected pyright or uvx dynamically and admitted a version range",
-            "install pyright 1.1.411 and rerun python-typecheck through its sole current program",
-        ),
-        _ => return None,
-    };
-    Some(MigrationRefusal {
-        release: PREDECESSOR_GATE_RELEASE,
-        gate_id: gate,
-        source_field: format!("policy.pre_commit_builtins.{name}"),
-        reason,
-        recovery,
-    })
-}
+mod predecessor;
+pub use predecessor::*;
 
 #[cfg(test)]
 include!("toolchain/fixtures.rs");
