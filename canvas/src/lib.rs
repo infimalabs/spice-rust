@@ -7,6 +7,8 @@ mod asset;
 pub mod axum;
 pub mod config;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod stream;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod thread;
 pub mod view;
 

@@ -31,6 +31,57 @@ fn identity(last: u8) -> wire::CanonicalUuid {
         .expect("canonical fixture identity")
 }
 
+fn seq(value: u64) -> wire::Seq {
+    wire::Seq::new(value).expect("non-zero fixture position")
+}
+
+fn stream_write(note: &str, trust: bool) -> journal::JournalWrite {
+    let mut write = journal::JournalWrite::new(
+        wire::Actor::Operator,
+        "task:STREAM-a1".parse().expect("origin"),
+        "2030-04-12T18:44:09.271Z".parse().expect("instant"),
+        wire::Producer::CommandDoor,
+    );
+    write
+        .fact(
+            wire::body::TaskNoted {
+                task: "STREAM-a1".parse().expect("task handle"),
+                note: note.to_owned(),
+            },
+            journal::FactCause::Root,
+        )
+        .expect("note fact builds");
+    if trust {
+        let digest = wire::Digest::compute(wire::Domain::ConfigExecutableSurface, b"surface");
+        let fact = write
+            .fact(
+                wire::body::TrustPended {
+                    surface: "config".to_owned(),
+                    digest: digest.clone(),
+                    previous: None,
+                },
+                journal::FactCause::Root,
+            )
+            .expect("trust fact builds");
+        write.trust_head(fact, move |_| wire::TrustHead {
+            digest,
+            state: wire::TrustState::Pended,
+        });
+    }
+    write
+}
+
+fn commit_stream(bus: &bus::Bus, note: &str, trust: bool) -> bus::JournalCommit {
+    match bus.commit(stream_write(note, trust)).expect("bus answers") {
+        bus::CommitOutcome::Committed(commit) => commit,
+        other => panic!("stream fixture commit failed: {other:?}"),
+    }
+}
+
+async fn stream_frame(socket: &mut ClientSocket) -> wire::StreamFrame {
+    wire::decode(&next_frame(socket).await).expect("current stream frame")
+}
+
 async fn websocket(address: SocketAddr) -> ClientSocket {
     let mut request = format!("ws://{address}/socket")
         .into_client_request()
@@ -120,6 +171,215 @@ async fn assert_socket_terminated(socket: &mut ClientSocket) {
         ),
         "socket remained active: {result:?}"
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn authenticated_socket_streams_one_bus_snapshot_updates_resume_and_typed_shutdown() {
+    let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
+        .expect("bus starts");
+    commit_stream(&bus, "initial", true);
+    let capabilities = Capabilities::default();
+    capabilities
+        .insert(operator(), wire::Actor::Operator)
+        .expect("operator capability");
+    let (server, _control) = Server::bind_streaming(epoch(), capabilities, bus.reader(), 8)
+        .await
+        .expect("streaming server binds");
+    let address = server.local_addr().expect("address");
+    let (shutdown, stopped) = oneshot::channel();
+    let server_task = tokio::spawn(server.up_until(async move {
+        let _ = stopped.await;
+    }));
+    let (mut socket, _) = authenticate(address, operator(), epoch()).await;
+    let subscription = identity(0xd0);
+    send_client(
+        &mut socket,
+        &wire::StreamRequest::Subscribe {
+            v: wire::WireVersion::CURRENT,
+            id: subscription,
+            epoch: epoch(),
+            subjects: vec![wire::ViewSubject::Facts, wire::ViewSubject::Trust],
+            after: None,
+        },
+    )
+    .await;
+    let initial_facts = stream_frame(&mut socket).await;
+    let initial_trust = stream_frame(&mut socket).await;
+    let wire::StreamFrame::Facts { packed, .. } = &initial_facts else {
+        panic!("expected initial facts: {initial_facts:?}");
+    };
+    let horizon = packed.horizon;
+    assert_eq!(packed.rows.len(), 2);
+    assert!(matches!(
+        initial_trust,
+        wire::StreamFrame::Trust { ref packed, .. }
+            if packed.horizon == horizon && packed.rows.len() == 1
+    ));
+    let returned = [
+        wire::encode(&initial_facts).expect("facts encode"),
+        wire::encode(&initial_trust).expect("trust encodes"),
+    ]
+    .concat();
+    assert!(!String::from_utf8_lossy(&returned).contains(&operator().to_string()));
+
+    let update = commit_stream(&bus, "later", false);
+    let live = stream_frame(&mut socket).await;
+    assert!(matches!(
+        live,
+        wire::StreamFrame::Fact { ref fact, id, .. }
+            if id == subscription && fact.seq.get() == update.last()
+    ));
+    // Trust is a replacement view and follows the same broadcast barrier.
+    assert!(matches!(
+        stream_frame(&mut socket).await,
+        wire::StreamFrame::Trust { .. }
+    ));
+    socket.close(None).await.expect("first socket closes");
+
+    let (mut resumed, _) = authenticate(address, operator(), epoch()).await;
+    send_client(
+        &mut resumed,
+        &wire::StreamRequest::Subscribe {
+            v: wire::WireVersion::CURRENT,
+            id: identity(0xd1),
+            epoch: epoch(),
+            subjects: vec![wire::ViewSubject::Facts],
+            after: Some(wire::StreamCursor {
+                epoch: epoch(),
+                seq: seq(update.last()),
+            }),
+        },
+    )
+    .await;
+    assert!(matches!(
+        stream_frame(&mut resumed).await,
+        wire::StreamFrame::Facts { packed, .. }
+            if packed.rows.is_empty() && packed.horizon == seq(update.last())
+    ));
+
+    shutdown.send(()).expect("shutdown signals");
+    assert!(matches!(
+        stream_frame(&mut resumed).await,
+        wire::StreamFrame::Closing { after, .. }
+            if after.seq == seq(update.last()) && after.epoch == epoch()
+    ));
+    assert_socket_terminated(&mut resumed).await;
+    server_task
+        .await
+        .expect("server task joins")
+        .expect("server stops");
+    bus.shutdown().expect("bus shuts down");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn capability_replacement_faults_the_live_stream_without_disclosure() {
+    let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
+        .expect("bus starts");
+    commit_stream(&bus, "initial", false);
+    let capabilities = Capabilities::default();
+    capabilities
+        .insert(operator(), wire::Actor::Operator)
+        .expect("operator capability");
+    let (server, _control) = Server::bind_streaming(epoch(), capabilities.clone(), bus.reader(), 8)
+        .await
+        .expect("streaming server binds");
+    let address = server.local_addr().expect("address");
+    let server_task = tokio::spawn(server.up());
+    let (mut socket, _) = authenticate(address, operator(), epoch()).await;
+    send_client(
+        &mut socket,
+        &wire::StreamRequest::Subscribe {
+            v: wire::WireVersion::CURRENT,
+            id: identity(0xd0),
+            epoch: epoch(),
+            subjects: vec![wire::ViewSubject::Facts],
+            after: None,
+        },
+    )
+    .await;
+    let _ = stream_frame(&mut socket).await;
+
+    assert!(capabilities.remove(operator(), &wire::Actor::Operator));
+    commit_stream(&bus, "replacement boundary", false);
+    let frame = stream_frame(&mut socket).await;
+    assert!(matches!(
+        frame,
+        wire::StreamFrame::Fault { ref fault, .. }
+            if fault.reason == "stream::capability-replaced"
+    ));
+    assert!(
+        !String::from_utf8_lossy(&wire::encode(&frame).expect("fault encodes"))
+            .contains(&operator().to_string())
+    );
+    assert_socket_terminated(&mut socket).await;
+    server_task.abort();
+    let _ = server_task.await;
+    bus.shutdown().expect("bus shuts down");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn blocked_command_delivery_turns_broadcast_lag_into_resumable_overflow() {
+    let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
+        .expect("bus starts");
+    commit_stream(&bus, "initial", false);
+    let capabilities = Capabilities::default();
+    capabilities
+        .insert(operator(), wire::Actor::Operator)
+        .expect("operator capability");
+    let (server, mut control) = Server::bind_streaming(epoch(), capabilities, bus.reader(), 8)
+        .await
+        .expect("streaming server binds");
+    let address = server.local_addr().expect("address");
+    let server_task = tokio::spawn(server.up());
+    let (mut socket, _) = authenticate(address, operator(), epoch()).await;
+    let subscription = identity(0xd0);
+    send_client(
+        &mut socket,
+        &wire::StreamRequest::Subscribe {
+            v: wire::WireVersion::CURRENT,
+            id: subscription,
+            epoch: epoch(),
+            subjects: vec![wire::ViewSubject::Facts],
+            after: None,
+        },
+    )
+    .await;
+    let initial = stream_frame(&mut socket).await;
+    let wire::StreamFrame::Facts { packed, .. } = initial else {
+        panic!("expected initial facts");
+    };
+
+    send_change(
+        &mut socket,
+        identity(0xd2),
+        epoch(),
+        wire::ResidentState::Seated,
+    )
+    .await;
+    let request = control.recv().await.expect("command enters control queue");
+    for index in 0..70 {
+        commit_stream(&bus, &format!("queued {index}"), false);
+    }
+    request
+        .respond(wire::Outcome::Refusal(wire::Refusal {
+            reason: "fixture::released".to_owned(),
+            witness: None,
+            expected: None,
+            observed: None,
+            remedy: "continue the fixture".to_owned(),
+        }))
+        .expect("response returns");
+    let _ = response(&mut socket).await;
+    let overflow = stream_frame(&mut socket).await;
+    assert!(matches!(
+        overflow,
+        wire::StreamFrame::Overflow { id, after, dropped, .. }
+            if id == subscription && after.seq == packed.horizon && dropped > 0
+    ));
+    assert_socket_terminated(&mut socket).await;
+    server_task.abort();
+    let _ = server_task.await;
+    bus.shutdown().expect("bus shuts down");
 }
 
 async fn wait_for_admission(
@@ -300,6 +560,26 @@ async fn shutdown_closes_partial_upgrade_pre_hello_and_active_sockets() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn shutdown_forces_transport_closed_when_a_session_cannot_finish_draining() {
+    let capabilities = Capabilities::default();
+    capabilities
+        .insert(operator(), wire::Actor::Operator)
+        .expect("operator capability");
+    let (server, _control) = Server::bind(epoch(), capabilities).await.expect("binds");
+    let state = Arc::clone(&server.state);
+    let session = SessionGuard::enter(&state);
+
+    timeout(ASSERTION_DEADLINE, state.close())
+        .await
+        .expect("session drain has a finite grace");
+    assert!(state.connections.is_cancelled());
+    assert_eq!(state.sessions.load(Ordering::Acquire), 1);
+
+    drop(session);
+    assert_eq!(state.sessions.load(Ordering::Acquire), 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn operator_lane_replacement_and_reconnect_cross_the_live_door() {
     let lane = identity(0xd0);
     let lane_capability = identity(0xd1);
@@ -423,7 +703,7 @@ async fn saturated_queue_orders_concurrent_work_before_dark_and_refuses_later_wo
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, mut control) = Server::bind_with_capacity(epoch(), capabilities, 1)
+    let (server, mut control) = Server::bind_with_capacity(epoch(), capabilities, None, 1)
         .await
         .expect("binds");
     let state = Arc::clone(&server.state);
@@ -503,7 +783,7 @@ async fn shutdown_interrupts_a_queue_reservation_blocked_by_saturation() {
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind_with_capacity(epoch(), capabilities, 1)
+    let (server, _control) = Server::bind_with_capacity(epoch(), capabilities, None, 1)
         .await
         .expect("binds");
     let state = Arc::clone(&server.state);
@@ -707,8 +987,11 @@ fn host_and_origin_must_name_the_published_endpoint() {
         capabilities: Capabilities::default(),
         admission: Mutex::new(Admission::Open),
         commands: mpsc::channel(1).0,
+        stream: None,
         closed: watch::channel(false).0,
         connections: CancellationToken::new(),
+        sessions: AtomicUsize::new(0),
+        sessions_closed: Notify::new(),
         admission_observed: watch::channel(None).0,
     };
     let mut headers = HeaderMap::new();

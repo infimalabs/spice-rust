@@ -55,6 +55,7 @@ pub mod manifest;
 mod optional;
 pub mod packed;
 pub mod reply;
+pub mod stream;
 pub mod witness;
 
 pub use command::{
@@ -82,6 +83,9 @@ pub use reply::{
     JournalReport, JournalRestore, JournalVerification, Outcome, ProofEvidence, Refusal,
     ReleaseNotes, ReleaseNotesTarget, ReleasePlan, Reply, ReplyPosition, Response,
     RestoreVerification, SeqRange, SeqRangeError, ThreadReport, Version,
+};
+pub use stream::{
+    StreamAdmissionError, StreamCursor, StreamFrame, StreamRequest, TrustView, ViewSubject,
 };
 pub use witness::{
     Answer, Disposition, Name, NameError, Phase, PhaseError, TaskHandle, TaskHandleError, Witness,
