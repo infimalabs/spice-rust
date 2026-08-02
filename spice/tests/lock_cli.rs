@@ -42,8 +42,9 @@ impl Fixture {
                 "taken = 71\n",
                 "full = 72\n",
                 "\n[lock.solo]\n",
-                "shards = 1\n",
+                "path = \"locks/solo.lock\"\n",
                 "\n[lock.pool]\n",
+                "directory = \"locks/pool\"\n",
                 "shards = 2\n",
             ),
         )
@@ -102,9 +103,7 @@ impl Fixture {
     }
 
     fn lock_root(&self) -> PathBuf {
-        fs::canonicalize(self.root.join(".git"))
-            .expect("fixture Git directory canonicalizes")
-            .join(".spice-rust/locks")
+        self.root.join("locks")
     }
 }
 
@@ -161,7 +160,7 @@ fn status_is_a_stable_read_only_direct_report_in_both_forms() {
     };
     assert_eq!(json.position, wire::ReplyPosition::Direct {});
     assert_eq!(text, json.body);
-    assert_eq!(text.root, fixture.lock_root().display().to_string());
+    assert_eq!(text.root, fixture.root.display().to_string());
     assert_eq!(text.exits.busy, BUSY_EXIT);
     assert_eq!(text.exits.taken, TAKEN_EXIT);
     assert_eq!(text.exits.full, FULL_EXIT);
@@ -205,7 +204,7 @@ fn run_preserves_exact_argv_environment_cwd_and_child_status() {
         format!("exact|--child-flag|{}", fixture.root.display())
     );
     assert_eq!(
-        fs::read(fixture.lock_root().join("solo/0")).expect("read released lock metadata"),
+        fs::read(fixture.lock_root().join("solo.lock")).expect("read released lock metadata"),
         b""
     );
 
@@ -213,6 +212,79 @@ fn run_preserves_exact_argv_environment_cwd_and_child_status() {
     assert_eq!(exited.code, Some(23));
     assert!(exited.out.is_empty());
     assert!(exited.err.is_empty());
+
+    let missing = fixture.invoke(&[
+        "--json",
+        "lock",
+        "run",
+        "solo",
+        "--",
+        "/definitely/missing/spice-lock-child",
+    ]);
+    assert_eq!(missing.code, Some(127));
+    let outcome: Outcome<()> = wire::decode(&missing.err).expect("launch fault decodes");
+    assert!(matches!(
+        outcome,
+        Outcome::Fault(fault) if fault.reason == "lock::child-launch-failed"
+    ));
+    let reacquired = fixture.invoke(&["lock", "run", "solo", "--", "/usr/bin/true"]);
+    assert_eq!(reacquired.code, Some(0));
+}
+
+#[test]
+fn explicit_absolute_file_and_pool_locations_are_reported_before_creation() {
+    let fixture = Fixture::new("absolute");
+    let file = fixture.root.join("absolute-state/single.lock");
+    let directory = fixture.root.join("absolute-state/pool");
+    fs::write(
+        fixture.root.join("spice.toml"),
+        format!(
+            concat!(
+                "[lock]\nbusy = 70\ntaken = 71\nfull = 72\n",
+                "[lock.solo]\npath = {:?}\n",
+                "[lock.pool]\ndirectory = {:?}\nshards = 2\n",
+            ),
+            file.display().to_string(),
+            directory.display().to_string(),
+        ),
+    )
+    .expect("absolute lock configuration writes");
+
+    let report = reply_body(fixture.invoke(&["lock", "--json"]));
+    let solo = report
+        .pools
+        .iter()
+        .find(|pool| pool.name == "solo")
+        .expect("single file is reported");
+    let pool = report
+        .pools
+        .iter()
+        .find(|pool| pool.name == "pool")
+        .expect("pool is reported");
+    assert_eq!(solo.kind, sill::LockTargetKind::File);
+    assert_eq!(solo.entries[0].path, file.display().to_string());
+    assert_eq!(pool.kind, sill::LockTargetKind::Pool);
+    assert_eq!(
+        pool.entries[0].path,
+        directory.join("0.lock").display().to_string()
+    );
+    assert!(!file.exists(), "status created an absolute lock file");
+    assert!(!directory.exists(), "status created an absolute pool");
+
+    assert_eq!(
+        fixture
+            .invoke(&["lock", "run", "solo", "--", "/usr/bin/true"])
+            .code,
+        Some(0)
+    );
+    assert_eq!(
+        fixture
+            .invoke(&["lock", "run", "pool", "--shard", "1", "--", "/usr/bin/true",])
+            .code,
+        Some(0)
+    );
+    assert!(file.is_file());
+    assert!(directory.join("1.lock").is_file());
 }
 
 #[test]
@@ -301,12 +373,87 @@ fn a_signal_to_the_wrapper_terminates_the_child_group_and_releases_the_lock() {
     assert_eq!(output.status.code(), Some(143));
     assert!(output.stderr.is_empty(), "signal fixture: {output:?}");
     assert_eq!(
-        fs::read(fixture.lock_root().join("solo/0")).expect("read lock after signal"),
+        fs::read(fixture.lock_root().join("solo.lock")).expect("read lock after signal"),
         b""
     );
 
     let reacquired = fixture.invoke(&["lock", "run", "solo", "--", "/usr/bin/true"]);
     assert_eq!(reacquired.code, Some(0));
+}
+
+#[test]
+fn abrupt_wrapper_death_leaves_stale_evidence_but_releases_kernel_possession() {
+    let fixture = Fixture::new("abrupt");
+    let child_pid_path = fixture.root.join("abrupt-child-pid");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_spice"));
+    child
+        .args([
+            "lock",
+            "run",
+            "solo",
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf '%s' \"$$\" > \"$1\"; printf 'READY\\n'; exec /usr/bin/tail -f /dev/null",
+            "lock-child",
+        ])
+        .arg(&child_pid_path)
+        .current_dir(&fixture.root)
+        .env_remove(steer::hook::INBOX)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut wrapper = child.spawn().expect("abrupt wrapper launches");
+    let wrapper_pid = wrapper.id();
+    let mut output = BufReader::new(wrapper.stdout.take().expect("wrapper stdout is piped"));
+    let mut ready = String::new();
+    output
+        .read_line(&mut ready)
+        .expect("abrupt child reaches execution");
+    assert_eq!(ready, "READY\n");
+
+    let killed = Command::new("/bin/kill")
+        .args(["-KILL", &wrapper_pid.to_string()])
+        .output()
+        .expect("kill abrupt wrapper");
+    assert!(killed.status.success(), "kill wrapper: {killed:?}");
+    assert!(!wrapper.wait().expect("wrapper is reaped").success());
+
+    let report = reply_body(fixture.invoke(&["lock", "--json"]));
+    let entry = &report
+        .pools
+        .iter()
+        .find(|pool| pool.name == "solo")
+        .expect("single lock is reported")
+        .entries[0];
+    assert_eq!(entry.availability, LockAvailability::Available);
+    assert_eq!(
+        entry.owner.as_ref().map(|owner| owner.pid),
+        Some(wrapper_pid)
+    );
+    assert!(entry.owner_stale);
+    assert_eq!(
+        fixture
+            .invoke(&["lock", "run", "solo", "--", "/usr/bin/true"])
+            .code,
+        Some(0)
+    );
+    assert_eq!(
+        fs::read(fixture.lock_root().join("solo.lock")).expect("released metadata reads"),
+        b""
+    );
+
+    let child_pid: i32 = fs::read_to_string(&child_pid_path)
+        .expect("child PID reads")
+        .parse()
+        .expect("child PID parses");
+    let result = unsafe { libc::kill(child_pid, libc::SIGKILL) };
+    if result == -1 {
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH),
+            "abrupt child cleanup failed"
+        );
+    }
 }
 
 #[test]
@@ -345,15 +492,24 @@ fn malformed_names_shards_and_configuration_refuse_without_running_a_child() {
     }
     assert!(!fixture.lock_root().exists());
 
-    fs::write(fixture.root.join("spice.toml"), "[lock.solo]\nshards = 0\n")
-        .expect("write invalid lock configuration");
-    let invalid = fixture.invoke(&["lock", "--json"]);
-    assert_eq!(invalid.code, Some(2));
-    let invalid: Outcome<()> = wire::decode(&invalid.err).expect("config refusal decodes");
-    let Outcome::Refusal(invalid) = invalid else {
-        panic!("invalid config must refuse: {invalid:?}");
-    };
-    assert_eq!(invalid.reason, "lock::configuration-refused");
+    for document in [
+        "[lock.solo]\ndirectory = 'locks/solo'\nshards = 0\n",
+        "[lock.solo]\npath = ''\n",
+        "[lock.solo]\npath = '../outside.lock'\n",
+        "[lock.solo]\npath = 'locks/solo.lock'\ndirectory = 'locks/solo'\n",
+        "[lock.solo]\nshards = 1\n",
+    ] {
+        fs::write(fixture.root.join("spice.toml"), document)
+            .expect("write invalid lock configuration");
+        let invalid = fixture.invoke(&["lock", "--json"]);
+        assert_eq!(invalid.code, Some(2));
+        let invalid: Outcome<()> = wire::decode(&invalid.err).expect("config refusal decodes");
+        let Outcome::Refusal(invalid) = invalid else {
+            panic!("invalid config must refuse: {invalid:?}");
+        };
+        assert_eq!(invalid.reason, "lock::configuration-refused");
+        assert!(!fixture.root.join("outside.lock").exists());
+    }
 }
 
 fn reply_body(spoken: Spoken) -> LockReport {
@@ -398,15 +554,15 @@ fn final_and_intermediate_symlinks_never_escape_the_configured_topology() {
     let final_external = final_link.root.join("external-final");
     fs::write(&final_external, b"external final lock").expect("external lock writes");
     let final_hold = hold_external(&final_external, "external-final");
-    let final_pool = final_link.lock_root().join("solo");
-    fs::create_dir_all(&final_pool).expect("final-link pool creates");
-    symlink(&final_external, final_pool.join("0")).expect("final shard symlink creates");
+    fs::create_dir_all(final_link.lock_root()).expect("final-link parent creates");
+    symlink(&final_external, final_link.lock_root().join("solo.lock"))
+        .expect("final lock symlink creates");
     assert_symlink_refusal(&final_link, "solo", &final_hold);
 
     let intermediate = Fixture::new("intermediate-symlink");
     let external_pool = intermediate.root.join("external-pool");
     fs::create_dir(&external_pool).expect("external pool creates");
-    let external_shard = external_pool.join("0");
+    let external_shard = external_pool.join("0.lock");
     fs::write(&external_shard, b"external intermediate lock").expect("external shard writes");
     let intermediate_hold = hold_external(&external_shard, "external-intermediate");
     fs::create_dir_all(intermediate.lock_root()).expect("lock root creates");
@@ -432,20 +588,19 @@ fn assert_symlink_refusal(repository: &Fixture, name: &str, external: &Possessio
     let before = tree(&repository.root);
 
     assert_state_fault(&repository.invoke(&["--json", "lock"]));
-    assert_state_fault(&repository.invoke(&[
-        "--json",
-        "lock",
-        "run",
-        name,
-        "--shard",
-        "0",
+    let mut arguments = vec!["--json", "lock", "run", name];
+    if name == "pool" {
+        arguments.extend(["--shard", "0"]);
+    }
+    arguments.extend([
         "--",
         "/bin/sh",
         "-c",
         "printf launched > \"$1\"",
         "lock-child",
         child_marker,
-    ]));
+    ]);
+    assert_state_fault(&repository.invoke(&arguments));
 
     assert!(
         !Path::new(child_marker).exists(),

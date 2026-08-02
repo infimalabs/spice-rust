@@ -359,7 +359,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn lock_names_cannot_escape_the_fixed_topology() {
+    fn lock_names_are_single_safe_path_components() {
         for name in [
             "",
             ".",
