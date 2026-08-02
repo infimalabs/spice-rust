@@ -111,6 +111,37 @@ fn text_and_binary_artifacts_round_trip_with_stable_metadata() {
         fixture.store.show(&task, "A2").expect("show binary").1,
         b"\x89PNG\r\n\x1a\n"
     );
+    assert_eq!(
+        fixture.store.capture().expect("capture task set").tasks(),
+        std::slice::from_ref(&task)
+    );
+}
+
+#[test]
+fn opaque_binary_without_an_admitted_extension_refuses_without_publication() {
+    let fixture = Fixture::new();
+    let task = task("ARTIFACT-m3");
+    let source = fixture.source("opaque", b"\xff\xfe\xfd");
+    let failure = fixture
+        .store
+        .add(AddRequest {
+            task: &task,
+            source: &source,
+            name: None,
+            media_type: None,
+            retention: Retention::Permanent,
+            created_at: instant("2030-01-01T00:00:00.000Z"),
+        })
+        .expect_err("opaque binary requires an explicit media type");
+
+    assert_eq!(failure.class(), ErrorClass::Refusal);
+    let detail = failure.to_string();
+    assert!(detail.contains("cannot infer a media type"), "{detail}");
+    assert!(detail.contains("pass --type"), "{detail}");
+    assert!(
+        !fixture.store.root().exists(),
+        "refused input published an artifact task directory"
+    );
 }
 
 #[test]
