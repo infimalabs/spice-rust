@@ -24,6 +24,8 @@ impl Fixture {
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(root.join(".git")).expect("create repository fixture");
+        fs::write(root.join("spice.toml"), "[tasks]\nstems = [\"rim\"]\n")
+            .expect("write task project policy");
         let bundle = root.join("artifact-backup");
         Self { root, bundle }
     }
@@ -147,6 +149,37 @@ fn task_artifact_cli_and_backup_restore_preserve_provenance() {
     assert_invalid_task_refusals(&fixture);
     resident.stop(&fixture);
     assert_backup_restore(&fixture, &task, first, second);
+}
+
+#[test]
+fn task_artifact_refuses_malformed_project_policy_before_state_access() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.root.join("spice.toml"),
+        "[tasks]\nstems = [\"rim\"]\nhidden_stems = [\"sandbox\", \"bad-stem\"]\n",
+    )
+    .expect("write malformed hidden project policy");
+
+    let output = fixture.invoke(&[
+        "task".to_owned(),
+        "artifact".to_owned(),
+        "list".to_owned(),
+        "UNKNOWN-12345678".to_owned(),
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+    let Outcome::<ArtifactAnswer>::Refusal(refusal) =
+        wire::decode(&output.stderr).expect("decode project policy refusal")
+    else {
+        panic!("malformed project policy did not refuse")
+    };
+    assert_eq!(refusal.reason, "artifact::configuration-refused");
+    assert_eq!(
+        refusal.expected.as_deref(),
+        Some("one admitted tracked task-project policy and machine-local configuration")
+    );
+    let observed = refusal.observed.expect("configuration diagnostic");
+    assert!(observed.contains("tasks.hidden_stems[1]"), "{observed}");
+    assert!(observed.contains("bad-stem"), "{observed}");
 }
 
 fn assert_artifact_surface(

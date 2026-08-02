@@ -6,6 +6,7 @@ fn phase(name: &str) -> wire::Phase {
 fn validated_snapshot(
     bus: &Bus,
     principal: wire::Actor,
+    projects: &ProjectPolicy,
 ) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
     let observed = bus
         .task_snapshot()
@@ -39,6 +40,7 @@ fn validated_snapshot(
             workflow.body.clone(),
             claim.as_ref().map(|head| head.body.clone()),
             lease.as_ref().map(|head| head.body.clone()),
+            projects,
         )
         .map_err(|error| {
             store_fault(
@@ -46,8 +48,16 @@ fn validated_snapshot(
                 &format!("task {handle} current heads are invalid: {error}"),
             )
         })?;
+        let visibility = entry.project().visibility().clone();
+        let presentation_title = if visibility.is_hidden() {
+            "Hidden task".to_owned()
+        } else {
+            statement.body.title.clone()
+        };
         entries.push(entry);
         tasks.push(BoardTask {
+            visibility,
+            presentation_title,
             statement,
             workflow,
             claim,
@@ -158,8 +168,13 @@ fn task_git_outcome(error: spice::task_git::Error) -> Outcome<CommandAnswer> {
     }
 }
 
-fn read_board(bus: &Bus, read: &BoardRead, principal: wire::Actor) -> Outcome<CommandAnswer> {
-    let mut snapshot = match validated_snapshot(bus, principal) {
+fn read_board(
+    bus: &Bus,
+    read: &BoardRead,
+    principal: wire::Actor,
+    projects: &ProjectPolicy,
+) -> Outcome<CommandAnswer> {
+    let mut snapshot = match validated_snapshot(bus, principal, projects) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -190,7 +205,12 @@ fn read_board(bus: &Bus, read: &BoardRead, principal: wire::Actor) -> Outcome<Co
     )
 }
 
-fn read_graph(bus: &Bus, graph: &BoardGraph, principal: wire::Actor) -> Outcome<CommandAnswer> {
+fn read_graph(
+    bus: &Bus,
+    graph: &BoardGraph,
+    principal: wire::Actor,
+    projects: &ProjectPolicy,
+) -> Outcome<CommandAnswer> {
     if let Some(at) = &graph.at {
         return refusal(
             "board::historical-barrier-refused",
@@ -210,7 +230,7 @@ fn read_graph(bus: &Bus, graph: &BoardGraph, principal: wire::Actor) -> Outcome<
             );
         }
     };
-    let snapshot = match validated_snapshot(bus, principal) {
+    let snapshot = match validated_snapshot(bus, principal, projects) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -228,6 +248,7 @@ fn read_handout(
     bus: &Bus,
     handout: &BoardHandout,
     principal: wire::Actor,
+    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     if let Some(at) = &handout.at {
         return refusal(
@@ -243,7 +264,7 @@ fn read_handout(
             "name an output path or -",
         );
     }
-    let snapshot = match validated_snapshot(bus, principal) {
+    let snapshot = match validated_snapshot(bus, principal, projects) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -255,8 +276,13 @@ fn read_handout(
     )
 }
 
-fn read_ledger(bus: &Bus, ledger: &DocLedger, principal: wire::Actor) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, principal) {
+fn read_ledger(
+    bus: &Bus,
+    ledger: &DocLedger,
+    principal: wire::Actor,
+    projects: &ProjectPolicy,
+) -> Outcome<CommandAnswer> {
+    let snapshot = match validated_snapshot(bus, principal, projects) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -343,6 +369,7 @@ fn guard_allocation(
     observed: AllocationHeads,
     winner: TaskHandle,
     actor: Actor,
+    projects: ProjectPolicy,
 ) {
     write.guard(JournalGuard::new(move |read| {
         witnesses_hold(read, &expected)?;
@@ -372,6 +399,7 @@ fn guard_allocation(
                     task.workflow().body().clone(),
                     task.claim().map(|head| head.body().clone()),
                     task.lease().map(|head| head.body().clone()),
+                    &projects,
                 )
                 .map_err(|error| {
                     GuardError::Invalid(format!("allocator current heads are invalid: {error}"))

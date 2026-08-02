@@ -85,10 +85,44 @@ pub struct Positioned<T> {
     pub body: T,
 }
 
+/// Visibility classification captured when a task project is admitted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+pub enum ProjectVisibility {
+    /// An ordinary scheduler route visible to actors and allocation.
+    Public,
+    /// A system-owned route retained as evidence but excluded from public work.
+    Hidden {
+        /// Resolved first project segment, without the leading dot.
+        stem: String,
+    },
+}
+
+impl ProjectVisibility {
+    /// Whether this project is system-owned hidden evidence.
+    #[must_use]
+    pub const fn is_hidden(&self) -> bool {
+        matches!(self, Self::Hidden { .. })
+    }
+
+    /// Hidden first segment, without the leading dot.
+    #[must_use]
+    pub fn hidden_stem(&self) -> Option<&str> {
+        match self {
+            Self::Public => None,
+            Self::Hidden { stem } => Some(stem),
+        }
+    }
+}
+
 /// One complete current task-head bundle in a board read answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BoardTask {
+    /// Classification derived during board admission from captured policy.
+    pub visibility: ProjectVisibility,
+    /// Actor-facing title derived from that classification.
+    pub presentation_title: String,
     pub statement: Positioned<crate::TaskHead>,
     pub workflow: Positioned<crate::WorkflowHead>,
     #[serde(
@@ -105,6 +139,22 @@ pub struct BoardTask {
     pub lease: Option<Positioned<crate::LeaseHead>>,
 }
 
+impl BoardTask {
+    /// Actor-facing title that does not expose hidden system task prose.
+    #[must_use]
+    pub fn presentation_title(&self) -> &str {
+        &self.presentation_title
+    }
+
+    /// Whether this row belongs to pending public work inventory.
+    #[must_use]
+    pub fn is_active_public(&self) -> bool {
+        !self.visibility.is_hidden()
+            && self.workflow.body.status == "pending"
+            && self.workflow.body.completion.is_none()
+    }
+}
+
 /// Validated current board heads returned from one snapshot barrier.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -119,6 +169,13 @@ pub struct BoardAnswer {
     pub tasks: Vec<BoardTask>,
     /// Current resident and lane head used by possession witnesses.
     pub residency: Positioned<crate::ResidencyHead>,
+}
+
+impl BoardAnswer {
+    /// Pending public routes only; hidden evidence never enters active inventory.
+    pub fn active_public_tasks(&self) -> impl Iterator<Item = &BoardTask> {
+        self.tasks.iter().filter(|task| task.is_active_public())
+    }
 }
 
 /// One deterministic resident-rendered document.

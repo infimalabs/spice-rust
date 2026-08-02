@@ -686,11 +686,12 @@ fn entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<CommandAnswer>> {
         .tasks
         .iter()
         .map(|heads| {
-            Entry::new(
+            Entry::from_answer(
                 heads.statement.body.clone(),
                 heads.workflow.body.clone(),
                 heads.claim.as_ref().map(|head| head.body.clone()),
                 heads.lease.as_ref().map(|head| head.body.clone()),
+                heads.visibility.clone(),
             )
             .map_err(|error| {
                 protocol_fault(
@@ -810,10 +811,11 @@ fn actor_seat(
 
 fn sole_active(board: &BoardAnswer) -> Result<(TaskHandle, &BoardTask), Outcome<CommandAnswer>> {
     let mut held = board.tasks.iter().filter(|heads| {
-        heads.claim.as_ref().is_some_and(|claim| {
-            claim.body.actor == board.principal
-                && claim.body.disposition == wire::ClaimDisposition::Active
-        })
+        !heads.visibility.is_hidden()
+            && heads.claim.as_ref().is_some_and(|claim| {
+                claim.body.actor == board.principal
+                    && claim.body.disposition == wire::ClaimDisposition::Active
+            })
     });
     let Some(heads) = held.next() else {
         return Err(refusal(
@@ -912,7 +914,14 @@ pub(crate) fn dispatch(
     bus: &Bus,
     command: &wire::AdmittedCommand,
 ) -> Option<Outcome<CommandAnswer>> {
-    dispatch_with_repository(bus, command, None)
+    let projects = ProjectPolicy::new(
+        ["board".to_owned(), "rim".to_owned()],
+        Vec::new(),
+        dialect::PROJECT_MIN_DEPTH as u64,
+        dialect::PROJECT_MAX_DEPTH as u64,
+    )
+    .expect("board command test project policy");
+    dispatch_with_repository(bus, command, None, &projects)
 }
 
 /// Dispatch with the resident repository required by production Git boundaries.
@@ -920,36 +929,43 @@ pub(crate) fn dispatch_with_repository(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     repository: Option<&Repository>,
+    projects: &ProjectPolicy,
 ) -> Option<Outcome<CommandAnswer>> {
     let outcome = match command.body() {
-        wire::intent::Intent::BoardRead(read) => read_board(bus, read, command.actor().clone()),
-        wire::intent::Intent::BoardGraph(graph) => read_graph(bus, graph, command.actor().clone()),
+        wire::intent::Intent::BoardRead(read) => {
+            read_board(bus, read, command.actor().clone(), projects)
+        }
+        wire::intent::Intent::BoardGraph(graph) => {
+            read_graph(bus, graph, command.actor().clone(), projects)
+        }
         wire::intent::Intent::BoardHandout(handout) => {
-            read_handout(bus, handout, command.actor().clone())
+            read_handout(bus, handout, command.actor().clone(), projects)
         }
         wire::intent::Intent::DocLedger(ledger) => {
-            read_ledger(bus, ledger, command.actor().clone())
+            read_ledger(bus, ledger, command.actor().clone(), projects)
         }
-        wire::intent::Intent::TaskAdd(add) => task_add(bus, command, add),
+        wire::intent::Intent::TaskAdd(add) => task_add(bus, command, add, projects),
         wire::intent::Intent::TaskNote(note) => task_note(bus, command, note),
-        wire::intent::Intent::TaskDefer(defer) => task_defer(bus, command, defer),
+        wire::intent::Intent::TaskDefer(defer) => task_defer(bus, command, defer, projects),
         wire::intent::Intent::TaskRef(task) if command.kind() == CommandKind::TaskWake => {
-            task_wake(bus, command, task)
+            task_wake(bus, command, task, projects)
         }
         wire::intent::Intent::TaskRef(task) if command.kind() == CommandKind::ClaimFree => {
-            claim_free(bus, command, task)
+            claim_free(bus, command, task, projects)
         }
-        wire::intent::Intent::TaskDepends(depends) => task_depends(bus, command, depends),
+        wire::intent::Intent::TaskDepends(depends) => {
+            task_depends(bus, command, depends, projects)
+        }
         wire::intent::Intent::ClaimWin(win) => {
-            claim_win(bus, command, win, repository)
+            claim_win(bus, command, win, repository, projects)
         }
         wire::intent::Intent::TaskDone(done) => {
-            task_done(bus, command, done, repository)
+            task_done(bus, command, done, repository, projects)
         }
         wire::intent::Intent::TaskReview(review) => {
-            task_review(bus, command, review, repository)
+            task_review(bus, command, review, repository, projects)
         }
-        wire::intent::Intent::DocApply(apply) => doc_apply(bus, command, apply),
+        wire::intent::Intent::DocApply(apply) => doc_apply(bus, command, apply, projects),
         _ => return None,
     };
     Some(outcome)

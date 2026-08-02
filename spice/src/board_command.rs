@@ -2,7 +2,7 @@
 
 use std::io::Read as _;
 
-use board::{Entry, View};
+use board::{Entry, ProjectPolicy, View};
 use bus::{Bus, CommitOutcome};
 use clap::ArgMatches;
 use journal::{FactCause, GuardError, JournalGuard, JournalRead, JournalWrite, PendingFact};

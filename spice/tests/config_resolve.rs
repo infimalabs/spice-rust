@@ -67,7 +67,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert_eq!(missing.root(), &spice::config::Root::default());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 40);
+    assert_eq!(missing.provenance().len(), 41);
     assert!(
         missing
             .provenance()
@@ -171,22 +171,27 @@ fn speech_configuration_refuses_untrusted_or_malformed_execution() {
 }
 
 #[test]
-fn coexistence_ignores_only_the_two_tracked_scaffold_roots() {
+fn coexistence_admits_current_task_metadata_and_ignores_the_policy_scaffold() {
     let tracked = concat!(
-        "[tasks]\nstems = ['rim']\n",
+        "[tasks]\nbase_stems = ['task']\nstems = ['rim']\nhidden_stems = ['sandbox']\n",
         "[policy]\nenv_names = []\n",
         "[taste.polling]\nwords = ['poll*']\nmessage = 'use events'\n",
     );
     let local = "[lock.worker]\ndirectory = 'locks/worker'\nshards = 2\n";
 
-    let strict = resolve(documents(Some(tracked), Some(local)))
+    let strict_tracked = tracked.replace("base_stems = ['task']\n", "");
+    let strict = resolve(documents(Some(&strict_tracked), Some(local)))
         .expect("strict resolution admits typed shared metadata");
     assert_eq!(strict.root().tasks().stems(), ["rim"]);
     assert!(strict.root().policy().env_names().is_empty());
 
     let coexisting = resolve(coexisting_documents(Some(tracked), Some(local)))
         .expect("coexistence projects out only predecessor roots");
-    assert!(coexisting.root().tasks().stems().is_empty());
+    assert_eq!(coexisting.root().tasks().stems(), ["rim"]);
+    assert_eq!(
+        coexisting.root().tasks().hidden_stems(),
+        ["oops", "maxim_proposal", "sandbox"]
+    );
     assert_eq!(
         coexisting.root().tasks().project_min_depth(),
         dialect::PROJECT_MIN_DEPTH as u64
@@ -206,6 +211,18 @@ fn coexistence_ignores_only_the_two_tracked_scaffold_roots() {
         path_source(&coexisting, "lock.worker.shards"),
         ConfigSource::Local
     );
+
+    let typo = resolve(coexisting_documents(
+        Some("[tasks]\nhidden_stem = ['sandbox']\n"),
+        None,
+    ))
+    .expect_err("unknown current task metadata must not disappear as scaffold");
+    assert!(typo.issues().iter().any(|issue| {
+        issue.kind() == IssueKind::Unknown
+            && issue
+                .path()
+                .is_some_and(|path| path.to_string() == "tasks.hidden_stem")
+    }));
 
     for (tracked, local, path) in [
         (Some("[unknown]\nvalue = 1\n"), None, "unknown"),
@@ -302,6 +319,7 @@ fn shared_metadata_is_tracked_only_and_enforces_names_and_depths() {
             r#"
 [tasks]
 stems = ["app", "board"]
+hidden_stems = ["sandbox", "oops", "sandbox"]
 project_min_depth = 2
 project_max_depth = 3
 
@@ -314,6 +332,10 @@ env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
     .expect("shared tracked metadata resolves");
 
     assert_eq!(resolved.root().tasks().stems(), ["app", "board"]);
+    assert_eq!(
+        resolved.root().tasks().hidden_stems(),
+        ["oops", "maxim_proposal", "sandbox"]
+    );
     assert_eq!(resolved.root().tasks().project_min_depth(), 2);
     assert_eq!(resolved.root().tasks().project_max_depth(), 3);
     assert_eq!(
@@ -322,12 +344,17 @@ env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
     );
     for path in [
         "tasks.stems",
+        "tasks.hidden_stems",
         "tasks.project_min_depth",
         "tasks.project_max_depth",
         "policy.env_names",
     ] {
         assert_eq!(path_source(&resolved, path), ConfigSource::Tracked);
     }
+    assert_eq!(
+        path_builtin(&resolved, "tasks.hidden_stems"),
+        Some(Builtin::Strings(&["oops", "maxim_proposal"]))
+    );
 
     let error = resolve(documents(
         Some(
@@ -390,6 +417,49 @@ env_names = ["LOCAL_NAME"]
             }),
             "missing {source:?} {kind:?} at {path}: {:#?}",
             error.issues()
+        );
+    }
+}
+
+#[test]
+fn hidden_stems_refuse_each_malformed_or_public_colliding_value_at_its_index() {
+    for (document, index, expected) in [
+        ("[tasks]\nhidden_stems = ['']\n", 0, "must match"),
+        ("[tasks]\nhidden_stems = ['.oops']\n", 0, "must match"),
+        ("[tasks]\nhidden_stems = ['bad-stem']\n", 0, "must match"),
+        ("[tasks]\nhidden_stems = ['Bad']\n", 0, "must match"),
+        ("[tasks]\nhidden_stems = ['two.parts']\n", 0, "must match"),
+        (
+            "[tasks]\nhidden_stems = ['sandbox', 'bad-stem']\n",
+            1,
+            "must match",
+        ),
+        (
+            "[tasks]\nstems = ['rim']\nhidden_stems = ['rim']\n",
+            0,
+            "conflicts with public stem",
+        ),
+        (
+            "[tasks]\nhidden_stems = ['task']\n",
+            0,
+            "conflicts with public stem",
+        ),
+    ] {
+        let error = resolve(documents(Some(document), None))
+            .expect_err("malformed hidden metadata must refuse");
+        let issue = error
+            .issues()
+            .iter()
+            .find(|issue| {
+                issue.kind() == IssueKind::Malformed
+                    && issue.path().is_some_and(|path| {
+                        path.to_string() == format!("tasks.hidden_stems[{index}]")
+                    })
+            })
+            .unwrap_or_else(|| panic!("missing indexed issue for {document:?}: {error}"));
+        assert!(
+            issue.message().contains(expected),
+            "{document:?}: {issue:?}"
         );
     }
 }
@@ -533,25 +603,14 @@ fn proof_executable_paths_refuse_every_non_local_or_non_absolute_route() {
     }
 }
 
-#[test]
-fn tracked_document_can_address_every_registry_descriptor() {
-    let local = format!(
-        concat!(
-            "[say]\ncommand = ['espeak-ng', '--stdout']\n\n",
-            "[proof]\ncontainer = \"{}\"\nrunner = \"{}\"\n",
-        ),
-        absolute("container"),
-        absolute("runner")
-    );
-    let resolved = resolve(documents(
-        Some(
-            r#"
+const TRACKED_ALL_DESCRIPTOR_DOCUMENT: &str = r#"
 [taste.alpha]
 words = ["done*"]
 message = "Done."
 
 [tasks]
 stems = ["app", "board"]
+hidden_stems = ["sandbox"]
 project_min_depth = 2
 project_max_depth = 3
 
@@ -629,8 +688,20 @@ words_per_minute = 190
 
 [proof]
 image = "sha256:4444444444444444444444444444444444444444444444444444444444444444"
-"#,
+"#;
+
+#[test]
+fn tracked_document_can_address_every_registry_descriptor() {
+    let local = format!(
+        concat!(
+            "[say]\ncommand = ['espeak-ng', '--stdout']\n\n",
+            "[proof]\ncontainer = \"{}\"\nrunner = \"{}\"\n",
         ),
+        absolute("container"),
+        absolute("runner")
+    );
+    let resolved = resolve(documents(
+        Some(TRACKED_ALL_DESCRIPTOR_DOCUMENT),
         Some(&local),
     ))
     .expect("tracked and local descriptors resolve together");

@@ -87,6 +87,35 @@ fn linked_worktrees_share_the_git_common_directory() {
 }
 
 #[test]
+fn startup_surface_captures_configured_hidden_project_policy_once() {
+    let root = fixture("hidden-project-policy");
+    fs::create_dir_all(root.join(".git")).expect("git directory");
+    fs::write(
+        root.join("spice.toml"),
+        "[tasks]\nstems = ['board']\nhidden_stems = ['sandbox']\n",
+    )
+    .expect("tracked task metadata");
+    let repository = Repository::discover(&root).expect("fixture repository resolves");
+
+    let startup = load_startup_surface(&repository).expect("startup policy resolves");
+    assert_eq!(
+        startup.config.projects.hidden_stems(),
+        ["oops", "maxim_proposal", "sandbox"]
+    );
+    assert_eq!(
+        startup
+            .config
+            .projects
+            .admit(".sandbox.triage_1")
+            .expect("configured hidden descendant")
+            .visibility()
+            .hidden_stem(),
+        Some("sandbox")
+    );
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+#[test]
 fn cooperative_and_forced_groups_drive_observed_counts_and_residue() {
     let (root, paths) = resident_fixture("groups");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
