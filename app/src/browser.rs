@@ -30,6 +30,47 @@ enum Connection {
     Offline(String),
 }
 
+#[derive(Clone, Default, PartialEq)]
+enum SpeechStatus {
+    #[default]
+    Idle,
+    Loading,
+    Playing,
+    Failed(String),
+}
+
+impl SpeechStatus {
+    fn active(&self) -> bool {
+        matches!(self, Self::Loading | Self::Playing)
+    }
+
+    fn state(&self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Loading => "loading",
+            Self::Playing => "playing",
+            Self::Failed(_) => "error",
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        if self.active() {
+            "Stop reading"
+        } else {
+            "Read current canvas"
+        }
+    }
+
+    fn title(&self) -> String {
+        match self {
+            Self::Idle => "Read current canvas".to_owned(),
+            Self::Loading => "Stop speech rendering".to_owned(),
+            Self::Playing => "Stop reading".to_owned(),
+            Self::Failed(reason) => format!("Speech unavailable: {reason}"),
+        }
+    }
+}
+
 impl Connection {
     fn class(&self) -> &'static str {
         match self {
@@ -111,20 +152,33 @@ fn canvas_app() -> Html {
     let note_task = use_state(String::new);
     let note_text = use_state(String::new);
     let sender = use_mut_ref(|| None::<UnboundedSender<ClientAction>>);
+    let speech = use_state(|| wire::SpeechPlayback::Disabled {});
+    let speech_status = use_state(SpeechStatus::default);
+    let speech_controller = use_mut_ref(crate::speech::Controller::default);
 
     {
         let connection = connection.clone();
         let surface = surface.clone();
         let sender = sender.clone();
+        let speech = speech.clone();
         use_effect_with((), move |()| {
             let active = Rc::new(Cell::new(true));
             let (tx, rx) = mpsc::unbounded();
             *sender.borrow_mut() = Some(tx);
-            spawn_local(run_surface(active.clone(), connection, surface, rx));
+            spawn_local(run_surface(active.clone(), connection, surface, speech, rx));
             move || {
                 active.set(false);
                 sender.borrow_mut().take();
             }
+        });
+    }
+    {
+        let effective = (*speech).clone();
+        let speech_controller = speech_controller.clone();
+        let speech_status = speech_status.clone();
+        use_effect_with(effective, move |_| {
+            speech_controller.borrow_mut().stop();
+            speech_status.set(SpeechStatus::Idle);
         });
     }
 
@@ -149,6 +203,11 @@ fn canvas_app() -> Html {
             note_text.set(String::new());
         })
     };
+    let toggle_speech = speech_toggle(
+        speech.clone(),
+        speech_status.clone(),
+        speech_controller.clone(),
+    );
 
     render_canvas(
         &connection,
@@ -159,7 +218,114 @@ fn canvas_app() -> Html {
         &note_text,
         submit_note,
         refresh,
+        &speech,
+        &speech_status,
+        toggle_speech,
     )
+}
+
+fn speech_toggle(
+    speech: UseStateHandle<wire::SpeechPlayback>,
+    speech_status: UseStateHandle<SpeechStatus>,
+    speech_controller: Rc<RefCell<crate::speech::Controller>>,
+) -> Callback<MouseEvent> {
+    Callback::from(move |_| {
+        if speech_status.active() {
+            speech_controller.borrow_mut().stop();
+            speech_status.set(SpeechStatus::Idle);
+            return;
+        }
+        let text = match crate::speech::rendered_text() {
+            Ok(text) => text,
+            Err(error) => {
+                speech_status.set(SpeechStatus::Failed(error));
+                return;
+            }
+        };
+        let generation = speech_controller.borrow_mut().begin();
+        speech_status.set(SpeechStatus::Loading);
+        match &*speech {
+            wire::SpeechPlayback::Disabled {} => speech_status.set(SpeechStatus::Idle),
+            wire::SpeechPlayback::System {
+                voice,
+                words_per_minute,
+            } => {
+                let ended = speech_status.clone();
+                let failed = speech_status.clone();
+                let result = speech_controller.borrow_mut().start_system(
+                    generation,
+                    &text,
+                    voice,
+                    *words_per_minute,
+                    move || ended.set(SpeechStatus::Idle),
+                    move || {
+                        failed.set(SpeechStatus::Failed(
+                            "system speech playback failed".to_owned(),
+                        ));
+                    },
+                );
+                match result {
+                    Ok(()) => speech_status.set(SpeechStatus::Playing),
+                    Err(error) => speech_status.set(SpeechStatus::Failed(error)),
+                }
+            }
+            wire::SpeechPlayback::External {
+                content_type,
+                available,
+                ..
+            } => {
+                if !available {
+                    speech_status.set(SpeechStatus::Failed(
+                        "external speech backend is unavailable".to_owned(),
+                    ));
+                    return;
+                }
+                let content_type = content_type.clone();
+                let speech_status = speech_status.clone();
+                let speech_controller = speech_controller.clone();
+                spawn_local(async move {
+                    let result = request_external_speech(&text, &content_type).await;
+                    if !speech_controller.borrow().is_current(generation) {
+                        return;
+                    }
+                    let bytes = match result {
+                        Ok(bytes) => bytes,
+                        Err(error) => {
+                            speech_status.set(SpeechStatus::Failed(error));
+                            return;
+                        }
+                    };
+                    let ended = speech_status.clone();
+                    let failed = speech_status.clone();
+                    let playing = speech_controller.borrow_mut().start_external(
+                        generation,
+                        &bytes,
+                        &content_type,
+                        move || ended.set(SpeechStatus::Idle),
+                        move || {
+                            failed.set(SpeechStatus::Failed(
+                                "rendered speech playback failed".to_owned(),
+                            ));
+                        },
+                    );
+                    let playing = match playing {
+                        Ok(playing) => playing,
+                        Err(error) => {
+                            speech_status.set(SpeechStatus::Failed(error));
+                            return;
+                        }
+                    };
+                    speech_status.set(SpeechStatus::Playing);
+                    if let Err(error) = crate::speech::await_play(playing).await
+                        && speech_controller.borrow().is_current(generation)
+                    {
+                        speech_controller.borrow_mut().stop();
+                        speech_status.set(SpeechStatus::Failed(error));
+                    }
+                });
+            }
+        }
+    })
 }
 
 fn render_canvas(
@@ -171,6 +337,9 @@ fn render_canvas(
     note_text: &UseStateHandle<String>,
     submit_note: Callback<SubmitEvent>,
     refresh: Callback<MouseEvent>,
+    speech: &UseStateHandle<wire::SpeechPlayback>,
+    speech_status: &UseStateHandle<SpeechStatus>,
+    toggle_speech: Callback<MouseEvent>,
 ) -> Html {
     let active_axis = **axis;
     let cursor = surface
@@ -190,6 +359,9 @@ fn render_canvas(
                 note_text,
                 submit_note,
                 refresh,
+                speech,
+                speech_status,
+                toggle_speech,
             )}
         </div>
     }
@@ -233,6 +405,9 @@ fn render_workspace(
     note_text: &UseStateHandle<String>,
     submit_note: Callback<SubmitEvent>,
     refresh: Callback<MouseEvent>,
+    speech: &wire::SpeechPlayback,
+    speech_status: &SpeechStatus,
+    toggle_speech: Callback<MouseEvent>,
 ) -> Html {
     let task_count = surface.board.as_ref().map_or(0, |board| board.tasks.len());
     let active_tasks = surface.board.as_ref().map_or(0, |board| {
@@ -260,7 +435,10 @@ fn render_workspace(
                     <span class="status-dot"></span>
                     <span class="status-copy">{connection.label()}</span>
                 </div>
-                <button class="refresh" type="button" onclick={refresh}>{"Refresh"}</button>
+                <div class="topbar-actions">
+                    {speech_control(speech, speech_status, toggle_speech)}
+                    <button class="refresh" type="button" onclick={refresh}>{"Refresh"}</button>
+                </div>
             </header>
             <main class="content">
                 <div class="page-heading">
@@ -294,6 +472,49 @@ fn render_workspace(
                 )}
             </main>
         </div>
+    }
+}
+
+fn speech_control(
+    speech: &wire::SpeechPlayback,
+    status: &SpeechStatus,
+    toggle: Callback<MouseEvent>,
+) -> Html {
+    if matches!(speech, wire::SpeechPlayback::Disabled {}) {
+        return Html::default();
+    }
+    let unavailable = matches!(
+        speech,
+        wire::SpeechPlayback::External {
+            available: false,
+            ..
+        }
+    );
+    let label = if unavailable {
+        "Speech unavailable"
+    } else {
+        status.label()
+    };
+    let title = if unavailable {
+        "External speech backend is not configured".to_owned()
+    } else {
+        status.title()
+    };
+    html! {
+        <>
+            <button
+                class={classes!("speech-button", status.active().then_some("stop"))}
+                type="button"
+                aria-label={label}
+                title={title}
+                data-state={status.state()}
+                disabled={unavailable}
+                onclick={toggle}
+            >
+                <span class="speech-icon" aria-hidden="true"></span>
+            </button>
+            <span class="visually-hidden" aria-live="polite">{status.title()}</span>
+        </>
     }
 }
 
@@ -577,12 +798,14 @@ async fn run_surface(
     active: Rc<Cell<bool>>,
     connection: UseStateHandle<Connection>,
     surface: UseStateHandle<SurfaceData>,
+    speech: UseStateHandle<wire::SpeechPlayback>,
     mut actions: UnboundedReceiver<ClientAction>,
 ) {
     let data = Rc::new(RefCell::new(SurfaceData::default()));
     while active.get() {
         connection.set(Connection::Connecting);
-        let result = run_connection(&active, &connection, &surface, &data, &mut actions).await;
+        let result =
+            run_connection(&active, &connection, &surface, &speech, &data, &mut actions).await;
         if !active.get() {
             break;
         }
@@ -615,6 +838,7 @@ async fn run_connection(
     active: &Rc<Cell<bool>>,
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
+    speech: &UseStateHandle<wire::SpeechPlayback>,
     data: &Rc<RefCell<SurfaceData>>,
     actions: &mut UnboundedReceiver<ClientAction>,
 ) -> Result<(), String> {
@@ -625,6 +849,7 @@ async fn run_connection(
         .json()
         .await
         .map_err(|error| format!("bootstrap response was invalid: {error}"))?;
+    speech.set(discovery.speech.clone());
     let session = Session::open(discovery.capability, discovery.epoch);
     let endpoint = discovery
         .endpoint
@@ -715,6 +940,50 @@ async fn run_connection(
         }
     }
     Ok(())
+}
+
+async fn request_external_speech(text: &str, content_type: &str) -> Result<Vec<u8>, String> {
+    let request = Request::post("/speech")
+        .json(&wire::SpeechRequest {
+            text: text.to_owned(),
+        })
+        .map_err(|error| format!("speech request could not be encoded: {error}"))?;
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("speech request failed: {error}"))?;
+    if !response.ok() {
+        let status = response.status();
+        let detail = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "speech renderer returned no detail".to_owned());
+        return Err(bounded_speech_error(&format!(
+            "speech renderer returned {status}: {detail}"
+        )));
+    }
+    let actual = response.headers().get("content-type").unwrap_or_default();
+    if actual != content_type {
+        return Err(format!(
+            "speech renderer returned {actual:?}, expected {content_type:?}"
+        ));
+    }
+    let bytes = response
+        .binary()
+        .await
+        .map_err(|error| format!("speech audio response was invalid: {error}"))?;
+    if bytes.is_empty() {
+        return Err("speech renderer returned empty audio".to_owned());
+    }
+    Ok(bytes)
+}
+
+fn bounded_speech_error(error: &str) -> String {
+    let mut end = error.len().min(240);
+    while !error.is_char_boundary(end) {
+        end -= 1;
+    }
+    error[..end].to_owned()
 }
 
 async fn send_refresh(

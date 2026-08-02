@@ -17,6 +17,7 @@ struct RuntimePaths {
 struct SurfaceConfig {
     steering: steer::Config,
     consent: consent::Policy,
+    speech: canvas::SpeechConfig,
 }
 
 // Runtime policy and trust identity are projections of this one captured generation.
@@ -44,6 +45,7 @@ where
         config: SurfaceConfig {
             steering: loaded.resolved().root().steer().clone(),
             consent: loaded.resolved().root().consent().policy().clone(),
+            speech: loaded.resolved().root().say().clone(),
         },
         trust: crate::trust_command::Surface::from_loaded(&loaded),
     })
@@ -516,9 +518,10 @@ async fn run_surface(
                 })?;
         }
     }
-    let (server, mut control) = canvas::axum::Server::bind(epoch, capabilities.clone())
-        .await
-        .map_err(|error| environment_fault("canvas::bind-failed", &error.to_string()))?;
+    let (server, mut control) =
+        canvas::axum::Server::bind(epoch, capabilities.clone(), config.speech.clone())
+            .await
+            .map_err(|error| environment_fault("canvas::bind-failed", &error.to_string()))?;
     let discovery = server
         .discovery(operator)
         .map_err(|error| environment_fault("canvas::discovery-invalid", &error.to_string()))?;
