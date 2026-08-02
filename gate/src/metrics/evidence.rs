@@ -98,7 +98,7 @@ impl ParserEvidence {
         }
     }
 
-    fn validate(&self) -> bool {
+    pub(crate) fn validate(&self) -> bool {
         match self {
             Self::Native { .. } => true,
             Self::External {
@@ -271,6 +271,16 @@ impl LatchBinding {
         &self.transition
     }
 
+    #[must_use]
+    pub fn actor_source(&self) -> Option<&str> {
+        self.actor_source.as_deref()
+    }
+
+    #[must_use]
+    pub fn actor(&self) -> Option<&str> {
+        self.actor.as_deref()
+    }
+
     fn validate(&self) -> Result<(), EvidenceError> {
         if !valid_text(&self.kind) || !valid_text(&self.transition) {
             return Err(EvidenceError::InvalidBinding(
@@ -306,9 +316,10 @@ impl LatchBinding {
             ));
         }
         let flags_match = match self.transition.as_str() {
-            "clear" | "healed" => !self.over_limit && !self.ratchet_breach,
+            "clear" => !self.over_limit && !self.ratchet_breach,
             "latched" => self.over_limit && self.over_base && self.ratchet_breach,
             "held" => self.over_limit && self.over_base,
+            "healed" => !self.over_limit && !self.over_base && !self.ratchet_breach,
             _ => false,
         };
         if !flags_match || (self.over_limit && !self.over_base) {

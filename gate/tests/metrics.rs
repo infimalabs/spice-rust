@@ -1,20 +1,29 @@
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use gate::metrics::{
     EvidenceState, LatchBinding, MagicFinding, MetricEvidence, MetricId, MetricKey,
-    MetricMeasurement, MetricParity, MetricReport, MetricUnit, ParseError, ParserEvidence,
-    ParserId, ParserMode, PredecessorMetricObservation, PredecessorMetricResult, RuleBinding,
-    STRUCTURAL_ARMS, STRUCTURAL_METRICS, StructuralArmEvidence, compare_predecessor_metric,
-    measure_file_shape, measure_repository_document, parse_lizard_csv, resolve_magic_metric,
-    resolve_metric_rule, scan_magic_regressions, scan_markdown_link_case,
+    MetricMeasurement, MetricParity, MetricReport, MetricStateBinding, MetricUnit, ParseError,
+    ParserEvidence, ParserId, ParserMode, PredecessorMetricObservation, PredecessorMetricResult,
+    RuleBinding, STRUCTURAL_ARMS, STRUCTURAL_METRICS, StructuralArmEvidence,
+    compare_predecessor_metric, measure_file_shape, measure_repository_document, parse_lizard_csv,
+    resolve_magic_metric, resolve_metric_rule, scan_magic_regressions, scan_markdown_link_case,
 };
-use gate::{GateId, PolicyContext, migrate_predecessor_policy};
+use gate::state::{ActorInputs, CurrentState, LatchKind, PredecessorSources, RenameMap};
+use gate::{GateId, PolicyContext, RulePolicy, migrate_predecessor_policy};
 
 const EXISTING_MAGIC_VALUE: u64 = 75;
 const FIXTURE_BASE_LIMIT: u64 = 1_000;
 const FIXTURE_RATCHET_LIMIT: u64 = 1_500;
 const NEW_MAGIC_VALUE: u64 = 100;
 const PYTHON_MAGIC_VALUE: u64 = 50;
+const STATE_CLEAR_VALUE: u64 = 20;
+const STATE_HELD_VALUE: u64 = 30;
+const STATE_LATCH_VALUE: u64 = 42;
+const STATE_TEST_CLOCK: f64 = 10_000.0;
+
+static NEXT_STATE_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 const SCOPED_POLICY: &str = r#"
 [policy.limits]
@@ -358,6 +367,111 @@ fn missing_rule_context_refuses_instead_of_selecting_a_global_default() {
 }
 
 #[test]
+fn bounded_metrics_cross_current_state_with_every_latch_transition_and_actor_variation() {
+    let policy = migrate_predecessor_policy("fixtures/metrics.toml", SCOPED_POLICY)
+        .expect("predecessor policy migrates once");
+    let fixture = MetricStateFixture::new();
+
+    let latched = reconcile_file_state(&fixture, &policy, STATE_LATCH_VALUE, STATE_TEST_CLOCK);
+    let latch = measured_latch(&latched);
+    assert_eq!(latch.transition(), "latched");
+    assert_eq!(latch.configured_ratchet_limit(), 40);
+    assert_eq!(latch.ratchet_limit(), 41);
+    assert_eq!(latch.active_limit(), 41);
+    assert_eq!(latch.actor_source(), Some("active-actor"));
+    assert_eq!(latch.actor(), Some("actor-a"));
+    assert!(latch.over_limit());
+    assert!(latch.over_base());
+    assert!(latch.ratchet_breach());
+
+    let held = reconcile_file_state(&fixture, &policy, STATE_HELD_VALUE, STATE_TEST_CLOCK + 1.0);
+    let latch = measured_latch(&held);
+    assert_eq!(latch.transition(), "held");
+    assert_eq!(latch.active_limit(), STATE_CLEAR_VALUE);
+    assert!(latch.over_limit());
+    assert!(latch.over_base());
+    assert!(!latch.ratchet_breach());
+
+    let healed = reconcile_file_state(&fixture, &policy, STATE_CLEAR_VALUE, STATE_TEST_CLOCK + 2.0);
+    let latch = measured_latch(&healed);
+    assert_eq!(latch.transition(), "healed");
+    assert!(!latch.over_limit());
+    assert!(!latch.over_base());
+
+    let clear = reconcile_file_state(&fixture, &policy, STATE_CLEAR_VALUE, STATE_TEST_CLOCK + 3.0);
+    let latch = measured_latch(&clear);
+    assert_eq!(latch.transition(), "clear");
+    assert_eq!(latch.active_limit(), 41);
+}
+
+#[test]
+fn state_binding_preserves_function_keys_and_unlimited_document_rules() {
+    let policy = migrate_predecessor_policy("fixtures/metrics.toml", SCOPED_POLICY)
+        .expect("predecessor policy migrates once");
+    let function_rule = resolve_metric_rule(
+        &policy,
+        MetricId::RoutineCcn,
+        &PolicyContext::new().with_path("src/app.rs"),
+    )
+    .expect("function rule resolves");
+    let parser_error = MetricStateBinding::new(
+        MetricId::RoutineCcn,
+        MetricKey::function("src/app.rs", "run").unwrap(),
+        5,
+        ParserEvidence::Native {
+            parser: ParserId::Utf8FileShapeV1,
+        },
+        function_rule.clone(),
+    )
+    .expect_err("a foreign parser cannot enter bounded state");
+    assert!(parser_error.to_string().contains("parser evidence"));
+    let function = MetricStateBinding::new(
+        MetricId::RoutineCcn,
+        MetricKey::function("src/app.rs", "run").unwrap(),
+        5,
+        ParserEvidence::External {
+            parser: ParserId::LizardCsvV1,
+            tool: "lizard".to_owned(),
+            version: "1.23.0".to_owned(),
+            executable_digest: "sha256:fixture".to_owned(),
+        },
+        function_rule,
+    )
+    .expect("function measurement binds");
+    assert_eq!(function.entry().kind(), LatchKind::ComplexityCcn);
+    assert_eq!(function.entry().key().repo_path(), "src/app.rs");
+    assert_eq!(function.entry().key().function_name(), Some("run"));
+    function
+        .observation(ActorInputs::new("src/app.rs").unwrap())
+        .expect("function observation crosses current state");
+
+    let document_path = "docs/reference/generated/DOCS_MAIN.mdoc";
+    let document_rule = resolve_metric_rule(
+        &policy,
+        MetricId::RepositoryDocumentCharacters,
+        &PolicyContext::new().with_path(document_path),
+    )
+    .expect("unlimited document rule resolves");
+    let binding = MetricStateBinding::new(
+        MetricId::RepositoryDocumentCharacters,
+        MetricKey::path(document_path).unwrap(),
+        FIXTURE_BASE_LIMIT,
+        ParserEvidence::Native {
+            parser: ParserId::Utf8DocumentCharactersV1,
+        },
+        document_rule,
+    )
+    .expect("document measurement binds");
+    let fixture = MetricStateFixture::new();
+    let row = reconcile_binding(&fixture, &binding, document_path, STATE_TEST_CLOCK);
+    let latch = measured_latch(&row);
+    assert!(latch.unlimited());
+    assert!(!latch.over_limit());
+    assert!(!latch.over_base());
+    assert!(!latch.ratchet_breach());
+}
+
+#[test]
 fn evidence_vocabulary_is_total_and_release_owned() {
     let states = [
         EvidenceState::Unavailable {
@@ -618,4 +732,96 @@ fn measured_evidence(metric: MetricId) -> MetricEvidence {
         ),
     };
     MetricEvidence::new(metric, key, EvidenceState::measured(measurement)).unwrap()
+}
+
+struct MetricStateFixture {
+    root: PathBuf,
+    destination: PathBuf,
+    sources: PredecessorSources,
+}
+
+impl MetricStateFixture {
+    fn new() -> Self {
+        let serial = NEXT_STATE_FIXTURE.fetch_add(1, Ordering::Relaxed);
+        let root =
+            std::env::temp_dir().join(format!("gate-metric-state-{}-{serial}", std::process::id()));
+        fs::create_dir_all(&root).expect("create metric-state fixture root");
+        let sources = PredecessorSources::new(
+            &root.join("predecessor-worktree"),
+            &root.join("predecessor-shared"),
+        );
+        let destination = root.join("current/gate-state.json");
+        Self {
+            root,
+            destination,
+            sources,
+        }
+    }
+}
+
+impl Drop for MetricStateFixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn reconcile_file_state(
+    fixture: &MetricStateFixture,
+    policy: &RulePolicy,
+    value: u64,
+    now: f64,
+) -> MetricEvidence {
+    let rule = resolve_metric_rule(
+        policy,
+        MetricId::FileLines,
+        &PolicyContext::new().with_path("src/app.rs"),
+    )
+    .expect("file rule resolves");
+    let binding = MetricStateBinding::new(
+        MetricId::FileLines,
+        MetricKey::path("src/app.rs").unwrap(),
+        value,
+        ParserEvidence::Native {
+            parser: ParserId::Utf8FileShapeV1,
+        },
+        rule,
+    )
+    .expect("file measurement binds");
+    reconcile_binding(fixture, &binding, "src/app.rs", now)
+}
+
+fn reconcile_binding(
+    fixture: &MetricStateFixture,
+    binding: &MetricStateBinding,
+    path: &str,
+    now: f64,
+) -> MetricEvidence {
+    let actors = ActorInputs::new(path)
+        .expect("actor inputs")
+        .with_active_actor("actor-a");
+    let observation = binding.observation(actors).expect("state observation");
+    let mut state = CurrentState::load(&fixture.destination, &fixture.sources)
+        .expect("load current metric state");
+    state
+        .begin_run(&RenameMap::default(), [path], now)
+        .expect("begin metric-state run");
+    let decisions = state
+        .reconcile([observation])
+        .expect("reconcile metric state");
+    let evidence = binding
+        .evidence(&decisions[0])
+        .expect("bind reconciled evidence");
+    state
+        .finish()
+        .expect("finish metric-state run")
+        .accept()
+        .expect("persist accepted metric state");
+    evidence
+}
+
+fn measured_latch(evidence: &MetricEvidence) -> &LatchBinding {
+    let EvidenceState::Measured { measurement } = evidence.state() else {
+        panic!("fixture produced nonmeasurement evidence")
+    };
+    measurement.latch().expect("bounded evidence carries latch")
 }

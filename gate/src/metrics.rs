@@ -11,6 +11,7 @@ mod evidence;
 mod parity;
 mod parser;
 mod policy_binding;
+mod state_binding;
 
 pub use declaration::{
     ArmDeclaration, KeyShape, MetricDeclaration, MetricId, MetricUnit, ParserDeclaration, ParserId,
@@ -34,3 +35,4 @@ pub use policy_binding::{
     PolicyBindingError, ResolvedMagicMetric, ResolvedMetricRule, resolve_magic_metric,
     resolve_metric_rule,
 };
+pub use state_binding::{MetricStateBinding, StateBindingError};
