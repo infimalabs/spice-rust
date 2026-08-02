@@ -70,7 +70,7 @@ release = "0.31.0"
 source_kind = "export"
 decision = "selected-empty"
 source_file = "/exports/release-0.31.0-tasks.json"
-team = "alpha"
+lineage = "alpha"
 field = "teams[0].shellSettings.taskRc"
 
 [[provenance]]
@@ -78,7 +78,7 @@ release = "0.31.0"
 source_kind = "export"
 decision = "selected-empty"
 source_file = "/exports/release-0.31.0-tasks.json"
-team = "beta"
+lineage = "beta"
 field = "teams[1].shellSettings.rc"
 
 [[provenance]]
@@ -86,6 +86,6 @@ release = "0.31.0"
 source_kind = "export"
 decision = "selected-empty"
 source_file = "/exports/release-0.31.0-tasks.json"
-team = "gamma"
+lineage = "gamma"
 field = "teams[2].shellSettings.taskRc[0]"
 list_index = 0
