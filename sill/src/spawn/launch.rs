@@ -36,8 +36,10 @@ pub(super) fn spawn_inner(spec: Spec, observation: Option<Observation>) -> io::R
         wake: wakes.failure,
         failed: AtomicBool::new(false),
     });
+    let failure_observer = observation.as_ref().map(Observation::observer);
     let mut captures = CaptureSetup {
         observation,
+        failure_observer,
         observer_wake: wakes.observer,
         selected_stream: wakes.selected_stream,
         sink_deadline: spec.deadlines.output_drain(),
@@ -143,6 +145,7 @@ fn capture_pipes(child: &mut Child, spec: &Spec) -> io::Result<CapturePipes> {
 
 struct CaptureSetup {
     observation: Option<Observation>,
+    failure_observer: Option<Arc<dyn crate::observe::RecordObserver>>,
     observer_wake: Option<UnixDatagram>,
     selected_stream: Option<OutputStream>,
     sink_deadline: std::time::Duration,
@@ -160,6 +163,7 @@ impl CaptureSetup {
         CaptureWorker {
             stream,
             observation: selected,
+            failure_observer: self.failure_observer.as_ref().map(Arc::clone),
             sink_deadline: self.sink_deadline,
             failure: Arc::clone(&self.failure),
             wake: wake.expect("captured stream has a preallocated wake"),
