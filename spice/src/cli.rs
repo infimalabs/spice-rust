@@ -14,7 +14,7 @@ mod tools;
 use syntax::register_syntax;
 #[cfg(test)]
 use syntax::{is_optional, syntax_tokens};
-pub(crate) use tools::ExternalTool;
+pub use tools::ExternalTool;
 use tools::{
     CALLER_COMMAND, DOCTOR_TOOLS, GATE_MUTATION_TOOLS, GATE_POLICY_TOOLS, NO_TOOLS, PROOF_TOOLS,
 };
@@ -27,7 +27,7 @@ const JSON: &str = "json";
 
 /// Principal admitted to a command leaf.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Principal {
+pub enum Principal {
     Local,
     Operator,
     Lane,
@@ -36,7 +36,7 @@ pub(crate) enum Principal {
 
 /// Relationship a leaf has with the authoritative journal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum JournalAccess {
+pub enum JournalAccess {
     None,
     Inspect,
     Read,
@@ -47,7 +47,7 @@ pub(crate) enum JournalAccess {
 
 /// Journal relationship a successful reply must report.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ReplyPositionLaw {
+pub enum ReplyPositionLaw {
     /// The command is daemonless and has no journal position.
     Direct,
     /// The command answers from a read snapshot.
@@ -68,7 +68,7 @@ impl JournalAccess {
 
 /// Additional posture or admission rule carried by a leaf.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Guard {
+pub enum Guard {
     Daemonless,
     Offline,
     Toolful,
@@ -81,7 +81,7 @@ pub(crate) enum Guard {
 
 /// Shape returned when a leaf succeeds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ResultClass {
+pub enum ResultClass {
     Reply,
     Plan,
     Stream,
@@ -89,14 +89,14 @@ pub(crate) enum ResultClass {
 
 /// Public process outcomes shared by every command renderer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ExitOutcome {
+pub enum ExitOutcome {
     Reply,
     Refusal,
     Fault,
 }
 
 impl ExitOutcome {
-    pub(crate) const ALL: &[Self] = &[Self::Reply, Self::Refusal, Self::Fault];
+    pub const ALL: &[Self] = &[Self::Reply, Self::Refusal, Self::Fault];
 
     #[cfg(test)]
     const fn code(self) -> i32 {
@@ -110,18 +110,18 @@ impl ExitOutcome {
 
 /// One generated CLI contract row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct Contract {
-    pub(crate) path: &'static [&'static str],
-    pub(crate) syntax: &'static str,
-    pub(crate) principal: Principal,
-    pub(crate) journal: JournalAccess,
-    pub(crate) reply_position: ReplyPositionLaw,
-    pub(crate) facts: &'static [FactKind],
-    pub(crate) guards: &'static [Guard],
-    pub(crate) tools: &'static [ExternalTool],
-    pub(crate) result: ResultClass,
-    pub(crate) outcomes: &'static [ExitOutcome],
-    pub(crate) battery: &'static str,
+pub struct Contract {
+    pub path: &'static [&'static str],
+    pub syntax: &'static str,
+    pub principal: Principal,
+    pub journal: JournalAccess,
+    pub reply_position: ReplyPositionLaw,
+    pub facts: &'static [FactKind],
+    pub guards: &'static [Guard],
+    pub tools: &'static [ExternalTool],
+    pub result: ResultClass,
+    pub outcomes: &'static [ExitOutcome],
+    pub battery: &'static str,
 }
 
 /// Whether one registered leaf has executable Rust dispatch today.
@@ -130,8 +130,10 @@ pub(crate) struct Contract {
 /// registered leaf fails the succession check instead of quietly joining the
 /// terminal release refusal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Landing {
+pub enum Landing {
     Landed,
+    /// A current public task owns this intentionally visible terminal refusal.
+    GapOwned(&'static str),
     Unaccounted,
 }
 
@@ -838,7 +840,7 @@ const CONTRACTS: &[Contract] = &[
 ///
 /// Returning the static rows performs no discovery or inspection. The Doctor
 /// surface adds observations later without gaining a second command list.
-pub(crate) const fn contracts() -> &'static [Contract] {
+pub const fn contracts() -> &'static [Contract] {
     CONTRACTS
 }
 
@@ -848,7 +850,7 @@ pub(crate) const fn contracts() -> &'static [Contract] {
 /// not make its implementation real. The closure test requires every current
 /// leaf to appear here, while the binary terminal branch uses the same
 /// classification to distinguish tracked work from a dispatch defect.
-pub(crate) fn landing(path: &[&str]) -> Landing {
+pub fn landing(path: &[&str]) -> Landing {
     match path {
         ["watch"]
         | ["retro"]
@@ -918,7 +920,7 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
 }
 
 /// Build the one parser and help tree from [`CONTRACTS`].
-pub(crate) fn command() -> Command {
+pub fn command() -> Command {
     command_from(contracts())
 }
 
@@ -985,12 +987,12 @@ fn contract_at<'a>(contracts: &'a [Contract], path: &[&str]) -> Option<&'a Contr
 
 /// Recover one registered contract for an internal typed client preflight.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn contract(path: &[&str]) -> Option<&'static Contract> {
+pub fn contract(path: &[&str]) -> Option<&'static Contract> {
     contract_at(contracts(), path)
 }
 
 /// Recover the contract selected by the generated parser.
-pub(crate) fn selected_contract(matches: &ArgMatches) -> Option<&'static Contract> {
+pub fn selected_contract(matches: &ArgMatches) -> Option<&'static Contract> {
     let mut path = Vec::new();
     let mut cursor = matches;
     while let Some((name, child)) = cursor.subcommand() {
@@ -1001,7 +1003,7 @@ pub(crate) fn selected_contract(matches: &ArgMatches) -> Option<&'static Contrac
 }
 
 /// Recover the leaf matches selected by the generated parser.
-pub(crate) fn selected_matches(mut matches: &ArgMatches) -> &ArgMatches {
+pub fn selected_matches(mut matches: &ArgMatches) -> &ArgMatches {
     while let Some((_, child)) = matches.subcommand() {
         matches = child;
     }
@@ -1010,7 +1012,7 @@ pub(crate) fn selected_matches(mut matches: &ArgMatches) -> &ArgMatches {
 
 /// Recover the command passed through the root `run` leaf.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn run_command(matches: &ArgMatches) -> Option<Vec<OsString>> {
+pub fn run_command(matches: &ArgMatches) -> Option<Vec<OsString>> {
     matches
         .subcommand_matches("run")?
         .get_many::<OsString>("CMD")
@@ -1024,7 +1026,7 @@ pub(crate) fn run_command(matches: &ArgMatches) -> Option<Vec<OsString>> {
 /// one place it is not a renderer flag is after a trailing `--`, where the
 /// operand is the caller's own command and its flags are that command's, not
 /// spice's.
-pub(crate) fn json_selected(matches: &ArgMatches) -> bool {
+pub fn json_selected(matches: &ArgMatches) -> bool {
     matches.get_flag(JSON)
 }
 

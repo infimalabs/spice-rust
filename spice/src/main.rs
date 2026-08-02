@@ -10,13 +10,13 @@ use std::{
 };
 
 use listen::{RetroSelector, StreamOutcome, SurfaceError, Watch};
+use spice::cli;
 use wire::{Fault, FaultClass, Outcome, Refusal};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod board_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod canvas_command;
-mod cli;
 #[cfg(not(target_arch = "wasm32"))]
 mod command_client;
 #[cfg(not(target_arch = "wasm32"))]
@@ -256,7 +256,11 @@ fn target_unsupported(path: &[&str]) -> Option<Fault> {
 }
 
 fn not_landed(contract: &cli::Contract) -> Outcome<()> {
-    match cli::landing(contract.path) {
+    not_landed_from(contract.path, cli::landing(contract.path))
+}
+
+fn not_landed_from(path: &[&str], landing: cli::Landing) -> Outcome<()> {
+    match landing {
         cli::Landing::Landed => Outcome::Fault(Fault {
             class: FaultClass::Protocol,
             reason: "release::dispatch-gap".to_owned(),
@@ -265,15 +269,22 @@ fn not_landed(contract: &cli::Contract) -> Outcome<()> {
                     "registered landed command reached the terminal ",
                     "release branch: {}"
                 ),
-                contract.path.join(" ")
+                path.join(" ")
             ),
+        }),
+        cli::Landing::GapOwned(owner) => Outcome::Refusal(Refusal {
+            reason: "release::not-landed".to_owned(),
+            witness: Some("succession-owner".to_owned()),
+            expected: Some(owner.to_owned()),
+            observed: Some(path.join(" ")),
+            remedy: format!("complete the owning task {owner}"),
         }),
         cli::Landing::Unaccounted => Outcome::Fault(Fault {
             class: FaultClass::Protocol,
             reason: "release::succession-unaccounted".to_owned(),
             detail: format!(
                 "registered command has no succession disposition: {}",
-                contract.path.join(" ")
+                path.join(" ")
             ),
         }),
     }
@@ -694,10 +705,13 @@ const fn exit_status<B>(outcome: &Outcome<B>) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use spice::cli;
     use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
     use super::render::{self, Stream};
-    use super::{FAULT_EXIT, REFUSAL_EXIT, REPLY_EXIT, exit_status, target_unsupported};
+    use super::{
+        FAULT_EXIT, REFUSAL_EXIT, REPLY_EXIT, exit_status, not_landed_from, target_unsupported,
+    };
 
     fn reply() -> Outcome<()> {
         Outcome::Reply(Reply {
@@ -748,6 +762,26 @@ mod tests {
             assert!(!fault.detail.is_empty());
         }
         assert!(target_unsupported(&["version"]).is_none());
+    }
+
+    #[test]
+    fn succession_terminal_distinguishes_owned_and_unaccounted_paths() {
+        let Outcome::Refusal(owned) = not_landed_from(
+            &["fixture", "owned"],
+            cli::Landing::GapOwned("FIXTURE-owner01"),
+        ) else {
+            panic!("an owned gap must remain one visible refusal");
+        };
+        assert_eq!(owned.reason, "release::not-landed");
+        assert_eq!(owned.expected.as_deref(), Some("FIXTURE-owner01"));
+        assert_eq!(owned.observed.as_deref(), Some("fixture owned"));
+
+        let Outcome::Fault(unaccounted) =
+            not_landed_from(&["fixture", "unknown"], cli::Landing::Unaccounted)
+        else {
+            panic!("an unaccounted path must fault");
+        };
+        assert_eq!(unaccounted.reason, "release::succession-unaccounted");
     }
 
     /// The stream an outcome speaks on and the exit it carries read the same.

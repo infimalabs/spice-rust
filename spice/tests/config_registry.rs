@@ -195,7 +195,7 @@ fn sample_path(template: &str) -> Vec<OwnedSegment> {
 }
 
 #[test]
-fn root_is_exactly_the_thirteen_typed_domains() {
+fn root_is_exactly_the_fourteen_typed_domains() {
     let root = decode(&complete()).expect("the complete root decodes");
     let round_trip = decode(&toml::to_string_pretty(&root).expect("root renders"))
         .expect("rendered root decodes");
@@ -218,7 +218,7 @@ fn root_is_exactly_the_thirteen_typed_domains() {
         table.keys().map(String::as_str).collect::<BTreeSet<_>>(),
         BTreeSet::from([
             "tasks", "policy", "taste", "consent", "gate", "board", "lane", "steer", "vendor",
-            "listen", "lock", "canvas", "proof",
+            "listen", "lock", "canvas", "say", "proof",
         ])
     );
 
@@ -354,6 +354,11 @@ fn templates_are_unique_canonical_non_overlapping_and_stably_ordered() {
         "lock.full",
         "lock.<name>.shards",
         "canvas.pack.rows",
+        "say.backend",
+        "say.command",
+        "say.voice",
+        "say.content_type",
+        "say.words_per_minute",
         "proof.image",
         "proof.container",
         "proof.runner",
@@ -433,6 +438,11 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
             "lock.full",
             "lock.<name>.shards",
             "canvas.pack.rows",
+            "say.backend",
+            "say.command",
+            "say.voice",
+            "say.content_type",
+            "say.words_per_minute",
             "proof.container",
             "proof.runner",
         ]
@@ -453,7 +463,7 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
     for entry in descriptors() {
         let local_only = matches!(
             entry.template().as_str(),
-            "proof.container" | "proof.runner"
+            "say.command" | "proof.container" | "proof.runner"
         );
         assert_eq!(
             entry.layers().contains(&ConfigSource::Tracked),

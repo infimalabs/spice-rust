@@ -79,7 +79,12 @@ const HELLO: &str = r#"{
 const CANVAS_BOOTSTRAP: &str = r#"{
   "endpoint": "http://127.0.0.1:48123",
   "capability": "018f82d4-6f59-7d06-92e3-bce9131163c6",
-  "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3"
+  "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+  "speech": {
+    "backend": "system",
+    "voice": "Zoe (Premium)",
+    "words_per_minute": 175
+  }
 }"#;
 
 const COMMAND: &str = r#"{
@@ -471,8 +476,15 @@ fn canvas_bootstrap_has_one_strict_current_generation_shape() {
         bootstrap.epoch,
         uuid("018f82d4-6f59-7d06-92e3-bce9131163c3")
     );
+    assert_eq!(
+        bootstrap.speech,
+        wire::SpeechPlayback::System {
+            voice: "Zoe (Premium)".to_owned(),
+            words_per_minute: 175,
+        }
+    );
 
-    for field in ["endpoint", "capability", "epoch"] {
+    for field in ["endpoint", "capability", "epoch", "speech"] {
         let mut value: serde_json::Value =
             serde_json::from_str(CANVAS_BOOTSTRAP).expect("bootstrap fixture is JSON");
         value
@@ -483,6 +495,18 @@ fn canvas_bootstrap_has_one_strict_current_generation_shape() {
             wire::decode::<CanvasBootstrap>(&serde_json::to_vec(&value).expect("shape encodes"))
                 .is_err(),
             "bootstrap without {field} was admitted"
+        );
+    }
+
+    for malformed in [
+        r#"{"backend":"unknown"}"#,
+        r#"{"backend":"disabled","voice":"Zoe"}"#,
+        r#"{"backend":"system","words_per_minute":175}"#,
+        r#"{"backend":"external","content_type":"audio/wav","words_per_minute":175}"#,
+    ] {
+        assert!(
+            wire::decode::<wire::SpeechPlayback>(malformed.as_bytes()).is_err(),
+            "malformed speech playback was admitted: {malformed}"
         );
     }
 }
