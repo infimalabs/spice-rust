@@ -333,7 +333,7 @@ pub struct LatchObservation {
     bound: BoundRule,
     measured: u64,
     actor_inputs: ActorInputs,
-    variation_percent: u32,
+    variation_percent: u64,
 }
 
 impl LatchObservation {
@@ -343,7 +343,7 @@ impl LatchObservation {
         bound: BoundRule,
         measured: u64,
         actor_inputs: ActorInputs,
-        variation_percent: u32,
+        variation_percent: u64,
     ) -> Result<Self, BoundError> {
         if entry.key().repo_path() != actor_inputs.candidate_path() {
             return Err(BoundError::InvalidPath {

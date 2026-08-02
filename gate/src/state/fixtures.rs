@@ -17,6 +17,7 @@ fn bound_decision_records_the_explicit_predecessor_order() {
     assert_eq!(breached.measured(), 16);
     assert_eq!(breached.base_limit(), 10);
     assert_eq!(breached.configured_elastic_limit(), 15);
+    assert_eq!(breached.variation_percent(), 0);
     assert_eq!(breached.elastic_limit(), 15);
     assert_eq!(breached.active_limit(), 15);
     assert!(!breached.unlimited());
@@ -116,6 +117,13 @@ fn actor_order_and_blake2b_variation_match_the_predecessor() {
         varied_elastic_limit(100, 150, "src/lib.rs", "actor-a", 10).expect("same normalized path"),
         147
     );
+    // Python 0.31.0 converts the exact product through binary64 before
+    // truncation: int(5059961668777554089 * 88 / 100) = 4452766268524247552.
+    assert_eq!(
+        varied_elastic_limit(1, 5_059_961_668_777_554_090, "src/20.rs", "actor-a", 100,)
+            .expect("large predecessor rounding vector"),
+        9_512_727_937_301_801_642
+    );
     let varied = BoundRule::new("slice", "file-loc", 100, 150, false, false)
         .expect("varied bound")
         .decide(
@@ -132,6 +140,47 @@ fn actor_order_and_blake2b_variation_match_the_predecessor() {
     assert_eq!(
         varied.actor().expect("selected variation actor").source(),
         ActorSource::ActiveActor
+    );
+}
+
+#[test]
+fn current_policy_variation_domain_reaches_canonical_state_evidence() {
+    const ABOVE_U32: u64 = 4_294_967_296;
+    let policy = crate::migrate_predecessor_policy(
+        "fixtures/policy.toml",
+        "[policy.flex]\njitter_percent = 4294967296\n",
+    )
+    .expect("the predecessor percentage has an exact current meaning");
+    assert_eq!(policy.document().ratchet().variation_percent(), ABOVE_U32);
+
+    let actors = ActorInputs::new("src/lib.rs")
+        .expect("actor inputs")
+        .with_active_actor("actor-a");
+    let decision = BoundRule::new("slice", "file-loc", 100, 150, false, false)
+        .expect("varied bound")
+        .decide(101, false, &actors, ABOVE_U32)
+        .expect("the complete policy percentage enters state evaluation");
+    assert_eq!(decision.variation_percent(), ABOVE_U32);
+    assert_eq!(decision.elastic_limit(), 100);
+    assert_eq!(decision.active_limit(), 100);
+    assert!(decision.over_limit());
+    assert_eq!(
+        decision.actor().expect("selected variation actor").source(),
+        ActorSource::ActiveActor
+    );
+
+    let encoded = wire::encode(&decision).expect("bound decision is canonical evidence");
+    let evidence: serde_json::Value =
+        wire::decode(&encoded).expect("canonical decision evidence decodes");
+    assert_eq!(evidence["variation_percent"], ABOVE_U32);
+    assert_eq!(evidence["configured_elastic_limit"], 150);
+    assert_eq!(evidence["elastic_limit"], 100);
+    assert_eq!(evidence["actor"]["source"], "active-actor");
+
+    assert_eq!(
+        varied_elastic_limit(100, 150, "src/lib.rs", "actor-a", u64::MAX)
+            .expect("the widest percentage clamps exactly below base"),
+        100
     );
 }
 
