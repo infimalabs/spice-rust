@@ -83,6 +83,26 @@ fn measure_arm(
     })
 }
 
+pub(super) fn validate_measurement(measurement: &HygieneMeasurement) -> Result<(), HygieneError> {
+    let declaration =
+        declaration(measurement.gate_id).ok_or(HygieneError::ForeignGate(measurement.gate_id))?;
+    let observed = HygieneObservation {
+        gate_id: measurement.gate_id,
+        outcome: measurement.outcome,
+        reason: measurement.reason.clone(),
+        evidence: measurement.evidence.clone(),
+        findings: measurement.findings.clone(),
+    };
+    let expected = measure_arm(declaration, observed)?;
+    if expected != *measurement {
+        return Err(HygieneError::InvalidEvidence {
+            gate: measurement.gate_id,
+            evidence: "retained measurement disagrees with its compiled declaration".to_owned(),
+        });
+    }
+    Ok(())
+}
+
 fn owned(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
 }

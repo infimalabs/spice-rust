@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::manifest::GateId;
 
@@ -81,7 +81,7 @@ impl TreeJurisdiction {
 }
 
 /// Candidate-path source consumed by one arm.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TreeInput {
     /// Paths changed in the selected index relative to its parent.
@@ -91,7 +91,7 @@ pub enum TreeInput {
 }
 
 /// Compiled evidence-normalization implementation recorded in every report arm.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum MeasurementEngine {
     /// Version-one validation and ordering implemented by this module.
@@ -193,7 +193,7 @@ mod declarations;
 pub use declarations::*;
 
 /// Operational evidence for one declared external tool.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(tag = "discovery", rename_all = "kebab-case")]
 pub enum ToolEvidence {
     /// The sole declared program was not found.
@@ -238,7 +238,7 @@ impl ToolEvidence {
 }
 
 /// One structured finding produced by a declared arm.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct ArmFinding {
     /// Selected-tree-relative path, absent only for a repository-wide finding.
     pub path: Option<String>,
@@ -251,7 +251,7 @@ pub struct ArmFinding {
 }
 
 /// Closed structured evidence vocabulary for the eight arms.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum FindingDetail {
     /// Source differs from the formatter's canonical bytes.
@@ -284,7 +284,7 @@ pub enum FindingDetail {
 }
 
 /// Finding-bearing predecessor status for a JavaScript declaration.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum JavascriptUnusedStatus {
     /// No production or test reference remains after declaration accounting.
@@ -294,7 +294,7 @@ pub enum JavascriptUnusedStatus {
 }
 
 /// Exact predecessor environment-ledger mismatch kind.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum EnvironmentLedgerKind {
     /// A source reference has no configured declaration.
@@ -304,7 +304,7 @@ pub enum EnvironmentLedgerKind {
 }
 
 /// One retained source locus nested beneath a repository-wide finding.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct SourceLocus {
     /// Selected-tree-relative path.
     pub path: String,
@@ -328,7 +328,7 @@ impl FindingDetail {
 }
 
 /// Typed result of one selected arm.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ArmOutcome {
     /// Analysis completed without findings.
@@ -383,7 +383,7 @@ pub struct ArmObservation {
 }
 
 /// Canonical retained measurement of one arm.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ArmMeasurement {
     /// Stable current gate identity.
     pub gate_id: GateId,
@@ -415,8 +415,31 @@ pub struct ArmMeasurement {
     pub exit_code: Option<i32>,
 }
 
+impl ArmMeasurement {
+    pub(crate) fn validate(&self) -> Result<(), ToolchainError> {
+        let declaration =
+            declaration(self.gate_id).ok_or(ToolchainError::ForeignGate(self.gate_id))?;
+        let observed = ArmObservation {
+            gate_id: self.gate_id,
+            outcome: self.outcome,
+            reason: self.reason.clone(),
+            tools: self.tools.clone(),
+            findings: self.findings.clone(),
+            exit_code: self.exit_code,
+        };
+        let expected = measure_arm(declaration, observed)?;
+        if expected != *self {
+            return Err(ToolchainError::InvalidToolEvidence {
+                gate: self.gate_id,
+                evidence: "retained measurement disagrees with its compiled declaration".to_owned(),
+            });
+        }
+        Ok(())
+    }
+}
+
 /// Canonical ordered report for the complete eight-arm family.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ToolchainReport {
     /// Current report schema.
     pub version: u64,
