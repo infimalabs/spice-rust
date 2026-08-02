@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant as Monotonic};
 
 use sill::{
-    Argv, Cancellation, Deadlines, Environment, Output, ProcessGroup, Redaction,
-    RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
+    Argv, Cancellation, Deadlines, Environment, ObservationFailure, Output, OutputStream,
+    ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
 };
 
 use super::*;
@@ -87,6 +87,35 @@ fn linked_worktrees_share_the_git_common_directory() {
 }
 
 #[test]
+fn startup_surface_captures_configured_hidden_project_policy_once() {
+    let root = fixture("hidden-project-policy");
+    fs::create_dir_all(root.join(".git")).expect("git directory");
+    fs::write(
+        root.join("spice.toml"),
+        "[tasks]\nstems = ['board']\nhidden_stems = ['sandbox']\n",
+    )
+    .expect("tracked task metadata");
+    let repository = Repository::discover(&root).expect("fixture repository resolves");
+
+    let startup = load_startup_surface(&repository).expect("startup policy resolves");
+    assert_eq!(
+        startup.config.projects.hidden_stems(),
+        ["oops", "maxim_proposal", "sandbox"]
+    );
+    assert_eq!(
+        startup
+            .config
+            .projects
+            .admit(".sandbox.triage_1")
+            .expect("configured hidden descendant")
+            .visibility()
+            .hidden_stem(),
+        Some("sandbox")
+    );
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+#[test]
 fn cooperative_and_forced_groups_drive_observed_counts_and_residue() {
     let (root, paths) = resident_fixture("groups");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
@@ -134,7 +163,8 @@ fn cooperative_and_forced_groups_drive_observed_counts_and_residue() {
     fs::write(paths.tape.join(tape_lane.to_string()), "not a tape")
         .expect("malformed tape residue");
     let sealed_lane = test_uuid(8);
-    let tape = tape::Tape::open(paths.tape.join(sealed_lane.to_string())).expect("live tape opens");
+    let tape = tape::Tape::open(paths.tape.join(sealed_lane.to_string()).join("claude"))
+        .expect("live tape opens");
     let locus = tape
         .tee(b"resident shutdown evidence")
         .expect("tape captures");
@@ -239,6 +269,68 @@ fn a_post_seated_surface_failure_compensates_to_verified_dark() {
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
+#[test]
+fn capture_failure_vacates_and_durably_degrades_the_exact_occupant() {
+    let (root, paths) = resident_fixture("capture-failure");
+    let repository = Repository::discover(&root).expect("fixture repository resolves");
+    let surface =
+        crate::trust_command::Surface::load(&repository).expect("fixture trust surface loads");
+    let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
+    let bus = Bus::start(journal).expect("fixture bus starts");
+    let epoch = test_uuid(1);
+    commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
+    let lane = test_uuid(2);
+    let occupant = test_uuid(3);
+    let mut seats = Seats::new();
+    seats
+        .seat(
+            lane,
+            occupant,
+            process_spec("exec /usr/bin/tail -f /dev/null", Duration::from_secs(5)),
+        )
+        .expect("capture fixture group starts");
+    seed_lane(&bus, epoch, lane, occupant);
+
+    super::lane_surface::capture_failed(
+        &bus,
+        epoch,
+        &mut seats,
+        &lane::capture::CaptureFailure {
+            lane,
+            occupant,
+            failure: ObservationFailure::SinkRefused {
+                stream: OutputStream::Stdout,
+                detail: "fixture tape refusal".to_owned(),
+            },
+        },
+    )
+    .expect("capture failure commits");
+
+    assert!(!seats.occupied(lane));
+    let head = current_residency(&bus, epoch)
+        .expect("capture residency reads")
+        .into_body();
+    let row = head
+        .lanes
+        .iter()
+        .find(|row| row.lane == lane)
+        .expect("capture lane remains durable");
+    assert_eq!((row.occupant, row.disposition.as_str()), (None, "degraded"));
+    let snapshot = bus.fact_snapshot().expect("capture facts read");
+    let degraded = snapshot
+        .facts()
+        .iter()
+        .find(|fact| fact.fact.kind() == wire::FactKind::LaneDegraded)
+        .expect("capture degradation is named");
+    assert!(
+        degraded.fact.body()["marker"]
+            .as_str()
+            .is_some_and(|marker| marker.contains("fixture tape refusal"))
+    );
+    bus.shutdown().expect("capture fixture bus stops");
+    fs::remove_dir_all(root).expect("capture fixture cleanup");
+}
+
 fn resident_fixture(name: &str) -> (PathBuf, RuntimePaths) {
     let root = fixture(name);
     fs::create_dir_all(root.join(".git")).expect("git directory");
@@ -278,6 +370,7 @@ fn seed_lane(bus: &Bus, epoch: CanonicalUuid, lane: CanonicalUuid, occupant: Can
         occupant: Some(occupant),
         lineage: vec![occupant],
         capabilities: vec![test_uuid(9)],
+        session: None,
         disposition: "occupied".to_owned(),
     });
     head.lanes.sort_by_key(|lane| lane.lane);

@@ -3,6 +3,8 @@ use listen::{
     decode,
 };
 
+const CLAUDE_SESSION: &[u8] =
+    br#"{"type":"system","subtype":"init","session_id":"018f7777-7777-7444-8888-999999999999"}"#;
 const CLAUDE_PROSE: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3,"output_tokens":2}}}"#;
 const CLAUDE_REASONING: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"thinking","thinking":"inspect"}],"usage":{"input_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3,"output_tokens":2}}}"#;
 const CLAUDE_OPAQUE_REASONING: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"redacted_thinking","data":"sealed"}],"usage":{"input_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3,"output_tokens":2}}}"#;
@@ -19,6 +21,8 @@ const CODEX_TOOL: &[u8] = br#"{"type":"item.started","item":{"id":"item-3","type
 const CODEX_WEB_SEARCH: &[u8] = br#"{"type":"item.started","item":{"id":"item-4","type":"web_search","query":"","action":{"type":"other"}}}"#;
 const CODEX_USAGE: &[u8] = br#"{"type":"turn.completed","usage":{"input_tokens":11,"cached_input_tokens":7,"cache_write_input_tokens":3,"output_tokens":5,"reasoning_output_tokens":2}}"#;
 const CODEX_FAILURE: &[u8] = br#"{"type":"turn.failed","error":{"message":"interrupted"}}"#;
+const CODEX_SESSION: &[u8] =
+    br#"{"type":"thread.started","thread_id":"019fbc32-beb1-7ee0-b814-a7513f8f8ea5"}"#;
 
 struct CurrentCase {
     dialect: Dialect,
@@ -27,6 +31,11 @@ struct CurrentCase {
 }
 
 const CURRENT: &[CurrentCase] = &[
+    CurrentCase {
+        dialect: Dialect::Claude,
+        bytes: CLAUDE_SESSION,
+        expected: EventKind::Session,
+    },
     CurrentCase {
         dialect: Dialect::Claude,
         bytes: CLAUDE_PROSE,
@@ -61,6 +70,11 @@ const CURRENT: &[CurrentCase] = &[
         dialect: Dialect::Claude,
         bytes: CLAUDE_FAILURE,
         expected: EventKind::Failure,
+    },
+    CurrentCase {
+        dialect: Dialect::Codex,
+        bytes: CODEX_SESSION,
+        expected: EventKind::Session,
     },
     CurrentCase {
         dialect: Dialect::Codex,
@@ -153,6 +167,27 @@ fn current_opaque_failure_and_statusless_tool_payloads_are_preserved() {
                 && tool.moment == ToolMoment::Call {
                     name: "web_search".to_owned()
                 }
+    ));
+}
+
+#[test]
+fn exact_current_initialization_records_declare_only_their_session_identity() {
+    let claude = decode(Dialect::Claude, CLAUDE_SESSION, locus(CLAUDE_SESSION))
+        .expect("matching Claude declaration locus");
+    assert!(matches!(
+        claude.events(),
+        [Event::Session(declaration)]
+            if declaration.identity == "018f7777-7777-7444-8888-999999999999"
+                && declaration.locus == locus(CLAUDE_SESSION)
+    ));
+
+    let codex = decode(Dialect::Codex, CODEX_SESSION, locus(CODEX_SESSION))
+        .expect("matching Codex declaration locus");
+    assert!(matches!(
+        codex.events(),
+        [Event::Session(declaration)]
+            if declaration.identity == "019fbc32-beb1-7ee0-b814-a7513f8f8ea5"
+                && declaration.locus == locus(CODEX_SESSION)
     ));
 }
 

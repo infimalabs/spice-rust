@@ -23,6 +23,9 @@ const ADD_TITLE: &str = concat!(
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 const POLICY: &str = r#"
+[tasks]
+stems = ["taste"]
+
 [taste.zeta]
 words = ["wait*", "sleep*"]
 message = "Observe the real completion event."
@@ -266,8 +269,9 @@ fn assert_review_plan(board: &BoardAnswer, answer: &TaskAnswer, title: &str) {
         .iter()
         .find(|task| task.statement.body.handle == answer.task)
         .expect("planned task is on the current board");
-    assert_eq!(task.statement.body.title, title);
+    assert_eq!(task.presentation_title(), title);
     assert_eq!(task.statement.body.project, "taste.policy");
+    assert!(!task.visibility.is_hidden());
     assert_eq!(
         task.workflow
             .body

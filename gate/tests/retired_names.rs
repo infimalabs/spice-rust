@@ -229,6 +229,22 @@ fn a_foreign_crate_keeps_its_skin() {
     assert!(scan_source("fixture.rs", source).is_empty());
 }
 
+#[test]
+fn exact_predecessor_lineage_keys_and_provenance_are_foreign_skin_only() {
+    let foreign = concat!(
+        "pub const COLLECTION_KEY: &str = \"teams\";\n",
+        "pub const IDENTITY_KEY: &str = \"teamId\";\n",
+        "pub const SOURCE_PATH: &str = \"teams[0].teamId\";\n",
+        "pub struct Lineage;\n",
+    );
+    assert!(scan_source("fixture.rs", foreign).is_empty());
+
+    let current = "pub struct MigrationRow { pub team: String }\n";
+    let violations = scan_source("fixture.rs", current);
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(violations[0].contains("lineage"), "{violations:?}");
+}
+
 /// One concept is one finding, however many times a file spells it.
 #[test]
 fn a_concept_named_repeatedly_is_reported_once() {

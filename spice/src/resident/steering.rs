@@ -293,6 +293,7 @@ pub(super) fn send(
         lane: send.lane,
         text: send.message.clone(),
         control: None,
+        attachments: send.attachments.clone(),
         expires,
     };
     let mut proposal = match write_at(command.actor().clone(), epoch, at, Producer::CommandDoor) {
@@ -385,6 +386,118 @@ pub(super) fn cancel(
     )
 }
 
+pub(super) fn recover(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    config: &steer::Config,
+    command: &wire::AdmittedCommand,
+    recover: &wire::intent::DirectiveRef,
+) -> Outcome<CommandAnswer> {
+    if !matches!(command.actor(), Actor::Operator) {
+        return refusal(
+            "steer::operator-required",
+            Some("operator".to_owned()),
+            Some(command.actor().to_string()),
+            "submit recovery through the current operator discovery",
+        );
+    }
+    let residency = match current_residency(bus, epoch) {
+        Ok(residency) => residency,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let snapshot = match snapshot(bus) {
+        Ok(snapshot) => snapshot,
+        Err(outcome) => return outcome,
+    };
+    let Some(directive) = snapshot.ledger.directive(recover.directive) else {
+        return refusal(
+            "steer::recovery-missing",
+            Some("one durable lapsed directive".to_owned()),
+            Some(recover.directive.to_string()),
+            "inspect durable steering history and name its exact directive identity",
+        );
+    };
+    if directive.disposition() != Disposition::Lapsed {
+        let reason = if directive.disposition() == Disposition::Live {
+            "steer::recovery-live"
+        } else {
+            "steer::recovery-retired"
+        };
+        return refusal(
+            reason,
+            Some("lapsed".to_owned()),
+            Some(format!("{:?}", directive.disposition()).to_lowercase()),
+            "recover only a directive whose durable lineage lapsed",
+        );
+    }
+    let expected = [
+        Witness::Directive {
+            steer: recover.directive,
+            disposition: Disposition::Lapsed,
+        },
+        Witness::Lineage {
+            steer: recover.directive,
+        },
+    ];
+    if command.expected() != expected {
+        return refusal(
+            "steer::witness-moved",
+            Some(format!("{expected:?}")),
+            Some(format!("{:?}", command.expected())),
+            "read the failed directive again before recovering it",
+        );
+    }
+    let at = match current_instant() {
+        Ok(at) => at,
+        Err(outcome) => return outcome,
+    };
+    let expires = match expiry(at, config.expiry().get()) {
+        Ok(expires) => expires,
+        Err(outcome) => return outcome,
+    };
+    let (origin, cause) = directive_cause(&snapshot.facts, recover.directive);
+    let key = directive.key().clone();
+    let lane = directive.lane();
+    let lapsed_at = directive.expires();
+    let mut proposal = match write_at_origin(command.actor().clone(), origin, Producer::CommandDoor)
+    {
+        Ok(proposal) => proposal,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    proposal.guard(recovery_guard(
+        recover.directive,
+        key.clone(),
+        lane,
+        lapsed_at,
+    ));
+    if let Err(error) = proposal.fact(
+        wire::body::SteerRecovered {
+            directive: recover.directive,
+            key: key.to_string(),
+            lane,
+            lapsed_at,
+            expires,
+        },
+        FactCause::Existing(cause),
+    ) {
+        return typed_store_fault("steer::recovery-fact-invalid", &error.to_string());
+    }
+    let answer = DirectiveAnswer {
+        directive: recover.directive,
+        key: key.to_string(),
+        disposition: Disposition::Live,
+    };
+    if let Err(error) = proposal.command_result(
+        typed_command(command, recover.clone()),
+        epoch,
+        answer.clone(),
+    ) {
+        return typed_store_fault("steer::recovery-receipt-invalid", &error.to_string());
+    }
+    finish(bus, paths, residency.body(), lane, proposal, answer)
+}
+
 pub(super) fn dispose(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -419,9 +532,24 @@ pub(super) fn dispose(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
+    let Some(vendor) = residency
+        .body()
+        .lanes
+        .iter()
+        .find(|lane| lane.lane == *actor_lane)
+        .map(|lane| &lane.vendor)
+    else {
+        return refusal(
+            "steer::lane-missing",
+            Some("current durable lane".to_owned()),
+            Some(actor_lane.to_string()),
+            "use a capability belonging to one current lane",
+        );
+    };
     let recognition = match transcript_recognition(
         paths,
         *actor_lane,
+        vendor,
         &dispose.token,
         dispose.disposition,
         &snapshot.ledger,
@@ -675,6 +803,7 @@ fn pending_directive(directive: &steer::Directive) -> PendingDirective {
         key: directive.key().to_string(),
         text: directive.text().to_owned(),
         control: directive.control().map(str::to_owned),
+        attachments: directive.attachments().to_vec(),
         expires: directive.expires(),
     }
 }
@@ -819,6 +948,32 @@ fn live_guard(directive: CanonicalUuid) -> JournalGuard {
         match ledger.directive(directive) {
             Some(current) if current.disposition() == Disposition::Live => Ok(()),
             _ => Err(GuardError::refused("steer::directive-moved")),
+        }
+    })
+}
+
+fn recovery_guard(
+    directive: CanonicalUuid,
+    key: steer::Key,
+    lane: CanonicalUuid,
+    lapsed_at: Instant,
+) -> JournalGuard {
+    JournalGuard::new(move |read| {
+        let snapshot = read
+            .fact_snapshot()
+            .map_err(|error| GuardError::Invalid(error.to_string()))?;
+        let ledger = steer::Ledger::from_snapshot(&snapshot)
+            .map_err(|error| GuardError::Invalid(error.to_string()))?;
+        match ledger.directive(directive) {
+            Some(current)
+                if current.key() == &key
+                    && current.lane() == lane
+                    && current.expires() == lapsed_at
+                    && current.disposition() == Disposition::Lapsed =>
+            {
+                Ok(())
+            }
+            _ => Err(GuardError::refused("steer::recovery-moved")),
         }
     })
 }

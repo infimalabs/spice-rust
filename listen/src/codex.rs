@@ -1,12 +1,16 @@
 use tape::Locus;
 
 use crate::{
-    Event, Events, Failure, Object, Prose, Reasoning, ReasoningContent, ResidueKind, Tool,
-    ToolMoment, ToolResult, Usage, array, object, string, unsigned,
+    Event, Events, Failure, Object, Prose, Reasoning, ReasoningContent, ResidueKind,
+    SessionDeclaration, Tool, ToolMoment, ToolResult, Usage, array, object, string, unsigned,
 };
 
 pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
     match string(record, "type")? {
+        "thread.started" => Ok(vec![Event::Session(SessionDeclaration {
+            identity: string(record, "thread_id")?.to_owned(),
+            locus,
+        })]),
         "item.started" => item(record, locus, ItemMoment::Started),
         "item.updated" => item(record, locus, ItemMoment::Updated),
         "item.completed" => item(record, locus, ItemMoment::Completed),

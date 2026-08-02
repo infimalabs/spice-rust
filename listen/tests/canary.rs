@@ -70,6 +70,7 @@ fn event_kind_spellings_are_stable() {
     assert_eq!(
         EventKind::ALL.map(EventKind::as_str),
         [
+            "session",
             "prose",
             "reasoning",
             "tool",

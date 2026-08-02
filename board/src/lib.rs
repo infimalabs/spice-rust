@@ -11,6 +11,7 @@ pub mod claim;
 pub mod config;
 pub mod graph;
 pub mod handout;
+pub mod inventory;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod lapse;
 pub mod next;
@@ -29,9 +30,13 @@ pub use apply::{
 pub use claim::{Active, ClaimRefusal};
 pub use config::{Config, NextConfig};
 pub use graph::{Diagram, View};
-pub use next::{Selection, select};
+pub use inventory::{HiddenInventory, Inventory};
+pub use next::{Selection, eligible_entry, select};
 pub use phase::{PhaseRefusal, Transition, TransitionKind};
-pub use task::{Dependency, Entry, Family, Project, TaskError};
+pub use task::{
+    BUILTIN_HIDDEN_STEMS, BUILTIN_PUBLIC_STEMS, Dependency, Entry, Family, Project, ProjectError,
+    ProjectPolicy, ProjectPolicyError, SystemTaskRoute, TaskError,
+};
 pub use urgency::Urgency;
 
 /// One read barrier over current journal task heads.
@@ -68,7 +73,10 @@ impl Snapshot {
 
     /// Reconstruct one owned board answer from authoritative journal heads.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn read(journal: &journal::Journal) -> Result<Self, SnapshotReadError> {
+    pub fn read(
+        journal: &journal::Journal,
+        projects: &ProjectPolicy,
+    ) -> Result<Self, SnapshotReadError> {
         let (cursor, heads) = journal
             .read(|read| Ok((read.cursor()?, read.task_heads()?)))
             .map_err(SnapshotReadError::Journal)?;
@@ -77,7 +85,7 @@ impl Snapshot {
             .map(|heads| {
                 let (statement, workflow, claim, lease) = heads.into_bodies();
                 let handle = statement.handle.clone();
-                Entry::new(statement, workflow, claim, lease)
+                Entry::new(statement, workflow, claim, lease, projects)
                     .map_err(|source| SnapshotReadError::Task { handle, source })
             })
             .collect::<Result<Vec<_>, _>>()?;

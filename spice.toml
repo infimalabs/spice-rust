@@ -70,12 +70,16 @@ project_max_depth = 3
 # makes the vocabulary countable rather than a set of literals accumulating
 # across crates.
 #
-# `steer` owns the four hook/session names. Interception exports the proof and
-# reads the geometry back: the hooks directory it sources its static stage
-# from, the rendered direction it writes to stderr, and the lane a shell is
-# bound to. `gate` owns the mutation seed and attempt number it repeats into
-# every bounded cargo-mutants process.
+# Session forensics reads the live Codex or Claude identity and the selected
+# agent vendor. `steer` owns the four hook/session names. Interception exports
+# the proof and reads the geometry back: the hooks directory it sources its
+# static stage from, the rendered direction it writes to stderr, and the lane
+# a shell is bound to. `gate` owns the mutation seed and attempt number it
+# repeats into every bounded cargo-mutants process.
 env_names = [
+    "CLAUDE_CODE_SESSION_ID",
+    "CODEX_THREAD_ID",
+    "SPICE_AGENT_VENDOR",
     "SPICE_HOOKS",
     "SPICE_INBOX",
     "SPICE_INSTALL_TEST_PAUSE_ACTION",

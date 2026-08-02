@@ -78,12 +78,15 @@ fn coexisting_loader_reads_rust_local_intent_without_admitting_python_tracked_ta
     write(
         root.join("spice.toml"),
         concat!(
-            "[tasks]\nstems = ['rim']\n",
+            "[tasks]\nstems = ['rim']\nhidden_stems = ['sandbox']\n",
             "[policy]\nenv_names = []\n",
             "[taste.polling]\nwords = ['poll*']\nmessage = 'use events'\n",
         ),
     );
-    write(local_path(&root), b"[lock.worker]\nshards = 3\n");
+    write(
+        local_path(&root),
+        b"[lock.worker]\ndirectory = 'locks/worker'\nshards = 3\n",
+    );
     let repository = spice::repository::Repository::discover(&root).expect("fixture repository");
 
     let strict = spice::config::load_repository(&repository, &[])
@@ -94,7 +97,11 @@ fn coexisting_loader_reads_rust_local_intent_without_admitting_python_tracked_ta
     let before = snapshot(scratch.path());
     let resolved = load_coexisting_repository(&repository, &[])
         .expect("coexisting loader projects out tracked shared metadata");
-    assert!(resolved.root().tasks().stems().is_empty());
+    assert_eq!(resolved.root().tasks().stems(), ["rim"]);
+    assert_eq!(
+        resolved.root().tasks().hidden_stems(),
+        ["oops", "maxim_proposal", "sandbox"]
+    );
     assert!(resolved.root().policy().env_names().is_empty());
     assert_eq!(resolved.root().taste().bag().tastes().len(), 1);
     assert_eq!(resolved.root().lock().named().len(), 1);
@@ -121,7 +128,7 @@ fn main_worktree_reads_only_the_two_exact_paths_and_passes_typed_flags() {
         local_path(&root),
         format!(
             concat!(
-                "[listen]\nwindow = \"3m\"\n[lock.alpha]\nshards = 2\n",
+                "[listen]\nwindow = \"3m\"\n[lock.alpha]\ndirectory = 'locks/alpha'\nshards = 2\n",
                 "[proof]\ncontainer = \"{}\"\nrunner = \"{}\"\n",
             ),
             container, runner
@@ -173,7 +180,7 @@ fn main_worktree_reads_only_the_two_exact_paths_and_passes_typed_flags() {
             .root()
             .lock()
             .named()
-            .map(|(name, shards)| (name.as_str(), shards.get()))
+            .map(|(name, target)| (name.as_str(), target.shards().get()))
             .collect::<Vec<_>>(),
         [("alpha", 2)]
     );

@@ -1,24 +1,36 @@
-//! Fixed repository-common topology for daemonless resource locking.
+//! Explicit configured topology for daemonless resource locking.
 
 use std::error::Error;
 #[cfg(unix)]
 use std::ffi::{CString, OsStr};
 use std::fmt;
 use std::fs;
-use std::io;
+use std::io::{self, Read, Seek, SeekFrom, Write};
 #[cfg(unix)]
 use std::path::Component;
 use std::path::{Path, PathBuf};
+use std::process;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Acquisition, Availability, ExitCode, LockConfig, LockFile, LockName, Possession};
+use crate::{
+    Acquisition, Availability, ExitCode, LockConfig, LockFile, LockName, LockTarget, Possession,
+};
+#[cfg(unix)]
+use crate::{Running, Spec};
+
+#[cfg(unix)]
+mod process_state;
+#[cfg(unix)]
+use process_state::{process_absent, process_group_terminal, process_terminal};
+
+const OWNER_BYTES_LIMIT: u64 = 64 * 1024;
 
 /// Read-only rendering of the configured lock topology.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LockReport {
-    /// Repository-common directory under which lock files live.
+    /// Repository path base used to resolve relative lock locations.
     pub root: String,
     /// Configured process statuses.
     pub exits: LockExitReport,
@@ -35,22 +47,72 @@ pub struct LockExitReport {
     pub full: i32,
 }
 
-/// One configured lock pool and every fixed shard path it owns.
+/// One configured lock target and every shard path it owns.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LockPoolReport {
     pub name: String,
+    pub kind: LockTargetKind,
     pub shards: u32,
     pub entries: Vec<LockShardReport>,
 }
 
-/// One fixed shard path and its point-in-time kernel availability.
+/// Whether one configured name resolves to a file or a shard directory.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LockTargetKind {
+    File,
+    Pool,
+}
+
+/// One configured shard path and its point-in-time kernel availability.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LockShardReport {
     pub shard: u32,
     pub path: String,
     pub availability: LockAvailability,
+    pub owner: Option<LockOwnerReport>,
+    pub owner_stale: bool,
+}
+
+/// Best-effort owner evidence written only after kernel possession succeeds.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LockOwnerReport {
+    pub pid: u32,
+    pub cwd: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LockOwnerEvidence {
+    pid: u32,
+    cwd: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    owner_released: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    protected_group: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    protected_guardian: Option<u32>,
+}
+
+impl LockOwnerEvidence {
+    fn report(&self) -> Option<LockOwnerReport> {
+        (!self.owner_released).then(|| LockOwnerReport {
+            pid: self.pid,
+            cwd: self.cwd.clone(),
+        })
+    }
+
+    #[cfg(unix)]
+    fn terminal_guardian_pending(&self) -> bool {
+        self.protected_group.is_some_and(process_group_terminal)
+            && self
+                .protected_guardian
+                .is_some_and(|pid| !process_absent(pid))
+            && (self.owner_released || process_terminal(self.pid))
+    }
 }
 
 /// Whether a nonblocking acquisition would have succeeded when observed.
@@ -63,25 +125,15 @@ pub enum LockAvailability {
 
 #[cfg(unix)]
 #[derive(Debug)]
-struct TopologyAuthority {
+struct DirectoryAuthority {
     directory: fs::File,
 }
 
 #[cfg(not(unix))]
 #[derive(Debug)]
-struct TopologyAuthority;
+struct DirectoryAuthority;
 
-#[cfg(unix)]
-#[derive(Debug)]
-struct PoolAuthority {
-    directory: fs::File,
-}
-
-#[cfg(not(unix))]
-#[derive(Debug)]
-struct PoolAuthority;
-
-/// Repository-common lock topology plus its admitted policy.
+/// Configured lock topology plus its admitted policy.
 #[derive(Clone, Debug)]
 pub struct LockTopology {
     root: PathBuf,
@@ -89,7 +141,7 @@ pub struct LockTopology {
 }
 
 impl LockTopology {
-    /// Bind an effective configuration to its fixed state directory.
+    /// Bind an effective configuration to its repository-relative path base.
     #[must_use]
     pub fn new(root: impl Into<PathBuf>, config: &LockConfig) -> Self {
         Self {
@@ -109,30 +161,38 @@ impl LockTopology {
     /// opened or observed.
     pub fn report(&self) -> Result<LockReport, LockSurfaceError> {
         let exits = self.config.exits();
-        let authority =
-            TopologyAuthority::observe(&self.root).map_err(|source| LockSurfaceError::Inspect {
-                path: self.root.clone(),
-                source,
-            })?;
         let pools = self
             .config
             .named()
-            .map(|(name, shards)| {
-                let pool = authority
-                    .as_ref()
-                    .map(|authority| authority.pool(name, false))
-                    .transpose()
-                    .map_err(|source| LockSurfaceError::Inspect {
-                        path: self.root.join(name.as_str()),
-                        source,
-                    })?
-                    .flatten();
-                let entries = (0..shards.get())
-                    .map(|shard| self.observe_shard(pool.as_ref(), name, shard))
-                    .collect::<Result<Vec<_>, _>>()?;
+            .map(|(name, target)| {
+                let location = self.resolve(target.location().as_path());
+                let (kind, shards, entries) = match target {
+                    LockTarget::File { .. } => (
+                        LockTargetKind::File,
+                        1,
+                        vec![self.observe_path(name, 0, &location)?],
+                    ),
+                    LockTarget::Pool { shards, .. } => {
+                        let authority =
+                            DirectoryAuthority::observe(&location).map_err(|source| {
+                                LockSurfaceError::Inspect {
+                                    path: location.clone(),
+                                    source,
+                                }
+                            })?;
+                        let entries = (0..shards.get())
+                            .map(|shard| {
+                                let path = location.join(format!("{shard}.lock"));
+                                self.observe_shard(authority.as_ref(), name, shard, path)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        (LockTargetKind::Pool, shards.get(), entries)
+                    }
+                };
                 Ok(LockPoolReport {
                     name: name.as_str().to_owned(),
-                    shards: shards.get(),
+                    kind,
+                    shards,
                     entries,
                 })
             })
@@ -151,8 +211,8 @@ impl LockTopology {
     /// Try one selected shard, or the first free shard in stable order.
     ///
     /// This is the first operation that mutates the topology: it creates the
-    /// selected pool directory and advisory lock files as acquisition reaches
-    /// them. Reporting the topology remains read-only.
+    /// configured parent directories and advisory lock files as acquisition
+    /// reaches them. Reporting the topology remains read-only.
     ///
     /// # Errors
     ///
@@ -164,71 +224,76 @@ impl LockTopology {
     ) -> Result<LockAttempt, LockSurfaceError> {
         let name = LockName::new(name.to_owned())
             .map_err(|_| LockSurfaceError::InvalidName(name.to_owned()))?;
-        let shards = self
+        let target = self
             .config
-            .shards(&name)
+            .target(&name)
             .ok_or_else(|| LockSurfaceError::UnknownName(name.as_str().to_owned()))?;
-        if let Some(shard) = requested
-            && shard >= shards.get()
-        {
-            return Err(LockSurfaceError::ShardOutOfRange {
-                name: name.as_str().to_owned(),
-                shard,
-                shards: shards.get(),
-            });
-        }
-
-        let pool_path = self.root.join(name.as_str());
-        let authority =
-            TopologyAuthority::prepare(&self.root).map_err(|source| LockSurfaceError::Prepare {
-                path: self.root.clone(),
-                source,
-            })?;
-        let pool = authority
-            .pool(&name, true)
-            .map_err(|source| LockSurfaceError::Prepare {
-                path: pool_path.clone(),
-                source,
-            })?
-            .ok_or_else(|| LockSurfaceError::Prepare {
-                path: pool_path,
-                source: io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "configured lock pool was not created",
-                ),
-            })?;
-        if let Some(shard) = requested {
-            return self
-                .acquire_shard(&pool, name, shard)
-                .map(|attempt| match attempt {
-                    Some(held) => LockAttempt::Acquired(held),
-                    None => LockAttempt::Contended {
-                        kind: Contention::Taken,
-                        code: self.config.exits().taken(),
-                    },
-                });
-        }
-
-        for shard in 0..shards.get() {
-            if let Some(held) = self.acquire_shard(&pool, name.clone(), shard)? {
-                return Ok(LockAttempt::Acquired(held));
+        let location = self.resolve(target.location().as_path());
+        match target {
+            LockTarget::File { .. } => {
+                if let Some(shard) = requested {
+                    return Err(LockSurfaceError::ShardOnFile {
+                        name: name.as_str().to_owned(),
+                        shard,
+                    });
+                }
+                self.acquire_path(name, 0, &location)
+                    .map(|held| match held {
+                        Some(held) => LockAttempt::Acquired(held),
+                        None => LockAttempt::Contended {
+                            kind: Contention::Busy,
+                            code: self.config.exits().busy(),
+                        },
+                    })
+            }
+            LockTarget::Pool { shards, .. } => {
+                if let Some(shard) = requested
+                    && shard >= shards.get()
+                {
+                    return Err(LockSurfaceError::ShardOutOfRange {
+                        name: name.as_str().to_owned(),
+                        shard,
+                        shards: shards.get(),
+                    });
+                }
+                let pool = DirectoryAuthority::prepare(&location).map_err(|source| {
+                    LockSurfaceError::Prepare {
+                        path: location.clone(),
+                        source,
+                    }
+                })?;
+                if let Some(shard) = requested {
+                    return self
+                        .acquire_shard(&pool, name, shard, location.join(format!("{shard}.lock")))
+                        .map(|held| match held {
+                            Some(held) => LockAttempt::Acquired(held),
+                            None => LockAttempt::Contended {
+                                kind: Contention::Taken,
+                                code: self.config.exits().taken(),
+                            },
+                        });
+                }
+                for shard in 0..shards.get() {
+                    let path = location.join(format!("{shard}.lock"));
+                    if let Some(held) = self.acquire_shard(&pool, name.clone(), shard, path)? {
+                        return Ok(LockAttempt::Acquired(held));
+                    }
+                }
+                Ok(LockAttempt::Contended {
+                    kind: Contention::Full,
+                    code: self.config.exits().full(),
+                })
             }
         }
-        let (kind, code) = if shards.get() == 1 {
-            (Contention::Busy, self.config.exits().busy())
-        } else {
-            (Contention::Full, self.config.exits().full())
-        };
-        Ok(LockAttempt::Contended { kind, code })
     }
 
     fn acquire_shard(
         &self,
-        pool: &PoolAuthority,
+        pool: &DirectoryAuthority,
         name: LockName,
         shard: u32,
+        path: PathBuf,
     ) -> Result<Option<HeldShard>, LockSurfaceError> {
-        let path = self.shard_path(&name, shard);
         let lock = LockFile::new(name, &path);
         let file = pool
             .shard(shard, true)
@@ -240,46 +305,109 @@ impl LockTopology {
                 path: path.clone(),
                 source: io::Error::new(io::ErrorKind::NotFound, "lock shard was not created"),
             })?;
-        match lock
-            .try_acquire_opened(file)
-            .map_err(|source| LockSurfaceError::Acquire { path, source })?
-        {
-            Acquisition::Acquired(possession) => Ok(Some(HeldShard { shard, possession })),
+        match synchronized_acquire(&lock, file).map_err(|source| LockSurfaceError::Acquire {
+            path: path.clone(),
+            source,
+        })? {
+            Acquisition::Acquired(possession) => HeldShard::new(shard, possession)
+                .map(Some)
+                .map_err(|source| LockSurfaceError::Acquire { path, source }),
             Acquisition::Contended => Ok(None),
         }
     }
 
-    fn shard_path(&self, name: &LockName, shard: u32) -> PathBuf {
-        self.root.join(name.as_str()).join(shard.to_string())
+    fn acquire_path(
+        &self,
+        name: LockName,
+        shard: u32,
+        path: &Path,
+    ) -> Result<Option<HeldShard>, LockSurfaceError> {
+        let file = open_configured_file(path, true)
+            .map_err(|source| LockSurfaceError::Prepare {
+                path: path.to_path_buf(),
+                source,
+            })?
+            .ok_or_else(|| LockSurfaceError::Prepare {
+                path: path.to_path_buf(),
+                source: io::Error::new(io::ErrorKind::NotFound, "lock file was not created"),
+            })?;
+        let lock = LockFile::new(name, path);
+        match synchronized_acquire(&lock, file).map_err(|source| LockSurfaceError::Acquire {
+            path: path.to_path_buf(),
+            source,
+        })? {
+            Acquisition::Acquired(possession) => HeldShard::new(shard, possession)
+                .map(Some)
+                .map_err(|source| LockSurfaceError::Acquire {
+                    path: path.to_path_buf(),
+                    source,
+                }),
+            Acquisition::Contended => Ok(None),
+        }
     }
 
     fn observe_shard(
         &self,
-        pool: Option<&PoolAuthority>,
+        pool: Option<&DirectoryAuthority>,
         name: &LockName,
         shard: u32,
+        path: PathBuf,
     ) -> Result<LockShardReport, LockSurfaceError> {
-        let path = self.shard_path(name, shard);
-        let lock = LockFile::new(name.clone(), &path);
-        let availability = match pool {
-            None => Availability::Available,
-            Some(pool) => {
-                match pool
-                    .shard(shard, false)
-                    .map_err(|source| LockSurfaceError::Inspect {
-                        path: path.clone(),
-                        source,
-                    })? {
-                    None => Availability::Available,
-                    Some(file) => lock.availability_opened(file).map_err(|source| {
-                        LockSurfaceError::Inspect {
-                            path: path.clone(),
-                            source,
-                        }
-                    })?,
-                }
-            }
+        let file = pool
+            .map(|pool| pool.shard(shard, false))
+            .transpose()
+            .map_err(|source| LockSurfaceError::Inspect {
+                path: path.clone(),
+                source,
+            })?
+            .flatten();
+        self.observed(name, shard, path, file)
+    }
+
+    fn observe_path(
+        &self,
+        name: &LockName,
+        shard: u32,
+        path: &Path,
+    ) -> Result<LockShardReport, LockSurfaceError> {
+        let file =
+            open_configured_file(path, false).map_err(|source| LockSurfaceError::Inspect {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        self.observed(name, shard, path.to_path_buf(), file)
+    }
+
+    fn observed(
+        &self,
+        name: &LockName,
+        shard: u32,
+        path: PathBuf,
+        file: Option<fs::File>,
+    ) -> Result<LockShardReport, LockSurfaceError> {
+        let Some(file) = file else {
+            return Ok(LockShardReport {
+                shard,
+                path: path.display().to_string(),
+                availability: LockAvailability::Available,
+                owner: None,
+                owner_stale: false,
+            });
         };
+        let owner_evidence = read_owner(&file).map_err(|source| LockSurfaceError::Inspect {
+            path: path.clone(),
+            source,
+        })?;
+        let availability = synchronized_availability(
+            &LockFile::new(name.clone(), &path),
+            file,
+            owner_evidence.as_ref(),
+        )
+        .map_err(|source| LockSurfaceError::Inspect {
+            path: path.clone(),
+            source,
+        })?;
+        let owner = owner_evidence.as_ref().and_then(LockOwnerEvidence::report);
         Ok(LockShardReport {
             shard,
             path: path.display().to_string(),
@@ -287,92 +415,67 @@ impl LockTopology {
                 Availability::Available => LockAvailability::Available,
                 Availability::Held => LockAvailability::Held,
             },
+            owner_stale: availability == Availability::Available && owner.is_some(),
+            owner,
         })
+    }
+
+    fn resolve(&self, configured: &Path) -> PathBuf {
+        if configured.is_absolute() {
+            configured.to_path_buf()
+        } else {
+            self.root.join(configured)
+        }
     }
 }
 
 #[cfg(unix)]
-impl TopologyAuthority {
-    fn observe(root: &Path) -> io::Result<Option<Self>> {
-        open_topology(root, false)
+impl DirectoryAuthority {
+    fn observe(path: &Path) -> io::Result<Option<Self>> {
+        open_absolute_directory(path, false)
+            .map(|directory| directory.map(|directory| Self { directory }))
     }
 
-    fn prepare(root: &Path) -> io::Result<Self> {
-        open_topology(root, true)?.ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "configured lock topology was not created",
-            )
-        })
-    }
-
-    fn pool(&self, name: &LockName, create: bool) -> io::Result<Option<PoolAuthority>> {
-        let Some(directory) =
-            open_directory_component(&self.directory, OsStr::new(name.as_str()), create)?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(PoolAuthority { directory }))
-    }
-}
-
-#[cfg(not(unix))]
-impl TopologyAuthority {
-    fn observe(_root: &Path) -> io::Result<Option<Self>> {
-        Err(unsupported_authority())
-    }
-
-    fn prepare(_root: &Path) -> io::Result<Self> {
-        Err(unsupported_authority())
-    }
-
-    fn pool(&self, _name: &LockName, _create: bool) -> io::Result<Option<PoolAuthority>> {
-        Err(unsupported_authority())
+    fn prepare(path: &Path) -> io::Result<Self> {
+        open_absolute_directory(path, true)?
+            .map(|directory| Self { directory })
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "configured lock directory was not created",
+                )
+            })
     }
 }
 
 #[cfg(unix)]
-impl PoolAuthority {
+impl DirectoryAuthority {
     fn shard(&self, shard: u32, create: bool) -> io::Result<Option<fs::File>> {
-        open_shard(&self.directory, &shard.to_string(), create)
+        open_lock_file(
+            &self.directory,
+            OsStr::new(&format!("{shard}.lock")),
+            create,
+        )
     }
 }
 
 #[cfg(not(unix))]
-impl PoolAuthority {
+impl DirectoryAuthority {
+    fn observe(_path: &Path) -> io::Result<Option<Self>> {
+        Err(unsupported_authority())
+    }
+
+    fn prepare(_path: &Path) -> io::Result<Self> {
+        Err(unsupported_authority())
+    }
+
     fn shard(&self, _shard: u32, _create: bool) -> io::Result<Option<fs::File>> {
         Err(unsupported_authority())
     }
 }
 
 #[cfg(unix)]
-fn open_topology(root: &Path, create: bool) -> io::Result<Option<TopologyAuthority>> {
-    let (anchor, components) = topology_components(root)?;
-    let anchor = fs::canonicalize(anchor)?;
-    let mut directory = open_absolute_directory(&anchor)?;
-    for component in components {
-        let Some(next) = open_directory_component(&directory, component, create)? else {
-            return Ok(None);
-        };
-        directory = next;
-    }
-    Ok(Some(TopologyAuthority { directory }))
-}
-
-#[cfg(unix)]
-fn topology_components(root: &Path) -> io::Result<(&Path, [&OsStr; 2])> {
-    let topology = root.file_name().ok_or_else(invalid_topology_path)?;
-    let state = root.parent().ok_or_else(invalid_topology_path)?;
-    let state_name = state.file_name().ok_or_else(invalid_topology_path)?;
-    let anchor = state.parent().ok_or_else(invalid_topology_path)?;
-    if !anchor.is_absolute() {
-        return Err(invalid_topology_path());
-    }
-    Ok((anchor, [state_name, topology]))
-}
-
-#[cfg(unix)]
-fn open_absolute_directory(path: &Path) -> io::Result<fs::File> {
+fn open_absolute_directory(path: &Path, create: bool) -> io::Result<Option<fs::File>> {
     use std::os::unix::fs::OpenOptionsExt;
 
     if !path.is_absolute() {
@@ -386,20 +489,32 @@ fn open_absolute_directory(path: &Path) -> io::Result<fs::File> {
         match component {
             Component::RootDir => {}
             Component::Normal(name) => {
-                directory =
-                    open_directory_component(&directory, name, false)?.ok_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::NotFound,
-                            format!("lock topology anchor is missing at {}", path.display()),
-                        )
-                    })?;
+                let Some(next) = open_directory_component(&directory, name, create)? else {
+                    return Ok(None);
+                };
+                directory = next;
             }
             Component::Prefix(_) | Component::CurDir | Component::ParentDir => {
                 return Err(invalid_topology_path());
             }
         }
     }
-    Ok(directory)
+    Ok(Some(directory))
+}
+
+#[cfg(unix)]
+fn open_configured_file(path: &Path, create: bool) -> io::Result<Option<fs::File>> {
+    let parent = path.parent().ok_or_else(invalid_topology_path)?;
+    let name = path.file_name().ok_or_else(invalid_topology_path)?;
+    let Some(directory) = open_absolute_directory(parent, create)? else {
+        return Ok(None);
+    };
+    open_lock_file(&directory, name, create)
+}
+
+#[cfg(not(unix))]
+fn open_configured_file(_path: &Path, _create: bool) -> io::Result<Option<fs::File>> {
+    Err(unsupported_authority())
 }
 
 #[cfg(unix)]
@@ -460,15 +575,15 @@ fn create_directory_at(parent: &fs::File, component: &OsStr) -> io::Result<()> {
 }
 
 #[cfg(unix)]
-fn open_shard(parent: &fs::File, shard: &str, create: bool) -> io::Result<Option<fs::File>> {
+fn open_lock_file(parent: &fs::File, name: &OsStr, create: bool) -> io::Result<Option<fs::File>> {
     use std::os::fd::{AsRawFd, FromRawFd};
 
-    let shard = path_component(OsStr::new(shard))?;
+    let name = path_component(name)?;
     let mut flags = libc::O_RDWR | libc::O_CLOEXEC | libc::O_NOFOLLOW;
     if create {
         flags |= libc::O_CREAT;
     }
-    let descriptor = unsafe { libc::openat(parent.as_raw_fd(), shard.as_ptr(), flags, 0o600) };
+    let descriptor = unsafe { libc::openat(parent.as_raw_fd(), name.as_ptr(), flags, 0o600) };
     if descriptor == -1 {
         let error = io::Error::last_os_error();
         if error.kind() == io::ErrorKind::NotFound && !create {
@@ -492,8 +607,96 @@ fn path_component(component: &OsStr) -> io::Result<CString> {
 fn invalid_topology_path() -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidInput,
-        "lock topology must be an absolute path with a two-component state suffix",
+        "lock target must resolve to an absolute path of normal components",
     )
+}
+
+#[cfg(unix)]
+fn synchronized_acquire(lock: &LockFile, file: fs::File) -> io::Result<Acquisition> {
+    let owner = read_owner(&file)?;
+    match lock.try_acquire_opened(file.try_clone()?)? {
+        Acquisition::Acquired(possession) => Ok(Acquisition::Acquired(possession)),
+        Acquisition::Contended
+            if owner
+                .as_ref()
+                .is_some_and(LockOwnerEvidence::terminal_guardian_pending) =>
+        {
+            lock.acquire_opened(file).map(Acquisition::Acquired)
+        }
+        Acquisition::Contended => Ok(Acquisition::Contended),
+    }
+}
+
+#[cfg(not(unix))]
+fn synchronized_acquire(lock: &LockFile, file: fs::File) -> io::Result<Acquisition> {
+    lock.try_acquire_opened(file)
+}
+
+#[cfg(unix)]
+fn synchronized_availability(
+    lock: &LockFile,
+    file: fs::File,
+    owner: Option<&LockOwnerEvidence>,
+) -> io::Result<Availability> {
+    let availability = lock.availability_opened(file.try_clone()?)?;
+    if availability == Availability::Held
+        && owner.is_some_and(LockOwnerEvidence::terminal_guardian_pending)
+    {
+        drop(lock.acquire_opened(file)?);
+        return Ok(Availability::Available);
+    }
+    Ok(availability)
+}
+
+#[cfg(not(unix))]
+fn synchronized_availability(
+    lock: &LockFile,
+    file: fs::File,
+    _owner: Option<&LockOwnerEvidence>,
+) -> io::Result<Availability> {
+    lock.availability_opened(file)
+}
+
+fn owner(protected: Option<(u32, u32)>, owner_released: bool) -> io::Result<LockOwnerEvidence> {
+    Ok(LockOwnerEvidence {
+        pid: process::id(),
+        cwd: std::env::current_dir()?.display().to_string(),
+        owner_released,
+        protected_group: protected.map(|(group, _)| group),
+        protected_guardian: protected.map(|(_, guardian)| guardian),
+    })
+}
+
+fn write_owner(
+    file: &fs::File,
+    protected: Option<(u32, u32)>,
+    owner_released: bool,
+) -> io::Result<()> {
+    let bytes = serde_json::to_vec(&owner(protected, owner_released)?).map_err(io::Error::other)?;
+    file.set_len(0)?;
+    let mut writer = file;
+    writer.seek(SeekFrom::Start(0))?;
+    writer.write_all(&bytes)?;
+    writer.write_all(b"\n")?;
+    writer.flush()?;
+    file.sync_data()
+}
+
+fn clear_owner(file: &fs::File) -> io::Result<()> {
+    file.set_len(0)?;
+    file.sync_data()
+}
+
+fn read_owner(file: &fs::File) -> io::Result<Option<LockOwnerEvidence>> {
+    let length = file.metadata()?.len();
+    if length == 0 || length > OWNER_BYTES_LIMIT {
+        return Ok(None);
+    }
+    let mut reader = file;
+    reader.seek(SeekFrom::Start(0))?;
+    let mut bytes = Vec::with_capacity(length as usize);
+    reader.take(OWNER_BYTES_LIMIT).read_to_end(&mut bytes)?;
+    Ok(serde_json::from_slice(&bytes).ok())
 }
 
 #[cfg(not(unix))]
@@ -516,9 +719,21 @@ pub enum LockAttempt {
 pub struct HeldShard {
     shard: u32,
     possession: Possession,
+    #[cfg(unix)]
+    protected: Option<(u32, u32)>,
 }
 
 impl HeldShard {
+    fn new(shard: u32, possession: Possession) -> io::Result<Self> {
+        write_owner(possession.file(), None, false)?;
+        Ok(Self {
+            shard,
+            possession,
+            #[cfg(unix)]
+            protected: None,
+        })
+    }
+
     #[must_use]
     pub const fn shard(&self) -> u32 {
         self.shard
@@ -527,6 +742,40 @@ impl HeldShard {
     #[must_use]
     pub const fn possession(&self) -> &Possession {
         &self.possession
+    }
+
+    /// Spawn a child whose process group retains possession if this process dies.
+    ///
+    /// An independent guardian holds the descriptor until every member of the
+    /// child's new process group is terminally absent.
+    #[cfg(unix)]
+    pub fn spawn_protected(&mut self, spec: Spec) -> io::Result<Running> {
+        let running = crate::spawn::spawn_guarded(spec, self.possession.file())?;
+        let guardian = running
+            .guardian_id()
+            .expect("protected spawn retains a guardian");
+        let protected = (running.id(), guardian);
+        if let Err(error) = write_owner(self.possession.file(), Some(protected), false) {
+            let _signal_result = running.signal_kill();
+            let _wait_result = running.wait();
+            return Err(error);
+        }
+        self.protected = Some(protected);
+        self.possession.retain_until_last_close();
+        Ok(running)
+    }
+}
+
+impl Drop for HeldShard {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some((group, guardian)) = self.protected
+            && !process_absent(guardian)
+        {
+            let _ = write_owner(self.possession.file(), Some((group, guardian)), true);
+            return;
+        }
+        let _ = clear_owner(self.possession.file());
     }
 }
 
@@ -554,6 +803,10 @@ impl Contention {
 pub enum LockSurfaceError {
     InvalidName(String),
     UnknownName(String),
+    ShardOnFile {
+        name: String,
+        shard: u32,
+    },
     ShardOutOfRange {
         name: String,
         shard: u32,
@@ -578,6 +831,10 @@ impl fmt::Display for LockSurfaceError {
         match self {
             Self::InvalidName(name) => write!(formatter, "lock name is invalid: {name:?}"),
             Self::UnknownName(name) => write!(formatter, "lock is not configured: {name:?}"),
+            Self::ShardOnFile { name, shard } => write!(
+                formatter,
+                "single-file lock {name:?} does not accept shard {shard}"
+            ),
             Self::ShardOutOfRange {
                 name,
                 shard,
@@ -605,7 +862,10 @@ impl Error for LockSurfaceError {
             Self::Prepare { source, .. }
             | Self::Acquire { source, .. }
             | Self::Inspect { source, .. } => Some(source),
-            Self::InvalidName(_) | Self::UnknownName(_) | Self::ShardOutOfRange { .. } => None,
+            Self::InvalidName(_)
+            | Self::UnknownName(_)
+            | Self::ShardOnFile { .. }
+            | Self::ShardOutOfRange { .. } => None,
         }
     }
 }
@@ -613,10 +873,16 @@ impl Error for LockSurfaceError {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::os::unix::process::CommandExt;
     use std::path::{Path, PathBuf};
+    use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use super::{Contention, LockAttempt, LockAvailability, LockSurfaceError, LockTopology};
+    use super::process_state::{process_group_terminal, process_terminal, process_zombie};
+    use super::{
+        Contention, LockAttempt, LockAvailability, LockOwnerEvidence, LockSurfaceError,
+        LockTargetKind, LockTopology,
+    };
     use crate::LockConfig;
 
     const BUSY_EXIT: u64 = 71;
@@ -634,7 +900,7 @@ mod tests {
                 std::process::id()
             ));
             fs::create_dir(&path).expect("exclusive scratch root is created");
-            Self(path)
+            Self(fs::canonicalize(path).expect("scratch root canonicalizes"))
         }
 
         fn path(&self) -> &Path {
@@ -649,12 +915,16 @@ mod tests {
     }
 
     fn topology(root: &Path) -> LockTopology {
-        let config = LockConfig::new(
-            BUSY_EXIT,
-            TAKEN_EXIT,
-            FULL_EXIT,
-            [("single".to_owned(), 1), ("pool".to_owned(), 2)],
-        )
+        let config: LockConfig = toml::from_str(&format!(
+            concat!(
+                "busy = {}\n",
+                "taken = {}\n",
+                "full = {}\n",
+                "[single]\npath = \"single.lock\"\n",
+                "[pool]\ndirectory = \"pool\"\nshards = 2\n",
+            ),
+            BUSY_EXIT, TAKEN_EXIT, FULL_EXIT,
+        ))
         .expect("fixture configuration is admitted");
         LockTopology::new(root, &config)
     }
@@ -673,9 +943,12 @@ mod tests {
             report
                 .pools
                 .iter()
-                .map(|pool| (pool.name.as_str(), pool.shards))
+                .map(|pool| (pool.name.as_str(), pool.kind, pool.shards))
                 .collect::<Vec<_>>(),
-            [("pool", 2), ("single", 1)]
+            [
+                ("pool", LockTargetKind::Pool, 2),
+                ("single", LockTargetKind::File, 1),
+            ]
         );
         assert_eq!(
             report.pools[0]
@@ -684,8 +957,8 @@ mod tests {
                 .map(|entry| entry.path.clone())
                 .collect::<Vec<_>>(),
             [
-                root.join("pool/0").display().to_string(),
-                root.join("pool/1").display().to_string(),
+                root.join("pool/0.lock").display().to_string(),
+                root.join("pool/1.lock").display().to_string(),
             ]
         );
         assert!(
@@ -719,11 +992,16 @@ mod tests {
             .expect("pool is reported");
         assert_eq!(pool.entries[0].availability, LockAvailability::Held);
         assert_eq!(pool.entries[1].availability, LockAvailability::Available);
-        assert!(root.join("pool/0").is_file());
+        assert!(root.join("pool/0.lock").is_file());
         assert!(
-            !root.join("pool/1").exists(),
+            !root.join("pool/1.lock").exists(),
             "observing an absent shard created it"
         );
+        assert_eq!(
+            pool.entries[0].owner.as_ref().map(|owner| owner.pid),
+            Some(std::process::id())
+        );
+        assert!(!pool.entries[0].owner_stale);
 
         drop(held);
         let released = topology.report().expect("released topology is observable");
@@ -733,6 +1011,131 @@ mod tests {
             .find(|pool| pool.name == "pool")
             .expect("pool is reported");
         assert_eq!(pool.entries[0].availability, LockAvailability::Available);
+        assert_eq!(pool.entries[0].owner, None);
+        assert!(!pool.entries[0].owner_stale);
+    }
+
+    #[test]
+    fn stale_owner_evidence_never_becomes_kernel_possession() {
+        let scratch = Scratch::new("stale-owner");
+        let root = scratch.path().join("locks");
+        let path = root.join("pool/0.lock");
+        fs::create_dir_all(path.parent().expect("stale owner parent"))
+            .expect("stale owner parent creates");
+        fs::write(&path, br#"{"pid":4242,"cwd":"/departed"}"#)
+            .expect("stale owner evidence writes");
+        let topology = topology(&root);
+
+        let report = topology.report().expect("stale evidence is observable");
+        let entry = &report
+            .pools
+            .iter()
+            .find(|pool| pool.name == "pool")
+            .expect("pool is reported")
+            .entries[0];
+        assert_eq!(entry.availability, LockAvailability::Available);
+        assert_eq!(entry.owner.as_ref().map(|owner| owner.pid), Some(4242));
+        assert!(entry.owner_stale);
+
+        let held = match topology
+            .try_acquire("pool", Some(0))
+            .expect("stale evidence does not contend")
+        {
+            LockAttempt::Acquired(held) => held,
+            LockAttempt::Contended { .. } => panic!("stale evidence became possession"),
+        };
+        let current = topology.report().expect("replacement owner is observable");
+        let entry = &current
+            .pools
+            .iter()
+            .find(|pool| pool.name == "pool")
+            .expect("pool is reported")
+            .entries[0];
+        assert_eq!(entry.availability, LockAvailability::Held);
+        assert_eq!(
+            entry.owner.as_ref().map(|owner| owner.pid),
+            Some(std::process::id())
+        );
+        assert!(!entry.owner_stale);
+        drop(held);
+    }
+
+    #[test]
+    fn guardian_synchronization_requires_terminal_group_and_live_guardian() {
+        let mut departed = Command::new("/usr/bin/true");
+        departed.process_group(0);
+        let mut departed = departed.spawn().expect("departed process launches");
+        let pid = departed.id();
+        assert!(departed.wait().expect("departed process reaps").success());
+
+        let completed = LockOwnerEvidence {
+            pid,
+            cwd: "/departed".to_owned(),
+            owner_released: false,
+            protected_group: Some(pid),
+            protected_guardian: Some(std::process::id()),
+        };
+        assert!(completed.terminal_guardian_pending());
+
+        let live_owner = LockOwnerEvidence {
+            pid: std::process::id(),
+            cwd: "/current".to_owned(),
+            owner_released: false,
+            protected_group: Some(pid),
+            protected_guardian: Some(std::process::id()),
+        };
+        assert!(!live_owner.terminal_guardian_pending());
+
+        let released_owner = LockOwnerEvidence {
+            owner_released: true,
+            ..live_owner
+        };
+        assert!(released_owner.report().is_none());
+        assert!(released_owner.terminal_guardian_pending());
+
+        let unguarded = LockOwnerEvidence {
+            pid,
+            cwd: "/departed".to_owned(),
+            owner_released: false,
+            protected_group: None,
+            protected_guardian: None,
+        };
+        assert!(!unguarded.terminal_guardian_pending());
+
+        let departed_guardian = LockOwnerEvidence {
+            pid,
+            cwd: "/departed".to_owned(),
+            owner_released: false,
+            protected_group: Some(pid),
+            protected_guardian: Some(pid),
+        };
+        assert!(!departed_guardian.terminal_guardian_pending());
+    }
+
+    #[test]
+    fn unreaped_zombie_process_and_group_are_terminal() {
+        let mut command = Command::new("/usr/bin/true");
+        command.process_group(0);
+        let mut child = command.spawn().expect("zombie fixture launches");
+        let pid = child.id();
+        let mut information = std::mem::MaybeUninit::<libc::siginfo_t>::uninit();
+        // SAFETY: waitid observes this child without reaping it because WNOWAIT is set.
+        assert_eq!(
+            unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    pid,
+                    information.as_mut_ptr(),
+                    libc::WEXITED | libc::WNOWAIT,
+                )
+            },
+            0
+        );
+
+        assert!(process_zombie(pid));
+        assert!(process_terminal(pid));
+        assert!(process_group_terminal(pid));
+        assert!(child.wait().expect("zombie fixture reaps").success());
     }
 
     #[test]
@@ -804,6 +1207,10 @@ mod tests {
         assert!(matches!(
             topology.try_acquire("pool", Some(2)),
             Err(LockSurfaceError::ShardOutOfRange { .. })
+        ));
+        assert!(matches!(
+            topology.try_acquire("single", Some(0)),
+            Err(LockSurfaceError::ShardOnFile { .. })
         ));
         assert!(!root.exists(), "a refused selection created lock state");
     }

@@ -35,6 +35,8 @@ pub enum CommandKind {
     DocLedger,
     /// Add one task as direct intent.
     TaskAdd,
+    /// Add one task through the fixed server-owned `.oops` route.
+    TaskOopsAdd,
     /// Replace an unsettled task statement.
     TaskEdit,
     /// Append an observation without replacing the statement.
@@ -456,6 +458,7 @@ impl CommandKind {
         Self::BoardHandout,
         Self::DocLedger,
         Self::TaskAdd,
+        Self::TaskOopsAdd,
         Self::TaskEdit,
         Self::TaskNote,
         Self::TaskDefer,
@@ -506,6 +509,7 @@ impl CommandKind {
             Self::BoardHandout => "board::handout",
             Self::DocLedger => "doc::ledger",
             Self::TaskAdd => "task::add",
+            Self::TaskOopsAdd => "task::oops-add",
             Self::TaskEdit => "task::edit",
             Self::TaskNote => "task::note",
             Self::TaskDefer => "task::defer",
@@ -557,7 +561,7 @@ impl CommandKind {
         match self {
             Self::BoardRead | Self::BoardGraph | Self::DocLedger => Law::READ,
             Self::BoardHandout => Law::OPERATOR_READ,
-            Self::TaskAdd => Law::ADD,
+            Self::TaskAdd | Self::TaskOopsAdd => Law::ADD,
             Self::TaskEdit => Law::EDIT,
             Self::TaskNote => Law::NOTE,
             Self::TaskDefer | Self::TaskWake => Law::DEFER,

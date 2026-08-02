@@ -12,25 +12,64 @@
 //! each other, and the qualifier is what keeps a reader from believing
 //! otherwise.
 
+pub mod battery;
 pub mod camp;
 pub mod config;
+pub mod core;
+pub mod hygiene;
 pub mod input;
 pub mod jurisdiction;
 pub mod kill;
+pub mod manifest;
 pub mod measure;
 pub mod message;
+pub mod metrics;
 pub mod names;
+pub mod policy;
 pub mod ratchet;
 pub mod report;
+pub mod state;
+pub mod toolchain;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tree;
 pub mod verdict;
 
+pub use battery::{
+    ActorEvidence, ArmDisposition, ArmEvidence, ArmExecution, ArmFamily, BatteryArmResult,
+    BatteryContext, BatteryError, BatteryExecutor, BatteryInputs, BatteryManifest,
+    BatteryManifestArm, BatteryReport, BatteryScope, BatteryState, BatteryToolEvidence,
+    BoundActorInputsEvidence, BoundEvidence, CANONICAL_BATTERY_MANIFEST, CompiledArm,
+    ConfigurationEvidence, DecisionEvidence, GATE_BATTERY_VERSION, LatchEvidence,
+    MeasurementEvidence, MigrationRefusal as BatteryMigrationRefusal, ResultProvenance,
+    run_battery,
+};
 pub use camp::{
     BoundRelation, CAMP_REPORT_VERSION, Camp, CampError, CampFinding, CampReport, CampRunError,
     CampStanding, DistributionReport, LocusDistance, SharedBound,
 };
 pub use config::{Config, WalkConfig};
+pub use core::{
+    CORE_GATE_IDS, CORE_REPORT_VERSION, ConfigInventoryEvidence, ConfigKeyEvidence,
+    CoreArmDeclaration, CoreArmInput, CoreArmReport, CoreEvidence, CoreFinding, CoreInputError,
+    CoreInputs, CoreObservation, CoreProvenance, CoreReport, CoreReportDecodeError, CoreStanding,
+    CoreTimeoutContract, CoreToolContract, DocMeasurement, GitCommandContract,
+    MergeIntegrityEvidence, MergeTreeCompletion, PlanPhaseEvidence,
+    PredecessorObservation as CorePredecessorObservation, RepoDocLimit, RepoDocsEvidence,
+    RepoShapeEvidence, StagingEvidence, core_declarations, evaluate_core,
+};
+pub use hygiene::{
+    AnalysisEvidence, AnalyzerEvidence, EvidenceState, ExclusionEvidence, HYGIENE_ARMS,
+    HYGIENE_REPORT_VERSION, HygieneAnalysisError, HygieneAnalyzer, HygieneConfiguration,
+    HygieneConfigurationSource, HygieneDeclaration, HygieneError, HygieneExclusion, HygieneFinding,
+    HygieneFindingDetail, HygieneJurisdiction, HygieneMeasurement, HygieneOutcome,
+    HygieneProvenance, HygieneReport, HygieneTraversal,
+    MigrationRefusal as HygieneMigrationRefusal,
+    PredecessorComparison as HygienePredecessorComparison,
+    PredecessorComparisonError as HygienePredecessorComparisonError,
+    PredecessorObservation as HygienePredecessorObservation,
+    PredecessorResult as HygienePredecessorResult, PrivateCouplingException, PythonUnusedStatus,
+    analyze_hygiene, compare_predecessor as compare_hygiene_predecessor,
+};
 pub use input::{
     BASELINE_PATH, BASELINE_VERSION, Baseline, BaselineError, Contract, ContractError,
     ExecutableDeclaration, FieldError, Floor, FloorDeclaration, FloorKind, GateSet, GateSetError,
@@ -46,18 +85,50 @@ pub use kill::{
     MutationToolIdentity, OutcomeEvidence, PINNED_CARGO_MUTANTS, ProcessCompletion,
     ProcessEvidence, RateError, StreamEvidence, SurvivorRate,
 };
+pub use manifest::{
+    GATE_MANIFEST_VERSION, GateDeclaration, GateId, GateManifest, GateManifestError,
+    MigrationError, MigrationErrorKind, OriginLayer, PREDECESSOR_GATE_RELEASE, PredecessorDocument,
+    PredecessorInputs, Provenance, migrate_predecessor,
+};
 pub use measure::{
     Bounds, MeasureError, Measurement, Metric, MetricError, Parser, Policy, measurement_digest,
     render_measurements,
 };
-pub use message::{CommitMessageError, OriginTrailer, OriginTrailerError, validate_commit_message};
+pub use message::{
+    CommitMessageError, CommitMessagePolicy, OriginTrailer, OriginTrailerError, TrailerRejection,
+    validate_commit_message,
+};
 pub use names::{RETIRED_NAMES, RetiredMatch, RetiredName, retired_matches};
+pub use policy::{
+    BoundLimits, BoundName, CompileError as PolicyCompileError, GlobalRatchet, MagicRule,
+    MigrationError as PolicyMigrationError, OneLetterBehavior, Policy as RulePolicy, PolicyContext,
+    PolicyDocument, RegexDialect, ResolveError as PolicyResolveError, ResolvedBound, ResolvedMagic,
+    RuleDeclaration, RuleId, RuleSettings, RuleSource, RuleSourceKind, ScopeAxis, ScopeSelector,
+    SelectionProvenance, SelectorSpecificity, migrate_predecessor_policy,
+};
 pub use ratchet::{Finding, Movement, Ratchet, RatchetError};
 pub use report::{
     GATE_REPORT_VERSION, GateReport, KILL_REPORT_VERSION, KillReport, ReportAttempt,
     ReportAttemptKind, ReportCompletion, ReportDecodeError, ReportFloor, ReportMeasurement,
     ReportMutant, ReportMutantDisposition, ReportMutationInventory, ReportMutationMovement,
     ReportOutcome, ReportProcess, ReportRate, ReportStream,
+};
+pub use state::{
+    ActorInputs, ActorResolution, ActorSource, BoundDecision, BoundError, BoundRule, ClaimDecision,
+    ClaimStatus, CurrentState, KeyError, LatchEntry, LatchKind, LatchObservation, LatchTransition,
+    PeerClaim, PendingState, PredecessorSources, RenameMap, StateDecision, StateError,
+    StateErrorKind, StateKey, StateLedger, StateReceipt, current_state_path, varied_elastic_limit,
+};
+pub use toolchain::{
+    ArmFinding, ArmMeasurement, ArmObservation, ArmOutcome, ConfigurationSource,
+    EnvironmentLedgerKind, FindingDetail, JavascriptUnusedStatus, LOCAL_PATH_MARKER,
+    MeasurementEngine, MigrationRefusal as ToolchainMigrationRefusal, PACKAGED_ENV_INCLUDES,
+    PACKAGED_ENV_PROFILE, PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_SCANNER_EXCLUDES,
+    PACKAGED_TASTE_WORDS, PACKAGED_TEST_PATHS, PackagedEnvironmentProfile, PredecessorComparison,
+    PredecessorComparisonError, PredecessorConfiguration, PredecessorFinding,
+    PredecessorObservation, PredecessorResult, SourceLocus, TOOLCHAIN_ARMS,
+    TOOLCHAIN_REPORT_VERSION, ToolEvidence, ToolRequirement, ToolchainDeclaration, ToolchainError,
+    ToolchainReport, TreeInput, TreeJurisdiction, compare_predecessor, measure_toolchain,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use tree::{SelectedTree, Selector, TreeError};

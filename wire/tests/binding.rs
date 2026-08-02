@@ -31,6 +31,13 @@ const BODIES: &[(CommandKind, &str)] = &[
 }"#,
     ),
     (
+        CommandKind::TaskOopsAdd,
+        r#"{
+  "title": "Create one system-owned hidden task",
+  "description": "The server fixes this route to .oops"
+}"#,
+    ),
+    (
         CommandKind::TaskEdit,
         r#"{ "task": "SPICE-aBcD", "title": "a replacement statement" }"#,
     ),
@@ -74,7 +81,10 @@ const BODIES: &[(CommandKind, &str)] = &[
   "successor": "lane:018f82d4-6f59-7d06-92e3-bce9131163c2"
 }"#,
     ),
-    (CommandKind::ClaimRenew, r#"{ "task": "SPICE-aBcD" }"#),
+    (
+        CommandKind::ClaimRenew,
+        r#"{ "task": "SPICE-aBcD", "lease_seconds": 900 }"#,
+    ),
     (CommandKind::ClaimFree, r#"{ "task": "SPICE-aBcD" }"#),
     (CommandKind::ClaimLapse, r#"{ "task": "SPICE-aBcD" }"#),
     (
@@ -137,7 +147,11 @@ const BODIES: &[(CommandKind, &str)] = &[
     ),
     (
         CommandKind::LaneState,
-        r#"{ "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2", "action": "drain" }"#,
+        r#"{
+  "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "action": "wake",
+  "worktree": "/worktrees/successor"
+}"#,
     ),
     (
         CommandKind::LaneRecall,
@@ -176,6 +190,26 @@ const BODIES: &[(CommandKind, &str)] = &[
     ),
     (CommandKind::UpChange, r#"{ "state": "quiescing" }"#),
 ];
+
+#[test]
+fn oops_route_body_cannot_name_or_cross_target_a_hidden_project() {
+    assert!(
+        "task::system-add".parse::<CommandKind>().is_err(),
+        "the retired generic hidden-creation discriminant still crosses the wire",
+    );
+    for project in [".oops", ".maxim_proposal.theme_2", ".sandbox.audit"] {
+        let body =
+            format!(r#"{{"title":"forged route","description":"detail","project":"{project}"}}"#);
+        assert!(
+            CommandKind::TaskOopsAdd
+                .binding()
+                .body
+                .decode(body.as_bytes())
+                .is_err(),
+            "oops route decoded caller-selected project {project}",
+        );
+    }
+}
 
 /// One successful reply body for every declared answer shape.
 const ANSWERS: &[(AnswerShape, &str)] = &[
@@ -439,6 +473,7 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::BoardHandout,
     BodyShape::DocLedger,
     BodyShape::TaskAdd,
+    BodyShape::TaskOopsAdd,
     BodyShape::TaskEdit,
     BodyShape::TaskNote,
     BodyShape::TaskDefer,
@@ -450,6 +485,7 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::TaskAssign,
     BodyShape::ClaimWin,
     BodyShape::ClaimCarry,
+    BodyShape::ClaimRenew,
     BodyShape::DocApply,
     BodyShape::SteerSend,
     BodyShape::SteerInbox,

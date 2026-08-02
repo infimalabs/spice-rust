@@ -1,24 +1,32 @@
-use crate::spec::Spec;
 #[cfg(unix)]
-use crate::spec::{ProcessGroup, StdinPolicy, StreamPolicy};
+use crate::observe::RecordObserver;
+use crate::observe::{Observation, ObservationFailure};
+#[cfg(unix)]
+use crate::spec::ProcessGroup;
+use crate::spec::Spec;
 use std::error::Error;
 use std::fmt;
+#[cfg(unix)]
+use std::fs::File;
 use std::io;
 #[cfg(unix)]
-use std::io::Read;
+use std::process::Child;
 use std::process::ExitStatus;
 #[cfg(unix)]
-use std::process::{Child, ChildStderr, ChildStdout, Stdio};
+use std::sync::atomic::Ordering;
 #[cfg(unix)]
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 #[cfg(unix)]
 use std::time::Instant;
 
 #[cfg(unix)]
-const READ_BUDGET_PER_EVENT: usize = 64 * 1024;
-#[cfg(unix)]
 const WAKE_BYTE: &[u8] = &[1];
+
+#[cfg(unix)]
+use capture::{CaptureHandle, FailureContext};
+#[cfg(unix)]
+use launch::spawn_inner;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CapturedOutput {
@@ -59,6 +67,7 @@ impl Completion {
 #[derive(Debug)]
 pub struct WaitOutcome {
     completion: Completion,
+    observation_failure: Option<ObservationFailure>,
     stdout: Option<CapturedOutput>,
     stderr: Option<CapturedOutput>,
 }
@@ -83,6 +92,12 @@ impl WaitOutcome {
 
     pub fn stderr(&self) -> Option<&CapturedOutput> {
         self.stderr.as_ref()
+    }
+
+    /// Selected-stream failure that forced process cleanup.
+    #[must_use]
+    pub const fn observation_failure(&self) -> Option<&ObservationFailure> {
+        self.observation_failure.as_ref()
     }
 }
 
@@ -136,10 +151,48 @@ pub struct Running {
     wake_receiver: std::os::unix::net::UnixDatagram,
     cancellation_wake: std::os::unix::net::UnixDatagram,
     child: Option<Child>,
-    child_exit: Arc<Mutex<Option<io::Result<()>>>>,
-    child_reaped: bool,
-    stdout: Option<CaptureReader<ChildStdout>>,
-    stderr: Option<CaptureReader<ChildStderr>>,
+    process: Arc<ProcessState>,
+    stdout: Option<CaptureHandle>,
+    stderr: Option<CaptureHandle>,
+    guardian: Option<guardian::Guardian>,
+}
+
+#[cfg(unix)]
+#[derive(Debug)]
+struct ProcessState {
+    completion: Mutex<ProcessCompletion>,
+    exited: Condvar,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Default)]
+struct ProcessCompletion {
+    notice: Option<Result<(), IoFailure>>,
+    status: Option<ExitStatus>,
+    taken: bool,
+    observation_failure: Option<ObservationFailure>,
+    cleanup_failure: Option<IoFailure>,
+}
+
+#[cfg(unix)]
+#[derive(Clone, Debug)]
+struct IoFailure {
+    kind: io::ErrorKind,
+    detail: String,
+}
+
+#[cfg(unix)]
+impl IoFailure {
+    fn capture(error: io::Error) -> Self {
+        Self {
+            kind: error.kind(),
+            detail: error.to_string(),
+        }
+    }
+
+    fn error(&self) -> io::Error {
+        io::Error::new(self.kind, self.detail.clone())
+    }
 }
 
 #[cfg(not(unix))]
@@ -150,57 +203,34 @@ pub struct Running {
 
 #[cfg(unix)]
 pub fn spawn(spec: Spec) -> io::Result<Running> {
-    use std::os::unix::net::UnixDatagram;
-    use std::os::unix::process::CommandExt;
-    use std::process::Command;
+    spawn_inner(spec, None, None)
+}
 
-    let (waiter_wake, wake_receiver) = UnixDatagram::pair()?;
-    let cancellation_wake = waiter_wake.try_clone()?;
-    wake_receiver.set_nonblocking(true)?;
+#[cfg(unix)]
+pub(crate) fn spawn_guarded(spec: Spec, file: &File) -> io::Result<Running> {
+    spawn_inner(spec, None, Some(file))
+}
 
-    let mut command = Command::new(spec.argv.program());
-    command
-        .args(spec.argv.arguments())
-        .current_dir(spec.cwd())
-        .env_clear()
-        .envs(spec.environment.entries().iter().cloned());
+/// Spawn one child with a bounded selected-stream observer.
+///
+/// The selected stream and every other captured stream are drained from child
+/// creation onward, independently of calls to [`Running::wait`] or shutdown.
+///
+/// # Errors
+///
+/// Returns an I/O error when the selected stream is not configured for capture
+/// or when the child and its capture workers cannot be created.
+#[cfg(unix)]
+pub fn spawn_observed(spec: Spec, observation: Observation) -> io::Result<Running> {
+    spawn_inner(spec, Some(observation), None)
+}
 
-    match spec.output.stdin() {
-        StdinPolicy::Inherit => command.stdin(Stdio::inherit()),
-        StdinPolicy::Null => command.stdin(Stdio::null()),
-    };
-    configure_stream(&mut command, true, spec.output.stdout());
-    configure_stream(&mut command, false, spec.output.stderr());
-
-    if spec.group == ProcessGroup::New {
-        command.process_group(0);
-    }
-
-    let mut child = command.spawn()?;
-    let started = Instant::now();
-    let pid = child.id();
-    let (stdout, stdout_error) = capture_result(capture_stdout(&mut child, spec.output.stdout()));
-    let (stderr, stderr_error) = capture_result(capture_stderr(&mut child, spec.output.stderr()));
-    let child_exit = start_exit_watcher(pid, waiter_wake);
-    let mut running = Running {
-        pid,
-        spec,
-        started,
-        wake_receiver,
-        cancellation_wake,
-        child: Some(child),
-        child_exit,
-        child_reaped: false,
-        stdout,
-        stderr,
-    };
-
-    if let Some(error) = stdout_error.or(stderr_error) {
-        let _cleanup_result = running.terminate_and_reap();
-        return Err(error);
-    }
-
-    Ok(running)
+#[cfg(not(unix))]
+pub fn spawn_observed(_spec: Spec, _observation: Observation) -> io::Result<Running> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "process spawning requires a native release target",
+    ))
 }
 
 #[cfg(not(unix))]
@@ -215,19 +245,16 @@ pub fn spawn(_spec: Spec) -> io::Result<Running> {
 fn start_exit_watcher(
     pid: u32,
     waiter_wake: std::os::unix::net::UnixDatagram,
-) -> Arc<Mutex<Option<io::Result<()>>>> {
-    let child_exit = Arc::new(Mutex::new(None));
-    let watcher_exit = Arc::clone(&child_exit);
-
+    process: Arc<ProcessState>,
+) {
     std::thread::spawn(move || {
-        let result = wait_for_exit(pid);
-        if let Ok(mut slot) = watcher_exit.lock() {
-            *slot = Some(result);
+        let result = wait_for_exit(pid).map_err(IoFailure::capture);
+        if let Ok(mut completion) = process.completion.lock() {
+            completion.notice = Some(result);
+            process.exited.notify_all();
         }
         let _wake_result = waiter_wake.send(WAKE_BYTE);
     });
-
-    child_exit
 }
 
 #[cfg(unix)]
@@ -254,84 +281,13 @@ fn wait_for_exit(pid: u32) -> io::Result<()> {
 }
 
 #[cfg(unix)]
-fn capture_result<R>(
-    result: io::Result<Option<CaptureReader<R>>>,
-) -> (Option<CaptureReader<R>>, Option<io::Error>) {
-    match result {
-        Ok(reader) => (reader, None),
-        Err(error) => (None, Some(error)),
-    }
-}
-
-#[cfg(unix)]
-fn configure_stream(command: &mut std::process::Command, stdout: bool, policy: StreamPolicy) {
-    let stdio = match policy {
-        StreamPolicy::Inherit => Stdio::inherit(),
-        StreamPolicy::Null => Stdio::null(),
-        StreamPolicy::Capture { .. } => Stdio::piped(),
-    };
-    if stdout {
-        command.stdout(stdio);
-    } else {
-        command.stderr(stdio);
-    }
-}
-
-#[cfg(unix)]
-fn capture_stdout(
-    child: &mut Child,
-    policy: StreamPolicy,
-) -> io::Result<Option<CaptureReader<ChildStdout>>> {
-    match policy {
-        StreamPolicy::Capture { limit } => {
-            let reader = child
-                .stdout
-                .take()
-                .ok_or_else(|| io::Error::other("captured stdout pipe is absent"))?;
-            set_nonblocking(&reader)?;
-            Ok(Some(CaptureReader::new(reader, limit)))
-        }
-        StreamPolicy::Inherit | StreamPolicy::Null => Ok(None),
-    }
-}
-
-#[cfg(unix)]
-fn capture_stderr(
-    child: &mut Child,
-    policy: StreamPolicy,
-) -> io::Result<Option<CaptureReader<ChildStderr>>> {
-    match policy {
-        StreamPolicy::Capture { limit } => {
-            let reader = child
-                .stderr
-                .take()
-                .ok_or_else(|| io::Error::other("captured stderr pipe is absent"))?;
-            set_nonblocking(&reader)?;
-            Ok(Some(CaptureReader::new(reader, limit)))
-        }
-        StreamPolicy::Inherit | StreamPolicy::Null => Ok(None),
-    }
-}
-
-#[cfg(unix)]
-fn set_nonblocking(descriptor: &impl std::os::fd::AsRawFd) -> io::Result<()> {
-    let descriptor = descriptor.as_raw_fd();
-    let flags = unsafe { platform::fcntl(descriptor, platform::F_GETFL) };
-    if flags == -1 {
-        return Err(io::Error::last_os_error());
-    }
-    let result =
-        unsafe { platform::fcntl(descriptor, platform::F_SETFL, flags | platform::O_NONBLOCK) };
-    if result == -1 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
 impl Running {
     pub fn id(&self) -> u32 {
         self.pid
+    }
+
+    pub(crate) fn guardian_id(&self) -> Option<u32> {
+        self.guardian.as_ref().map(guardian::Guardian::id)
     }
 
     pub fn spec(&self) -> &Spec {
@@ -350,9 +306,8 @@ impl Running {
         loop {
             self.drain_outputs()?;
             if let Some(status) = self.take_child_exit()? {
-                return self
-                    .finish(Completion::Exited(status))
-                    .map(WaitStep::Exited);
+                let completion = self.completion(status)?;
+                return self.finish(completion).map(WaitStep::Exited);
             }
             let elapsed = started.elapsed();
             if elapsed >= duration {
@@ -387,7 +342,8 @@ impl Running {
             self.drain_outputs()?;
 
             if let Some(status) = self.take_child_exit()? {
-                return self.finish(Completion::Exited(status));
+                let completion = self.completion(status)?;
+                return self.finish(completion);
             }
 
             if self.spec.wait.cancellation().is_cancelled() {
@@ -455,64 +411,93 @@ impl Running {
             )?;
         }
 
-        Ok(WaitOutcome {
+        let outcome = WaitOutcome {
             completion,
-            stdout: self.stdout.take().map(CaptureReader::finish),
-            stderr: self.stderr.take().map(CaptureReader::finish),
-        })
+            observation_failure: self.observation_failure()?,
+            stdout: self
+                .stdout
+                .take()
+                .map(CaptureHandle::finish)
+                .transpose()
+                .map_err(|source| self.io_error("finishing stdout capture", source))?,
+            stderr: self
+                .stderr
+                .take()
+                .map(CaptureHandle::finish)
+                .transpose()
+                .map_err(|source| self.io_error("finishing stderr capture", source))?,
+        };
+        if guardian::group_absent(self.pid)
+            && let Some(guardian) = self.guardian.take()
+        {
+            guardian
+                .wait()
+                .map_err(|source| self.io_error("reaping lock guardian", source))?;
+        }
+        Ok(outcome)
     }
 
     fn take_child_exit(&mut self) -> Result<Option<ExitStatus>, WaitError> {
-        let exit = self
-            .child_exit
-            .lock()
-            .map_err(|_| {
+        let notice = {
+            let mut completion = self.process.completion.lock().map_err(|_| {
                 self.io_error(
                     "reading child completion",
                     io::Error::other("child completion lock is poisoned"),
                 )
-            })?
-            .take();
+            })?;
+            if let Some(failure) = &completion.cleanup_failure {
+                return Err(self.io_error("cleaning up failed observation", failure.error()));
+            }
+            if let Some(status) = completion.status
+                && !completion.taken
+            {
+                completion.taken = true;
+                self.child.take();
+                return Ok(Some(status));
+            }
+            completion.notice.clone()
+        };
 
-        match exit {
-            Some(Ok(())) => self.reap_notified_child().map(Some),
-            Some(Err(source)) => Err(self.io_error("watching for child completion", source)),
+        match notice {
+            Some(Ok(())) => {
+                reap_process(self.pid, &self.process)
+                    .map_err(|source| self.io_error("reaping notified child", source))?;
+                self.take_child_exit()
+            }
+            Some(Err(source)) => {
+                Err(self.io_error("watching for child completion", source.error()))
+            }
             None => Ok(None),
         }
     }
 
-    fn reap_notified_child(&mut self) -> Result<ExitStatus, WaitError> {
-        let status = self
-            .child
-            .as_mut()
-            .expect("an unreaped process owns its child handle")
-            .wait()
-            .map_err(|source| self.io_error("reaping notified child", source))?;
-        self.child.take();
-        self.child_reaped = true;
-        Ok(status)
+    fn completion(&self, status: ExitStatus) -> Result<Completion, WaitError> {
+        Ok(Completion::Exited(status))
+    }
+
+    fn observation_failure(&self) -> Result<Option<ObservationFailure>, WaitError> {
+        self.process
+            .completion
+            .lock()
+            .map(|completion| completion.observation_failure.clone())
+            .map_err(|_| {
+                self.io_error(
+                    "reading observation completion",
+                    io::Error::other("child completion lock is poisoned"),
+                )
+            })
     }
 
     fn block_for(&mut self, duration: Duration) -> Result<(), WaitError> {
         use std::os::fd::AsRawFd;
 
-        let mut descriptors = Vec::with_capacity(3);
+        let mut descriptors = Vec::with_capacity(1);
         descriptors.push(platform::PollFd::read(self.wake_receiver.as_raw_fd()));
-        if let Some(stdout) = &self.stdout
-            && !stdout.is_complete()
-        {
-            descriptors.push(platform::PollFd::read(stdout.raw_fd()));
-        }
-        if let Some(stderr) = &self.stderr
-            && !stderr.is_complete()
-        {
-            descriptors.push(platform::PollFd::read(stderr.raw_fd()));
-        }
 
         let result = unsafe {
             platform::poll(
                 descriptors.as_mut_ptr(),
-                platform::Nfds::try_from(descriptors.len()).expect("three poll descriptors fit"),
+                platform::Nfds::try_from(descriptors.len()).expect("one poll descriptor fits"),
                 poll_timeout(duration),
             )
         };
@@ -540,15 +525,15 @@ impl Running {
     }
 
     fn drain_outputs(&mut self) -> Result<(), WaitError> {
-        if let Some(stdout) = &mut self.stdout {
-            stdout.drain_available().map_err(|source| WaitError::Io {
+        if let Some(stdout) = &self.stdout {
+            stdout.failure().map_err(|source| WaitError::Io {
                 owner: self.spec.wait.owner().to_owned(),
                 operation: "draining stdout",
                 source,
             })?;
         }
-        if let Some(stderr) = &mut self.stderr {
-            stderr.drain_available().map_err(|source| WaitError::Io {
+        if let Some(stderr) = &self.stderr {
+            stderr.failure().map_err(|source| WaitError::Io {
                 owner: self.spec.wait.owner().to_owned(),
                 operation: "draining stderr",
                 source,
@@ -558,8 +543,8 @@ impl Running {
     }
 
     fn outputs_complete(&self) -> bool {
-        self.stdout.as_ref().is_none_or(CaptureReader::is_complete)
-            && self.stderr.as_ref().is_none_or(CaptureReader::is_complete)
+        self.stdout.as_ref().is_none_or(CaptureHandle::is_complete)
+            && self.stderr.as_ref().is_none_or(CaptureHandle::is_complete)
     }
 
     fn signal(&self, signal: i32) -> Result<(), WaitError> {
@@ -630,7 +615,12 @@ impl Running {
 #[cfg(unix)]
 impl Drop for Running {
     fn drop(&mut self) {
-        if !self.child_reaped {
+        let reaped = self
+            .process
+            .completion
+            .lock()
+            .is_ok_and(|completion| completion.status.is_some());
+        if !reaped {
             let _signal_result = self.signal(platform::SIGKILL);
             let _reap_result = self.await_child_for(self.spec.deadlines.reap());
         }
@@ -638,63 +628,121 @@ impl Drop for Running {
 }
 
 #[cfg(unix)]
-#[derive(Debug)]
-struct CaptureReader<R> {
-    reader: R,
-    output: CapturedOutput,
-    limit: usize,
+fn fail_observation(
+    context: &FailureContext,
+    observer: &Arc<dyn RecordObserver>,
+    failure: ObservationFailure,
+) {
+    if context.failed.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    if let Ok(mut completion) = context.process.completion.lock() {
+        completion.observation_failure = Some(failure.clone());
+    }
+
+    if let Err(error) = abort_process(context)
+        && let Ok(mut completion) = context.process.completion.lock()
+    {
+        completion.cleanup_failure = Some(error);
+    }
+    let _wake_result = context.wake.send(WAKE_BYTE);
+    let _reported = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        observer.failed(&failure);
+    }));
 }
 
 #[cfg(unix)]
-impl<R: Read + std::os::fd::AsRawFd> CaptureReader<R> {
-    fn new(reader: R, limit: usize) -> Self {
-        Self {
-            reader,
-            output: CapturedOutput {
-                bytes: Vec::with_capacity(limit.min(8 * 1024)),
-                truncated: false,
-                complete: false,
-            },
-            limit,
+fn abort_process(context: &FailureContext) -> Result<(), IoFailure> {
+    signal_pid(
+        context.pid,
+        context.group,
+        platform::SIGTERM,
+        &context.owner,
+    )
+    .map_err(|error| IoFailure {
+        kind: io::ErrorKind::Other,
+        detail: error.to_string(),
+    })?;
+    if wait_for_exit_notice(&context.process, context.grace)? {
+        reap_process(context.pid, &context.process).map_err(IoFailure::capture)?;
+        return Ok(());
+    }
+
+    signal_pid(
+        context.pid,
+        context.group,
+        platform::SIGKILL,
+        &context.owner,
+    )
+    .map_err(|error| IoFailure {
+        kind: io::ErrorKind::Other,
+        detail: error.to_string(),
+    })?;
+    if wait_for_exit_notice(&context.process, context.reap)? {
+        reap_process(context.pid, &context.process).map_err(IoFailure::capture)?;
+        return Ok(());
+    }
+
+    Err(IoFailure {
+        kind: io::ErrorKind::TimedOut,
+        detail: format!(
+            "observation cleanup exceeded its {:?} reap deadline",
+            context.reap
+        ),
+    })
+}
+
+#[cfg(unix)]
+fn wait_for_exit_notice(process: &ProcessState, duration: Duration) -> Result<bool, IoFailure> {
+    let completion = process.completion.lock().map_err(|_| IoFailure {
+        kind: io::ErrorKind::Other,
+        detail: "child completion lock is poisoned".to_owned(),
+    })?;
+    let (completion, _timeout) = process
+        .exited
+        .wait_timeout_while(completion, duration, |completion| {
+            completion.notice.is_none() && completion.status.is_none()
+        })
+        .map_err(|_| IoFailure {
+            kind: io::ErrorKind::Other,
+            detail: "child completion lock is poisoned".to_owned(),
+        })?;
+    match &completion.notice {
+        Some(Err(failure)) => Err(failure.clone()),
+        Some(Ok(())) => Ok(true),
+        None => Ok(completion.status.is_some()),
+    }
+}
+
+#[cfg(unix)]
+fn reap_process(pid: u32, process: &ProcessState) -> io::Result<ExitStatus> {
+    use std::os::unix::process::ExitStatusExt;
+
+    let mut completion = process
+        .completion
+        .lock()
+        .map_err(|_| io::Error::other("child completion lock is poisoned"))?;
+    if let Some(status) = completion.status {
+        return Ok(status);
+    }
+    if let Some(Err(failure)) = &completion.notice {
+        return Err(failure.error());
+    }
+    let pid =
+        i32::try_from(pid).map_err(|source| io::Error::new(io::ErrorKind::InvalidData, source))?;
+    let mut raw = 0;
+    loop {
+        let result = unsafe { libc::waitpid(pid, &mut raw, 0) };
+        if result == pid {
+            let status = ExitStatus::from_raw(raw);
+            completion.status = Some(status);
+            process.exited.notify_all();
+            return Ok(status);
         }
-    }
-
-    fn raw_fd(&self) -> std::os::fd::RawFd {
-        self.reader.as_raw_fd()
-    }
-
-    fn drain_available(&mut self) -> io::Result<()> {
-        let mut drained = 0;
-        let mut buffer = [0_u8; 8 * 1024];
-
-        while drained < READ_BUDGET_PER_EVENT {
-            match self.reader.read(&mut buffer) {
-                Ok(0) => {
-                    self.output.complete = true;
-                    return Ok(());
-                }
-                Ok(read) => {
-                    drained += read;
-                    let available = self.limit.saturating_sub(self.output.bytes.len());
-                    let retained = available.min(read);
-                    self.output.bytes.extend_from_slice(&buffer[..retained]);
-                    self.output.truncated |= retained < read;
-                }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-                Err(error) => return Err(error),
-            }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
         }
-
-        Ok(())
-    }
-
-    fn is_complete(&self) -> bool {
-        self.output.complete
-    }
-
-    fn finish(self) -> CapturedOutput {
-        self.output
     }
 }
 
@@ -739,175 +787,13 @@ fn poll_timeout(duration: Duration) -> i32 {
 }
 
 #[cfg(unix)]
+mod capture;
+#[cfg(unix)]
+mod guardian;
+#[cfg(unix)]
+mod launch;
+#[cfg(unix)]
 mod platform;
 
 #[cfg(all(test, unix))]
-mod tests {
-    use super::{Completion, spawn};
-    use crate::lock::{Acquisition, LockFile, LockName, tests::unique_lock_path};
-    use crate::spec::{
-        Argv, Cancellation, CancellationToken, Deadlines, Environment, Output, ProcessGroup,
-        Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
-    };
-    use std::fs;
-    use std::time::Duration;
-
-    #[test]
-    fn output_capture_is_bounded_and_environment_is_explicit() {
-        let spec = test_spec(
-            "/bin/sh",
-            ["-c", "printf '%s' \"$ONLY\"; printf '56789'"],
-            Environment::new([("ONLY", "1234")]).expect("valid environment"),
-            Cancellation::Never,
-            Duration::from_secs(1),
-            StreamPolicy::Capture { limit: 4 },
-        );
-        let outcome = spawn(spec)
-            .expect("spawn bounded output child")
-            .wait()
-            .expect("wait for bounded output child");
-
-        assert!(matches!(outcome.completion(), Completion::Exited(status) if status.success()));
-        let stdout = outcome.stdout().expect("stdout was captured");
-        assert_eq!(stdout.bytes(), b"1234");
-        assert!(stdout.truncated());
-        assert!(stdout.complete());
-    }
-
-    #[test]
-    fn ambient_environment_is_cleared_before_explicit_entries_are_set() {
-        let spec = test_spec(
-            "/usr/bin/env",
-            std::iter::empty::<&str>(),
-            Environment::new([("SILL_ONLY", "exact")]).expect("valid environment"),
-            Cancellation::Never,
-            Duration::from_secs(1),
-            StreamPolicy::Capture { limit: 1024 },
-        );
-        let outcome = spawn(spec)
-            .expect("spawn environment probe")
-            .wait()
-            .expect("wait for environment probe");
-
-        assert!(matches!(outcome.completion(), Completion::Exited(status) if status.success()));
-        assert_eq!(
-            outcome.stdout().expect("stdout was captured").bytes(),
-            b"SILL_ONLY=exact\n"
-        );
-    }
-
-    #[test]
-    fn runtime_deadline_terminates_the_whole_process_group() {
-        let spec = test_spec(
-            "/bin/sh",
-            ["-c", "/usr/bin/tail -f /dev/null & wait"],
-            Environment::empty(),
-            Cancellation::Never,
-            Duration::from_millis(20),
-            StreamPolicy::Null,
-        );
-        let outcome = spawn(spec)
-            .expect("spawn process group")
-            .wait()
-            .expect("reap timed-out process group");
-
-        assert!(matches!(outcome.completion(), Completion::TimedOut(_)));
-    }
-
-    #[test]
-    fn cancellation_terminates_and_reaps_the_child() {
-        let token = CancellationToken::new();
-        let spec = test_spec(
-            "/usr/bin/tail",
-            ["-f", "/dev/null"],
-            Environment::empty(),
-            Cancellation::Token(token.clone()),
-            Duration::from_secs(1),
-            StreamPolicy::Null,
-        );
-        let running = spawn(spec).expect("spawn cancellable child");
-        let waiter = std::thread::spawn(move || running.wait());
-        assert!(
-            token.wait_for_registration(Duration::from_secs(1)),
-            "wait did not register its cancellation callback"
-        );
-        token.cancel();
-        let outcome = waiter
-            .join()
-            .expect("cancellation waiter thread must not panic")
-            .expect("reap cancelled child");
-
-        assert!(matches!(outcome.completion(), Completion::Cancelled(_)));
-    }
-
-    #[test]
-    fn exec_child_does_not_inherit_lock_possession() {
-        let path = unique_lock_path("cloexec");
-        let lock = LockFile::new(LockName::new("cloexec").expect("valid name"), &path);
-        let possession = match lock.try_acquire().expect("acquire parent lock") {
-            Acquisition::Acquired(possession) => possession,
-            Acquisition::Contended => panic!("fresh parent lock must be available"),
-        };
-        let token = CancellationToken::new();
-        let running = spawn(test_spec(
-            "/usr/bin/tail",
-            ["-f", "/dev/null"],
-            Environment::empty(),
-            Cancellation::Token(token.clone()),
-            Duration::from_secs(1),
-            StreamPolicy::Null,
-        ))
-        .expect("spawn child while lock is held");
-
-        drop(possession);
-        let reacquired = match lock.try_acquire().expect("reacquire after parent release") {
-            Acquisition::Acquired(possession) => possession,
-            Acquisition::Contended => panic!("exec child inherited the lock descriptor"),
-        };
-        token.cancel();
-        assert!(matches!(
-            running
-                .wait()
-                .expect("reap lock-inheritance probe")
-                .completion(),
-            Completion::Cancelled(_)
-        ));
-        drop(reacquired);
-        fs::remove_file(path).expect("remove lock-inheritance test file");
-    }
-
-    fn test_spec<I, S>(
-        program: &str,
-        arguments: I,
-        environment: Environment,
-        cancellation: Cancellation,
-        runtime: Duration,
-        stdout: StreamPolicy,
-    ) -> Spec
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<std::ffi::OsString>,
-    {
-        Spec {
-            argv: Argv::new(program, arguments).expect("valid argv"),
-            cwd: std::env::temp_dir(),
-            environment,
-            group: ProcessGroup::New,
-            deadlines: Deadlines::new(
-                runtime,
-                Duration::from_millis(50),
-                Duration::from_millis(100),
-            )
-            .expect("valid deadlines"),
-            wait: WaitPolicy::new("sill spawn test", cancellation, RestartDisposition::Never)
-                .expect("valid wait policy"),
-            output: Output::new(
-                StdinPolicy::Null,
-                stdout,
-                StreamPolicy::Capture { limit: 1024 },
-            ),
-            redaction: Redaction::All,
-            grace: Duration::from_millis(10),
-        }
-    }
-}
+mod tests;

@@ -592,23 +592,50 @@ fn tape_evidence(root: &Path) -> CommandResult<Vec<DiskEvidence>> {
     let mut evidence = Vec::new();
     for path in paths {
         let lane = path_lane(&path, "resident::tape-invalid")?;
-        let tape = match tape::Tape::open_existing(&path) {
-            Ok(tape) => tape,
+        let members = match fs::read_dir(&path) {
+            Ok(entries) => entries,
             Err(error) => {
                 evidence.push(DiskEvidence {
                     lane,
-                    marker: format!("tape open: {error}"),
+                    marker: format!("tape root: {error}"),
                     consume: None,
                 });
                 continue;
             }
         };
-        if let Err(error) = tape.seal() {
-            evidence.push(DiskEvidence {
-                lane,
-                marker: format!("tape seal: {error}"),
-                consume: None,
-            });
+        let mut members = members
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| environment_fault("resident::tape-unreadable", &error.to_string()))?;
+        members.sort();
+        for member in members {
+            let name = member.file_name().and_then(|name| name.to_str());
+            if !matches!(name, Some("claude" | "codex")) {
+                evidence.push(DiskEvidence {
+                    lane,
+                    marker: format!("tape contract: unexpected path {}", member.display()),
+                    consume: None,
+                });
+                continue;
+            }
+            let tape = match tape::Tape::open_existing(&member) {
+                Ok(tape) => tape,
+                Err(error) => {
+                    evidence.push(DiskEvidence {
+                        lane,
+                        marker: format!("tape open {}: {error}", member.display()),
+                        consume: None,
+                    });
+                    continue;
+                }
+            };
+            if let Err(error) = tape.seal() {
+                evidence.push(DiskEvidence {
+                    lane,
+                    marker: format!("tape seal {}: {error}", member.display()),
+                    consume: None,
+                });
+            }
         }
     }
     Ok(evidence)

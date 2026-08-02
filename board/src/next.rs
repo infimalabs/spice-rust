@@ -63,7 +63,8 @@ pub fn select<'a>(entries: &'a [Entry], actor: &Actor) -> Option<Selection<'a>> 
 
 fn eligible(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskHandle>) -> bool {
     let workflow = entry.workflow();
-    workflow.status == "pending"
+    !entry.project().visibility().is_hidden()
+        && workflow.status == "pending"
         && workflow.completion.is_none()
         && workflow.deferral.is_none()
         && workflow
@@ -78,4 +79,15 @@ fn eligible(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskHandle>) -> b
         && !entry
             .claim()
             .is_some_and(|claim| claim.disposition == ClaimDisposition::Active)
+}
+
+/// Whether one named entry satisfies the same eligibility law as allocation.
+#[must_use]
+pub fn eligible_entry(entries: &[Entry], entry: &Entry, actor: &Actor) -> bool {
+    let completed = entries
+        .iter()
+        .filter(|candidate| candidate.workflow().status == "completed")
+        .map(|candidate| candidate.statement().handle.clone())
+        .collect::<BTreeSet<_>>();
+    eligible(entry, actor, &completed)
 }

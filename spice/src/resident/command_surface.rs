@@ -8,8 +8,8 @@ use wire::intent::{CommandAnswer, Intent};
 use wire::{CanonicalUuid, CommandKind, Outcome, Refusal};
 
 use super::{
-    RuntimePaths, SurfaceConfig, dispatch_release_publish, dispatch_up_change, lane_surface,
-    policy_surface, steering,
+    RuntimePaths, SurfaceConfig, dispatch_release_publish, dispatch_up_change, lane_recovery,
+    lane_surface, policy_surface, steering,
 };
 
 pub(super) struct Surface<'a> {
@@ -17,8 +17,8 @@ pub(super) struct Surface<'a> {
     repository: &'a Repository,
     paths: &'a RuntimePaths,
     epoch: CanonicalUuid,
-    capabilities: &'a canvas::axum::Capabilities,
-    discovery: &'a canvas::Discovery,
+    lane: lane_surface::Runtime<'a>,
+    recovery: lane_recovery::Runtime,
     config: &'a SurfaceConfig,
 }
 
@@ -28,8 +28,8 @@ impl<'a> Surface<'a> {
         repository: &'a Repository,
         paths: &'a RuntimePaths,
         epoch: CanonicalUuid,
-        capabilities: &'a canvas::axum::Capabilities,
-        discovery: &'a canvas::Discovery,
+        lane: lane_surface::Runtime<'a>,
+        recovery: lane_recovery::Runtime,
         config: &'a SurfaceConfig,
     ) -> Self {
         Self {
@@ -37,8 +37,8 @@ impl<'a> Surface<'a> {
             repository,
             paths,
             epoch,
-            capabilities,
-            discovery,
+            lane,
+            recovery,
             config,
         }
     }
@@ -48,7 +48,12 @@ impl<'a> Surface<'a> {
         seats: &mut Seats,
         command: &wire::AdmittedCommand,
     ) -> Outcome<CommandAnswer> {
-        if let Some(outcome) = crate::board_command::dispatch(self.bus, command) {
+        if let Some(outcome) = crate::board_command::dispatch_with_repository(
+            self.bus,
+            command,
+            Some(self.repository),
+            &self.config.projects,
+        ) {
             return outcome;
         }
         match (command.kind(), command.body()) {
@@ -62,17 +67,22 @@ impl<'a> Surface<'a> {
                 lane_surface::read(self.bus, self.paths, self.epoch, command)
             }
             (CommandKind::LaneSeat, Intent::LaneSeat(seat)) => lane_surface::seat(
-                self.bus,
-                self.paths,
-                self.epoch,
-                seats,
-                &lane_surface::Runtime::new(self.capabilities, self.discovery),
-                command,
-                seat,
+                self.bus, self.paths, self.epoch, seats, &self.lane, command, seat,
             ),
-            (CommandKind::LaneState, Intent::LaneState(state)) => {
-                lane_surface::state(self.bus, self.paths, self.epoch, seats, command, state)
+            (CommandKind::LaneState, Intent::LaneState(state)) if state.worktree.is_some() => {
+                lane_recovery::import(
+                    self.bus,
+                    self.paths,
+                    self.epoch,
+                    seats,
+                    &self.recovery,
+                    command,
+                    state,
+                )
             }
+            (CommandKind::LaneState, Intent::LaneState(state)) => lane_surface::state(
+                self.bus, self.paths, self.epoch, seats, &self.lane, command, state,
+            ),
             (CommandKind::LaneRecall, Intent::LaneRecall(recall)) => {
                 lane_surface::recall(self.bus, self.paths, self.epoch, command, recall)
             }
@@ -90,6 +100,14 @@ impl<'a> Surface<'a> {
             (CommandKind::SteerCancel, Intent::DirectiveRef(cancel)) => {
                 steering::cancel(self.bus, self.paths, self.epoch, command, cancel)
             }
+            (CommandKind::SteerResend, Intent::DirectiveRef(recover)) => steering::recover(
+                self.bus,
+                self.paths,
+                self.epoch,
+                &self.config.steering,
+                command,
+                recover,
+            ),
             (CommandKind::SteerDispose, Intent::SteerDispose(dispose)) => {
                 steering::dispose(self.bus, self.paths, self.epoch, command, dispose)
             }

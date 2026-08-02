@@ -7,24 +7,36 @@ use std::fmt;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::pin::Pin;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use ::axum::Router;
 use ::axum::body::Body;
+use ::axum::extract::DefaultBodyLimit;
 use ::axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use ::axum::extract::{OriginalUri, State};
+use ::axum::extract::{Json, OriginalUri, State};
 use ::axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, ETAG, HOST, ORIGIN};
 use ::axum::http::{HeaderMap, HeaderValue, StatusCode};
 use ::axum::response::{IntoResponse, Response};
-use ::axum::routing::get;
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use ::axum::routing::{get, post};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
-use tokio::sync::{Mutex, mpsc, oneshot, watch};
+use tokio::sync::{Mutex, Notify, Semaphore, mpsc, oneshot, watch};
+use tokio::time::timeout;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 
 use crate::{Discovery, EMBEDDED_APP};
+
+const SESSION_DRAIN_GRACE: Duration = Duration::from_secs(1);
+const SPEECH_REQUEST_BYTES: usize = 64 * 1_024;
+const SPEECH_TEXT_BYTES: usize = 32 * 1_024;
+const SPEECH_AUDIO_BYTES: u64 = 16 * 1_024 * 1_024;
+const SPEECH_DIAGNOSTIC_BYTES: u64 = 8 * 1_024;
+const SPEECH_RUNTIME: Duration = Duration::from_secs(30);
 
 /// Closed capability-to-principal map for one resident generation.
 #[derive(Clone, Default)]
@@ -130,6 +142,13 @@ impl Capabilities {
         })
     }
 
+    fn matches(&self, capability: wire::CanonicalUuid, actor: &wire::Actor) -> bool {
+        self.principals
+            .read()
+            .ok()
+            .is_some_and(|principals| principals.get(&capability) == Some(actor))
+    }
+
     fn operator(&self) -> Option<wire::CanonicalUuid> {
         let principals = self.principals.read().ok()?;
         let mut operators = principals.iter().filter_map(|(capability, actor)| {
@@ -189,10 +208,15 @@ struct SurfaceState {
     origin: String,
     epoch: wire::CanonicalUuid,
     capabilities: Capabilities,
+    speech: crate::SpeechConfig,
+    speech_slot: Semaphore,
     admission: Mutex<Admission>,
     commands: mpsc::Sender<ControlRequest>,
+    stream: Option<crate::stream::Source>,
     closed: watch::Sender<bool>,
     connections: CancellationToken,
+    sessions: AtomicUsize,
+    sessions_closed: Notify,
     #[cfg(test)]
     admission_observed: watch::Sender<Option<AdmissionObservation>>,
 }
@@ -234,8 +258,13 @@ impl SurfaceState {
         #[cfg(test)]
         self.admission_observed
             .send_replace(Some(AdmissionObservation::Ordering(command.id())));
+        let mut closed = self.closed.subscribe();
         let permit = tokio::select! {
             biased;
+            changed = closed.changed() => {
+                let _ = changed;
+                return Err(EnqueueError::NotAdmitting);
+            },
             _ = self.connections.cancelled() => return Err(EnqueueError::NotAdmitting),
             permit = self.commands.reserve() => {
                 permit.map_err(|_| EnqueueError::ControlClosed)?
@@ -268,8 +297,39 @@ impl SurfaceState {
 
     async fn close(&self) {
         self.closed.send_replace(true);
-        self.connections.cancel();
         *self.admission.lock().await = Admission::Closed;
+        let drain = async {
+            loop {
+                let notified = self.sessions_closed.notified();
+                if self.sessions.load(Ordering::Acquire) == 0 {
+                    break;
+                }
+                notified.await;
+            }
+        };
+        let _ = tokio::time::timeout(SESSION_DRAIN_GRACE, drain).await;
+        self.connections.cancel();
+    }
+}
+
+struct SessionGuard {
+    state: Arc<SurfaceState>,
+}
+
+impl SessionGuard {
+    fn enter(state: &Arc<SurfaceState>) -> Self {
+        state.sessions.fetch_add(1, Ordering::AcqRel);
+        Self {
+            state: Arc::clone(state),
+        }
+    }
+}
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        if self.state.sessions.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.state.sessions_closed.notify_waiters();
+        }
     }
 }
 
@@ -430,13 +490,34 @@ impl Server {
     pub async fn bind(
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
+        speech: crate::SpeechConfig,
     ) -> Result<(Self, Control), std::io::Error> {
-        Self::bind_with_capacity(epoch, capabilities, 64).await
+        Self::bind_with_capacity(epoch, capabilities, speech, None, 64).await
+    }
+
+    /// Bind the command socket and Bus-backed canvas stream to one generation.
+    pub async fn bind_streaming(
+        epoch: wire::CanonicalUuid,
+        capabilities: Capabilities,
+        speech: crate::SpeechConfig,
+        bus: bus::BusReader,
+        rows: usize,
+    ) -> Result<(Self, Control), std::io::Error> {
+        Self::bind_with_capacity(
+            epoch,
+            capabilities,
+            speech,
+            Some(crate::stream::Source::new(bus, epoch, rows)),
+            64,
+        )
+        .await
     }
 
     async fn bind_with_capacity(
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
+        speech: crate::SpeechConfig,
+        stream: Option<crate::stream::Source>,
         capacity: usize,
     ) -> Result<(Self, Control), std::io::Error> {
         let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
@@ -459,10 +540,15 @@ impl Server {
                     origin,
                     epoch,
                     capabilities,
+                    speech,
+                    speech_slot: Semaphore::new(1),
                     admission: Mutex::new(Admission::Open),
                     commands,
+                    stream,
                     closed,
                     connections,
+                    sessions: AtomicUsize::new(0),
+                    sessions_closed: Notify::new(),
                     #[cfg(test)]
                     admission_observed,
                 }),
@@ -503,14 +589,19 @@ impl Server {
         let router = Router::new()
             .route("/socket", get(socket))
             .route("/bootstrap", get(bootstrap))
+            .route("/speech", post(speech))
+            .layer(DefaultBodyLimit::max(SPEECH_REQUEST_BYTES))
             .fallback(app)
             .with_state(state);
-        ::axum::serve(self.listener, router)
+        let connections = closing.connections.clone();
+        let served = ::axum::serve(self.listener, router)
             .with_graceful_shutdown(async move {
                 shutdown.await;
                 closing.close().await;
             })
-            .await
+            .await;
+        connections.cancel();
+        served
     }
 }
 
@@ -552,6 +643,7 @@ async fn bootstrap(State(state): State<Arc<SurfaceState>>, headers: HeaderMap) -
         endpoint: state.origin.clone(),
         capability,
         epoch: state.epoch,
+        speech: state.speech.playback(),
     };
     let Ok(bytes) = wire::encode(&discovery) else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -568,6 +660,158 @@ async fn bootstrap(State(state): State<Arc<SurfaceState>>, headers: HeaderMap) -
     response
 }
 
+async fn speech(
+    State(state): State<Arc<SurfaceState>>,
+    headers: HeaderMap,
+    Json(request): Json<wire::SpeechRequest>,
+) -> Response {
+    if admit_headers(&state, &headers, true).is_err() {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if request.text.is_empty() || request.text.len() > SPEECH_TEXT_BYTES {
+        return speech_error(
+            StatusCode::BAD_REQUEST,
+            "speech text must be nonempty and at most 32768 bytes",
+        );
+    }
+    if state.speech.backend() != crate::SpeechBackend::External || state.speech.command().is_none()
+    {
+        return speech_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "external speech backend is unavailable",
+        );
+    }
+    let Ok(_permit) = state.speech_slot.try_acquire() else {
+        return speech_error(StatusCode::TOO_MANY_REQUESTS, "speech renderer is busy");
+    };
+    let bytes = match render_external_speech(&state.speech, request.text.as_bytes()).await {
+        Ok(bytes) => bytes,
+        Err(error) => return speech_error(error.status(), error.message()),
+    };
+    let Ok(content_type) = HeaderValue::from_str(state.speech.content_type()) else {
+        return speech_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "speech media type became unavailable",
+        );
+    };
+    let mut response = Response::new(Body::from(bytes));
+    response.headers_mut().insert(CONTENT_TYPE, content_type);
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    install_browser_headers(&mut response);
+    response
+}
+
+async fn render_external_speech(
+    speech: &crate::SpeechConfig,
+    text: &[u8],
+) -> Result<Vec<u8>, SpeechRenderError> {
+    let argv = speech
+        .resolved_command()
+        .ok_or(SpeechRenderError::Unavailable)?;
+    let mut command = tokio::process::Command::new(&argv[0]);
+    command
+        .args(&argv[1..])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = command
+        .spawn()
+        .map_err(|_| SpeechRenderError::Unavailable)?;
+    let mut stdin = child.stdin.take().ok_or(SpeechRenderError::Io)?;
+    let stdout = child.stdout.take().ok_or(SpeechRenderError::Io)?;
+    let stderr = child.stderr.take().ok_or(SpeechRenderError::Io)?;
+    let rendered = timeout(SPEECH_RUNTIME, async {
+        let write = async {
+            stdin.write_all(text).await?;
+            stdin.shutdown().await?;
+            drop(stdin);
+            Ok::<_, std::io::Error>(())
+        };
+        let read_audio = async {
+            let mut bytes = Vec::new();
+            stdout
+                .take(SPEECH_AUDIO_BYTES + 1)
+                .read_to_end(&mut bytes)
+                .await?;
+            Ok::<_, std::io::Error>(bytes)
+        };
+        let read_diagnostic = async {
+            let mut bytes = Vec::new();
+            stderr
+                .take(SPEECH_DIAGNOSTIC_BYTES + 1)
+                .read_to_end(&mut bytes)
+                .await?;
+            Ok::<_, std::io::Error>(bytes)
+        };
+        let ((), audio, _diagnostic, status) =
+            tokio::try_join!(write, read_audio, read_diagnostic, child.wait())?;
+        Ok::<_, std::io::Error>((audio, status))
+    })
+    .await;
+    let (audio, status) = match rendered {
+        Ok(Ok(outcome)) => outcome,
+        Ok(Err(_)) => return Err(SpeechRenderError::Io),
+        Err(_) => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Err(SpeechRenderError::TimedOut);
+        }
+    };
+    if !status.success() {
+        return Err(SpeechRenderError::Failed);
+    }
+    if audio.is_empty() {
+        return Err(SpeechRenderError::Empty);
+    }
+    if u64::try_from(audio.len()).is_err() || audio.len() as u64 > SPEECH_AUDIO_BYTES {
+        return Err(SpeechRenderError::TooLarge);
+    }
+    Ok(audio)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SpeechRenderError {
+    Unavailable,
+    TimedOut,
+    Failed,
+    Empty,
+    TooLarge,
+    Io,
+}
+
+impl SpeechRenderError {
+    const fn status(self) -> StatusCode {
+        match self {
+            Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+            Self::TimedOut => StatusCode::GATEWAY_TIMEOUT,
+            Self::Failed | Self::Empty | Self::TooLarge | Self::Io => StatusCode::BAD_GATEWAY,
+        }
+    }
+
+    const fn message(self) -> &'static str {
+        match self {
+            Self::Unavailable => "external speech backend is unavailable",
+            Self::TimedOut => "external speech backend timed out",
+            Self::Failed => "external speech backend failed",
+            Self::Empty => "external speech backend produced no audio",
+            Self::TooLarge => "external speech backend exceeded the audio limit",
+            Self::Io => "external speech backend I/O failed",
+        }
+    }
+}
+
+fn speech_error(status: StatusCode, message: &'static str) -> Response {
+    let mut response = (status, message).into_response();
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    install_browser_headers(&mut response);
+    response
+}
+
 fn install_browser_headers(response: &mut Response) {
     response.headers_mut().insert(
         "content-security-policy",
@@ -575,6 +819,7 @@ fn install_browser_headers(response: &mut Response) {
             "default-src 'self'; connect-src 'self' ws:; img-src 'self'; object-src 'none'; \
              script-src 'self' 'wasm-unsafe-eval' \
              'sha256-B50SC8VLF+K2T0Re7VCfyZ3PqVhYIkg+OlhW+7PQyTU='; style-src 'self'; \
+             media-src 'self' blob:; \
              base-uri 'none'; \
              frame-ancestors 'none'",
         ),
@@ -624,26 +869,157 @@ fn admit_headers(
 }
 
 async fn socket_session(mut socket: WebSocket, state: Arc<SurfaceState>) {
+    let _session = SessionGuard::enter(&state);
     let mut closed = state.closed.subscribe();
-    let Some(accepted) = open_session(&mut socket, &state, &mut closed).await else {
+    let Some((accepted, capability)) = open_session(&mut socket, &state, &mut closed).await else {
         return;
     };
     send_encoded(&mut socket, &accepted).await;
-    while let Some(bytes) = receive_command(&mut socket, &mut closed).await {
-        if matches!(
-            route_command(&mut socket, &state, &accepted, &bytes).await,
-            SessionFlow::Close
-        ) {
-            return;
+    let mut subscription = None;
+    let mut broadcasts = state.stream.as_ref().map(crate::stream::Source::subscribe);
+    loop {
+        tokio::select! {
+            biased;
+            changed = closed.changed() => {
+                if changed.is_err() || *closed.borrow() {
+                    if let Some(frame) = subscription
+                        .as_ref()
+                        .and_then(crate::stream::Subscription::closing)
+                    {
+                        send_encoded(&mut socket, &frame).await;
+                    }
+                    return;
+                }
+            }
+            notice = async {
+                broadcasts
+                    .as_mut()
+                    .expect("enabled branch has a Bus broadcast")
+                    .recv()
+                    .await
+            }, if broadcasts.is_some()
+                && subscription
+                    .as_ref()
+                    .is_some_and(crate::stream::Subscription::is_live) => {
+                if matches!(
+                    route_broadcast(
+                        &mut socket,
+                        &state,
+                        &accepted,
+                        capability,
+                        subscription.as_mut().expect("live branch has a subscription"),
+                        notice,
+                    )
+                    .await,
+                    SessionFlow::Close
+                ) {
+                    return;
+                }
+            }
+            message = socket.recv() => {
+                let Some(Ok(message)) = message else {
+                    return;
+                };
+                let bytes = match message {
+                    Message::Binary(bytes) => bytes.to_vec(),
+                    Message::Text(text) => text.as_bytes().to_vec(),
+                    Message::Ping(_) | Message::Pong(_) => continue,
+                    Message::Close(_) => return,
+                };
+                let flow = if is_stream_request(&bytes) {
+                    route_stream(
+                        &mut socket,
+                        &state,
+                        &accepted,
+                        capability,
+                        &bytes,
+                        &mut subscription,
+                    )
+                    .await
+                } else {
+                    route_command(&mut socket, &state, &accepted, &bytes).await
+                };
+                if matches!(flow, SessionFlow::Close) {
+                    return;
+                }
+            }
         }
     }
+}
+
+async fn route_broadcast(
+    socket: &mut WebSocket,
+    state: &SurfaceState,
+    accepted: &wire::Accepted,
+    capability: wire::CanonicalUuid,
+    subscription: &mut crate::stream::Subscription,
+    notice: Result<bus::JournalCommit, tokio::sync::broadcast::error::RecvError>,
+) -> SessionFlow {
+    if !state.capabilities.matches(capability, &accepted.actor) {
+        send_replaced(socket, state.epoch, Some(subscription.id())).await;
+        return SessionFlow::Close;
+    }
+    match notice {
+        Ok(commit) => {
+            send_broadcast_update(socket, state, accepted, capability, subscription, commit).await
+        }
+        Err(tokio::sync::broadcast::error::RecvError::Lagged(dropped)) => {
+            let frame = subscription
+                .overflow(dropped)
+                .unwrap_or_else(|failure| failure.frame(state.epoch, Some(subscription.id())));
+            send_encoded(socket, &frame).await;
+            SessionFlow::Close
+        }
+        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+            let frame = stream_fault(
+                state.epoch,
+                Some(subscription.id()),
+                wire::FaultClass::Environment,
+                "stream::broadcast-closed",
+                "resident Bus cursor broadcast closed",
+            );
+            send_encoded(socket, &frame).await;
+            SessionFlow::Close
+        }
+    }
+}
+
+async fn send_broadcast_update(
+    socket: &mut WebSocket,
+    state: &SurfaceState,
+    accepted: &wire::Accepted,
+    capability: wire::CanonicalUuid,
+    subscription: &mut crate::stream::Subscription,
+    commit: bus::JournalCommit,
+) -> SessionFlow {
+    let frames = match subscription.advance(
+        state.stream.as_ref().expect("broadcast has a source"),
+        commit,
+    ) {
+        Ok(frames) => frames,
+        Err(failure) => {
+            let frame = failure.frame(state.epoch, Some(subscription.id()));
+            send_encoded(socket, &frame).await;
+            return SessionFlow::Close;
+        }
+    };
+    if !state.capabilities.matches(capability, &accepted.actor) {
+        send_replaced(socket, state.epoch, Some(subscription.id())).await;
+        return SessionFlow::Close;
+    }
+    for frame in frames {
+        if !send_encoded(socket, &frame).await {
+            return SessionFlow::Close;
+        }
+    }
+    SessionFlow::Continue
 }
 
 async fn open_session(
     socket: &mut WebSocket,
     state: &SurfaceState,
     closed: &mut watch::Receiver<bool>,
-) -> Option<wire::Accepted> {
+) -> Option<(wire::Accepted, wire::CanonicalUuid)> {
     let message = receive_message(socket, closed).await?;
     let bytes = match message {
         Message::Binary(bytes) => bytes.to_vec(),
@@ -652,7 +1028,7 @@ async fn open_session(
     };
     match wire::decode::<wire::Hello>(&bytes) {
         Ok(hello) => match state.capabilities.admit(&hello, state.epoch) {
-            Ok(accepted) => Some(accepted),
+            Ok(accepted) => Some((accepted, hello.capability)),
             Err(OpeningError::Refused(refusal)) => {
                 send_encoded(socket, &refusal).await;
                 None
@@ -673,21 +1049,6 @@ async fn open_session(
             )
             .await;
             None
-        }
-    }
-}
-
-async fn receive_command(
-    socket: &mut WebSocket,
-    closed: &mut watch::Receiver<bool>,
-) -> Option<Vec<u8>> {
-    loop {
-        let message = receive_message(socket, closed).await?;
-        match message {
-            Message::Binary(bytes) => return Some(bytes.to_vec()),
-            Message::Text(text) => return Some(text.as_bytes().to_vec()),
-            Message::Ping(_) | Message::Pong(_) => continue,
-            Message::Close(_) => return None,
         }
     }
 }
@@ -721,6 +1082,156 @@ async fn receive_message(
 enum SessionFlow {
     Continue,
     Close,
+}
+
+fn is_stream_request(bytes: &[u8]) -> bool {
+    wire::decode::<serde_json::Value>(bytes)
+        .ok()
+        .and_then(|value| {
+            value
+                .as_object()
+                .and_then(|object| object.get("stream"))
+                .cloned()
+        })
+        .is_some()
+}
+
+async fn route_stream(
+    socket: &mut WebSocket,
+    state: &SurfaceState,
+    accepted: &wire::Accepted,
+    capability: wire::CanonicalUuid,
+    bytes: &[u8],
+    subscription: &mut Option<crate::stream::Subscription>,
+) -> SessionFlow {
+    if !state.capabilities.matches(capability, &accepted.actor) {
+        send_replaced(
+            socket,
+            state.epoch,
+            subscription.as_ref().map(crate::stream::Subscription::id),
+        )
+        .await;
+        return SessionFlow::Close;
+    }
+    let request = match wire::decode::<wire::StreamRequest>(bytes) {
+        Ok(request) => request,
+        Err(error) => {
+            let frame = stream_fault(
+                state.epoch,
+                None,
+                wire::FaultClass::Protocol,
+                "stream::undecodable",
+                &error.to_string(),
+            );
+            send_encoded(socket, &frame).await;
+            return SessionFlow::Continue;
+        }
+    };
+    let Some(source) = state.stream.as_ref() else {
+        let frame = stream_fault(
+            state.epoch,
+            Some(request.id()),
+            wire::FaultClass::Environment,
+            "stream::unavailable",
+            "this canvas socket has no resident Bus stream",
+        );
+        send_encoded(socket, &frame).await;
+        return SessionFlow::Continue;
+    };
+
+    let result = match &request {
+        wire::StreamRequest::Subscribe { .. } => {
+            if subscription.is_some() {
+                Err(crate::stream::Failure::Refusal(wire::Refusal {
+                    reason: "stream::already-subscribed".to_owned(),
+                    witness: Some("session".to_owned()),
+                    expected: Some("one subscription".to_owned()),
+                    observed: Some("a second subscription".to_owned()),
+                    remedy: "open another authenticated socket for another subscription".to_owned(),
+                }))
+            } else {
+                match source.begin(accepted, &request) {
+                    Ok((opened, frames)) => {
+                        if !state.capabilities.matches(capability, &accepted.actor) {
+                            send_replaced(socket, state.epoch, Some(request.id())).await;
+                            return SessionFlow::Close;
+                        }
+                        for frame in frames {
+                            if !send_encoded(socket, &frame).await {
+                                return SessionFlow::Close;
+                            }
+                        }
+                        *subscription = Some(opened);
+                        return SessionFlow::Continue;
+                    }
+                    Err(failure) => Err(failure),
+                }
+            }
+        }
+        wire::StreamRequest::Continue { .. } => match subscription.as_mut() {
+            Some(subscription) => subscription.continue_page(&request),
+            None => Err(crate::stream::Failure::Refusal(wire::Refusal {
+                reason: "stream::subscription-required".to_owned(),
+                witness: Some("session".to_owned()),
+                expected: Some("an active subscription".to_owned()),
+                observed: Some("no subscription".to_owned()),
+                remedy: "subscribe before continuing a packed view".to_owned(),
+            })),
+        },
+        wire::StreamRequest::Thread { .. } => source.thread(accepted, &request),
+    };
+    if !state.capabilities.matches(capability, &accepted.actor) {
+        send_replaced(socket, state.epoch, Some(request.id())).await;
+        return SessionFlow::Close;
+    }
+    match result {
+        Ok(frame) => {
+            if send_encoded(socket, &frame).await {
+                SessionFlow::Continue
+            } else {
+                SessionFlow::Close
+            }
+        }
+        Err(failure) => {
+            let frame = failure.frame(state.epoch, Some(request.id()));
+            send_encoded(socket, &frame).await;
+            SessionFlow::Continue
+        }
+    }
+}
+
+async fn send_replaced(
+    socket: &mut WebSocket,
+    epoch: wire::CanonicalUuid,
+    id: Option<wire::CanonicalUuid>,
+) {
+    let frame = stream_fault(
+        epoch,
+        id,
+        wire::FaultClass::Protocol,
+        "stream::capability-replaced",
+        "the capability that authenticated this stream is no longer current",
+    );
+    send_encoded(socket, &frame).await;
+}
+
+fn stream_fault(
+    epoch: wire::CanonicalUuid,
+    id: Option<wire::CanonicalUuid>,
+    class: wire::FaultClass,
+    reason: &str,
+    detail: &str,
+) -> wire::StreamFrame {
+    wire::StreamFrame::Fault {
+        v: wire::WireVersion::CURRENT,
+        epoch,
+        id,
+        fault: wire::Fault {
+            class,
+            reason: reason.to_owned(),
+            detail: detail.to_owned(),
+        },
+    }
 }
 
 async fn route_command(
@@ -757,6 +1268,9 @@ async fn route_command(
     let response = command.clone();
     let pending = match state.enqueue(command).await {
         Ok(pending) => pending,
+        Err(EnqueueError::NotAdmitting) if *state.closed.borrow() => {
+            return SessionFlow::Close;
+        }
         Err(EnqueueError::NotAdmitting) => {
             send_encoded(socket, &response.response(closing_refusal())).await;
             return SessionFlow::Continue;
@@ -767,8 +1281,13 @@ async fn route_command(
         }
     };
     let PendingResponse { returned, sent } = pending;
+    let mut closed = state.closed.subscribe();
     let returned = tokio::select! {
         biased;
+        changed = closed.changed() => {
+            let _ = changed;
+            return SessionFlow::Close;
+        },
         _ = state.connections.cancelled() => return SessionFlow::Close,
         returned = returned => returned,
     };
@@ -815,10 +1334,11 @@ fn closing_refusal() -> wire::Outcome<wire::intent::CommandAnswer> {
     })
 }
 
-async fn send_encoded<T: serde::Serialize>(socket: &mut WebSocket, value: &T) {
-    if let Ok(bytes) = wire::encode(value) {
-        let _ = socket.send(Message::Binary(bytes.into())).await;
-    }
+async fn send_encoded<T: serde::Serialize>(socket: &mut WebSocket, value: &T) -> bool {
+    let Ok(bytes) = wire::encode(value) else {
+        return false;
+    };
+    socket.send(Message::Binary(bytes.into())).await.is_ok()
 }
 
 /// True only for the one address family this surface may bind.

@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+cd "$root" # env-policy: allow
+exec cargo xtask reference-transaction "$1"

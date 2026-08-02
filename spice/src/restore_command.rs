@@ -53,6 +53,8 @@ struct PreparedRestore {
     capture: journal::RestoreCapture,
     previous: Option<Digest>,
     previous_bytes: Option<Vec<u8>>,
+    artifacts: artifact::BackupImage,
+    previous_artifacts: artifact::BackupImage,
     plan: Digest,
 }
 
@@ -86,15 +88,20 @@ fn prepare_restore(bundle: &Path) -> Result<PreparedRestore, Failure> {
     let state = repository.admit_state().map_err(state_failure)?;
     let destination = state.journal().to_path_buf();
     let capture = journal::capture_restore_bundle(bundle).map_err(bundle_failure)?;
+    let artifacts = artifact_image(&capture)?;
+    let artifact_store =
+        artifact::Store::new(state.artifacts(), state.locks().join("task-artifacts.lock"));
+    let previous_artifacts = artifact_store.capture().map_err(artifact_failure)?;
     let previous_bytes = current_bytes(&destination)?;
     let previous = previous_bytes
         .as_ref()
         .map(|bytes| Digest::compute(Domain::JournalBackupMember, bytes));
     let plan_document = RestorePlanIdentity {
-        version: 1,
+        version: 2,
         bundle: capture.verification().bundle.clone(),
         destination: destination.display().to_string(),
         previous: previous.clone(),
+        previous_artifacts: artifact_identity(&previous_artifacts)?,
     };
     let plan_bytes = wire::encode(&plan_document).map_err(|error| {
         fault(
@@ -111,6 +118,8 @@ fn prepare_restore(bundle: &Path) -> Result<PreparedRestore, Failure> {
         capture,
         previous,
         previous_bytes,
+        artifacts,
+        previous_artifacts,
         plan,
     })
 }
@@ -120,21 +129,49 @@ fn apply_restore(
     requested: &str,
 ) -> Result<(SeqRange, JournalRestore), Failure> {
     let _lock = admit_apply(&prepared, requested)?;
-    publish_authority(&prepared.destination, prepared.capture.authority_bytes())?;
+    let artifact_store = artifact::Store::new(
+        prepared.state.artifacts(),
+        prepared.state.locks().join("task-artifacts.lock"),
+    );
+    let replacement = artifact_store
+        .begin_replace(&prepared.artifacts, &prepared.previous_artifacts)
+        .map_err(artifact_failure)?;
+    if let Err(failure) =
+        publish_authority(&prepared.destination, prepared.capture.authority_bytes())
+    {
+        replacement.rollback().map_err(|rollback| {
+            fault(
+                FaultClass::Environment,
+                "restore::artifact-rollback-failed",
+                format!("{rollback}; authority publication also failed: {failure:?}"),
+            )
+        })?;
+        return Err(failure);
+    }
     let finalized = verify_published(&prepared).and_then(|()| append_restored(&prepared));
     let position = match finalized {
         Ok(position) => position,
         Err(failure) => {
-            rollback_authority(&prepared).map_err(|rollback| {
-                fault(
+            let authority_rollback = rollback_authority(&prepared);
+            let artifact_rollback = replacement.rollback();
+            if let Err(rollback) = authority_rollback {
+                return Err(fault(
                     FaultClass::Environment,
                     "restore::rollback-failed",
                     format!("{rollback:?}; replacement finalization also failed"),
-                )
-            })?;
+                ));
+            }
+            if let Err(rollback) = artifact_rollback {
+                return Err(fault(
+                    FaultClass::Environment,
+                    "restore::artifact-rollback-failed",
+                    format!("{rollback}; replacement finalization also failed"),
+                ));
+            }
             return Err(failure);
         }
     };
+    replacement.commit().map_err(artifact_failure)?;
     Ok((position, prepared.report(true)))
 }
 
@@ -354,6 +391,82 @@ struct RestorePlanIdentity {
     bundle: Digest,
     destination: String,
     previous: Option<Digest>,
+    previous_artifacts: Digest,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct ArtifactGenerationMember {
+    path: String,
+    mode: u32,
+    bytes: u64,
+    digest: Digest,
+}
+
+fn artifact_image(capture: &journal::RestoreCapture) -> Result<artifact::BackupImage, Failure> {
+    const PREFIX: &str = "artifacts/tasks/";
+
+    let mut files = Vec::new();
+    for member in capture.members() {
+        if member.path() == capture.authority_path() {
+            continue;
+        }
+        let Some(path) = member.path().strip_prefix(PREFIX) else {
+            return Err(refusal(
+                "restore::member-unsupported",
+                format!("the authority member or one {PREFIX} member"),
+                member.path(),
+                "verify the bundle with the Spice release that owns its member inventory",
+            ));
+        };
+        files.push(artifact::BackupFile {
+            path: path.to_owned(),
+            mode: member.mode(),
+            bytes: member.bytes().to_vec(),
+        });
+    }
+    let image = artifact::BackupImage::admit(files).map_err(artifact_failure)?;
+    let unknown = image
+        .tasks()
+        .iter()
+        .filter(|task| capture.tasks().binary_search(task).is_err())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if !unknown.is_empty() {
+        return Err(refusal(
+            "restore::artifact-task-unknown",
+            "every artifact manifest task to exist in the captured journal task set",
+            unknown.join(", "),
+            "restore a bundle whose artifact manifests were captured with their task authority",
+        ));
+    }
+    Ok(image)
+}
+
+fn artifact_identity(image: &artifact::BackupImage) -> Result<Digest, Failure> {
+    let mut members = Vec::with_capacity(image.files().len());
+    for member in image.files() {
+        members.push(ArtifactGenerationMember {
+            path: member.path.clone(),
+            mode: member.mode,
+            bytes: u64::try_from(member.bytes.len()).map_err(|error| {
+                fault(
+                    FaultClass::Protocol,
+                    "restore::artifact-size-invalid",
+                    error.to_string(),
+                )
+            })?,
+            digest: Digest::compute(Domain::TaskArtifactPayload, &member.bytes),
+        });
+    }
+    let bytes = wire::encode(&members).map_err(|error| {
+        fault(
+            FaultClass::Protocol,
+            "restore::artifact-identity-unencodable",
+            error.to_string(),
+        )
+    })?;
+    Ok(Digest::compute(Domain::TaskArtifactStore, &bytes))
 }
 
 fn current_identity(path: &Path) -> Result<Option<Digest>, Failure> {
@@ -501,6 +614,27 @@ fn bundle_failure(error: journal::BackupVerifyError) -> Failure {
             reason: "restore::bundle-invalid".to_owned(),
             detail: invalid.to_string(),
         }),
+    }
+}
+
+fn artifact_failure(error: artifact::Error) -> Failure {
+    match error.class() {
+        artifact::ErrorClass::Refusal => refusal(
+            "restore::artifact-refused",
+            "the exact artifact generation observed during preview",
+            error.to_string(),
+            "preview the unchanged bundle against the current artifact store and retry",
+        ),
+        artifact::ErrorClass::Corrupt => fault(
+            FaultClass::Store,
+            "restore::artifact-invalid",
+            error.to_string(),
+        ),
+        artifact::ErrorClass::Environment => fault(
+            FaultClass::Environment,
+            "restore::artifact-unavailable",
+            error.to_string(),
+        ),
     }
 }
 

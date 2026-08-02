@@ -30,9 +30,10 @@ impl Fixture {
         assert!(output.status.success(), "git init: {output:?}");
         let root = fs::canonicalize(root).expect("canonicalize config fixture root");
         let tracked = concat!(
-            "[tasks]\nstems = ['rim']\n",
+            "[tasks]\nstems = ['rim']\nhidden_stems = ['sandbox']\n",
             "[policy]\nenv_names = []\n",
             "[taste.polling]\nwords = ['poll*']\nmessage = 'use events'\n",
+            "[lock.worker]\ndirectory = 'locks/worker'\n",
         )
         .as_bytes()
         .to_vec();
@@ -90,15 +91,19 @@ fn reads_name_the_coexistence_effective_tree_and_provenance() {
     assert_eq!(text["effective"], json["effective"]);
     assert_eq!(text["provenance"], json["provenance"]);
     assert_eq!(json["mode"], "python-scaffold-coexistence");
-    assert_eq!(
-        json["ignored_tracked_roots"],
-        serde_json::json!(["policy", "tasks"])
-    );
+    assert_eq!(json["ignored_tracked_roots"], serde_json::json!(["policy"]));
     assert_eq!(
         json["effective"]["taste"]["polling"]["message"],
         "use events"
     );
-    assert_eq!(json["effective"]["tasks"]["stems"], serde_json::json!([]));
+    assert_eq!(
+        json["effective"]["tasks"]["stems"],
+        serde_json::json!(["rim"])
+    );
+    assert_eq!(
+        json["effective"]["tasks"]["hidden_stems"],
+        serde_json::json!(["oops", "maxim_proposal", "sandbox"])
+    );
     assert_eq!(
         json["effective"]["tasks"]["project_min_depth"],
         dialect::PROJECT_MIN_DEPTH
@@ -280,7 +285,11 @@ fn local_symlinks_are_refused_without_following_or_replacing_them() {
 
     let fixture = Fixture::new("symlink");
     let target = fixture.root.join("outside.toml");
-    fs::write(&target, "[lock.worker]\nshards = 7\n").expect("write symlink target");
+    fs::write(
+        &target,
+        "[lock.worker]\ndirectory = 'locks/worker'\nshards = 7\n",
+    )
+    .expect("write symlink target");
     fs::create_dir_all(fixture.local().parent().expect("local parent"))
         .expect("create local parent");
     symlink(&target, fixture.local()).expect("plant local symlink");
@@ -291,7 +300,7 @@ fn local_symlinks_are_refused_without_following_or_replacing_them() {
     );
     assert_eq!(
         fs::read(&target).expect("read symlink target"),
-        b"[lock.worker]\nshards = 7\n"
+        b"[lock.worker]\ndirectory = 'locks/worker'\nshards = 7\n"
     );
     assert!(
         fs::symlink_metadata(fixture.local())

@@ -25,7 +25,9 @@ fn dispatch_client(
         ["doc"] => run_doc(repository, contract, matches),
         ["doc", "ledger"] => client_ledger(repository, contract, matches),
         ["task", "next"] => client_next(repository, contract),
+        ["task", "reclaim"] => client_reclaim(repository, contract, matches),
         ["task", "add"] => client_add(repository, contract, matches),
+        ["task", "capture"] => client_capture(repository, contract, matches),
         ["task", "oops"] => client_oops(repository, contract, matches),
         ["task", "note"] => client_note(repository, contract, matches),
         ["task", "defer"] => client_defer(repository, contract, matches),
@@ -115,7 +117,7 @@ fn client_ledger(
 
 fn client_next(repository: &Repository, contract: &Contract) -> Outcome<CommandAnswer> {
     mutate_from_board(repository, contract, |board| {
-        let entries = entries(&board)?;
+        let entries = actor_entries(&board)?;
         let selected = board::select(&entries, &board.principal).ok_or_else(|| {
             refusal(
                 "board::allocator-empty",
@@ -141,6 +143,84 @@ fn client_next(repository: &Repository, contract: &Contract) -> Outcome<CommandA
     })
 }
 
+fn client_reclaim(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    mutate_from_board(repository, contract, |board| {
+        let (task, heads) = match matches.get_one::<String>("HANDLE") {
+            Some(written) => {
+                let task = written.parse::<TaskHandle>().map_err(|error| {
+                    refusal("task::handle-invalid", Some(written.clone()), &error.to_string())
+                })?;
+                let heads = task_heads(&board, &task)?;
+                (task, heads)
+            }
+            None => sole_active(&board)?,
+        };
+        let seconds = matches
+            .get_one::<String>("lease-seconds")
+            .map_or(Ok(60 * 60), |written| {
+                written.parse::<u64>().map_err(|error| {
+                    refusal(
+                        "claim::lease-seconds-invalid",
+                        Some(written.clone()),
+                        &error.to_string(),
+                    )
+                })
+            })?;
+        if seconds == 0 {
+            return Err(refusal(
+                "claim::lease-seconds-zero",
+                Some(seconds.to_string()),
+                "request a positive bounded lease extension",
+            ));
+        }
+        let claim = heads.claim.as_ref().ok_or_else(|| {
+            refusal(
+                "claim::head-missing",
+                Some(task.to_string()),
+                "reclaim only the current lane's active task",
+            )
+        })?;
+        if claim.body.disposition != ClaimDisposition::Active || claim.body.actor != board.principal
+        {
+            return Err(refusal(
+                "claim::ownership-refused",
+                Some(task.to_string()),
+                "reclaim only an active claim owned by this lane capability",
+            ));
+        }
+        let lease = heads.lease.as_ref().ok_or_else(|| {
+            protocol_fault(
+                "claim::lease-missing",
+                "an active claim head has no durable lease head",
+            )
+        })?;
+        let (lane, occupant) = actor_seat(&board)?;
+        Ok((
+            CommandKind::ClaimRenew,
+            vec![
+                Witness::Claim {
+                    task: task.clone(),
+                    head: Some(claim.position),
+                },
+                Witness::Lease {
+                    task: task.clone(),
+                    head: lease.position,
+                },
+                residency_witness(&board, lane, occupant),
+            ],
+            serde_json::to_value(ClaimRenew {
+                task,
+                lease_seconds: seconds,
+            })
+            .expect("typed intent encodes"),
+        ))
+    })
+}
+
 fn client_add(
     repository: &Repository,
     contract: &Contract,
@@ -151,18 +231,96 @@ fn client_add(
     submit_add(repository, contract, title, project, None)
 }
 
+fn client_capture(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    let task = match matches.get_one::<String>("HANDLE") {
+        Some(written) => {
+            if matches.contains_id("title") || matches.contains_id("project") {
+                return refusal(
+                    "task::capture-shape",
+                    Some(written.clone()),
+                    "name either an existing HANDLE or new-task title/project fields",
+                );
+            }
+            match written.parse::<TaskHandle>() {
+                Ok(task) => task,
+                Err(error) => {
+                    return refusal(
+                        "task::handle-invalid",
+                        Some(written.clone()),
+                        &error.to_string(),
+                    );
+                }
+            }
+        }
+        None => {
+            let Some(project) = matches.get_one::<String>("project").cloned() else {
+                return refusal(
+                    "task::capture-project-missing",
+                    None,
+                    "supply --project when task capture mints a new task",
+                );
+            };
+            let candidate = match spice::task_git::capture(repository) {
+                Ok(candidate) => candidate,
+                Err(error) => return task_git_outcome(error),
+            };
+            let title = matches
+                .get_one::<String>("title")
+                .cloned()
+                .unwrap_or(candidate.subject);
+            let add_contract = crate::cli::contract(&["task", "add"])
+                .expect("task add contract is registered");
+            match submit_add(repository, add_contract, title, Some(project), None) {
+                Outcome::Reply(Reply {
+                    body: CommandAnswer::Task(answer),
+                    ..
+                }) => answer.task,
+                Outcome::Reply(_) => {
+                    return protocol_fault(
+                        "task::capture-add-answer",
+                        "task add returned another answer shape",
+                    );
+                }
+                Outcome::Refusal(refusal) => return Outcome::Refusal(refusal),
+                Outcome::Fault(fault) => return Outcome::Fault(fault),
+            }
+        }
+    };
+    mutate_from_board(repository, contract, |board| {
+        let heads = task_heads(&board, &task)?;
+        let (lane, occupant) = actor_seat(&board)?;
+        let rule = "capture".parse::<Name>().expect("capture is a wire name");
+        Ok((
+            CommandKind::ClaimWin,
+            vec![
+                statement_witness(heads),
+                workflow_witness(heads),
+                claim_witness(heads),
+                Witness::Eligibility { rule: rule.clone() },
+                residency_witness(&board, lane, occupant),
+            ],
+            serde_json::to_value(ClaimWin { rule }).expect("typed intent encodes"),
+        ))
+    })
+}
+
 fn client_oops(
     repository: &Repository,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
     let text = required(matches, "TEXT");
-    submit_add(
+    submit_oops_add(
         repository,
         contract,
-        text.clone(),
-        Some("board.oops".to_owned()),
-        Some(text),
+        TaskOopsAdd {
+            title: text.clone(),
+            description: text,
+        },
     )
 }
 
@@ -499,6 +657,32 @@ fn submit_add(
     )
 }
 
+fn submit_oops_add(
+    repository: &Repository,
+    contract: &Contract,
+    body: TaskOopsAdd,
+) -> Outcome<CommandAnswer> {
+    mutate_from_board(repository, contract, |board| {
+        let handle = mint_handle(Some(".oops"), &body.title);
+        if board
+            .tasks
+            .iter()
+            .any(|task| task.statement.body.handle == handle)
+        {
+            return Err(refusal(
+                "task::identity-collision",
+                Some(handle.to_string()),
+                "retry task oops so the authority can mint a fresh handle",
+            ));
+        }
+        Ok((
+            CommandKind::TaskOopsAdd,
+            vec![Witness::Absence { task: handle }],
+            serde_json::to_value(body).expect("typed intent encodes"),
+        ))
+    })
+}
+
 pub(crate) fn submit_task_add(
     repository: &Repository,
     contract: &Contract,
@@ -603,16 +787,17 @@ fn current_board(repository: &Repository) -> Result<BoardAnswer, Outcome<Command
     }
 }
 
-fn entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<CommandAnswer>> {
+fn actor_entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<CommandAnswer>> {
     board
         .tasks
         .iter()
         .map(|heads| {
-            Entry::new(
-                heads.statement.body.clone(),
+            Entry::from_answer(
+                heads.client_statement(),
                 heads.workflow.body.clone(),
                 heads.claim.as_ref().map(|head| head.body.clone()),
                 heads.lease.as_ref().map(|head| head.body.clone()),
+                heads.visibility.clone(),
             )
             .map_err(|error| {
                 protocol_fault(
@@ -732,10 +917,11 @@ fn actor_seat(
 
 fn sole_active(board: &BoardAnswer) -> Result<(TaskHandle, &BoardTask), Outcome<CommandAnswer>> {
     let mut held = board.tasks.iter().filter(|heads| {
-        heads.claim.as_ref().is_some_and(|claim| {
-            claim.body.actor == board.principal
-                && claim.body.disposition == wire::ClaimDisposition::Active
-        })
+        !heads.visibility.is_hidden()
+            && heads.claim.as_ref().is_some_and(|claim| {
+                claim.body.actor == board.principal
+                    && claim.body.disposition == wire::ClaimDisposition::Active
+            })
     });
     let Some(heads) = held.next() else {
         return Err(refusal(
@@ -829,33 +1015,69 @@ fn stem(text: &str) -> String {
 }
 
 /// Dispatch one board-family request after transport admission.
+#[cfg(test)]
 pub(crate) fn dispatch(
     bus: &Bus,
     command: &wire::AdmittedCommand,
 ) -> Option<Outcome<CommandAnswer>> {
+    let projects = ProjectPolicy::new(
+        ["board".to_owned(), "rim".to_owned()],
+        ["sandbox".to_owned()],
+        dialect::PROJECT_MIN_DEPTH as u64,
+        dialect::PROJECT_MAX_DEPTH as u64,
+    )
+    .expect("board command test project policy");
+    dispatch_with_repository(bus, command, None, &projects)
+}
+
+/// Dispatch with the resident repository required by production Git boundaries.
+pub(crate) fn dispatch_with_repository(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    repository: Option<&Repository>,
+    projects: &ProjectPolicy,
+) -> Option<Outcome<CommandAnswer>> {
     let outcome = match command.body() {
-        wire::intent::Intent::BoardRead(read) => read_board(bus, read, command.actor().clone()),
-        wire::intent::Intent::BoardGraph(graph) => read_graph(bus, graph, command.actor().clone()),
+        wire::intent::Intent::BoardRead(read) => {
+            read_board(bus, read, command.actor().clone(), projects)
+        }
+        wire::intent::Intent::BoardGraph(graph) => {
+            read_graph(bus, graph, command.actor().clone(), projects)
+        }
         wire::intent::Intent::BoardHandout(handout) => {
-            read_handout(bus, handout, command.actor().clone())
+            read_handout(bus, handout, command.actor().clone(), projects)
         }
         wire::intent::Intent::DocLedger(ledger) => {
-            read_ledger(bus, ledger, command.actor().clone())
+            read_ledger(bus, ledger, command.actor().clone(), projects)
         }
-        wire::intent::Intent::TaskAdd(add) => task_add(bus, command, add),
+        wire::intent::Intent::TaskAdd(add) => task_add(bus, command, add, projects),
+        wire::intent::Intent::TaskOopsAdd(add) => task_oops_add(bus, command, add, projects),
         wire::intent::Intent::TaskNote(note) => task_note(bus, command, note),
-        wire::intent::Intent::TaskDefer(defer) => task_defer(bus, command, defer),
+        wire::intent::Intent::TaskDefer(defer) => task_defer(bus, command, defer, projects),
         wire::intent::Intent::TaskRef(task) if command.kind() == CommandKind::TaskWake => {
-            task_wake(bus, command, task)
+            task_wake(bus, command, task, projects)
         }
         wire::intent::Intent::TaskRef(task) if command.kind() == CommandKind::ClaimFree => {
-            claim_free(bus, command, task)
+            claim_free(bus, command, task, projects)
         }
-        wire::intent::Intent::TaskDepends(depends) => task_depends(bus, command, depends),
-        wire::intent::Intent::ClaimWin(win) => claim_win(bus, command, win),
-        wire::intent::Intent::TaskDone(done) => task_done(bus, command, done),
-        wire::intent::Intent::TaskReview(review) => task_review(bus, command, review),
-        wire::intent::Intent::DocApply(apply) => doc_apply(bus, command, apply),
+        wire::intent::Intent::TaskDepends(depends) => {
+            task_depends(bus, command, depends, projects)
+        }
+        wire::intent::Intent::ClaimWin(win) => {
+            claim_win(bus, command, win, repository, projects)
+        }
+        wire::intent::Intent::ClaimRenew(renew)
+            if command.kind() == CommandKind::ClaimRenew =>
+        {
+            claim_reclaim(bus, command, renew, projects)
+        }
+        wire::intent::Intent::TaskDone(done) => {
+            task_done(bus, command, done, repository, projects)
+        }
+        wire::intent::Intent::TaskReview(review) => {
+            task_review(bus, command, review, repository, projects)
+        }
+        wire::intent::Intent::DocApply(apply) => doc_apply(bus, command, apply, projects),
         _ => return None,
     };
     Some(outcome)

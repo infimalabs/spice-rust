@@ -16,6 +16,9 @@ use wire::{Actor, FactKind, Instant, Outcome, Producer};
 
 const REFUSAL_EXIT: i32 = 2;
 const READINESS_DEADLINE: Duration = Duration::from_secs(10);
+const SESSION_ID: &str = "018f7777-7777-7444-8888-999999999999";
+const SESSION_RECORD: &str =
+    r#"{"type":"system","subtype":"init","session_id":"018f7777-7777-7444-8888-999999999999"}"#;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -39,6 +42,9 @@ impl Fixture {
             concat!(
                 "#!/bin/sh\n",
                 "trap 'exit 0' TERM INT\n",
+                "printf '%s\\n' '",
+                "{\"type\":\"system\",\"subtype\":\"init\",",
+                "\"session_id\":\"018f7777-7777-7444-8888-999999999999\"}'\n",
                 "while :; do sleep 1; done\n",
             ),
         )
@@ -66,7 +72,10 @@ impl Fixture {
     }
 
     fn tape(&self, lane: wire::CanonicalUuid) -> PathBuf {
-        self.runtime.join("tape").join(lane.to_string())
+        self.runtime
+            .join("tape")
+            .join(lane.to_string())
+            .join("claude")
     }
 }
 
@@ -301,6 +310,26 @@ fn seed_occupied_lane(
         .expect("lane fixture worktree canonicalizes")
         .display()
         .to_string();
+    let mut declaration = SESSION_RECORD.as_bytes().to_vec();
+    declaration.push(b'\n');
+    let locus = tape::Tape::open(fixture.tape(lane))
+        .expect("lane fixture tape opens")
+        .tee(&declaration)
+        .expect("session declaration reaches tape");
+    let session = wire::LaneSession {
+        lane,
+        occupant,
+        worktree: worktree.clone(),
+        vendor: "claude".parse().expect("fixture vendor"),
+        epoch,
+        stream: "stdout".to_owned(),
+        identity: SESSION_ID.to_owned(),
+        locus: wire::TapeLocus {
+            member: locus.member,
+            offset: locus.offset,
+            length: locus.length,
+        },
+    };
     let mut next = current.body().clone();
     next.lanes.push(wire::LaneResidency {
         lane,
@@ -310,6 +339,7 @@ fn seed_occupied_lane(
         occupant: Some(occupant),
         lineage: vec![occupant],
         capabilities: vec![capability],
+        session: Some(session.clone()),
         disposition: "occupied".to_owned(),
     });
     next.lanes.sort_by_key(|row| row.lane);
@@ -334,6 +364,23 @@ fn seed_occupied_lane(
             FactCause::Existing(current.position()),
         )
         .expect("lane fixture fact");
+    let declared = write
+        .fact(
+            wire::body::LaneSessionDeclared {
+                lane: session.lane,
+                occupant: session.occupant,
+                worktree: session.worktree,
+                vendor: session.vendor,
+                epoch: session.epoch,
+                stream: session.stream,
+                identity: session.identity,
+                member: session.locus.member,
+                offset: session.locus.offset,
+                length: session.locus.length,
+            },
+            FactCause::Pending(seated),
+        )
+        .expect("session fixture fact");
     let started = write
         .fact(
             wire::body::LaneStarted {
@@ -342,7 +389,7 @@ fn seed_occupied_lane(
                 epoch,
                 group: 123,
             },
-            FactCause::Pending(seated),
+            FactCause::Pending(declared),
         )
         .expect("occupant fixture fact");
     write.residency_head(started, move |_| next);

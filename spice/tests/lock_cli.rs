@@ -7,12 +7,73 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sill::{Acquisition, LockAvailability, LockFile, LockName, LockReport, Possession};
+use sill::{
+    Acquisition, Contention, LockAttempt, LockAvailability, LockConfig, LockFile, LockName,
+    LockReport, LockTopology, Possession,
+};
 use wire::Outcome;
+
+#[path = "support/process_exit.rs"]
+mod process_exit;
+use process_exit::ProcessExitObserver;
 
 const BUSY_EXIT: i32 = 70;
 const TAKEN_EXIT: i32 = 71;
 const FULL_EXIT: i32 = 72;
+const CLOSE_FDS_READY: &str = "LOCK-CLOSE-FDS-READY";
+const CLOSE_FDS_PID_FILE: &str = "abrupt-child-pid";
+const ACQUIRE_FIXTURE: &str = "unreaped_wrapper_synchronizes_first_topology_acquisition_fixture";
+const REPORT_FIXTURE: &str = "terminal_zombie_owner_never_exposes_held_availability_fixture";
+
+#[test]
+#[ignore = "subprocess fixture for the abrupt wrapper death test"]
+fn close_all_non_stdio_descriptors_and_wait() {
+    let pid_path = std::env::current_dir()
+        .expect("close-fds helper reads its working directory")
+        .join(CLOSE_FDS_PID_FILE);
+    fs::write(pid_path, std::process::id().to_string()).expect("close-fds helper records its PID");
+    close_non_stdio_descriptors();
+    println!("{CLOSE_FDS_READY}");
+    std::io::stdout()
+        .flush()
+        .expect("close-fds helper flushes readiness");
+    std::io::copy(&mut std::io::stdin(), &mut std::io::sink())
+        .expect("close-fds helper waits for stdin closure");
+}
+
+#[cfg(target_os = "linux")]
+fn close_non_stdio_descriptors() {
+    // SAFETY: the helper deliberately closes its complete non-stdio descriptor range.
+    if unsafe { libc::syscall(libc::SYS_close_range, 3, libc::c_uint::MAX, 0) } == 0 {
+        return;
+    }
+    close_descriptor_snapshot();
+}
+
+#[cfg(target_os = "macos")]
+fn close_non_stdio_descriptors() {
+    close_descriptor_snapshot();
+}
+
+fn close_descriptor_snapshot() {
+    let descriptors = fs::read_dir("/dev/fd")
+        .expect("close-fds helper reads its descriptor directory")
+        .map(|entry| {
+            entry
+                .expect("close-fds helper reads a descriptor entry")
+                .file_name()
+                .to_string_lossy()
+                .parse::<libc::c_int>()
+                .expect("descriptor directory entries are numeric")
+        })
+        .collect::<Vec<_>>();
+    for descriptor in descriptors.into_iter().filter(|descriptor| *descriptor > 2) {
+        // SAFETY: the helper deliberately closes every inherited non-stdio descriptor.
+        unsafe {
+            libc::close(descriptor);
+        }
+    }
+}
 
 struct Fixture {
     root: PathBuf,
@@ -42,8 +103,9 @@ impl Fixture {
                 "taken = 71\n",
                 "full = 72\n",
                 "\n[lock.solo]\n",
-                "shards = 1\n",
+                "path = \"locks/solo.lock\"\n",
                 "\n[lock.pool]\n",
+                "directory = \"locks/pool\"\n",
                 "shards = 2\n",
             ),
         )
@@ -102,9 +164,19 @@ impl Fixture {
     }
 
     fn lock_root(&self) -> PathBuf {
-        fs::canonicalize(self.root.join(".git"))
-            .expect("fixture Git directory canonicalizes")
-            .join(".spice-rust/locks")
+        self.root.join("locks")
+    }
+
+    fn topology(&self) -> LockTopology {
+        let config: LockConfig = toml::from_str(concat!(
+            "busy = 70\n",
+            "taken = 71\n",
+            "full = 72\n",
+            "[solo]\n",
+            "path = 'locks/solo.lock'\n",
+        ))
+        .expect("fixture lock topology is admitted");
+        LockTopology::new(&self.root, &config)
     }
 }
 
@@ -140,6 +212,161 @@ impl HeldProcess {
     }
 }
 
+struct AbruptProtected {
+    wrapper: Child,
+    wrapper_pid: u32,
+    release: Option<std::process::ChildStdin>,
+    output: BufReader<std::process::ChildStdout>,
+    child_pid: libc::pid_t,
+    reaped: bool,
+}
+
+impl AbruptProtected {
+    fn start(fixture: &Fixture) -> Self {
+        let helper = std::env::current_exe().expect("locate lock CLI test executable");
+        let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+        command
+            .args(["lock", "run", "solo", "--"])
+            .arg(helper)
+            .args([
+                "--exact",
+                "close_all_non_stdio_descriptors_and_wait",
+                "--ignored",
+                "--nocapture",
+            ])
+            .current_dir(&fixture.root)
+            .env_remove(steer::hook::INBOX)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut wrapper = command.spawn().expect("abrupt wrapper launches");
+        let wrapper_pid = wrapper.id();
+        let release = wrapper.stdin.take().expect("wrapper stdin is piped");
+        let mut output = BufReader::new(wrapper.stdout.take().expect("wrapper stdout is piped"));
+        wait_for_close_fds_ready(&mut output);
+        let child_pid = fs::read_to_string(fixture.root.join(CLOSE_FDS_PID_FILE))
+            .expect("child PID reads")
+            .parse()
+            .expect("child PID parses");
+
+        let exited = ProcessExitObserver::new(wrapper_pid);
+        // SAFETY: SIGKILL terminates only the wrapper retained by this fixture.
+        assert_eq!(
+            unsafe { libc::kill(wrapper_pid as libc::pid_t, libc::SIGKILL) },
+            0
+        );
+        exited.wait();
+        assert_process_zombie(wrapper_pid);
+
+        Self {
+            wrapper,
+            wrapper_pid,
+            release: Some(release),
+            output,
+            child_pid,
+            reaped: false,
+        }
+    }
+
+    fn terminate_group(&mut self) {
+        drop(self.release.take());
+        let mut trailing = String::new();
+        self.output
+            .read_to_string(&mut trailing)
+            .expect("protected process group closes stdout on exit");
+        assert!(
+            trailing.contains("test result: ok"),
+            "abrupt child output: {trailing:?}"
+        );
+        assert_process_terminal(self.child_pid);
+        assert_process_zombie(self.wrapper_pid);
+    }
+
+    fn reap(mut self) {
+        assert!(
+            !self
+                .wrapper
+                .wait()
+                .expect("wrapper reaps after assertions")
+                .success()
+        );
+        self.reaped = true;
+    }
+}
+
+impl Drop for AbruptProtected {
+    fn drop(&mut self) {
+        drop(self.release.take());
+        if !self.reaped {
+            // SAFETY: cleanup targets only this fixture's wrapper.
+            unsafe {
+                libc::kill(self.wrapper_pid as libc::pid_t, libc::SIGKILL);
+            }
+            let _ = self.wrapper.wait();
+        }
+    }
+}
+
+fn wait_for_close_fds_ready(output: &mut impl BufRead) {
+    loop {
+        let mut ready = String::new();
+        assert_ne!(
+            output
+                .read_line(&mut ready)
+                .expect("abrupt child reaches execution"),
+            0,
+            "close-fds helper exited before readiness"
+        );
+        if ready.contains(CLOSE_FDS_READY) {
+            return;
+        }
+    }
+}
+
+fn retain_unreaped_children() {
+    // SAFETY: the isolated fixture has no concurrent child lifecycle and installs
+    // ordinary waitable-child semantics before it spawns the wrapper.
+    let mut action = unsafe { std::mem::zeroed::<libc::sigaction>() };
+    action.sa_sigaction = libc::SIG_DFL;
+    // SAFETY: the signal mask belongs exclusively to this local action.
+    assert_eq!(unsafe { libc::sigemptyset(&mut action.sa_mask) }, 0);
+    // SAFETY: this process-local fixture intentionally clears SA_NOCLDWAIT.
+    assert_eq!(
+        unsafe { libc::sigaction(libc::SIGCHLD, &action, std::ptr::null_mut()) },
+        0
+    );
+}
+
+fn run_isolated_lifecycle_fixture(name: &str) {
+    let output = Command::new(std::env::current_exe().expect("locate lock CLI test executable"))
+        .args(["--exact", name, "--ignored", "--nocapture"])
+        .output()
+        .expect("launch isolated lock lifecycle fixture");
+    assert!(
+        output.status.success(),
+        "lock lifecycle fixture: {output:?}"
+    );
+}
+
+fn assert_process_terminal(pid: libc::pid_t) {
+    // SAFETY: signal zero only probes whether the process remains present.
+    if unsafe { libc::kill(pid, 0) } == -1 {
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    } else {
+        assert_process_zombie(pid as u32);
+    }
+}
+
+fn assert_process_zombie(pid: u32) {
+    #[cfg(target_os = "linux")]
+    assert_linux_process_zombie(pid);
+    #[cfg(target_os = "macos")]
+    assert_macos_process_zombie(pid);
+}
+
 struct Spoken {
     code: Option<i32>,
     out: Vec<u8>,
@@ -161,7 +388,7 @@ fn status_is_a_stable_read_only_direct_report_in_both_forms() {
     };
     assert_eq!(json.position, wire::ReplyPosition::Direct {});
     assert_eq!(text, json.body);
-    assert_eq!(text.root, fixture.lock_root().display().to_string());
+    assert_eq!(text.root, fixture.root.display().to_string());
     assert_eq!(text.exits.busy, BUSY_EXIT);
     assert_eq!(text.exits.taken, TAKEN_EXIT);
     assert_eq!(text.exits.full, FULL_EXIT);
@@ -205,7 +432,7 @@ fn run_preserves_exact_argv_environment_cwd_and_child_status() {
         format!("exact|--child-flag|{}", fixture.root.display())
     );
     assert_eq!(
-        fs::read(fixture.lock_root().join("solo/0")).expect("read released lock metadata"),
+        fs::read(fixture.lock_root().join("solo.lock")).expect("read released lock metadata"),
         b""
     );
 
@@ -213,6 +440,79 @@ fn run_preserves_exact_argv_environment_cwd_and_child_status() {
     assert_eq!(exited.code, Some(23));
     assert!(exited.out.is_empty());
     assert!(exited.err.is_empty());
+
+    let missing = fixture.invoke(&[
+        "--json",
+        "lock",
+        "run",
+        "solo",
+        "--",
+        "/definitely/missing/spice-lock-child",
+    ]);
+    assert_eq!(missing.code, Some(127));
+    let outcome: Outcome<()> = wire::decode(&missing.err).expect("launch fault decodes");
+    assert!(matches!(
+        outcome,
+        Outcome::Fault(fault) if fault.reason == "lock::child-launch-failed"
+    ));
+    let reacquired = fixture.invoke(&["lock", "run", "solo", "--", "/usr/bin/true"]);
+    assert_eq!(reacquired.code, Some(0));
+}
+
+#[test]
+fn explicit_absolute_file_and_pool_locations_are_reported_before_creation() {
+    let fixture = Fixture::new("absolute");
+    let file = fixture.root.join("absolute-state/single.lock");
+    let directory = fixture.root.join("absolute-state/pool");
+    fs::write(
+        fixture.root.join("spice.toml"),
+        format!(
+            concat!(
+                "[lock]\nbusy = 70\ntaken = 71\nfull = 72\n",
+                "[lock.solo]\npath = {:?}\n",
+                "[lock.pool]\ndirectory = {:?}\nshards = 2\n",
+            ),
+            file.display().to_string(),
+            directory.display().to_string(),
+        ),
+    )
+    .expect("absolute lock configuration writes");
+
+    let report = reply_body(fixture.invoke(&["lock", "--json"]));
+    let solo = report
+        .pools
+        .iter()
+        .find(|pool| pool.name == "solo")
+        .expect("single file is reported");
+    let pool = report
+        .pools
+        .iter()
+        .find(|pool| pool.name == "pool")
+        .expect("pool is reported");
+    assert_eq!(solo.kind, sill::LockTargetKind::File);
+    assert_eq!(solo.entries[0].path, file.display().to_string());
+    assert_eq!(pool.kind, sill::LockTargetKind::Pool);
+    assert_eq!(
+        pool.entries[0].path,
+        directory.join("0.lock").display().to_string()
+    );
+    assert!(!file.exists(), "status created an absolute lock file");
+    assert!(!directory.exists(), "status created an absolute pool");
+
+    assert_eq!(
+        fixture
+            .invoke(&["lock", "run", "solo", "--", "/usr/bin/true"])
+            .code,
+        Some(0)
+    );
+    assert_eq!(
+        fixture
+            .invoke(&["lock", "run", "pool", "--shard", "1", "--", "/usr/bin/true",])
+            .code,
+        Some(0)
+    );
+    assert!(file.is_file());
+    assert!(directory.join("1.lock").is_file());
 }
 
 #[test]
@@ -301,12 +601,137 @@ fn a_signal_to_the_wrapper_terminates_the_child_group_and_releases_the_lock() {
     assert_eq!(output.status.code(), Some(143));
     assert!(output.stderr.is_empty(), "signal fixture: {output:?}");
     assert_eq!(
-        fs::read(fixture.lock_root().join("solo/0")).expect("read lock after signal"),
+        fs::read(fixture.lock_root().join("solo.lock")).expect("read lock after signal"),
         b""
     );
 
     let reacquired = fixture.invoke(&["lock", "run", "solo", "--", "/usr/bin/true"]);
     assert_eq!(reacquired.code, Some(0));
+}
+
+#[test]
+fn unreaped_wrapper_synchronizes_first_topology_acquisition_after_group_completion() {
+    run_isolated_lifecycle_fixture(ACQUIRE_FIXTURE);
+}
+
+#[test]
+#[ignore = "subprocess fixture isolates unreaped-child signal policy"]
+fn unreaped_wrapper_synchronizes_first_topology_acquisition_fixture() {
+    retain_unreaped_children();
+    let fixture = Fixture::new("abrupt-acquire");
+    let topology = fixture.topology();
+    let mut protected = AbruptProtected::start(&fixture);
+
+    assert!(matches!(
+        topology.try_acquire("solo", None).expect("live group contention is observable"),
+        LockAttempt::Contended { kind: Contention::Busy, code } if code.get() == BUSY_EXIT
+    ));
+    protected.terminate_group();
+
+    let acquired = topology
+        .try_acquire("solo", None)
+        .expect("terminal group completion synchronizes");
+    let LockAttempt::Acquired(held) = acquired else {
+        panic!("first terminal-group acquisition remained contended");
+    };
+    assert_eq!(held.shard(), 0);
+    drop(held);
+    protected.reap();
+}
+
+#[test]
+fn terminal_zombie_owner_never_exposes_held_availability() {
+    run_isolated_lifecycle_fixture(REPORT_FIXTURE);
+}
+
+#[test]
+#[ignore = "subprocess fixture isolates unreaped-child signal policy"]
+fn terminal_zombie_owner_never_exposes_held_availability_fixture() {
+    retain_unreaped_children();
+    let fixture = Fixture::new("abrupt-report");
+    let topology = fixture.topology();
+    let mut protected = AbruptProtected::start(&fixture);
+    protected.terminate_group();
+
+    let report = topology
+        .report()
+        .expect("terminal zombie owner synchronizes");
+    let entry = &report
+        .pools
+        .iter()
+        .find(|pool| pool.name == "solo")
+        .expect("single lock is reported")
+        .entries[0];
+    assert_eq!(entry.availability, LockAvailability::Available);
+    assert_eq!(
+        entry.owner.as_ref().map(|owner| owner.pid),
+        Some(protected.wrapper_pid)
+    );
+    assert!(entry.owner_stale);
+    protected.reap();
+}
+
+#[test]
+fn a_surviving_group_member_retains_possession_after_the_leader_exits() {
+    let fixture = Fixture::new("descendant");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+    command
+        .args([
+            "lock",
+            "run",
+            "solo",
+            "--",
+            "/bin/sh",
+            "-c",
+            "exec 3<&0; /bin/cat <&3 & printf 'READY\\n'",
+        ])
+        .current_dir(&fixture.root)
+        .env_remove(steer::hook::INBOX)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut wrapper = command.spawn().expect("descendant wrapper launches");
+    let release = wrapper.stdin.take().expect("wrapper stdin is piped");
+    let mut output = BufReader::new(wrapper.stdout.take().expect("wrapper stdout is piped"));
+    let mut ready = String::new();
+    output
+        .read_line(&mut ready)
+        .expect("group leader reaches execution");
+    assert_eq!(ready, "READY\n");
+    assert!(
+        wrapper
+            .wait()
+            .expect("wrapper exits with its leader")
+            .success()
+    );
+
+    let report = reply_body(fixture.invoke(&["lock", "--json"]));
+    let entry = &report
+        .pools
+        .iter()
+        .find(|pool| pool.name == "solo")
+        .expect("single lock is reported")
+        .entries[0];
+    assert_eq!(entry.availability, LockAvailability::Held);
+    assert!(entry.owner.is_none());
+    assert_contention(
+        fixture.invoke(&["--json", "lock", "run", "solo", "--", "/usr/bin/true"]),
+        BUSY_EXIT,
+        "lock::busy",
+    );
+
+    drop(release);
+    let mut trailing = String::new();
+    output
+        .read_to_string(&mut trailing)
+        .expect("surviving group member closes stdout on exit");
+    assert!(trailing.is_empty(), "group member output: {trailing:?}");
+    assert_eq!(
+        fixture
+            .invoke(&["lock", "run", "solo", "--", "/usr/bin/true"])
+            .code,
+        Some(0)
+    );
 }
 
 #[test]
@@ -345,15 +770,24 @@ fn malformed_names_shards_and_configuration_refuse_without_running_a_child() {
     }
     assert!(!fixture.lock_root().exists());
 
-    fs::write(fixture.root.join("spice.toml"), "[lock.solo]\nshards = 0\n")
-        .expect("write invalid lock configuration");
-    let invalid = fixture.invoke(&["lock", "--json"]);
-    assert_eq!(invalid.code, Some(2));
-    let invalid: Outcome<()> = wire::decode(&invalid.err).expect("config refusal decodes");
-    let Outcome::Refusal(invalid) = invalid else {
-        panic!("invalid config must refuse: {invalid:?}");
-    };
-    assert_eq!(invalid.reason, "lock::configuration-refused");
+    for document in [
+        "[lock.solo]\ndirectory = 'locks/solo'\nshards = 0\n",
+        "[lock.solo]\npath = ''\n",
+        "[lock.solo]\npath = '../outside.lock'\n",
+        "[lock.solo]\npath = 'locks/solo.lock'\ndirectory = 'locks/solo'\n",
+        "[lock.solo]\nshards = 1\n",
+    ] {
+        fs::write(fixture.root.join("spice.toml"), document)
+            .expect("write invalid lock configuration");
+        let invalid = fixture.invoke(&["lock", "--json"]);
+        assert_eq!(invalid.code, Some(2));
+        let invalid: Outcome<()> = wire::decode(&invalid.err).expect("config refusal decodes");
+        let Outcome::Refusal(invalid) = invalid else {
+            panic!("invalid config must refuse: {invalid:?}");
+        };
+        assert_eq!(invalid.reason, "lock::configuration-refused");
+        assert!(!fixture.root.join("outside.lock").exists());
+    }
 }
 
 fn reply_body(spoken: Spoken) -> LockReport {
@@ -398,15 +832,15 @@ fn final_and_intermediate_symlinks_never_escape_the_configured_topology() {
     let final_external = final_link.root.join("external-final");
     fs::write(&final_external, b"external final lock").expect("external lock writes");
     let final_hold = hold_external(&final_external, "external-final");
-    let final_pool = final_link.lock_root().join("solo");
-    fs::create_dir_all(&final_pool).expect("final-link pool creates");
-    symlink(&final_external, final_pool.join("0")).expect("final shard symlink creates");
+    fs::create_dir_all(final_link.lock_root()).expect("final-link parent creates");
+    symlink(&final_external, final_link.lock_root().join("solo.lock"))
+        .expect("final lock symlink creates");
     assert_symlink_refusal(&final_link, "solo", &final_hold);
 
     let intermediate = Fixture::new("intermediate-symlink");
     let external_pool = intermediate.root.join("external-pool");
     fs::create_dir(&external_pool).expect("external pool creates");
-    let external_shard = external_pool.join("0");
+    let external_shard = external_pool.join("0.lock");
     fs::write(&external_shard, b"external intermediate lock").expect("external shard writes");
     let intermediate_hold = hold_external(&external_shard, "external-intermediate");
     fs::create_dir_all(intermediate.lock_root()).expect("lock root creates");
@@ -432,20 +866,19 @@ fn assert_symlink_refusal(repository: &Fixture, name: &str, external: &Possessio
     let before = tree(&repository.root);
 
     assert_state_fault(&repository.invoke(&["--json", "lock"]));
-    assert_state_fault(&repository.invoke(&[
-        "--json",
-        "lock",
-        "run",
-        name,
-        "--shard",
-        "0",
+    let mut arguments = vec!["--json", "lock", "run", name];
+    if name == "pool" {
+        arguments.extend(["--shard", "0"]);
+    }
+    arguments.extend([
         "--",
         "/bin/sh",
         "-c",
         "printf launched > \"$1\"",
         "lock-child",
         child_marker,
-    ]));
+    ]);
+    assert_state_fault(&repository.invoke(&arguments));
 
     assert!(
         !Path::new(child_marker).exists(),
@@ -518,4 +951,33 @@ fn walk_tree(root: &Path, directory: &Path, state: &mut BTreeMap<String, (u32, S
             panic!("snapshot encountered an unsupported file type at {relative}");
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn assert_linux_process_zombie(pid: u32) {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).expect("zombie stat reads");
+    let (_, fields) = stat.rsplit_once(") ").expect("zombie stat fields split");
+    assert_eq!(fields.as_bytes().first(), Some(&b'Z'));
+}
+
+#[cfg(target_os = "macos")]
+fn assert_macos_process_zombie(pid: u32) {
+    let mut information = std::mem::MaybeUninit::<libc::proc_bsdshortinfo>::uninit();
+    let size = libc::c_int::try_from(size_of::<libc::proc_bsdshortinfo>())
+        .expect("process information size fits c_int");
+    // SAFETY: the process information destination is writable for its complete size.
+    let bytes = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDT_SHORTBSDINFO,
+            0,
+            information.as_mut_ptr().cast(),
+            size,
+        )
+    };
+    assert_eq!(bytes, 0);
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ESRCH)
+    );
 }

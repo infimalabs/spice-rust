@@ -81,6 +81,10 @@ pub enum Domain {
     JournalBackupManifest,
     /// The exact bytes of one member in a journal backup bundle.
     JournalBackupMember,
+    /// The exact bytes of one task-addressed sidecar artifact.
+    TaskArtifactPayload,
+    /// One complete manifest-referenced task artifact store generation.
+    TaskArtifactStore,
     /// The exact restore action pinned before authority replacement.
     JournalRestorePlan,
     /// The payload manifest of one release target.
@@ -131,6 +135,10 @@ pub enum Domain {
     GateMeasurement,
     /// The complete current identity and ordered outcome of one gate run.
     GateReceipt,
+    /// One complete current persistent gate-state ledger.
+    GateStateLedger,
+    /// One immutable accepted or rejected gate-state transition.
+    GateStateReceipt,
     /// The exact tracked and machine-local executable policy documents.
     ConfigExecutableSurface,
 }
@@ -151,6 +159,8 @@ impl Domain {
             Self::ConfigPlan => "spice.config.plan.v1",
             Self::JournalBackupManifest => "spice.journal.backup-manifest.v1",
             Self::JournalBackupMember => "spice.journal.backup-member.v1",
+            Self::TaskArtifactPayload => "spice.task.artifact-payload.v1",
+            Self::TaskArtifactStore => "spice.task.artifact-store.v1",
             Self::JournalRestorePlan => "spice.journal.restore-plan.v1",
             Self::DistTargetPayload => "spice.dist.target-payload.v1",
             Self::DistArtifact => "spice.dist.artifact.v1",
@@ -176,6 +186,8 @@ impl Domain {
             Self::GateInventory => "spice.gate.inventory.v1",
             Self::GateMeasurement => "spice.gate.measurement.v1",
             Self::GateReceipt => "spice.gate.receipt.v1",
+            Self::GateStateLedger => "spice.gate.state-ledger.v1",
+            Self::GateStateReceipt => "spice.gate.state-receipt.v1",
             Self::ConfigExecutableSurface => "spice.config.executable-surface.v1",
         }
     }

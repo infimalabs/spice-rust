@@ -85,6 +85,16 @@ const RESIDENCY: &str = r#"{
     "occupant": "018f82d4-6f59-7d06-92e3-bce913116303",
     "lineage": ["018f82d4-6f59-7d06-92e3-bce913116305"],
     "capabilities": ["018f82d4-6f59-7d06-92e3-bce913116306"],
+    "session": {
+      "lane": "018f82d4-6f59-7d06-92e3-bce913116302",
+      "occupant": "018f82d4-6f59-7d06-92e3-bce913116303",
+      "worktree": "/worktrees/lane-a",
+      "vendor": "claude",
+      "epoch": "018f82d4-6f59-7d06-92e3-bce913116304",
+      "stream": "stdout",
+      "identity": "018f7777-7777-7444-8888-999999999999",
+      "locus": { "member": 7, "offset": 31, "length": 93 }
+    },
     "disposition": "active"
   }]
 }"#;
@@ -145,6 +155,7 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
             "life",
             "lineage",
             "occupant",
+            "session",
             "vendor",
             "worktree",
         ],

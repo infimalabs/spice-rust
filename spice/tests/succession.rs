@@ -13,6 +13,7 @@ struct Case {
     path: &'static str,
     arguments: &'static [&'static str],
     output: OutputKind,
+    expected: ExpectedOutcome,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -21,12 +22,36 @@ enum OutputKind {
     ChildStream,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ExpectedOutcome {
+    Generic,
+    TaskMigration,
+}
+
 const UUID: &str = "00000000-0000-4000-8000-000000000001";
 const DIGEST: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
 const CASES: &[Case] = &[
+    case("demo", &[]),
     case("watch", &["watch", "missing"]),
     case("retro", &["retro", "missing"]),
+    case("session", &["session"]),
+    case("session briefing", &["session", "briefing"]),
+    case("session commands", &["session", "commands"]),
+    case("session commits", &["session", "commits"]),
+    case("session compactions", &["session", "compactions"]),
+    case("session messages", &["session", "messages"]),
+    case("session phases", &["session", "phases"]),
+    case("session slices", &["session", "slices"]),
+    case("session summary", &["session", "summary"]),
+    case("session sweep", &["session", "sweep"]),
+    case(
+        "session thread",
+        &["session", "thread", "00000000-0000-4000-8000-000000000002"],
+    ),
+    case("session timeline", &["session", "timeline"]),
+    case("session tokens", &["session", "tokens"]),
+    case("session turns", &["session", "turns"]),
     case("doctor", &["doctor"]),
     case("version", &["version"]),
     case("install", &["install"]),
@@ -52,7 +77,9 @@ const CASES: &[Case] = &[
         &["board", "handout", "readiness-handout.json"],
     ),
     case("task next", &["task", "next"]),
+    case("task reclaim", &["task", "reclaim"]),
     case("task add", &["task", "add", "readiness task"]),
+    case("task capture", &["task", "capture"]),
     case("task done", &["task", "done"]),
     case("task review", &["task", "review", "READY-12345678"]),
     case(
@@ -70,14 +97,29 @@ const CASES: &[Case] = &[
         "task depends",
         &["task", "depends", "READY-12345678", "AFTER-12345678"],
     ),
+    case(
+        "task artifact add",
+        &["task", "artifact", "add", "READY-12345678", "missing"],
+    ),
+    case(
+        "task artifact list",
+        &["task", "artifact", "list", "READY-12345678"],
+    ),
+    case("task artifact prune", &["task", "artifact", "prune"]),
+    case(
+        "task artifact show",
+        &["task", "artifact", "show", "READY-12345678", "A1"],
+    ),
     case("doc", &["doc", "missing"]),
     case("doc ledger", &["doc", "ledger", "READY-12345678"]),
     case("lane", &["lane"]),
     case("lane add", &["lane", "add"]),
     case("lane drain", &["lane", "drain", UUID]),
     case("lane wake", &["lane", "wake", UUID]),
+    case("lane import", &["lane", "import", UUID, "."]),
     case("steer", &["steer", UUID, "readiness direction"]),
     case("steer cancel", &["steer", "cancel", UUID]),
+    case("steer recover", &["steer", "recover", UUID]),
     case("inbox", &["inbox"]),
     case("recall", &["recall"]),
     case("consent", &["consent"]),
@@ -104,9 +146,16 @@ const CASES: &[Case] = &[
         path: "run",
         arguments: &["run", "--", "/bin/echo", "run"],
         output: OutputKind::ChildStream,
+        expected: ExpectedOutcome::Generic,
     },
     case("ack", &["ack", "ready"]),
     case("config", &["config"]),
+    Case {
+        path: "config migrate-tasks",
+        arguments: &["config", "migrate-tasks", "task-export.json"],
+        output: OutputKind::Document,
+        expected: ExpectedOutcome::TaskMigration,
+    },
 ];
 
 const fn case(path: &'static str, arguments: &'static [&'static str]) -> Case {
@@ -114,6 +163,7 @@ const fn case(path: &'static str, arguments: &'static [&'static str]) -> Case {
         path,
         arguments,
         output: OutputKind::Document,
+        expected: ExpectedOutcome::Generic,
     }
 }
 
@@ -145,8 +195,9 @@ impl Drop for Scratch {
 fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
     let registered = landed_ledger_paths();
     let exercised = CASES.iter().map(|case| case.path).collect::<BTreeSet<_>>();
-    assert_eq!(registered.len(), 63);
-    assert_eq!(CASES.len(), 63);
+    assert_eq!(registered.len(), 87);
+    assert_eq!(CASES.len(), 87);
+    assert_eq!(exercised.len(), 87);
     assert_eq!(exercised.len(), CASES.len(), "process case repeated");
     assert_eq!(
         exercised, registered,
@@ -154,6 +205,7 @@ fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
     );
 
     let scratch = Scratch::new();
+    write_task_export(scratch.path());
     for case in CASES {
         let text = invoke(scratch.path(), case, false);
         let json = invoke(scratch.path(), case, true);
@@ -164,6 +216,7 @@ fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
         assert_one_stream(&json, case.path);
         assert_no_placeholder(&text, case.path);
         assert_no_placeholder(&json, case.path);
+        assert_expected_outcome(case, &text, &json);
 
         if case.output == OutputKind::Document {
             let document = if json.status.success() {
@@ -176,6 +229,42 @@ fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
             });
         }
     }
+}
+
+fn write_task_export(root: &Path) {
+    fs::write(
+        root.join("task-export.json"),
+        concat!(
+            "{\n",
+            "  \"version\": 1,\n",
+            "  \"release\": \"0.31.0\",\n",
+            "  \"tasks\": {\"hidden_stems\": [\"sandbox\"]}\n",
+            "}\n",
+        ),
+    )
+    .expect("write explicit predecessor task export");
+}
+
+fn assert_expected_outcome(case: &Case, text: &Output, json: &Output) {
+    if case.expected == ExpectedOutcome::Generic {
+        return;
+    }
+    assert!(text.status.success(), "{} text: {text:?}", case.path);
+    let text = String::from_utf8(text.stdout.clone()).expect("migration text is UTF-8");
+    assert!(text.contains("source_release = \"0.31.0\""), "{text}");
+    assert!(text.contains("\"maxim_proposal\""), "{text}");
+    assert!(text.contains("\"sandbox\""), "{text}");
+
+    let outcome: wire::Outcome<serde_json::Value> =
+        wire::decode(&json.stdout).expect("migration JSON is a typed outcome");
+    let wire::Outcome::Reply(reply) = outcome else {
+        panic!("{} must return a typed reply: {outcome:?}", case.path);
+    };
+    assert_eq!(reply.body["source_release"], "0.31.0");
+    assert_eq!(
+        reply.body["tasks"]["hidden_stems"],
+        serde_json::json!(["oops", "maxim_proposal", "sandbox"]),
+    );
 }
 
 fn assert_exit(case: &Case, output: &Output, form: &str) {
@@ -214,10 +303,28 @@ fn invoke(root: &Path, case: &Case, json: bool) -> Output {
     if json {
         command.arg("--json");
     }
+    if case.path == "demo" {
+        command.args([
+            "demo",
+            "--seed-only",
+            "--root",
+            if json {
+                "readiness-demo-json"
+            } else {
+                "readiness-demo-text"
+            },
+        ]);
+    } else {
+        command.args(case.arguments);
+    }
     command
-        .args(case.arguments)
         .current_dir(root)
         .env_remove(steer::hook::INBOX)
+        .env_remove("CODEX_THREAD_ID") // env-policy: allow
+        .env_remove("CLAUDE_CODE_SESSION_ID") // env-policy: allow
+        .env_remove("SPICE_AGENT_VENDOR") // env-policy: allow
+        .env("CODEX_HOME", root.join("absent-codex-home"))
+        .env("CLAUDE_CONFIG_DIR", root.join("absent-claude-home"))
         .output()
         .unwrap_or_else(|error| panic!("{} process did not launch: {error}", case.path))
 }

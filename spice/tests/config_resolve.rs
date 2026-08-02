@@ -67,7 +67,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert_eq!(missing.root(), &spice::config::Root::default());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 24);
+    assert_eq!(missing.provenance().len(), 41);
     assert!(
         missing
             .provenance()
@@ -93,22 +93,105 @@ fn missing_and_empty_documents_are_empty_intent() {
 }
 
 #[test]
-fn coexistence_ignores_only_the_two_tracked_scaffold_roots() {
+fn speech_backends_resolve_with_local_only_external_argv() {
+    let disabled = resolve(documents(Some("[say]\nbackend = 'disabled'\n"), None))
+        .expect("tracked disabled speech resolves");
+    assert_eq!(
+        disabled.root().say().backend(),
+        canvas::SpeechBackend::Disabled
+    );
+    assert!(disabled.root().say().command().is_none());
+    assert_eq!(path_source(&disabled, "say.backend"), ConfigSource::Tracked);
+
+    let system = resolve(documents(
+        Some("[say]\nvoice = 'Samantha'\nwords_per_minute = 205\n"),
+        None,
+    ))
+    .expect("tracked system speech resolves");
+    assert_eq!(system.root().say().voice(), "Samantha");
+    assert_eq!(system.root().say().words_per_minute(), 205);
+
+    let external = resolve(documents(
+        Some("[say]\nbackend = 'external'\n"),
+        Some(concat!(
+            "[say]\n",
+            "command = ['espeak-ng', '--stdout', '-s', '{words_per_minute}']\n",
+            "content_type = 'audio/wav'\n",
+        )),
+    ))
+    .expect("tracked selection and local command resolve together");
+    assert_eq!(
+        external
+            .root()
+            .say()
+            .resolved_command()
+            .expect("external argv"),
+        ["espeak-ng", "--stdout", "-s", "175"]
+    );
+    assert_eq!(path_source(&external, "say.command"), ConfigSource::Local);
+}
+
+#[test]
+fn speech_configuration_refuses_untrusted_or_malformed_execution() {
+    let tracked_command = resolve(documents(
+        Some("[say]\nbackend = 'external'\ncommand = ['espeak-ng']\n"),
+        None,
+    ))
+    .expect_err("tracked documents cannot install executable argv");
+    assert!(tracked_command.issues().iter().any(|issue| {
+        issue
+            .path()
+            .is_some_and(|path| path.to_string() == "say.command")
+            && issue.source() == ConfigSource::Tracked
+            && issue.kind() == IssueKind::Policy
+    }));
+
+    for (document, path) in [
+        ("[say]\nbackend = 'mystery'\n", "say.backend"),
+        ("[say]\nvoice = ''\n", "say.voice"),
+        (
+            "[say]\ncontent_type = 'audio/wav; charset=utf-8'\n",
+            "say.content_type",
+        ),
+        ("[say]\nwords_per_minute = 0\n", "say.words_per_minute"),
+    ] {
+        let error = resolve(documents(Some(document), None))
+            .expect_err("malformed speech configuration must be refused");
+        assert!(
+            error.issues().iter().any(|issue| {
+                issue
+                    .path()
+                    .is_some_and(|candidate| candidate.to_string() == path)
+                    && issue.kind() == IssueKind::Malformed
+            }),
+            "missing malformed issue for {path}: {:?}",
+            error.issues()
+        );
+    }
+}
+
+#[test]
+fn coexistence_admits_current_task_metadata_and_ignores_the_policy_scaffold() {
     let tracked = concat!(
-        "[tasks]\nstems = ['rim']\n",
+        "[tasks]\nbase_stems = ['task']\nstems = ['rim']\nhidden_stems = ['sandbox']\n",
         "[policy]\nenv_names = []\n",
         "[taste.polling]\nwords = ['poll*']\nmessage = 'use events'\n",
     );
-    let local = "[lock.worker]\nshards = 2\n";
+    let local = "[lock.worker]\ndirectory = 'locks/worker'\nshards = 2\n";
 
-    let strict = resolve(documents(Some(tracked), Some(local)))
+    let strict_tracked = tracked.replace("base_stems = ['task']\n", "");
+    let strict = resolve(documents(Some(&strict_tracked), Some(local)))
         .expect("strict resolution admits typed shared metadata");
     assert_eq!(strict.root().tasks().stems(), ["rim"]);
     assert!(strict.root().policy().env_names().is_empty());
 
     let coexisting = resolve(coexisting_documents(Some(tracked), Some(local)))
         .expect("coexistence projects out only predecessor roots");
-    assert!(coexisting.root().tasks().stems().is_empty());
+    assert_eq!(coexisting.root().tasks().stems(), ["rim"]);
+    assert_eq!(
+        coexisting.root().tasks().hidden_stems(),
+        ["oops", "maxim_proposal", "sandbox"]
+    );
     assert_eq!(
         coexisting.root().tasks().project_min_depth(),
         dialect::PROJECT_MIN_DEPTH as u64
@@ -128,6 +211,18 @@ fn coexistence_ignores_only_the_two_tracked_scaffold_roots() {
         path_source(&coexisting, "lock.worker.shards"),
         ConfigSource::Local
     );
+
+    let typo = resolve(coexisting_documents(
+        Some("[tasks]\nhidden_stem = ['sandbox']\n"),
+        None,
+    ))
+    .expect_err("unknown current task metadata must not disappear as scaffold");
+    assert!(typo.issues().iter().any(|issue| {
+        issue.kind() == IssueKind::Unknown
+            && issue
+                .path()
+                .is_some_and(|path| path.to_string() == "tasks.hidden_stem")
+    }));
 
     for (tracked, local, path) in [
         (Some("[unknown]\nvalue = 1\n"), None, "unknown"),
@@ -224,6 +319,7 @@ fn shared_metadata_is_tracked_only_and_enforces_names_and_depths() {
             r#"
 [tasks]
 stems = ["app", "board"]
+hidden_stems = ["sandbox", "oops", "sandbox"]
 project_min_depth = 2
 project_max_depth = 3
 
@@ -236,6 +332,10 @@ env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
     .expect("shared tracked metadata resolves");
 
     assert_eq!(resolved.root().tasks().stems(), ["app", "board"]);
+    assert_eq!(
+        resolved.root().tasks().hidden_stems(),
+        ["oops", "maxim_proposal", "sandbox"]
+    );
     assert_eq!(resolved.root().tasks().project_min_depth(), 2);
     assert_eq!(resolved.root().tasks().project_max_depth(), 3);
     assert_eq!(
@@ -244,12 +344,17 @@ env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
     );
     for path in [
         "tasks.stems",
+        "tasks.hidden_stems",
         "tasks.project_min_depth",
         "tasks.project_max_depth",
         "policy.env_names",
     ] {
         assert_eq!(path_source(&resolved, path), ConfigSource::Tracked);
     }
+    assert_eq!(
+        path_builtin(&resolved, "tasks.hidden_stems"),
+        Some(Builtin::Strings(&["oops", "maxim_proposal"]))
+    );
 
     let error = resolve(documents(
         Some(
@@ -312,6 +417,49 @@ env_names = ["LOCAL_NAME"]
             }),
             "missing {source:?} {kind:?} at {path}: {:#?}",
             error.issues()
+        );
+    }
+}
+
+#[test]
+fn hidden_stems_refuse_each_malformed_or_public_colliding_value_at_its_index() {
+    for (document, index, expected) in [
+        ("[tasks]\nhidden_stems = ['']\n", 0, "must match"),
+        ("[tasks]\nhidden_stems = ['.oops']\n", 0, "must match"),
+        ("[tasks]\nhidden_stems = ['bad-stem']\n", 0, "must match"),
+        ("[tasks]\nhidden_stems = ['Bad']\n", 0, "must match"),
+        ("[tasks]\nhidden_stems = ['two.parts']\n", 0, "must match"),
+        (
+            "[tasks]\nhidden_stems = ['sandbox', 'bad-stem']\n",
+            1,
+            "must match",
+        ),
+        (
+            "[tasks]\nstems = ['rim']\nhidden_stems = ['rim']\n",
+            0,
+            "conflicts with public stem",
+        ),
+        (
+            "[tasks]\nhidden_stems = ['task']\n",
+            0,
+            "conflicts with public stem",
+        ),
+    ] {
+        let error = resolve(documents(Some(document), None))
+            .expect_err("malformed hidden metadata must refuse");
+        let issue = error
+            .issues()
+            .iter()
+            .find(|issue| {
+                issue.kind() == IssueKind::Malformed
+                    && issue.path().is_some_and(|path| {
+                        path.to_string() == format!("tasks.hidden_stems[{index}]")
+                    })
+            })
+            .unwrap_or_else(|| panic!("missing indexed issue for {document:?}: {error}"));
+        assert!(
+            issue.message().contains(expected),
+            "{document:?}: {issue:?}"
         );
     }
 }
@@ -455,27 +603,23 @@ fn proof_executable_paths_refuse_every_non_local_or_non_absolute_route() {
     }
 }
 
-#[test]
-fn tracked_document_can_address_every_registry_descriptor() {
-    let local = format!(
-        "[proof]\ncontainer = \"{}\"\nrunner = \"{}\"\n",
-        absolute("container"),
-        absolute("runner")
-    );
-    let resolved = resolve(documents(
-        Some(
-            r#"
+const TRACKED_ALL_DESCRIPTOR_DOCUMENT: &str = r#"
 [taste.alpha]
 words = ["done*"]
 message = "Done."
 
 [tasks]
 stems = ["app", "board"]
+hidden_stems = ["sandbox"]
 project_min_depth = 2
 project_max_depth = 3
 
 [policy]
 env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
+
+[policy.commit_message]
+allowed_trailers = ["Spice-Origin"]
+blocked_trailers = ["Co-Authored-By"]
 
 [consent]
 posture = "deny"
@@ -505,8 +649,18 @@ hold = "40m"
 expiry = "12h"
 resend = ["2m"]
 
+[vendor.claude]
+binary = "/opt/claude"
+model = "opus"
+effort = "xhigh"
+auto_compact_window_tokens = 123456
+
 [vendor.codex]
 binary = "/opt/codex"
+model = "gpt-current"
+effort = "max"
+personality = "pragmatic"
+fast_mode = true
 
 [listen]
 window = "2m"
@@ -517,22 +671,47 @@ taken = 71
 full = 72
 
 [lock.alpha]
+directory = "locks/alpha"
 shards = 2
+
+[lock.single]
+path = "locks/single.lock"
 
 [canvas.pack]
 rows = 50
 
+[say]
+backend = "external"
+voice = "Samantha"
+content_type = "audio/wav"
+words_per_minute = 190
+
 [proof]
 image = "sha256:4444444444444444444444444444444444444444444444444444444444444444"
-"#,
+"#;
+
+#[test]
+fn tracked_document_can_address_every_registry_descriptor() {
+    let local = format!(
+        concat!(
+            "[say]\ncommand = ['espeak-ng', '--stdout']\n\n",
+            "[proof]\ncontainer = \"{}\"\nrunner = \"{}\"\n",
         ),
+        absolute("container"),
+        absolute("runner")
+    );
+    let resolved = resolve(documents(
+        Some(TRACKED_ALL_DESCRIPTOR_DOCUMENT),
         Some(&local),
     ))
     .expect("tracked and local descriptors resolve together");
 
     for row in resolved.provenance() {
         let path = row.path().to_string();
-        let expected = if matches!(path.as_str(), "proof.container" | "proof.runner") {
+        let expected = if matches!(
+            path.as_str(),
+            "say.command" | "proof.container" | "proof.runner"
+        ) {
             ConfigSource::Local
         } else {
             ConfigSource::Tracked
@@ -594,9 +773,10 @@ fn tables_merge_recursively_and_dynamic_lock_rows_keep_typed_paths() {
     let resolved = resolve(documents(
         Some(concat!(
             "[lock]\nbusy = 70\ntaken = 71\nfull = 72\n",
-            "[lock.alpha]\nshards = 2\n[lock.\"a.b\"]\nshards = 3\n",
+            "[lock.alpha]\ndirectory = 'locks/alpha'\nshards = 2\n",
+            "[lock.\"a.b\"]\ndirectory = 'locks/a.b'\nshards = 3\n",
         )),
-        Some("[lock.alpha]\nshards = 4\n[lock.zeta]\nshards = 5\n"),
+        Some("[lock.alpha]\nshards = 4\n[lock.zeta]\ndirectory = 'locks/zeta'\nshards = 5\n"),
     ))
     .expect("dynamic lock tables merge");
 
@@ -606,7 +786,7 @@ fn tables_merge_recursively_and_dynamic_lock_rows_keep_typed_paths() {
             .root()
             .lock()
             .named()
-            .map(|(name, shards)| (name.as_str(), shards.get()))
+            .map(|(name, target)| (name.as_str(), target.shards().get()))
             .collect::<Vec<_>>(),
         [("a.b", 3), ("alpha", 4), ("zeta", 5)]
     );
@@ -741,9 +921,11 @@ life = "Drain"
 window = "never"
 
 [lock.alpha]
+directory = "locks/alpha"
 shards = 0
 
 [lock.beta]
+directory = "locks/beta"
 shards = 2
 mystery = 3
 
@@ -878,7 +1060,8 @@ fn flag_values_cannot_cross_descriptor_types_or_duplicate_mappings() {
 
 #[test]
 fn equivalent_repeated_resolutions_are_identical_and_the_resolver_has_no_io_surface() {
-    let tracked = "[listen]\nwindow = \"2m\"\n[lock.alpha]\nshards = 2\n";
+    let tracked =
+        "[listen]\nwindow = \"2m\"\n[lock.alpha]\ndirectory = 'locks/alpha'\nshards = 2\n";
     let local = "[listen]\nwindow = \"3m\"\n";
     let first = resolve(documents(Some(tracked), Some(local))).expect("first resolution");
     let second = resolve(documents(Some(tracked), Some(local))).expect("second resolution");

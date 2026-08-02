@@ -8,14 +8,18 @@ use sill::{
     StreamPolicy, WaitPolicy,
 };
 use vendor::{
-    Attribution, Effort, Launch, McpServer, Process, Record, RecordStream, Resume, SessionId,
-    SteeringHook, SteeringKey, claude, codex, permission_request,
+    Attribution, ContractError, Effort, Launch, McpServer, Process, Record, RecordStream, Resume,
+    SessionId, SteeringHook, SteeringKey, claude, codex, permission_request,
 };
 use wire::CanonicalUuid;
 
 const CLAUDE_PROSE: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3,"output_tokens":2}}}"#;
+const CLAUDE_SESSION: &[u8] =
+    br#"{"type":"system","subtype":"init","session_id":"018f7777-7777-7444-8888-999999999999"}"#;
 const CODEX_PROSE: &[u8] =
     br#"{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"done"}}"#;
+const CODEX_SESSION: &[u8] =
+    br#"{"type":"thread.started","thread_id":"019fbc32-beb1-7ee0-b814-a7513f8f8ea5"}"#;
 
 const HOOK_COMMAND: &str = "/usr/bin/spice agent post-tool-hook --repo-root /worktree";
 const STEERING_TOKEN: &str = "1kJHh5bb";
@@ -104,6 +108,7 @@ fn codex_carries_every_launch_knob_and_resumes_after_its_flags() {
             "/worktree",
             "--model",
             "gpt-5-codex",
+            "--json",
             "--config",
             CODEX_HOOK_OVERRIDE,
             "--config",
@@ -128,7 +133,7 @@ fn codex_carries_every_launch_knob_and_resumes_after_its_flags() {
         CODEX_MODEL,
         Resume::Session(SessionId::new("codex-thread").expect("session identity")),
     );
-    resuming.fast_mode = true;
+    resuming.fast_mode = Some(true);
     resuming.personality = Some("terse".to_owned());
     let resumed = codex::record("/opt/codex", &resuming).expect("valid resumed record");
     assert_record(
@@ -140,6 +145,7 @@ fn codex_carries_every_launch_knob_and_resumes_after_its_flags() {
             "/worktree",
             "--model",
             "gpt-5-codex",
+            "--json",
             "--config",
             CODEX_HOOK_OVERRIDE,
             "--config",
@@ -171,10 +177,11 @@ fn codex_carries_every_launch_knob_and_resumes_after_its_flags() {
 #[test]
 fn every_launch_closes_the_steering_path_end_to_end() {
     let launch = fixture(CLAUDE_MODEL, Resume::Fresh);
+    let codex_launch = fixture(CODEX_MODEL, Resume::Fresh);
 
     // Delivery: both dialects install the hook that carries steering back in.
     let claude = claude::record("/opt/claude", &launch).expect("valid record");
-    let codex = codex::record("/opt/codex", &launch).expect("valid record");
+    let codex = codex::record("/opt/codex", &codex_launch).expect("valid record");
     assert!(
         arguments(&claude)
             .iter()
@@ -229,18 +236,73 @@ fn a_repository_that_refuses_claudes_trailer_gets_attribution_withheld() {
 }
 
 #[test]
-fn both_vendors_carry_every_configured_effort() {
+fn vendor_effort_rendering_carries_every_shared_value_once() {
     for effort in Effort::ALL {
-        let mut launch = fixture(CLAUDE_MODEL, Resume::Fresh);
-        launch.effort = *effort;
-        let record = claude::record("/opt/claude", &launch).expect("valid record");
-        assert_arguments_contain(&record, &["--effort", effort.as_str()]);
+        let mut claude_launch = fixture(CLAUDE_MODEL, Resume::Fresh);
+        claude_launch.effort = *effort;
+        let record = claude::record("/opt/claude", &claude_launch).expect("valid Claude record");
+        let rendered = arguments(&record);
+        assert_eq!(
+            rendered
+                .windows(2)
+                .filter(|pair| pair == &["--effort", effort.as_str()])
+                .count(),
+            1,
+            "Claude effort {:?} must render exactly once",
+            effort
+        );
 
-        let codex = codex::record("/opt/codex", &launch).expect("valid record");
+        let mut codex_launch = fixture(CODEX_MODEL, Resume::Fresh);
+        codex_launch.effort = *effort;
+        let codex = codex::record("/opt/codex", &codex_launch).expect("valid Codex record");
         assert!(
             arguments(&codex).contains(&format!("model_reasoning_effort=\"{}\"", effort.as_str())),
         );
     }
+}
+
+#[test]
+fn vendor_specific_knobs_refuse_instead_of_being_silently_ignored() {
+    let mut claude_launch = fixture(CLAUDE_MODEL, Resume::Fresh);
+    claude_launch.personality = Some("friendly".to_owned());
+    assert_eq!(
+        claude::record("/opt/claude", &claude_launch).expect_err("personality refuses"),
+        ContractError::Unsupported {
+            path: "vendor.claude.personality",
+            vendor: "Claude",
+        }
+    );
+
+    claude_launch.personality = None;
+    claude_launch.fast_mode = Some(false);
+    assert_eq!(
+        claude::record("/opt/claude", &claude_launch).expect_err("fast mode refuses"),
+        ContractError::Unsupported {
+            path: "vendor.claude.fast_mode",
+            vendor: "Claude",
+        }
+    );
+
+    let mut codex_launch = fixture(CODEX_MODEL, Resume::Fresh);
+    codex_launch.fast_mode = None;
+    assert_eq!(
+        codex::record("/opt/codex", &codex_launch).expect_err("omitted fast mode refuses"),
+        ContractError::Missing {
+            path: "vendor.codex.fast_mode",
+        }
+    );
+}
+
+#[test]
+fn codex_personality_is_rendered_as_one_toml_string() {
+    let mut launch = fixture(CODEX_MODEL, Resume::Fresh);
+    launch.personality = Some("direct \"operator\"\\nvoice".to_owned());
+
+    let record = codex::record("/opt/codex", &launch).expect("personality renders");
+    assert_arguments_contain(
+        &record,
+        &["personality=\"direct \\\"operator\\\"\\\\nvoice\""],
+    );
 }
 
 #[test]
@@ -256,6 +318,89 @@ fn a_session_identity_stores_exactly_what_it_admitted() {
         "padding admitted for the emptiness check must not ride into --resume"
     );
     assert!(SessionId::new("  ").is_err());
+}
+
+#[test]
+fn both_selected_record_contracts_admit_the_exact_typed_session_declaration() {
+    let cases = [
+        (
+            claude::record("/opt/claude", &fixture(CLAUDE_MODEL, Resume::Fresh))
+                .expect("Claude record"),
+            CLAUDE_SESSION,
+            "018f7777-7777-7444-8888-999999999999",
+        ),
+        (
+            codex::record("/opt/codex", &fixture(CODEX_MODEL, Resume::Fresh))
+                .expect("Codex record"),
+            CODEX_SESSION,
+            "019fbc32-beb1-7ee0-b814-a7513f8f8ea5",
+        ),
+    ];
+    for (record, bytes, expected) in cases {
+        let locus = Locus::new(7, 31, bytes.len() as u64);
+        let decoded = record
+            .decode(RecordStream::Stdout, bytes, locus)
+            .expect("matching locus")
+            .expect("selected stream");
+        let declaration = record
+            .session_declaration(&decoded)
+            .expect("session identity is admitted")
+            .expect("initialization record declares a session");
+        assert_eq!(declaration.session.as_str(), expected);
+        assert_eq!(declaration.locus, locus);
+    }
+}
+
+#[test]
+fn diagnostics_malformed_records_and_unrelated_events_never_create_session_authority() {
+    let cases = [
+        (
+            claude::record("/opt/claude", &fixture(CLAUDE_MODEL, Resume::Fresh))
+                .expect("Claude record"),
+            CLAUDE_SESSION,
+            CLAUDE_PROSE,
+            br#"{"type":"system","subtype":"init"}"#.as_slice(),
+            br#"{"type":"system","subtype":"init","session_id":""}"#.as_slice(),
+        ),
+        (
+            codex::record("/opt/codex", &fixture(CODEX_MODEL, Resume::Fresh))
+                .expect("Codex record"),
+            CODEX_SESSION,
+            CODEX_PROSE,
+            br#"{"type":"thread.started"}"#.as_slice(),
+            br#"{"type":"thread.started","thread_id":""}"#.as_slice(),
+        ),
+    ];
+    for (record, session, unrelated, malformed, empty) in cases {
+        let diagnostic_locus = Locus::new(8, 0, session.len() as u64);
+        assert!(
+            record
+                .decode(RecordStream::Stderr, session, diagnostic_locus)
+                .expect("diagnostic locus matches")
+                .is_none()
+        );
+
+        for bytes in [unrelated, malformed] {
+            let locus = Locus::new(9, 0, bytes.len() as u64);
+            let decoded = record
+                .decode(RecordStream::Stdout, bytes, locus)
+                .expect("selected record locus matches")
+                .expect("selected record is accounted");
+            assert_eq!(
+                record
+                    .session_declaration(&decoded)
+                    .expect("non-session record has no invalid identity"),
+                None
+            );
+        }
+
+        let locus = Locus::new(10, 0, empty.len() as u64);
+        let decoded = record
+            .decode(RecordStream::Stdout, empty, locus)
+            .expect("empty declaration locus matches")
+            .expect("selected declaration is decoded");
+        assert!(record.session_declaration(&decoded).is_err());
+    }
 }
 
 #[test]
@@ -296,7 +441,7 @@ fn fixture(model: &str, resume: Resume) -> Launch {
         model: model.to_owned(),
         effort: Effort::High,
         personality: None,
-        fast_mode: false,
+        fast_mode: (model == CODEX_MODEL).then_some(false),
         attribution: Attribution::Harness,
         hook: SteeringHook {
             command: HOOK_COMMAND.to_owned(),

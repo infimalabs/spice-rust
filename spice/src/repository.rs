@@ -29,11 +29,14 @@ pub struct StatePaths {
     canvas: PathBuf,
     degraded: PathBuf,
     tape: PathBuf,
+    artifact_data: PathBuf,
+    artifacts: PathBuf,
 }
 
 impl StatePaths {
     fn new(runtime: PathBuf) -> Self {
         let data = runtime.join("data");
+        let artifact_data = runtime.join("artifacts");
         Self {
             journal: data.join("spicejournal.sqlite3"),
             folds: data.join("spicefolds.sqlite3"),
@@ -43,6 +46,8 @@ impl StatePaths {
             canvas: runtime.join("canvas"),
             degraded: runtime.join("degraded"),
             tape: runtime.join("tape"),
+            artifacts: artifact_data.join("tasks"),
+            artifact_data,
             runtime,
             data,
         }
@@ -106,6 +111,12 @@ impl StatePaths {
     #[must_use]
     pub fn tape(&self) -> &Path {
         &self.tape
+    }
+
+    /// Task-addressed sidecar artifact store.
+    #[must_use]
+    pub fn artifacts(&self) -> &Path {
+        &self.artifacts
     }
 }
 
@@ -178,6 +189,8 @@ impl Repository {
             paths.proof(),
             paths.degraded(),
             paths.tape(),
+            &paths.artifact_data,
+            paths.artifacts(),
         ] {
             admit(path, StateShape::Directory)?;
         }

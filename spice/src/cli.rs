@@ -14,9 +14,10 @@ mod tools;
 use syntax::register_syntax;
 #[cfg(test)]
 use syntax::{is_optional, syntax_tokens};
-pub(crate) use tools::ExternalTool;
+pub use tools::ExternalTool;
 use tools::{
     CALLER_COMMAND, DOCTOR_TOOLS, GATE_MUTATION_TOOLS, GATE_POLICY_TOOLS, NO_TOOLS, PROOF_TOOLS,
+    TASK_GIT_TOOLS,
 };
 #[cfg(test)]
 use tools::{ToolBounds, ToolCancellation, ToolNetwork, posture_violations};
@@ -27,7 +28,7 @@ const JSON: &str = "json";
 
 /// Principal admitted to a command leaf.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Principal {
+pub enum Principal {
     Local,
     Operator,
     Lane,
@@ -36,7 +37,7 @@ pub(crate) enum Principal {
 
 /// Relationship a leaf has with the authoritative journal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum JournalAccess {
+pub enum JournalAccess {
     None,
     Inspect,
     Read,
@@ -47,7 +48,7 @@ pub(crate) enum JournalAccess {
 
 /// Journal relationship a successful reply must report.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ReplyPositionLaw {
+pub enum ReplyPositionLaw {
     /// The command is daemonless and has no journal position.
     Direct,
     /// The command answers from a read snapshot.
@@ -68,7 +69,7 @@ impl JournalAccess {
 
 /// Additional posture or admission rule carried by a leaf.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Guard {
+pub enum Guard {
     Daemonless,
     Offline,
     Toolful,
@@ -81,7 +82,7 @@ pub(crate) enum Guard {
 
 /// Shape returned when a leaf succeeds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ResultClass {
+pub enum ResultClass {
     Reply,
     Plan,
     Stream,
@@ -89,14 +90,14 @@ pub(crate) enum ResultClass {
 
 /// Public process outcomes shared by every command renderer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ExitOutcome {
+pub enum ExitOutcome {
     Reply,
     Refusal,
     Fault,
 }
 
 impl ExitOutcome {
-    pub(crate) const ALL: &[Self] = &[Self::Reply, Self::Refusal, Self::Fault];
+    pub const ALL: &[Self] = &[Self::Reply, Self::Refusal, Self::Fault];
 
     #[cfg(test)]
     const fn code(self) -> i32 {
@@ -110,18 +111,18 @@ impl ExitOutcome {
 
 /// One generated CLI contract row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct Contract {
-    pub(crate) path: &'static [&'static str],
-    pub(crate) syntax: &'static str,
-    pub(crate) principal: Principal,
-    pub(crate) journal: JournalAccess,
-    pub(crate) reply_position: ReplyPositionLaw,
-    pub(crate) facts: &'static [FactKind],
-    pub(crate) guards: &'static [Guard],
-    pub(crate) tools: &'static [ExternalTool],
-    pub(crate) result: ResultClass,
-    pub(crate) outcomes: &'static [ExitOutcome],
-    pub(crate) battery: &'static str,
+pub struct Contract {
+    pub path: &'static [&'static str],
+    pub syntax: &'static str,
+    pub principal: Principal,
+    pub journal: JournalAccess,
+    pub reply_position: ReplyPositionLaw,
+    pub facts: &'static [FactKind],
+    pub guards: &'static [Guard],
+    pub tools: &'static [ExternalTool],
+    pub result: ResultClass,
+    pub outcomes: &'static [ExitOutcome],
+    pub battery: &'static str,
 }
 
 /// Whether one registered leaf has executable Rust dispatch today.
@@ -130,8 +131,10 @@ pub(crate) struct Contract {
 /// registered leaf fails the succession check instead of quietly joining the
 /// terminal release refusal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Landing {
+pub enum Landing {
     Landed,
+    /// A current public task owns this intentionally visible terminal refusal.
+    GapOwned(&'static str),
     Unaccounted,
 }
 
@@ -187,6 +190,16 @@ macro_rules! row {
 /// Every current leaf. Parser registration and help are generated from these rows.
 const CONTRACTS: &[Contract] = &[
     row!(
+        ["demo"],
+        "demo [--root DIR] [--reuse DIR] [--seed-only] [--preserve]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "spice::demo"
+    ),
+    row!(
         ["watch"],
         "watch [ROOT]",
         Local,
@@ -205,6 +218,158 @@ const CONTRACTS: &[Contract] = &[
         [Daemonless, Offline],
         Stream,
         "listen::retro"
+    ),
+    row!(
+        ["session"],
+        "session",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_briefing"
+    ),
+    row!(
+        ["session", "briefing"],
+        "session briefing [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
+         [--turn-id ID...] [--tool NAME...] [--max-lines N] [--max-bytes N] \
+         [--explain-pruning] [--deadline-seconds SECONDS]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_briefing"
+    ),
+    row!(
+        ["session", "commands"],
+        "session commands [FILES...] [--limit N] [--newest-first] \
+         [--since-compaction] [--failed] [--pipelines] [--noncanonical-pipelines] \
+         [--summary] [--max-text N]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_commands"
+    ),
+    row!(
+        ["session", "commits"],
+        "session commits [FILES...] [--limit N]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_commits"
+    ),
+    row!(
+        ["session", "compactions"],
+        "session compactions [FILES...] [--limit N]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_compactions"
+    ),
+    row!(
+        ["session", "messages"],
+        "session messages [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
+         [--turn-id ID...] [--side user|assistant...] \
+         [--phase-kind prompt|commentary|final_answer...] [--flavor FLAVOR...] \
+         [--limit N] [--oldest-first] [--max-text N]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_messages"
+    ),
+    row!(
+        ["session", "phases"],
+        "session phases [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
+         [--turn-id ID...] [--tool NAME...] [--limit N] [--examples N] [--max-text N]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_phases"
+    ),
+    row!(
+        ["session", "slices"],
+        "session slices [FILES...] [--limit N] [--slice-id ID...] \
+         [--view summary|full] [--max-text N]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_slices"
+    ),
+    row!(
+        ["session", "summary"],
+        "session summary [FILES...] [--recent N]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_summary"
+    ),
+    row!(
+        ["session", "sweep"],
+        "session sweep [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
+         [--turn-id ID...] [--tool NAME...] [--count N] [--deadline-seconds SECONDS]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_sweep"
+    ),
+    row!(
+        ["session", "thread"],
+        "session thread THREAD_ID",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_thread"
+    ),
+    row!(
+        ["session", "timeline"],
+        "session timeline [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
+         [--turn-id ID...] [--tool NAME...] [--limit N] [--max-text N]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_timeline"
+    ),
+    row!(
+        ["session", "tokens"],
+        "session tokens [FILES...] [--by-file]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_tokens"
+    ),
+    row!(
+        ["session", "turns"],
+        "session turns [FILES...] [--start TIME] [--end TIME] [--contains TEXT] \
+         [--turn-id ID...] [--tool NAME...] [--limit N] [--view dialogue|full]",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "rim::session_turns"
     ),
     row!(
         ["doctor"],
@@ -407,9 +572,20 @@ const CONTRACTS: &[Contract] = &[
         OperatorOrLane,
         Command,
         [ClaimWon],
-        [Resident],
+        [Resident, Toolful],
+        TASK_GIT_TOOLS,
         Reply,
         "board::next"
+    ),
+    row!(
+        ["task", "reclaim"],
+        "task reclaim [HANDLE] [--lease-seconds SECONDS]",
+        Lane,
+        Command,
+        [ClaimRenewed],
+        [Resident, LaneCapability],
+        Reply,
+        "board::reclaim"
     ),
     row!(
         ["task", "add"],
@@ -422,12 +598,24 @@ const CONTRACTS: &[Contract] = &[
         "board::task_add"
     ),
     row!(
+        ["task", "capture"],
+        "task capture [HANDLE] [--title TITLE] [--project PROJECT]",
+        OperatorOrLane,
+        Command,
+        [ClaimWon],
+        [Resident, Toolful],
+        TASK_GIT_TOOLS,
+        Reply,
+        "board::task_capture"
+    ),
+    row!(
         ["task", "done"],
         "task done [--validation TEXT]",
         Lane,
         Command,
         [TaskDone, TaskPhased],
-        [Resident, LaneCapability],
+        [Resident, LaneCapability, Toolful],
+        TASK_GIT_TOOLS,
         Reply,
         "board::task_done"
     ),
@@ -437,7 +625,8 @@ const CONTRACTS: &[Contract] = &[
         Lane,
         Command,
         [TaskReviewed],
-        [Resident, LaneCapability],
+        [Resident, LaneCapability, Toolful],
+        TASK_GIT_TOOLS,
         Reply,
         "board::task_review"
     ),
@@ -502,6 +691,46 @@ const CONTRACTS: &[Contract] = &[
         "board::task_depends"
     ),
     row!(
+        ["task", "artifact", "add"],
+        "task artifact add HANDLE PATH [--name NAME] [--type TYPE] [--retention RETENTION]",
+        OperatorOrLane,
+        Read,
+        [],
+        [Daemonless],
+        Reply,
+        "artifact::add"
+    ),
+    row!(
+        ["task", "artifact", "list"],
+        "task artifact list HANDLE",
+        OperatorOrLane,
+        Read,
+        [],
+        [Daemonless],
+        Reply,
+        "artifact::list"
+    ),
+    row!(
+        ["task", "artifact", "show"],
+        "task artifact show HANDLE ARTIFACT",
+        OperatorOrLane,
+        Read,
+        [],
+        [Daemonless],
+        Reply,
+        "artifact::show"
+    ),
+    row!(
+        ["task", "artifact", "prune"],
+        "task artifact prune [--older-than DURATION] [--apply]",
+        OperatorOrLane,
+        Read,
+        [],
+        [Daemonless],
+        Reply,
+        "artifact::prune"
+    ),
+    row!(
         ["doc"],
         "doc [PATH|-] [--apply=<digest>]",
         OperatorOrLane,
@@ -536,7 +765,7 @@ const CONTRACTS: &[Contract] = &[
         "lane add [WORKTREE] [--life Steer|Drive|Drain] [--vendor NAME]",
         Operator,
         Command,
-        [LaneSeated, LaneStarted],
+        [LaneSeated, LaneSessionDeclared, LaneStarted],
         [Resident, OperatorCapability],
         Reply,
         "lane::add"
@@ -556,10 +785,20 @@ const CONTRACTS: &[Contract] = &[
         "lane wake ID",
         Operator,
         Command,
-        [LaneStarted],
+        [LaneSessionDeclared, LaneStarted, ClaimCarried],
         [Resident, OperatorCapability],
         Reply,
         "lane::wake"
+    ),
+    row!(
+        ["lane", "import"],
+        "lane import ID WORKTREE",
+        Operator,
+        Command,
+        [LaneImported, LaneSessionDeclared, LaneStarted, ClaimCarried],
+        [Resident, OperatorCapability],
+        Reply,
+        "lane::import"
     ),
     row!(
         ["steer"],
@@ -580,6 +819,16 @@ const CONTRACTS: &[Contract] = &[
         [Resident, OperatorCapability],
         Reply,
         "steer::cancel"
+    ),
+    row!(
+        ["steer", "recover"],
+        "steer recover ID",
+        Operator,
+        Command,
+        [SteerRecovered],
+        [Resident, OperatorCapability],
+        Reply,
+        "steer::recover"
     ),
     row!(
         ["inbox"],
@@ -832,13 +1081,23 @@ const CONTRACTS: &[Contract] = &[
         Plan,
         "spice::config"
     ),
+    row!(
+        ["config", "migrate-tasks"],
+        "config migrate-tasks EXPORT",
+        Local,
+        None,
+        [],
+        [Daemonless, Offline],
+        Reply,
+        "spice::task_config_migration"
+    ),
 ];
 
 /// The complete registry in the order used by help and Doctor rendering.
 ///
 /// Returning the static rows performs no discovery or inspection. The Doctor
 /// surface adds observations later without gaining a second command list.
-pub(crate) const fn contracts() -> &'static [Contract] {
+pub const fn contracts() -> &'static [Contract] {
     CONTRACTS
 }
 
@@ -848,10 +1107,25 @@ pub(crate) const fn contracts() -> &'static [Contract] {
 /// not make its implementation real. The closure test requires every current
 /// leaf to appear here, while the binary terminal branch uses the same
 /// classification to distinguish tracked work from a dispatch defect.
-pub(crate) fn landing(path: &[&str]) -> Landing {
+pub fn landing(path: &[&str]) -> Landing {
     match path {
-        ["watch"]
+        ["demo"]
+        | ["watch"]
         | ["retro"]
+        | ["session"]
+        | ["session", "briefing"]
+        | ["session", "commands"]
+        | ["session", "commits"]
+        | ["session", "compactions"]
+        | ["session", "messages"]
+        | ["session", "phases"]
+        | ["session", "slices"]
+        | ["session", "summary"]
+        | ["session", "sweep"]
+        | ["session", "thread"]
+        | ["session", "timeline"]
+        | ["session", "tokens"]
+        | ["session", "turns"]
         | ["doctor"]
         | ["version"]
         | ["gate"]
@@ -868,6 +1142,7 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["down"]
         | ["run"]
         | ["config"]
+        | ["config", "migrate-tasks"]
         | ["trust"]
         | ["trust", "grant"]
         | ["trust", "revoke"]
@@ -886,9 +1161,11 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["lane", "add"]
         | ["lane", "drain"]
         | ["lane", "wake"]
+        | ["lane", "import"]
         | ["recall"]
         | ["steer"]
         | ["steer", "cancel"]
+        | ["steer", "recover"]
         | ["inbox"]
         | ["ack"]
         | ["consent"]
@@ -899,7 +1176,9 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["board", "graph"]
         | ["board", "handout"]
         | ["task", "next"]
+        | ["task", "reclaim"]
         | ["task", "add"]
+        | ["task", "capture"]
         | ["task", "done"]
         | ["task", "review"]
         | ["task", "note"]
@@ -908,6 +1187,10 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
         | ["task", "free"]
         | ["task", "oops"]
         | ["task", "depends"]
+        | ["task", "artifact", "add"]
+        | ["task", "artifact", "list"]
+        | ["task", "artifact", "show"]
+        | ["task", "artifact", "prune"]
         | ["doc"]
         | ["doc", "ledger"]
         | ["taste"]
@@ -918,7 +1201,7 @@ pub(crate) fn landing(path: &[&str]) -> Landing {
 }
 
 /// Build the one parser and help tree from [`CONTRACTS`].
-pub(crate) fn command() -> Command {
+pub fn command() -> Command {
     command_from(contracts())
 }
 
@@ -985,12 +1268,12 @@ fn contract_at<'a>(contracts: &'a [Contract], path: &[&str]) -> Option<&'a Contr
 
 /// Recover one registered contract for an internal typed client preflight.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn contract(path: &[&str]) -> Option<&'static Contract> {
+pub fn contract(path: &[&str]) -> Option<&'static Contract> {
     contract_at(contracts(), path)
 }
 
 /// Recover the contract selected by the generated parser.
-pub(crate) fn selected_contract(matches: &ArgMatches) -> Option<&'static Contract> {
+pub fn selected_contract(matches: &ArgMatches) -> Option<&'static Contract> {
     let mut path = Vec::new();
     let mut cursor = matches;
     while let Some((name, child)) = cursor.subcommand() {
@@ -1001,7 +1284,7 @@ pub(crate) fn selected_contract(matches: &ArgMatches) -> Option<&'static Contrac
 }
 
 /// Recover the leaf matches selected by the generated parser.
-pub(crate) fn selected_matches(mut matches: &ArgMatches) -> &ArgMatches {
+pub fn selected_matches(mut matches: &ArgMatches) -> &ArgMatches {
     while let Some((_, child)) = matches.subcommand() {
         matches = child;
     }
@@ -1010,7 +1293,7 @@ pub(crate) fn selected_matches(mut matches: &ArgMatches) -> &ArgMatches {
 
 /// Recover the command passed through the root `run` leaf.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn run_command(matches: &ArgMatches) -> Option<Vec<OsString>> {
+pub fn run_command(matches: &ArgMatches) -> Option<Vec<OsString>> {
     matches
         .subcommand_matches("run")?
         .get_many::<OsString>("CMD")
@@ -1024,7 +1307,7 @@ pub(crate) fn run_command(matches: &ArgMatches) -> Option<Vec<OsString>> {
 /// one place it is not a renderer flag is after a trailing `--`, where the
 /// operand is the caller's own command and its flags are that command's, not
 /// spice's.
-pub(crate) fn json_selected(matches: &ArgMatches) -> bool {
+pub fn json_selected(matches: &ArgMatches) -> bool {
     matches.get_flag(JSON)
 }
 

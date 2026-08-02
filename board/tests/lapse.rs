@@ -27,8 +27,19 @@ fn task() -> TaskHandle {
     "BOARD-a1".parse().expect("fixture task")
 }
 
+fn projects() -> board::ProjectPolicy {
+    board::ProjectPolicy::new(
+        ["board".to_owned()],
+        Vec::new(),
+        dialect::PROJECT_MIN_DEPTH as u64,
+        dialect::PROJECT_MAX_DEPTH as u64,
+    )
+    .expect("fixture project policy")
+}
+
 fn win_request(command: u8) -> WinRequest {
     WinRequest {
+        projects: projects(),
         command: uuid(command),
         actor: Actor::Lane(uuid(20)),
         lane: uuid(20),
@@ -43,6 +54,7 @@ fn win_request(command: u8) -> WinRequest {
 
 fn lapse_request(command: u8) -> Request {
     Request {
+        projects: projects(),
         command: uuid(command),
         occupant: uuid(21),
         epoch: uuid(22),
@@ -112,6 +124,7 @@ fn fixture(path: Option<&Path>) -> Journal {
             occupant: Some(uuid(21)),
             lineage: Vec::new(),
             capabilities: Vec::new(),
+            session: None,
             disposition: "occupied".to_owned(),
         }],
     });
@@ -128,7 +141,7 @@ fn claimed() -> Journal {
 #[test]
 fn lapse_preserves_lease_and_makes_the_task_allocatable_again() {
     let mut journal = claimed();
-    let before = Snapshot::read(&journal).expect("claimed snapshot");
+    let before = Snapshot::read(&journal, &projects()).expect("claimed snapshot");
     let statement = before.entries()[0].statement().clone();
     let workflow = before.entries()[0].workflow().clone();
     let lease = before.entries()[0].lease().expect("lease").clone();
@@ -136,7 +149,7 @@ fn lapse_preserves_lease_and_makes_the_task_allocatable_again() {
     let expired = lapse(&mut journal, lapse_request(32)).expect("lapse claim");
     assert_eq!(expired.task(), &task());
     assert_eq!(expired.first(), expired.last());
-    let after = Snapshot::read(&journal).expect("lapsed snapshot");
+    let after = Snapshot::read(&journal, &projects()).expect("lapsed snapshot");
     assert_eq!(
         after.entries()[0].claim().expect("claim").disposition,
         ClaimDisposition::Lapsed
@@ -209,14 +222,14 @@ fn timer_and_authority_refusals_leave_the_journal_unchanged() {
     for (request, expected) in cases {
         let mut journal = claimed();
         let before = journal.fact_snapshot().expect("before refusal");
-        let heads = Snapshot::read(&journal).expect("heads before refusal");
+        let heads = Snapshot::read(&journal, &projects()).expect("heads before refusal");
         match lapse(&mut journal, request) {
             Err(LapseError::Refused(observed)) => assert_eq!(observed, expected),
             other => panic!("expected {expected:?}, found {other:?}"),
         }
         assert_eq!(journal.fact_snapshot().expect("after refusal"), before);
         assert_eq!(
-            Snapshot::read(&journal).expect("heads after refusal"),
+            Snapshot::read(&journal, &projects()).expect("heads after refusal"),
             heads
         );
     }
@@ -225,6 +238,13 @@ fn timer_and_authority_refusals_leave_the_journal_unchanged() {
     free(
         &mut journal,
         FreeRequest {
+            projects: board::ProjectPolicy::new(
+                ["board".to_owned()],
+                Vec::new(),
+                dialect::PROJECT_MIN_DEPTH as u64,
+                dialect::PROJECT_MAX_DEPTH as u64,
+            )
+            .expect("fixture project policy"),
             command: uuid(45),
             actor: Actor::Lane(uuid(20)),
             lane: uuid(20),
@@ -236,7 +256,7 @@ fn timer_and_authority_refusals_leave_the_journal_unchanged() {
     )
     .expect("free first");
     let before = journal.fact_snapshot().expect("before inactive refusal");
-    let heads = Snapshot::read(&journal).expect("heads before inactive refusal");
+    let heads = Snapshot::read(&journal, &projects()).expect("heads before inactive refusal");
     assert!(matches!(
         lapse(&mut journal, lapse_request(46)),
         Err(LapseError::Refused(Refusal::Inactive(
@@ -245,7 +265,7 @@ fn timer_and_authority_refusals_leave_the_journal_unchanged() {
     ));
     assert_eq!(journal.fact_snapshot().expect("after refusal"), before);
     assert_eq!(
-        Snapshot::read(&journal).expect("heads after inactive refusal"),
+        Snapshot::read(&journal, &projects()).expect("heads after inactive refusal"),
         heads
     );
 }
@@ -269,6 +289,7 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
                 occupant: request.occupant,
                 epoch: request.epoch,
                 until: request.expiry,
+                git: None,
             },
             FactCause::Root,
         )
@@ -284,7 +305,7 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
     journal.apply(write).expect("seed malformed claim");
 
     let before = journal.fact_snapshot().expect("before malformed refusal");
-    let heads = Snapshot::read(&journal).expect("heads before malformed refusal");
+    let heads = Snapshot::read(&journal, &projects()).expect("heads before malformed refusal");
     assert!(matches!(
         lapse(&mut journal, lapse_request(48)),
         Err(LapseError::Refused(Refusal::MissingLease))
@@ -294,7 +315,7 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
         before
     );
     assert_eq!(
-        Snapshot::read(&journal).expect("heads after malformed refusal"),
+        Snapshot::read(&journal, &projects()).expect("heads after malformed refusal"),
         heads
     );
 }
@@ -309,14 +330,14 @@ fn duplicate_receipt_rolls_back_and_independent_connections_share_lapse() {
     let mut second = Journal::open(store.path()).expect("second connection");
 
     let before = first.fact_snapshot().expect("before duplicate");
-    let heads = Snapshot::read(&first).expect("heads before duplicate");
+    let heads = Snapshot::read(&first, &projects()).expect("heads before duplicate");
     assert!(matches!(
         lapse(&mut first, lapse_request(31)),
         Err(LapseError::Commit(_))
     ));
     assert_eq!(first.fact_snapshot().expect("duplicate rolls back"), before);
     assert_eq!(
-        Snapshot::read(&first).expect("duplicate preserves heads"),
+        Snapshot::read(&first, &projects()).expect("duplicate preserves heads"),
         heads
     );
 

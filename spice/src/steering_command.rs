@@ -44,6 +44,13 @@ pub(crate) fn run(
             };
             (SelectedCommand::SteerCancel { directive }, None)
         }
+        ["steer", "recover"] => {
+            let directive = match uuid_operand(matches, "ID", "steer::directive-invalid") {
+                Ok(directive) => directive,
+                Err(outcome) => return outcome,
+            };
+            (SelectedCommand::SteerRecover { directive }, None)
+        }
         ["inbox"] => {
             let lane = match optional_uuid_operand(matches, "LANE", "steer::lane-invalid") {
                 Ok(lane) => lane,

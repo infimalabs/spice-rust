@@ -12,13 +12,15 @@ use wire::{
     TaskHandle, WireVersion, Witness, body, intent,
 };
 
-use crate::{Active, ClaimRefusal, Entry};
+use crate::{Active, ClaimRefusal, Entry, ProjectPolicy};
 
 const CHANGED: &str = "possession inputs changed before the release could commit";
 
 /// Authenticated inputs for one claim release.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FreeRequest {
+    /// Captured project vocabulary used by both release observations.
+    pub projects: ProjectPolicy,
     /// Identity stored with the canonical command receipt.
     pub command: CanonicalUuid,
     /// Principal derived from the authenticated resident capability.
@@ -262,6 +264,7 @@ fn observe(
         workflow.body().clone(),
         Some(claim.body().clone()),
         Some(lease.body().clone()),
+        &request.projects,
     )
     .map_err(|error| GuardError::Invalid(format!("task {task} is invalid: {error}")))?;
     let active = Active::admit(&entry, &request.actor, request.at).map_err(FreeRefusal::Claim)?;
@@ -448,8 +451,19 @@ mod tests {
         "BOARD-a1".parse().expect("task")
     }
 
+    fn projects() -> crate::ProjectPolicy {
+        crate::ProjectPolicy::new(
+            ["board".to_owned()],
+            Vec::new(),
+            dialect::PROJECT_MIN_DEPTH as u64,
+            dialect::PROJECT_MAX_DEPTH as u64,
+        )
+        .expect("fixture project policy")
+    }
+
     fn free_request(command: u8) -> FreeRequest {
         FreeRequest {
+            projects: projects(),
             command: uuid(command),
             actor: Actor::Lane(uuid(20)),
             lane: uuid(20),
@@ -516,6 +530,7 @@ mod tests {
                 occupant: Some(uuid(21)),
                 lineage: Vec::new(),
                 capabilities: Vec::new(),
+                session: None,
                 disposition: "occupied".to_owned(),
             }],
         });
@@ -523,6 +538,7 @@ mod tests {
         win(
             &mut journal,
             WinRequest {
+                projects: projects(),
                 command: uuid(31),
                 actor: Actor::Lane(uuid(20)),
                 lane: uuid(20),

@@ -1,19 +1,18 @@
 //! Codex's current exec launch contract.
 //!
-//! The launch asks for no structured stream. Codex writes its own
-//! `rollout-*.jsonl` transcript for the thread, which is where its records are
-//! read from, so a `--json` flag here would only duplicate onto stdout what is
-//! already being recorded — and spice never launched Codex with one.
+//! The launch selects Codex's JSONL stdout so the supervisor receives the
+//! `thread.started` declaration and every subsequent record through its sole
+//! selected-stream capture path.
 
 use std::ffi::OsString;
 
 use listen::Dialect;
-use sill::{Running, SpecError};
+use sill::Running;
 
 use crate::launch::{
     Launch, McpServer, POST_TOOL_HOOK_STATUS_MESSAGE, POST_TOOL_HOOK_TIMEOUT_SECONDS, SteeringHook,
 };
-use crate::{LaunchError, Process, Record, RecordStream};
+use crate::{ContractError, LaunchError, Process, Record, RecordStream};
 
 /// Tools whose completion Codex's hook surface can report.
 ///
@@ -27,25 +26,26 @@ pub const POST_TOOL_HOOK_MATCHER: &str = "^(Bash|apply_patch|Edit|Write|mcp__.*)
 ///
 /// # Errors
 ///
-/// Returns [`SpecError`] when `binary` is empty.
-pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, SpecError> {
+/// Returns a path-specific refusal when fast mode is not explicit, or the
+/// common argument-vector refusal when the binary is empty.
+pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, ContractError> {
+    let fast_mode = launch.fast_mode.ok_or(ContractError::Missing {
+        path: "vendor.codex.fast_mode",
+    })?;
     let mut arguments = vec![
         OsString::from("exec"),
         OsString::from("--cd"),
         launch.cwd.clone().into_os_string(),
         OsString::from("--model"),
         OsString::from(launch.model.as_str()),
+        OsString::from("--json"),
     ];
     for override_ in config_overrides(launch) {
         arguments.push(OsString::from("--config"));
         arguments.push(OsString::from(override_));
     }
     arguments.extend([
-        OsString::from(if launch.fast_mode {
-            "--enable"
-        } else {
-            "--disable"
-        }),
+        OsString::from(if fast_mode { "--enable" } else { "--disable" }),
         OsString::from("fast_mode"),
         // A supervised lane owns its own boundary: the sandbox would refuse the
         // worktree writes the work consists of, and an approval prompt has no
@@ -64,13 +64,13 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Sp
     }
     arguments.push(OsString::from(launch.prompt.as_str()));
 
-    Record::new(
+    Ok(Record::new(
         binary,
         arguments,
         Dialect::Codex,
         RecordStream::Stdout,
         launch.resume.clone(),
-    )
+    )?)
 }
 
 /// Every dotted override this launch states, in the order Codex reads them.
@@ -86,7 +86,7 @@ pub fn config_overrides(launch: &Launch) -> Vec<String> {
     ];
     overrides.extend(mcp_overrides(&launch.mcp));
     if let Some(personality) = &launch.personality {
-        overrides.push(format!("personality=\"{personality}\""));
+        overrides.push(format!("personality={}", toml_string(personality)));
     }
     overrides
 }

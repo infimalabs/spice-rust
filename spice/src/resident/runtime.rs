@@ -15,8 +15,11 @@ struct RuntimePaths {
 }
 
 struct SurfaceConfig {
+    canvas: canvas::Config,
     steering: steer::Config,
     consent: consent::Policy,
+    speech: canvas::SpeechConfig,
+    projects: board::ProjectPolicy,
 }
 
 // Runtime policy and trust identity are projections of this one captured generation.
@@ -42,8 +45,11 @@ where
     after_capture();
     Ok(StartupSurface {
         config: SurfaceConfig {
+            canvas: *loaded.resolved().root().canvas(),
             steering: loaded.resolved().root().steer().clone(),
             consent: loaded.resolved().root().consent().policy().clone(),
+            speech: loaded.resolved().root().say().clone(),
+            projects: loaded.resolved().root().tasks().project_policy(),
         },
         trust: crate::trust_command::Surface::from_loaded(&loaded),
     })
@@ -181,7 +187,7 @@ pub(crate) fn up() -> Outcome<()> {
     up_from(&current)
 }
 
-fn up_from(current: &Path) -> Outcome<()> {
+pub(crate) fn up_from(current: &Path) -> Outcome<()> {
     let repository = match Repository::discover(current) {
         Ok(repository) => repository,
         Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
@@ -274,25 +280,11 @@ fn journal_open_failure(error: journal::OpenError) -> Outcome<()> {
 }
 
 fn configuration_refusal(error: &spice::config::LoadError) -> Outcome<()> {
-    let mut diagnostics = error
-        .acquisition()
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>();
-    if let Some(resolution) = error.resolution() {
-        diagnostics.extend(resolution.issues().iter().map(ToString::to_string));
-    }
-    if let Some(repository) = error.repository() {
-        diagnostics.push(repository.to_string());
-    }
-    if diagnostics.is_empty() {
-        diagnostics.push(error.to_string());
-    }
     Outcome::Refusal(Refusal {
         reason: "resident::configuration-refused".to_owned(),
         witness: Some("effective-configuration".to_owned()),
         expected: Some("one admitted effective repository configuration".to_owned()),
-        observed: Some(diagnostics.join(" | ")),
+        observed: Some(error.diagnostic()),
         remedy: "repair tracked or local configuration before starting the resident".to_owned(),
     })
 }
@@ -325,7 +317,7 @@ pub(crate) fn down(contract: &crate::cli::Contract) -> Outcome<()> {
     down_from(&current, contract)
 }
 
-fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outcome<()> {
+pub(crate) fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outcome<()> {
     let repository = match Repository::discover(current) {
         Ok(repository) => repository,
         Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
@@ -516,9 +508,15 @@ async fn run_surface(
                 })?;
         }
     }
-    let (server, mut control) = canvas::axum::Server::bind(epoch, capabilities.clone())
-        .await
-        .map_err(|error| environment_fault("canvas::bind-failed", &error.to_string()))?;
+    let (server, mut control) = canvas::axum::Server::bind_streaming(
+        epoch,
+        capabilities.clone(),
+        config.speech.clone(),
+        bus.reader(),
+        config.canvas.rows(),
+    )
+    .await
+    .map_err(|error| environment_fault("canvas::bind-failed", &error.to_string()))?;
     let discovery = server
         .discovery(operator)
         .map_err(|error| environment_fault("canvas::discovery-invalid", &error.to_string()))?;
@@ -535,40 +533,62 @@ async fn run_surface(
     let mut server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;
     }));
-    lane_surface::restore_seats(bus, paths, epoch, seats)?;
+    let capture::Channels {
+        reporter,
+        mut records,
+        mut failures,
+    } = capture::channels();
+    lane_surface::restore_seats(bus, paths, epoch, seats, &reporter)?;
+    let recovery = lane_recovery::Runtime::new(reporter.clone());
     let command_surface = command_surface::Surface::new(
         bus,
         repository,
         paths,
         epoch,
-        &capabilities,
-        &discovery,
+        lane_surface::Runtime::new(&capabilities, &discovery, reporter),
+        recovery,
         config,
     );
     loop {
-        let request = tokio::select! {
-            request = control.recv() => request.ok_or_else(|| {
-                environment_fault("canvas::control-closed", "canvas control receiver closed")
-            })?,
+        tokio::select! {
+            request = control.recv() => {
+                let request = request.ok_or_else(|| {
+                    environment_fault("canvas::control-closed", "canvas control receiver closed")
+                })?;
+                let dark = is_dark_command(request.command());
+                let outcome = command_surface.dispatch(seats, request.command());
+                let reached_dark = dark && matches!(outcome, Outcome::Reply(_));
+                let response = request.respond(outcome);
+                if reached_dark {
+                    if let Ok(response) = response {
+                        response.wait().await;
+                    }
+                    control.close();
+                    drop(published);
+                    let _ = shutdown.send(());
+                    return match server_task.await {
+                        Ok(Ok(())) => Ok(()),
+                        served => Err(server_outcome(served)),
+                    };
+                }
+            }
+            record = records.recv() => {
+                let record = record.ok_or_else(|| environment_fault(
+                    "lane::capture-records-closed",
+                    "lane capture record receiver closed",
+                ))?;
+                lane_surface::capture_record(bus, epoch, seats, &record)?;
+            }
+            failure = failures.recv() => {
+                let failure = failure.ok_or_else(|| environment_fault(
+                    "lane::capture-failures-closed",
+                    "lane capture failure receiver closed",
+                ))?;
+                lane_surface::capture_failed(bus, epoch, seats, &failure)?;
+            }
             served = &mut server_task => {
                 return Err(server_outcome(served));
             }
-        };
-        let dark = is_dark_command(request.command());
-        let outcome = command_surface.dispatch(seats, request.command());
-        let reached_dark = dark && matches!(outcome, Outcome::Reply(_));
-        let response = request.respond(outcome);
-        if reached_dark {
-            if let Ok(response) = response {
-                response.wait().await;
-            }
-            control.close();
-            drop(published);
-            let _ = shutdown.send(());
-            return match server_task.await {
-                Ok(Ok(())) => Ok(()),
-                served => Err(server_outcome(served)),
-            };
         }
     }
 }

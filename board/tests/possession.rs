@@ -27,8 +27,19 @@ fn task() -> TaskHandle {
     "BOARD-a1".parse().expect("fixture task")
 }
 
+fn projects() -> board::ProjectPolicy {
+    board::ProjectPolicy::new(
+        ["board".to_owned()],
+        Vec::new(),
+        dialect::PROJECT_MIN_DEPTH as u64,
+        dialect::PROJECT_MAX_DEPTH as u64,
+    )
+    .expect("fixture project policy")
+}
+
 fn win_request(command: u8) -> WinRequest {
     WinRequest {
+        projects: projects(),
         command: uuid(command),
         actor: Actor::Lane(uuid(20)),
         lane: uuid(20),
@@ -43,6 +54,7 @@ fn win_request(command: u8) -> WinRequest {
 
 fn free_request(command: u8) -> FreeRequest {
     FreeRequest {
+        projects: projects(),
         command: uuid(command),
         actor: Actor::Lane(uuid(20)),
         lane: uuid(20),
@@ -113,6 +125,7 @@ fn fixture(path: Option<&Path>) -> Journal {
             occupant: Some(uuid(21)),
             lineage: Vec::new(),
             capabilities: Vec::new(),
+            session: None,
             disposition: "occupied".to_owned(),
         }],
     });
@@ -129,7 +142,7 @@ fn claimed() -> Journal {
 #[test]
 fn release_preserves_lease_and_makes_the_task_allocatable_again() {
     let mut journal = claimed();
-    let before = Snapshot::read(&journal).expect("claimed snapshot");
+    let before = Snapshot::read(&journal, &projects()).expect("claimed snapshot");
     let statement = before.entries()[0].statement().clone();
     let workflow = before.entries()[0].workflow().clone();
     let lease = before.entries()[0].lease().expect("lease").clone();
@@ -137,7 +150,7 @@ fn release_preserves_lease_and_makes_the_task_allocatable_again() {
     let released = free(&mut journal, free_request(32)).expect("release claim");
     assert_eq!(released.task(), &task());
     assert_eq!(released.first(), released.last());
-    let after = Snapshot::read(&journal).expect("released snapshot");
+    let after = Snapshot::read(&journal, &projects()).expect("released snapshot");
     assert_eq!(
         after.entries()[0].claim().expect("claim").disposition,
         ClaimDisposition::Freed
@@ -236,6 +249,7 @@ fn an_active_claim_without_its_lease_is_a_typed_zero_write_refusal() {
                 occupant: request.occupant,
                 epoch: request.epoch,
                 until: request.expiry,
+                git: None,
             },
             FactCause::Root,
         )

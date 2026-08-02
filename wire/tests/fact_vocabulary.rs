@@ -20,7 +20,7 @@
 //! expanded from it. Reading the expansion instead would read this crate's own
 //! output back to itself, which is why the parser below looks for the table and
 //! not for `pub enum FactKind` — that enum is now generated, so a parser aimed
-//! at it would find no variants and prove nothing about all 59 of them.
+//! at it would find no variants and prove nothing about all 62 of them.
 //!
 //! [`PINNED`] holds the third side, and the one neither of the others can
 //! supply. Both of those read the crate under test: the match covers its enum
@@ -72,6 +72,7 @@ const PINNED: &[(&str, &str)] = &[
     ("DocApplied", "doc::applied"),
     ("SteerSent", "steer::sent"),
     ("SteerResent", "steer::resent"),
+    ("SteerRecovered", "steer::recovered"),
     ("SteerAcked", "steer::acked"),
     ("SteerDeclined", "steer::declined"),
     ("SteerMissed", "steer::missed"),
@@ -83,7 +84,9 @@ const PINNED: &[(&str, &str)] = &[
     ("ConsentQueued", "consent::queued"),
     ("ConsentFloored", "consent::floored"),
     ("LaneSeated", "lane::seated"),
+    ("LaneSessionDeclared", "lane::declared"),
     ("LaneStarted", "lane::started"),
+    ("LaneImported", "lane::imported"),
     ("LaneExited", "lane::exited"),
     ("LaneCompacted", "lane::compacted"),
     ("LaneRenewed", "lane::renewed"),
@@ -141,6 +144,7 @@ fn plane(kind: FactKind) -> &'static str {
         FactKind::DocApplied => "doc",
         FactKind::SteerSent
         | FactKind::SteerResent
+        | FactKind::SteerRecovered
         | FactKind::SteerAcked
         | FactKind::SteerDeclined
         | FactKind::SteerMissed
@@ -152,7 +156,9 @@ fn plane(kind: FactKind) -> &'static str {
         | FactKind::ConsentQueued
         | FactKind::ConsentFloored => "consent",
         FactKind::LaneSeated
+        | FactKind::LaneSessionDeclared
         | FactKind::LaneStarted
+        | FactKind::LaneImported
         | FactKind::LaneExited
         | FactKind::LaneCompacted
         | FactKind::LaneRenewed

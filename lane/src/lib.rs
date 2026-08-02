@@ -17,6 +17,7 @@
 //! [`renew`] is told whether an occupant is alive; neither consults a clock, so
 //! the same facts read in the same order always reduce to the same seat.
 
+pub mod capture;
 pub mod config;
 pub mod drain;
 pub mod hold;

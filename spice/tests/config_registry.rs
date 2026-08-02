@@ -7,11 +7,16 @@ use wire::ConfigSource;
 const COMPLETE: &str = r#"
 [tasks]
 stems = ["app", "board"]
+hidden_stems = ["oops", "sandbox", "sandbox"]
 project_min_depth = 2
 project_max_depth = 3
 
 [policy]
 env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
+
+[policy.commit_message]
+allowed_trailers = ["Spice-Origin", "Reviewed-By"]
+blocked_trailers = ["Co-Authored-By"]
 
 [taste.zeta]
 words = ["delay*", "slept"]
@@ -56,9 +61,16 @@ resend = ["10m", "30m", "2h"]
 
 [vendor.claude]
 binary = "/opt/claude"
+model = "opus"
+effort = "xhigh"
+auto_compact_window_tokens = 123456
 
 [vendor.codex]
 binary = "/opt/codex"
+model = "gpt-current"
+effort = "max"
+personality = "pragmatic"
+fast_mode = true
 
 [listen]
 window = "10m"
@@ -69,15 +81,18 @@ taken = 71
 full = 72
 
 [lock.alpha]
-shards = 2
+path = "locks/alpha.lock"
 
 [lock.zeta]
+directory = "locks/zeta"
 shards = 4
 
 [lock."a.b"]
+directory = "locks/a.b"
 shards = 5
 
 [lock."a[0]"]
+directory = "locks/a[0]"
 shards = 6
 
 [canvas.pack]
@@ -175,6 +190,7 @@ fn builtin_matches(builtin: Builtin, value: &Value) -> bool {
             u64::try_from(*actual) == Ok(expected)
         }
         (Builtin::Float(expected), Value::Float(actual)) => actual == &expected,
+        (Builtin::Boolean(expected), Value::Boolean(actual)) => actual == &expected,
         _ => false,
     }
 }
@@ -195,7 +211,7 @@ fn sample_path(template: &str) -> Vec<OwnedSegment> {
 }
 
 #[test]
-fn root_is_exactly_the_thirteen_typed_domains() {
+fn root_is_exactly_the_fourteen_typed_domains() {
     let root = decode(&complete()).expect("the complete root decodes");
     let round_trip = decode(&toml::to_string_pretty(&root).expect("root renders"))
         .expect("rendered root decodes");
@@ -204,6 +220,10 @@ fn root_is_exactly_the_thirteen_typed_domains() {
     assert!(root.proof().container().is_some());
     assert!(root.proof().runner().is_some());
     assert_eq!(root.tasks().stems(), ["app", "board"]);
+    assert_eq!(
+        root.tasks().hidden_stems(),
+        ["oops", "maxim_proposal", "sandbox"]
+    );
     assert_eq!(root.tasks().project_min_depth(), 2);
     assert_eq!(root.tasks().project_max_depth(), 3);
     assert_eq!(
@@ -218,7 +238,7 @@ fn root_is_exactly_the_thirteen_typed_domains() {
         table.keys().map(String::as_str).collect::<BTreeSet<_>>(),
         BTreeSet::from([
             "tasks", "policy", "taste", "consent", "gate", "board", "lane", "steer", "vendor",
-            "listen", "lock", "canvas", "proof",
+            "listen", "lock", "canvas", "say", "proof",
         ])
     );
 
@@ -326,9 +346,12 @@ fn registry_builtins_are_the_typed_root_defaults() {
 fn templates_are_unique_canonical_non_overlapping_and_stably_ordered() {
     let expected = [
         "tasks.stems",
+        "tasks.hidden_stems",
         "tasks.project_min_depth",
         "tasks.project_max_depth",
         "policy.env_names",
+        "policy.commit_message.allowed_trailers",
+        "policy.commit_message.blocked_trailers",
         "taste.<name>.words",
         "taste.<name>.message",
         "consent.posture",
@@ -347,13 +370,28 @@ fn templates_are_unique_canonical_non_overlapping_and_stably_ordered() {
         "lane.hold",
         "steer.expiry",
         "steer.resend",
-        "vendor.<name>.binary",
+        "vendor.claude.binary",
+        "vendor.claude.model",
+        "vendor.claude.effort",
+        "vendor.claude.auto_compact_window_tokens",
+        "vendor.codex.binary",
+        "vendor.codex.model",
+        "vendor.codex.effort",
+        "vendor.codex.personality",
+        "vendor.codex.fast_mode",
         "listen.window",
         "lock.busy",
         "lock.taken",
         "lock.full",
+        "lock.<name>.path",
+        "lock.<name>.directory",
         "lock.<name>.shards",
         "canvas.pack.rows",
+        "say.backend",
+        "say.command",
+        "say.voice",
+        "say.content_type",
+        "say.words_per_minute",
         "proof.image",
         "proof.container",
         "proof.runner",
@@ -404,16 +442,23 @@ fn templates_are_unique_canonical_non_overlapping_and_stably_ordered() {
     }
 
     for name in ["a.b", "a[0]", ""] {
-        let path = [
-            PathSegment::Key("lock"),
-            PathSegment::Key(name),
-            PathSegment::Key("shards"),
-        ];
-        assert_eq!(
-            descriptor(&path).map(|entry| entry.template().as_str()),
-            Some("lock.<name>.shards"),
-            "the registry must leave {name:?} to the lock name authority"
-        );
+        for field in ["path", "directory", "shards"] {
+            let path = [
+                PathSegment::Key("lock"),
+                PathSegment::Key(name),
+                PathSegment::Key(field),
+            ];
+            assert_eq!(
+                descriptor(&path).map(|entry| entry.template().as_str()),
+                Some(match field {
+                    "path" => "lock.<name>.path",
+                    "directory" => "lock.<name>.directory",
+                    "shards" => "lock.<name>.shards",
+                    _ => unreachable!(),
+                }),
+                "the registry must leave {name:?} to the lock name authority"
+            );
+        }
     }
 }
 
@@ -431,8 +476,15 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
             "lock.busy",
             "lock.taken",
             "lock.full",
+            "lock.<name>.path",
+            "lock.<name>.directory",
             "lock.<name>.shards",
             "canvas.pack.rows",
+            "say.backend",
+            "say.command",
+            "say.voice",
+            "say.content_type",
+            "say.words_per_minute",
             "proof.container",
             "proof.runner",
         ]
@@ -453,7 +505,7 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
     for entry in descriptors() {
         let local_only = matches!(
             entry.template().as_str(),
-            "proof.container" | "proof.runner"
+            "say.command" | "proof.container" | "proof.runner"
         );
         assert_eq!(
             entry.layers().contains(&ConfigSource::Tracked),
@@ -478,7 +530,8 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
         let compatible = matches!(
             (entry.kind(), entry.builtin()),
             (_, None)
-                | (ValueKind::String, Some(Builtin::Absent))
+                | (_, Some(Builtin::Absent))
+                | (ValueKind::Boolean, Some(Builtin::Boolean(_)))
                 | (
                     ValueKind::String | ValueKind::Duration | ValueKind::Answer | ValueKind::Life,
                     Some(Builtin::String(_)),

@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EventKind {
+    /// The vendor declared the exact resumable session identity.
+    Session,
     /// Assistant prose visible to the operator.
     Prose,
     /// Model reasoning, whether rendered or opaque.
@@ -22,7 +24,8 @@ pub enum EventKind {
 
 impl EventKind {
     /// Every kind in stable canary order.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
+        Self::Session,
         Self::Prose,
         Self::Reasoning,
         Self::Tool,
@@ -35,6 +38,7 @@ impl EventKind {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Session => "session",
             Self::Prose => "prose",
             Self::Reasoning => "reasoning",
             Self::Tool => "tool",
@@ -48,6 +52,8 @@ impl EventKind {
 /// One typed moment decoded from a vendor record.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Event {
+    /// Exact resumable vendor session declaration.
+    Session(SessionDeclaration),
     /// Assistant prose.
     Prose(Prose),
     /// Model reasoning.
@@ -67,6 +73,7 @@ impl Event {
     #[must_use]
     pub const fn kind(&self) -> EventKind {
         match self {
+            Self::Session(_) => EventKind::Session,
             Self::Prose(_) => EventKind::Prose,
             Self::Reasoning(_) => EventKind::Reasoning,
             Self::Tool(_) => EventKind::Tool,
@@ -80,6 +87,7 @@ impl Event {
     #[must_use]
     pub const fn locus(&self) -> Locus {
         match self {
+            Self::Session(event) => event.locus,
             Self::Prose(event) => event.locus,
             Self::Reasoning(event) => event.locus,
             Self::Tool(event) => event.locus,
@@ -88,6 +96,15 @@ impl Event {
             Self::Failure(event) => event.locus,
         }
     }
+}
+
+/// The exact vendor identity declared by a current session record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SessionDeclaration {
+    /// Vendor spelling of the resumable session identity.
+    pub identity: String,
+    /// Source bytes carrying the declaration.
+    pub locus: Locus,
 }
 
 /// Visible assistant text.

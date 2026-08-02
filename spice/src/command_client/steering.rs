@@ -41,6 +41,7 @@ pub(crate) fn execute_steering(
                 &wire::intent::SteerSend {
                     lane,
                     message: message.to_owned(),
+                    attachments: Vec::new(),
                 },
             );
             execute_mapped(discovery_path, contract, Connection::Operator, mapped)

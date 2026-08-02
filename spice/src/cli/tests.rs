@@ -104,7 +104,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 
 #[test]
 fn every_contract_has_an_executable_succession_disposition() {
-    assert_eq!(contracts().len(), 63);
+    assert_eq!(contracts().len(), 87);
 
     let unaccounted = contracts()
         .iter()
@@ -117,16 +117,21 @@ fn every_contract_has_an_executable_succession_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 63);
+    assert_eq!(landed, 87);
+    assert_eq!(landing(&["demo"]), Landing::Landed);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
     assert_eq!(landing(&["lock", "run"]), Landing::Landed);
+    assert_eq!(landing(&["config", "migrate-tasks"]), Landing::Landed);
     assert_eq!(landing(&["release", "publish"]), Landing::Landed);
     assert_eq!(landing(&["restore", "verify"]), Landing::Landed);
     assert_eq!(landing(&["lane"]), Landing::Landed);
     assert_eq!(landing(&["lane", "add"]), Landing::Landed);
     assert_eq!(landing(&["lane", "drain"]), Landing::Landed);
     assert_eq!(landing(&["lane", "wake"]), Landing::Landed);
+    assert_eq!(landing(&["lane", "import"]), Landing::Landed);
+    assert_eq!(landing(&["steer", "recover"]), Landing::Landed);
+    assert_eq!(landing(&["task", "reclaim"]), Landing::Landed);
     assert_eq!(landing(&["recall"]), Landing::Landed);
     assert_eq!(landing(&["steer"]), Landing::Landed);
     assert_eq!(landing(&["steer", "cancel"]), Landing::Landed);
@@ -213,7 +218,7 @@ fn installed_python_registry_and_ledger_dispositions_are_bijective() {
         .filter_map(|line| line.split_once('`'))
         .map(|(path, disposition)| {
             assert!(
-                [": R", ": D", ": X"]
+                [": R", ": D", ": P", ": X"]
                     .iter()
                     .any(|prefix| disposition.starts_with(prefix)),
                 "Python ledger path has no explicit disposition: {path}",
@@ -238,37 +243,25 @@ fn installed_python_registry_and_ledger_dispositions_are_bijective() {
 #[derive(Clone, Copy, Debug)]
 enum PythonTaskDisposition {
     Landed(&'static [&'static str]),
-    Later(&'static str),
+    Branch(&'static [&'static str]),
 }
 
 #[test]
 fn every_python_task_control_has_one_tested_current_disposition() {
-    use PythonTaskDisposition::{Landed, Later};
+    use PythonTaskDisposition::{Branch, Landed};
 
     let mappings = [
         ("task", Landed(&["board"])),
         ("task add", Landed(&["task", "add"])),
-        ("task artifact", Later("Task-addressed sidecar artifacts")),
-        (
-            "task artifact add",
-            Later("Task-addressed sidecar artifacts"),
-        ),
-        (
-            "task artifact list",
-            Later("Task-addressed sidecar artifacts"),
-        ),
+        ("task artifact", Branch(&["task", "artifact"])),
+        ("task artifact add", Landed(&["task", "artifact", "add"])),
+        ("task artifact list", Landed(&["task", "artifact", "list"])),
         (
             "task artifact prune",
-            Later("Task-addressed sidecar artifacts"),
+            Landed(&["task", "artifact", "prune"]),
         ),
-        (
-            "task artifact show",
-            Later("Task-addressed sidecar artifacts"),
-        ),
-        (
-            "task capture",
-            Later("Task-boundary Git publication and capture"),
-        ),
+        ("task artifact show", Landed(&["task", "artifact", "show"])),
+        ("task capture", Landed(&["task", "capture"])),
         ("task claim", Landed(&["task", "next"])),
         ("task delete", Landed(&["doc"])),
         ("task depends", Landed(&["task", "depends"])),
@@ -283,7 +276,7 @@ fn every_python_task_control_has_one_tested_current_disposition() {
         ("task next", Landed(&["task", "next"])),
         ("task note", Landed(&["task", "note"])),
         ("task oops", Landed(&["task", "oops"])),
-        ("task reclaim", Later("Manual claim renewal")),
+        ("task reclaim", Landed(&["task", "reclaim"])),
         ("task review", Landed(&["task", "review"])),
         ("task reword", Landed(&["doc"])),
         ("task show", Landed(&["board"])),
@@ -306,7 +299,6 @@ fn every_python_task_control_has_one_tested_current_disposition() {
         .filter_map(|line| line.strip_prefix("- `"))
         .filter_map(|line| line.split_once('`').map(|(path, _)| path))
         .collect::<BTreeSet<_>>();
-    let later = include_str!("../../../LATER.md");
     let mapped = mappings
         .iter()
         .map(|(path, _)| *path)
@@ -331,14 +323,18 @@ fn every_python_task_control_has_one_tested_current_disposition() {
                     "Python `{python}` maps to an unlanded Rust leaf: {path:?}",
                 );
             }
-            Later(boundary) => assert!(
-                later.lines().any(|line| {
-                    line.strip_prefix("| ")
-                        .and_then(|line| line.split_once(" |"))
-                        .is_some_and(|(surface, _)| surface == boundary)
-                }),
-                "Python `{python}` names an absent LATER.md boundary: {boundary}",
-            ),
+            Branch(path) => {
+                assert!(
+                    contracts().iter().any(|contract| {
+                        contract.path.starts_with(path) && contract.path.len() > path.len()
+                    }),
+                    "Python `{python}` maps to an empty Rust branch: {path:?}",
+                );
+                assert!(
+                    contracts().iter().all(|contract| contract.path != path),
+                    "Python `{python}` branch unexpectedly names a leaf: {path:?}",
+                );
+            }
         }
     }
 }
@@ -471,7 +467,7 @@ fn daemonless_local_succession_is_closed_and_explicit() {
 }
 
 #[test]
-fn python_lifecycle_and_session_forensics_name_their_rust_successors() {
+fn python_lifecycle_and_session_forensics_name_landed_successors() {
     let ledger = include_str!("../../../PORTING.md");
     let agent = ledger
         .split_once("### Agent lifecycle")
@@ -483,6 +479,14 @@ fn python_lifecycle_and_session_forensics_name_their_rust_successors() {
     for mapping in [
         "- `agent activation`: R -> `lane` and canvas discovery.",
         "- `agent ensure`: R -> `lane add`.",
+        concat!(
+            "- `agent import`: R -> `lane import` for atomic team-seat, lineage, ",
+            "exact session, and active-claim transfer."
+        ),
+        concat!(
+            "- `agent requeue-deadletter`: R -> `steer recover` for exact-once ",
+            "lapsed directive recovery with payload and provenance retained."
+        ),
         "- `agent show`: R -> `lane` and `recall`.",
     ] {
         assert!(
@@ -498,13 +502,31 @@ fn python_lifecycle_and_session_forensics_name_their_rust_successors() {
         .split_once("### Task plane")
         .expect("the session forensics section is bounded")
         .0;
-    let historical_path = format!("- `session {}{}`: X.", "brie", "fing");
-    assert!(sessions.lines().any(|line| line == historical_path));
+    let landed = sessions
+        .lines()
+        .filter(|line| line.starts_with("- `session"))
+        .collect::<Vec<_>>();
+    assert_eq!(landed.len(), 14);
+    assert!(
+        landed
+            .iter()
+            .all(|line| line.contains(": R -> `rim::session"))
+    );
+    assert!(!sessions.lines().any(|line| line.contains(": X")));
     assert!(sessions.contains(
-        "Their retained questions use `watch`,\n\
-         `retro`, `recall`, and `thread` over owned tape and journal loci."
+        "The Rust rim now reads immutable Codex and Claude transcript evidence directly,\n\
+         including gzip, ambient/thread discovery, compaction reconstruction, usage and\n\
+         tool accounting, deterministic residue, and bounded filtered projections."
     ));
-    for path in [&["lane"][..], &["lane", "add"][..], &["recall"][..]] {
+    for path in [
+        &["lane"][..],
+        &["lane", "add"][..],
+        &["recall"][..],
+        &["session"][..],
+        &["session", "briefing"][..],
+        &["session", "commands"][..],
+        &["session", "thread"][..],
+    ] {
         assert_eq!(landing(path), Landing::Landed);
     }
 }
@@ -602,6 +624,10 @@ fn tool_postures_follow_the_closed_command_order() {
                 "proof replay".to_owned(),
                 vec!["OCI runtime", "sealed battery member"],
             ),
+            ("task next".to_owned(), vec!["git"]),
+            ("task capture".to_owned(), vec!["git"]),
+            ("task done".to_owned(), vec!["git"]),
+            ("task review".to_owned(), vec!["git"]),
             ("run".to_owned(), vec!["CMD"]),
         ]
     );
@@ -793,7 +819,7 @@ fn contract_syntax_drives_argument_registration() {
 #[test]
 fn configuration_flag_mappings_resolve_in_the_generated_tree() {
     let parser = command();
-    for mapping in spice::config::descriptors()
+    for mapping in crate::config::descriptors()
         .iter()
         .filter_map(|descriptor| descriptor.flag())
     {

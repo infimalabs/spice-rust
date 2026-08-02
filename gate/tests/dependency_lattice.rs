@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 const EXPECTED: &[(&str, &[&str])] = &[
     ("app", &["wire"]),
+    ("artifact", &["atomic", "sill", "wire"]),
     ("atomic", &[]),
     ("board", &["dialect", "fold", "journal", "wire"]),
     ("bus", &["fold", "journal"]),
@@ -27,9 +28,9 @@ const EXPECTED: &[(&str, &[&str])] = &[
     (
         "spice",
         &[
-            "atomic", "board", "bus", "canvas", "consent", "dialect", "dist", "fold", "gate",
-            "journal", "lane", "listen", "proof", "sill", "steer", "tape", "taste", "vendor",
-            "wire",
+            "artifact", "atomic", "board", "bus", "canvas", "consent", "dialect", "dist", "fold",
+            "gate", "journal", "lane", "listen", "proof", "sill", "steer", "tape", "taste",
+            "vendor", "wire",
         ],
     ),
     ("steer", &["atomic", "fold", "journal", "sill", "wire"]),
@@ -37,7 +38,7 @@ const EXPECTED: &[(&str, &[&str])] = &[
     ("taste", &["fold", "journal", "listen", "wire"]),
     ("vendor", &["listen", "sill", "wire"]),
     ("wire", &[]),
-    ("xtask", &["dist", "sill", "wire"]),
+    ("xtask", &["dist", "gate", "sill", "spice", "wire"]),
 ];
 
 #[test]

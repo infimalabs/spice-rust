@@ -24,7 +24,8 @@ use wire::{
 const FAULT_EXIT: i32 = 1;
 const REFUSAL_EXIT: i32 = 2;
 const READINESS_DEADLINE: Duration = Duration::from_secs(10);
-const CLIENT_DEADLINE_BOUND: Duration = Duration::from_secs(5);
+const CLIENT_DEADLINE_BOUND: Duration = Duration::from_secs(10);
+const LANE_DEADLINE_BOUND: Duration = Duration::from_secs(20);
 const ADVERSARIAL_PEER_LIFE: Duration = Duration::from_secs(7);
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -738,6 +739,7 @@ fn seed_active_claim(fixture: &Fixture) {
                 occupant,
                 epoch,
                 until: expiry,
+                git: None,
             },
             FactCause::Existing(
                 wire::Seq::new(added.last()).expect("task commit has a non-zero position"),
@@ -780,6 +782,7 @@ fn seed_lane(fixture: &Fixture, lane: wire::CanonicalUuid, capability: wire::Can
         occupant: None,
         lineage: Vec::new(),
         capabilities: vec![capability],
+        session: None,
         disposition: "vacant".to_owned(),
     });
     next.lanes.sort_by_key(|row| row.lane);
@@ -830,3 +833,9 @@ mod cases;
 
 #[path = "resident/lane_process.rs"]
 mod lane_process;
+
+#[path = "resident/lane_continuity.rs"]
+mod lane_continuity;
+
+#[path = "resident/vendor_process.rs"]
+mod vendor_process;

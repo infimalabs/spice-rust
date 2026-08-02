@@ -178,6 +178,10 @@ fn tool_observation(
             )
             .to_owned(),
         },
+        DoctorToolSource::TaskBoundaryContract => match probe.named(tool.name) {
+            Ok(()) => DoctorObservation::Ready {},
+            Err(reason) => DoctorObservation::Unavailable { reason },
+        },
         DoctorToolSource::WorktreeConfiguration => match probe.named(tool.name) {
             Ok(()) => DoctorObservation::Ready {},
             Err(reason) => DoctorObservation::Unavailable { reason },
@@ -217,28 +221,13 @@ fn gate_observation(
 }
 
 fn configuration_refusal(error: &config::LoadError) -> Refusal {
-    let mut diagnostics: Vec<String> = error
-        .acquisition()
-        .iter()
-        .map(ToString::to_string)
-        .collect();
-    if let Some(resolution) = error.resolution() {
-        diagnostics.extend(resolution.issues().iter().map(ToString::to_string));
-    }
-    if let Some(repository) = error.repository() {
-        diagnostics.push(repository.to_string());
-    }
-    if diagnostics.is_empty() {
-        diagnostics.push(error.to_string());
-    }
-
     Refusal {
         reason: "doctor::configuration-refused".to_owned(),
         witness: None,
         expected: Some(
             "tracked and local inputs admitted by the configuration registry".to_owned(),
         ),
-        observed: Some(diagnostics.join(" | ")),
+        observed: Some(error.diagnostic()),
         remedy: "correct the named configuration inputs and rerun doctor".to_owned(),
     }
 }

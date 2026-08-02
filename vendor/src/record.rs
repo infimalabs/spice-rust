@@ -11,6 +11,8 @@ use sill::{
     StreamPolicy, WaitPolicy,
 };
 
+use crate::ContractError;
+
 /// Stable identity of a session that can be resumed explicitly.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct SessionId(String);
@@ -53,6 +55,15 @@ impl fmt::Display for SessionIdError {
 }
 
 impl Error for SessionIdError {}
+
+/// One exact session declaration admitted from a selected vendor record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SessionDeclaration {
+    /// Identity accepted for an explicit successor resume.
+    pub session: SessionId,
+    /// Durable record bytes that declared the identity.
+    pub locus: Locus,
+}
 
 /// Whether a launch begins or resumes an exact session.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -168,6 +179,35 @@ impl Record {
         }
         listen::decode(self.dialect, bytes, locus).map(Some)
     }
+
+    /// Admit the session declaration carried by one decoded selected record.
+    ///
+    /// Diagnostic streams and records of every other event kind return no
+    /// declaration. The current Claude and Codex decoders each emit at most one
+    /// declaration from their exact initialization record.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionIdError`] when the vendor declared an empty identity.
+    pub fn session_declaration(
+        &self,
+        decoded: &Decoded,
+    ) -> Result<Option<SessionDeclaration>, SessionIdError> {
+        decoded
+            .events()
+            .iter()
+            .find_map(|event| match event {
+                listen::Event::Session(declaration) => Some(declaration),
+                _ => None,
+            })
+            .map(|declaration| {
+                Ok(SessionDeclaration {
+                    session: SessionId::new(declaration.identity.clone())?,
+                    locus: declaration.locus,
+                })
+            })
+            .transpose()
+    }
 }
 
 /// Vendor-neutral process settings supplied by lane supervision.
@@ -258,7 +298,7 @@ impl Error for ProcessError {}
 #[derive(Debug)]
 pub enum LaunchError {
     /// The executable and argument contract was invalid.
-    Contract(SpecError),
+    Contract(ContractError),
     /// `sill` could not create the child.
     Spawn(io::Error),
 }

@@ -8,12 +8,15 @@ use std::path::{Component, Path, PathBuf};
 #[cfg(unix)]
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags};
 
-use wire::manifest::{JOURNAL_BACKUP_VERSION, JournalBackupManifest};
-use wire::{Digest, Domain, RestoreVerification, WireVersion};
+use wire::manifest::JournalBackupManifest;
+use wire::{Digest, Domain, RestoreVerification, TaskHandle, WireVersion};
 
-use crate::{JournalReader, OpenError, SCHEMA_VERSION, VerifyError};
+use crate::{JournalReader, OpenError, VerifyError};
 
 const MANIFEST: &str = "manifest.json";
+
+mod manifest;
+use manifest::admit_manifest_generation;
 
 /// Authenticates one offline journal backup bundle without writer capability.
 ///
@@ -32,6 +35,37 @@ pub fn verify_restore_bundle(
 pub struct RestoreCapture {
     verification: RestoreVerification,
     authority: Vec<u8>,
+    authority_path: String,
+    members: Vec<RestoreMember>,
+    tasks: Vec<TaskHandle>,
+}
+
+/// One authenticated regular file captured from a restore bundle.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RestoreMember {
+    path: String,
+    mode: u32,
+    bytes: Vec<u8>,
+}
+
+impl RestoreMember {
+    /// Canonical slash-separated member path relative to the bundle root.
+    #[must_use]
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Exact POSIX mode authenticated by the bundle manifest.
+    #[must_use]
+    pub const fn mode(&self) -> u32 {
+        self.mode
+    }
+
+    /// Exact authenticated member bytes.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
 }
 
 impl RestoreCapture {
@@ -45,6 +79,24 @@ impl RestoreCapture {
     #[must_use]
     pub fn authority_bytes(&self) -> &[u8] {
         &self.authority
+    }
+
+    /// Canonical member path carrying the SQLite authority.
+    #[must_use]
+    pub fn authority_path(&self) -> &str {
+        &self.authority_path
+    }
+
+    /// Every authenticated bundle member in canonical manifest order.
+    #[must_use]
+    pub fn members(&self) -> &[RestoreMember] {
+        &self.members
+    }
+
+    /// Every task in the captured journal head set, ordered by handle.
+    #[must_use]
+    pub fn tasks(&self) -> &[TaskHandle] {
+        &self.tasks
     }
 
     /// Consumes the capture and returns its public verification receipt.
@@ -94,11 +146,12 @@ where
 {
     let bundle = BundleAuthority::open(root)?;
     let (manifest, manifest_bytes) = read_manifest(&bundle)?;
-    admit_manifest_versions(&manifest)?;
+    let manifest = admit_manifest_generation(manifest)?;
     let authority = admitted_member_path(&manifest.authority)?;
-    let authority_capture = authenticate_members(&bundle, &manifest, &authority, after_inventory)?;
+    let (authority_capture, members) =
+        authenticate_members(&bundle, &manifest, &authority, after_inventory)?;
     after_capture(&root.join(&authority));
-    let verified = verify_authority(&authority_capture.bytes, manifest.journal_schema)?;
+    let (verified, tasks) = verify_authority(&authority_capture.bytes, manifest.journal_schema)?;
 
     Ok(RestoreCapture {
         verification: RestoreVerification {
@@ -113,6 +166,9 @@ where
             threads: count(verified.threads, "threads")?,
         },
         authority: authority_capture.bytes,
+        authority_path: manifest.authority,
+        members,
+        tasks,
     })
 }
 
@@ -215,38 +271,12 @@ fn read_manifest(
     }
 }
 
-fn admit_manifest_versions(manifest: &JournalBackupManifest) -> Result<(), BackupVerifyError> {
-    if manifest.version != JOURNAL_BACKUP_VERSION {
-        Err(BackupVerifyError::UnsupportedVersion {
-            found: manifest.version,
-            current: JOURNAL_BACKUP_VERSION,
-        })
-    } else if !manifest.wire.is_current() {
-        Err(BackupVerifyError::UnsupportedWire {
-            found: manifest.wire,
-            current: WireVersion::CURRENT,
-        })
-    } else if manifest.journal_schema > SCHEMA_VERSION {
-        Err(BackupVerifyError::ForwardSchema {
-            found: manifest.journal_schema,
-            current: SCHEMA_VERSION,
-        })
-    } else if manifest.journal_schema != SCHEMA_VERSION {
-        Err(BackupVerifyError::SchemaMismatch {
-            manifest: manifest.journal_schema,
-            authority: SCHEMA_VERSION,
-        })
-    } else {
-        Ok(())
-    }
-}
-
 fn authenticate_members<F>(
     bundle: &BundleAuthority,
     manifest: &JournalBackupManifest,
     authority: &Path,
     after_inventory: F,
-) -> Result<CapturedMember, BackupVerifyError>
+) -> Result<(CapturedMember, Vec<RestoreMember>), BackupVerifyError>
 where
     F: FnOnce(&Path),
 {
@@ -254,6 +284,7 @@ where
     after_inventory(&bundle.root);
     let mut previous: Option<&str> = None;
     let mut authority_capture = None;
+    let mut captures = Vec::with_capacity(manifest.members.len());
     for member in &manifest.members {
         let relative = admitted_member_path(&member.path)?;
         admit_member_order(&bundle.root, previous, &member.path)?;
@@ -261,15 +292,25 @@ where
         let observed =
             authenticate_member(bundle, &relative, member.mode, member.bytes, &member.digest)?;
         if relative == authority {
-            authority_capture = Some(observed);
+            authority_capture = Some(CapturedMember {
+                digest: observed.digest.clone(),
+                bytes: observed.bytes.clone(),
+            });
         }
+        captures.push(RestoreMember {
+            path: member.path.clone(),
+            mode: member.mode,
+            bytes: observed.bytes,
+        });
     }
-    authority_capture.ok_or_else(|| BackupVerifyError::Incomplete {
-        detail: format!(
-            "authority member {:?} is absent from the manifest inventory",
-            manifest.authority
-        ),
-    })
+    authority_capture
+        .map(|authority| (authority, captures))
+        .ok_or_else(|| BackupVerifyError::Incomplete {
+            detail: format!(
+                "authority member {:?} is absent from the manifest inventory",
+                manifest.authority
+            ),
+        })
 }
 
 fn admit_inventory(
@@ -360,7 +401,7 @@ fn authenticate_member(
 fn verify_authority(
     authority: &[u8],
     manifest_schema: u32,
-) -> Result<crate::Verification, BackupVerifyError> {
+) -> Result<(crate::Verification, Vec<TaskHandle>), BackupVerifyError> {
     let reader = JournalReader::from_serialized(authority).map_err(BackupVerifyError::Authority)?;
     let schema = reader
         .schema_version()
@@ -371,7 +412,14 @@ fn verify_authority(
             authority: schema,
         });
     }
-    reader.verify().map_err(BackupVerifyError::Replay)
+    let verified = reader.verify().map_err(BackupVerifyError::Replay)?;
+    let tasks = reader
+        .read(|read| read.task_heads())
+        .map_err(BackupVerifyError::AuthorityView)?
+        .into_iter()
+        .map(|heads| heads.statement().body().handle.clone())
+        .collect();
+    Ok((verified, tasks))
 }
 
 fn count(value: usize, subject: &str) -> Result<u64, BackupVerifyError> {
@@ -722,6 +770,7 @@ pub enum BackupVerifyError {
         source: io::Error,
     },
     Authority(OpenError),
+    AuthorityView(crate::GuardError),
     Replay(VerifyError),
 }
 
@@ -764,6 +813,9 @@ impl fmt::Display for BackupVerifyError {
                 path.display()
             ),
             Self::Authority(error) => write!(formatter, "backup authority was refused: {error}"),
+            Self::AuthorityView(error) => {
+                write!(formatter, "backup authority task view was refused: {error}")
+            }
             Self::Replay(error) => write!(formatter, "backup replay closure failed: {error}"),
         }
     }
@@ -774,6 +826,7 @@ impl Error for BackupVerifyError {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::Authority(error) => Some(error),
+            Self::AuthorityView(error) => Some(error),
             Self::Replay(error) => Some(error),
             Self::Missing { .. }
             | Self::Incomplete { .. }

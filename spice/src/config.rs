@@ -12,6 +12,7 @@ use wire::ConfigSource;
 
 mod load;
 mod resolve;
+mod task_migration;
 
 pub use load::{
     AcquisitionIssue, AcquisitionKind, CaptureGeneration, LoadError, Loaded, Locations,
@@ -21,6 +22,13 @@ pub use load::{
 pub use resolve::{
     ConcretePath, Document, FlagError, FlagOverride, FlagValue, Inputs, Issue, IssueKind,
     Provenance, ResolveError, Resolved, resolve,
+};
+pub use task_migration::{
+    MigrationDecision as TaskMigrationDecision, MigrationError as TaskMigrationError,
+    MigrationErrorKind as TaskMigrationErrorKind, MigrationProvenance as TaskMigrationProvenance,
+    MigrationSource as TaskMigrationSource, PREDECESSOR_TASK_RELEASE, PredecessorTaskMigration,
+    RAW_OVERRIDE_MAPPINGS, RawOverrideMapping, TASK_MIGRATION_SCHEMA_VERSION, TaskMigrationReport,
+    migrate_predecessor_tasks,
 };
 
 /// Every release-one configuration domain.
@@ -39,6 +47,7 @@ pub struct Root {
     listen: listen::Config,
     lock: sill::LockConfig,
     canvas: canvas::Config,
+    say: canvas::SpeechConfig,
     proof: proof::Config,
 }
 
@@ -91,7 +100,7 @@ impl Root {
         &self.steer
     }
 
-    /// Vendor executable overrides.
+    /// Vendor-specific launch policy.
     #[must_use]
     pub const fn vendor(&self) -> &vendor::Config {
         &self.vendor
@@ -115,6 +124,12 @@ impl Root {
         &self.canvas
     }
 
+    /// Browser-owned speech playback and its optional local renderer.
+    #[must_use]
+    pub const fn say(&self) -> &canvas::SpeechConfig {
+        &self.say
+    }
+
     /// Proof image policy and machine-local executable locations.
     #[must_use]
     pub const fn proof(&self) -> &proof::Config {
@@ -126,6 +141,7 @@ impl Root {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TaskMetadata {
     stems: Vec<String>,
+    hidden_stems: Vec<String>,
     project_min_depth: u64,
     project_max_depth: u64,
 }
@@ -135,6 +151,24 @@ impl TaskMetadata {
     #[must_use]
     pub fn stems(&self) -> &[String] {
         &self.stems
+    }
+
+    /// Fully resolved hidden roots in declared order, without leading dots.
+    #[must_use]
+    pub fn hidden_stems(&self) -> &[String] {
+        &self.hidden_stems
+    }
+
+    /// One immutable classifier for board admission and allocation.
+    #[must_use]
+    pub fn project_policy(&self) -> board::ProjectPolicy {
+        board::ProjectPolicy::new(
+            self.stems.clone(),
+            self.hidden_stems.clone(),
+            self.project_min_depth,
+            self.project_max_depth,
+        )
+        .expect("admitted task metadata always reconstructs its project policy")
     }
 
     /// Fewest dotted segments admitted for a public project.
@@ -148,12 +182,30 @@ impl TaskMetadata {
     pub const fn project_max_depth(&self) -> u64 {
         self.project_max_depth
     }
+
+    fn migrated(hidden_additions: Vec<String>) -> Result<Self, board::ProjectPolicyError> {
+        let defaults = Self::default();
+        let projects = board::ProjectPolicy::new(
+            defaults.stems.clone(),
+            hidden_additions,
+            defaults.project_min_depth,
+            defaults.project_max_depth,
+        )?;
+        Ok(Self {
+            hidden_stems: projects.hidden_stems().to_vec(),
+            ..defaults
+        })
+    }
 }
 
 impl Default for TaskMetadata {
     fn default() -> Self {
         Self {
             stems: Vec::new(),
+            hidden_stems: board::BUILTIN_HIDDEN_STEMS
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
             project_min_depth: default_project_min_depth(),
             project_max_depth: default_project_max_depth(),
         }
@@ -165,6 +217,8 @@ impl Default for TaskMetadata {
 struct TaskMetadataInput {
     #[serde(default, deserialize_with = "unique_names")]
     stems: Vec<String>,
+    #[serde(default)]
+    hidden_stems: Vec<String>,
     #[serde(
         default = "default_project_min_depth",
         deserialize_with = "positive_depth"
@@ -189,8 +243,16 @@ impl<'de> Deserialize<'de> for TaskMetadata {
                 input.project_min_depth, input.project_max_depth,
             )));
         }
+        let projects = board::ProjectPolicy::new(
+            input.stems.clone(),
+            input.hidden_stems,
+            input.project_min_depth,
+            input.project_max_depth,
+        )
+        .map_err(D::Error::custom)?;
         Ok(Self {
             stems: input.stems,
+            hidden_stems: projects.hidden_stems().to_vec(),
             project_min_depth: input.project_min_depth,
             project_max_depth: input.project_max_depth,
         })
@@ -203,6 +265,7 @@ impl<'de> Deserialize<'de> for TaskMetadata {
 pub struct WorkspacePolicy {
     #[serde(deserialize_with = "unique_names")]
     env_names: Vec<String>,
+    commit_message: gate::CommitMessagePolicy,
 }
 
 impl WorkspacePolicy {
@@ -210,6 +273,12 @@ impl WorkspacePolicy {
     #[must_use]
     pub fn env_names(&self) -> &[String] {
         &self.env_names
+    }
+
+    /// Commit trailer policy shared by launch attribution and the native hook.
+    #[must_use]
+    pub const fn commit_message(&self) -> &gate::CommitMessagePolicy {
+        &self.commit_message
     }
 }
 
@@ -251,6 +320,8 @@ fn unique_names<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<String
 /// Semantic validation still belongs to the domain type named by [`Root`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ValueKind {
+    /// One boolean.
+    Boolean,
     /// One string.
     String,
     /// One ordered string list.
@@ -274,6 +345,7 @@ impl ValueKind {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Boolean => "boolean",
             Self::String => "string",
             Self::StringList => "string-list",
             Self::UnsignedInteger => "unsigned-integer",
@@ -300,6 +372,8 @@ pub enum Builtin {
     UnsignedInteger(u64),
     /// One finite floating-point number.
     Float(f64),
+    /// One boolean.
+    Boolean(bool),
 }
 
 /// Whether a leaf is tracked policy or an admitted machine-local setting.
@@ -536,6 +610,13 @@ registry! {
         class: Policy,
         flag: None,
     }
+    fixed "tasks.hidden_stems" {
+        kind: StringList,
+        builtin: Some(Builtin::Strings(&board::BUILTIN_HIDDEN_STEMS)),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
     fixed "tasks.project_min_depth" {
         kind: UnsignedInteger,
         builtin: Some(Builtin::UnsignedInteger(dialect::PROJECT_MIN_DEPTH as u64)),
@@ -553,6 +634,20 @@ registry! {
     fixed "policy.env_names" {
         kind: StringList,
         builtin: Some(Builtin::Strings(&[])),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "policy.commit_message.allowed_trailers" {
+        kind: StringList,
+        builtin: Some(Builtin::Absent),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "policy.commit_message.blocked_trailers" {
+        kind: StringList,
+        builtin: Some(Builtin::Absent),
         layers: TRACKED,
         class: Policy,
         flag: None,
@@ -683,9 +778,67 @@ registry! {
         class: Policy,
         flag: None,
     }
-    named "vendor.<name>.binary" {
+    fixed "vendor.claude.binary" {
         kind: String,
-        builtin: None,
+        builtin: Some(Builtin::String("claude")),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "vendor.claude.model" {
+        kind: String,
+        builtin: Some(Builtin::String(vendor::DEFAULT_CLAUDE_MODEL)),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "vendor.claude.effort" {
+        kind: String,
+        builtin: Some(Builtin::String("high")),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "vendor.claude.auto_compact_window_tokens" {
+        kind: UnsignedInteger,
+        builtin: Some(Builtin::UnsignedInteger(
+            vendor::DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS,
+        )),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "vendor.codex.binary" {
+        kind: String,
+        builtin: Some(Builtin::String("codex")),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "vendor.codex.model" {
+        kind: String,
+        builtin: Some(Builtin::String(vendor::DEFAULT_CODEX_MODEL)),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "vendor.codex.effort" {
+        kind: String,
+        builtin: Some(Builtin::String("high")),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "vendor.codex.personality" {
+        kind: String,
+        builtin: Some(Builtin::Absent),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "vendor.codex.fast_mode" {
+        kind: Boolean,
+        builtin: Some(Builtin::Boolean(false)),
         layers: TRACKED,
         class: Policy,
         flag: None,
@@ -718,6 +871,20 @@ registry! {
         class: MachineLocal,
         flag: None,
     }
+    named "lock.<name>.path" {
+        kind: String,
+        builtin: None,
+        layers: TRACKED_LOCAL,
+        class: MachineLocal,
+        flag: None,
+    }
+    named "lock.<name>.directory" {
+        kind: String,
+        builtin: None,
+        layers: TRACKED_LOCAL,
+        class: MachineLocal,
+        flag: None,
+    }
     named "lock.<name>.shards" {
         kind: UnsignedInteger,
         builtin: None,
@@ -728,6 +895,43 @@ registry! {
     fixed "canvas.pack.rows" {
         kind: UnsignedInteger,
         builtin: Some(Builtin::UnsignedInteger(40)),
+        layers: TRACKED_LOCAL,
+        class: MachineLocal,
+        flag: None,
+    }
+    fixed "say.backend" {
+        kind: String,
+        builtin: Some(Builtin::String("system")),
+        layers: TRACKED_LOCAL,
+        class: MachineLocal,
+        flag: None,
+    }
+    fixed "say.command" {
+        kind: StringList,
+        builtin: Some(Builtin::Strings(&[])),
+        layers: LOCAL,
+        class: MachineLocal,
+        flag: None,
+    }
+    fixed "say.voice" {
+        kind: String,
+        builtin: Some(Builtin::String(canvas::speech::DEFAULT_VOICE)),
+        layers: TRACKED_LOCAL,
+        class: MachineLocal,
+        flag: None,
+    }
+    fixed "say.content_type" {
+        kind: String,
+        builtin: Some(Builtin::String(canvas::speech::DEFAULT_CONTENT_TYPE)),
+        layers: TRACKED_LOCAL,
+        class: MachineLocal,
+        flag: None,
+    }
+    fixed "say.words_per_minute" {
+        kind: UnsignedInteger,
+        builtin: Some(Builtin::UnsignedInteger(
+            canvas::speech::DEFAULT_WORDS_PER_MINUTE as u64,
+        )),
         layers: TRACKED_LOCAL,
         class: MachineLocal,
         flag: None,

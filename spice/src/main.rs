@@ -10,19 +10,21 @@ use std::{
 };
 
 use listen::{RetroSelector, StreamOutcome, SurfaceError, Watch};
+use spice::cli;
 use wire::{Fault, FaultClass, Outcome, Refusal};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod board_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod canvas_command;
-mod cli;
 #[cfg(not(target_arch = "wasm32"))]
 mod command_client;
 #[cfg(not(target_arch = "wasm32"))]
 mod config_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod consent_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod demo_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod doctor;
 #[cfg(not(target_arch = "wasm32"))]
@@ -46,7 +48,13 @@ mod resident;
 #[cfg(not(target_arch = "wasm32"))]
 mod restore_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod session_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod steering_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod task_artifact_command;
+#[cfg(not(target_arch = "wasm32"))]
+mod task_migration_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod taste_command;
 #[cfg(not(target_arch = "wasm32"))]
@@ -124,8 +132,28 @@ fn main() {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    {
+        dispatch_native_queries(contract, leaf, form);
+        dispatch_native_controls(contract, leaf, form);
+    }
+    #[cfg(target_arch = "wasm32")]
+    deliver_target_refusal(contract.path, form);
+    #[cfg(not(target_arch = "wasm32"))]
+    let outcome = match contract.path {
+        ["up"] => resident::up(),
+        ["down"] => resident::down(contract),
+        _ => not_landed(contract),
+    };
+    #[cfg(target_arch = "wasm32")]
+    let outcome = not_landed(contract);
+    deliver(&outcome, form);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn dispatch_native_queries(contract: &cli::Contract, leaf: &clap::ArgMatches, form: Form) {
     match contract.path {
         ["doctor"] => deliver(&doctor_outcome(), form),
+        ["demo"] => deliver(&demo_command::run(leaf), form),
         ["gate"] => deliver(&gate_command::run(leaf), form),
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
@@ -135,6 +163,9 @@ fn main() {
             install_command::Answer::Receipt(outcome) => deliver(&outcome, form),
         },
         ["config"] => deliver_config(&config_command::run(leaf), form),
+        ["config", "migrate-tasks"] => {
+            deliver_task_migration(&task_migration_command::run(leaf), form)
+        }
         ["consent"] => deliver(&consent_command::read(contract), form),
         ["consent", "allow"] => deliver(
             &consent_command::decide(leaf, contract, wire::Answer::Granted),
@@ -153,6 +184,12 @@ fn main() {
             }
         },
         ["backup"] => deliver(&journal_command::backup(leaf), form),
+        ["task", "artifact", "add"]
+        | ["task", "artifact", "list"]
+        | ["task", "artifact", "show"]
+        | ["task", "artifact", "prune"] => {
+            deliver(&task_artifact_command::run(leaf, contract), form)
+        }
         ["restore"] => deliver(&restore_command::restore(leaf), form),
         ["journal"] => deliver(&journal_command::report(contract), form),
         ["journal", "replay"] => deliver(&journal_command::replay(leaf, contract), form),
@@ -163,10 +200,37 @@ fn main() {
         ["canvas"] => deliver(&canvas_command::open(), form),
         ["version"] => deliver(&version_outcome(), form),
         ["release", "notes"] => deliver(&release_command::notes(leaf), form),
+        _ => {}
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, form: Form) {
+    match contract.path {
         ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
-        ["lane"] | ["lane", "add"] | ["lane", "drain"] | ["lane", "wake"] | ["recall"] => {
-            deliver(&lane_command::run(leaf, contract), form)
-        }
+        ["session"]
+        | ["session", "briefing"]
+        | ["session", "commands"]
+        | ["session", "commits"]
+        | ["session", "compactions"]
+        | ["session", "messages"]
+        | ["session", "phases"]
+        | ["session", "slices"]
+        | ["session", "summary"]
+        | ["session", "sweep"]
+        | ["session", "thread"]
+        | ["session", "timeline"]
+        | ["session", "tokens"]
+        | ["session", "turns"] => deliver(
+            &session_command::run(leaf, contract.path, &session_environment()),
+            form,
+        ),
+        ["lane"]
+        | ["lane", "add"]
+        | ["lane", "drain"]
+        | ["lane", "wake"]
+        | ["lane", "import"]
+        | ["recall"] => deliver(&lane_command::run(leaf, contract), form),
         ["release", "publish"] => match release_command::run(leaf, contract) {
             release_command::RunResult::Plan(outcome) => deliver(&outcome, form),
             release_command::RunResult::Published(outcome) => deliver(&outcome, form),
@@ -175,7 +239,9 @@ fn main() {
         | ["board", "graph"]
         | ["board", "handout"]
         | ["task", "next"]
+        | ["task", "reclaim"]
         | ["task", "add"]
+        | ["task", "capture"]
         | ["task", "done"]
         | ["task", "review"]
         | ["task", "note"]
@@ -186,7 +252,7 @@ fn main() {
         | ["task", "depends"]
         | ["doc"]
         | ["doc", "ledger"] => deliver(&board_command::run(leaf, contract), form),
-        ["steer"] | ["steer", "cancel"] | ["inbox"] | ["ack"] => deliver(
+        ["steer"] | ["steer", "cancel"] | ["steer", "recover"] | ["inbox"] | ["ack"] => deliver(
             &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
             form,
         ),
@@ -198,17 +264,6 @@ fn main() {
         ["taste", "drop"] => deliver(&taste_command::drop(leaf, contract), form),
         _ => {}
     }
-    #[cfg(target_arch = "wasm32")]
-    deliver_target_refusal(contract.path, form);
-    #[cfg(not(target_arch = "wasm32"))]
-    let outcome = match contract.path {
-        ["up"] => resident::up(),
-        ["down"] => resident::down(contract),
-        _ => not_landed(contract),
-    };
-    #[cfg(target_arch = "wasm32")]
-    let outcome = not_landed(contract);
-    deliver(&outcome, form);
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -222,6 +277,10 @@ fn deliver_target_refusal(path: &[&str], form: Form) {
 #[cfg(any(test, target_arch = "wasm32"))]
 fn target_unsupported(path: &[&str]) -> Option<Fault> {
     let (reason, detail) = match path {
+        ["demo"] => (
+            "demo::target-unsupported",
+            "filesystem seeding and platform browser launch are unavailable on wasm32",
+        ),
         ["gate", ..] => (
             "gate::target-unsupported",
             "immutable Git tree selection is unavailable on wasm32",
@@ -246,6 +305,14 @@ fn target_unsupported(path: &[&str]) -> Option<Fault> {
             "canvas::target-unsupported",
             "repository discovery and platform browser launch are unavailable on wasm32",
         ),
+        ["config", "migrate-tasks"] => (
+            "task-migration::target-unsupported",
+            "reading a predecessor task export is unavailable on wasm32",
+        ),
+        ["session", ..] => (
+            "session::target-unsupported",
+            "filesystem transcript forensics are unavailable on wasm32",
+        ),
         _ => return None,
     };
     Some(Fault {
@@ -256,7 +323,11 @@ fn target_unsupported(path: &[&str]) -> Option<Fault> {
 }
 
 fn not_landed(contract: &cli::Contract) -> Outcome<()> {
-    match cli::landing(contract.path) {
+    not_landed_from(contract.path, cli::landing(contract.path))
+}
+
+fn not_landed_from(path: &[&str], landing: cli::Landing) -> Outcome<()> {
+    match landing {
         cli::Landing::Landed => Outcome::Fault(Fault {
             class: FaultClass::Protocol,
             reason: "release::dispatch-gap".to_owned(),
@@ -265,15 +336,22 @@ fn not_landed(contract: &cli::Contract) -> Outcome<()> {
                     "registered landed command reached the terminal ",
                     "release branch: {}"
                 ),
-                contract.path.join(" ")
+                path.join(" ")
             ),
+        }),
+        cli::Landing::GapOwned(owner) => Outcome::Refusal(Refusal {
+            reason: "release::not-landed".to_owned(),
+            witness: Some("succession-owner".to_owned()),
+            expected: Some(owner.to_owned()),
+            observed: Some(path.join(" ")),
+            remedy: format!("complete the owning task {owner}"),
         }),
         cli::Landing::Unaccounted => Outcome::Fault(Fault {
             class: FaultClass::Protocol,
             reason: "release::succession-unaccounted".to_owned(),
             detail: format!(
                 "registered command has no succession disposition: {}",
-                contract.path.join(" ")
+                path.join(" ")
             ),
         }),
     }
@@ -649,6 +727,24 @@ fn deliver_config(outcome: &Outcome<config_command::ConfigReport>, form: Form) -
     deliver(outcome, form)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn deliver_task_migration(outcome: &Outcome<spice::config::TaskMigrationReport>, form: Form) -> ! {
+    if form == Form::Text
+        && let Outcome::Reply(reply) = outcome
+    {
+        match reply.body.text() {
+            Ok(document) => {
+                let mut stdout = io::stdout().lock();
+                let _ = stdout.write_all(&document);
+                let _ = stdout.flush();
+                terminate_code(REPLY_EXIT);
+            }
+            Err(error) => deliver_fault(render_fault(error.to_string()), Form::Text),
+        }
+    }
+    deliver(outcome, form)
+}
+
 /// Acquire one ambient bootstrap value before typed configuration crosses
 /// into the library graph.
 #[expect(
@@ -657,6 +753,18 @@ fn deliver_config(outcome: &Outcome<config_command::ConfigReport>, form: Form) -
 )]
 pub fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
     std::env::var_os(name)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn session_environment() -> session_command::Environment {
+    session_command::Environment::new(
+        bootstrap_environment("CODEX_THREAD_ID"), // env-policy: allow
+        bootstrap_environment("CLAUDE_CODE_SESSION_ID"), // env-policy: allow
+        bootstrap_environment("SPICE_AGENT_VENDOR"), // env-policy: allow
+        bootstrap_environment("CODEX_HOME"),
+        bootstrap_environment("CLAUDE_CONFIG_DIR"),
+        bootstrap_environment("HOME"),
+    )
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -694,10 +802,13 @@ const fn exit_status<B>(outcome: &Outcome<B>) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use spice::cli;
     use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
     use super::render::{self, Stream};
-    use super::{FAULT_EXIT, REFUSAL_EXIT, REPLY_EXIT, exit_status, target_unsupported};
+    use super::{
+        FAULT_EXIT, REFUSAL_EXIT, REPLY_EXIT, exit_status, not_landed_from, target_unsupported,
+    };
 
     fn reply() -> Outcome<()> {
         Outcome::Reply(Reply {
@@ -735,11 +846,16 @@ mod tests {
     #[test]
     fn daemonless_local_os_contracts_have_named_wasm_refusals() {
         for (path, reason) in [
+            (&["demo"][..], "demo::target-unsupported"),
             (&["install"][..], "install::target-unsupported"),
             (&["lock"][..], "lock::target-unsupported"),
             (&["lock", "run"][..], "lock::target-unsupported"),
             (&["restore", "verify"][..], "restore::target-unsupported"),
             (&["release", "notes"][..], "release::target-unsupported"),
+            (
+                &["config", "migrate-tasks"][..],
+                "task-migration::target-unsupported",
+            ),
         ] {
             let fault = target_unsupported(path)
                 .unwrap_or_else(|| panic!("{} needs a wasm refusal", path.join(" ")));
@@ -748,6 +864,26 @@ mod tests {
             assert!(!fault.detail.is_empty());
         }
         assert!(target_unsupported(&["version"]).is_none());
+    }
+
+    #[test]
+    fn succession_terminal_distinguishes_owned_and_unaccounted_paths() {
+        let Outcome::Refusal(owned) = not_landed_from(
+            &["fixture", "owned"],
+            cli::Landing::GapOwned("FIXTURE-owner01"),
+        ) else {
+            panic!("an owned gap must remain one visible refusal");
+        };
+        assert_eq!(owned.reason, "release::not-landed");
+        assert_eq!(owned.expected.as_deref(), Some("FIXTURE-owner01"));
+        assert_eq!(owned.observed.as_deref(), Some("fixture owned"));
+
+        let Outcome::Fault(unaccounted) =
+            not_landed_from(&["fixture", "unknown"], cli::Landing::Unaccounted)
+        else {
+            panic!("an unaccounted path must fault");
+        };
+        assert_eq!(unaccounted.reason, "release::succession-unaccounted");
     }
 
     /// The stream an outcome speaks on and the exit it carries read the same.

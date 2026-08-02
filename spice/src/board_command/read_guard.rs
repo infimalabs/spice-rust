@@ -6,6 +6,7 @@ fn phase(name: &str) -> wire::Phase {
 fn validated_snapshot(
     bus: &Bus,
     principal: wire::Actor,
+    projects: &ProjectPolicy,
 ) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
     let observed = bus
         .task_snapshot()
@@ -39,6 +40,7 @@ fn validated_snapshot(
             workflow.body.clone(),
             claim.as_ref().map(|head| head.body.clone()),
             lease.as_ref().map(|head| head.body.clone()),
+            projects,
         )
         .map_err(|error| {
             store_fault(
@@ -46,13 +48,15 @@ fn validated_snapshot(
                 &format!("task {handle} current heads are invalid: {error}"),
             )
         })?;
+        let visibility = entry.project().visibility().clone();
         entries.push(entry);
-        tasks.push(BoardTask {
+        tasks.push(BoardTask::from_authoritative(
+            visibility,
             statement,
             workflow,
             claim,
             lease,
-        });
+        ));
     }
     Ok(ValidatedSnapshot {
         cursor,
@@ -74,8 +78,97 @@ fn positioned<T: Clone>(head: &journal::JournalHead<T>) -> Positioned<T> {
     }
 }
 
-fn read_board(bus: &Bus, read: &BoardRead, principal: wire::Actor) -> Outcome<CommandAnswer> {
-    let mut snapshot = match validated_snapshot(bus, principal) {
+fn task_repository(
+    snapshot: &ValidatedSnapshot,
+    command: &wire::AdmittedCommand,
+    resident: &Repository,
+) -> Result<Repository, Outcome<CommandAnswer>> {
+    let Some((lane, occupant)) = command.expected().iter().find_map(|witness| match witness {
+        Witness::Residency {
+            lane,
+            occupant,
+            epoch,
+        } if *epoch == command.epoch() => Some((*lane, *occupant)),
+        _ => None,
+    }) else {
+        return Err(protocol_fault(
+            "git::residency-witness",
+            "task Git boundary has no current residency witness",
+        ));
+    };
+    let Some(row) = snapshot
+        .answer
+        .residency
+        .body
+        .lanes
+        .iter()
+        .find(|row| row.lane == lane && row.occupant == Some(occupant))
+    else {
+        return Err(refusal(
+            "git::lane-moved",
+            Some(lane.to_string()),
+            "retry through the lane and occupant that currently hold the claim",
+        ));
+    };
+    let repository = Repository::discover(&row.worktree).map_err(|error| {
+        environment_fault("git::worktree-unresolved", &error.to_string())
+    })?;
+    if repository.common_dir() != resident.common_dir()
+        || repository.worktree_root() != std::path::Path::new(&row.worktree)
+    {
+        return Err(environment_fault(
+            "git::worktree-moved",
+            "the claimed lane no longer names one worktree in the resident repository",
+        ));
+    }
+    Ok(repository)
+}
+
+fn publish_task_boundary(
+    repository: Option<&Repository>,
+    snapshot: &ValidatedSnapshot,
+    command: &wire::AdmittedCommand,
+    entry: &Entry,
+) -> Result<Option<GitBoundary>, Outcome<CommandAnswer>> {
+    let Some(resident) = repository else {
+        return Ok(None);
+    };
+    let lane = task_repository(snapshot, command, resident)?;
+    let actor = command.actor().to_string();
+    spice::task_git::publish(
+        &lane,
+        spice::task_git::Metadata {
+            label: entry.statement().handle.as_str(),
+            title: &entry.statement().title,
+            project: &entry.statement().project,
+            phase: entry.workflow().phase.as_str(),
+            actor: &actor,
+        },
+    )
+    .map(Some)
+    .map_err(task_git_outcome)
+}
+
+fn task_git_outcome(error: spice::task_git::Error) -> Outcome<CommandAnswer> {
+    match error.class() {
+        spice::task_git::ErrorClass::Refusal => refusal(
+            error.reason(),
+            Some(error.detail().to_owned()),
+            error.remedy(),
+        ),
+        spice::task_git::ErrorClass::Fault => {
+            environment_fault(error.reason(), error.detail())
+        }
+    }
+}
+
+fn read_board(
+    bus: &Bus,
+    read: &BoardRead,
+    principal: wire::Actor,
+    projects: &ProjectPolicy,
+) -> Outcome<CommandAnswer> {
+    let mut snapshot = match validated_snapshot(bus, principal, projects) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -106,7 +199,12 @@ fn read_board(bus: &Bus, read: &BoardRead, principal: wire::Actor) -> Outcome<Co
     )
 }
 
-fn read_graph(bus: &Bus, graph: &BoardGraph, principal: wire::Actor) -> Outcome<CommandAnswer> {
+fn read_graph(
+    bus: &Bus,
+    graph: &BoardGraph,
+    principal: wire::Actor,
+    projects: &ProjectPolicy,
+) -> Outcome<CommandAnswer> {
     if let Some(at) = &graph.at {
         return refusal(
             "board::historical-barrier-refused",
@@ -126,16 +224,18 @@ fn read_graph(bus: &Bus, graph: &BoardGraph, principal: wire::Actor) -> Outcome<
             );
         }
     };
-    let snapshot = match validated_snapshot(bus, principal) {
+    let snapshot = match validated_snapshot(bus, principal, projects) {
         Ok(snapshot) => snapshot,
+        Err(outcome) => return outcome,
+    };
+    let entries = match actor_entries(&snapshot.answer) {
+        Ok(entries) => entries,
         Err(outcome) => return outcome,
     };
     snapshot_reply(
         snapshot.cursor,
         CommandAnswer::Text(TextAnswer {
-            text: board::graph::render(view, &snapshot.entries)
-                .text()
-                .to_owned(),
+            text: board::graph::render(view, &entries).text().to_owned(),
         }),
     )
 }
@@ -144,6 +244,7 @@ fn read_handout(
     bus: &Bus,
     handout: &BoardHandout,
     principal: wire::Actor,
+    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     if let Some(at) = &handout.at {
         return refusal(
@@ -159,27 +260,37 @@ fn read_handout(
             "name an output path or -",
         );
     }
-    let snapshot = match validated_snapshot(bus, principal) {
+    let snapshot = match validated_snapshot(bus, principal, projects) {
         Ok(snapshot) => snapshot,
+        Err(outcome) => return outcome,
+    };
+    let entries = match actor_entries(&snapshot.answer) {
+        Ok(entries) => entries,
         Err(outcome) => return outcome,
     };
     snapshot_reply(
         snapshot.cursor,
         CommandAnswer::Text(TextAnswer {
-            text: board::handout::compose(&snapshot.entries),
+            text: board::handout::compose(&entries),
         }),
     )
 }
 
-fn read_ledger(bus: &Bus, ledger: &DocLedger, principal: wire::Actor) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, principal) {
+fn read_ledger(
+    bus: &Bus,
+    ledger: &DocLedger,
+    principal: wire::Actor,
+    projects: &ProjectPolicy,
+) -> Outcome<CommandAnswer> {
+    let snapshot = match validated_snapshot(bus, principal, projects) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let Some(entry) = snapshot
-        .entries
+    let Some(task) = snapshot
+        .answer
+        .tasks
         .iter()
-        .find(|entry| entry.statement().handle == ledger.task)
+        .find(|task| task.statement.body.handle == ledger.task)
     else {
         return refusal(
             "doc::task-unknown",
@@ -187,11 +298,11 @@ fn read_ledger(bus: &Bus, ledger: &DocLedger, principal: wire::Actor) -> Outcome
             "read board and name one current task handle",
         );
     };
-    let statement = entry.statement();
-    let mut source = format!("# {}\n", statement.title);
+    let statement = &task.statement.body;
+    let mut source = format!("# {}\n", task.presentation_title());
     source.push_str(&format!(
         "\nFlow: {}\n",
-        join_phases(&entry.workflow().flow)
+        join_phases(&task.workflow.body.flow)
     ));
     if !statement.tags.is_empty() {
         source.push_str(&format!("Tags: {}\n", statement.tags.join(", ")));
@@ -259,6 +370,7 @@ fn guard_allocation(
     observed: AllocationHeads,
     winner: TaskHandle,
     actor: Actor,
+    projects: ProjectPolicy,
 ) {
     write.guard(JournalGuard::new(move |read| {
         witnesses_hold(read, &expected)?;
@@ -288,6 +400,7 @@ fn guard_allocation(
                     task.workflow().body().clone(),
                     task.claim().map(|head| head.body().clone()),
                     task.lease().map(|head| head.body().clone()),
+                    &projects,
                 )
                 .map_err(|error| {
                     GuardError::Invalid(format!("allocator current heads are invalid: {error}"))
@@ -301,6 +414,36 @@ fn guard_allocation(
         } else {
             Err(GuardError::refused(
                 "board::witness-moved: allocator winner changed",
+            ))
+        }
+    }));
+}
+
+fn guard_capture(
+    write: &mut JournalWrite,
+    expected: Vec<Witness>,
+    observed: AllocationHeads,
+) {
+    write.guard(JournalGuard::new(move |read| {
+        witnesses_hold(read, &expected)?;
+        let current = read
+            .task_heads()?
+            .iter()
+            .map(|task| {
+                (
+                    task.statement().body().handle.clone(),
+                    task.statement().position(),
+                    task.workflow().position(),
+                    task.claim().map(journal::JournalHead::position),
+                    task.lease().map(journal::JournalHead::position),
+                )
+            })
+            .collect::<AllocationHeads>();
+        if current == observed {
+            Ok(())
+        } else {
+            Err(GuardError::refused(
+                "board::witness-moved: capture head set changed",
             ))
         }
     }));
@@ -350,7 +493,9 @@ fn witnesses_hold(read: &JournalRead<'_>, expected: &[Witness]) -> Result<(), Gu
             } => read.workflow_head(task)?.is_some_and(|observed| {
                 observed.position() == *head && observed.body().deferral.is_some() == *deferred
             }),
-            Witness::Eligibility { rule } => rule.as_str() == "next",
+            Witness::Eligibility { rule } => {
+                matches!(rule.as_str(), "next" | "capture")
+            }
             Witness::Assignment {
                 task,
                 head,

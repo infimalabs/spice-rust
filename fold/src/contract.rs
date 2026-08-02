@@ -105,6 +105,7 @@ const fn is_steering(kind: wire::FactKind) -> bool {
         kind,
         wire::FactKind::SteerSent
             | wire::FactKind::SteerResent
+            | wire::FactKind::SteerRecovered
             | wire::FactKind::SteerAcked
             | wire::FactKind::SteerDeclined
             | wire::FactKind::SteerMissed
@@ -128,6 +129,7 @@ const fn is_lane(kind: wire::FactKind) -> bool {
     matches!(
         kind,
         wire::FactKind::LaneSeated
+            | wire::FactKind::LaneSessionDeclared
             | wire::FactKind::LaneStarted
             | wire::FactKind::LaneExited
             | wire::FactKind::LaneCompacted

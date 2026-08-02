@@ -81,6 +81,32 @@ pub struct TaskPhased {
     pub phase: Phase,
 }
 
+/// Exact repository history selected at one task boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitBoundary {
+    /// Lane commit that entered the boundary.
+    pub head: String,
+    /// Commit whose tree and ancestry left the boundary.
+    pub integrated: String,
+    /// Remote-tracking baseline used by the boundary, when one exists.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub upstream: Option<String>,
+    /// Exact baseline commit incorporated by the boundary, when one exists.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub upstream_head: Option<String>,
+    /// Lane commits ahead of the observed baseline when the boundary opened.
+    pub local_commits: u32,
+}
+
 /// A task completed under a re-proven active claim.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskDone {
@@ -88,6 +114,13 @@ pub struct TaskDone {
     pub task: TaskHandle,
     /// Evidence the completion rests on.
     pub validation: String,
+    /// Repository history published before the workflow advanced.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub git: Option<GitBoundary>,
 }
 
 /// A review verdict landed with reviewer and assignment witnesses.
@@ -106,6 +139,13 @@ pub struct TaskReviewed {
         deserialize_with = "crate::optional::present"
     )]
     pub finding: Option<String>,
+    /// Repository history published before the review completed.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub git: Option<GitBoundary>,
 }
 
 /// The allocator seated a reviewer under the anti-self-review witness.
@@ -168,6 +208,13 @@ pub struct ClaimWon {
     pub epoch: CanonicalUuid,
     /// Lease expiry the possession runs to.
     pub until: Instant,
+    /// Repository history fixed when possession was minted.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub git: Option<GitBoundary>,
 }
 
 /// Possession passed to a successor with ancestor lineage preserved.
@@ -247,8 +294,23 @@ pub struct SteerSent {
         deserialize_with = "crate::optional::present"
     )]
     pub control: Option<String>,
+    /// Opaque attachment payloads carried with this direction.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<DirectiveAttachment>,
     /// Instant the directive expires without a disposition.
     pub expires: Instant,
+}
+
+/// One exact attachment carried by a durable directive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DirectiveAttachment {
+    /// Operator-facing attachment name.
+    pub name: String,
+    /// Declared media type.
+    pub content_type: String,
+    /// Exact opaque data URL admitted with the directive.
+    pub data_url: String,
 }
 
 /// The same intent was sent again with lineage and escalation carried.
@@ -264,6 +326,21 @@ pub struct SteerResent {
     pub lane: CanonicalUuid,
     /// Escalation level the lineage has reached.
     pub escalation: u32,
+}
+
+/// A lapsed directive was restored to live standing exactly once.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SteerRecovered {
+    /// Durable directive identity retained by the recovery.
+    pub directive: CanonicalUuid,
+    /// Human-sized key retained by the recovery.
+    pub key: String,
+    /// Lane the directive remains addressed to.
+    pub lane: CanonicalUuid,
+    /// Expiry that proves the failed standing being recovered.
+    pub lapsed_at: Instant,
+    /// Fresh bounded expiry assigned to the restored directive.
+    pub expires: Instant,
 }
 
 /// Exact assistant-prose evidence inside one durable lane-tape record.
@@ -460,6 +537,31 @@ pub struct LaneSeated {
     pub vendor: Name,
 }
 
+/// A selected vendor record declared the exact resumable lane session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaneSessionDeclared {
+    /// Lane whose session was declared.
+    pub lane: CanonicalUuid,
+    /// Occupant whose selected stream emitted the declaration.
+    pub occupant: CanonicalUuid,
+    /// Canonical worktree bound to the launch.
+    pub worktree: String,
+    /// Vendor dialect that admitted the declaration.
+    pub vendor: Name,
+    /// Resident generation that observed the declaration.
+    pub epoch: CanonicalUuid,
+    /// Selected child stream carrying records.
+    pub stream: String,
+    /// Exact resumable vendor identity.
+    pub identity: String,
+    /// Durable tape member holding the declaration.
+    pub member: u64,
+    /// Declaration offset within the member.
+    pub offset: u64,
+    /// Number of declaration bytes.
+    pub length: u64,
+}
+
 /// An occupant became live under the lane.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneStarted {
@@ -471,6 +573,25 @@ pub struct LaneStarted {
     pub epoch: CanonicalUuid,
     /// Process-group identity returned by the sole process door.
     pub group: u32,
+}
+
+/// A vacant lane seat moved to a fresh linked worktree before exact-session seating.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaneImported {
+    /// Lane whose team seat is retained.
+    pub lane: CanonicalUuid,
+    /// Latest occupant in the retained lineage.
+    pub ancestor: CanonicalUuid,
+    /// Worktree the seat was authoritatively bound to.
+    pub from_worktree: String,
+    /// Fresh linked worktree receiving the seat.
+    pub worktree: String,
+    /// Driver dialect retained by the transfer.
+    pub vendor: Name,
+    /// Exact resumable identity proved before the transfer.
+    pub identity: String,
+    /// Resident generation that admitted the transfer.
+    pub epoch: CanonicalUuid,
 }
 
 /// The resident observed the occupant end.
@@ -491,6 +612,14 @@ pub struct LaneCompacted {
     pub lane: CanonicalUuid,
     /// Occupant that compacted.
     pub occupant: CanonicalUuid,
+    /// Selected child stream carrying the boundary record.
+    pub stream: String,
+    /// Durable tape member holding the boundary record.
+    pub member: u64,
+    /// Boundary-record offset within the member.
+    pub offset: u64,
+    /// Number of bytes in the boundary record.
+    pub length: u64,
 }
 
 /// A successor occupant was seated with its ancestor named.

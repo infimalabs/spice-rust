@@ -12,13 +12,18 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use wire::intent::{
-    BoardAnswer, BoardRead, ConsentPolicy, ConsentPolicyAnswer, ConsentQueueAnswer, ConsentRead,
-    InboxAnswer, LaneAnswer, LaneRead, SteerInbox, TaskAnswer, TaskNote,
+    BoardRead, ConsentPolicy, ConsentRead, LaneRead, SteerInbox, TaskAnswer, TaskNote,
 };
-use wire::{Answer, CanonicalUuid, CommandKind, Outcome, Response, TaskHandle, Witness};
+use wire::{
+    Answer, CanonicalUuid, CommandKind, Response, StreamRequest, TaskHandle, WireVersion, Witness,
+};
 use yew::prelude::*;
 
-use crate::{Axis, Principal, Session, SteerPane};
+use crate::{Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective};
+
+mod view;
+
+use view::render_canvas;
 
 type SenderHandle = Rc<RefCell<Option<UnboundedSender<ClientAction>>>>;
 
@@ -28,6 +33,47 @@ enum Connection {
     Connecting,
     Online { actor: String, epoch: String },
     Offline(String),
+}
+
+#[derive(Clone, Default, PartialEq)]
+enum SpeechStatus {
+    #[default]
+    Idle,
+    Loading,
+    Playing,
+    Failed(String),
+}
+
+impl SpeechStatus {
+    fn active(&self) -> bool {
+        matches!(self, Self::Loading | Self::Playing)
+    }
+
+    fn state(&self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Loading => "loading",
+            Self::Playing => "playing",
+            Self::Failed(_) => "error",
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        if self.active() {
+            "Stop reading"
+        } else {
+            "Read current canvas"
+        }
+    }
+
+    fn title(&self) -> String {
+        match self {
+            Self::Idle => "Read current canvas".to_owned(),
+            Self::Loading => "Stop speech rendering".to_owned(),
+            Self::Playing => "Stop reading".to_owned(),
+            Self::Failed(reason) => format!("Speech unavailable: {reason}"),
+        }
+    }
 }
 
 impl Connection {
@@ -49,29 +95,7 @@ impl Connection {
     }
 }
 
-#[derive(Clone, PartialEq)]
-struct EventRow {
-    class: &'static str,
-    title: String,
-    detail: String,
-}
-
-#[derive(Clone, Default, PartialEq)]
-struct SurfaceData {
-    board: Option<BoardAnswer>,
-    lanes: Option<LaneAnswer>,
-    inbox: Option<InboxAnswer>,
-    consent: Option<ConsentQueueAnswer>,
-    policy: Option<ConsentPolicyAnswer>,
-    events: Vec<EventRow>,
-}
-
-impl SurfaceData {
-    fn push(&mut self, row: EventRow) {
-        self.events.insert(0, row);
-        self.events.truncate(12);
-    }
-}
+type SurfaceData = Option<CanvasRuntime>;
 
 #[derive(Clone)]
 enum ClientAction {
@@ -87,14 +111,14 @@ enum ClientAction {
     },
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum PendingKind {
     Board,
     Lanes,
     Inbox,
     Consent,
     Policy,
-    Note,
+    Note(TaskHandle),
     ConsentDecision,
 }
 
@@ -111,20 +135,33 @@ fn canvas_app() -> Html {
     let note_task = use_state(String::new);
     let note_text = use_state(String::new);
     let sender = use_mut_ref(|| None::<UnboundedSender<ClientAction>>);
+    let speech = use_state(|| wire::SpeechPlayback::Disabled {});
+    let speech_status = use_state(SpeechStatus::default);
+    let speech_controller = use_mut_ref(crate::speech::Controller::default);
 
     {
         let connection = connection.clone();
         let surface = surface.clone();
         let sender = sender.clone();
+        let speech = speech.clone();
         use_effect_with((), move |()| {
             let active = Rc::new(Cell::new(true));
             let (tx, rx) = mpsc::unbounded();
             *sender.borrow_mut() = Some(tx);
-            spawn_local(run_surface(active.clone(), connection, surface, rx));
+            spawn_local(run_surface(active.clone(), connection, surface, speech, rx));
             move || {
                 active.set(false);
                 sender.borrow_mut().take();
             }
+        });
+    }
+    {
+        let effective = (*speech).clone();
+        let speech_controller = speech_controller.clone();
+        let speech_status = speech_status.clone();
+        use_effect_with(effective, move |_| {
+            speech_controller.borrow_mut().stop();
+            speech_status.set(SpeechStatus::Idle);
         });
     }
 
@@ -149,6 +186,11 @@ fn canvas_app() -> Html {
             note_text.set(String::new());
         })
     };
+    let toggle_speech = speech_toggle(
+        speech.clone(),
+        speech_status.clone(),
+        speech_controller.clone(),
+    );
 
     render_canvas(
         &connection,
@@ -159,441 +201,135 @@ fn canvas_app() -> Html {
         &note_text,
         submit_note,
         refresh,
+        &speech,
+        &speech_status,
+        toggle_speech,
     )
 }
 
-fn render_canvas(
-    connection: &UseStateHandle<Connection>,
-    surface: &UseStateHandle<SurfaceData>,
-    axis: &UseStateHandle<Axis>,
-    sender: &SenderHandle,
-    note_task: &UseStateHandle<String>,
-    note_text: &UseStateHandle<String>,
-    submit_note: Callback<SubmitEvent>,
-    refresh: Callback<MouseEvent>,
-) -> Html {
-    let active_axis = **axis;
-    let cursor = surface
-        .board
-        .as_ref()
-        .map(|board| board.cursor.to_string())
-        .unwrap_or_else(|| "-".to_owned());
-    html! {
-        <div class="shell">
-            {render_rail(axis, active_axis, &cursor)}
-            {render_workspace(
-                connection,
-                surface,
-                active_axis,
-                sender,
-                note_task,
-                note_text,
-                submit_note,
-                refresh,
-            )}
-        </div>
-    }
-}
-
-fn render_rail(axis: &UseStateHandle<Axis>, active_axis: Axis, cursor: &str) -> Html {
-    html! {
-        <aside class="rail">
-            <div class="brand">
-                <span class="brand-mark">{"SP"}</span>
-                <span class="brand-name">{"Spice Canvas"}</span>
-            </div>
-            <nav class="axis-nav" aria-label="Canvas axes">
-                {for Axis::ALL.iter().copied().map(|candidate| {
-                    let axis = axis.clone();
-                    let selected = candidate == active_axis;
-                    html! {
-                        <button
-                            class="axis-button"
-                            aria-current={selected.then_some("page")}
-                            title={candidate.question()}
-                            onclick={Callback::from(move |_| axis.set(candidate))}
-                        >
-                            <span class="axis-glyph"></span>
-                            <span class="axis-label">{title(candidate.as_str())}</span>
-                        </button>
-                    }
-                })}
-            </nav>
-            <div class="rail-meta">{format!("cursor {cursor}")}</div>
-        </aside>
-    }
-}
-
-fn render_workspace(
-    connection: &UseStateHandle<Connection>,
-    surface: &UseStateHandle<SurfaceData>,
-    active_axis: Axis,
-    sender: &SenderHandle,
-    note_task: &UseStateHandle<String>,
-    note_text: &UseStateHandle<String>,
-    submit_note: Callback<SubmitEvent>,
-    refresh: Callback<MouseEvent>,
-) -> Html {
-    let task_count = surface.board.as_ref().map_or(0, |board| board.tasks.len());
-    let active_tasks = surface.board.as_ref().map_or(0, |board| {
-        board
-            .tasks
-            .iter()
-            .filter(|task| task.workflow.body.status != "completed")
-            .count()
-    });
-    let lane_count = surface.lanes.as_ref().map_or(0, |lanes| lanes.lanes.len());
-    let pending_count = surface
-        .consent
-        .as_ref()
-        .map_or(0, |consent| consent.pending.len());
-    let cursor = surface
-        .board
-        .as_ref()
-        .map(|board| board.cursor.to_string())
-        .unwrap_or_else(|| "-".to_owned());
-    html! {
-        <div class="workspace">
-            <header class="topbar">
-                <div class="mobile-brand">{"Spice Canvas"}</div>
-                <div class={connection.class()}>
-                    <span class="status-dot"></span>
-                    <span class="status-copy">{connection.label()}</span>
-                </div>
-                <button class="refresh" type="button" onclick={refresh}>{"Refresh"}</button>
-            </header>
-            <main class="content">
-                <div class="page-heading">
-                    <div>
-                        <h1>{title(active_axis.as_str())}</h1>
-                        <p>{active_axis.question()}</p>
-                    </div>
-                </div>
-                <section class="metrics" aria-label="Current resident metrics">
-                    {metric("Tasks", task_count.to_string(), format!("{active_tasks} active"))}
-                    {metric("Lanes", lane_count.to_string(), resident_state(surface))}
-                    {metric(
-                        "Consent",
-                        pending_count.to_string(),
-                        "pending decisions".to_owned(),
-                    )}
-                    {metric("Journal", cursor, "snapshot cursor".to_owned())}
-                </section>
-                <div class="pane-strip" aria-label="Panes on this axis">
-                    {for active_axis.panes().map(|pane| html! {
-                        <span class="pane-chip">{title(pane.as_str())}</span>
-                    })}
-                </div>
-                {render_axis(
-                    active_axis,
-                    surface,
-                    sender,
-                    note_task,
-                    note_text,
-                    submit_note,
-                )}
-            </main>
-        </div>
-    }
-}
-
-fn render_axis(
-    axis: Axis,
-    surface: &SurfaceData,
-    sender: &SenderHandle,
-    note_task: &UseStateHandle<String>,
-    note_text: &UseStateHandle<String>,
-    submit_note: Callback<SubmitEvent>,
-) -> Html {
-    match axis {
-        Axis::Magnitude => render_magnitude(surface),
-        Axis::Flow => render_flow(surface, note_task, note_text, submit_note),
-        Axis::Topology => render_topology(surface),
-        Axis::Chronology => render_chronology(surface, sender),
-    }
-}
-
-fn render_magnitude(surface: &SurfaceData) -> Html {
-    let Some(consent) = &surface.consent else {
-        return empty("No magnitude snapshot is available.");
-    };
-    html! {
-        <section class="section">
-            <div class="section-heading">
-                <h2>{"Consent budgets"}</h2>
-                <span class="section-count">{format!("{} rules", consent.budgets.len())}</span>
-            </div>
-            if consent.budgets.is_empty() {
-                {empty("No bounded consent rules are active.")}
-            } else {
-                <div class="table-wrap"><table>
-                    <thead><tr>
-                        <th>{"Rule"}</th><th>{"Remaining"}</th><th>{"Bound"}</th>
-                    </tr></thead>
-                    <tbody>{for consent.budgets.iter().map(|budget| html! {
-                        <tr>
-                            <td class="mono">{budget.rule.to_string()}</td>
-                            <td>{budget.remaining}</td>
-                            <td>{budget.bound}</td>
-                        </tr>
-                    })}</tbody>
-                </table></div>
+fn speech_toggle(
+    speech: UseStateHandle<wire::SpeechPlayback>,
+    speech_status: UseStateHandle<SpeechStatus>,
+    speech_controller: Rc<RefCell<crate::speech::Controller>>,
+) -> Callback<MouseEvent> {
+    Callback::from(move |_| {
+        if speech_status.active() {
+            speech_controller.borrow_mut().stop();
+            speech_status.set(SpeechStatus::Idle);
+            return;
+        }
+        let text = match crate::speech::rendered_text() {
+            Ok(text) => text,
+            Err(error) => {
+                speech_status.set(SpeechStatus::Failed(error));
+                return;
             }
-        </section>
-    }
-}
-
-fn render_flow(
-    surface: &SurfaceData,
-    note_task: &UseStateHandle<String>,
-    note_text: &UseStateHandle<String>,
-    submit_note: Callback<SubmitEvent>,
-) -> Html {
-    let Some(board) = &surface.board else {
-        return empty("No board snapshot is available.");
-    };
-    let selected = (**note_task).clone();
-    let note = (**note_text).clone();
-    html! {
-        <div class="split">
-            <section class="section">
-                <div class="section-heading">
-                    <h2>{"Current work"}</h2>
-                    <span class="section-count">{format!("{} tasks", board.tasks.len())}</span>
-                </div>
-                <div class="table-wrap"><table>
-                    <thead><tr>
-                        <th>{"Task"}</th><th>{"Phase"}</th><th>{"Owner"}</th><th>{"Project"}</th>
-                    </tr></thead>
-                    <tbody>{for board.tasks.iter().map(|task| {
-                        let statement = &task.statement.body;
-                        let workflow = &task.workflow.body;
-                        html! {
-                            <tr>
-                                <td class="title-cell">
-                                    <div class="mono muted">{statement.handle.to_string()}</div>
-                                    <div>{statement.title.clone()}</div>
-                                </td>
-                                <td><span class={phase_class(&workflow.status)}>
-                                    {workflow.phase.to_string()}
-                                </span></td>
-                                <td class="mono">{
-                                    workflow
-                                        .assignment
-                                        .as_ref()
-                                        .map(ToString::to_string)
-                                        .unwrap_or_else(|| "-".to_owned())
-                                }</td>
-                                <td>{statement.project.clone()}</td>
-                            </tr>
-                        }
-                    })}</tbody>
-                </table></div>
-            </section>
-            <section class="section">
-                <div class="section-heading"><h2>{"Append observation"}</h2></div>
-                <form class="form" onsubmit={submit_note}>
-                    <label for="note-task">{"Task"}</label>
-                    <input
-                        id="note-task"
-                        list="note-tasks"
-                        value={selected}
-                        placeholder="SPICE-aBcD"
-                        oninput={state_from_input(note_task.clone())}
-                    />
-                    <datalist id="note-tasks">
-                        {for board.tasks.iter().map(|task| {
-                            let task = &task.statement.body;
-                            html! {
-                                <option value={task.handle.to_string()}>
-                                    {task.title.clone()}
-                                </option>
-                            }
-                        })}
-                    </datalist>
-                    <label for="note-body">{"Observation"}</label>
-                    <textarea
-                        id="note-body"
-                        value={note}
-                        oninput={state_from_textarea(note_text.clone())}
-                    ></textarea>
-                    <button
-                        type="submit"
-                        disabled={note_task.is_empty() || note_text.trim().is_empty()}
-                    >{"Add note"}</button>
-                </form>
-            </section>
-        </div>
-    }
-}
-
-fn render_topology(surface: &SurfaceData) -> Html {
-    let Some(lanes) = &surface.lanes else {
-        return empty("No lane snapshot is available.");
-    };
-    html! {
-        <section class="section">
-            <div class="section-heading">
-                <h2>{"Resident topology"}</h2>
-                <span class="section-count">{format!("{} lanes", lanes.lanes.len())}</span>
-            </div>
-            if lanes.lanes.is_empty() {
-                {empty("No lanes are seated.")}
-            } else {
-                <div class="table-wrap"><table>
-                    <thead><tr>
-                        <th>{"Lane"}</th><th>{"Standing"}</th><th>{"Occupant"}</th>
-                        <th>{"Worktree"}</th><th>{"Vendor"}</th>
-                    </tr></thead>
-                    <tbody>{for lanes.lanes.iter().map(|lane| html! {
-                        <tr>
-                            <td class="mono">{short(&lane.lane.to_string())}</td>
-                            <td><span class="tag active">{lane.disposition.clone()}</span></td>
-                            <td class="mono">{
-                                lane
-                                    .occupant
-                                    .map(|value| short(&value.to_string()))
-                                    .unwrap_or_else(|| "vacant".to_owned())
-                            }</td>
-                            <td class="mono">{lane.worktree.clone()}</td>
-                            <td>{lane.vendor.to_string()}</td>
-                        </tr>
-                    })}</tbody>
-                </table></div>
-            }
-        </section>
-    }
-}
-
-fn render_chronology(surface: &SurfaceData, sender: &SenderHandle) -> Html {
-    let pending = surface
-        .consent
-        .as_ref()
-        .map(|value| value.pending.as_slice())
-        .unwrap_or(&[]);
-    let directives = surface
-        .inbox
-        .as_ref()
-        .map(|inbox| {
-            inbox
-                .lanes
-                .iter()
-                .flat_map(|lane| lane.pending.iter())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    html! {
-        <div class="split">
-            <div>
-                <section class="section">
-                    <div class="section-heading">
-                        <h2>{"Pending consent"}</h2>
-                        <span class="section-count">{pending.len()}</span>
-                    </div>
-                    if pending.is_empty() {
-                        {empty("No consent decisions are pending.")}
-                    } else {
-                        <div class="table-wrap"><table>
-                            <thead><tr>
-                                <th>{"Operation"}</th><th>{"Rule"}</th>
-                                <th>{"Lane"}</th><th>{"Decision"}</th>
-                            </tr></thead>
-                            <tbody>{for pending.iter().map(|request| {
-                                let allow = ClientAction::Consent {
-                                    request: request.request,
-                                    rule: request.rule.clone(),
-                                    answer: Answer::Granted,
-                                };
-                                let deny = ClientAction::Consent {
-                                    request: request.request,
-                                    rule: request.rule.clone(),
-                                    answer: Answer::Denied,
-                                };
-                                let allow_sender = sender.clone();
-                                let deny_sender = sender.clone();
-                                html! {
-                                    <tr>
-                                        <td class="title-cell">{request.operation.clone()}</td>
-                                        <td class="mono">{request.rule.to_string()}</td>
-                                        <td class="mono">{short(&request.lane.to_string())}</td>
-                                        <td><div class="decision-row">
-                                            <button
-                                                type="button"
-                                                onclick={Callback::from(move |_| {
-                                                    send_action(&allow_sender, allow.clone());
-                                                })}
-                                            >{"Allow"}</button>
-                                            <button
-                                                class="deny"
-                                                type="button"
-                                                onclick={Callback::from(move |_| {
-                                                    send_action(&deny_sender, deny.clone());
-                                                })}
-                                            >{"Deny"}</button>
-                                        </div></td>
-                                    </tr>
-                                }
-                            })}</tbody>
-                        </table></div>
-                    }
-                </section>
-                <section class="section">
-                    <div class="section-heading">
-                        <h2>{"Pending direction"}</h2>
-                        <span class="section-count">{directives.len()}</span>
-                    </div>
-                    if directives.is_empty() {
-                        {empty("No directives are pending.")}
-                    } else {
-                        <div class="event-list">{for directives.iter().map(|directive| html! {
-                            <article class="event">
-                                <strong>
-                                    {format!("{} / {}", directive.key, directive.expires)}
-                                </strong>
-                                <p>{directive.text.clone()}</p>
-                            </article>
-                        })}</div>
-                    }
-                </section>
-            </div>
-            <section class="section">
-                <div class="section-heading"><h2>{"Command outcomes"}</h2></div>
-                if surface.events.is_empty() {
-                    {empty("No command outcomes have been recorded.")}
-                } else {
-                    <div class="event-list">{for surface.events.iter().map(|event| html! {
-                        <article class={classes!("event", event.class)}>
-                            <strong>{event.title.clone()}</strong>
-                            <p>{event.detail.clone()}</p>
-                        </article>
-                    })}</div>
+        };
+        let generation = speech_controller.borrow_mut().begin();
+        speech_status.set(SpeechStatus::Loading);
+        match &*speech {
+            wire::SpeechPlayback::Disabled {} => speech_status.set(SpeechStatus::Idle),
+            wire::SpeechPlayback::System {
+                voice,
+                words_per_minute,
+            } => {
+                let ended = speech_status.clone();
+                let failed = speech_status.clone();
+                let result = speech_controller.borrow_mut().start_system(
+                    generation,
+                    &text,
+                    voice,
+                    *words_per_minute,
+                    move || ended.set(SpeechStatus::Idle),
+                    move || {
+                        failed.set(SpeechStatus::Failed(
+                            "system speech playback failed".to_owned(),
+                        ));
+                    },
+                );
+                match result {
+                    Ok(()) => speech_status.set(SpeechStatus::Playing),
+                    Err(error) => speech_status.set(SpeechStatus::Failed(error)),
                 }
-            </section>
-        </div>
-    }
+            }
+            wire::SpeechPlayback::External {
+                content_type,
+                available,
+                ..
+            } => {
+                if !available {
+                    speech_status.set(SpeechStatus::Failed(
+                        "external speech backend is unavailable".to_owned(),
+                    ));
+                    return;
+                }
+                let content_type = content_type.clone();
+                let speech_status = speech_status.clone();
+                let speech_controller = speech_controller.clone();
+                spawn_local(async move {
+                    let result = request_external_speech(&text, &content_type).await;
+                    if !speech_controller.borrow().is_current(generation) {
+                        return;
+                    }
+                    let bytes = match result {
+                        Ok(bytes) => bytes,
+                        Err(error) => {
+                            speech_status.set(SpeechStatus::Failed(error));
+                            return;
+                        }
+                    };
+                    let ended = speech_status.clone();
+                    let failed = speech_status.clone();
+                    let playing = speech_controller.borrow_mut().start_external(
+                        generation,
+                        &bytes,
+                        &content_type,
+                        move || ended.set(SpeechStatus::Idle),
+                        move || {
+                            failed.set(SpeechStatus::Failed(
+                                "rendered speech playback failed".to_owned(),
+                            ));
+                        },
+                    );
+                    let playing = match playing {
+                        Ok(playing) => playing,
+                        Err(error) => {
+                            speech_status.set(SpeechStatus::Failed(error));
+                            return;
+                        }
+                    };
+                    speech_status.set(SpeechStatus::Playing);
+                    if let Err(error) = crate::speech::await_play(playing).await
+                        && speech_controller.borrow().is_current(generation)
+                    {
+                        speech_controller.borrow_mut().stop();
+                        speech_status.set(SpeechStatus::Failed(error));
+                    }
+                });
+            }
+        }
+    })
 }
 
 async fn run_surface(
     active: Rc<Cell<bool>>,
     connection: UseStateHandle<Connection>,
     surface: UseStateHandle<SurfaceData>,
+    speech: UseStateHandle<wire::SpeechPlayback>,
     mut actions: UnboundedReceiver<ClientAction>,
 ) {
     let data = Rc::new(RefCell::new(SurfaceData::default()));
     while active.get() {
-        connection.set(Connection::Connecting);
-        let result = run_connection(&active, &connection, &surface, &data, &mut actions).await;
+        if matches!(&*connection, Connection::Starting) {
+            connection.set(Connection::Connecting);
+        }
+        let result =
+            run_connection(&active, &connection, &surface, &speech, &data, &mut actions).await;
         if !active.get() {
             break;
         }
         let reason = result.unwrap_err_or_else();
         connection.set(Connection::Offline(reason.clone()));
-        data.borrow_mut().push(EventRow {
-            class: "fault",
-            title: "Canvas connection reset".to_owned(),
-            detail: reason,
-        });
-        surface.set(data.borrow().clone());
         TimeoutFuture::new(1_200).await;
     }
 }
@@ -615,9 +351,49 @@ async fn run_connection(
     active: &Rc<Cell<bool>>,
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
+    speech: &UseStateHandle<wire::SpeechPlayback>,
     data: &Rc<RefCell<SurfaceData>>,
     actions: &mut UnboundedReceiver<ClientAction>,
 ) -> Result<(), String> {
+    let (session, mut writer, mut reader) = open_socket(speech).await?;
+    let principal = admit_runtime(&session, &mut reader, connection, surface, data).await?;
+    let mut pending = BTreeMap::new();
+    send_subscription(&principal, data, &mut writer).await?;
+    send_refresh(&principal, &mut writer, &mut pending).await?;
+
+    while active.get() {
+        let incoming = reader.next().fuse();
+        let action = actions.next().fuse();
+        futures_util::pin_mut!(incoming, action);
+        select! {
+            frame = incoming => {
+                let frame = frame
+                    .ok_or_else(|| "resident closed the socket".to_owned())?
+                    .map_err(websocket_error)?;
+                let bytes = binary_message(frame)?;
+                let directives = handle_incoming(&session, surface, data, &mut pending, &bytes)?;
+                relay_directives(&principal, &mut writer, directives).await?;
+            },
+            action = action => {
+                let action = action.ok_or_else(|| "canvas command channel closed".to_owned())?;
+                dispatch_action(&principal, &mut writer, &mut pending, action).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Discover the resident endpoint and open the socket its bootstrap names.
+async fn open_socket(
+    speech: &UseStateHandle<wire::SpeechPlayback>,
+) -> Result<
+    (
+        Session,
+        futures_util::stream::SplitSink<WebSocket, Message>,
+        futures_util::stream::SplitStream<WebSocket>,
+    ),
+    String,
+> {
     let discovery: wire::CanvasBootstrap = Request::get("/bootstrap")
         .send()
         .await
@@ -625,6 +401,7 @@ async fn run_connection(
         .json()
         .await
         .map_err(|error| format!("bootstrap response was invalid: {error}"))?;
+    speech.set(discovery.speech.clone());
     let session = Session::open(discovery.capability, discovery.epoch);
     let endpoint = discovery
         .endpoint
@@ -632,13 +409,24 @@ async fn run_connection(
         .ok_or_else(|| "bootstrap endpoint was not loopback HTTP".to_owned())?;
     let socket = WebSocket::open(&format!("ws://{endpoint}/socket"))
         .map_err(|error| format!("socket did not open: {error}"))?;
-    let (mut writer, mut reader) = socket.split();
+    let (mut writer, reader) = socket.split();
     writer
         .send(Message::Bytes(
             wire::encode(&session.hello()).map_err(|error| error.to_string())?,
         ))
         .await
         .map_err(websocket_error)?;
+    Ok((session, writer, reader))
+}
+
+/// Admit the acceptance frame and publish the runtime that frame names.
+async fn admit_runtime(
+    session: &Session,
+    reader: &mut futures_util::stream::SplitStream<WebSocket>,
+    connection: &UseStateHandle<Connection>,
+    surface: &UseStateHandle<SurfaceData>,
+    data: &Rc<RefCell<SurfaceData>>,
+) -> Result<Principal, String> {
     let accepted_bytes = binary_message(
         reader
             .next()
@@ -649,72 +437,136 @@ async fn run_connection(
     let accepted = session
         .admit_accepted(&accepted_bytes)
         .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
-    let principal = Principal::admitted(&accepted);
-    *data.borrow_mut() = SurfaceData::default();
+    let principal = {
+        let mut data = data.borrow_mut();
+        match data.as_mut() {
+            Some(runtime) => {
+                runtime.reconnect(&accepted);
+            }
+            None => *data = Some(CanvasRuntime::new(&accepted)),
+        }
+        data.as_ref()
+            .expect("accepted connection creates runtime")
+            .principal()
+            .clone()
+    };
     surface.set(data.borrow().clone());
     connection.set(Connection::Online {
         actor: principal.actor().to_string(),
         epoch: principal.epoch().to_string(),
     });
-    let mut pending = BTreeMap::new();
-    send_refresh(&principal, &mut writer, &mut pending).await?;
+    Ok(principal)
+}
 
-    while active.get() {
-        let incoming = reader.next().fuse();
-        let action = actions.next().fuse();
-        let refresh = TimeoutFuture::new(2_000).fuse();
-        futures_util::pin_mut!(incoming, action, refresh);
-        select! {
-            frame = incoming => {
-                let frame = frame
-                    .ok_or_else(|| "resident closed the socket".to_owned())?
-                    .map_err(websocket_error)?;
-                let bytes = binary_message(frame)?;
-                handle_response(&session, surface, data, &mut pending, &bytes)?;
-            },
-            action = action => {
-                let action = action.ok_or_else(|| "canvas command channel closed".to_owned())?;
-                match action {
-                    ClientAction::Refresh => {
-                        send_refresh(&principal, &mut writer, &mut pending).await?
-                    }
-                    ClientAction::Note { task, note } => {
-                        let body = TaskNote { task: task.clone(), note };
-                        let expected = vec![Witness::Existence { task }];
-                        send_typed(
-                            &principal,
-                            &mut writer,
-                            &mut pending,
-                            PendingKind::Note,
-                            CommandKind::TaskNote,
-                            expected,
-                            body,
-                        ).await?;
-                    }
-                    ClientAction::Consent { request, rule, answer } => {
-                        let body = wire::intent::ConsentDecide { request, answer };
-                        let expected = vec![
-                            Witness::Consent { request, answer: Answer::Asked },
-                            Witness::Rule { name: rule },
-                        ];
-                        send_typed(
-                            &principal,
-                            &mut writer,
-                            &mut pending,
-                            PendingKind::ConsentDecision,
-                            CommandKind::ConsentDecide,
-                            expected,
-                            body,
-                        ).await?;
-                    }
-                }
-            },
-            () = refresh => {
-                send_refresh(&principal, &mut writer, &mut pending).await?;
-            }
+/// Carry back the stream directives one admitted frame produced.
+async fn relay_directives(
+    principal: &Principal,
+    writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    directives: Vec<StreamDirective>,
+) -> Result<(), String> {
+    for directive in directives {
+        if send_stream_directive(principal, writer, directive).await? {
+            return Err("resident stream requested reconnect".to_owned());
         }
     }
     Ok(())
+}
+
+/// Send one operator action as the typed command the resident admits.
+async fn dispatch_action(
+    principal: &Principal,
+    writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    action: ClientAction,
+) -> Result<(), String> {
+    match action {
+        ClientAction::Refresh => send_refresh(principal, writer, pending).await,
+        ClientAction::Note { task, note } => {
+            let body = TaskNote {
+                task: task.clone(),
+                note,
+            };
+            let expected = vec![Witness::Existence { task: task.clone() }];
+            send_typed(
+                principal,
+                writer,
+                pending,
+                PendingKind::Note(task),
+                CommandKind::TaskNote,
+                expected,
+                body,
+            )
+            .await
+        }
+        ClientAction::Consent {
+            request,
+            rule,
+            answer,
+        } => {
+            let body = wire::intent::ConsentDecide { request, answer };
+            let expected = vec![
+                Witness::Consent {
+                    request,
+                    answer: Answer::Asked,
+                },
+                Witness::Rule { name: rule },
+            ];
+            send_typed(
+                principal,
+                writer,
+                pending,
+                PendingKind::ConsentDecision,
+                CommandKind::ConsentDecide,
+                expected,
+                body,
+            )
+            .await
+        }
+    }
+}
+
+async fn request_external_speech(text: &str, content_type: &str) -> Result<Vec<u8>, String> {
+    let request = Request::post("/speech")
+        .json(&wire::SpeechRequest {
+            text: text.to_owned(),
+        })
+        .map_err(|error| format!("speech request could not be encoded: {error}"))?;
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("speech request failed: {error}"))?;
+    if !response.ok() {
+        let status = response.status();
+        let detail = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "speech renderer returned no detail".to_owned());
+        return Err(bounded_speech_error(&format!(
+            "speech renderer returned {status}: {detail}"
+        )));
+    }
+    let actual = response.headers().get("content-type").unwrap_or_default();
+    if actual != content_type {
+        return Err(format!(
+            "speech renderer returned {actual:?}, expected {content_type:?}"
+        ));
+    }
+    let bytes = response
+        .binary()
+        .await
+        .map_err(|error| format!("speech audio response was invalid: {error}"))?;
+    if bytes.is_empty() {
+        return Err("speech renderer returned empty audio".to_owned());
+    }
+    Ok(bytes)
+}
+
+fn bounded_speech_error(error: &str) -> String {
+    let mut end = error.len().min(240);
+    while !error.is_char_boundary(end) {
+        end -= 1;
+    }
+    error[..end].to_owned()
 }
 
 async fn send_refresh(
@@ -722,7 +574,7 @@ async fn send_refresh(
     writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
 ) -> Result<(), String> {
-    send_typed(
+    send_if_offered(
         principal,
         writer,
         pending,
@@ -732,7 +584,7 @@ async fn send_refresh(
         BoardRead { family: None },
     )
     .await?;
-    send_typed(
+    send_if_offered(
         principal,
         writer,
         pending,
@@ -742,7 +594,7 @@ async fn send_refresh(
         LaneRead {},
     )
     .await?;
-    send_typed(
+    send_if_offered(
         principal,
         writer,
         pending,
@@ -752,7 +604,7 @@ async fn send_refresh(
         SteerInbox { lane: None },
     )
     .await?;
-    send_typed(
+    send_if_offered(
         principal,
         writer,
         pending,
@@ -762,7 +614,7 @@ async fn send_refresh(
         ConsentRead {},
     )
     .await?;
-    send_typed(
+    send_if_offered(
         principal,
         writer,
         pending,
@@ -770,6 +622,30 @@ async fn send_refresh(
         CommandKind::ConsentPolicy,
         vec![],
         ConsentPolicy {},
+    )
+    .await
+}
+
+async fn send_if_offered<B: Serialize>(
+    principal: &Principal,
+    writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    pending_kind: PendingKind,
+    kind: CommandKind,
+    expected: Vec<Witness>,
+    body: B,
+) -> Result<(), String> {
+    if !SteerPane::over(principal).offers(kind) {
+        return Ok(());
+    }
+    send_typed(
+        principal,
+        writer,
+        pending,
+        pending_kind,
+        kind,
+        expected,
+        body,
     )
     .await
 }
@@ -795,91 +671,141 @@ async fn send_typed<B: Serialize>(
         .map_err(websocket_error)
 }
 
-fn handle_response(
+async fn send_subscription(
+    principal: &Principal,
+    data: &Rc<RefCell<SurfaceData>>,
+    writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+) -> Result<(), String> {
+    let (subjects, after, pending_thread) = {
+        let data = data.borrow();
+        let runtime = data
+            .as_ref()
+            .ok_or_else(|| "canvas runtime is absent".to_owned())?;
+        (
+            runtime.subjects(),
+            runtime.resume(),
+            runtime.pending_thread(),
+        )
+    };
+    send_stream_request(
+        writer,
+        &StreamRequest::Subscribe {
+            v: WireVersion::CURRENT,
+            id: random_uuid()?,
+            epoch: principal.epoch(),
+            subjects,
+            after,
+        },
+    )
+    .await?;
+    if let Some(cursor) = pending_thread {
+        send_stream_request(
+            writer,
+            &StreamRequest::Thread {
+                v: WireVersion::CURRENT,
+                id: random_uuid()?,
+                epoch: principal.epoch(),
+                cursor,
+            },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn send_stream_directive(
+    principal: &Principal,
+    writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    directive: StreamDirective,
+) -> Result<bool, String> {
+    let request = match directive {
+        StreamDirective::Continue { subject, cursor } => StreamRequest::Continue {
+            v: WireVersion::CURRENT,
+            id: random_uuid()?,
+            epoch: principal.epoch(),
+            subject,
+            cursor,
+        },
+        StreamDirective::Thread { cursor } => StreamRequest::Thread {
+            v: WireVersion::CURRENT,
+            id: random_uuid()?,
+            epoch: principal.epoch(),
+            cursor,
+        },
+        StreamDirective::Reconnect => return Ok(true),
+    };
+    send_stream_request(writer, &request).await?;
+    Ok(false)
+}
+
+async fn send_stream_request(
+    writer: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    request: &StreamRequest,
+) -> Result<(), String> {
+    writer
+        .send(Message::Bytes(
+            wire::encode(request).map_err(|error| error.to_string())?,
+        ))
+        .await
+        .map_err(websocket_error)
+}
+
+fn handle_incoming(
     session: &Session,
     surface: &UseStateHandle<SurfaceData>,
     data: &Rc<RefCell<SurfaceData>>,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     bytes: &[u8],
-) -> Result<(), String> {
+) -> Result<Vec<StreamDirective>, String> {
+    let crossing: serde_json::Value = wire::decode(bytes).map_err(|error| error.to_string())?;
+    if crossing.get("stream").is_some() {
+        let admitted = session
+            .admit_stream(bytes)
+            .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
+        let directives = data
+            .borrow_mut()
+            .as_mut()
+            .ok_or_else(|| "stream frame arrived before runtime acceptance".to_owned())?
+            .apply_stream(&admitted);
+        surface.set(data.borrow().clone());
+        return Ok(directives);
+    }
+
     let identity: ResponseIdentity = wire::decode(bytes).map_err(|error| error.to_string())?;
     let kind = pending
         .remove(&identity.id)
         .ok_or_else(|| format!("response named unknown command {}", identity.id))?;
-    match kind {
-        PendingKind::Board => apply(session, surface, data, bytes, |data, body: BoardAnswer| {
-            data.board = Some(body)
-        }),
-        PendingKind::Lanes => apply(session, surface, data, bytes, |data, body: LaneAnswer| {
-            data.lanes = Some(body)
-        }),
-        PendingKind::Inbox => apply(session, surface, data, bytes, |data, body: InboxAnswer| {
-            data.inbox = Some(body)
-        }),
-        PendingKind::Consent => apply(
-            session,
-            surface,
-            data,
-            bytes,
-            |data, body: ConsentQueueAnswer| data.consent = Some(body),
-        ),
-        PendingKind::Policy => apply(
-            session,
-            surface,
-            data,
-            bytes,
-            |data, body: ConsentPolicyAnswer| data.policy = Some(body),
-        ),
-        PendingKind::Note => apply(session, surface, data, bytes, |data, body: TaskAnswer| {
-            data.push(EventRow {
-                class: "reply",
-                title: format!("Note appended to {}", body.task),
-                detail: body.status,
-            });
-        }),
-        PendingKind::ConsentDecision => apply(
-            session,
-            surface,
-            data,
-            bytes,
-            |data, body: wire::intent::ConsentAnswer| {
-                data.push(EventRow {
-                    class: "reply",
-                    title: format!("Consent {:?}", body.answer).to_lowercase(),
-                    detail: body.request.to_string(),
-                });
-            },
-        ),
-    }
-}
-
-fn apply<T: for<'de> Deserialize<'de>>(
-    session: &Session,
-    surface: &UseStateHandle<SurfaceData>,
-    data: &Rc<RefCell<SurfaceData>>,
-    bytes: &[u8],
-    reply: impl FnOnce(&mut SurfaceData, T),
-) -> Result<(), String> {
-    let response: Response<T> = session
-        .admit_frame(bytes)
-        .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?
-        .into_inner();
     let mut data = data.borrow_mut();
-    match response.outcome {
-        Outcome::Reply(answer) => reply(&mut data, answer.body),
-        Outcome::Refusal(refusal) => data.push(EventRow {
-            class: "refusal",
-            title: refusal.reason,
-            detail: refusal.remedy,
-        }),
-        Outcome::Fault(fault) => data.push(EventRow {
-            class: "fault",
-            title: fault.reason,
-            detail: fault.detail,
-        }),
+    let runtime = data
+        .as_mut()
+        .ok_or_else(|| "response arrived before runtime acceptance".to_owned())?;
+    match kind {
+        PendingKind::Board => runtime.apply_board(&admit_response(session, bytes)?),
+        PendingKind::Lanes => runtime.apply_lanes(&admit_response(session, bytes)?),
+        PendingKind::Inbox => runtime.apply_inbox(&admit_response(session, bytes)?),
+        PendingKind::Consent => runtime.apply_consent(&admit_response(session, bytes)?),
+        PendingKind::Policy => runtime.apply_policy(&admit_response(session, bytes)?),
+        PendingKind::Note(task) => {
+            let admitted: crate::Admitted<Response<TaskAnswer>> = admit_response(session, bytes)?;
+            runtime.apply_note(&admitted, &task.to_string());
+        }
+        PendingKind::ConsentDecision => {
+            let admitted: crate::Admitted<Response<wire::intent::ConsentAnswer>> =
+                admit_response(session, bytes)?;
+            runtime.apply_decision(&admitted);
+        }
     }
     surface.set(data.clone());
-    Ok(())
+    Ok(Vec::new())
+}
+
+fn admit_response<T: for<'de> Deserialize<'de>>(
+    session: &Session,
+    bytes: &[u8],
+) -> Result<crate::Admitted<Response<T>>, String> {
+    session
+        .admit_frame(bytes)
+        .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))
 }
 
 fn random_uuid() -> Result<CanonicalUuid, String> {
@@ -970,8 +896,8 @@ fn short(value: &str) -> String {
 
 fn resident_state(surface: &SurfaceData) -> String {
     surface
-        .lanes
         .as_ref()
+        .and_then(CanvasRuntime::lanes)
         .map(|lanes| format!("{:?}", lanes.state).to_lowercase())
         .unwrap_or_else(|| "resident state".to_owned())
 }

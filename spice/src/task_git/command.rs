@@ -1,0 +1,551 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, mpsc};
+use std::thread::JoinHandle;
+use std::time::Instant;
+
+#[cfg(unix)]
+use std::os::unix::process::CommandExt as _;
+
+fn required_read(
+    root: &Path,
+    args: &[&str],
+    action: &str,
+) -> Result<String, Error> {
+    let output = run(root, args)?;
+    if output.success() {
+        Ok(output.stdout.trim().to_owned())
+    } else {
+        Err(Error::fault(
+            "git::command-failed",
+            output.detail(action),
+        ))
+    }
+}
+
+fn try_read(
+    root: &Path,
+    args: &[&str],
+) -> Result<Option<String>, Error> {
+    let output = run(root, args)?;
+    Ok(output.success().then(|| output.stdout.trim().to_owned()))
+}
+
+fn run(root: &Path, args: &[&str]) -> Result<GitOutput, Error> {
+    run_bounded(root, args, None)
+}
+
+fn run_with_input(
+    root: &Path,
+    args: &[&str],
+    input: &[u8],
+) -> Result<GitOutput, Error> {
+    run_bounded(root, args, Some(input))
+}
+
+fn run_bounded(
+    root: &Path,
+    args: &[&str],
+    input: Option<&[u8]>,
+) -> Result<GitOutput, Error> {
+    let limit = command_limit(args);
+    let mut process = spawn_git(root, args, input.is_some())?;
+    let workers = match CommandWorkers::start(&mut process, input) {
+        Ok(workers) => workers,
+        Err(error) => {
+            process.terminate()?;
+            return Err(error);
+        }
+    };
+    let (status, stdout, stderr) = supervise_git(&mut process, workers, args, limit)?;
+    Ok(GitOutput {
+        status: status.code().unwrap_or(-1),
+        stdout: decode_output(stdout, "stdout")?,
+        stderr: decode_output(stderr, "stderr")?,
+    })
+}
+
+fn spawn_git(
+    root: &Path,
+    args: &[&str],
+    piped_input: bool,
+) -> Result<GitProcess, Error> {
+    let mut command = Command::new("git");
+    command
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env(
+            "GIT_SSH_COMMAND",
+            "ssh -o BatchMode=yes -o ConnectTimeout=5",
+        )
+        .stdin(if piped_input {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    command.process_group(0);
+    command
+        .spawn()
+        .map(GitProcess::new)
+        .map_err(|error| Error::fault("git::launch-failed", error.to_string()))
+}
+
+fn command_limit(args: &[&str]) -> Duration {
+    if args
+        .first()
+        .is_some_and(|name| matches!(*name, "fetch" | "push"))
+    {
+        NETWORK_COMMAND_LIMIT
+    } else {
+        LOCAL_COMMAND_LIMIT
+    }
+}
+
+fn supervise_git(
+    process: &mut GitProcess,
+    mut workers: CommandWorkers,
+    args: &[&str],
+    limit: Duration,
+) -> Result<(std::process::ExitStatus, Vec<u8>, Vec<u8>), Error> {
+    let runtime_started = Instant::now();
+    let mut output_drain_started = None;
+    let mut status = None;
+    loop {
+        if status.is_none() {
+            status = match process.poll_exit() {
+                Ok(status) => status,
+                Err(error) => {
+                    return fail_supervision(process, workers, error);
+                }
+            };
+            if status.is_some() {
+                output_drain_started = Some(Instant::now());
+                match process.group_present() {
+                    Ok(true) => {
+                        let error = Error::fault(
+                            "git::descendant-survived",
+                            format!(
+                                "git {} exited while its process group still had live descendants",
+                                args.join(" "),
+                            ),
+                        );
+                        return fail_supervision(process, workers, error);
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        return fail_supervision(process, workers, error);
+                    }
+                }
+            }
+        }
+
+        while let Ok(event) = workers.events.try_recv() {
+            if let Err(error) = workers.accept(event, args) {
+                return fail_supervision(process, workers, error);
+            }
+        }
+        if let Some(status) = status
+            && workers.complete()
+        {
+            workers.join()?;
+            return Ok((
+                status,
+                workers.stdout.take().expect("complete workers have stdout"),
+                workers.stderr.take().expect("complete workers have stderr"),
+            ));
+        }
+
+        if status.is_none() && runtime_started.elapsed() >= limit {
+            let error = Error::fault(
+                "git::command-timeout",
+                format!(
+                    "git {} exceeded {} seconds",
+                    args.join(" "),
+                    limit.as_secs(),
+                ),
+            );
+            return fail_supervision(process, workers, error);
+        }
+        if output_drain_started
+            .is_some_and(|started| started.elapsed() >= OUTPUT_DRAIN_LIMIT)
+        {
+            let error = Error::fault(
+                "git::output-drain-timeout",
+                format!(
+                    "git {} output did not close within {} milliseconds",
+                    args.join(" "),
+                    OUTPUT_DRAIN_LIMIT.as_millis(),
+                ),
+            );
+            return fail_supervision(process, workers, error);
+        }
+
+        let runtime_remaining = limit.saturating_sub(runtime_started.elapsed());
+        let drain_remaining = output_drain_started.map_or(runtime_remaining, |started| {
+            OUTPUT_DRAIN_LIMIT.saturating_sub(started.elapsed())
+        });
+        let wait = runtime_remaining
+            .min(drain_remaining)
+            .min(Duration::from_millis(10));
+        match workers.events.recv_timeout(wait) {
+            Ok(event) => {
+                if let Err(error) = workers.accept(event, args) {
+                    return fail_supervision(process, workers, error);
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) if !workers.complete() => {
+                let error = Error::fault(
+                    "git::worker-lost",
+                    format!("git {} lost an I/O worker", args.join(" ")),
+                );
+                return fail_supervision(process, workers, error);
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                std::thread::sleep(wait);
+            }
+        }
+    }
+}
+
+fn fail_supervision<T>(
+    process: &mut GitProcess,
+    mut workers: CommandWorkers,
+    error: Error,
+) -> Result<T, Error> {
+    let cleanup = process.terminate();
+    let joined = workers.join();
+    cleanup?;
+    joined?;
+    Err(error)
+}
+
+struct GitProcess {
+    child: std::process::Child,
+    pid: u32,
+    status: Option<std::process::ExitStatus>,
+}
+
+impl GitProcess {
+    fn new(child: std::process::Child) -> Self {
+        let pid = child.id();
+        Self {
+            child,
+            pid,
+            status: None,
+        }
+    }
+
+    fn poll_exit(&mut self) -> Result<Option<std::process::ExitStatus>, Error> {
+        if self.status.is_none() {
+            self.status = self.child.try_wait().map_err(|error| {
+                Error::fault("git::wait-failed", error.to_string())
+            })?;
+        }
+        Ok(self.status)
+    }
+
+    fn terminate(&mut self) -> Result<(), Error> {
+        self.signal_group(false)?;
+        if self.settle(PROCESS_GROUP_GRACE)? {
+            return Ok(());
+        }
+        self.signal_group(true)?;
+        if self.settle(PROCESS_GROUP_REAP_LIMIT)? {
+            Ok(())
+        } else {
+            Err(Error::fault(
+                "git::process-group-reap-timeout",
+                format!(
+                    "Git process group {} remained after {} milliseconds",
+                    self.pid,
+                    PROCESS_GROUP_REAP_LIMIT.as_millis(),
+                ),
+            ))
+        }
+    }
+
+    fn settle(&mut self, limit: Duration) -> Result<bool, Error> {
+        let started = Instant::now();
+        loop {
+            let exited = self.poll_exit()?.is_some();
+            if exited && !self.group_present()? {
+                return Ok(true);
+            }
+            if started.elapsed() >= limit {
+                return Ok(false);
+            }
+            std::thread::sleep(
+                limit
+                    .saturating_sub(started.elapsed())
+                    .min(Duration::from_millis(5)),
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    fn signal_group(&mut self, kill: bool) -> Result<(), Error> {
+        let signal = if kill {
+            rustix::process::Signal::KILL
+        } else {
+            rustix::process::Signal::TERM
+        };
+        match rustix::process::kill_process_group(self.process_group()?, signal) {
+            Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
+            Err(error) => Err(Error::fault(
+                "git::process-group-signal-failed",
+                error.to_string(),
+            )),
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn signal_group(&mut self, _kill: bool) -> Result<(), Error> {
+        self.child
+            .kill()
+            .or_else(|error| {
+                (error.kind() == std::io::ErrorKind::InvalidInput)
+                    .then_some(())
+                    .ok_or(error)
+            })
+            .map_err(|error| Error::fault("git::process-kill-failed", error.to_string()))
+    }
+
+    #[cfg(unix)]
+    fn group_present(&self) -> Result<bool, Error> {
+        match rustix::process::test_kill_process_group(self.process_group()?) {
+            Ok(()) | Err(rustix::io::Errno::PERM) => Ok(true),
+            Err(rustix::io::Errno::SRCH) => Ok(false),
+            Err(error) => Err(Error::fault(
+                "git::process-group-probe-failed",
+                error.to_string(),
+            )),
+        }
+    }
+
+    #[cfg(unix)]
+    fn process_group(&self) -> Result<rustix::process::Pid, Error> {
+        let pid = i32::try_from(self.pid).map_err(|error| {
+            Error::fault("git::process-group-invalid", error.to_string())
+        })?;
+        rustix::process::Pid::from_raw(pid).ok_or_else(|| {
+            Error::fault("git::process-group-invalid", "Git returned process ID zero")
+        })
+    }
+
+    #[cfg(not(unix))]
+    fn group_present(&self) -> Result<bool, Error> {
+        Ok(self.status.is_none())
+    }
+}
+
+enum WorkerEvent {
+    Stdout(Result<Vec<u8>, OutputReadError>),
+    Stderr(Result<Vec<u8>, OutputReadError>),
+    Stdin(Result<(), std::io::Error>),
+    Panicked(&'static str),
+}
+
+struct CommandWorkers {
+    events: mpsc::Receiver<WorkerEvent>,
+    handles: Vec<JoinHandle<()>>,
+    stdout: Option<Vec<u8>>,
+    stderr: Option<Vec<u8>>,
+    stdin_complete: bool,
+}
+
+impl CommandWorkers {
+    fn start(process: &mut GitProcess, input: Option<&[u8]>) -> Result<Self, Error> {
+        let stdout = process.child.stdout.take().ok_or_else(|| {
+            Error::fault(
+                "git::stdout-missing",
+                "Git stdout pipe was unavailable",
+            )
+        })?;
+        let stderr = process.child.stderr.take().ok_or_else(|| {
+            Error::fault(
+                "git::stderr-missing",
+                "Git stderr pipe was unavailable",
+            )
+        })?;
+        let stdin = input
+            .map(|bytes| {
+                process
+                    .child
+                    .stdin
+                    .take()
+                    .map(|stdin| (stdin, bytes.to_vec()))
+                    .ok_or_else(|| {
+                        Error::fault(
+                            "git::stdin-missing",
+                            "Git stdin pipe was unavailable",
+                        )
+                    })
+            })
+            .transpose()?;
+        let (sender, events) = mpsc::channel();
+        let total = Arc::new(AtomicUsize::new(0));
+        let mut handles = vec![
+            spawn_reader(
+                stdout,
+                Arc::clone(&total),
+                sender.clone(),
+                true,
+            ),
+            spawn_reader(stderr, total, sender.clone(), false),
+        ];
+        if let Some((stdin, bytes)) = stdin {
+            handles.push(spawn_writer(stdin, bytes, sender.clone()));
+        }
+        drop(sender);
+        Ok(Self {
+            events,
+            handles,
+            stdout: None,
+            stderr: None,
+            stdin_complete: input.is_none(),
+        })
+    }
+
+    fn accept(&mut self, event: WorkerEvent, args: &[&str]) -> Result<(), Error> {
+        match event {
+            WorkerEvent::Stdout(result) => {
+                self.stdout = Some(output_result(result, "stdout", args)?);
+            }
+            WorkerEvent::Stderr(result) => {
+                self.stderr = Some(output_result(result, "stderr", args)?);
+            }
+            WorkerEvent::Stdin(Ok(())) => self.stdin_complete = true,
+            WorkerEvent::Stdin(Err(error)) => {
+                return Err(Error::fault("git::stdin-failed", error.to_string()));
+            }
+            WorkerEvent::Panicked(name) => {
+                return Err(Error::fault(
+                    "git::io-worker-panicked",
+                    format!("Git {name} worker panicked"),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn complete(&self) -> bool {
+        self.stdout.is_some() && self.stderr.is_some() && self.stdin_complete
+    }
+
+    fn join(&mut self) -> Result<(), Error> {
+        let mut panicked = false;
+        for handle in self.handles.drain(..) {
+            panicked |= handle.join().is_err();
+        }
+        if panicked {
+            Err(Error::fault(
+                "git::io-worker-panicked",
+                "Git I/O worker panicked",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+fn spawn_reader<R>(
+    input: R,
+    total: Arc<AtomicUsize>,
+    sender: mpsc::Sender<WorkerEvent>,
+    stdout: bool,
+) -> JoinHandle<()>
+where
+    R: std::io::Read + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            read_bounded(input, &total)
+        }));
+        let event = match result {
+            Ok(result) if stdout => WorkerEvent::Stdout(result),
+            Ok(result) => WorkerEvent::Stderr(result),
+            Err(_) if stdout => WorkerEvent::Panicked("stdout"),
+            Err(_) => WorkerEvent::Panicked("stderr"),
+        };
+        let _sent = sender.send(event);
+    })
+}
+
+fn spawn_writer(
+    mut stdin: std::process::ChildStdin,
+    input: Vec<u8>,
+    sender: mpsc::Sender<WorkerEvent>,
+) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            stdin.write_all(&input)
+        }));
+        let event = match result {
+            Ok(result) => WorkerEvent::Stdin(result),
+            Err(_) => WorkerEvent::Panicked("stdin"),
+        };
+        let _sent = sender.send(event);
+    })
+}
+
+enum OutputReadError {
+    Limit,
+    Read(std::io::Error),
+}
+
+fn read_bounded(
+    mut input: impl std::io::Read,
+    total: &AtomicUsize,
+) -> Result<Vec<u8>, OutputReadError> {
+    let mut output = Vec::new();
+    let mut buffer = [0_u8; 8 * 1024];
+    loop {
+        let count = input
+            .read(&mut buffer)
+            .map_err(OutputReadError::Read)?;
+        if count == 0 {
+            return Ok(output);
+        }
+        let previous = total.fetch_add(count, Ordering::AcqRel);
+        if previous.saturating_add(count) > OUTPUT_LIMIT {
+            return Err(OutputReadError::Limit);
+        }
+        output.extend_from_slice(&buffer[..count]);
+    }
+}
+
+fn output_result(
+    result: Result<Vec<u8>, OutputReadError>,
+    name: &str,
+    args: &[&str],
+) -> Result<Vec<u8>, Error> {
+    match result {
+        Ok(bytes) => Ok(bytes),
+        Err(OutputReadError::Limit) => Err(Error::fault(
+                "git::output-limit",
+                format!(
+                    "git {} exceeded {} bytes",
+                    args.join(" "),
+                    OUTPUT_LIMIT,
+                ),
+            )),
+        Err(OutputReadError::Read(error)) => Err(Error::fault(
+                "git::output-read-failed",
+                format!("Git {name}: {error}"),
+            )),
+    }
+}
+
+fn decode_output(bytes: Vec<u8>, name: &str) -> Result<String, Error> {
+    String::from_utf8(bytes).map_err(|error| {
+        Error::fault(
+            "git::output-not-utf8",
+            format!("Git {name}: {error}"),
+        )
+    })
+}

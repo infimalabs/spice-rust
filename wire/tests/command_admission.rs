@@ -1,6 +1,6 @@
 //! Authentication, generation, law, and body checks at the command door.
 
-use wire::intent::{CommandAnswer, Intent, StateAnswer};
+use wire::intent::{BodyShape, CommandAnswer, Intent, StateAnswer};
 use wire::{
     Accepted, Actor, CanonicalUuid, Command, CommandKind, CommandRejection, Outcome, Reply,
     ReplyPosition, ResidentState, WireVersion, Witness,
@@ -117,6 +117,15 @@ fn lane_cannot_submit_operator_direction() {
         CommandRejection::Refusal(wire::Refusal { ref reason, .. })
             if reason == "command::authority"
     ));
+}
+
+#[test]
+fn task_creation_routes_are_closed_over_distinct_body_contracts() {
+    assert_eq!(CommandKind::TaskAdd.binding().body, BodyShape::TaskAdd,);
+    assert_eq!(
+        CommandKind::TaskOopsAdd.binding().body,
+        BodyShape::TaskOopsAdd,
+    );
 }
 
 #[test]

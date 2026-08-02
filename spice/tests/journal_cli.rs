@@ -8,6 +8,7 @@ use rusqlite::{Connection, params};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use sill::{Acquisition, LockFile, LockName};
+use wire::manifest::{JOURNAL_BACKUP_VERSION, JournalBackupManifest};
 use wire::{
     Actor, AnyFact, Envelope, FactKind, FoldReport, JournalBackup, JournalReindex, JournalReport,
     JournalRestore, JournalVerification, Origin, Outcome, Seq, ThreadReport, WireVersion,
@@ -167,6 +168,46 @@ fn journal_replay_reindex_thread_backup_and_restore_round_trip() {
     assert_reindex(&fixture);
     assert_backup(&fixture);
     assert_restore(&fixture);
+}
+
+#[test]
+fn authority_only_backup_v1_uses_the_sole_current_restore_path() {
+    let fixture = Fixture::new();
+    fixture.reply::<JournalBackup>(&[
+        "backup",
+        fixture.bundle.to_str().expect("UTF-8 backup path"),
+    ]);
+    let manifest_path = fixture.bundle.join("manifest.json");
+    let mut manifest: JournalBackupManifest =
+        wire::decode(&fs::read(&manifest_path).expect("read current backup manifest"))
+            .expect("decode current backup manifest");
+    assert_eq!(manifest.version, JOURNAL_BACKUP_VERSION);
+    assert_eq!(manifest.members.len(), 1, "fixture must be authority-only");
+    manifest.version = 1;
+    fs::write(
+        &manifest_path,
+        wire::encode(&manifest).expect("encode canonical backup v1 manifest"),
+    )
+    .expect("write backup v1 manifest");
+
+    fs::remove_file(&fixture.authority).expect("remove current authority");
+    drop(journal::Journal::open(&fixture.authority).expect("create empty authority"));
+    let preview = fixture.reply::<JournalRestore>(&[
+        "restore",
+        fixture.bundle.to_str().expect("UTF-8 backup path"),
+    ]);
+    assert!(!preview.body.applied);
+    assert_eq!(preview.body.verification.members, 1);
+    let applied = fixture.reply::<JournalRestore>(&[
+        "restore",
+        fixture.bundle.to_str().expect("UTF-8 backup path"),
+        &format!("--apply={}", preview.body.plan),
+    ]);
+    assert!(applied.body.applied);
+    journal::JournalReader::open(&fixture.authority)
+        .expect("restored v1 authority opens")
+        .verify()
+        .expect("restored v1 authority verifies through the current path");
 }
 
 fn assert_journal_thread_and_fold(fixture: &Fixture) {

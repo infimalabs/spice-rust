@@ -31,6 +31,96 @@ fn identity(last: u8) -> wire::CanonicalUuid {
         .expect("canonical fixture identity")
 }
 
+fn seq(value: u64) -> wire::Seq {
+    wire::Seq::new(value).expect("non-zero fixture position")
+}
+
+fn stream_write(note: &str, trust: bool) -> journal::JournalWrite {
+    let mut write = journal::JournalWrite::new(
+        wire::Actor::Operator,
+        "task:STREAM-a1".parse().expect("origin"),
+        "2030-04-12T18:44:09.271Z".parse().expect("instant"),
+        wire::Producer::CommandDoor,
+    );
+    write
+        .fact(
+            wire::body::TaskNoted {
+                task: "STREAM-a1".parse().expect("task handle"),
+                note: note.to_owned(),
+            },
+            journal::FactCause::Root,
+        )
+        .expect("note fact builds");
+    if trust {
+        let digest = wire::Digest::compute(wire::Domain::ConfigExecutableSurface, b"surface");
+        let fact = write
+            .fact(
+                wire::body::TrustPended {
+                    surface: "config".to_owned(),
+                    digest: digest.clone(),
+                    previous: None,
+                },
+                journal::FactCause::Root,
+            )
+            .expect("trust fact builds");
+        write.trust_head(fact, move |_| wire::TrustHead {
+            digest,
+            state: wire::TrustState::Pended,
+        });
+    }
+    write
+}
+
+fn commit_stream(bus: &bus::Bus, note: &str, trust: bool) -> bus::JournalCommit {
+    match bus.commit(stream_write(note, trust)).expect("bus answers") {
+        bus::CommitOutcome::Committed(commit) => commit,
+        other => panic!("stream fixture commit failed: {other:?}"),
+    }
+}
+
+fn commit_lane_stream(
+    bus: &bus::Bus,
+    lane: wire::CanonicalUuid,
+    capability: wire::CanonicalUuid,
+) -> bus::JournalCommit {
+    let mut write = journal::JournalWrite::new(
+        wire::Actor::Spice,
+        format!("resident:{}", epoch()).parse().expect("origin"),
+        "2030-04-12T18:44:09.272Z".parse().expect("instant"),
+        wire::Producer::ResidentRecognition,
+    );
+    write
+        .fact(
+            wire::body::LaneSeated {
+                lane,
+                capability,
+                worktree: "/tmp/canvas-stream-lane".to_owned(),
+                life: "drive".to_owned(),
+                vendor: "claude".parse().expect("vendor"),
+            },
+            journal::FactCause::Root,
+        )
+        .expect("lane fact builds");
+    match bus.commit(write).expect("bus answers") {
+        bus::CommitOutcome::Committed(commit) => commit,
+        other => panic!("lane stream fixture failed: {other:?}"),
+    }
+}
+
+async fn stream_frame(socket: &mut ClientSocket) -> wire::StreamFrame {
+    stream_frame_bytes(socket).await.0
+}
+
+async fn stream_frame_bytes(socket: &mut ClientSocket) -> (wire::StreamFrame, Vec<u8>) {
+    let bytes = next_frame(socket).await;
+    let frame = wire::decode(&bytes).expect("current stream frame");
+    (frame, bytes)
+}
+
+fn speech() -> crate::SpeechConfig {
+    crate::SpeechConfig::default()
+}
+
 async fn websocket(address: SocketAddr) -> ClientSocket {
     let mut request = format!("ws://{address}/socket")
         .into_client_request()
@@ -122,6 +212,273 @@ async fn assert_socket_terminated(socket: &mut ClientSocket) {
     );
 }
 
+async fn assert_initial_stream(
+    socket: &mut ClientSocket,
+    subscription: wire::CanonicalUuid,
+    lane_capability: wire::CanonicalUuid,
+) {
+    send_client(
+        socket,
+        &wire::StreamRequest::Subscribe {
+            v: wire::WireVersion::CURRENT,
+            id: subscription,
+            epoch: epoch(),
+            subjects: vec![wire::ViewSubject::Facts, wire::ViewSubject::Trust],
+            after: None,
+        },
+    )
+    .await;
+    let (facts, fact_bytes) = stream_frame_bytes(socket).await;
+    let (trust, trust_bytes) = stream_frame_bytes(socket).await;
+    let wire::StreamFrame::Facts { packed, .. } = &facts else {
+        panic!("expected initial facts: {facts:?}");
+    };
+    let horizon = packed.horizon;
+    assert_eq!(packed.rows.len(), 3);
+    assert!(
+        packed
+            .rows
+            .iter()
+            .any(|fact| fact.kind() == wire::FactKind::LaneSeated)
+    );
+    assert!(matches!(
+        trust,
+        wire::StreamFrame::Trust { ref packed, .. }
+            if packed.horizon == horizon && packed.rows.len() == 1
+    ));
+    let returned = [fact_bytes, trust_bytes].concat();
+    assert!(!String::from_utf8_lossy(&returned).contains(&operator().to_string()));
+    assert!(!String::from_utf8_lossy(&returned).contains(&lane_capability.to_string()));
+}
+
+async fn assert_live_stream(
+    socket: &mut ClientSocket,
+    bus: &bus::Bus,
+    subscription: wire::CanonicalUuid,
+) -> u64 {
+    let update = commit_stream(bus, "later", false);
+    let live = stream_frame(socket).await;
+    assert!(matches!(
+        live,
+        wire::StreamFrame::Fact { ref fact, id, .. }
+            if id == subscription && fact.seq().get() == update.last()
+    ));
+    assert!(matches!(
+        stream_frame(socket).await,
+        wire::StreamFrame::Trust { .. }
+    ));
+    let lane_capability = identity(0xe6);
+    let lane = commit_lane_stream(bus, identity(0xe5), lane_capability);
+    let (lane_frame, lane_bytes) = stream_frame_bytes(socket).await;
+    assert!(matches!(
+        lane_frame,
+        wire::StreamFrame::Fact { ref fact, .. }
+            if fact.seq().get() == lane.last() && fact.kind() == wire::FactKind::LaneSeated
+    ));
+    assert!(!String::from_utf8_lossy(&lane_bytes).contains(&lane_capability.to_string()));
+    assert!(matches!(
+        stream_frame(socket).await,
+        wire::StreamFrame::Trust { .. }
+    ));
+    send_client(
+        socket,
+        &wire::StreamRequest::Thread {
+            v: wire::WireVersion::CURRENT,
+            id: identity(0xd2),
+            epoch: epoch(),
+            cursor: wire::StreamCursor {
+                epoch: epoch(),
+                seq: seq(lane.last()),
+            },
+        },
+    )
+    .await;
+    let (thread, bytes) = stream_frame_bytes(socket).await;
+    assert!(matches!(
+        thread,
+        wire::StreamFrame::Thread { ref packed, .. }
+            if packed.rows.first().is_some_and(|fact| {
+                fact.seq().get() == lane.last() && fact.kind() == wire::FactKind::LaneSeated
+            })
+    ));
+    assert!(!String::from_utf8_lossy(&bytes).contains(&lane_capability.to_string()));
+    lane.last()
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn authenticated_socket_streams_one_bus_snapshot_updates_resume_and_typed_shutdown() {
+    let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
+        .expect("bus starts");
+    commit_stream(&bus, "initial", true);
+    let initial_lane_capability = identity(0xe8);
+    commit_lane_stream(&bus, identity(0xe7), initial_lane_capability);
+    let capabilities = Capabilities::default();
+    capabilities
+        .insert(operator(), wire::Actor::Operator)
+        .expect("operator capability");
+    let (server, _control) =
+        Server::bind_streaming(epoch(), capabilities, speech(), bus.reader(), 8)
+            .await
+            .expect("streaming server binds");
+    let address = server.local_addr().expect("address");
+    let (shutdown, stopped) = oneshot::channel();
+    let server_task = tokio::spawn(server.up_until(async move {
+        let _ = stopped.await;
+    }));
+    let (mut socket, _) = authenticate(address, operator(), epoch()).await;
+    let subscription = identity(0xd0);
+    assert_initial_stream(&mut socket, subscription, initial_lane_capability).await;
+    let live_cursor = assert_live_stream(&mut socket, &bus, subscription).await;
+    socket.close(None).await.expect("first socket closes");
+
+    let (mut resumed, _) = authenticate(address, operator(), epoch()).await;
+    send_client(
+        &mut resumed,
+        &wire::StreamRequest::Subscribe {
+            v: wire::WireVersion::CURRENT,
+            id: identity(0xd1),
+            epoch: epoch(),
+            subjects: vec![wire::ViewSubject::Facts],
+            after: Some(wire::StreamCursor {
+                epoch: epoch(),
+                seq: seq(live_cursor),
+            }),
+        },
+    )
+    .await;
+    assert!(matches!(
+        stream_frame(&mut resumed).await,
+        wire::StreamFrame::Facts { packed, .. }
+            if packed.rows.is_empty() && packed.horizon == seq(live_cursor)
+    ));
+
+    shutdown.send(()).expect("shutdown signals");
+    assert!(matches!(
+        stream_frame(&mut resumed).await,
+        wire::StreamFrame::Closing { after, .. }
+            if after.seq == seq(live_cursor) && after.epoch == epoch()
+    ));
+    assert_socket_terminated(&mut resumed).await;
+    server_task
+        .await
+        .expect("server task joins")
+        .expect("server stops");
+    bus.shutdown().expect("bus shuts down");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn capability_replacement_faults_the_live_stream_without_disclosure() {
+    let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
+        .expect("bus starts");
+    commit_stream(&bus, "initial", false);
+    let capabilities = Capabilities::default();
+    capabilities
+        .insert(operator(), wire::Actor::Operator)
+        .expect("operator capability");
+    let (server, _control) =
+        Server::bind_streaming(epoch(), capabilities.clone(), speech(), bus.reader(), 8)
+            .await
+            .expect("streaming server binds");
+    let address = server.local_addr().expect("address");
+    let server_task = tokio::spawn(server.up());
+    let (mut socket, _) = authenticate(address, operator(), epoch()).await;
+    send_client(
+        &mut socket,
+        &wire::StreamRequest::Subscribe {
+            v: wire::WireVersion::CURRENT,
+            id: identity(0xd0),
+            epoch: epoch(),
+            subjects: vec![wire::ViewSubject::Facts],
+            after: None,
+        },
+    )
+    .await;
+    let _ = stream_frame(&mut socket).await;
+
+    assert!(capabilities.remove(operator(), &wire::Actor::Operator));
+    commit_stream(&bus, "replacement boundary", false);
+    let frame = stream_frame(&mut socket).await;
+    assert!(matches!(
+        frame,
+        wire::StreamFrame::Fault { ref fault, .. }
+            if fault.reason == "stream::capability-replaced"
+    ));
+    assert!(
+        !String::from_utf8_lossy(&wire::encode(&frame).expect("fault encodes"))
+            .contains(&operator().to_string())
+    );
+    assert_socket_terminated(&mut socket).await;
+    server_task.abort();
+    let _ = server_task.await;
+    bus.shutdown().expect("bus shuts down");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn blocked_command_delivery_turns_broadcast_lag_into_resumable_overflow() {
+    let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
+        .expect("bus starts");
+    commit_stream(&bus, "initial", false);
+    let capabilities = Capabilities::default();
+    capabilities
+        .insert(operator(), wire::Actor::Operator)
+        .expect("operator capability");
+    let (server, mut control) =
+        Server::bind_streaming(epoch(), capabilities, speech(), bus.reader(), 8)
+            .await
+            .expect("streaming server binds");
+    let address = server.local_addr().expect("address");
+    let server_task = tokio::spawn(server.up());
+    let (mut socket, _) = authenticate(address, operator(), epoch()).await;
+    let subscription = identity(0xd0);
+    send_client(
+        &mut socket,
+        &wire::StreamRequest::Subscribe {
+            v: wire::WireVersion::CURRENT,
+            id: subscription,
+            epoch: epoch(),
+            subjects: vec![wire::ViewSubject::Facts],
+            after: None,
+        },
+    )
+    .await;
+    let initial = stream_frame(&mut socket).await;
+    let wire::StreamFrame::Facts { packed, .. } = initial else {
+        panic!("expected initial facts");
+    };
+
+    send_change(
+        &mut socket,
+        identity(0xd2),
+        epoch(),
+        wire::ResidentState::Seated,
+    )
+    .await;
+    let request = control.recv().await.expect("command enters control queue");
+    for index in 0..70 {
+        commit_stream(&bus, &format!("queued {index}"), false);
+    }
+    request
+        .respond(wire::Outcome::Refusal(wire::Refusal {
+            reason: "fixture::released".to_owned(),
+            witness: None,
+            expected: None,
+            observed: None,
+            remedy: "continue the fixture".to_owned(),
+        }))
+        .expect("response returns");
+    let _ = response(&mut socket).await;
+    let overflow = stream_frame(&mut socket).await;
+    assert!(matches!(
+        overflow,
+        wire::StreamFrame::Overflow { id, after, dropped, .. }
+            if id == subscription && after.seq == packed.horizon && dropped > 0
+    ));
+    assert_socket_terminated(&mut socket).await;
+    server_task.abort();
+    let _ = server_task.await;
+    bus.shutdown().expect("bus shuts down");
+}
+
 async fn wait_for_admission(
     observed: &mut watch::Receiver<Option<AdmissionObservation>>,
     expected: AdmissionObservation,
@@ -141,7 +498,9 @@ async fn server_binds_ipv4_loopback_and_publishes_that_endpoint() {
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind(epoch(), capabilities).await.expect("binds");
+    let (server, _control) = Server::bind(epoch(), capabilities, speech())
+        .await
+        .expect("binds");
     let address = server.local_addr().expect("local address");
     let discovery = server.discovery(operator()).expect("operator discovery");
 
@@ -168,9 +527,161 @@ async fn request(address: SocketAddr, host: &str, path: &str) -> Vec<u8> {
     response
 }
 
+async fn speech_request(address: SocketAddr, host: &str, origin: &str, body: &[u8]) -> Vec<u8> {
+    let mut stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("connect to canvas");
+    let head = format!(
+        concat!(
+            "POST /speech HTTP/1.1\r\n",
+            "Host: {host}\r\n",
+            "Origin: {origin}\r\n",
+            "Content-Type: application/json\r\n",
+            "Content-Length: {}\r\n",
+            "Connection: close\r\n\r\n",
+        ),
+        body.len(),
+        host = host,
+        origin = origin,
+    );
+    stream.write_all(head.as_bytes()).await.expect("write head");
+    stream.write_all(body).await.expect("write body");
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .await
+        .expect("read response");
+    response
+}
+
+fn response_body(response: &[u8]) -> &[u8] {
+    let split = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("response carries headers")
+        + 4;
+    &response[split..]
+}
+
+fn external_speech(command: &[&str]) -> crate::SpeechConfig {
+    crate::SpeechConfig::new(
+        crate::SpeechBackend::External,
+        command.iter().map(ToString::to_string).collect(),
+        crate::speech::DEFAULT_VOICE.to_owned(),
+        "audio/test".to_owned(),
+        175,
+    )
+    .expect("external speech fixture")
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn speech_endpoint_executes_only_the_server_owned_argv_contract() {
+    let (server, _control) = Server::bind(
+        epoch(),
+        Capabilities::default(),
+        external_speech(&["/bin/cat"]),
+    )
+    .await
+    .expect("binds");
+    let address = server.local_addr().expect("local address");
+    let task = tokio::spawn(server.up());
+    let body = wire::encode(&wire::SpeechRequest {
+        text: "spoken exactly; $(not a shell)".to_owned(),
+    })
+    .expect("request encodes");
+    let response = speech_request(
+        address,
+        &address.to_string(),
+        &format!("http://{address}"),
+        &body,
+    )
+    .await;
+
+    assert!(response.starts_with(b"HTTP/1.1 200 OK\r\n"));
+    assert!(
+        response
+            .windows(b"content-type: audio/test".len())
+            .any(|window| window == b"content-type: audio/test")
+    );
+    assert_eq!(response_body(&response), b"spoken exactly; $(not a shell)");
+
+    task.abort();
+    assert!(task.await.expect_err("aborted server task").is_cancelled());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn speech_endpoint_bounds_disabled_malformed_and_unavailable_backends() {
+    for speech in [
+        crate::SpeechConfig::new(
+            crate::SpeechBackend::Disabled,
+            Vec::new(),
+            crate::speech::DEFAULT_VOICE.to_owned(),
+            "audio/wav".to_owned(),
+            175,
+        )
+        .expect("disabled speech"),
+        crate::SpeechConfig::default(),
+        external_speech(&[]),
+        external_speech(&["/definitely/missing/spice-speech"]),
+    ] {
+        let (server, _control) = Server::bind(epoch(), Capabilities::default(), speech)
+            .await
+            .expect("binds");
+        let address = server.local_addr().expect("local address");
+        let task = tokio::spawn(server.up());
+        let body = wire::encode(&wire::SpeechRequest {
+            text: "bounded failure".to_owned(),
+        })
+        .expect("request encodes");
+        let response = speech_request(
+            address,
+            &address.to_string(),
+            &format!("http://{address}"),
+            &body,
+        )
+        .await;
+        assert!(response.starts_with(b"HTTP/1.1 503 Service Unavailable\r\n"));
+        assert_eq!(
+            response_body(&response),
+            b"external speech backend is unavailable"
+        );
+        task.abort();
+        assert!(task.await.expect_err("aborted server task").is_cancelled());
+    }
+
+    let (server, _control) = Server::bind(
+        epoch(),
+        Capabilities::default(),
+        external_speech(&["/bin/cat"]),
+    )
+    .await
+    .expect("binds");
+    let address = server.local_addr().expect("local address");
+    let task = tokio::spawn(server.up());
+    let malformed = speech_request(
+        address,
+        &address.to_string(),
+        &format!("http://{address}"),
+        br#"{"text":"valid","command":["/bin/cat"]}"#,
+    )
+    .await;
+    assert!(malformed.starts_with(b"HTTP/1.1 422 Unprocessable Entity\r\n"));
+    let cross_origin = speech_request(
+        address,
+        &address.to_string(),
+        "https://attacker.example",
+        br#"{"text":"valid"}"#,
+    )
+    .await;
+    assert!(cross_origin.starts_with(b"HTTP/1.1 403 Forbidden\r\n"));
+
+    task.abort();
+    assert!(task.await.expect_err("aborted server task").is_cancelled());
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn live_server_serves_exact_embedded_bytes_and_refuses_another_host() {
-    let (server, _control) = Server::bind(epoch(), Capabilities::default())
+    let (server, _control) = Server::bind(epoch(), Capabilities::default(), speech())
         .await
         .expect("binds");
     let address = server.local_addr().expect("local address");
@@ -209,7 +720,9 @@ async fn bootstrap_names_the_exact_operator_generation_and_is_not_cached() {
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind(epoch(), capabilities).await.expect("binds");
+    let (server, _control) = Server::bind(epoch(), capabilities, speech())
+        .await
+        .expect("binds");
     let address = server.local_addr().expect("local address");
     let task = tokio::spawn(server.up());
 
@@ -225,10 +738,18 @@ async fn bootstrap_names_the_exact_operator_generation_and_is_not_cached() {
             .windows(b"cache-control: no-store".len())
             .any(|window| window == b"cache-control: no-store")
     );
-    let discovery: Discovery = wire::decode(&response[split..]).expect("bootstrap decodes");
+    let discovery: wire::CanvasBootstrap =
+        wire::decode(&response[split..]).expect("bootstrap decodes");
     assert_eq!(discovery.endpoint, format!("http://{address}"));
     assert_eq!(discovery.capability, operator());
     assert_eq!(discovery.epoch, epoch());
+    assert_eq!(
+        discovery.speech,
+        wire::SpeechPlayback::System {
+            voice: "Zoe (Premium)".to_owned(),
+            words_per_minute: 175,
+        }
+    );
 
     task.abort();
     assert!(task.await.expect_err("aborted server task").is_cancelled());
@@ -240,7 +761,9 @@ async fn authenticated_session_routes_multiple_typed_commands_and_correlates_ans
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, mut control) = Server::bind(epoch(), capabilities).await.expect("binds");
+    let (server, mut control) = Server::bind(epoch(), capabilities, speech())
+        .await
+        .expect("binds");
     let address = server.local_addr().expect("local address");
     let (shutdown, stopped) = oneshot::channel();
     let server_task = tokio::spawn(server.up_until(async move {
@@ -262,7 +785,9 @@ async fn shutdown_closes_partial_upgrade_pre_hello_and_active_sockets() {
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind(epoch(), capabilities).await.expect("binds");
+    let (server, _control) = Server::bind(epoch(), capabilities, speech())
+        .await
+        .expect("binds");
     let state = Arc::clone(&server.state);
     let address = server.local_addr().expect("local address");
     let (shutdown, stopped) = oneshot::channel();
@@ -300,6 +825,28 @@ async fn shutdown_closes_partial_upgrade_pre_hello_and_active_sockets() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn shutdown_forces_transport_closed_when_a_session_cannot_finish_draining() {
+    let capabilities = Capabilities::default();
+    capabilities
+        .insert(operator(), wire::Actor::Operator)
+        .expect("operator capability");
+    let (server, _control) = Server::bind(epoch(), capabilities, speech())
+        .await
+        .expect("binds");
+    let state = Arc::clone(&server.state);
+    let session = SessionGuard::enter(&state);
+
+    timeout(ASSERTION_DEADLINE, state.close())
+        .await
+        .expect("session drain has a finite grace");
+    assert!(state.connections.is_cancelled());
+    assert_eq!(state.sessions.load(Ordering::Acquire), 1);
+
+    drop(session);
+    assert_eq!(state.sessions.load(Ordering::Acquire), 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn operator_lane_replacement_and_reconnect_cross_the_live_door() {
     let lane = identity(0xd0);
     let lane_capability = identity(0xd1);
@@ -310,7 +857,9 @@ async fn operator_lane_replacement_and_reconnect_cross_the_live_door() {
     capabilities
         .insert(lane_capability, wire::Actor::Lane(lane))
         .expect("lane capability");
-    let (server, mut control) = Server::bind(epoch(), capabilities).await.expect("binds");
+    let (server, mut control) = Server::bind(epoch(), capabilities, speech())
+        .await
+        .expect("binds");
     let address = server.local_addr().expect("local address");
     let (shutdown, stopped) = oneshot::channel();
     let server_task = tokio::spawn(server.up_until(async move {
@@ -369,7 +918,7 @@ async fn operator_lane_replacement_and_reconnect_cross_the_live_door() {
     replacement
         .insert(operator(), wire::Actor::Lane(lane))
         .expect("replacement generation capability");
-    let (server, _control) = Server::bind(replacement_epoch, replacement)
+    let (server, _control) = Server::bind(replacement_epoch, replacement, speech())
         .await
         .expect("replacement binds");
     let address = server.local_addr().expect("replacement address");
@@ -423,9 +972,10 @@ async fn saturated_queue_orders_concurrent_work_before_dark_and_refuses_later_wo
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, mut control) = Server::bind_with_capacity(epoch(), capabilities, 1)
-        .await
-        .expect("binds");
+    let (server, mut control) =
+        Server::bind_with_capacity(epoch(), capabilities, speech(), None, 1)
+            .await
+            .expect("binds");
     let state = Arc::clone(&server.state);
     let mut observed = state.admission_observed.subscribe();
     let address = server.local_addr().expect("local address");
@@ -503,7 +1053,7 @@ async fn shutdown_interrupts_a_queue_reservation_blocked_by_saturation() {
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind_with_capacity(epoch(), capabilities, 1)
+    let (server, _control) = Server::bind_with_capacity(epoch(), capabilities, speech(), None, 1)
         .await
         .expect("binds");
     let state = Arc::clone(&server.state);
@@ -705,10 +1255,15 @@ fn host_and_origin_must_name_the_published_endpoint() {
         origin: "http://127.0.0.1:48123".to_owned(),
         epoch: epoch(),
         capabilities: Capabilities::default(),
+        speech: speech(),
+        speech_slot: Semaphore::new(1),
         admission: Mutex::new(Admission::Open),
         commands: mpsc::channel(1).0,
+        stream: None,
         closed: watch::channel(false).0,
         connections: CancellationToken::new(),
+        sessions: AtomicUsize::new(0),
+        sessions_closed: Notify::new(),
         admission_observed: watch::channel(None).0,
     };
     let mut headers = HeaderMap::new();
