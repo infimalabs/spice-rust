@@ -8,6 +8,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod acquire;
 mod admission;
+#[cfg(not(target_arch = "wasm32"))]
+mod config_keys;
 mod declaration;
 mod evaluate;
 #[cfg(not(target_arch = "wasm32"))]
@@ -21,6 +23,8 @@ use wire::{Digest, Phase, TaskHandle};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use acquire::{ClaimCapture, CoreSource, acquire_core};
+#[cfg(not(target_arch = "wasm32"))]
+pub use config_keys::{CONFIG_KEY_DECLARATIONS, ConfigKeyDeclaration};
 pub use declaration::{
     CoreArmDeclaration, CoreTimeoutContract, CoreToolContract, GitCommandContract,
     PredecessorObservation, core_declarations,

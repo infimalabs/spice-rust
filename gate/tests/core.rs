@@ -704,7 +704,12 @@ fn acquisition_measures_every_compiled_provider_the_core_fixtures_assert() {
     let repository = contract_repository("core-acquire-clean");
     let report = acquired(&repository, ClaimCapture::Idle);
 
-    for id in [GateId::MergeIntegrity, GateId::PlanPhase, GateId::Staging] {
+    for id in [
+        GateId::MergeIntegrity,
+        GateId::PlanPhase,
+        GateId::Staging,
+        GateId::ConfigKeyValidity,
+    ] {
         let acquired = acquired_arm(&report, id);
         assert_eq!(
             acquired.observation(),
@@ -718,6 +723,66 @@ fn acquisition_measures_every_compiled_provider_the_core_fixtures_assert() {
             acquired.diagnostic()
         );
     }
+
+    repository.remove();
+}
+
+#[test]
+fn configuration_key_admission_names_the_unknown_active_layer_key() {
+    let repository = git_repository("core-acquire-config-key-unknown");
+    repository.write(
+        "spice.toml",
+        concat!("[tasks]\n", "stems = ['rim']\n", "strms = ['misspelled']\n",),
+    );
+    repository.write("baseline.toml", &workspace_document("baseline.toml"));
+    repository.write("src/app.rs", "pub fn app() {}\n");
+    git_commit(&repository, "unknown active configuration key");
+
+    let report = acquired(&repository, ClaimCapture::Idle);
+    let configuration = acquired_arm(&report, GateId::ConfigKeyValidity);
+    let expected = ConfigKeyEvidence::new(vec![
+        CoreFinding::new(
+            "unknown-key",
+            None::<String>,
+            concat!(
+                "tracked layer key tasks.strms is absent from the packaged ",
+                "configuration registry",
+            ),
+        )
+        .expect("unknown-key evidence"),
+    ]);
+    assert_eq!(
+        configuration.observation(),
+        &measured(CoreEvidence::ConfigKeyValidity(expected))
+    );
+    assert_eq!(configuration.standing(), CoreStanding::Failed);
+
+    repository.remove();
+}
+
+#[test]
+fn configuration_key_admission_names_a_known_key_forbidden_in_the_active_layer() {
+    let repository = git_repository("core-acquire-config-key-layer");
+    repository.write("spice.toml", "[say]\ncommand = ['/usr/bin/say']\n");
+    repository.write("baseline.toml", &workspace_document("baseline.toml"));
+    repository.write("src/app.rs", "pub fn app() {}\n");
+    git_commit(&repository, "forbidden active configuration layer");
+
+    let report = acquired(&repository, ClaimCapture::Idle);
+    let configuration = acquired_arm(&report, GateId::ConfigKeyValidity);
+    let expected = ConfigKeyEvidence::new(vec![
+        CoreFinding::new(
+            "forbidden-layer",
+            None::<String>,
+            "tracked layer key say.command is packaged for the local layer, not tracked",
+        )
+        .expect("layer-policy evidence"),
+    ]);
+    assert_eq!(
+        configuration.observation(),
+        &measured(CoreEvidence::ConfigKeyValidity(expected))
+    );
+    assert_eq!(configuration.standing(), CoreStanding::Failed);
 
     repository.remove();
 }
@@ -851,7 +916,6 @@ fn an_arm_without_a_compiled_provider_crosses_as_unsupported_and_never_as_a_pass
 
     for id in [
         GateId::RepoDocs,
-        GateId::ConfigKeyValidity,
         GateId::ConfigFalseDisable,
         GateId::ConfigTrackedTrust,
     ] {

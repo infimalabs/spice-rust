@@ -113,6 +113,8 @@ pub struct Contract {
     gate_set: GateSet,
     policy: Policy,
     #[cfg(not(target_arch = "wasm32"))]
+    tracked_configuration: toml::Value,
+    #[cfg(not(target_arch = "wasm32"))]
     shape: ShapePolicy,
     camp_policy: Policy,
     kill_profile: KillProfile,
@@ -157,6 +159,9 @@ impl Contract {
     ) -> Result<Self, ContractError> {
         let gate_set = GateSet::current().map_err(ContractError::GateSet)?;
         let bounds = current_bounds().map_err(ContractError::Bounds)?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let tracked_configuration =
+            tracked_configuration(policy_path, policy_text).map_err(ContractError::Policy)?;
         let tracked = tracked_policy(policy_path, policy_text).map_err(ContractError::Policy)?;
         let ignore = tracked_ignore(policy_path, &tracked).map_err(ContractError::Policy)?;
         #[cfg(not(target_arch = "wasm32"))]
@@ -187,6 +192,8 @@ impl Contract {
             gate_set,
             policy,
             #[cfg(not(target_arch = "wasm32"))]
+            tracked_configuration,
+            #[cfg(not(target_arch = "wasm32"))]
             shape,
             camp_policy,
             kill_profile,
@@ -207,6 +214,12 @@ impl Contract {
     #[must_use]
     pub const fn policy(&self) -> &Policy {
         &self.policy
+    }
+
+    /// Parsed tracked layer captured from the selected source.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) const fn tracked_configuration(&self) -> &toml::Value {
+        &self.tracked_configuration
     }
 
     /// Admitted tracked intent for the repository-shape provider.
@@ -349,6 +362,14 @@ impl ShapePolicy {
 
 fn tracked_policy(path: &Path, text: &str) -> Result<TrackedPolicy, PolicyError> {
     toml::from_str::<TrackedPolicy>(text).map_err(|source| PolicyError::Toml {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tracked_configuration(path: &Path, text: &str) -> Result<toml::Value, PolicyError> {
+    toml::from_str(text).map_err(|source| PolicyError::Toml {
         path: path.to_path_buf(),
         source,
     })

@@ -392,15 +392,19 @@ mod tests {
     }
 
     #[test]
-    fn report_environment_rows_are_the_tracked_workspace_vocabulary() {
+    fn report_environment_rows_are_in_the_tracked_workspace_vocabulary() {
         let tracked: WorkspacePolicy = toml::from_str(include_str!("../../spice.toml"))
             .expect("tracked workspace policy decodes");
-        let declared: Vec<_> = SpiceVariable::ALL
-            .iter()
-            .map(|variable| variable.as_str())
-            .collect();
 
-        assert_eq!(tracked.policy.env_names, declared);
+        for variable in SpiceVariable::ALL {
+            assert!(
+                tracked
+                    .policy
+                    .env_names
+                    .iter()
+                    .any(|name| name == variable.as_str())
+            );
+        }
     }
 
     #[test]

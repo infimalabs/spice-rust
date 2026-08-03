@@ -19,6 +19,7 @@ use sill::{Argv, Completion, spawn};
 use wire::{Digest, Phase, TaskHandle};
 
 use super::admission::{validate_git_tree, validate_repo_path};
+use super::config_keys::config_keys;
 use super::declaration::CoreArmDeclaration;
 use super::shape::repo_shape;
 use super::{
@@ -176,10 +177,10 @@ fn observe(
         GateId::PlanPhase => plan_phase(&source.claim),
         GateId::RepoShape => return repo_shape(source, contract),
         GateId::Staging => staging(source, contract.bounds()),
-        id @ (GateId::RepoDocs
-        | GateId::ConfigKeyValidity
-        | GateId::ConfigFalseDisable
-        | GateId::ConfigTrackedTrust) => uncompiled(id),
+        GateId::ConfigKeyValidity => return config_keys(contract),
+        id @ (GateId::RepoDocs | GateId::ConfigFalseDisable | GateId::ConfigTrackedTrust) => {
+            uncompiled(id)
+        }
         id => unreachable!("{id} is not a compiled core declaration"),
     })
 }
@@ -208,10 +209,6 @@ fn uncompiled(id: GateId) -> CoreObservation {
         GateId::RepoDocs => (
             "this build compiles no repository-document bound resolver",
             "compile doctrine-document selection with its active caps and peer bound claims",
-        ),
-        GateId::ConfigKeyValidity => (
-            "this build compiles no layered-configuration admission provider",
-            "compile packaged and active-layer key admission over the resolved configuration",
         ),
         GateId::ConfigFalseDisable => (
             "this build compiles no false-disable registry inventory",
