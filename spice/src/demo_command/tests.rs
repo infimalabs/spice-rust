@@ -51,7 +51,7 @@ fn seed_is_deterministic_quoted_and_reopenable_without_touching_python() {
         environment.root.join(TRANSCRIPT_NAME)
     );
     assert!(environment.state.journal().is_file());
-    assert!(environment.root.join(".git").is_dir());
+    assert_eq!(seeded_head(&environment.root).unwrap(), expected_head());
     assert_eq!(
         fs::read(&environment.transcript).unwrap(),
         transcript_bytes().unwrap()
@@ -84,6 +84,70 @@ fn seed_is_deterministic_quoted_and_reopenable_without_touching_python() {
     let reopened = reopen_environment(&root, executable).expect("complete seed reopens");
     assert_eq!(reopened.root, environment.root);
     assert_eq!(reopened.launch_command, environment.launch_command);
+}
+
+#[test]
+fn seeded_roots_are_born_on_one_commit_wherever_they_are_created() {
+    let scratch = Scratch::new("born");
+    let first = scratch.child("first root");
+    let second = scratch.child("a second root under a much longer name");
+    for root in [&first, &second] {
+        seed_environment(Some(root), Path::new("/opt/spice")).expect("born demo seed succeeds");
+    }
+
+    let born = "refs/heads/main at a53ad58b1356a5f7abea7437975321850e04b217";
+    assert_eq!(
+        seeded_head(&first).unwrap(),
+        born,
+        "the first seeded root is not born on the deterministic commit"
+    );
+    assert_eq!(
+        seeded_head(&second).unwrap(),
+        born,
+        "a longer root path moved the seeded commit"
+    );
+    assert_eq!(
+        expected_head(),
+        born,
+        "reopening expects a commit the seed never writes"
+    );
+}
+
+#[test]
+fn reuse_refuses_a_seeded_root_whose_branch_or_commit_moved() {
+    let scratch = Scratch::new("moved");
+    let root = scratch.child("moved-root");
+    let executable = Path::new("/opt/spice");
+    let environment = seed_environment(Some(&root), executable).expect("moved-root seed succeeds");
+    let head = environment.root.join(".git/HEAD");
+    let branch = environment.root.join(".git/refs/heads/main");
+    let seeded = fs::read(&branch).unwrap();
+    let refuses = |observed: &str| {
+        let outcome = *reopen_environment(&root, executable).expect_err("a moved seed refuses");
+        let Outcome::Refusal(refusal) = outcome else {
+            panic!("a moved seed must refuse: {outcome:?}");
+        };
+        assert_eq!(refusal.reason, "demo::commit-moved");
+        assert_eq!(refusal.expected.as_deref(), Some(expected_head().as_str()));
+        assert_eq!(refusal.observed.as_deref(), Some(observed));
+        assert_eq!(
+            refusal.remedy,
+            "reset this demo root to its seeded commit or seed a new one"
+        );
+    };
+
+    fs::write(&branch, "9c3f4bd0bd0b1e2ee59a1e0e9d2b47a3f7c4a5d6\n").unwrap();
+    refuses("refs/heads/main at 9c3f4bd0bd0b1e2ee59a1e0e9d2b47a3f7c4a5d6");
+
+    fs::write(&branch, &seeded).unwrap();
+    fs::write(&head, "ref: refs/heads/operator\n").unwrap();
+    refuses("refs/heads/operator at no commit");
+
+    fs::write(&head, format!("ref: {SEED_BRANCH}\n")).unwrap();
+    assert!(
+        reopen_environment(&root, executable).is_ok(),
+        "the named recovery restores a reusable demo root"
+    );
 }
 
 #[test]

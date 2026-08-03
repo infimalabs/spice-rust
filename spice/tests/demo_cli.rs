@@ -8,6 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use wire::{DemoAnswer, Outcome, ReplyPosition};
 
+const SEED_COMMIT: &str = "a53ad58b1356a5f7abea7437975321850e04b217";
+
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
@@ -121,7 +123,14 @@ fn seed_only_process_is_anchored_recoverable_and_python_inert() {
             .display()
             .to_string()
     );
-    assert!(root.join(".git").is_dir());
+    assert_eq!(
+        fs::read_to_string(root.join(".git/HEAD")).expect("read seeded HEAD"),
+        "ref: refs/heads/main\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".git/refs/heads/main")).expect("read seeded branch"),
+        format!("{SEED_COMMIT}\n")
+    );
     assert!(root.join(".spice-demo.json").is_file());
     assert_eq!(
         fs::read(root.join("spice.toml")).expect("read seeded config"),
@@ -182,6 +191,55 @@ fn seed_only_process_is_anchored_recoverable_and_python_inert() {
     };
     assert_eq!(refusal.reason, "demo::root-not-empty");
     assert_eq!(fs::read(sentinel).unwrap(), b"preserve me\n");
+    fixture.assert_ambient_untouched(&ambient_before);
+}
+
+#[test]
+fn reuse_refuses_a_moved_demo_root_over_the_wire_without_python() {
+    let fixture = Fixture::new();
+    let ambient_before = fs::read(&fixture.ambient_spice).expect("snapshot ambient authority");
+    let root = fixture.root("moved root");
+    let seeded = fixture.invoke(&[
+        "--json",
+        "demo",
+        "--seed-only",
+        "--root",
+        root.to_str().expect("fixture root is UTF-8"),
+    ]);
+    assert_eq!(seeded.status.code(), Some(0));
+    let root = fs::canonicalize(root).expect("seeded root is canonical");
+    fs::write(
+        root.join(".git/refs/heads/main"),
+        "9c3f4bd0bd0b1e2ee59a1e0e9d2b47a3f7c4a5d6\n",
+    )
+    .expect("move the seeded branch off its commit");
+
+    let refused = fixture.invoke(&[
+        "--json",
+        "demo",
+        "--reuse",
+        root.to_str().expect("fixture root is UTF-8"),
+    ]);
+    assert_eq!(refused.status.code(), Some(2));
+    assert!(refused.stdout.is_empty());
+    let Outcome::Refusal(refusal) =
+        wire::decode::<Outcome<DemoAnswer>>(&refused.stderr).expect("demo refusal is typed")
+    else {
+        panic!("a moved demo root must refuse");
+    };
+    assert_eq!(refusal.reason, "demo::commit-moved");
+    assert_eq!(
+        refusal.expected.as_deref(),
+        Some(format!("refs/heads/main at {SEED_COMMIT}").as_str())
+    );
+    assert_eq!(
+        refusal.observed.as_deref(),
+        Some("refs/heads/main at 9c3f4bd0bd0b1e2ee59a1e0e9d2b47a3f7c4a5d6")
+    );
+    assert_eq!(
+        refusal.remedy,
+        "reset this demo root to its seeded commit or seed a new one"
+    );
     fixture.assert_ambient_untouched(&ambient_before);
 }
 

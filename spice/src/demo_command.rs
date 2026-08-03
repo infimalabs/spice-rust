@@ -31,6 +31,11 @@ const DEMO_UUID: &str = "018f82d4-6f59-7d06-92e3-bce913116410";
 const DEMO_LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116411";
 const DEMO_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce913116412";
 const DEMO_EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce913116413";
+const SEED_BRANCH: &str = "refs/heads/main";
+const SEED_NAME: &str = "spice demo";
+const SEED_EMAIL: &str = "demo@spice.invalid";
+const SEED_MESSAGE: &str = "spice demo seed\n";
+const SEED_COMMIT: &str = "a53ad58b1356a5f7abea7437975321850e04b217";
 const READY_DEADLINE: Duration = Duration::from_secs(10);
 const STOP_DEADLINE: Duration = Duration::from_secs(10);
 
@@ -201,12 +206,7 @@ fn seed_environment(root: Option<&Path>, executable: &Path) -> DemoResult<Enviro
 }
 
 fn seed_prepared_root(root: &Path, executable: &Path, automatic: bool) -> DemoResult<Environment> {
-    gix::init(root).map_err(|error| {
-        environment_fault(
-            "demo::git-init-failed",
-            format!("{}: {error}", root.display()),
-        )
-    })?;
+    born_repository(root)?;
     let repository = spice::repository::Repository::discover(root)
         .map_err(|error| environment_fault("demo::repository-unavailable", error.to_string()))?;
     let state = repository
@@ -299,6 +299,17 @@ fn reopen_environment(root: &Path, executable: &Path) -> DemoResult<Environment>
             Some("the deterministic demo project policy"),
             Some(&root.join(CONFIG_NAME).display().to_string()),
             "restore the seeded config or remove this disposable root",
+        )
+        .into());
+    }
+    let expected = expected_head();
+    let head = seeded_head(&root)?;
+    if head != expected {
+        return Err(refusal(
+            "demo::commit-moved",
+            Some(&expected),
+            Some(&head),
+            "reset this demo root to its seeded commit or seed a new one",
         )
         .into());
     }
@@ -417,6 +428,66 @@ fn canonical_demo_root(root: &Path) -> DemoResult<PathBuf> {
             format!("{}: {error}", root.display()),
         )
     })?)
+}
+
+/// Create one demo repository already born on its seeded `main` commit.
+///
+/// Tree, identity, message, and time are all compiled in, so every disposable
+/// root reaches the same commit id and reopening can hold a root to it.
+fn born_repository(root: &Path) -> DemoResult<()> {
+    let repository = gix::init(root).map_err(|error| {
+        environment_fault(
+            "demo::git-init-failed",
+            format!("{}: {error}", root.display()),
+        )
+    })?;
+    let empty_tree = repository
+        .write_object(gix::objs::Tree::default())
+        .map_err(|error| environment_fault("demo::seed-commit-failed", error.to_string()))?;
+    let stamp = format!(
+        "{} +0000",
+        instant(CANNED_TRANSCRIPT[0].0).get().as_second()
+    );
+    let identity = gix::actor::SignatureRef {
+        name: SEED_NAME.into(),
+        email: SEED_EMAIL.into(),
+        time: &stamp,
+    };
+    repository
+        .commit_as(
+            identity,
+            identity,
+            SEED_BRANCH,
+            SEED_MESSAGE,
+            empty_tree,
+            gix::commit::NO_PARENT_IDS,
+        )
+        .map_err(|error| environment_fault("demo::seed-commit-failed", error.to_string()))?;
+    Ok(())
+}
+
+/// Name the branch and commit a demo root is parked on, however it got there.
+///
+/// A detached, unborn, or moved head all describe themselves in this one
+/// spelling, so the seeded expectation is a single string to compare against.
+fn seeded_head(root: &Path) -> DemoResult<String> {
+    let repository = gix::open(root).map_err(|error| {
+        environment_fault(
+            "demo::repository-unavailable",
+            format!("{}: {error}", root.display()),
+        )
+    })?;
+    let head = repository
+        .head()
+        .map_err(|error| environment_fault("demo::repository-unavailable", error.to_string()))?;
+    let branch = head.referent_name().map_or_else(
+        || "detached HEAD".to_owned(),
+        |name| name.as_bstr().to_string(),
+    );
+    let commit = head
+        .id()
+        .map_or_else(|| "no commit".to_owned(), |id| id.detach().to_string());
+    Ok(format!("{branch} at {commit}"))
 }
 
 fn seed_journal(state: &spice::repository::StatePaths, root: &Path) -> DemoResult<()> {
@@ -616,6 +687,10 @@ fn transcript_bytes() -> DemoResult<Vec<u8>> {
         bytes.push(b'\n');
     }
     Ok(bytes)
+}
+
+fn expected_head() -> String {
+    format!("{SEED_BRANCH} at {SEED_COMMIT}")
 }
 
 fn expected_manifest() -> DemoManifest {
