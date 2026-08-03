@@ -7,7 +7,7 @@ use syn::parse::{Parse, ParseStream};
 use syn::visit::{self, Visit};
 use syn::{
     Expr, FnArg, GenericParam, Ident, Item, ItemFn, ItemMacro, Lit, LitStr, Pat, PathArguments,
-    Stmt, Token, Type, UseTree, braced,
+    Signature, Stmt, Token, Type, UseTree, braced,
 };
 
 use super::acquire::CoreSource;
@@ -282,6 +282,12 @@ fn ungroup(expression: &Expr) -> &Expr {
     }
 }
 
+/// Method chains rooted in an authenticated configuration binding.
+///
+/// A binding is seeded only by a parameter of the authoritative root type or by
+/// an initializer that already carries a path. Every pattern that rebinds a name
+/// evicts it for the construct that scopes the pattern; a let-expression pattern
+/// evicts to the end of its block, which can only lose a chain, never invent one.
 struct ConsumerVisitor<'a> {
     declared: &'a BTreeSet<Vec<String>>,
     roots: BTreeSet<String>,
@@ -297,6 +303,56 @@ impl<'a> ConsumerVisitor<'a> {
             observed: BTreeSet::new(),
             bindings: BTreeMap::new(),
         }
+    }
+
+    /// Open one body whose only bindings are its own authenticated parameters.
+    ///
+    /// Returns the caller's frame for the visitor to restore once the body ends;
+    /// every function form seeds a binding by this one rule.
+    fn enter_body(&mut self, signature: &Signature) -> BTreeMap<String, Vec<String>> {
+        let outer = std::mem::take(&mut self.bindings);
+        let mut roots = self.roots.clone();
+        for parameter in &signature.generics.params {
+            if let GenericParam::Type(parameter) = parameter {
+                roots.remove(&parameter.ident.to_string());
+            }
+        }
+        for argument in &signature.inputs {
+            let FnArg::Typed(argument) = argument else {
+                continue;
+            };
+            if root_type(&argument.ty, &roots)
+                && let Pat::Ident(binding) = &*argument.pat
+            {
+                self.bindings.insert(binding.ident.to_string(), Vec::new());
+            }
+        }
+        outer
+    }
+
+    /// Drop every name one pattern rebinds, ending the path it used to carry.
+    ///
+    /// A rebound name holds an unauthenticated value, so it carries no path at
+    /// all until some authenticated parameter or initializer gives it one.
+    fn shadow(&mut self, pattern: &Pat) {
+        let mut names = PatternNames::default();
+        names.visit_pat(pattern);
+        for name in names.names {
+            self.bindings.remove(&name);
+        }
+    }
+}
+
+/// Every name one pattern binds, nested and shorthand forms included.
+#[derive(Default)]
+struct PatternNames {
+    names: Vec<String>,
+}
+
+impl<'ast> Visit<'ast> for PatternNames {
+    fn visit_pat_ident(&mut self, node: &'ast syn::PatIdent) {
+        self.names.push(node.ident.to_string());
+        visit::visit_pat_ident(self, node);
     }
 }
 
@@ -321,24 +377,14 @@ impl<'ast> Visit<'ast> for ConsumerVisitor<'_> {
     }
 
     fn visit_item_fn(&mut self, node: &'ast ItemFn) {
-        let outer = std::mem::take(&mut self.bindings);
-        let mut roots = self.roots.clone();
-        for parameter in &node.sig.generics.params {
-            if let GenericParam::Type(parameter) = parameter {
-                roots.remove(&parameter.ident.to_string());
-            }
-        }
-        for argument in &node.sig.inputs {
-            let FnArg::Typed(argument) = argument else {
-                continue;
-            };
-            if root_type(&argument.ty, &roots)
-                && let Pat::Ident(binding) = &*argument.pat
-            {
-                self.bindings.insert(binding.ident.to_string(), Vec::new());
-            }
-        }
+        let outer = self.enter_body(&node.sig);
         visit::visit_item_fn(self, node);
+        self.bindings = outer;
+    }
+
+    fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
+        let outer = self.enter_body(&node.sig);
+        visit::visit_impl_item_fn(self, node);
         self.bindings = outer;
     }
 
@@ -380,19 +426,45 @@ impl<'ast> Visit<'ast> for ConsumerVisitor<'_> {
     }
 
     fn visit_local(&mut self, node: &'ast syn::Local) {
-        if let Pat::Ident(binding) = &node.pat {
-            let name = binding.ident.to_string();
-            let path = node
-                .init
-                .as_ref()
-                .and_then(|initial| method_path(&initial.expr, &self.bindings));
-            if let Some(path) = path {
-                self.bindings.insert(name, path);
-            } else {
-                self.bindings.remove(&name);
-            }
-        }
+        let bound = simple_binding(&node.pat).map(ToString::to_string);
+        let path = node
+            .init
+            .as_ref()
+            .and_then(|initial| method_path(&initial.expr, &self.bindings));
         visit::visit_local(self, node);
+        self.shadow(&node.pat);
+        if let (Some(name), Some(path)) = (bound, path) {
+            self.bindings.insert(name, path);
+        }
+    }
+
+    fn visit_expr_closure(&mut self, node: &'ast syn::ExprClosure) {
+        let outer = self.bindings.clone();
+        for input in &node.inputs {
+            self.shadow(input);
+        }
+        visit::visit_expr_closure(self, node);
+        self.bindings = outer;
+    }
+
+    fn visit_arm(&mut self, node: &'ast syn::Arm) {
+        let outer = self.bindings.clone();
+        self.shadow(&node.pat);
+        visit::visit_arm(self, node);
+        self.bindings = outer;
+    }
+
+    fn visit_expr_for_loop(&mut self, node: &'ast syn::ExprForLoop) {
+        let outer = self.bindings.clone();
+        self.visit_expr(&node.expr);
+        self.shadow(&node.pat);
+        self.visit_block(&node.body);
+        self.bindings = outer;
+    }
+
+    fn visit_expr_let(&mut self, node: &'ast syn::ExprLet) {
+        visit::visit_expr_let(self, node);
+        self.shadow(&node.pat);
     }
 
     fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
@@ -402,6 +474,17 @@ impl<'ast> Visit<'ast> for ConsumerVisitor<'_> {
             self.observed.insert(path);
         }
         visit::visit_expr_method_call(self, node);
+    }
+}
+
+/// The one name a let pattern binds outright, seen through a type annotation.
+///
+/// Any other pattern binds by destructuring, which carries no path forward.
+fn simple_binding(pattern: &Pat) -> Option<&Ident> {
+    match pattern {
+        Pat::Type(annotated) => simple_binding(&annotated.pat),
+        Pat::Ident(binding) if binding.subpat.is_none() => Some(&binding.ident),
+        _ => None,
     }
 }
 
