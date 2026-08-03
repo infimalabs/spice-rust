@@ -183,13 +183,46 @@ impl BatteryArmResult {
 }
 
 /// Complete canonical battery report.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+///
+/// This type deliberately does not implement [`Deserialize`]. A derived one
+/// would let any caller lift retained bytes straight into a report without
+/// passing through [`Self::validate`], and because
+/// [`BatteryReceipt::mint`](super::BatteryReceipt::mint) takes a report by
+/// value, that report could then be bound into a published receipt. Its
+/// completeness is a precondition of minting, so the only way to hold one is
+/// to have run the battery or to have decoded through the private shape below.
+///
+/// ```compile_fail,E0277
+/// let report: gate::BatteryReport = serde_json::from_slice(b"{}").expect("no way in");
+/// ```
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BatteryReport {
     version: u64,
     gate_set: Digest,
     context: BatteryContext,
     results: Vec<BatteryArmResult>,
+}
+
+/// The report shape exactly as it is spelled on disk, admitted nowhere else.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawReport {
+    version: u64,
+    gate_set: Digest,
+    context: BatteryContext,
+    results: Vec<BatteryArmResult>,
+}
+
+impl From<RawReport> for BatteryReport {
+    fn from(raw: RawReport) -> Self {
+        Self {
+            version: raw.version,
+            gate_set: raw.gate_set,
+            context: raw.context,
+            results: raw.results,
+        }
+    }
 }
 
 impl BatteryReport {
@@ -230,8 +263,9 @@ impl BatteryReport {
 
     /// Decode only a canonical, complete, correctly ordered current report.
     pub fn decode(bytes: &[u8]) -> Result<Self, BatteryError> {
-        let report: Self = wire::decode(bytes)
+        let raw: RawReport = wire::decode(bytes)
             .map_err(|error| BatteryError::new(format!("invalid battery report: {error}")))?;
+        let report = Self::from(raw);
         report.validate()?;
         let canonical = report
             .encode()
@@ -246,9 +280,9 @@ impl BatteryReport {
     /// vector.
     ///
     /// [`Self::decode`] is not the only way a report reaches a reader: one
-    /// arrives as a nested field whenever a receipt is decoded, and a nested
-    /// field is deserialized without passing through any constructor. Both
-    /// doors call this.
+    /// also arrives as a nested field whenever a receipt is decoded. Both
+    /// doors decode through [`RawReport`] and both call this, and no third
+    /// door exists because the public type carries no [`Deserialize`].
     pub(super) fn validate(&self) -> Result<(), BatteryError> {
         if self.version != GATE_BATTERY_VERSION {
             return Err(BatteryError::new(format!(
