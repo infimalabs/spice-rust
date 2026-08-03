@@ -11,6 +11,10 @@ use tree_sitter_language::LanguageFn;
 pub enum StructuralPattern {
     /// A direct call whose callee is one identifier.
     FunctionCall,
+    /// One named JavaScript declaration.
+    JavaScriptDeclaration,
+    /// One JavaScript identifier occurrence.
+    JavaScriptIdentifier,
 }
 
 impl StructuralPattern {
@@ -19,6 +23,8 @@ impl StructuralPattern {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::FunctionCall => "function-call",
+            Self::JavaScriptDeclaration => "javascript-declaration",
+            Self::JavaScriptIdentifier => "javascript-identifier",
         }
     }
 }
@@ -186,6 +192,40 @@ const PATTERNS: &[PatternDeclaration] = &[PatternDeclaration {
     match_capture: "match",
 }];
 
+const JAVASCRIPT_SYMBOL_PATTERNS: &[PatternDeclaration] = &[
+    PatternDeclaration {
+        pattern: StructuralPattern::JavaScriptDeclaration,
+        match_capture: "match",
+    },
+    PatternDeclaration {
+        pattern: StructuralPattern::JavaScriptIdentifier,
+        match_capture: "match",
+    },
+];
+
+const JAVASCRIPT_SYMBOL_BINDINGS: &[PatternBinding] = &[
+    PatternBinding {
+        pattern: StructuralPattern::JavaScriptDeclaration,
+        query: concat!(
+            "[",
+            " (class_declaration name: (identifier) @class)",
+            " (function_declaration name: (identifier) @function)",
+            " (generator_function_declaration name: (identifier) @function)",
+            " (lexical_declaration \"const\" ",
+            "(variable_declarator name: (identifier) @constant))",
+            " (lexical_declaration \"let\" ",
+            "(variable_declarator name: (identifier) @let))",
+            " (variable_declaration ",
+            "(variable_declarator name: (identifier) @variable))",
+            "] @match",
+        ),
+    },
+    PatternBinding {
+        pattern: StructuralPattern::JavaScriptIdentifier,
+        query: "(identifier) @symbol @match",
+    },
+];
+
 const GRAMMARS: &[GrammarBinding] = &[
     GrammarBinding {
         name: "python",
@@ -244,13 +284,42 @@ pub fn scan_structural(
     language: &str,
     source: &str,
 ) -> Result<Vec<StructuralMatch>, StructuralScanError> {
-    let grammar = GRAMMARS
+    let grammar = grammar(language)?;
+    scan(grammar, source, PATTERNS, grammar.patterns)
+}
+
+/// Parse JavaScript once and retain its named declarations and identifiers.
+///
+/// This stays crate-internal because it is one domain-specific query set over
+/// the shared structural scanner, not a second public scanner contract.
+pub(crate) fn scan_javascript_symbols(
+    source: &str,
+) -> Result<Vec<StructuralMatch>, StructuralScanError> {
+    let grammar = grammar("javascript")?;
+    scan(
+        grammar,
+        source,
+        JAVASCRIPT_SYMBOL_PATTERNS,
+        JAVASCRIPT_SYMBOL_BINDINGS,
+    )
+}
+
+fn grammar(language: &str) -> Result<&'static GrammarBinding, StructuralScanError> {
+    GRAMMARS
         .iter()
         .find(|binding| binding.name == language)
         .ok_or_else(|| StructuralScanError::UnsupportedLanguage {
             observed: language.to_owned(),
             supported: GRAMMARS.iter().map(|binding| binding.name).collect(),
-        })?;
+        })
+}
+
+fn scan(
+    grammar: &GrammarBinding,
+    source: &str,
+    declarations: &[PatternDeclaration],
+    bindings: &[PatternBinding],
+) -> Result<Vec<StructuralMatch>, StructuralScanError> {
     let language: Language = grammar.language.into();
     let mut parser = Parser::new();
     parser
@@ -271,9 +340,10 @@ pub fn scan_structural(
     }
 
     let mut findings = Vec::new();
-    for declaration in PATTERNS {
+    for declaration in declarations {
         scan_pattern(
             grammar,
+            bindings,
             &language,
             tree.root_node(),
             source,
@@ -287,14 +357,14 @@ pub fn scan_structural(
 
 fn scan_pattern(
     grammar: &GrammarBinding,
+    bindings: &[PatternBinding],
     language: &Language,
     root: tree_sitter::Node<'_>,
     source: &str,
     declaration: PatternDeclaration,
     findings: &mut Vec<StructuralMatch>,
 ) -> Result<(), StructuralScanError> {
-    let binding = grammar
-        .patterns
+    let binding = bindings
         .iter()
         .find(|binding| binding.pattern == declaration.pattern)
         .ok_or_else(|| binding_error(grammar, declaration, "query is missing"))?;
@@ -410,6 +480,55 @@ mod tests {
                 "audit",
             );
         }
+    }
+
+    #[test]
+    fn javascript_symbol_scan_retains_every_supported_declaration_kind() {
+        let source = concat!(
+            "class Fixture {}\n",
+            "function run() {}\n",
+            "function* stream() {}\n",
+            "const fixed = 1;\n",
+            "let mutable = 2;\n",
+            "var legacy = 3;\n",
+            "run();\n",
+        );
+        let matches = scan_javascript_symbols(source).expect("JavaScript symbols scan");
+        let declarations: Vec<(&str, &str)> = matches
+            .iter()
+            .filter(|matched| matched.pattern() == StructuralPattern::JavaScriptDeclaration)
+            .map(|matched| {
+                let [capture] = matched.captures() else {
+                    panic!("declaration has unexpected captures: {matched:?}");
+                };
+                (capture.name(), capture.text())
+            })
+            .collect();
+        assert_eq!(
+            declarations,
+            [
+                ("class", "Fixture"),
+                ("function", "run"),
+                ("function", "stream"),
+                ("constant", "fixed"),
+                ("let", "mutable"),
+                ("variable", "legacy"),
+            ]
+        );
+        assert_eq!(
+            matches
+                .iter()
+                .filter(|matched| {
+                    matched.pattern() == StructuralPattern::JavaScriptIdentifier
+                        && matched
+                            .captures()
+                            .iter()
+                            .any(|capture| capture.text() == "run")
+                })
+                .count(),
+            2,
+            "the declaration and call are distinct identifier occurrences"
+        );
     }
 
     #[test]
