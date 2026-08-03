@@ -10,6 +10,8 @@ mod acquire;
 mod admission;
 mod declaration;
 mod evaluate;
+#[cfg(not(target_arch = "wasm32"))]
+mod shape;
 
 use std::error::Error;
 use std::fmt;
