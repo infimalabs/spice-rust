@@ -3,13 +3,12 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::str::FromStr;
 
 use gate::{
-    CORE_GATE_IDS, ClaimCapture, ConfigInventoryEvidence, ConfigKeyEvidence, Contract,
-    CoreArmInput, CoreEvidence, CoreFinding, CoreInputs, CoreObservation, CoreProvenance,
+    ActorCapture, CORE_GATE_IDS, ClaimCapture, ConfigInventoryEvidence, ConfigKeyEvidence,
+    Contract, CoreArmInput, CoreEvidence, CoreFinding, CoreInputs, CoreObservation, CoreProvenance,
     CoreReport, CoreReportDecodeError, CoreSource, CoreStanding, CoreTimeoutContract,
     CoreToolContract, DocMeasurement, GateId, MergeIntegrityEvidence, MergeTreeCompletion,
     PREDECESSOR_GATE_RELEASE, PlanPhaseEvidence, RepoDocLimit, RepoDocsEvidence, RepoShapeEvidence,
     Selector, StagingEvidence, acquire_core, core_declarations, evaluate_core,
-    varied_elastic_limit,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -18,7 +17,7 @@ use wire::{Digest, Domain, Phase, TaskHandle};
 mod support;
 
 use support::{
-    acquired, acquired_arm, contract_repository, git, git_commit, git_output, git_repository,
+    Tree, acquired, acquired_arm, contract_repository, git, git_commit, git_output, git_repository,
     measured,
 };
 
@@ -660,7 +659,7 @@ fn acquired_input(inputs: &CoreInputs, id: GateId) -> &CoreArmInput {
 #[test]
 fn acquisition_measures_every_compiled_provider_the_core_fixtures_assert() {
     let repository = contract_repository("core-acquire-clean");
-    let report = acquired(&repository, ClaimCapture::Idle);
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
 
     for id in [
         GateId::MergeIntegrity,
@@ -685,6 +684,14 @@ fn acquisition_measures_every_compiled_provider_the_core_fixtures_assert() {
     repository.remove();
 }
 
+/// One document, two actors, two caps.
+///
+/// Elastic headroom is seeded from the actor that is acting, so the same
+/// oversized document is judged against a different cap for each of them. Both
+/// expected caps are the predecessor `jittered_flex_limit(10000, 15000,
+/// "DOCTRINE.md", actor, jitter_percent=5)` for that actor's spelling. An engine
+/// seeded from the document's own path instead hands every actor 14800, so it
+/// can produce neither number and cannot make both assertions hold at once.
 #[test]
 fn repository_documents_are_selected_measured_and_judged_only_by_the_engine() {
     let repository = contract_repository("core-acquire-repo-docs");
@@ -696,7 +703,21 @@ fn repository_documents_are_selected_measured_and_judged_only_by_the_engine() {
     );
     git_commit(&repository, "repository document fixture");
 
-    let report = acquired(&repository, ClaimCapture::Idle);
+    assert_repository_documents(&repository, "worktree-author", 14_850);
+    assert_repository_documents(&repository, "worktree-peer", 15_000);
+
+    repository.remove();
+}
+
+/// Acquire one fixture as `actor` and assert the whole document inventory.
+fn assert_repository_documents(repository: &Tree, actor: &str, active_limit: u64) {
+    let report = acquired(
+        repository,
+        ClaimCapture::Idle,
+        ActorCapture::Acting {
+            actor: actor.to_owned(),
+        },
+    );
     let arm = acquired_arm(&report, GateId::RepoDocs);
     let CoreObservation::Measured {
         evidence: CoreEvidence::RepoDocs(evidence),
@@ -709,13 +730,12 @@ fn repository_documents_are_selected_measured_and_judged_only_by_the_engine() {
     };
     assert_eq!(bounded.path(), "DOCTRINE.md");
     assert_eq!(bounded.characters(), 20_000);
-    let active_limit = varied_elastic_limit(10_000, 15_000, "DOCTRINE.md", "DOCTRINE.md", 5)
-        .expect("packaged document headroom resolves");
     assert_eq!(
         bounded.bound(),
         RepoDocLimit::AtMost {
             characters: active_limit
-        }
+        },
+        "{actor} received a cap no predecessor run seeded from that actor produces"
     );
     assert!(!bounded.peer_claim());
     assert_eq!(unlimited.path(), "docs/reference/generated/REFERENCE.md");
@@ -727,8 +747,6 @@ fn repository_documents_are_selected_measured_and_judged_only_by_the_engine() {
         "DOCTRINE.md: 20000 characters (cap {active_limit})"
     )));
     assert!(!arm.diagnostic().contains("REFERENCE"));
-
-    repository.remove();
 }
 
 #[test]
@@ -738,7 +756,7 @@ fn a_partially_staged_file_is_acquired_from_the_captured_repository() {
     git(&repository, &["add", "src/app.rs"]);
     repository.write("src/app.rs", "fn main() {\n    // unstaged\n}\n");
 
-    let report = acquired(&repository, ClaimCapture::Idle);
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let staging = acquired_arm(&report, GateId::Staging);
 
     assert_eq!(
@@ -770,7 +788,7 @@ fn a_repository_mutated_after_capture_cannot_cross_later_staging_evidence() {
         .materialize(&repository.root)
         .expect("materialize the captured index");
     let contract = Contract::load(tree.root()).expect("load the captured contract");
-    let captured = CoreSource::capture(&tree, &contract, ClaimCapture::Idle)
+    let captured = CoreSource::capture(&tree, &contract, ClaimCapture::Idle, ActorCapture::Absent)
         .expect("capture one clean core source");
 
     repository.write("src/app.rs", "fn main() {\n    // staged\n}\n");
@@ -792,7 +810,7 @@ fn a_repository_mutated_after_capture_cannot_cross_later_staging_evidence() {
         "the staging arm is labelled with the digest its observation was taken under"
     );
 
-    let later = CoreSource::capture(&tree, &contract, ClaimCapture::Idle)
+    let later = CoreSource::capture(&tree, &contract, ClaimCapture::Idle, ActorCapture::Absent)
         .expect("capture the same tree over the mutated repository");
     let later_inputs = acquire_core(&later, &contract).expect("acquire the later battery");
     assert_eq!(
@@ -822,6 +840,7 @@ fn a_captured_claim_reaches_the_plan_phase_arm_without_the_gate_reading_a_journa
             task: task.clone(),
             phase: phase.clone(),
         },
+        ActorCapture::Absent,
     );
 
     assert_eq!(
@@ -843,6 +862,7 @@ fn a_repository_without_a_claim_store_skips_plan_phase_rather_than_measuring_it(
         ClaimCapture::Absent {
             reason: "no claim store is configured for this repository".to_owned(),
         },
+        ActorCapture::Absent,
     );
     let plan = acquired_arm(&report, GateId::PlanPhase);
 
@@ -868,7 +888,7 @@ fn an_unreadable_selected_tree_refuses_capture_with_a_typed_core_input_error() {
         .expect("selected directory")
         .permissions();
     fs::set_permissions(&sealed, fs::Permissions::from_mode(0o000)).expect("seal the directory");
-    let refused = CoreSource::capture(&tree, &contract, ClaimCapture::Idle);
+    let refused = CoreSource::capture(&tree, &contract, ClaimCapture::Idle, ActorCapture::Absent);
     fs::set_permissions(&sealed, restore).expect("restore the directory");
 
     let error = refused.expect_err("an unreadable selected tree cannot yield one identity");
@@ -900,7 +920,7 @@ fn an_empty_merge_is_acquired_from_the_repository_and_refused_by_the_engine() {
     assert!(repository.path(".git/MERGE_HEAD").exists());
     git(&repository, &["read-tree", "--reset", "-u", "HEAD"]);
 
-    let report = acquired(&repository, ClaimCapture::Idle);
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let merge = acquired_arm(&report, GateId::MergeIntegrity);
 
     let head_tree = git(&repository, &["rev-parse", "HEAD^{tree}"]);

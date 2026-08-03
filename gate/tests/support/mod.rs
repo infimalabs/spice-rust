@@ -1,5 +1,5 @@
 use gate::{
-    CORE_GATE_IDS, ClaimCapture, Contract, CoreArmInput, CoreArmReport, CoreEvidence,
+    ActorCapture, CORE_GATE_IDS, ClaimCapture, Contract, CoreArmInput, CoreArmReport, CoreEvidence,
     CoreObservation, CoreReport, CoreSource, GateId, Selector, acquire_core, evaluate_core,
 };
 
@@ -164,13 +164,13 @@ pub(crate) fn create_scratch_root(candidates: impl Iterator<Item = PathBuf>) -> 
 /// battery covers each compiled declaration in canonical order, and every arm
 /// is labelled with the digest of the tree it was actually taken from.
 #[allow(dead_code)]
-pub(crate) fn acquired(repository: &Tree, claim: ClaimCapture) -> CoreReport {
+pub(crate) fn acquired(repository: &Tree, claim: ClaimCapture, actor: ActorCapture) -> CoreReport {
     let tree = Selector::staged()
         .materialize(&repository.root)
         .expect("materialize the captured index");
     let contract = Contract::load(tree.root()).expect("load the captured contract");
-    let source =
-        CoreSource::capture(&tree, &contract, claim).expect("capture one immutable core source");
+    let source = CoreSource::capture(&tree, &contract, claim, actor)
+        .expect("capture one immutable core source");
     let inputs = acquire_core(&source, &contract).expect("acquire one complete core battery");
 
     assert_eq!(
