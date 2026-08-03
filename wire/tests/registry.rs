@@ -13,8 +13,8 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use wire::{
-    Answer, Command, CommandKind, Digest, Disposition, LawError, Name, ResidentState, TaskHandle,
-    TrustState, Witness, WitnessKind,
+    Answer, Authority, Command, CommandKind, Digest, Disposition, LawError, Name, ResidentState,
+    TaskHandle, TrustState, Witness, WitnessKind,
 };
 
 /// Body of the `task::done` command printed in WIRE.md.
@@ -83,6 +83,22 @@ fn every_command_names_the_witnesses_it_requires() {
                 "{kind} names {optional:?} as both required and optional",
             );
         }
+    }
+}
+
+/// Lane lifecycle is the operator's move alone, and this row is the only place
+/// that is enforced: `Command::admit` refuses every non-operator actor before a
+/// handler runs, so the resident's own import path deliberately carries no
+/// second authority check it could never observe violated. Weakening this row
+/// would silently let a seated lane import another lane's worktree.
+#[test]
+fn lane_lifecycle_is_admitted_for_the_operator_alone() {
+    for kind in [CommandKind::LaneSeat, CommandKind::LaneState] {
+        assert_eq!(
+            kind.law().authority,
+            Authority::Operator,
+            "{kind} is the resident's single enforcement point for lane lifecycle authority",
+        );
     }
 }
 
