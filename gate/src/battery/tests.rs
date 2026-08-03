@@ -13,8 +13,15 @@ use crate::manifest::{GateId, OriginLayer, PREDECESSOR_GATE_RELEASE};
 use crate::state::{
     ActorInputs, ActorResolution, BoundDecision, BoundRule, CurrentState, PredecessorSources,
 };
+use crate::toolchain::{ArmFinding, ArmOutcome, FindingDetail, LOCAL_PATH_MARKER};
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+/// The Rust file carrying a local path marker, selected as changed.
+const MARKED: &str = "src/marked.rs";
+
+/// The prose file carrying a discouraged word, selected as changed.
+const PROSE: &str = "docs/guide.md";
 
 #[test]
 fn canonical_manifest_is_the_exact_25_arm_compiled_contract() {
@@ -336,6 +343,92 @@ fn repository_executor_owns_one_capture_and_runs_each_family_once() {
     assert_eq!(
         BatteryReceipt::verify(&receipt_bytes).expect("verify production receipt"),
         receipt
+    );
+}
+
+/// The scanning arms read the change inventory the executor captured.
+///
+/// `LocalPaths` and `Taste` scan the selected changes and nothing else, so the
+/// list handed in at capture is the whole of what they open. The unselected
+/// file is the control: it is committed, dirty for both arms, and named by
+/// nobody. An executor that recomputed the change set from the repository would
+/// report it, and one that substituted an empty list would report neither file
+/// and call a marked tree clean.
+#[test]
+fn the_scanning_arms_report_exact_findings_over_the_captured_changes() {
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    let (word, replacement) = discouraged_word();
+    let marked = format!("// {LOCAL_PATH_MARKER}somebody/devel\n");
+    fs::write(repository.join(MARKED), &marked).expect("fixture marked source");
+    fs::create_dir(repository.join("docs")).expect("fixture prose directory");
+    fs::write(
+        repository.join(PROSE),
+        format!("This paragraph is {word} and nothing else.\n"),
+    )
+    .expect("fixture discouraged prose");
+    fs::write(
+        repository.join("docs/unselected.md"),
+        format!("{marked}This paragraph is {word} as well.\n"),
+    )
+    .expect("fixture change nobody selected");
+    fixture_git(&repository, &["add", "--all"]);
+    fixture_git(&repository, &["commit", "-q", "-m", "scanned sources"]);
+
+    let hygiene = crate::HygieneConfiguration::new(["app/main.py"], ["tests"])
+        .expect("production hygiene roots");
+    let mut executor = RepositoryExecutor::capture(
+        &repository,
+        &crate::Selector::staged(),
+        crate::ClaimCapture::Idle,
+        None,
+        [MARKED, PROSE].map(str::to_owned).to_vec(),
+        hygiene,
+    )
+    .expect("capture production battery source");
+    let source = executor.source().clone();
+    let inputs = fixture.inputs_for(&source);
+    let report = run_battery(&inputs, &mut executor).expect("complete production battery");
+
+    let scanned = |gate_id: GateId| {
+        let result = report
+            .results()
+            .iter()
+            .find(|result| result.gate_id() == gate_id)
+            .expect("the battery ran every compiled arm");
+        let ArmEvidence::Toolchain { report } = result.evidence() else {
+            panic!("{} is a toolchain arm", gate_id.as_str())
+        };
+        assert_eq!(
+            report.outcome,
+            ArmOutcome::Findings,
+            "{} admitted a selected change it should have reported: {}",
+            gate_id.as_str(),
+            report.reason
+        );
+        assert_eq!(result.state(), BatteryState::Failed);
+        report.findings.clone()
+    };
+
+    assert_eq!(
+        scanned(GateId::LocalPaths),
+        [ArmFinding {
+            path: Some(MARKED.to_owned()),
+            line: Some(1),
+            column: None,
+            detail: FindingDetail::LocalPath,
+        }],
+        "the marker scanner named something other than the one selected marked line"
+    );
+    assert_eq!(
+        scanned(GateId::Taste),
+        [ArmFinding {
+            path: Some(PROSE.to_owned()),
+            line: Some(1),
+            column: None,
+            detail: FindingDetail::Taste { word, replacement },
+        }],
+        "the prose scanner named something other than the one selected discouraged word"
     );
 }
 
@@ -1362,6 +1455,20 @@ fn production_repository(root: &Path) -> PathBuf {
     fixture_git(&repository, &["add", "--all"]);
     fixture_git(&repository, &["commit", "-q", "-m", "fixture"]);
     repository
+}
+
+/// The first compiled discouraged word and what it asks for instead.
+///
+/// Read off the vocabulary rather than spelled here, so a fixture cannot outlive
+/// the entry it was written against.
+fn discouraged_word() -> (String, String) {
+    let (pattern, replacement) = crate::toolchain::PACKAGED_TASTE_WORDS
+        .first()
+        .expect("the compiled vocabulary is not empty");
+    (
+        pattern.trim_end_matches('*').to_owned(),
+        (*replacement).to_owned(),
+    )
 }
 
 fn fixture_git(repository: &Path, arguments: &[&str]) {
