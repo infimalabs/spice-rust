@@ -239,6 +239,11 @@ fn plural(count: usize, unit: &str) -> String {
 
 /// Scan every selected change for the workstation path marker.
 ///
+/// One finding per occurrence rather than per line, each carrying the column it
+/// opens at. Two markers on one line are two paths that have to be fixed, and
+/// the column is what keeps the second from arriving as a duplicate of the first
+/// and being refused.
+///
 /// The include is every regular file, decoded as UTF-8 with replacement, so a
 /// binary file is read and simply yields no marker rather than being skipped
 /// for a reason the declaration never names. A file that cannot be read is a
@@ -261,11 +266,11 @@ pub(super) fn local_paths(
             Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
         };
         for (line, text) in lines {
-            if text.contains(LOCAL_PATH_MARKER) {
+            for (start, _) in text.match_indices(LOCAL_PATH_MARKER) {
                 findings.push(ArmFinding {
                     path: Some(path.clone()),
                     line: Some(line),
-                    column: None,
+                    column: column_of(&text, start),
                     detail: FindingDetail::LocalPath,
                 });
             }

@@ -308,6 +308,13 @@ fn the_scanning_arms_report_exact_findings_over_the_captured_changes() {
     let prose = format!("This paragraph is {word} and nothing else.\n");
     let column = u32::try_from(prose.find(&word).expect("the fixture names the word") + 1)
         .expect("a fixture column fits");
+    let marker_column = u32::try_from(
+        marked
+            .find(LOCAL_PATH_MARKER)
+            .expect("the fixture names the marker")
+            + 1,
+    )
+    .expect("a fixture column fits");
     fs::write(repository.join(MARKED), &marked).expect("fixture marked source");
     fs::create_dir(repository.join("docs")).expect("fixture prose directory");
     fs::write(repository.join(PROSE), &prose).expect("fixture discouraged prose");
@@ -363,7 +370,7 @@ fn the_scanning_arms_report_exact_findings_over_the_captured_changes() {
         [ArmFinding {
             path: Some(MARKED.to_owned()),
             line: Some(1),
-            column: None,
+            column: Some(marker_column),
             detail: FindingDetail::LocalPath,
         }],
         "the marker scanner named something other than the one selected marked line"
