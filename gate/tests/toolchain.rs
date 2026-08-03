@@ -399,20 +399,22 @@ fn the_compiled_scanners_pass_over_a_clean_tree() {
     measure_toolchain(observations).expect("clean observations are admitted");
 }
 
-/// The prose fixture writes one discouraged word twice on one line.
+/// The fixture repeats one discouraged word and one path marker on one line.
 ///
-/// Both occurrences carry the same word and the same replacement on the same
-/// line of the same file, so the column is the only field that tells them
-/// apart. Admission refuses findings that agree in every field, which makes
-/// this the case that proves the second occurrence survives as its own place to
-/// fix rather than collapsing into the first.
+/// Each pair carries the same detail on the same line of the same file, so the
+/// column is the only field that tells the two apart. Admission refuses findings
+/// that agree in every field, which makes these the cases that prove a second
+/// occurrence survives as its own place to fix rather than collapsing into the
+/// first.
 #[test]
 fn the_compiled_scanners_report_exact_findings_over_a_dirty_tree() {
     let (word, replacement) = discouraged_word();
     let prose = format!("This paragraph is {word} and {word} again.\n");
+    let marked =
+        format!("// {LOCAL_PATH_MARKER}somebody/devel and {LOCAL_PATH_MARKER}somebody/scratch\n");
     let repository = scanning_repository(
         "toolchain-dirty",
-        &format!("// {LOCAL_PATH_MARKER}somebody/devel\nfn main( ) {{\n    let  x=1;\n}}\n"),
+        &format!("{marked}fn main( ) {{\n    let  x=1;\n}}\n"),
         &prose,
     );
     let observations = acquired(
@@ -445,15 +447,22 @@ fn the_compiled_scanners_report_exact_findings_over_a_dirty_tree() {
         }],
         "the formatter named something other than the one unformatted file"
     );
+    let local_path = |column| ArmFinding {
+        path: Some(SOURCE.to_owned()),
+        line: Some(1),
+        column: Some(column),
+        detail: FindingDetail::LocalPath,
+    };
     assert_eq!(
         arm(&observations, GateId::LocalPaths).findings,
-        [ArmFinding {
-            path: Some(SOURCE.to_owned()),
-            line: Some(1),
-            column: None,
-            detail: FindingDetail::LocalPath,
-        }],
-        "the marker scanner named something other than the one marked line"
+        [
+            local_path(fixture_column(&marked, LOCAL_PATH_MARKER)),
+            local_path(fixture_column(
+                &marked,
+                &format!("{LOCAL_PATH_MARKER}somebody/scratch")
+            )),
+        ],
+        "the marker scanner named something other than the two marked occurrences"
     );
     let discouraged = |column| ArmFinding {
         path: Some(PROSE.to_owned()),
