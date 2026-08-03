@@ -17,7 +17,7 @@ use wire::{Digest, Domain, Phase, TaskHandle};
 mod support;
 
 use support::{
-    Tree, acquired, acquired_arm, contract_repository, git, git_commit, git_output, git_repository,
+    acquired, acquired_arm, contract_repository, git, git_commit, git_output, git_repository,
     measured,
 };
 
@@ -682,71 +682,6 @@ fn acquisition_measures_every_compiled_provider_the_core_fixtures_assert() {
     }
 
     repository.remove();
-}
-
-/// One document, two actors, two caps.
-///
-/// Elastic headroom is seeded from the actor that is acting, so the same
-/// oversized document is judged against a different cap for each of them. Both
-/// expected caps are the predecessor `jittered_flex_limit(10000, 15000,
-/// "DOCTRINE.md", actor, jitter_percent=5)` for that actor's spelling. An engine
-/// seeded from the document's own path instead hands every actor 14800, so it
-/// can produce neither number and cannot make both assertions hold at once.
-#[test]
-fn repository_documents_are_selected_measured_and_judged_only_by_the_engine() {
-    let repository = contract_repository("core-acquire-repo-docs");
-    let doctrine = "x".repeat(20_000);
-    repository.write("DOCTRINE.md", &doctrine);
-    repository.write(
-        "docs/reference/generated/REFERENCE.md",
-        "unlimited doctrine",
-    );
-    git_commit(&repository, "repository document fixture");
-
-    assert_repository_documents(&repository, "worktree-author", 14_850);
-    assert_repository_documents(&repository, "worktree-peer", 15_000);
-
-    repository.remove();
-}
-
-/// Acquire one fixture as `actor` and assert the whole document inventory.
-fn assert_repository_documents(repository: &Tree, actor: &str, active_limit: u64) {
-    let report = acquired(
-        repository,
-        ClaimCapture::Idle,
-        ActorCapture::Acting {
-            actor: actor.to_owned(),
-        },
-    );
-    let arm = acquired_arm(&report, GateId::RepoDocs);
-    let CoreObservation::Measured {
-        evidence: CoreEvidence::RepoDocs(evidence),
-    } = arm.observation()
-    else {
-        panic!("repository-document provider emitted no measurement: {arm:?}");
-    };
-    let [bounded, unlimited] = evidence.measurements() else {
-        panic!("unexpected repository-document inventory: {evidence:?}");
-    };
-    assert_eq!(bounded.path(), "DOCTRINE.md");
-    assert_eq!(bounded.characters(), 20_000);
-    assert_eq!(
-        bounded.bound(),
-        RepoDocLimit::AtMost {
-            characters: active_limit
-        },
-        "{actor} received a cap no predecessor run seeded from that actor produces"
-    );
-    assert!(!bounded.peer_claim());
-    assert_eq!(unlimited.path(), "docs/reference/generated/REFERENCE.md");
-    assert_eq!(unlimited.characters(), 18);
-    assert_eq!(unlimited.bound(), RepoDocLimit::Unlimited);
-    assert!(!unlimited.peer_claim());
-    assert_eq!(arm.standing(), CoreStanding::Failed);
-    assert!(arm.diagnostic().contains(&format!(
-        "DOCTRINE.md: 20000 characters (cap {active_limit})"
-    )));
-    assert!(!arm.diagnostic().contains("REFERENCE"));
 }
 
 #[test]

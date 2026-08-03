@@ -40,7 +40,7 @@ use crate::jurisdiction::Jurisdiction;
 use crate::measure::Bounds;
 use crate::metrics::measure_repository_document;
 use crate::policy::{BoundName, PolicyContext};
-use crate::state::{ActorInputs, ActorResolution, varied_elastic_limit};
+use crate::state::{ActorInputs, ActorResolution, PeerClaim, owning_claim, varied_elastic_limit};
 use crate::tree::SelectedTree;
 
 /// The one program both Git-declared arms observe through.
@@ -81,12 +81,20 @@ pub enum ClaimCapture {
 /// gate does not read, exactly like the board head above. The caller that owns
 /// one hands it over whole, and a run with no acting actor says so rather than
 /// borrowing another input to stand in for one.
-#[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// The active bound claims ride with the actor because a claim is peer-held
+/// only relative to someone: with no actor there is no peer to be outranked by,
+/// which is exactly the point at which the predecessor resolves no claims at
+/// all. The gate holds no clock, so the caller reads the ledger under its own
+/// run clock and hands over what was still active in that moment.
+#[derive(Clone, Debug, PartialEq)]
 pub enum ActorCapture {
     /// One actor is acting in this worktree.
     Acting {
         /// Identity that seeds this actor's headroom.
         actor: String,
+        /// Bound claims the ledger held active when the caller read it.
+        bound_claims: Vec<PeerClaim>,
     },
     /// No actor is acting in this worktree.
     Absent,
@@ -105,10 +113,29 @@ impl ActorCapture {
             CoreInputError::new(format!("actor provenance for {path:?}: {error}"))
         })?;
         Ok(match self {
-            Self::Acting { actor } => inputs.with_active_actor(actor),
+            Self::Acting { actor, .. } => inputs.with_active_actor(actor),
             Self::Absent => inputs,
         }
         .resolve_seed())
+    }
+
+    /// Whether a peer holds the bound claim that governs `path`.
+    ///
+    /// Ownership is resolved by the ledger's own rule, so this acquisition and
+    /// the state transaction that redirects a claimant name the same owner for
+    /// one path. The actor is trimmed for the same reason the transaction
+    /// trims its claimant: a claim is held by an identity, not by a spelling
+    /// with surrounding space.
+    fn peer_holds(&self, path: &str) -> bool {
+        match self {
+            Self::Acting {
+                actor,
+                bound_claims,
+            } => {
+                owning_claim(bound_claims, path).is_some_and(|claim| claim.actor() != actor.trim())
+            }
+            Self::Absent => false,
+        }
     }
 }
 
@@ -315,6 +342,11 @@ fn repo_docs(
 /// taken from the path hands every actor one identical cap, which is the one
 /// thing per-actor variation exists to prevent. The path remains the first hash
 /// input, so a single actor still receives a different cap per document.
+///
+/// A bound claim is resolved only for a document that breached its cap, which
+/// is the same set the predecessor asks the ledger about: a document inside its
+/// bound claims nothing and can be held by nobody. An unlimited document is
+/// never claimed for the same reason, since it has no cap left to breach.
 fn document_measurement(
     actor: &ActorCapture,
     contract: &Contract,
@@ -352,7 +384,8 @@ fn document_measurement(
             "resolve active repository-document bound for {path:?}: {error}"
         ))
     })?;
-    DocMeasurement::new(path, characters, active_limit, false)
+    let peer_claim = characters > active_limit && actor.peer_holds(path);
+    DocMeasurement::new(path, characters, active_limit, peer_claim)
 }
 
 fn plan_phase(claim: &ClaimCapture) -> CoreObservation {

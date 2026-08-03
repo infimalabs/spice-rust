@@ -604,7 +604,12 @@ fn validate_claims(
     Ok(())
 }
 
-fn owning_claim<'a>(claims: &'a [PeerClaim], path: &str) -> Option<&'a PeerClaim> {
+/// The one claim that owns `path`: earliest creation, then lowest actor.
+///
+/// Every reader of the ledger resolves ownership here, so a transaction that
+/// redirects a claimant and an acquisition that reports a peer-held bound name
+/// the same owner for one path.
+pub(crate) fn owning_claim<'a>(claims: &'a [PeerClaim], path: &str) -> Option<&'a PeerClaim> {
     claims
         .iter()
         .filter(|claim| claim.path == path)
