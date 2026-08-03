@@ -11,10 +11,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::manifest::GateId;
 
+#[cfg(not(target_arch = "wasm32"))]
+mod acquire;
 mod analyze;
 mod measure;
 mod predecessor;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use acquire::{HygieneSource, acquire_hygiene};
 pub use analyze::{
     HygieneAnalysisError, HygieneConfiguration, HygieneExclusion, PrivateCouplingException,
     analyze_hygiene,

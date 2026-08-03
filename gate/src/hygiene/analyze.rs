@@ -214,6 +214,8 @@ impl HygieneConfiguration {
 /// Why a source-driven hygiene run could not produce its canonical report.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HygieneAnalysisError {
+    /// The immutable selected source could not be captured whole.
+    Source(String),
     /// Tracked inputs were not execution-grade.
     Configuration(String),
     /// Internally produced evidence violated the closed report contract.
@@ -223,6 +225,9 @@ pub enum HygieneAnalysisError {
 impl fmt::Display for HygieneAnalysisError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Source(evidence) => {
+                write!(formatter, "hygiene source acquisition failed: {evidence}")
+            }
             Self::Configuration(evidence) => formatter.write_str(evidence),
             Self::Measurement(source) => write!(formatter, "hygiene measurement failed: {source}"),
         }
@@ -232,7 +237,7 @@ impl fmt::Display for HygieneAnalysisError {
 impl Error for HygieneAnalysisError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Configuration(_) => None,
+            Self::Source(_) | Self::Configuration(_) => None,
             Self::Measurement(source) => Some(source),
         }
     }
