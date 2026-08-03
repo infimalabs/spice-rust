@@ -3,7 +3,7 @@
 //! [`super::measure_toolchain`] validates, orders, and canonicalizes; this
 //! module only observes. Every declaration produces exactly one
 //! [`ArmObservation`], in compiled order, whether or not this build can analyze
-//! it. Three declarations route to a compiled analysis in [`super::analyze`];
+//! it. Four declarations route to a compiled analysis in [`super::analyze`];
 //! the rest cross as [`ArmOutcome::Unsupported`], which is neither a pass nor a
 //! skip, so an unmeasured tree is never admitted by silence.
 //!
@@ -157,6 +157,7 @@ fn examine(
             ),
             GateId::LocalPaths => analyze::local_paths(declaration, source.root, source.changes()),
             GateId::Taste => analyze::taste(declaration, source.root, source.changes()),
+            GateId::JavascriptUnused => analyze::javascript_unused(declaration, source.root),
             id => Analysis::terminal(
                 ArmOutcome::ParseFailure,
                 format!(
@@ -259,12 +260,9 @@ fn resolved_programs(
 /// receiving a sentence written for something else.
 pub(super) const fn owed_analyzer(id: GateId) -> Option<&'static str> {
     match id {
-        GateId::Formatters | GateId::LocalPaths | GateId::Taste => None,
+        GateId::Formatters | GateId::LocalPaths | GateId::Taste | GateId::JavascriptUnused => None,
         GateId::CanvasWebTypecheck => {
             Some("compile the wasm32 check and trunk release build analyses under bounds")
-        }
-        GateId::JavascriptUnused => {
-            Some("compile the JavaScript declaration and reference analysis over selected modules")
         }
         GateId::PythonTypecheck => {
             Some("compile the pyright error-level analysis over selected sources")
