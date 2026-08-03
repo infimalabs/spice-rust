@@ -49,6 +49,7 @@ pub struct RepositoryExecutor<'trace> {
     source: Digest,
     claim: ClaimCapture,
     search_path: Option<OsString>,
+    changes: Vec<String>,
     hygiene: HygieneConfiguration,
     context: Option<BatteryContext>,
     families: [Option<FamilyExecution>; FAMILY_COUNT],
@@ -57,6 +58,13 @@ pub struct RepositoryExecutor<'trace> {
 
 impl RepositoryExecutor<'_> {
     /// Materialize and retain one repository selection for a complete battery.
+    ///
+    /// `changes` names the selected-tree-relative paths the caller resolved as
+    /// changed, which every arm declaring [`crate::TreeInput::SelectedChanges`]
+    /// scans and nothing else. It is supplied rather than derived here for the
+    /// same reason `search_path` is: an executor that read the repository back
+    /// would measure a set the caller never saw, and an executor that defaulted
+    /// to none would scan nothing and call every tree clean.
     ///
     /// # Errors
     ///
@@ -67,9 +75,18 @@ impl RepositoryExecutor<'_> {
         selector: &Selector,
         claim: ClaimCapture,
         search_path: Option<OsString>,
+        changes: Vec<String>,
         hygiene: HygieneConfiguration,
     ) -> Result<Self, BatteryError> {
-        Self::capture_inner(repository, selector, claim, search_path, hygiene, None)
+        Self::capture_inner(
+            repository,
+            selector,
+            claim,
+            search_path,
+            changes,
+            hygiene,
+            None,
+        )
     }
 }
 
@@ -85,6 +102,7 @@ impl<'trace> RepositoryExecutor<'trace> {
         selector: &Selector,
         claim: ClaimCapture,
         search_path: Option<OsString>,
+        changes: Vec<String>,
         hygiene: HygieneConfiguration,
         trace: &'trace mut dyn FnMut(RepositoryExecutionEvent),
     ) -> Result<Self, BatteryError> {
@@ -93,6 +111,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             selector,
             claim,
             search_path,
+            changes,
             hygiene,
             Some(trace),
         )
@@ -103,6 +122,7 @@ impl<'trace> RepositoryExecutor<'trace> {
         selector: &Selector,
         claim: ClaimCapture,
         search_path: Option<OsString>,
+        changes: Vec<String>,
         hygiene: HygieneConfiguration,
         trace: Option<&'trace mut dyn FnMut(RepositoryExecutionEvent)>,
     ) -> Result<Self, BatteryError> {
@@ -124,6 +144,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             source,
             claim,
             search_path,
+            changes,
             hygiene,
             context: None,
             families: std::array::from_fn(|_| None),
@@ -215,7 +236,8 @@ impl<'trace> RepositoryExecutor<'trace> {
     }
 
     fn acquire_toolchain_family(&self) -> Result<Vec<ArmEvidence>, String> {
-        let source = ToolchainSource::capture(&self.tree, self.search_path.clone());
+        let source =
+            ToolchainSource::capture(&self.tree, self.search_path.clone(), self.changes.clone());
         let report = measure_toolchain(acquire_toolchain(&source, &self.contract))
             .map_err(|error| error.to_string())?;
         Ok(report

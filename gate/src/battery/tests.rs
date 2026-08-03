@@ -237,11 +237,15 @@ fn repository_executor_owns_one_capture_and_runs_each_family_once() {
     let selector = crate::Selector::staged();
     let mut events = Vec::new();
     let mut record = |event| events.push(event);
+    let changes = ["app/main.py", "src/lib.rs", "tests/test_main.py"]
+        .map(str::to_owned)
+        .to_vec();
     let mut executor = RepositoryExecutor::capture_traced(
         &repository,
         &selector,
         crate::ClaimCapture::Idle,
         None,
+        changes,
         hygiene,
         &mut record,
     )
