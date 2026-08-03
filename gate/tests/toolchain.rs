@@ -22,8 +22,16 @@ const DRIFTED_VERSION: &str = "cargo 0.0.0 (0000000000 1970-01-01)";
 /// The program the drift fixture makes wrong; every other stub stays exact.
 const DRIFTED_PROGRAM: &str = "cargo";
 
-/// The three arms this build analyzes itself rather than owing an analyzer.
-const COMPILED_ARMS: [GateId; 3] = [GateId::Formatters, GateId::LocalPaths, GateId::Taste];
+/// The four arms this build analyzes itself rather than owing an analyzer.
+const COMPILED_ARMS: [GateId; 4] = [
+    GateId::Formatters,
+    GateId::LocalPaths,
+    GateId::Taste,
+    GateId::CanvasWebTypecheck,
+];
+
+/// The compiled scanners that are applicable to the shared source fixture.
+const SCANNING_ARMS: [GateId; 3] = [GateId::Formatters, GateId::LocalPaths, GateId::Taste];
 
 /// The prose file both scanning fixtures carry, clean in one and dirty in the other.
 const PROSE: &str = "docs/guide.md";
@@ -216,7 +224,7 @@ fn a_program_that_leaves_its_exact_version_contract_is_unsupported_version() {
 }
 
 #[test]
-fn the_three_compiled_arms_pass_over_a_clean_tree() {
+fn the_compiled_scanners_pass_over_a_clean_tree() {
     let repository = scanning_repository(
         "toolchain-clean",
         "fn main() {}\n",
@@ -228,7 +236,7 @@ fn the_three_compiled_arms_pass_over_a_clean_tree() {
         &[SOURCE, PROSE],
     );
 
-    for id in COMPILED_ARMS {
+    for id in SCANNING_ARMS {
         let observation = arm(&observations, id);
         assert_eq!(
             observation.outcome,
@@ -249,7 +257,7 @@ fn the_three_compiled_arms_pass_over_a_clean_tree() {
 }
 
 #[test]
-fn the_three_compiled_arms_report_exact_findings_over_a_dirty_tree() {
+fn the_compiled_scanners_report_exact_findings_over_a_dirty_tree() {
     let (word, replacement) = discouraged_word();
     let repository = scanning_repository(
         "toolchain-dirty",
@@ -262,7 +270,7 @@ fn the_three_compiled_arms_report_exact_findings_over_a_dirty_tree() {
         &[SOURCE, PROSE],
     );
 
-    for id in COMPILED_ARMS {
+    for id in SCANNING_ARMS {
         let observation = arm(&observations, id);
         assert_eq!(
             observation.outcome,
@@ -355,6 +363,37 @@ fn a_formatter_refusal_naming_no_file_carries_the_code_it_refused_with() {
     );
 
     measure_toolchain(observations).expect("an explained refusal is admitted");
+}
+
+#[test]
+fn canvas_public_acquisition_retains_unparsed_nonzero_without_running_trunk() {
+    let repository = scanning_repository(
+        "toolchain-canvas-nonzero",
+        "fn main() {}\n",
+        "Every sentence here is ordinary.\n",
+    );
+    repository.write("app/index.html", "<main></main>\n");
+    git_commit(&repository, "canvas entrypoint");
+    let stubs = canvas_nonzero_directory("toolchain-canvas-tools");
+    let observations = acquired(&repository, Some(stubs.root.clone().into_os_string()), &[]);
+
+    let observation = arm(&observations, GateId::CanvasWebTypecheck);
+    assert_eq!(observation.outcome, ArmOutcome::NonzeroAnalysis);
+    assert_eq!(observation.exit_code, Some(17));
+    assert!(observation.findings.is_empty());
+    assert!(
+        observation
+            .reason
+            .contains("cargo wasm32 check refused with 17")
+    );
+    assert!(
+        !stubs.path("trunk-analysis-ran").exists(),
+        "trunk ran after the cargo analysis refused"
+    );
+
+    measure_toolchain(observations).expect("canvas nonzero observation is admitted");
+    repository.remove();
+    stubs.remove();
 }
 
 /// Acquire one battery over a committed fixture tree and a captured search path.
@@ -521,6 +560,60 @@ fn stub_directory(label: &str) -> Tree {
             "{program} declares a version this stub cannot quote"
         );
         stubs.write(program, &format!("#!/bin/sh\nprintf '%s\\n' '{version}'\n"));
+        let path = stubs.path(program);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+            .unwrap_or_else(|error| panic!("make {} executable: {error}", path.display()));
+    }
+    stubs
+}
+
+/// Exact-version stubs whose cargo analysis refuses before trunk can run.
+fn canvas_nonzero_directory(label: &str) -> Tree {
+    let stubs = Tree::new(label);
+    let mut declared = BTreeMap::new();
+    for declaration in TOOLCHAIN_ARMS {
+        for requirement in declaration.tools() {
+            declared.insert(requirement.program(), requirement.exact_version());
+        }
+    }
+
+    for (program, version) in declared {
+        assert!(
+            !version.contains('\''),
+            "{program} version must be shell safe"
+        );
+        let body = match program {
+            "cargo" => format!(
+                concat!(
+                    "#!/bin/sh\n",
+                    "if [ \"$1\" = \"--version\" ]; then printf '%s\\n' '{version}'; exit 0; fi\n",
+                    "if [ \"$1\" = \"fmt\" ]; then exit 0; fi\n",
+                    "if [ \"$1\" = \"check\" ]; then printf 'opaque refusal\\n' >&2; exit 17; fi\n",
+                    "exit 91\n",
+                ),
+                version = version,
+            ),
+            "trunk" => {
+                let marker = stubs.path("trunk-analysis-ran");
+                assert!(
+                    !marker.to_string_lossy().contains('\''),
+                    "trunk marker path must be shell safe"
+                );
+                format!(
+                    concat!(
+                        "#!/bin/sh\n",
+                        "if [ \"$1\" = \"--version\" ]; then ",
+                        "printf '%s\\n' '{version}'; exit 0; fi\n",
+                        ": > '{marker}'\n",
+                        "exit 99\n",
+                    ),
+                    version = version,
+                    marker = marker.display(),
+                )
+            }
+            _ => format!("#!/bin/sh\nprintf '%s\\n' '{version}'\n"),
+        };
+        stubs.write(program, &body);
         let path = stubs.path(program);
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
             .unwrap_or_else(|error| panic!("make {} executable: {error}", path.display()));

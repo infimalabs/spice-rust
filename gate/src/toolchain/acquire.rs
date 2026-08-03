@@ -3,7 +3,7 @@
 //! [`super::measure_toolchain`] validates, orders, and canonicalizes; this
 //! module only observes. Every declaration produces exactly one
 //! [`ArmObservation`], in compiled order, whether or not this build can analyze
-//! it. Three declarations route to a compiled analysis in [`super::analyze`];
+//! it. Four declarations route to a compiled analysis in [`super::analyze`];
 //! the rest cross as [`ArmOutcome::Unsupported`], which is neither a pass nor a
 //! skip, so an unmeasured tree is never admitted by silence.
 //!
@@ -155,6 +155,12 @@ fn examine(
                 bounds,
                 &resolved_programs(declaration, tools),
             ),
+            GateId::CanvasWebTypecheck => analyze::canvas_web_typecheck(
+                declaration,
+                source.root,
+                bounds,
+                &resolved_programs(declaration, tools),
+            ),
             GateId::LocalPaths => analyze::local_paths(declaration, source.root, source.changes()),
             GateId::Taste => analyze::taste(declaration, source.root, source.changes()),
             id => Analysis::terminal(
@@ -259,9 +265,8 @@ fn resolved_programs(
 /// receiving a sentence written for something else.
 pub(super) const fn owed_analyzer(id: GateId) -> Option<&'static str> {
     match id {
-        GateId::Formatters | GateId::LocalPaths | GateId::Taste => None,
-        GateId::CanvasWebTypecheck => {
-            Some("compile the wasm32 check and trunk release build analyses under bounds")
+        GateId::Formatters | GateId::LocalPaths | GateId::Taste | GateId::CanvasWebTypecheck => {
+            None
         }
         GateId::JavascriptUnused => {
             Some("compile the JavaScript declaration and reference analysis over selected modules")

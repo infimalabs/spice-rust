@@ -266,8 +266,8 @@ pub enum FindingDetail {
     LocalPath,
     /// A discouraged prose token has a compiled replacement.
     Taste { word: String, replacement: String },
-    /// Rust/Wasm canvas analysis diagnostic.
-    CanvasType { code: String, message: String },
+    /// Source-located Rust/Wasm canvas analysis output.
+    CanvasWebOutput { code: String, message: String },
     /// JavaScript declaration has no admitted references.
     JavascriptUnused {
         symbol: String,
@@ -324,7 +324,7 @@ impl FindingDetail {
             Self::Formatting { .. } => GateId::Formatters,
             Self::LocalPath => GateId::LocalPaths,
             Self::Taste { .. } => GateId::Taste,
-            Self::CanvasType { .. } => GateId::CanvasWebTypecheck,
+            Self::CanvasWebOutput { .. } => GateId::CanvasWebTypecheck,
             Self::JavascriptUnused { .. } => GateId::JavascriptUnused,
             Self::PythonType { .. } => GateId::PythonTypecheck,
             Self::EnvironmentAccess { .. } => GateId::EnvPolicy,
@@ -694,7 +694,7 @@ fn valid_finding_detail(detail: &FindingDetail) -> bool {
         FindingDetail::Taste { word, replacement } => {
             !word.is_empty() && !replacement.contains(['\n', '\r'])
         }
-        FindingDetail::CanvasType { code, message }
+        FindingDetail::CanvasWebOutput { code, message }
         | FindingDetail::PythonType { code, message } => !code.is_empty() && !message.is_empty(),
         FindingDetail::JavascriptUnused {
             symbol,
