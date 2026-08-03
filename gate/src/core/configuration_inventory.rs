@@ -8,7 +8,7 @@ use syn::visit::{self, Visit};
 use syn::{Expr, FnArg, Ident, ItemFn, ItemMacro, Lit, LitStr, Pat, Token, Type, braced};
 
 use super::acquire::CoreSource;
-use super::{ConfigInventoryEvidence, CoreEvidence, CoreInputError, CoreObservation};
+use super::{ConfigInventoryEvidence, CoreEvidence, CoreFinding, CoreInputError, CoreObservation};
 
 const CONFIG_REGISTRY_PATH: &str = "spice/src/config.rs";
 
@@ -50,22 +50,12 @@ impl ConfigurationInventorySource {
 
     /// Gather false-default registry declarations and their typed consumers.
     pub(super) fn false_disable(&self) -> Result<CoreObservation, CoreInputError> {
-        let mut declared = BTreeSet::new();
-        for source in self
-            .files
-            .iter()
-            .filter(|source| source.path == CONFIG_REGISTRY_PATH)
-        {
-            let mut visitor = DeclarationVisitor::default();
-            visitor.visit_file(&source.syntax);
-            if let Some(error) = visitor.error {
-                return Err(CoreInputError::new(format!(
-                    "configuration inventory cannot inspect {} registry: {error}",
-                    source.path
-                )));
-            }
-            declared.extend(visitor.declared);
-        }
+        let declared: BTreeSet<_> = self
+            .registry_rows()?
+            .into_iter()
+            .filter(|row| row.false_builtin)
+            .map(|row| row.path)
+            .collect();
 
         let mut consumer = ConsumerVisitor::new(&declared);
         for source in &self.files {
@@ -82,6 +72,57 @@ impl ConfigurationInventorySource {
             evidence: CoreEvidence::ConfigFalseDisable(evidence),
         })
     }
+
+    /// Gather policy-class registry paths and classify their source authority.
+    pub(super) fn tracked_trust(&self) -> Result<CoreObservation, CoreInputError> {
+        let mut declared = BTreeSet::new();
+        let mut observed = BTreeSet::new();
+        let mut violations = Vec::new();
+        for row in self.registry_rows()?.into_iter().filter(|row| row.policy) {
+            declared.insert(row.path.clone());
+            if row.tracked_source() {
+                observed.insert(row.path);
+            } else {
+                let path = row.path.join(".");
+                violations.push(CoreFinding::new(
+                    "config-tracked-trust::untracked-source",
+                    None::<String>,
+                    format!(
+                        "trust-bearing configuration path {path} admits untracked layer {}",
+                        row.layers
+                    ),
+                )?);
+            }
+        }
+        let evidence = ConfigInventoryEvidence::new(
+            declared.into_iter().collect(),
+            observed.into_iter().collect(),
+            violations,
+        )?;
+        Ok(CoreObservation::Measured {
+            evidence: CoreEvidence::ConfigTrackedTrust(evidence),
+        })
+    }
+
+    fn registry_rows(&self) -> Result<Vec<RegistryRow>, CoreInputError> {
+        let mut rows = Vec::new();
+        for source in self
+            .files
+            .iter()
+            .filter(|source| source.path == CONFIG_REGISTRY_PATH)
+        {
+            let mut visitor = DeclarationVisitor::default();
+            visitor.visit_file(&source.syntax);
+            if let Some(error) = visitor.error {
+                return Err(CoreInputError::new(format!(
+                    "configuration inventory cannot inspect {} registry: {error}",
+                    source.path
+                )));
+            }
+            rows.extend(visitor.rows);
+        }
+        Ok(rows)
+    }
 }
 
 fn production_rust(path: &str) -> bool {
@@ -93,7 +134,7 @@ fn production_rust(path: &str) -> bool {
 
 #[derive(Default)]
 struct DeclarationVisitor {
-    declared: Vec<Vec<String>>,
+    rows: Vec<RegistryRow>,
     error: Option<syn::Error>,
 }
 
@@ -108,14 +149,7 @@ impl<'ast> Visit<'ast> for DeclarationVisitor {
                 .is_some_and(|segment| segment.ident == "registry")
         {
             match syn::parse2::<RegistryRows>(node.mac.tokens.clone()) {
-                Ok(rows) => {
-                    self.declared.extend(
-                        rows.0
-                            .into_iter()
-                            .filter(|row| row.false_builtin)
-                            .map(|row| row.path),
-                    );
-                }
+                Ok(rows) => self.rows.extend(rows.0),
                 Err(error) => self.error = Some(error),
             }
         }
@@ -128,6 +162,14 @@ struct RegistryRows(Vec<RegistryRow>);
 struct RegistryRow {
     path: Vec<String>,
     false_builtin: bool,
+    layers: String,
+    policy: bool,
+}
+
+impl RegistryRow {
+    fn tracked_source(&self) -> bool {
+        matches!(self.layers.as_str(), "TRACKED" | "TRACKED_FLAG")
+    }
 }
 
 impl Parse for RegistryRows {
@@ -139,6 +181,8 @@ impl Parse for RegistryRows {
             let body;
             braced!(body in input);
             let mut false_builtin = false;
+            let mut layers = None;
+            let mut policy = None;
             while !body.is_empty() {
                 let field: Ident = body.parse()?;
                 body.parse::<Token![:]>()?;
@@ -146,14 +190,52 @@ impl Parse for RegistryRows {
                 body.parse::<Token![,]>()?;
                 if field == "builtin" {
                     false_builtin = is_false_builtin(&value);
+                } else if field == "layers" {
+                    layers = Some(required_identifier(&value, "registry layers")?);
+                } else if field == "class" {
+                    policy = Some(required_policy_class(&value)?);
                 }
             }
             rows.push(RegistryRow {
                 path: path.value().split('.').map(str::to_owned).collect(),
                 false_builtin,
+                layers: layers.ok_or_else(|| {
+                    syn::Error::new(path.span(), "registry row requires a layers field")
+                })?,
+                policy: policy.ok_or_else(|| {
+                    syn::Error::new(path.span(), "registry row requires a class field")
+                })?,
             });
         }
         Ok(Self(rows))
+    }
+}
+
+fn required_identifier(expression: &Expr, label: &str) -> syn::Result<String> {
+    let Expr::Path(path) = ungroup(expression) else {
+        return Err(syn::Error::new_spanned(
+            expression,
+            format!("{label} must be one identifier"),
+        ));
+    };
+    if path.path.segments.len() != 1 {
+        return Err(syn::Error::new_spanned(
+            expression,
+            format!("{label} must be one identifier"),
+        ));
+    }
+    Ok(path.path.segments[0].ident.to_string())
+}
+
+fn required_policy_class(expression: &Expr) -> syn::Result<bool> {
+    let class = required_identifier(expression, "registry policy class")?;
+    match class.as_str() {
+        "Policy" => Ok(true),
+        "MachineLocal" => Ok(false),
+        _ => Err(syn::Error::new_spanned(
+            expression,
+            format!("unknown registry policy class {class}"),
+        )),
     }
 }
 

@@ -187,7 +187,7 @@ fn observe(
         GateId::ConfigKeyValidity => return config_keys(contract),
         GateId::RepoDocs => return repo_docs(source, contract),
         GateId::ConfigFalseDisable => return configuration.false_disable(),
-        id @ GateId::ConfigTrackedTrust => uncompiled(id),
+        GateId::ConfigTrackedTrust => return configuration.tracked_trust(),
         id => unreachable!("{id} is not a compiled core declaration"),
     })
 }
@@ -271,24 +271,6 @@ fn plan_phase(claim: &ClaimCapture) -> CoreObservation {
         ClaimCapture::Absent { reason } => CoreObservation::Skipped {
             reason: reason.clone(),
         },
-    }
-}
-
-/// Arms whose compiled provider this build does not carry yet.
-///
-/// Each states the exact provider that is missing, so the report names the work
-/// rather than reporting a measurement nobody made.
-fn uncompiled(id: GateId) -> CoreObservation {
-    let (reason, recovery) = match id {
-        GateId::ConfigTrackedTrust => (
-            "this build compiles no tracked-config trust inventory",
-            "compile the declared executable repository config paths and their approval guards",
-        ),
-        id => unreachable!("{id} has a compiled core provider"),
-    };
-    CoreObservation::Unsupported {
-        reason: reason.to_owned(),
-        recovery: recovery.to_owned(),
     }
 }
 
