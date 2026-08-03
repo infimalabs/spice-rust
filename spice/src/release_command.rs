@@ -204,6 +204,47 @@ mod tests {
         assert_eq!(fault.class, FaultClass::Protocol);
         assert_eq!(fault.reason, "release::answer-shape");
     }
+
+    #[test]
+    fn notes_reads_the_one_explicit_input_operand_it_was_given() {
+        let name = format!("spice-release-notes-input-{}", std::process::id());
+        let root = std::env::temp_dir().join(name);
+        fs::create_dir_all(&root).expect("scratch root");
+        let input = root.join("release-input.json");
+        let path = input.to_str().expect("scratch path is UTF-8");
+        let dispatch = |path: &str| {
+            let matches = spice::cli::command()
+                .try_get_matches_from(["spice", "release", "notes", path])
+                .expect("one explicit release input parses");
+            notes(spice::cli::selected_matches(&matches))
+        };
+        let refused = |bytes: &[u8]| {
+            fs::write(&input, bytes).expect("scratch input");
+            let outcome = dispatch(path);
+            let Outcome::Refusal(refusal) = outcome else {
+                panic!("release notes must refuse an input that is not release evidence");
+            };
+            assert_eq!(refusal.reason, "release::notes-refused");
+            refusal.observed.expect("a refusal names what it read")
+        };
+
+        // Two inputs at one path refuse differently, so the bytes behind the
+        // operand decide the answer and no other source can stand in for them.
+        assert_ne!(refused(b"{}"), refused(b"a release range"));
+
+        fs::remove_file(&input).expect("scratch input is removable");
+        let Outcome::Fault(fault) = dispatch(path) else {
+            panic!("an unreadable release input must fault");
+        };
+        assert_eq!(fault.class, FaultClass::Environment);
+        assert_eq!(fault.reason, "release::input-unreadable");
+        assert!(
+            fault.detail.contains(path),
+            "the release-notes fault named an input it was never given: {:?}",
+            fault.detail,
+        );
+        fs::remove_dir_all(&root).expect("scratch root is removable");
+    }
 }
 
 pub(crate) fn admit_stage(root: &Path) -> Result<AdmittedRelease, ReleaseError> {

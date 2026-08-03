@@ -732,44 +732,47 @@ fn release_notes_surfaces_name_only_the_canonical_explicit_input() {
         .expect("release notes has one registered contract");
     assert_eq!(contract.syntax, "release notes INPUT");
 
-    let cli = include_str!("../../../.spice-rust-proposal-living-spec/CLI.md");
-    let rows = cli
-        .lines()
-        .filter(|line| line.contains("spice release notes"))
-        .collect::<Vec<_>>();
     assert_eq!(
-        rows,
-        [concat!(
-            "| `spice release notes INPUT` | `offline` | Render deterministic notes from one ",
-            "canonical ordered release input carrying the source, both target payloads, and their ",
-            "proof and gate receipts; no journal open or hidden fact read. |"
-        )],
+        contract.journal,
+        JournalAccess::None,
+        "release notes opened a journal instead of reading its explicit input",
+    );
+    assert!(
+        contract.facts.is_empty(),
+        "release notes read a hidden fact instead of its explicit input: {:?}",
+        contract.facts,
+    );
+    assert!(
+        contract.guards.contains(&Guard::Offline),
+        "release notes left the offline guard that keeps its input explicit",
     );
 
-    let genesis = include_str!("../../../.spice-rust-proposal-living-spec/GENESIS.md");
-    let notes = genesis
-        .split_once("- Write release notes")
-        .expect("genesis names release-notes work")
-        .1
-        .split_once("## Cut release one")
-        .expect("release-notes work ends before cutover")
-        .0;
-    assert!(notes.contains("One canonical ordered release INPUT"));
-    for legacy in ["Git range", "sealed manifest"] {
+    // One operand carries the whole input: a Git range or a sealed manifest
+    // would need a second endpoint, or none at all.
+    let parser = command();
+    let admitted = parser
+        .clone()
+        .try_get_matches_from(["spice", "release", "notes", "release-input.json"])
+        .expect("one explicit input parses");
+    assert_eq!(
+        selected_matches(&admitted)
+            .get_one::<String>("INPUT")
+            .map(String::as_str),
+        Some("release-input.json"),
+    );
+    for legacy in [
+        &["spice", "release", "notes"][..],
+        &["spice", "release", "notes", "FIRST", "SECOND"],
+    ] {
         assert!(
-            !notes.contains(legacy),
-            "release-notes genesis restored legacy {legacy:?} input",
-        );
-        assert!(
-            !rows[0].contains(legacy),
-            "release-notes CLI restored legacy {legacy:?} input",
+            parser.clone().try_get_matches_from(legacy).is_err(),
+            "{legacy:?} must be rejected: release notes takes exactly one canonical input",
         );
     }
 
-    let scaffold = include_str!("../../../.spice-rust-proposal-living-spec/SCAFFOLD.md");
-    assert!(scaffold.contains("proof replay · release notes INPUT."));
-    assert!(!scaffold.contains("proof replay · release notes."));
-
+    // The native dispatch reads that one operand as a file, proven against the
+    // binary rim in `release_command::tests`; on wasm32 the same operand is the
+    // only thing the terminal refusal can name.
     let wasm_dispatch = include_str!("../main.rs");
     assert!(
         wasm_dispatch
