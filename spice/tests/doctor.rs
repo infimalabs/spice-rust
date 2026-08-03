@@ -225,20 +225,12 @@ fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
         report.configuration.tasks().project_max_depth(),
         dialect::PROJECT_MAX_DEPTH as u64
     );
-    let mut expected_environment = SpiceVariable::ALL
-        .iter()
-        .map(|variable| variable.as_str().to_owned())
-        .collect::<Vec<_>>();
-    expected_environment.splice(
-        4..4,
-        [
-            "SPICE_HYGIENE_ACQUIRE_REPOSITORY".to_owned(), // env-policy: allow
-            "SPICE_HYGIENE_INTERPRETER_MARKER".to_owned(), // env-policy: allow
-        ],
-    );
     assert_eq!(
         report.configuration.policy().env_names(),
-        expected_environment
+        SpiceVariable::ALL
+            .iter()
+            .map(|variable| variable.as_str().to_owned())
+            .collect::<Vec<_>>()
     );
     for path in [
         "tasks.stems",

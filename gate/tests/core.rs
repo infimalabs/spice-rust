@@ -9,7 +9,7 @@ use gate::{
     CoreTimeoutContract, CoreToolContract, DocMeasurement, GateId, MergeIntegrityEvidence,
     MergeTreeCompletion, PREDECESSOR_GATE_RELEASE, PlanPhaseEvidence, RepoDocLimit,
     RepoDocsEvidence, RepoShapeEvidence, Selector, StagingEvidence, acquire_core,
-    core_declarations, evaluate_core,
+    core_declarations, evaluate_core, varied_elastic_limit,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -914,11 +914,7 @@ fn an_arm_without_a_compiled_provider_crosses_as_unsupported_and_never_as_a_pass
     let repository = contract_repository("core-acquire-uncompiled");
     let report = acquired(&repository, ClaimCapture::Idle);
 
-    for id in [
-        GateId::RepoDocs,
-        GateId::ConfigFalseDisable,
-        GateId::ConfigTrackedTrust,
-    ] {
+    for id in [GateId::ConfigFalseDisable, GateId::ConfigTrackedTrust] {
         let acquired = acquired_arm(&report, id);
         let CoreObservation::Unsupported { reason, recovery } = acquired.observation() else {
             panic!("{id} claimed a measurement no compiled provider made");
@@ -931,6 +927,52 @@ fn an_arm_without_a_compiled_provider_crosses_as_unsupported_and_never_as_a_pass
         );
         assert!(acquired.diagnostic().contains(recovery));
     }
+
+    repository.remove();
+}
+
+#[test]
+fn repository_documents_are_selected_measured_and_judged_only_by_the_engine() {
+    let repository = contract_repository("core-acquire-repo-docs");
+    let doctrine = "x".repeat(20_000);
+    repository.write("DOCTRINE.md", &doctrine);
+    repository.write(
+        "docs/reference/generated/REFERENCE.md",
+        "unlimited doctrine",
+    );
+    git_commit(&repository, "repository document fixture");
+
+    let report = acquired(&repository, ClaimCapture::Idle);
+    let arm = acquired_arm(&report, GateId::RepoDocs);
+    let CoreObservation::Measured {
+        evidence: CoreEvidence::RepoDocs(evidence),
+    } = arm.observation()
+    else {
+        panic!("repository-document provider emitted no measurement: {arm:?}");
+    };
+    let [bounded, unlimited] = evidence.measurements() else {
+        panic!("unexpected repository-document inventory: {evidence:?}");
+    };
+    assert_eq!(bounded.path(), "DOCTRINE.md");
+    assert_eq!(bounded.characters(), 20_000);
+    let active_limit = varied_elastic_limit(10_000, 15_000, "DOCTRINE.md", "DOCTRINE.md", 5)
+        .expect("packaged document headroom resolves");
+    assert_eq!(
+        bounded.bound(),
+        RepoDocLimit::AtMost {
+            characters: active_limit
+        }
+    );
+    assert!(!bounded.peer_claim());
+    assert_eq!(unlimited.path(), "docs/reference/generated/REFERENCE.md");
+    assert_eq!(unlimited.characters(), 18);
+    assert_eq!(unlimited.bound(), RepoDocLimit::Unlimited);
+    assert!(!unlimited.peer_claim());
+    assert_eq!(arm.standing(), CoreStanding::Failed);
+    assert!(arm.diagnostic().contains(&format!(
+        "DOCTRINE.md: 20000 characters (cap {active_limit})"
+    )));
+    assert!(!arm.diagnostic().contains("REFERENCE"));
 
     repository.remove();
 }

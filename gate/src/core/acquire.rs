@@ -13,6 +13,7 @@
 //! incomplete: an unreadable selected tree and a malformed arm.
 
 use std::ffi::OsStr;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use sill::{Argv, Completion, spawn};
@@ -24,13 +25,16 @@ use super::declaration::CoreArmDeclaration;
 use super::shape::repo_shape;
 use super::{
     CoreArmInput, CoreEvidence, CoreInputError, CoreInputs, CoreObservation, CoreProvenance,
-    MergeIntegrityEvidence, MergeTreeCompletion, PlanPhaseEvidence, StagingEvidence,
-    core_declarations,
+    DocMeasurement, MergeIntegrityEvidence, MergeTreeCompletion, PlanPhaseEvidence,
+    RepoDocsEvidence, StagingEvidence, core_declarations,
 };
 use crate::GateId;
 use crate::input::Contract;
 use crate::jurisdiction::Jurisdiction;
 use crate::measure::Bounds;
+use crate::metrics::measure_repository_document;
+use crate::policy::{BoundName, PolicyContext};
+use crate::state::varied_elastic_limit;
 use crate::tree::SelectedTree;
 
 /// The one program both Git-declared arms observe through.
@@ -178,11 +182,77 @@ fn observe(
         GateId::RepoShape => return repo_shape(source, contract),
         GateId::Staging => staging(source, contract.bounds()),
         GateId::ConfigKeyValidity => return config_keys(contract),
-        id @ (GateId::RepoDocs | GateId::ConfigFalseDisable | GateId::ConfigTrackedTrust) => {
-            uncompiled(id)
-        }
+        GateId::RepoDocs => return repo_docs(source, contract),
+        id @ (GateId::ConfigFalseDisable | GateId::ConfigTrackedTrust) => uncompiled(id),
         id => unreachable!("{id} is not a compiled core declaration"),
     })
+}
+
+fn repo_docs(
+    source: &CoreSource<'_>,
+    contract: &Contract,
+) -> Result<CoreObservation, CoreInputError> {
+    let mut measurements = Vec::new();
+    for entry in source.jurisdiction.measurable() {
+        let path = entry.path();
+        let selected = contract
+            .rule_policy()
+            .selects_repository_document(path)
+            .map_err(|error| {
+                CoreInputError::new(format!(
+                    "repository-document selection for {path:?}: {error}"
+                ))
+            })?;
+        if !selected {
+            continue;
+        }
+        let bytes = fs::read(source.root.join(path)).map_err(|error| {
+            CoreInputError::new(format!(
+                "read selected repository document {path:?}: {error}"
+            ))
+        })?;
+        let document = measure_repository_document(path, &bytes).map_err(|error| {
+            CoreInputError::new(format!(
+                "measure selected repository document {path:?}: {error}"
+            ))
+        })?;
+        let bound = contract
+            .rule_policy()
+            .resolve_bound(
+                BoundName::RepoTruthDocChars,
+                &PolicyContext::new().with_path(path),
+            )
+            .map_err(|error| {
+                CoreInputError::new(format!(
+                    "resolve repository-document bound for {path:?}: {error}"
+                ))
+            })?;
+        let measurement = if bound.unlimited() {
+            DocMeasurement::unlimited(path, document.characters())?
+        } else {
+            let active_limit = varied_elastic_limit(
+                bound.limit(),
+                bound.ratchet_limit(),
+                path,
+                path,
+                contract
+                    .rule_policy()
+                    .document()
+                    .ratchet()
+                    .variation_percent(),
+            )
+            .map_err(|error| {
+                CoreInputError::new(format!(
+                    "resolve active repository-document bound for {path:?}: {error}"
+                ))
+            })?;
+            DocMeasurement::new(path, document.characters(), active_limit, false)?
+        };
+        measurements.push(measurement);
+    }
+    RepoDocsEvidence::new(measurements)
+        .map(CoreEvidence::RepoDocs)
+        .map(measured)
 }
 
 fn plan_phase(claim: &ClaimCapture) -> CoreObservation {
@@ -206,10 +276,6 @@ fn plan_phase(claim: &ClaimCapture) -> CoreObservation {
 /// rather than reporting a measurement nobody made.
 fn uncompiled(id: GateId) -> CoreObservation {
     let (reason, recovery) = match id {
-        GateId::RepoDocs => (
-            "this build compiles no repository-document bound resolver",
-            "compile doctrine-document selection with its active caps and peer bound claims",
-        ),
         GateId::ConfigFalseDisable => (
             "this build compiles no false-disable registry inventory",
             "compile the declared false-disable paths and the consumers that resolve them",

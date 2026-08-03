@@ -6,14 +6,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use gate::{
-    ArmObservation, ArmOutcome, Contract, Selector, TOOLCHAIN_ARMS, TOOLCHAIN_REPORT_VERSION,
-    ToolEvidence, ToolchainSource, acquire_toolchain, measure_toolchain,
+    ArmFinding, ArmObservation, ArmOutcome, Contract, FindingDetail, GateId, LOCAL_PATH_MARKER,
+    PACKAGED_TASTE_WORDS, Selector, TOOLCHAIN_ARMS, TOOLCHAIN_REPORT_VERSION, ToolEvidence,
+    ToolchainSource, acquire_toolchain, measure_toolchain,
 };
 use wire::{Digest, Domain};
 
 mod support;
 
-use support::{Tree, contract_repository};
+use support::{Tree, contract_repository, git_commit};
 
 /// The version every stub reports when it is asked to be wrong.
 const DRIFTED_VERSION: &str = "cargo 0.0.0 (0000000000 1970-01-01)";
@@ -21,11 +22,28 @@ const DRIFTED_VERSION: &str = "cargo 0.0.0 (0000000000 1970-01-01)";
 /// The program the drift fixture makes wrong; every other stub stays exact.
 const DRIFTED_PROGRAM: &str = "cargo";
 
+/// The three arms this build analyzes itself rather than owing an analyzer.
+const COMPILED_ARMS: [GateId; 3] = [GateId::Formatters, GateId::LocalPaths, GateId::Taste];
+
+/// The prose file both scanning fixtures carry, clean in one and dirty in the other.
+const PROSE: &str = "docs/guide.md";
+
+/// The Rust file the formatter reads and the marker scanner searches.
+const SOURCE: &str = "src/main.rs";
+
 #[test]
 fn acquisition_over_a_real_tree_yields_a_report_measure_toolchain_admits() {
-    let repository = contract_repository("toolchain-real");
+    let repository = scanning_repository(
+        "toolchain-real",
+        "fn main() {}\n",
+        "Every sentence here is ordinary.\n",
+    );
     let search_path = toolchain_directory();
-    let observations = acquired(&repository, Some(search_path.clone().into_os_string()));
+    let observations = acquired(
+        &repository,
+        Some(search_path.clone().into_os_string()),
+        &[SOURCE],
+    );
 
     let mut identified = 0_usize;
     for (declaration, observation) in TOOLCHAIN_ARMS.into_iter().zip(&observations) {
@@ -86,16 +104,29 @@ fn acquisition_over_a_real_tree_yields_a_report_measure_toolchain_admits() {
 
 #[test]
 fn a_program_absent_from_the_captured_search_path_is_unavailable_with_missing_evidence() {
-    let repository = contract_repository("toolchain-absent");
+    let repository = scanning_repository(
+        "toolchain-absent",
+        "fn main() {}\n",
+        "Every sentence here is ordinary.\n",
+    );
     let empty = Tree::new("toolchain-empty-path");
-    let observations = acquired(&repository, Some(empty.root.clone().into_os_string()));
+    let observations = acquired(
+        &repository,
+        Some(empty.root.clone().into_os_string()),
+        &[SOURCE, PROSE],
+    );
 
     for (declaration, observation) in TOOLCHAIN_ARMS.into_iter().zip(&observations) {
         if declaration.tools().is_empty() {
+            let expected = if COMPILED_ARMS.contains(&declaration.id()) {
+                ArmOutcome::Passed
+            } else {
+                ArmOutcome::Unsupported
+            };
             assert_eq!(
                 observation.outcome,
-                ArmOutcome::Unsupported,
-                "{} declares no tool, so nothing can be unavailable",
+                expected,
+                "{} declares no tool, so an empty search path cannot change it",
                 declaration.id().as_str()
             );
             continue;
@@ -132,9 +163,17 @@ fn a_program_absent_from_the_captured_search_path_is_unavailable_with_missing_ev
 
 #[test]
 fn a_program_that_leaves_its_exact_version_contract_is_unsupported_version() {
-    let repository = contract_repository("toolchain-drift");
+    let repository = scanning_repository(
+        "toolchain-drift",
+        "fn main() {}\n",
+        "Every sentence here is ordinary.\n",
+    );
     let stubs = stub_directory("toolchain-drifted-cargo");
-    let observations = acquired(&repository, Some(stubs.root.clone().into_os_string()));
+    let observations = acquired(
+        &repository,
+        Some(stubs.root.clone().into_os_string()),
+        &[SOURCE, PROSE],
+    );
 
     for (declaration, observation) in TOOLCHAIN_ARMS.into_iter().zip(&observations) {
         let drifted = declaration
@@ -143,6 +182,8 @@ fn a_program_that_leaves_its_exact_version_contract_is_unsupported_version() {
             .any(|requirement| requirement.program() == DRIFTED_PROGRAM);
         let expected = if drifted {
             ArmOutcome::UnsupportedVersion
+        } else if COMPILED_ARMS.contains(&declaration.id()) {
+            ArmOutcome::Passed
         } else {
             ArmOutcome::Unsupported
         };
@@ -174,20 +215,172 @@ fn a_program_that_leaves_its_exact_version_contract_is_unsupported_version() {
     measure_toolchain(observations).expect("version-drift observations are admitted");
 }
 
+#[test]
+fn the_three_compiled_arms_pass_over_a_clean_tree() {
+    let repository = scanning_repository(
+        "toolchain-clean",
+        "fn main() {}\n",
+        "Every sentence here is ordinary.\n",
+    );
+    let observations = acquired(
+        &repository,
+        Some(toolchain_directory().into_os_string()),
+        &[SOURCE, PROSE],
+    );
+
+    for id in COMPILED_ARMS {
+        let observation = arm(&observations, id);
+        assert_eq!(
+            observation.outcome,
+            ArmOutcome::Passed,
+            "{} refused a clean tree: {}",
+            id.as_str(),
+            observation.reason
+        );
+        assert!(
+            observation.findings.is_empty(),
+            "{} passed while carrying {:?}",
+            id.as_str(),
+            observation.findings
+        );
+    }
+
+    measure_toolchain(observations).expect("clean observations are admitted");
+}
+
+#[test]
+fn the_three_compiled_arms_report_exact_findings_over_a_dirty_tree() {
+    let (word, replacement) = discouraged_word();
+    let repository = scanning_repository(
+        "toolchain-dirty",
+        &format!("// {LOCAL_PATH_MARKER}somebody/devel\nfn main( ) {{\n    let  x=1;\n}}\n"),
+        &format!("This paragraph is {word} and nothing else.\n"),
+    );
+    let observations = acquired(
+        &repository,
+        Some(toolchain_directory().into_os_string()),
+        &[SOURCE, PROSE],
+    );
+
+    for id in COMPILED_ARMS {
+        let observation = arm(&observations, id);
+        assert_eq!(
+            observation.outcome,
+            ArmOutcome::Findings,
+            "{} admitted a dirty tree: {}",
+            id.as_str(),
+            observation.reason
+        );
+    }
+
+    let formatting = &arm(&observations, GateId::Formatters).findings;
+    assert_eq!(
+        formatting,
+        &[ArmFinding {
+            path: Some(SOURCE.to_owned()),
+            line: Some(1),
+            column: None,
+            detail: FindingDetail::Formatting {
+                formatter: "rustfmt".to_owned(),
+            },
+        }],
+        "the formatter named something other than the one unformatted file"
+    );
+    assert_eq!(
+        arm(&observations, GateId::LocalPaths).findings,
+        [ArmFinding {
+            path: Some(SOURCE.to_owned()),
+            line: Some(1),
+            column: None,
+            detail: FindingDetail::LocalPath,
+        }],
+        "the marker scanner named something other than the one marked line"
+    );
+    assert_eq!(
+        arm(&observations, GateId::Taste).findings,
+        [ArmFinding {
+            path: Some(PROSE.to_owned()),
+            line: Some(1),
+            column: None,
+            detail: FindingDetail::Taste { word, replacement },
+        }],
+        "the prose scanner named something other than the one discouraged word"
+    );
+
+    measure_toolchain(observations).expect("finding observations are admitted");
+}
+
+/// A refusal the formatter cannot explain is retained with the code it gave.
+///
+/// [`measure_toolchain`] admits an exit code only beside `NonzeroAnalysis` and
+/// demands one there, so an analysis that reports the outcome without the code
+/// is refused at admission rather than at the call. The captured tree here has
+/// Rust sources and no manifest, which is a refusal about the tree rather than
+/// about any one file, so the formatter names no differing file.
+///
+/// The code ships twice, once as a field and once inside the sentence, and both
+/// spellings are held to each other. A reader shown a sentence naming one code
+/// beside a field carrying another has been handed an invented number.
+#[test]
+fn a_formatter_refusal_naming_no_file_carries_the_code_it_refused_with() {
+    let repository = contract_repository("toolchain-unreadable");
+    let observations = acquired(
+        &repository,
+        Some(toolchain_directory().into_os_string()),
+        &[],
+    );
+
+    let observation = arm(&observations, GateId::Formatters);
+    assert_eq!(
+        observation.outcome,
+        ArmOutcome::NonzeroAnalysis,
+        "the formatter read a tree Cargo has no manifest for: {}",
+        observation.reason
+    );
+    let code = observation
+        .exit_code
+        .expect("a refusal carries the code it refused with");
+    assert_ne!(code, 0, "zero is not a code that explains a refusal");
+    assert!(
+        observation
+            .reason
+            .contains(&format!("refused with {code} ")),
+        "the field carries {code} and the sentence names another: {}",
+        observation.reason
+    );
+    assert!(
+        observation.findings.is_empty(),
+        "an unexplained refusal invented {:?}",
+        observation.findings
+    );
+
+    measure_toolchain(observations).expect("an explained refusal is admitted");
+}
+
 /// Acquire one battery over a committed fixture tree and a captured search path.
 ///
 /// Every invariant that holds for all three fixtures is asserted here once, so
 /// each test states only what makes it different.
-fn acquired(repository: &Tree, search_path: Option<OsString>) -> Vec<ArmObservation> {
+fn acquired(
+    repository: &Tree,
+    search_path: Option<OsString>,
+    changes: &[&str],
+) -> Vec<ArmObservation> {
     let tree = Selector::staged()
         .materialize(&repository.root)
         .expect("materialize the captured index");
     let contract = Contract::load(tree.root()).expect("load the captured contract");
-    let source = ToolchainSource::capture(&tree, search_path);
+    let selected: Vec<String> = changes.iter().map(|path| (*path).to_owned()).collect();
+    let source = ToolchainSource::capture(&tree, search_path, selected.clone());
     assert_eq!(
         source.root(),
         tree.root(),
         "acquisition observes the captured tree and not the live repository"
+    );
+    assert_eq!(
+        source.changes(),
+        selected,
+        "acquisition scans the changes the rim captured and no others"
     );
 
     let observations = acquire_toolchain(&source, &contract);
@@ -204,14 +397,37 @@ fn acquired(repository: &Tree, search_path: Option<OsString>) -> Vec<ArmObservat
     );
 
     for (declaration, observation) in TOOLCHAIN_ARMS.into_iter().zip(&observations) {
-        assert!(
-            !matches!(
-                observation.outcome,
-                ArmOutcome::NotApplicable | ArmOutcome::Excluded
-            ),
-            "{} answered a skip acquisition never measured",
+        assert_ne!(
+            observation.outcome,
+            ArmOutcome::Excluded,
+            "{} answered an exclusion acquisition never measured",
             declaration.id().as_str()
         );
+        if COMPILED_ARMS.contains(&declaration.id()) {
+            assert_ne!(
+                observation.outcome,
+                ArmOutcome::Unsupported,
+                "{} has a compiled analysis and still called itself unanalyzed",
+                declaration.id().as_str()
+            );
+        } else {
+            assert!(
+                matches!(
+                    observation.outcome,
+                    ArmOutcome::Unsupported
+                        | ArmOutcome::ToolUnavailable
+                        | ArmOutcome::UnsupportedVersion
+                ),
+                "{} has no compiled analysis and answered {:?} anyway",
+                declaration.id().as_str(),
+                observation.outcome
+            );
+            assert!(
+                observation.findings.is_empty(),
+                "{} carried findings no compiled analysis produced",
+                declaration.id().as_str()
+            );
+        }
         assert!(
             !observation.reason.is_empty(),
             "{} reported no cause",
@@ -236,6 +452,44 @@ fn acquired(repository: &Tree, search_path: Option<OsString>) -> Vec<ArmObservat
         }
     }
     observations
+}
+
+/// One committed fixture repository Cargo can read and the scanners can scan.
+///
+/// Formatters runs the declared `cargo fmt --all -- --check` for real, so the
+/// captured tree has to be a package Cargo will actually open.
+fn scanning_repository(label: &str, source: &str, prose: &str) -> Tree {
+    let repository = contract_repository(label);
+    repository.write(
+        "Cargo.toml",
+        "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
+    );
+    repository.write(SOURCE, source);
+    repository.write(PROSE, prose);
+    git_commit(&repository, "fixture sources");
+    repository
+}
+
+/// The one observation carrying this identity.
+fn arm(observations: &[ArmObservation], id: GateId) -> &ArmObservation {
+    observations
+        .iter()
+        .find(|observation| observation.gate_id == id)
+        .unwrap_or_else(|| panic!("{} was not observed", id.as_str()))
+}
+
+/// The first discouraged word and its replacement, read from the vocabulary.
+///
+/// Read rather than spelled so the fixture cannot drift from the compiled
+/// vocabulary, and so this file never has to contain a discouraged word.
+fn discouraged_word() -> (String, String) {
+    let (pattern, replacement) = PACKAGED_TASTE_WORDS
+        .first()
+        .expect("the compiled vocabulary is not empty");
+    (
+        pattern.trim_end_matches('*').to_owned(),
+        (*replacement).to_owned(),
+    )
 }
 
 /// The directory holding the Cargo that built this test.

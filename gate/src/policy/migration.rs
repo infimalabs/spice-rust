@@ -5,7 +5,7 @@ use std::fmt;
 
 use toml::Value;
 
-use super::matcher::compile_stem_expression;
+use super::matcher::{compile_stem_expression, normalize_path};
 use super::{
     BoundLimits, BoundName, CompileError, GlobalRatchet, MagicRule, OneLetterBehavior, Policy,
     PolicyDocument, RuleDeclaration, RuleId, RuleSettings, RuleSource, RuleSourceKind,
@@ -16,6 +16,7 @@ const RULE_SETTING_KEYS: [&str; 5] = ["multiplier", "min", "max", "unlimited", "
 const DEFAULT_MAGIC_THRESHOLD: u64 = 10;
 const DEFAULT_MARKDOWN_BASE: u64 = 10_000;
 const DEFAULT_MARKDOWN_MAX: u64 = 30_000;
+const DEFAULT_REPO_TRUTH_DOCS: &[&str] = &["AGENTS.md"];
 
 /// Translate one predecessor policy document into the sole compiled current
 /// representation.
@@ -51,13 +52,64 @@ pub fn migrate_predecessor_policy(
     let limits = parse_limits(policy, &source)?;
     let ratchet = parse_legacy_ratchet(policy, &limits, &source)?;
     let magic_threshold = parse_magic(policy, &source)?;
+    let repo_truth_docs = parse_repo_truth_docs(policy, &source)?;
     let markdown = parse_markdown(policy, &source)?;
     let mut rules = generated_markdown_rules(&source, &markdown)?;
     let generated = rules.len();
     rules.extend(parse_list_rules(policy, &source, generated)?);
 
-    let document = PolicyDocument::predecessor(limits, ratchet, magic_threshold, rules);
+    let document =
+        PolicyDocument::predecessor(limits, ratchet, magic_threshold, repo_truth_docs, rules);
     Policy::compile(document).map_err(|error| compile_error(&source, &error))
+}
+
+pub(crate) fn packaged_rule_policy() -> Result<Policy, MigrationError> {
+    let source = "gate packaged rule policy";
+    let markdown = MarkdownPolicy {
+        extensions: vec![".md".to_owned()],
+        stem_pattern: None,
+        base_chars: DEFAULT_MARKDOWN_BASE,
+        max_bounded_chars: DEFAULT_MARKDOWN_MAX,
+    };
+    let rules = generated_markdown_rules(source, &markdown)?;
+    let document = PolicyDocument::predecessor(
+        BoundLimits::PREDECESSOR,
+        GlobalRatchet::PREDECESSOR,
+        DEFAULT_MAGIC_THRESHOLD,
+        DEFAULT_REPO_TRUTH_DOCS
+            .iter()
+            .map(|path| (*path).to_owned())
+            .collect(),
+        rules,
+    );
+    Policy::compile(document).map_err(|error| compile_error(source, &error))
+}
+
+fn parse_repo_truth_docs(
+    policy: Option<&toml::Table>,
+    source: &str,
+) -> Result<Vec<String>, MigrationError> {
+    let table = optional_nested(policy, "repo_truth", "policy.repo_truth", source)?;
+    reject_unknown(table, &["docs"], "policy.repo_truth", source)?;
+    let paths = match table.and_then(|table| table.get("docs")) {
+        Some(value) => string_list(value, "policy.repo_truth.docs", source, true)?,
+        None => DEFAULT_REPO_TRUTH_DOCS
+            .iter()
+            .map(|path| (*path).to_owned())
+            .collect(),
+    };
+    paths
+        .into_iter()
+        .map(|path| {
+            normalize_path(&path).map_err(|reason| {
+                MigrationError::new(
+                    source,
+                    "policy.repo_truth.docs",
+                    format!("{path:?}: {reason}"),
+                )
+            })
+        })
+        .collect()
 }
 
 #[derive(Debug)]

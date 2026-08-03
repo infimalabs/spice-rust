@@ -200,6 +200,13 @@ pub enum PolicyError {
         /// Typed TOML decoder refusal with source position.
         source: toml::de::Error,
     },
+    /// Tracked policy could not compile into the current named-rule model.
+    Rules {
+        /// Fixed policy path.
+        path: PathBuf,
+        /// Typed migration or compilation refusal.
+        source: crate::policy::MigrationError,
+    },
     /// A compiled default skip is not a current jurisdiction spelling.
     Selector {
         /// Fixed policy path.
@@ -221,6 +228,11 @@ impl fmt::Display for PolicyError {
                     path.display()
                 )
             }
+            Self::Rules { path, source } => write!(
+                formatter,
+                "{} does not compile into current rule policy: {source}",
+                path.display()
+            ),
             Self::Selector {
                 path,
                 field,
@@ -234,6 +246,7 @@ impl Error for PolicyError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Toml { source, .. } => Some(source),
+            Self::Rules { source, .. } => Some(source),
             Self::Selector { source, .. } => Some(source),
         }
     }
