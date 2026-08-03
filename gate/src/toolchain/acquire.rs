@@ -3,7 +3,7 @@
 //! [`super::measure_toolchain`] validates, orders, and canonicalizes; this
 //! module only observes. Every declaration produces exactly one
 //! [`ArmObservation`], in compiled order, whether or not this build can analyze
-//! it. Three declarations route to a compiled analysis in [`super::analyze`];
+//! it. Five declarations route to a compiled analysis in [`super::analyze`];
 //! the rest cross as [`ArmOutcome::Unsupported`], which is neither a pass nor a
 //! skip, so an unmeasured tree is never admitted by silence.
 //!
@@ -157,6 +157,8 @@ fn examine(
             ),
             GateId::LocalPaths => analyze::local_paths(declaration, source.root, source.changes()),
             GateId::Taste => analyze::taste(declaration, source.root, source.changes()),
+            GateId::EnvPolicy => analyze::env_policy(declaration, source.root, source.changes()),
+            GateId::EnvNameLedger => analyze::env_name_ledger(declaration, source.root),
             id => Analysis::terminal(
                 ArmOutcome::ParseFailure,
                 format!(
@@ -252,14 +254,18 @@ fn resolved_programs(
 
 /// The exact analyzer one identity is still owed, or `None` once nothing is.
 ///
-/// Nothing is owed in two cases, and neither is a gap: the three analyses this
+/// Nothing is owed in two cases, and neither is a gap: the five analyses this
 /// build compiles answer for themselves, and an identity that is not a
 /// toolchain arm is not this family's to compile at all. Every identity is
 /// named outright, so a new [`GateId`] fails to compile here rather than
 /// receiving a sentence written for something else.
 pub(super) const fn owed_analyzer(id: GateId) -> Option<&'static str> {
     match id {
-        GateId::Formatters | GateId::LocalPaths | GateId::Taste => None,
+        GateId::Formatters
+        | GateId::LocalPaths
+        | GateId::Taste
+        | GateId::EnvPolicy
+        | GateId::EnvNameLedger => None,
         GateId::CanvasWebTypecheck => {
             Some("compile the wasm32 check and trunk release build analyses under bounds")
         }
@@ -269,8 +275,6 @@ pub(super) const fn owed_analyzer(id: GateId) -> Option<&'static str> {
         GateId::PythonTypecheck => {
             Some("compile the pyright error-level analysis over selected sources")
         }
-        GateId::EnvPolicy => Some("compile the PACKAGED_ENV_PROFILE environment access scanner"),
-        GateId::EnvNameLedger => Some("compile the PACKAGED_ENV_PROFILE environment name ledger"),
         GateId::MergeIntegrity
         | GateId::PlanPhase
         | GateId::RepoShape

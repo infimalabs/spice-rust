@@ -195,6 +195,8 @@ mod acquire;
 mod analyze;
 mod declarations;
 #[cfg(not(target_arch = "wasm32"))]
+mod environment;
+#[cfg(not(target_arch = "wasm32"))]
 pub use acquire::{ToolchainSource, acquire_toolchain};
 pub use declarations::*;
 

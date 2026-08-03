@@ -1,17 +1,22 @@
 //! Compiled analyses for the toolchain arms this build answers itself.
 //!
-//! Three of the eight declared analyses need nothing beyond the captured tree
+//! Five of the eight declared analyses need nothing beyond the captured tree
 //! and the compiled scanner vocabulary: the formatter check over the complete
-//! selected tree, the workstation-path scanner, and the prose scanner. Each
-//! reports only what it observed, and [`super::measure_toolchain`] remains the
-//! sole authority that admits it.
+//! selected tree, the workstation-path scanner, the prose scanner, and the two
+//! environment scanners. Each reports only what it observed, and
+//! [`super::measure_toolchain`] remains the sole authority that admits it.
 //!
 //! Each declaration records its exclusions as English sentences and its
 //! includes as globs. Those strings are the retained evidence and the
 //! predicates here are the compiled form of the same rules, so every rule is
 //! written once in this module and the two spellings are proven equal in tests.
+//!
+//! The environment law is large enough to live on its own in
+//! [`super::environment`]. This module still owns which paths the two
+//! environment arms select and which outcome they earn; that module owns only
+//! what one line of one language family says about the environment.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,8 +24,8 @@ use std::path::{Path, PathBuf};
 use sill::{Argv, Completion, spawn};
 
 use super::{
-    ArmFinding, ArmOutcome, FindingDetail, LOCAL_PATH_MARKER, PACKAGED_TASTE_WORDS,
-    ToolchainDeclaration,
+    ArmFinding, ArmOutcome, EnvironmentLedgerKind, FindingDetail, LOCAL_PATH_MARKER,
+    PACKAGED_ENV_PROFILE, PACKAGED_TASTE_WORDS, SourceLocus, ToolchainDeclaration, environment,
 };
 use crate::GateId;
 use crate::jurisdiction::{Ignore, Jurisdiction};
@@ -257,6 +262,136 @@ pub(super) fn taste(
     Analysis::scanned(declaration.id, selected.len(), findings)
 }
 
+/// Scan every selected change for an unwaived environment access.
+///
+/// One finding per access rather than per line, each carrying the column it
+/// begins at. Two reads on one line are two places the environment shapes
+/// behavior, and a column is what keeps the second from arriving as a duplicate
+/// of the first and being refused.
+pub(super) fn env_policy(
+    declaration: ToolchainDeclaration,
+    root: &Path,
+    changes: &[String],
+) -> Analysis {
+    let selected = selected_changes(root, changes, env_language);
+    if selected.is_empty() {
+        return Analysis::not_applicable(declaration);
+    }
+
+    let mut findings = Vec::new();
+    for path in &selected {
+        let family = extension(path).and_then(|found| environment::family(&found));
+        let text = decoded(root, path);
+        let waived = environment::waived_lines(&text);
+        for (line, source) in numbered(&text) {
+            if waived.contains(&line) {
+                continue;
+            }
+            for access in environment::accesses(family, &source) {
+                findings.push(ArmFinding {
+                    path: Some(path.clone()),
+                    line: Some(line),
+                    column: Some(access.column),
+                    detail: FindingDetail::EnvironmentAccess {
+                        name: access.name,
+                        source: source.clone(),
+                    },
+                });
+            }
+        }
+    }
+    Analysis::scanned(declaration.id, selected.len(), findings)
+}
+
+/// Account every environment name the complete selected tree references.
+///
+/// A name the tree references and the profile does not declare is unaccounted
+/// and carries every locus that references it. A name the profile declares and
+/// the tree never references is stale and carries none, because there is no
+/// place to point at. Both directions are reported, so the ledger cannot drift
+/// in either one without saying so.
+pub(super) fn env_name_ledger(declaration: ToolchainDeclaration, root: &Path) -> Analysis {
+    let sources = match env_sources(root) {
+        Ok(sources) => sources,
+        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+    };
+    if sources.is_empty() {
+        return Analysis::not_applicable(declaration);
+    }
+
+    let mut referenced: BTreeMap<String, Vec<SourceLocus>> = BTreeMap::new();
+    for path in &sources {
+        let family = extension(path).and_then(|found| environment::family(&found));
+        for (line, text) in numbered_lines(root, path) {
+            for name in environment::references(family, &text) {
+                referenced.entry(name).or_default().push(SourceLocus {
+                    path: path.clone(),
+                    line,
+                });
+            }
+        }
+    }
+
+    let declared: BTreeSet<&str> = PACKAGED_ENV_PROFILE
+        .declared_names
+        .iter()
+        .copied()
+        .collect();
+    let mut findings: Vec<ArmFinding> = referenced
+        .iter()
+        .filter(|(name, _)| !declared.contains(name.as_str()))
+        .map(|(name, loci)| ledger(EnvironmentLedgerKind::Unaccounted, name, loci.clone()))
+        .collect();
+    findings.extend(
+        declared
+            .iter()
+            .filter(|name| !referenced.contains_key(**name))
+            .map(|name| ledger(EnvironmentLedgerKind::Stale, name, Vec::new())),
+    );
+    Analysis::scanned(declaration.id, sources.len(), findings)
+}
+
+/// One repository-wide ledger finding, which carries loci instead of a locus.
+fn ledger(mismatch: EnvironmentLedgerKind, name: &str, references: Vec<SourceLocus>) -> ArmFinding {
+    ArmFinding {
+        path: None,
+        line: None,
+        column: None,
+        detail: FindingDetail::EnvironmentLedger {
+            mismatch,
+            name: name.to_owned(),
+            references,
+        },
+    }
+}
+
+/// Whether one selected-tree path is a packaged environment-language source.
+///
+/// The scanner's own implementation is never one of them, so a tree that
+/// vendors the predecessor does not report the law as a violation of itself.
+fn env_language(path: &str) -> bool {
+    !environment::is_scanner_itself(path)
+        && extension(path)
+            .is_some_and(|found| environment::ENV_EXTENSIONS.contains(&found.as_str()))
+}
+
+/// Every packaged environment-language source in the complete selected tree.
+///
+/// Sorted and deduplicated because each retained locus list has to be strictly
+/// increasing, and the walk order is the only thing that decides it.
+fn env_sources(root: &Path) -> Result<Vec<String>, String> {
+    let walked = Jurisdiction::walk(root, &Ignore::default())
+        .map_err(|error| format!("the selected tree could not be walked: {error}"))?;
+    let mut sources: Vec<String> = walked
+        .measurable()
+        .map(|entry| entry.path().to_owned())
+        .filter(|path| !excluded(path) && env_language(path))
+        .collect();
+    sources.sort();
+    sources.dedup();
+    Ok(sources)
+}
+
 /// Run the declared formatter check over the complete selected tree.
 ///
 /// One finding per differing file, carrying the first region the formatter
@@ -453,20 +588,29 @@ fn selected_changes(
     selected
 }
 
-/// One selected file decoded with replacement, as one-based numbered lines.
-fn numbered_lines(root: &Path, path: &str) -> Vec<(u32, String)> {
-    let Ok(bytes) = fs::read(root.join(path)) else {
-        return Vec::new();
-    };
-    String::from_utf8_lossy(&bytes)
-        .lines()
+/// One selected file decoded with replacement, empty when it cannot be read.
+fn decoded(root: &Path, path: &str) -> String {
+    fs::read(root.join(path)).map_or_else(
+        |_| String::new(),
+        |bytes| String::from_utf8_lossy(&bytes).into_owned(),
+    )
+}
+
+/// One decoded file as one-based numbered lines.
+fn numbered(text: &str) -> Vec<(u32, String)> {
+    text.lines()
         .enumerate()
-        .filter_map(|(index, text)| {
+        .filter_map(|(index, line)| {
             u32::try_from(index + 1)
                 .ok()
-                .map(|line| (line, text.to_owned()))
+                .map(|number| (number, line.to_owned()))
         })
         .collect()
+}
+
+/// One selected file decoded with replacement, as one-based numbered lines.
+fn numbered_lines(root: &Path, path: &str) -> Vec<(u32, String)> {
+    numbered(&decoded(root, path))
 }
 
 /// Every discouraged word one line of prose contains, with its replacement.

@@ -69,7 +69,11 @@ mod tests {
         for declaration in TOOLCHAIN_ARMS {
             let compiled = matches!(
                 declaration.id,
-                GateId::Formatters | GateId::LocalPaths | GateId::Taste
+                GateId::Formatters
+                    | GateId::LocalPaths
+                    | GateId::Taste
+                    | GateId::EnvPolicy
+                    | GateId::EnvNameLedger
             );
             let owed = super::super::acquire::owed_analyzer(declaration.id);
             assert_eq!(
