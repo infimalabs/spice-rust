@@ -70,6 +70,19 @@ mod tests {
         assert!(rust.contains(&format!("**/*.{RUST_EXTENSION}").as_str()));
     }
 
+    #[test]
+    fn compiled_javascript_extensions_cover_exactly_the_declared_globs() {
+        let declared = declaration(GateId::JavascriptUnused)
+            .expect("javascript-unused is declared")
+            .jurisdiction
+            .includes;
+        let expected: Vec<String> = JAVASCRIPT_EXTENSIONS
+            .iter()
+            .map(|extension| format!("**/*.{extension}"))
+            .collect();
+        assert_eq!(declared, expected);
+    }
+
     /// Every declared arm routes somewhere named, so a ninth cannot drift in.
     #[test]
     fn every_declared_arm_has_a_named_analysis_or_a_named_owed_analyzer() {
@@ -79,6 +92,7 @@ mod tests {
                 GateId::Formatters
                     | GateId::LocalPaths
                     | GateId::Taste
+                    | GateId::JavascriptUnused
                     | GateId::CanvasWebTypecheck
                     | GateId::EnvPolicy
                     | GateId::EnvNameLedger

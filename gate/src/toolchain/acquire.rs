@@ -3,7 +3,8 @@
 //! [`super::measure_toolchain`] validates, orders, and canonicalizes; this
 //! module only observes. Every declaration produces exactly one
 //! [`ArmObservation`], in compiled order, whether or not this build can analyze
-//! it. Six declarations route to a compiled analysis in [`super::analyze`];
+//! it. Every declaration naming a compiled analysis routes to
+//! [`super::analyze`];
 //! the rest cross as [`ArmOutcome::Unsupported`], which is neither a pass nor a
 //! skip, so an unmeasured tree is never admitted by silence.
 //!
@@ -163,6 +164,7 @@ fn examine(
             ),
             GateId::LocalPaths => analyze::local_paths(declaration, source.root, source.changes()),
             GateId::Taste => analyze::taste(declaration, source.root, source.changes()),
+            GateId::JavascriptUnused => analyze::javascript_unused(declaration, source.root),
             GateId::EnvPolicy => analyze::env_policy(declaration, source.root, source.changes()),
             GateId::EnvNameLedger => analyze::env_name_ledger(declaration, source.root),
             id => Analysis::terminal(
@@ -260,23 +262,21 @@ fn resolved_programs(
 
 /// The exact analyzer one identity is still owed, or `None` once nothing is.
 ///
-/// Nothing is owed in two cases, and neither is a gap: an analysis this build
-/// compiles answers for itself, and an identity that is not a toolchain arm is
-/// not this family's to compile at all. The arms below are the count, which is
-/// why no sentence here carries one to go stale. Every identity is named
-/// outright, so a new [`GateId`] fails to compile here rather than receiving a
-/// sentence written for something else.
+/// Nothing is owed in two cases, and neither is a gap: every compiled variant
+/// named in the match below answers for itself, and an identity that is not a
+/// toolchain arm is not this family's to compile at all. No sentence here
+/// carries a count, because a count goes stale the moment an analysis lands.
+/// Every identity is named outright, so a new [`GateId`] fails to compile here
+/// rather than receiving a sentence written for something else.
 pub(super) const fn owed_analyzer(id: GateId) -> Option<&'static str> {
     match id {
         GateId::Formatters
         | GateId::LocalPaths
         | GateId::Taste
         | GateId::CanvasWebTypecheck
+        | GateId::JavascriptUnused
         | GateId::EnvPolicy
         | GateId::EnvNameLedger => None,
-        GateId::JavascriptUnused => {
-            Some("compile the JavaScript declaration and reference analysis over selected modules")
-        }
         GateId::PythonTypecheck => {
             Some("compile the pyright error-level analysis over selected sources")
         }

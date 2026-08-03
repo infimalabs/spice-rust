@@ -7,9 +7,9 @@ use std::process::Command;
 
 use gate::{
     ArmFinding, ArmObservation, ArmOutcome, Contract, EnvironmentLedgerKind, FindingDetail, GateId,
-    LOCAL_PATH_MARKER, PACKAGED_ENV_PROFILE, PACKAGED_TASTE_WORDS, Selector, SourceLocus,
-    TOOLCHAIN_ARMS, TOOLCHAIN_REPORT_VERSION, ToolEvidence, ToolchainSource, acquire_toolchain,
-    measure_toolchain,
+    JavascriptUnusedStatus, LOCAL_PATH_MARKER, PACKAGED_ENV_PROFILE,
+    PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_TASTE_WORDS, Selector, SourceLocus, TOOLCHAIN_ARMS,
+    TOOLCHAIN_REPORT_VERSION, ToolEvidence, ToolchainSource, acquire_toolchain, measure_toolchain,
 };
 use wire::{Digest, Domain};
 
@@ -24,21 +24,31 @@ const DRIFTED_VERSION: &str = "cargo 0.0.0 (0000000000 1970-01-01)";
 const DRIFTED_PROGRAM: &str = "cargo";
 
 /// The arms this build analyzes itself rather than owing an analyzer.
-const COMPILED_ARMS: [GateId; 6] = [
+const COMPILED_ARMS: [GateId; 7] = [
     GateId::Formatters,
     GateId::LocalPaths,
     GateId::Taste,
+    GateId::JavascriptUnused,
     GateId::CanvasWebTypecheck,
     GateId::EnvPolicy,
     GateId::EnvNameLedger,
 ];
 
-/// The compiled scanners that are applicable to the shared source fixture.
+/// The compiled scanners applicable to every shared source fixture.
 ///
-/// The environment arms are compiled too, and a Rust source names no
-/// environment, so the shared fixture leaves them nothing to find and they are
-/// held to that in their own fixtures rather than here.
-const SCANNING_ARMS: [GateId; 3] = [GateId::Formatters, GateId::LocalPaths, GateId::Taste];
+/// The environment arms are compiled too, and neither a Rust source nor a clean
+/// JavaScript module names an environment, so the shared fixture leaves them
+/// nothing to find and they are held to that in their own fixtures rather than
+/// here.
+const SCANNING_ARMS: [GateId; 4] = [
+    GateId::Formatters,
+    GateId::LocalPaths,
+    GateId::Taste,
+    GateId::JavascriptUnused,
+];
+
+/// The three compiled scanners the generic dirty fixture intentionally violates.
+const GENERIC_FINDING_ARMS: [GateId; 3] = [GateId::Formatters, GateId::LocalPaths, GateId::Taste];
 
 /// The prose file both scanning fixtures carry, clean in one and dirty in the other.
 const PROSE: &str = "docs/guide.md";
@@ -65,6 +75,9 @@ const SHARED_NAME: &str = "SPICE_LANE"; // env-policy: allow
 
 /// The exact unwaived read both fixture files spell.
 const READ: &str = "cache = os.getenv(\"SPICE_LANE\")";
+
+/// The clean JavaScript module that makes the complete-tree analysis applicable.
+const JAVASCRIPT: &str = "web/app.js";
 
 #[test]
 fn acquisition_over_a_real_tree_yields_a_report_measure_toolchain_admits() {
@@ -297,7 +310,7 @@ fn the_compiled_scanners_report_exact_findings_over_a_dirty_tree() {
         &[SOURCE, PROSE],
     );
 
-    for id in SCANNING_ARMS {
+    for id in GENERIC_FINDING_ARMS {
         let observation = arm(&observations, id);
         assert_eq!(
             observation.outcome,
@@ -343,6 +356,101 @@ fn the_compiled_scanners_report_exact_findings_over_a_dirty_tree() {
     );
 
     measure_toolchain(observations).expect("finding observations are admitted");
+}
+
+#[test]
+fn javascript_unused_reports_candidate_and_test_only_but_suppresses_the_exact_exemption() {
+    let repository = scanning_repository(
+        "toolchain-javascript-unused",
+        "fn main() {}\n",
+        "Every sentence here is ordinary.\n",
+    );
+    let &(exempt_path, exempt_symbol, _) = PACKAGED_JAVASCRIPT_EXEMPTIONS
+        .first()
+        .expect("the packaged exemption fixture exists");
+    repository.write(
+        "web/exports.mjs",
+        &format!(
+            concat!(
+                "export function unusedExport() {{}}\n",
+                "export const testOnlyExport = 1;\n",
+                "export function {}() {{}}\n",
+            ),
+            exempt_symbol,
+        ),
+    );
+    repository.write(
+        "tests/exports.spec.cjs",
+        concat!(
+            "import { testOnlyExport } from \"../web/exports.mjs\";\n",
+            "console.log(testOnlyExport);\n",
+        ),
+    );
+    repository.write(
+        exempt_path,
+        &format!("export function {exempt_symbol}() {{ return true; }}\n"),
+    );
+    git_commit(&repository, "javascript declaration fixture");
+
+    let observations = acquired(
+        &repository,
+        Some(toolchain_directory().into_os_string()),
+        &[],
+    );
+    let observation = arm(&observations, GateId::JavascriptUnused);
+    assert_eq!(observation.outcome, ArmOutcome::Findings);
+    assert_eq!(
+        observation.findings,
+        [
+            ArmFinding {
+                path: Some("web/exports.mjs".to_owned()),
+                line: Some(1),
+                column: None,
+                detail: FindingDetail::JavascriptUnused {
+                    symbol: "unusedExport".to_owned(),
+                    declaration_kind: "function".to_owned(),
+                    status: JavascriptUnusedStatus::CandidateUnused,
+                    reason: "no_references_outside_declaration".to_owned(),
+                    reference_count: 1,
+                    test_reference_count: 0,
+                },
+            },
+            ArmFinding {
+                path: Some("web/exports.mjs".to_owned()),
+                line: Some(2),
+                column: None,
+                detail: FindingDetail::JavascriptUnused {
+                    symbol: "testOnlyExport".to_owned(),
+                    declaration_kind: "constant".to_owned(),
+                    status: JavascriptUnusedStatus::TestOnly,
+                    reason: "references_only_in_tests".to_owned(),
+                    reference_count: 1,
+                    test_reference_count: 2,
+                },
+            },
+            ArmFinding {
+                path: Some("web/exports.mjs".to_owned()),
+                line: Some(3),
+                column: None,
+                detail: FindingDetail::JavascriptUnused {
+                    symbol: exempt_symbol.to_owned(),
+                    declaration_kind: "function".to_owned(),
+                    status: JavascriptUnusedStatus::CandidateUnused,
+                    reason: "no_references_outside_declaration".to_owned(),
+                    reference_count: 1,
+                    test_reference_count: 0,
+                },
+            },
+        ]
+    );
+    assert!(
+        observation
+            .findings
+            .iter()
+            .all(|finding| { finding.path.as_deref() != Some(exempt_path) })
+    );
+
+    measure_toolchain(observations).expect("JavaScript findings are admitted");
 }
 
 /// A refusal the formatter cannot explain is retained with the code it gave.
@@ -532,6 +640,7 @@ fn scanning_repository(label: &str, source: &str, prose: &str) -> Tree {
     );
     repository.write(SOURCE, source);
     repository.write(PROSE, prose);
+    repository.write(JAVASCRIPT, "void 0;\n");
     git_commit(&repository, "fixture sources");
     repository
 }

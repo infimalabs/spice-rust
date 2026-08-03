@@ -1,10 +1,11 @@
 //! Compiled analyses for the toolchain arms this build answers itself.
 //!
-//! Six of the eight declared analyses are compiled here: the formatter check
+//! Most of the eight declared analyses are compiled here: the formatter check
 //! over the complete selected tree, the canvas Wasm check and build, the
-//! workstation-path scanner, the prose scanner, and the two environment
-//! scanners. Each reports only what it observed, and
-//! [`super::measure_toolchain`] remains the sole authority that admits it.
+//! workstation-path scanner, the prose scanner, the JavaScript
+//! declaration/reference analysis, and the two environment scanners. Each
+//! reports only what it observed, and [`super::measure_toolchain`] remains the
+//! sole authority that admits it.
 //!
 //! Each declaration records its exclusions as English sentences and its
 //! includes as globs. Those strings are the retained evidence and the
@@ -24,12 +25,14 @@ use std::path::{Path, PathBuf};
 use sill::{Argv, Completion, Environment, spawn};
 
 use super::{
-    ArmFinding, ArmOutcome, EnvironmentLedgerKind, FindingDetail, LOCAL_PATH_MARKER,
-    PACKAGED_ENV_PROFILE, PACKAGED_TASTE_WORDS, SourceLocus, ToolchainDeclaration, environment,
+    ArmFinding, ArmOutcome, EnvironmentLedgerKind, FindingDetail, JavascriptUnusedStatus,
+    LOCAL_PATH_MARKER, PACKAGED_ENV_PROFILE, PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_TASTE_WORDS,
+    PACKAGED_TEST_PATHS, SourceLocus, ToolchainDeclaration, environment,
 };
 use crate::GateId;
 use crate::jurisdiction::{Ignore, Jurisdiction};
 use crate::measure::Bounds;
+use crate::structural::{StructuralPattern, scan_javascript_symbols};
 
 /// What one compiled analysis observed about one arm.
 ///
@@ -158,6 +161,9 @@ const BUILD_EXCLUSIONS: &[&str] = &[".git", "target", "dist", "node_modules", ".
 
 /// The compiled form of the Taste include globs, in declaration order.
 const PROSE_EXTENSIONS: &[&str] = &["md", "txt", "rst"];
+
+/// The compiled form of the JavaScript-unused include globs.
+const JAVASCRIPT_EXTENSIONS: &[&str] = &["js", "mjs", "cjs"];
 
 /// The compiled form of the Formatters Rust include glob.
 const RUST_EXTENSION: &str = "rs";
@@ -419,6 +425,198 @@ fn env_sources(root: &Path) -> Result<Vec<String>, String> {
     sources.sort();
     sources.dedup();
     Ok(sources)
+}
+
+#[derive(Debug)]
+struct JavascriptDeclaration {
+    path: String,
+    line: u32,
+    declaration_kind: String,
+    symbol: String,
+    in_test: bool,
+}
+
+#[derive(Debug)]
+struct JavascriptInventory {
+    examined: usize,
+    declarations: Vec<JavascriptDeclaration>,
+    references: BTreeMap<String, (usize, usize)>,
+}
+
+/// Resolve JavaScript declarations against every identifier in the selected modules.
+///
+/// The production count includes a declaration's own identifier. Consequently
+/// `(1, 0)` means a production declaration is truly unused, while `(1, n)`
+/// means its only uses beyond the declaration occur in configured test roots.
+pub(super) fn javascript_unused(declaration: ToolchainDeclaration, root: &Path) -> Analysis {
+    let inventory = match javascript_inventory(root) {
+        Ok(inventory) => inventory,
+        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+    };
+    if inventory.examined == 0 {
+        return Analysis::not_applicable(declaration);
+    }
+
+    let mut findings = Vec::new();
+    for declared in inventory.declarations {
+        if javascript_exempt(&declared.path, &declared.symbol) {
+            continue;
+        }
+        let (production, tests) = inventory
+            .references
+            .get(&declared.symbol)
+            .copied()
+            .unwrap_or_default();
+        let (production, tests) = if declared.in_test {
+            (production, tests + 1)
+        } else {
+            (production + 1, tests)
+        };
+        let status = if production + tests == 1 {
+            Some((
+                JavascriptUnusedStatus::CandidateUnused,
+                "no_references_outside_declaration",
+            ))
+        } else if !declared.in_test && production == 1 && tests > 0 {
+            Some((JavascriptUnusedStatus::TestOnly, "references_only_in_tests"))
+        } else {
+            None
+        };
+        let Some((status, reason)) = status else {
+            continue;
+        };
+        let Ok(reference_count) = u32::try_from(production) else {
+            return Analysis::terminal(
+                ArmOutcome::ParseFailure,
+                format!(
+                    "javascript-unused reference count overflowed for {}",
+                    declared.symbol
+                ),
+            );
+        };
+        let Ok(test_reference_count) = u32::try_from(tests) else {
+            return Analysis::terminal(
+                ArmOutcome::ParseFailure,
+                format!(
+                    "javascript-unused test reference count overflowed for {}",
+                    declared.symbol
+                ),
+            );
+        };
+        findings.push(ArmFinding {
+            path: Some(declared.path),
+            line: Some(declared.line),
+            column: None,
+            detail: FindingDetail::JavascriptUnused {
+                symbol: declared.symbol,
+                declaration_kind: declared.declaration_kind,
+                status,
+                reason: reason.to_owned(),
+                reference_count,
+                test_reference_count,
+            },
+        });
+    }
+    Analysis::scanned(declaration.id, inventory.examined, findings)
+}
+
+fn javascript_inventory(root: &Path) -> Result<JavascriptInventory, String> {
+    let sources = javascript_sources(root)?;
+    let mut declarations = Vec::new();
+    let mut references: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    for (path, source, in_test) in &sources {
+        let matches = scan_javascript_symbols(source)
+            .map_err(|error| format!("javascript-unused could not parse {path}: {error}"))?;
+        let declaration_loci: BTreeSet<(usize, usize)> = matches
+            .iter()
+            .filter(|matched| matched.pattern() == StructuralPattern::JavaScriptDeclaration)
+            .flat_map(|matched| matched.captures())
+            .map(|capture| (capture.start_byte(), capture.end_byte()))
+            .collect();
+        for matched in matches {
+            let [capture] = matched.captures() else {
+                return Err(format!(
+                    "javascript-unused received a malformed {} match in {path}",
+                    matched.pattern().as_str()
+                ));
+            };
+            match matched.pattern() {
+                StructuralPattern::JavaScriptDeclaration => {
+                    let line = source_line(source, matched.start_byte())
+                        .ok_or_else(|| format!("javascript-unused line overflowed in {path}"))?;
+                    declarations.push(JavascriptDeclaration {
+                        path: path.clone(),
+                        line,
+                        declaration_kind: capture.name().to_owned(),
+                        symbol: capture.text().to_owned(),
+                        in_test: *in_test,
+                    });
+                }
+                StructuralPattern::JavaScriptIdentifier => {
+                    if declaration_loci.contains(&(capture.start_byte(), capture.end_byte())) {
+                        continue;
+                    }
+                    let counts = references.entry(capture.text().to_owned()).or_default();
+                    if *in_test {
+                        counts.1 += 1;
+                    } else {
+                        counts.0 += 1;
+                    }
+                }
+                StructuralPattern::FunctionCall => {
+                    return Err(format!(
+                        "javascript-unused received an unrelated structural match in {path}"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(JavascriptInventory {
+        examined: sources.len(),
+        declarations,
+        references,
+    })
+}
+
+fn javascript_sources(root: &Path) -> Result<Vec<(String, String, bool)>, String> {
+    let walked = Jurisdiction::walk(root, &Ignore::default())
+        .map_err(|error| format!("the selected tree could not be walked: {error}"))?;
+    let mut paths: Vec<String> = walked
+        .measurable()
+        .map(|entry| entry.path().to_owned())
+        .filter(|path| !excluded(path))
+        .filter(|path| {
+            extension(path).is_some_and(|found| JAVASCRIPT_EXTENSIONS.contains(&found.as_str()))
+        })
+        .collect();
+    paths.sort();
+
+    paths
+        .into_iter()
+        .map(|path| {
+            let source = fs::read_to_string(root.join(&path)).map_err(|error| {
+                format!("javascript-unused could not read {path} as UTF-8: {error}")
+            })?;
+            let in_test = PACKAGED_TEST_PATHS.iter().any(|test_root| {
+                path == *test_root
+                    || path
+                        .strip_prefix(test_root)
+                        .is_some_and(|suffix| suffix.starts_with('/'))
+            });
+            Ok((path, source, in_test))
+        })
+        .collect()
+}
+
+fn javascript_exempt(path: &str, symbol: &str) -> bool {
+    PACKAGED_JAVASCRIPT_EXEMPTIONS
+        .iter()
+        .any(|(exempt_path, exempt_symbol, _)| path == *exempt_path && symbol == *exempt_symbol)
+}
+
+fn source_line(source: &str, start_byte: usize) -> Option<u32> {
+    let prefix = source.as_bytes().get(..start_byte)?;
+    u32::try_from(prefix.iter().filter(|byte| **byte == b'\n').count() + 1).ok()
 }
 
 /// Run the declared formatter check over the complete selected tree.
