@@ -242,7 +242,14 @@ impl BatteryReport {
         Ok(report)
     }
 
-    fn validate(&self) -> Result<(), BatteryError> {
+    /// Refuse anything but a complete, correctly ordered, internally agreeing
+    /// vector.
+    ///
+    /// [`Self::decode`] is not the only way a report reaches a reader: one
+    /// arrives as a nested field whenever a receipt is decoded, and a nested
+    /// field is deserialized without passing through any constructor. Both
+    /// doors call this.
+    pub(super) fn validate(&self) -> Result<(), BatteryError> {
         if self.version != GATE_BATTERY_VERSION {
             return Err(BatteryError::new(format!(
                 "unsupported battery report version {}; expected {GATE_BATTERY_VERSION}",
@@ -418,7 +425,7 @@ fn validate_compiled_result(
     Ok(())
 }
 
-fn gate_set_digest(manifest: &BatteryManifest) -> Digest {
+pub(super) fn gate_set_digest(manifest: &BatteryManifest) -> Digest {
     let mut bytes = CANONICAL_BATTERY_MANIFEST.as_bytes().to_vec();
     bytes.extend_from_slice(b"\0compiled-declaration-identities\0");
     for (position, arm) in manifest.arms.iter().enumerate() {
