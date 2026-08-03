@@ -41,11 +41,19 @@ enum FamilyExecution {
 /// A family is acquired when its first arm is requested. Its complete result
 /// set or refusal is cached, so the remaining canonical positions only project
 /// family-owned evidence and cannot run the family again.
+///
+/// The core family is the one exception, and it is acquired in full at capture.
+/// Two of its arms observe the live repository the tree was materialized from,
+/// so they can only be taken in the same moment the source is captured: an
+/// acquisition deferred to first request would read an index, a `MERGE_HEAD`,
+/// or a worktree that moved after the capture the report names. Its complete
+/// result or refusal is retained from that one capture and handed over
+/// unchanged when the first core arm is requested.
 pub struct RepositoryExecutor<'trace> {
     tree: SelectedTree,
     contract: Contract,
     source: Digest,
-    claim: ClaimCapture,
+    core: Result<Vec<ArmEvidence>, String>,
     rim: RimCapture,
     hygiene: HygieneConfiguration,
     context: Option<BatteryContext>,
@@ -65,7 +73,9 @@ impl RepositoryExecutor<'_> {
     /// # Errors
     ///
     /// Refuses selection, tracked-contract, or source-identity failure before
-    /// an executor can be used.
+    /// an executor can be used. A core family that refuses to acquire is not
+    /// one of these: the capture succeeded, and the refusal it produced is the
+    /// evidence every core position projects.
     pub fn capture(
         repository: impl Into<PathBuf>,
         selector: &Selector,
@@ -110,15 +120,21 @@ impl<'trace> RepositoryExecutor<'trace> {
         let contract = Contract::load(tree.root()).map_err(|error| {
             BatteryError::new(format!("cannot load captured battery contract: {error}"))
         })?;
-        let source = CoreSource::capture(&tree, &contract, claim.clone())
-            .map_err(|error| BatteryError::new(format!("cannot identify battery source: {error}")))?
-            .digest()
-            .clone();
+        // One capture, taken once: the digest every arm is labelled with and the
+        // whole core family are read from the same `CoreSource`, and nothing
+        // below this block can reach the live repository again.
+        let (source, core) = {
+            let captured = CoreSource::capture(&tree, &contract, claim).map_err(|error| {
+                BatteryError::new(format!("cannot identify battery source: {error}"))
+            })?;
+            let core = core_family(&captured, &contract);
+            (captured.digest().clone(), core)
+        };
         Ok(Self {
             tree,
             contract,
             source,
-            claim,
+            core,
             rim,
             hygiene,
             context: None,
@@ -178,7 +194,9 @@ impl<'trace> RepositoryExecutor<'trace> {
 
     fn acquire_family(&self, family: ArmFamily) -> FamilyExecution {
         let result = match family {
-            ArmFamily::Core => self.acquire_core_family(),
+            // Not acquired here: this hands over the result the capture already
+            // took, so the first core arm cannot start a second observation.
+            ArmFamily::Core => self.core.clone(),
             ArmFamily::Toolchain => self.acquire_toolchain_family(),
             ArmFamily::Metrics => Err(concat!(
                 "metrics family acquisition is unavailable: this build has no complete ",
@@ -191,18 +209,6 @@ impl<'trace> RepositoryExecutor<'trace> {
             Ok(evidence) => FamilyExecution::Complete(evidence),
             Err(reason) => FamilyExecution::Refused(reason),
         }
-    }
-
-    fn acquire_core_family(&self) -> Result<Vec<ArmEvidence>, String> {
-        let source = CoreSource::capture(&self.tree, &self.contract, self.claim.clone())
-            .map_err(|error| error.to_string())?;
-        let inputs = acquire_core(&source, &self.contract).map_err(|error| error.to_string())?;
-        Ok(evaluate_core(&inputs)
-            .arms()
-            .iter()
-            .cloned()
-            .map(|report| ArmEvidence::Core { report })
-            .collect())
     }
 
     fn acquire_toolchain_family(&self) -> Result<Vec<ArmEvidence>, String> {
@@ -273,6 +279,23 @@ impl BatteryExecutor for RepositoryExecutor<'_> {
             evidence,
         )
     }
+}
+
+/// Acquire and judge the complete core family from one captured source.
+///
+/// Taken while the capture is still in hand rather than from anything the
+/// executor retains afterwards, because the source is the only thing that ever
+/// held the two Git observations. A refusal is carried as the family's result
+/// instead of failing the capture: an incomplete family is evidence the battery
+/// projects, not a reason no battery can run.
+fn core_family(source: &CoreSource<'_>, contract: &Contract) -> Result<Vec<ArmEvidence>, String> {
+    let inputs = acquire_core(source, contract).map_err(|error| error.to_string())?;
+    Ok(evaluate_core(&inputs)
+        .arms()
+        .iter()
+        .cloned()
+        .map(|report| ArmEvidence::Core { report })
+        .collect())
 }
 
 const fn family_index(family: ArmFamily) -> usize {
