@@ -16,6 +16,7 @@ use std::str::FromStr;
 use serde::de::{Deserializer, Error as _};
 use serde::{Deserialize, Serialize, Serializer};
 
+pub(crate) use migration::packaged_rule_policy;
 pub use migration::{MigrationError, migrate_predecessor_policy};
 pub use runtime::{CompileError, Policy, ResolveError};
 
@@ -619,6 +620,8 @@ pub struct PolicyDocument {
     limits: BoundLimits,
     ratchet: GlobalRatchet,
     magic_examine_threshold: u64,
+    #[serde(default)]
+    repo_truth_docs: Vec<String>,
     rules: Vec<RuleDeclaration>,
 }
 
@@ -647,6 +650,12 @@ impl PolicyDocument {
         self.magic_examine_threshold
     }
 
+    /// Explicit repository-truth documents in canonical path order.
+    #[must_use]
+    pub fn repo_truth_docs(&self) -> &[String] {
+        &self.repo_truth_docs
+    }
+
     /// Named rules in stable source order.
     #[must_use]
     pub fn rules(&self) -> &[RuleDeclaration] {
@@ -657,6 +666,7 @@ impl PolicyDocument {
         limits: BoundLimits,
         ratchet: GlobalRatchet,
         magic_examine_threshold: u64,
+        repo_truth_docs: Vec<String>,
         rules: Vec<RuleDeclaration>,
     ) -> Self {
         Self {
@@ -664,6 +674,7 @@ impl PolicyDocument {
             limits,
             ratchet,
             magic_examine_threshold,
+            repo_truth_docs,
             rules,
         }
     }

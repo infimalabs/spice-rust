@@ -26,6 +26,7 @@ use crate::kill::{
     RateError, SurvivorRate,
 };
 use crate::measure::{Bounds, Metric, MetricError, Parser, Policy};
+use crate::policy::{Policy as RulePolicy, packaged_rule_policy};
 use crate::ratchet::Ratchet;
 
 /// Fixed tracked policy path within a selected repository tree.
@@ -112,6 +113,7 @@ impl KillProfile {
 pub struct Contract {
     gate_set: GateSet,
     policy: Policy,
+    rule_policy: RulePolicy,
     #[cfg(not(target_arch = "wasm32"))]
     shape: ShapePolicy,
     camp_policy: Policy,
@@ -161,6 +163,12 @@ impl Contract {
         let ignore = tracked_ignore(policy_path, &tracked).map_err(ContractError::Policy)?;
         #[cfg(not(target_arch = "wasm32"))]
         let shape = ShapePolicy::from_tracked(&tracked.policy);
+        let rule_policy = packaged_rule_policy().map_err(|source| {
+            ContractError::Policy(PolicyError::Rules {
+                path: policy_path.to_path_buf(),
+                source,
+            })
+        })?;
         let metrics: Vec<Metric> = gate_set
             .metrics
             .iter()
@@ -186,6 +194,7 @@ impl Contract {
         Ok(Self {
             gate_set,
             policy,
+            rule_policy,
             #[cfg(not(target_arch = "wasm32"))]
             shape,
             camp_policy,
@@ -207,6 +216,12 @@ impl Contract {
     #[must_use]
     pub const fn policy(&self) -> &Policy {
         &self.policy
+    }
+
+    /// Compiled named rules used by structural family acquisition.
+    #[must_use]
+    pub const fn rule_policy(&self) -> &RulePolicy {
+        &self.rule_policy
     }
 
     /// Admitted tracked intent for the repository-shape provider.
