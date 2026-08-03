@@ -14,8 +14,6 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::manifest::PREDECESSOR_GATE_RELEASE;
-
 pub use context::{
     ActorEvidence, BatteryContext, BatteryInputs, BatteryScope, BatteryToolEvidence,
     BoundActorInputsEvidence, BoundEvidence, ConfigurationEvidence, LatchEvidence,
@@ -39,56 +37,6 @@ pub enum ArmFamily {
     Toolchain,
     Metrics,
     Hygiene,
-}
-
-/// One release-owned refusal retained in place of executable behavior.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MigrationRefusal {
-    pub(super) source_field: Vec<String>,
-    pub(super) owning_release: String,
-    pub(super) reason: String,
-    pub(super) recovery: String,
-}
-
-impl MigrationRefusal {
-    /// Structurally segmented source field that could not be compiled.
-    #[must_use]
-    pub fn source_field(&self) -> &[String] {
-        &self.source_field
-    }
-
-    /// Release that still owns interpretation of the field.
-    #[must_use]
-    pub fn owning_release(&self) -> &str {
-        &self.owning_release
-    }
-
-    /// Exact semantic incompatibility.
-    #[must_use]
-    pub fn reason(&self) -> &str {
-        &self.reason
-    }
-
-    /// Exact operator recovery.
-    #[must_use]
-    pub fn recovery(&self) -> &str {
-        &self.recovery
-    }
-
-    pub(super) fn validate(&self, position: usize) -> Result<(), BatteryError> {
-        if self.source_field.is_empty()
-            || self.source_field.iter().any(|part| !valid_text(part))
-            || self.owning_release != PREDECESSOR_GATE_RELEASE
-            || !valid_text(&self.reason)
-            || !valid_text(&self.recovery)
-        {
-            return Err(BatteryError::new(format!(
-                "battery arm {position} has an incomplete migration refusal"
-            )));
-        }
-        Ok(())
-    }
 }
 
 fn valid_text(value: &str) -> bool {

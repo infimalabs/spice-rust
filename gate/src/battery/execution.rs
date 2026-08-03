@@ -7,7 +7,7 @@ use super::manifest_contract::{
 };
 use super::{
     ArmEvidence, ArmFamily, BatteryContext, BatteryError, BatteryInputs, BatteryState,
-    MigrationRefusal, ResultProvenance, inline_evidence,
+    ResultProvenance, inline_evidence,
 };
 use crate::manifest::GateId;
 
@@ -116,12 +116,9 @@ pub trait BatteryExecutor {
 pub struct BatteryArmResult {
     position: usize,
     predecessor: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    gate_id: Option<GateId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    declaration: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    family: Option<ArmFamily>,
+    gate_id: GateId,
+    declaration: String,
+    family: ArmFamily,
     state: BatteryState,
     reason: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -142,21 +139,21 @@ impl BatteryArmResult {
         &self.predecessor
     }
 
-    /// Compiled gate identity, absent only for a migration refusal.
+    /// Compiled gate identity.
     #[must_use]
-    pub const fn gate_id(&self) -> Option<GateId> {
+    pub const fn gate_id(&self) -> GateId {
         self.gate_id
     }
 
     /// Exact compiled declaration identity.
     #[must_use]
-    pub fn declaration(&self) -> Option<&str> {
-        self.declaration.as_deref()
+    pub fn declaration(&self) -> &str {
+        &self.declaration
     }
 
-    /// Owning compiled family, absent only for a migration refusal.
+    /// Owning compiled family.
     #[must_use]
-    pub const fn family(&self) -> Option<ArmFamily> {
+    pub const fn family(&self) -> ArmFamily {
         self.family
     }
 
@@ -301,63 +298,18 @@ fn execute_arm(
     inputs: &BatteryInputs<'_>,
     executor: &mut impl BatteryExecutor,
 ) -> BatteryArmResult {
-    match &arm.disposition {
-        ArmDisposition::Compiled {
-            gate_id,
-            family,
-            declaration,
-        } => execute_compiled(
-            position,
-            arm,
-            *gate_id,
-            *family,
-            declaration,
-            inputs,
-            executor,
-        ),
-        ArmDisposition::MigrationRefusal {
-            source_field,
-            owning_release,
-            reason,
-            recovery,
-        } => {
-            let refusal = MigrationRefusal {
-                source_field: source_field.clone(),
-                owning_release: owning_release.clone(),
-                reason: reason.clone(),
-                recovery: recovery.clone(),
-            };
-            BatteryArmResult {
-                position,
-                predecessor: arm.predecessor.clone(),
-                gate_id: None,
-                declaration: None,
-                family: None,
-                state: BatteryState::Unsupported,
-                reason: refusal.reason.clone(),
-                provenance: None,
-                evidence: ArmEvidence::MigrationRefusal { refusal },
-            }
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn execute_compiled(
-    position: usize,
-    arm: &BatteryManifestArm,
-    gate_id: GateId,
-    family: ArmFamily,
-    declaration: &str,
-    inputs: &BatteryInputs<'_>,
-    executor: &mut impl BatteryExecutor,
-) -> BatteryArmResult {
+    let ArmDisposition::Compiled {
+        gate_id,
+        family,
+        declaration,
+    } = &arm.disposition;
+    let (gate_id, family) = (*gate_id, *family);
     let compiled = CompiledArm {
         position,
         predecessor: arm.predecessor.clone(),
         gate_id,
         family,
-        declaration: declaration.to_owned(),
+        declaration: declaration.clone(),
     };
     let execution = match executor.execute(&compiled, inputs) {
         Ok(execution) => admit_execution(execution, family, gate_id, declaration, inputs.source()),
@@ -371,9 +323,9 @@ fn execute_compiled(
     BatteryArmResult {
         position,
         predecessor: arm.predecessor.clone(),
-        gate_id: Some(gate_id),
-        declaration: Some(declaration.to_owned()),
-        family: Some(family),
+        gate_id,
+        declaration: declaration.clone(),
+        family,
         state: execution.state,
         reason: execution.reason,
         provenance: execution.provenance,
@@ -438,34 +390,13 @@ fn validate_result(
         provenance: result.provenance.clone(),
         evidence: result.evidence.clone(),
     };
-    match &arm.disposition {
-        ArmDisposition::Compiled {
-            gate_id,
-            family,
-            declaration,
-        } => {
-            execution.validate_expected(*family, *gate_id, declaration, source)?;
-            validate_compiled_result(position, result, *gate_id, *family, declaration)
-        }
-        ArmDisposition::MigrationRefusal {
-            source_field,
-            owning_release,
-            reason,
-            recovery,
-        } => {
-            execution.validate()?;
-            validate_refusal_result(
-                position,
-                result,
-                MigrationRefusal {
-                    source_field: source_field.clone(),
-                    owning_release: owning_release.clone(),
-                    reason: reason.clone(),
-                    recovery: recovery.clone(),
-                },
-            )
-        }
-    }
+    let ArmDisposition::Compiled {
+        gate_id,
+        family,
+        declaration,
+    } = &arm.disposition;
+    execution.validate_expected(*family, *gate_id, declaration, source)?;
+    validate_compiled_result(position, result, *gate_id, *family, declaration)
 }
 
 fn validate_compiled_result(
@@ -475,33 +406,13 @@ fn validate_compiled_result(
     family: ArmFamily,
     declaration: &str,
 ) -> Result<(), BatteryError> {
-    if result.gate_id != Some(gate_id)
-        || result.family != Some(family)
-        || result.declaration.as_deref() != Some(declaration)
-        || result.evidence.family() != Some(family)
+    if result.gate_id != gate_id
+        || result.family != family
+        || result.declaration != declaration
+        || result.evidence.family() != family
     {
         return Err(BatteryError::new(format!(
             "battery result {position} disagrees with its compiled declaration"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_refusal_result(
-    position: usize,
-    result: &BatteryArmResult,
-    refusal: MigrationRefusal,
-) -> Result<(), BatteryError> {
-    if result.gate_id.is_some()
-        || result.family.is_some()
-        || result.declaration.is_some()
-        || result.state != BatteryState::Unsupported
-        || result.reason != refusal.reason
-        || result.provenance.is_some()
-        || result.evidence != (ArmEvidence::MigrationRefusal { refusal })
-    {
-        return Err(BatteryError::new(format!(
-            "battery result {position} does not preserve its migration refusal"
         )));
     }
     Ok(())
@@ -515,25 +426,8 @@ fn gate_set_digest(manifest: &BatteryManifest) -> Digest {
         bytes.push(0);
         bytes.extend_from_slice(arm.predecessor.as_bytes());
         bytes.push(0);
-        match &arm.disposition {
-            ArmDisposition::Compiled { declaration, .. } => {
-                bytes.extend_from_slice(declaration.as_bytes());
-            }
-            ArmDisposition::MigrationRefusal {
-                source_field,
-                owning_release,
-                reason,
-                recovery,
-            } => {
-                bytes.extend_from_slice(owning_release.as_bytes());
-                bytes.push(0);
-                bytes.extend_from_slice(source_field.join(".").as_bytes());
-                bytes.push(0);
-                bytes.extend_from_slice(reason.as_bytes());
-                bytes.push(0);
-                bytes.extend_from_slice(recovery.as_bytes());
-            }
-        }
+        let ArmDisposition::Compiled { declaration, .. } = &arm.disposition;
+        bytes.extend_from_slice(declaration.as_bytes());
         bytes.push(b'\n');
     }
     Digest::compute(Domain::GateSet, &bytes)

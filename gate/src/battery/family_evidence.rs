@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use wire::Digest;
 
-use super::{ArmFamily, BatteryError, MigrationRefusal, valid_text};
+use super::{ArmFamily, BatteryError, valid_text};
 use crate::core::{CoreArmReport, CoreStanding};
 use crate::hygiene::{AnalysisEvidence, HygieneMeasurement, HygieneOutcome, HygieneProvenance};
 use crate::manifest::GateId;
@@ -110,35 +110,30 @@ pub enum ArmEvidence {
         declaration: String,
         reason: String,
     },
-    MigrationRefusal {
-        refusal: MigrationRefusal,
-    },
 }
 
 impl ArmEvidence {
-    /// Family represented by compiled evidence, absent for a migration refusal.
+    /// Family represented by compiled evidence.
     #[must_use]
-    pub const fn family(&self) -> Option<ArmFamily> {
+    pub const fn family(&self) -> ArmFamily {
         match self {
-            Self::Core { .. } => Some(ArmFamily::Core),
-            Self::Toolchain { .. } => Some(ArmFamily::Toolchain),
-            Self::Metrics { .. } => Some(ArmFamily::Metrics),
-            Self::Hygiene { .. } => Some(ArmFamily::Hygiene),
-            Self::ExecutorFailure { arm_family, .. } => Some(*arm_family),
-            Self::MigrationRefusal { .. } => None,
+            Self::Core { .. } => ArmFamily::Core,
+            Self::Toolchain { .. } => ArmFamily::Toolchain,
+            Self::Metrics { .. } => ArmFamily::Metrics,
+            Self::Hygiene { .. } => ArmFamily::Hygiene,
+            Self::ExecutorFailure { arm_family, .. } => *arm_family,
         }
     }
 
     /// Gate identity carried by the family report.
     #[must_use]
-    pub const fn gate_id(&self) -> Option<GateId> {
+    pub const fn gate_id(&self) -> GateId {
         match self {
-            Self::Core { report } => Some(report.id()),
-            Self::Toolchain { report } => Some(report.gate_id),
-            Self::Metrics { report } => Some(report.gate_id()),
-            Self::Hygiene { report } => Some(report.gate_id),
-            Self::ExecutorFailure { gate_id, .. } => Some(*gate_id),
-            Self::MigrationRefusal { .. } => None,
+            Self::Core { report } => report.id(),
+            Self::Toolchain { report } => report.gate_id,
+            Self::Metrics { report } => report.gate_id(),
+            Self::Hygiene { report } => report.gate_id,
+            Self::ExecutorFailure { gate_id, .. } => *gate_id,
         }
     }
 
@@ -150,7 +145,6 @@ impl ArmEvidence {
             Self::Metrics { report } => metric_state(report),
             Self::Hygiene { report } => Ok(hygiene_state(report.outcome)),
             Self::ExecutorFailure { .. } => Ok(BatteryState::Failed),
-            Self::MigrationRefusal { .. } => Ok(BatteryState::Unsupported),
         }
     }
 
@@ -162,7 +156,6 @@ impl ArmEvidence {
             Self::Metrics { report } => metric_reason(report),
             Self::Hygiene { report } => hygiene_reason(report),
             Self::ExecutorFailure { reason, .. } => Ok(reason.clone()),
-            Self::MigrationRefusal { refusal } => Ok(refusal.reason.clone()),
         }
     }
 
@@ -218,7 +211,7 @@ impl ArmEvidence {
         declaration: &str,
         source: &Digest,
     ) -> Result<(), BatteryError> {
-        if self.family() != Some(family) || self.gate_id() != Some(gate_id) {
+        if self.family() != family || self.gate_id() != gate_id {
             return Err(BatteryError::new(
                 "arm evidence belongs to a different compiled gate or family",
             ));
@@ -259,7 +252,6 @@ impl ArmEvidence {
             Self::ExecutorFailure { .. } => Err(BatteryError::new(
                 "executor failure requires declaration and one-line reason",
             )),
-            Self::MigrationRefusal { refusal } => refusal.validate(0),
         }
     }
 }
