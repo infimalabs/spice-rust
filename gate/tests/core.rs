@@ -1,7 +1,5 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
-use std::path::Path;
-use std::process::{Command, Output};
 use std::str::FromStr;
 
 use gate::{
@@ -19,9 +17,9 @@ use wire::{Digest, Domain, Phase, TaskHandle};
 
 mod support;
 
-use support::Tree;
-
-const GIT: &str = "/usr/bin/git";
+use support::{
+    Tree, contract_repository, git, git_commit, git_output, git_repository, workspace_document,
+};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -625,46 +623,6 @@ fn finding(code: &str, path: Option<impl Into<String>>, detail: &str) -> CoreFin
     CoreFinding::new(code, path, detail).expect("valid fixture finding")
 }
 
-fn git_repository(label: &str) -> Tree {
-    let repository = Tree::new(label);
-    git(&repository, &["init", "-q", "-b", "main"]);
-    git(&repository, &["config", "user.name", "Gate Fixture"]);
-    git(
-        &repository,
-        &["config", "user.email", "gate@example.invalid"],
-    );
-    repository
-}
-
-fn git_commit(repository: &Tree, message: &str) {
-    git(repository, &["add", "--all"]);
-    git(repository, &["commit", "-q", "-m", message]);
-}
-
-fn git(repository: &Tree, arguments: &[&str]) -> String {
-    let output = git_output(repository, arguments);
-    assert!(
-        output.status.success(),
-        "git {arguments:?} exited {}: {}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .expect("Git fixture output is UTF-8")
-        .trim()
-        .to_owned()
-}
-
-fn git_output(repository: &Tree, arguments: &[&str]) -> Output {
-    Command::new(GIT)
-        .args(arguments)
-        .current_dir(&repository.root)
-        .env_clear()
-        .env("HOME", &repository.root)
-        .output()
-        .unwrap_or_else(|error| panic!("run git {arguments:?}: {error}"))
-}
-
 fn fixture_tree() -> Digest {
     Digest::compute(Domain::GateTree, b"core predecessor parity fixture")
 }
@@ -692,22 +650,6 @@ fn compared_merge(
         completion,
         conflicted_paths,
     }
-}
-
-fn workspace_document(name: &str) -> String {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(name);
-    fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("read {} for the fixture: {error}", path.display()))
-}
-
-/// One committed fixture repository carrying the tracked contract documents.
-fn contract_repository(label: &str) -> Tree {
-    let repository = git_repository(label);
-    repository.write("spice.toml", &workspace_document("spice.toml"));
-    repository.write("baseline.toml", &workspace_document("baseline.toml"));
-    repository.write("src/app.rs", "fn main() {}\n");
-    git_commit(&repository, "fixture contract");
-    repository
 }
 
 fn shape_contract_repository(label: &str) -> Tree {

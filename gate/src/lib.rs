@@ -29,6 +29,8 @@ pub mod policy;
 pub mod ratchet;
 pub mod report;
 pub mod state;
+#[cfg(not(target_arch = "wasm32"))]
+mod structural;
 pub mod toolchain;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tree;
@@ -121,6 +123,10 @@ pub use state::{
     PeerClaim, PendingState, PredecessorSources, RenameMap, StateDecision, StateError,
     StateErrorKind, StateKey, StateLedger, StateReceipt, current_state_path, varied_elastic_limit,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use structural::{
+    StructuralCapture, StructuralMatch, StructuralPattern, StructuralScanError, scan_structural,
+};
 pub use toolchain::{
     ArmFinding, ArmMeasurement, ArmObservation, ArmOutcome, ConfigurationSource,
     EnvironmentLedgerKind, FindingDetail, JavascriptUnusedStatus, LOCAL_PATH_MARKER,
@@ -132,6 +138,8 @@ pub use toolchain::{
     TOOLCHAIN_REPORT_VERSION, ToolEvidence, ToolRequirement, ToolchainDeclaration, ToolchainError,
     ToolchainReport, TreeInput, TreeJurisdiction, compare_predecessor, measure_toolchain,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use toolchain::{ToolchainSource, acquire_toolchain};
 #[cfg(not(target_arch = "wasm32"))]
 pub use tree::{SelectedTree, Selector, TreeError};
 pub use verdict::{
