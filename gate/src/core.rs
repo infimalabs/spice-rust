@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use wire::{Digest, Phase, TaskHandle};
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use acquire::{ClaimCapture, CoreSource, acquire_core};
+pub use acquire::{ActorCapture, ClaimCapture, CoreSource, acquire_core};
 #[cfg(not(target_arch = "wasm32"))]
 pub use config_keys::{CONFIG_KEY_DECLARATIONS, ConfigKeyDeclaration};
 pub use declaration::{

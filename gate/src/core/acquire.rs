@@ -40,7 +40,7 @@ use crate::jurisdiction::Jurisdiction;
 use crate::measure::Bounds;
 use crate::metrics::measure_repository_document;
 use crate::policy::{BoundName, PolicyContext};
-use crate::state::varied_elastic_limit;
+use crate::state::{ActorInputs, ActorResolution, varied_elastic_limit};
 use crate::tree::SelectedTree;
 
 /// The one program both Git-declared arms observe through.
@@ -74,6 +74,44 @@ pub enum ClaimCapture {
     },
 }
 
+/// The actor acting in this worktree, captured with the source.
+///
+/// Elastic headroom varies per actor, so acquisition needs an identity the
+/// selected tree cannot supply: the acting actor lives in the live worktree the
+/// gate does not read, exactly like the board head above. The caller that owns
+/// one hands it over whole, and a run with no acting actor says so rather than
+/// borrowing another input to stand in for one.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ActorCapture {
+    /// One actor is acting in this worktree.
+    Acting {
+        /// Identity that seeds this actor's headroom.
+        actor: String,
+    },
+    /// No actor is acting in this worktree.
+    Absent,
+}
+
+impl ActorCapture {
+    /// Resolve one candidate path's jitter seed through the documented order.
+    ///
+    /// [`ActorInputs`] is the single resolver both this family and every bound
+    /// rule seed through. The gate observes no published trailer and no
+    /// candidate blob, so an acting actor is the only member above the path
+    /// this capture can present, and its absence falls to the candidate path
+    /// the order already names last.
+    fn seed(&self, path: &str) -> Result<ActorResolution, CoreInputError> {
+        let inputs = ActorInputs::new(path).map_err(|error| {
+            CoreInputError::new(format!("actor provenance for {path:?}: {error}"))
+        })?;
+        Ok(match self {
+            Self::Acting { actor } => inputs.with_active_actor(actor),
+            Self::Absent => inputs,
+        }
+        .resolve_seed())
+    }
+}
+
 /// One captured Git source and everything acquisition is permitted to read.
 ///
 /// Capture computes the immutable tree identity once and, in the same moment,
@@ -86,6 +124,7 @@ pub struct CoreSource<'a> {
     jurisdiction: Jurisdiction,
     digest: Digest,
     claim: ClaimCapture,
+    actor: ActorCapture,
     git: GitObservations,
 }
 
@@ -104,6 +143,7 @@ impl<'a> CoreSource<'a> {
         tree: &'a SelectedTree,
         contract: &Contract,
         claim: ClaimCapture,
+        actor: ActorCapture,
     ) -> Result<Self, CoreInputError> {
         // Taken before the walk because it is the only subject here that can
         // still move: the selected tree was sealed at materialization, while
@@ -119,6 +159,7 @@ impl<'a> CoreSource<'a> {
             jurisdiction,
             digest,
             claim,
+            actor,
             git,
         })
     }
@@ -144,6 +185,12 @@ impl<'a> CoreSource<'a> {
     #[must_use]
     pub const fn claim(&self) -> &ClaimCapture {
         &self.claim
+    }
+
+    /// Acting actor captured with this source.
+    #[must_use]
+    pub const fn actor(&self) -> &ActorCapture {
+        &self.actor
     }
 }
 
@@ -250,43 +297,62 @@ fn repo_docs(
                 "measure selected repository document {path:?}: {error}"
             ))
         })?;
-        let bound = contract
-            .rule_policy()
-            .resolve_bound(
-                BoundName::RepoTruthDocChars,
-                &PolicyContext::new().with_path(path),
-            )
-            .map_err(|error| {
-                CoreInputError::new(format!(
-                    "resolve repository-document bound for {path:?}: {error}"
-                ))
-            })?;
-        let measurement = if bound.unlimited() {
-            DocMeasurement::unlimited(path, document.characters())?
-        } else {
-            let active_limit = varied_elastic_limit(
-                bound.limit(),
-                bound.ratchet_limit(),
-                path,
-                path,
-                contract
-                    .rule_policy()
-                    .document()
-                    .ratchet()
-                    .variation_percent(),
-            )
-            .map_err(|error| {
-                CoreInputError::new(format!(
-                    "resolve active repository-document bound for {path:?}: {error}"
-                ))
-            })?;
-            DocMeasurement::new(path, document.characters(), active_limit, false)?
-        };
-        measurements.push(measurement);
+        measurements.push(document_measurement(
+            &source.actor,
+            contract,
+            path,
+            document.characters(),
+        )?);
     }
     RepoDocsEvidence::new(measurements)
         .map(CoreEvidence::RepoDocs)
         .map(measured)
+}
+
+/// Measure one selected document against the acting actor's active cap.
+///
+/// The headroom seed is the actor's, never the document's own path: a seed
+/// taken from the path hands every actor one identical cap, which is the one
+/// thing per-actor variation exists to prevent. The path remains the first hash
+/// input, so a single actor still receives a different cap per document.
+fn document_measurement(
+    actor: &ActorCapture,
+    contract: &Contract,
+    path: &str,
+    characters: u64,
+) -> Result<DocMeasurement, CoreInputError> {
+    let bound = contract
+        .rule_policy()
+        .resolve_bound(
+            BoundName::RepoTruthDocChars,
+            &PolicyContext::new().with_path(path),
+        )
+        .map_err(|error| {
+            CoreInputError::new(format!(
+                "resolve repository-document bound for {path:?}: {error}"
+            ))
+        })?;
+    if bound.unlimited() {
+        return DocMeasurement::unlimited(path, characters);
+    }
+    let seed = actor.seed(path)?;
+    let active_limit = varied_elastic_limit(
+        bound.limit(),
+        bound.ratchet_limit(),
+        path,
+        seed.value(),
+        contract
+            .rule_policy()
+            .document()
+            .ratchet()
+            .variation_percent(),
+    )
+    .map_err(|error| {
+        CoreInputError::new(format!(
+            "resolve active repository-document bound for {path:?}: {error}"
+        ))
+    })?;
+    DocMeasurement::new(path, characters, active_limit, false)
 }
 
 fn plan_phase(claim: &ClaimCapture) -> CoreObservation {

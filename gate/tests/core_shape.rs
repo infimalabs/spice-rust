@@ -1,6 +1,6 @@
 use gate::{
-    ClaimCapture, Contract, CoreEvidence, CoreFinding, CoreObservation, CoreSource, CoreStanding,
-    GateId, RepoShapeEvidence, Selector, acquire_core,
+    ActorCapture, ClaimCapture, Contract, CoreEvidence, CoreFinding, CoreObservation, CoreSource,
+    CoreStanding, GateId, RepoShapeEvidence, Selector, acquire_core,
 };
 
 mod support;
@@ -26,7 +26,7 @@ fn shape_refusal(repository: &Tree) -> String {
         .materialize(&repository.root)
         .expect("materialize the captured index");
     let contract = Contract::load(tree.root()).expect("load the captured contract");
-    let source = CoreSource::capture(&tree, &contract, ClaimCapture::Idle)
+    let source = CoreSource::capture(&tree, &contract, ClaimCapture::Idle, ActorCapture::Absent)
         .expect("capture one immutable core source");
     acquire_core(&source, &contract)
         .expect_err("an unusable shape input must refuse rather than acquire")
@@ -36,7 +36,7 @@ fn shape_refusal(repository: &Tree) -> String {
 #[test]
 fn repository_shape_skips_only_when_no_package_root_is_declared_or_derivable() {
     let repository = contract_repository("core-acquire-shape-skipped");
-    let report = acquired(&repository, ClaimCapture::Idle);
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let shape = acquired_arm(&report, GateId::RepoShape);
 
     assert_eq!(shape.standing(), CoreStanding::Skipped);
@@ -57,7 +57,7 @@ fn repository_shape_skips_when_declared_roots_contain_no_modules() {
     repository.write("src/sample/README.md", "# No Python here\n");
     git_commit(&repository, "non-applicable shape fixture");
 
-    let report = acquired(&repository, ClaimCapture::Idle);
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let shape = acquired_arm(&report, GateId::RepoShape);
     assert_eq!(shape.standing(), CoreStanding::Skipped);
     let CoreObservation::Skipped { reason } = shape.observation() else {
@@ -75,7 +75,7 @@ fn repository_shape_measures_a_clean_declared_package() {
     repository.write("tests/test_feature.py", "def test_feature():\n    pass\n");
     git_commit(&repository, "clean shape fixture");
 
-    let report = acquired(&repository, ClaimCapture::Idle);
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let shape = acquired_arm(&report, GateId::RepoShape);
     assert_eq!(
         shape.observation(),
@@ -102,7 +102,7 @@ fn repository_shape_exempts_the_declared_generated_subtree() {
     repository.write("src/sample/generated/BadName.py", "GENERATED = True\n");
     git_commit(&repository, "generated shape fixture");
 
-    let report = acquired(&repository, ClaimCapture::Idle);
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let shape = acquired_arm(&report, GateId::RepoShape);
     assert_eq!(
         shape.observation(),
@@ -124,7 +124,7 @@ fn repository_shape_reports_the_exact_canonical_violation_set() {
     repository.write("tests/BadName.py", "");
     git_commit(&repository, "violating shape fixture");
 
-    let report = acquired(&repository, ClaimCapture::Idle);
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let shape = acquired_arm(&report, GateId::RepoShape);
     let expected = RepoShapeEvidence::new(vec![
         CoreFinding::new(
@@ -175,7 +175,7 @@ fn repository_shape_measures_a_package_root_only_pyproject_metadata_names() {
     repository.write("sample_app/BadName.py", "");
     git_commit(&repository, "pyproject-derived shape fixture");
 
-    let report = acquired(&repository, ClaimCapture::Idle);
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let shape = acquired_arm(&report, GateId::RepoShape);
     let expected = RepoShapeEvidence::new(vec![
         CoreFinding::new(
@@ -253,7 +253,7 @@ fn repository_shape_derives_a_package_root_from_every_supported_backend() {
         repository.write("src/other_pkg/BadOther.py", "");
         git_commit(&repository, "packaging backend shape fixture");
 
-        let report = acquired(&repository, ClaimCapture::Idle);
+        let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
         let shape = acquired_arm(&report, GateId::RepoShape);
         let expected = RepoShapeEvidence::new(
             expected_paths
@@ -339,7 +339,7 @@ fn repository_shape_scans_every_configured_test_root() {
     repository.write("tests/BadName.py", "");
     git_commit(&repository, "configured test root fixture");
 
-    let report = acquired(&repository, ClaimCapture::Idle);
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let shape = acquired_arm(&report, GateId::RepoShape);
     let expected = RepoShapeEvidence::new(vec![
         CoreFinding::new(
@@ -387,7 +387,7 @@ fn repository_shape_holds_names_to_the_tracked_boundary_pattern() {
     repository.write("src/sample/sharedgamma2.py", "");
     git_commit(&repository, "tracked boundary pattern fixture");
 
-    let report = acquired(&repository, ClaimCapture::Idle);
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let shape = acquired_arm(&report, GateId::RepoShape);
     let expected = RepoShapeEvidence::new(vec![
         CoreFinding::new(
@@ -428,7 +428,7 @@ fn repository_shape_exempts_nested_generated_globs_and_nothing_else() {
     repository.write("src/sample/BadName.py", "");
     git_commit(&repository, "nested generated shape fixture");
 
-    let report = acquired(&repository, ClaimCapture::Idle);
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let shape = acquired_arm(&report, GateId::RepoShape);
     let expected = RepoShapeEvidence::new(vec![
         CoreFinding::new(

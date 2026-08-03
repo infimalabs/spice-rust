@@ -9,7 +9,7 @@ use super::{
     BatteryInputs, CompiledArm, inline_evidence,
 };
 use crate::GateId;
-use crate::core::{ClaimCapture, CoreSource, acquire_core, evaluate_core};
+use crate::core::{ActorCapture, ClaimCapture, CoreSource, acquire_core, evaluate_core};
 use crate::hygiene::{HygieneConfiguration, HygieneSource, acquire_hygiene};
 use crate::input::Contract;
 use crate::toolchain::{RimCapture, ToolchainSource, acquire_toolchain, measure_toolchain};
@@ -80,10 +80,11 @@ impl RepositoryExecutor<'_> {
         repository: impl Into<PathBuf>,
         selector: &Selector,
         claim: ClaimCapture,
+        actor: ActorCapture,
         rim: RimCapture,
         hygiene: HygieneConfiguration,
     ) -> Result<Self, BatteryError> {
-        Self::capture_inner(repository, selector, claim, rim, hygiene, None)
+        Self::capture_inner(repository, selector, claim, actor, rim, hygiene, None)
     }
 }
 
@@ -98,17 +99,27 @@ impl<'trace> RepositoryExecutor<'trace> {
         repository: impl Into<PathBuf>,
         selector: &Selector,
         claim: ClaimCapture,
+        actor: ActorCapture,
         rim: RimCapture,
         hygiene: HygieneConfiguration,
         trace: &'trace mut dyn FnMut(RepositoryExecutionEvent),
     ) -> Result<Self, BatteryError> {
-        Self::capture_inner(repository, selector, claim, rim, hygiene, Some(trace))
+        Self::capture_inner(
+            repository,
+            selector,
+            claim,
+            actor,
+            rim,
+            hygiene,
+            Some(trace),
+        )
     }
 
     fn capture_inner(
         repository: impl Into<PathBuf>,
         selector: &Selector,
         claim: ClaimCapture,
+        actor: ActorCapture,
         rim: RimCapture,
         hygiene: HygieneConfiguration,
         trace: Option<&'trace mut dyn FnMut(RepositoryExecutionEvent)>,
@@ -124,9 +135,10 @@ impl<'trace> RepositoryExecutor<'trace> {
         // whole core family are read from the same `CoreSource`, and nothing
         // below this block can reach the live repository again.
         let (source, core) = {
-            let captured = CoreSource::capture(&tree, &contract, claim).map_err(|error| {
-                BatteryError::new(format!("cannot identify battery source: {error}"))
-            })?;
+            let captured =
+                CoreSource::capture(&tree, &contract, claim, actor).map_err(|error| {
+                    BatteryError::new(format!("cannot identify battery source: {error}"))
+                })?;
             let core = core_family(&captured, &contract);
             (captured.digest().clone(), core)
         };

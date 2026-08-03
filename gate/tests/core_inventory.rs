@@ -2,8 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use gate::{
-    ClaimCapture, ConfigInventoryEvidence, ConfigKeyEvidence, CoreArmReport, CoreEvidence,
-    CoreFinding, CoreObservation, CoreStanding, GateId,
+    ActorCapture, ClaimCapture, ConfigInventoryEvidence, ConfigKeyEvidence, CoreArmReport,
+    CoreEvidence, CoreFinding, CoreObservation, CoreStanding, GateId,
 };
 
 mod support;
@@ -24,7 +24,7 @@ fn configuration_key_admission_names_the_unknown_active_layer_key() {
     repository.write("src/app.rs", "pub fn app() {}\n");
     git_commit(&repository, "unknown active configuration key");
 
-    let report = acquired(&repository, ClaimCapture::Idle);
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let configuration = acquired_arm(&report, GateId::ConfigKeyValidity);
     let expected = ConfigKeyEvidence::new(vec![
         CoreFinding::new(
@@ -54,7 +54,7 @@ fn configuration_key_admission_names_a_known_key_forbidden_in_the_active_layer()
     repository.write("src/app.rs", "pub fn app() {}\n");
     git_commit(&repository, "forbidden active configuration layer");
 
-    let report = acquired(&repository, ClaimCapture::Idle);
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let configuration = acquired_arm(&report, GateId::ConfigKeyValidity);
     let expected = ConfigKeyEvidence::new(vec![
         CoreFinding::new(
@@ -76,7 +76,7 @@ fn configuration_key_admission_names_a_known_key_forbidden_in_the_active_layer()
 #[test]
 fn false_disable_inventory_fails_when_a_declared_path_has_no_consumer() {
     let repository = false_disable_repository("core-false-disable-missing", false);
-    let report = acquired(&repository, ClaimCapture::Idle);
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let arm = acquired_arm(&report, GateId::ConfigFalseDisable);
     let evidence = false_disable_evidence(arm);
 
@@ -95,7 +95,7 @@ fn false_disable_inventory_fails_when_a_declared_path_has_no_consumer() {
 #[test]
 fn false_disable_inventory_passes_with_canonical_honored_paths() {
     let repository = false_disable_repository("core-false-disable-honored", true);
-    let report = acquired(&repository, ClaimCapture::Idle);
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let arm = acquired_arm(&report, GateId::ConfigFalseDisable);
     let evidence = false_disable_evidence(arm);
     let expected = [
@@ -193,7 +193,7 @@ fn false_disable_inventory_authenticates_the_configuration_root_type() {
     );
     git_commit(&repository, "configuration Root authority fixture");
 
-    let report = acquired(&repository, ClaimCapture::Idle);
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let arm = acquired_arm(&report, GateId::ConfigFalseDisable);
     let evidence = false_disable_evidence(arm);
     let declared = [
@@ -229,7 +229,7 @@ fn current_false_disable_registry_and_consumer_are_one_inventory() {
     }
     git_commit(&repository, "current false-disable sources");
 
-    let report = acquired(&repository, ClaimCapture::Idle);
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let arm = acquired_arm(&report, GateId::ConfigFalseDisable);
     let evidence = false_disable_evidence(arm);
     let expected = [config_path(&["vendor", "codex", "fast_mode"])];
@@ -307,7 +307,7 @@ fn config_path(parts: &[&str]) -> Vec<String> {
 #[test]
 fn tracked_trust_inventory_fails_with_one_untracked_policy_source() {
     let repository = untracked_trust_repository("core-tracked-trust-untracked");
-    let report = acquired(&repository, ClaimCapture::Idle);
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let arm = acquired_arm(&report, GateId::ConfigTrackedTrust);
     let evidence = tracked_trust_evidence(arm);
     let expected = [
@@ -338,7 +338,7 @@ fn tracked_trust_inventory_passes_when_every_policy_source_is_tracked() {
         .expect("read current configuration registry");
     repository.write("spice/src/config.rs", &config);
     git_commit(&repository, "current tracked-trust registry");
-    let report = acquired(&repository, ClaimCapture::Idle);
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let arm = acquired_arm(&report, GateId::ConfigTrackedTrust);
     let evidence = tracked_trust_evidence(arm);
 
