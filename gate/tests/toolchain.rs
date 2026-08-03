@@ -50,13 +50,24 @@ const SCANNING_ARMS: [GateId; 4] = [
 /// The three compiled scanners the generic dirty fixture intentionally violates.
 const GENERIC_FINDING_ARMS: [GateId; 3] = [GateId::Formatters, GateId::LocalPaths, GateId::Taste];
 
+/// The arms that decode a selected source, and the source each one selects.
+///
+/// Naming the expected source per arm is what proves each reached its own
+/// selection rather than inheriting a refusal earned by another arm's file.
+const DECODING_ARMS: [(GateId, &str); 4] = [
+    (GateId::LocalPaths, SETTINGS),
+    (GateId::Taste, PROSE),
+    (GateId::EnvPolicy, SETTINGS),
+    (GateId::EnvNameLedger, SETTINGS),
+];
+
 /// The prose file both scanning fixtures carry, clean in one and dirty in the other.
 const PROSE: &str = "docs/guide.md";
 
 /// The Rust file the formatter reads and the marker scanner searches.
 const SOURCE: &str = "src/main.rs";
 
-/// The Python file carrying one waived access and one unwaived access.
+/// The Python file carrying one waived access and three unwaived lines.
 const SETTINGS: &str = "app/settings.py";
 
 /// The second Python file reading the same environment name.
@@ -75,6 +86,19 @@ const SHARED_NAME: &str = "SPICE_LANE"; // env-policy: allow
 
 /// The exact unwaived read both fixture files spell.
 const READ: &str = "cache = os.getenv(\"SPICE_LANE\")";
+
+/// One line reading a watchlisted name beside a name nobody wrote down.
+///
+/// Neither extractor sees this line whole: the watchlist names the first read
+/// and the access gate is the only thing that catches the second.
+const MIXED: &str = "flag = os.getenv(\"SPICE_LANE\") or os.environ[key]";
+
+/// One line committing two reads under names nobody wrote down.
+///
+/// Both accesses report under the same family idiom on the same line of the
+/// same file, so the column is the only thing that keeps the second from
+/// arriving as a duplicate of the first and being refused.
+const DYNAMIC: &str = "both = os.environ[first] or os.getenv(second)";
 
 /// The clean JavaScript module that makes the complete-tree analysis applicable.
 const JAVASCRIPT: &str = "web/app.js";
@@ -656,20 +680,26 @@ fn environment_repository(label: &str) -> Tree {
         "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
     );
     let marker = PACKAGED_ENV_PROFILE.allow_marker;
+    let waived = format!("home = os.getenv(\"{WAIVED_NAME}\")  # {marker}");
     repository.write(
         SETTINGS,
-        &format!("import os\n\nhome = os.getenv(\"{WAIVED_NAME}\")  # {marker}\n{READ}\n"),
+        &format!("import os\n\n{waived}\n{READ}\n{MIXED}\n{DYNAMIC}\n"),
     );
     repository.write(WORKER, &format!("import os\n\n{READ}\n"));
     git_commit(&repository, "fixture environment sources");
     repository
 }
 
-/// One waived access and one unwaived access are one finding, not two.
+/// Every unwaived access is one finding, and the waived one is none.
 ///
 /// The waiver is the whole point of the arm: an access is admitted by being
 /// written down, so an arm that reported the annotated read too would make the
 /// inventory unreadable and an arm that reported neither would make it empty.
+/// Past the waiver this holds the arm to one finding per access rather than per
+/// line, over a line whose two reads only one extractor each can name and a
+/// line whose two reads share a name and differ by column alone. Admission
+/// refuses findings that agree in every field, so the second of those two is
+/// retained only because the column tells it apart.
 #[test]
 fn the_environment_policy_arm_reports_only_the_unwaived_access() {
     let repository = environment_repository("toolchain-env-policy");
@@ -686,19 +716,26 @@ fn the_environment_policy_arm_reports_only_the_unwaived_access() {
         "the policy arm read a tree with one unwaived access: {}",
         observation.reason
     );
-    let column = READ.find(SHARED_NAME).expect("the read names the literal") + 1;
+    let idiom = python_idiom();
+    let access = |line: u32, source: &str, needle: &str, name: &str| ArmFinding {
+        path: Some(SETTINGS.to_owned()),
+        line: Some(line),
+        column: Some(fixture_column(source, needle)),
+        detail: FindingDetail::EnvironmentAccess {
+            name: name.to_owned(),
+            source: source.to_owned(),
+        },
+    };
     assert_eq!(
         observation.findings,
-        [ArmFinding {
-            path: Some(SETTINGS.to_owned()),
-            line: Some(4),
-            column: Some(u32::try_from(column).expect("a fixture column fits")),
-            detail: FindingDetail::EnvironmentAccess {
-                name: SHARED_NAME.to_owned(),
-                source: READ.to_owned(),
-            },
-        }],
-        "the policy arm named something other than the one unwaived access"
+        [
+            access(4, READ, SHARED_NAME, SHARED_NAME),
+            access(5, MIXED, SHARED_NAME, SHARED_NAME),
+            access(5, MIXED, "os.environ", &idiom),
+            access(6, DYNAMIC, "os.environ", &idiom),
+            access(6, DYNAMIC, "os.getenv", &idiom),
+        ],
+        "the policy arm named something other than the five unwaived accesses"
     );
 
     measure_toolchain(observations).expect("environment observations are admitted");
@@ -756,6 +793,10 @@ fn the_environment_ledger_arm_accounts_an_unaccounted_name_at_every_locus() {
                 line: 4,
             },
             SourceLocus {
+                path: SETTINGS.to_owned(),
+                line: 5,
+            },
+            SourceLocus {
                 path: WORKER.to_owned(),
                 line: 3,
             },
@@ -782,6 +823,89 @@ fn the_environment_ledger_arm_accounts_an_unaccounted_name_at_every_locus() {
     );
 
     measure_toolchain(observations).expect("environment observations are admitted");
+}
+
+/// A source that cannot be read terminates every arm that decodes one.
+///
+/// An arm answering from empty text would report a clean file it never opened,
+/// which is a pass nobody checked. The four decoding arms share one reader, so
+/// they are held to this together rather than one at a time. Both files are
+/// sealed because the arms select differently: the prose scanner never selects
+/// a Python source and the environment arms never select prose.
+#[test]
+fn a_selected_source_that_cannot_be_read_terminates_every_decoding_arm() {
+    let repository = contract_repository("toolchain-unreadable-source");
+    repository.write(
+        "Cargo.toml",
+        "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
+    );
+    repository.write(SETTINGS, &format!("import os\n\n{READ}\n"));
+    repository.write(PROSE, "# Guide\n\nOrdinary prose.\n");
+    git_commit(&repository, "fixture sources for one unreadable read");
+
+    let tree = Selector::staged()
+        .materialize(&repository.root)
+        .expect("materialize the captured index");
+    let contract = Contract::load(tree.root()).expect("load the captured contract");
+    let sealed = [SETTINGS, PROSE];
+    let restore: Vec<(PathBuf, fs::Permissions)> = sealed
+        .iter()
+        .map(|path| {
+            let file = tree.root().join(path);
+            let mode = fs::metadata(&file).expect("selected source").permissions();
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o000))
+                .expect("seal the selected source");
+            (file, mode)
+        })
+        .collect();
+
+    let source = ToolchainSource::capture(
+        &tree,
+        Some(toolchain_directory().into_os_string()),
+        sealed.iter().map(|path| (*path).to_owned()),
+    );
+    let observations = acquire_toolchain(&source, &contract);
+    for (file, mode) in restore {
+        fs::set_permissions(&file, mode).expect("restore the selected source");
+    }
+
+    for (id, named) in DECODING_ARMS {
+        let observation = arm(&observations, id);
+        assert_eq!(
+            observation.outcome,
+            ArmOutcome::ParseFailure,
+            "{} answered for bytes it never read: {}",
+            id.as_str(),
+            observation.reason
+        );
+        assert!(
+            observation.reason.contains(named),
+            "{} refused without naming {named}, the source it selects: {}",
+            id.as_str(),
+            observation.reason
+        );
+    }
+}
+
+/// The one-based character column one needle occupies in one fixture line.
+fn fixture_column(line: &str, needle: &str) -> u32 {
+    let start = line
+        .find(needle)
+        .expect("the fixture line names the needle");
+    u32::try_from(line[..start].chars().count() + 1).expect("a fixture column fits")
+}
+
+/// The stable finding name the profile gives a dynamic Python access.
+///
+/// Read rather than spelled, so the fixture cannot drift from the compiled
+/// profile the arm actually reports under.
+fn python_idiom() -> String {
+    PACKAGED_ENV_PROFILE
+        .finding_names
+        .iter()
+        .find(|(family, _)| *family == "python")
+        .map(|(_, name)| (*name).to_owned())
+        .expect("the packaged profile names the python access family")
 }
 
 /// The one observation carrying this identity.

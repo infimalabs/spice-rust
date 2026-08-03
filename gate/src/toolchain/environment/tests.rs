@@ -94,12 +94,60 @@ mod tests {
         assert_eq!(found[0].column, column_at(&line, "SPICE_HOOKS"));
     }
 
+    /// Two dynamic reads on one line are two accesses, not the first one.
+    ///
+    /// Neither read carries a literal, so both are named by the family idiom
+    /// and only the column tells them apart. A gate that answered with its
+    /// first match would report one place the environment is read where the
+    /// line commits two.
+    #[test]
+    fn two_dynamic_reads_on_one_line_are_two_accesses() {
+        let line = "value = os.environ[first] or os.getenv(second)";
+        let found = accesses(Some("python"), line);
+        assert_eq!(found.len(), 2, "one line, two dynamic reads, two accesses");
+        assert_eq!(found[0].name, "os env access");
+        assert_eq!(found[1].name, "os env access");
+        assert_eq!(found[0].column, column_at(line, "os.environ"));
+        assert_eq!(found[1].column, column_at(line, "os.getenv"));
+    }
+
+    /// A watchlisted read beside a dynamic read is two differently named accesses.
+    ///
+    /// This is the case neither extractor sees alone: the watchlist names the
+    /// first read and knows nothing of the second, the gate finds both idioms
+    /// and can name neither literal. Answering from whichever extractor spoke
+    /// first loses one of the two accesses the line commits.
+    #[test]
+    fn a_watchlisted_read_beside_a_dynamic_read_is_two_accesses() {
+        let line = "value = os.getenv(\"SPICE_HOOKS\") or os.environ[key]";
+        let found = accesses(Some("python"), line);
+        assert_eq!(found.len(), 2, "one literal read and one dynamic read");
+        assert_eq!(found[0].name, "SPICE_HOOKS");
+        assert_eq!(found[0].column, column_at(line, "SPICE_HOOKS"));
+        assert_eq!(found[1].name, "os env access");
+        assert_eq!(found[1].column, column_at(line, "os.environ"));
+    }
+
+    /// One read both extractors catch is one access, named by its literal.
+    ///
+    /// The gate matches the idiom and the watchlist matches the literal inside
+    /// it. Reporting both would double every ordinary read, so the literal is
+    /// owned by the access it sits in and the idiom stays silent about it.
+    #[test]
+    fn a_watchlisted_read_inside_an_idiom_is_one_access_not_two() {
+        let line = "value = os.getenv(\"SPICE_HOOKS\")";
+        let found = accesses(Some("python"), line);
+        assert_eq!(found.len(), 1, "both extractors caught one read");
+        assert_eq!(found[0].name, "SPICE_HOOKS");
+        assert_eq!(found[0].column, column_at(line, "SPICE_HOOKS"));
+    }
+
     /// A read under a name the watchlist never heard of is still an access.
     ///
     /// The gate names the family idiom because a dynamic read has no literal to
     /// name, and that is the whole reason it exists beside the watchlist.
     #[test]
-    fn a_read_no_watchlist_pattern_catches_falls_through_to_the_gate() {
+    fn a_read_no_watchlist_pattern_catches_is_named_by_the_gate() {
         let line = "home = os.environ[key]";
         let found = accesses(Some("python"), line);
         assert_eq!(found.len(), 1);

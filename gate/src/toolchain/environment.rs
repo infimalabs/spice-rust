@@ -139,12 +139,13 @@ impl Guarded {
         !self.guarded || !line[..start].ends_with('\\')
     }
 
-    /// Where the first admitted match of this pattern begins in one line.
-    fn find(&self, line: &str) -> Option<usize> {
+    /// Where every admitted match of this pattern begins in one line.
+    fn starts(&self, line: &str) -> Vec<usize> {
         self.pattern
             .find_iter(line)
             .map(|found| found.start())
-            .find(|start| self.admits(line, *start))
+            .filter(|start| self.admits(line, *start))
+            .collect()
     }
 
     /// Every admitted `name` capture of this pattern, by where the name begins.
@@ -205,44 +206,60 @@ pub(super) fn waived_lines(text: &str) -> BTreeSet<u32> {
 
 /// Every environment access one line commits, by one-based character column.
 ///
-/// The watchlist answers first and names the literal it caught. Only a line no
-/// watchlist pattern caught falls through to the access gate, which names the
-/// family idiom rather than a literal because a read under a name nobody wrote
-/// down has no literal to name. That fallthrough is the whole reason the gate
-/// exists: an inventory that saw only declared literals would miss every
-/// dynamic read.
+/// The line is read by two extractors that compose rather than pre-empt each
+/// other. The watchlist names the literals it caught; the family access gate
+/// finds the idioms an access is spelled with, which is what catches a read
+/// under a name nobody wrote down. Each literal belongs to the access it sits
+/// inside, which is the last gate match beginning at or before it, so a read
+/// naming a watchlisted literal inline is the one access it reads as, not two.
+///
+/// A gate match owning no literal is a dynamic read and reports under the
+/// family idiom. A literal owned by no gate match, which is every literal in a
+/// file of no declared family, reports under its own name. Nothing else is
+/// suppressed: two reads on one line are two accesses, whichever extractor
+/// names them.
 pub(super) fn accesses(family: Option<&str>, line: &str) -> Vec<Access> {
-    let mut caught: BTreeSet<(u32, String)> = BTreeSet::new();
-    for matcher in watchlist() {
-        for (start, name) in matcher.names(line) {
-            if let Some(column) = column_of(line, start) {
-                caught.insert((column, name));
-            }
+    let literals: BTreeSet<(usize, String)> = watchlist()
+        .iter()
+        .flat_map(|matcher| matcher.names(line))
+        .collect();
+    let gated = family.filter(|_| PACKAGED_ENV_PROFILE.access_gate);
+    let gates: BTreeSet<usize> = gated
+        .map(|family| gate_starts(family, line))
+        .unwrap_or_default();
+
+    let mut owning: BTreeSet<usize> = BTreeSet::new();
+    let mut found: Vec<Access> = Vec::new();
+    for (start, name) in literals {
+        if let Some(gate) = gates.range(..=start).next_back() {
+            owning.insert(*gate);
+        }
+        if let Some(column) = column_of(line, start) {
+            found.push(Access { column, name });
         }
     }
-    if !caught.is_empty() {
-        return caught
-            .into_iter()
-            .map(|(column, name)| Access { column, name })
-            .collect();
+    if let Some(family) = gated {
+        let idiom = finding_name(family);
+        found.extend(gates.difference(&owning).filter_map(|start| {
+            column_of(line, *start).map(|column| Access {
+                column,
+                name: idiom.clone(),
+            })
+        }));
     }
+    found.sort_by(|left, right| (left.column, &left.name).cmp(&(right.column, &right.name)));
+    found
+}
 
-    let Some(family) = family.filter(|_| PACKAGED_ENV_PROFILE.access_gate) else {
-        return Vec::new();
-    };
-    let gate = access_gate()
+/// Where every admitted access-gate match for one family begins in one line.
+fn gate_starts(family: &str, line: &str) -> BTreeSet<usize> {
+    access_gate()
         .iter()
         .find(|(named, _)| *named == family)
         .map(|(_, patterns)| patterns.as_slice())
-        .unwrap_or_default();
-    gate.iter()
-        .find_map(|matcher| matcher.find(line))
-        .and_then(|start| column_of(line, start))
-        .map(|column| Access {
-            column,
-            name: finding_name(family),
-        })
-        .into_iter()
+        .unwrap_or_default()
+        .iter()
+        .flat_map(|matcher| matcher.starts(line))
         .collect()
 }
 

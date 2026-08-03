@@ -241,7 +241,9 @@ fn plural(count: usize, unit: &str) -> String {
 ///
 /// The include is every regular file, decoded as UTF-8 with replacement, so a
 /// binary file is read and simply yields no marker rather than being skipped
-/// for a reason the declaration never names.
+/// for a reason the declaration never names. A file that cannot be read is a
+/// different thing and terminates the arm, because a scan reporting no marker
+/// in a file it never opened would name nothing and mean nothing.
 pub(super) fn local_paths(
     declaration: ToolchainDeclaration,
     root: &Path,
@@ -254,7 +256,11 @@ pub(super) fn local_paths(
 
     let mut findings = Vec::new();
     for path in &selected {
-        for (line, text) in numbered_lines(root, path) {
+        let lines = match numbered_lines(root, path) {
+            Ok(lines) => lines,
+            Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+        };
+        for (line, text) in lines {
             if text.contains(LOCAL_PATH_MARKER) {
                 findings.push(ArmFinding {
                     path: Some(path.clone()),
@@ -283,7 +289,11 @@ pub(super) fn taste(
 
     let mut findings = Vec::new();
     for path in &selected {
-        for (line, text) in numbered_lines(root, path) {
+        let lines = match numbered_lines(root, path) {
+            Ok(lines) => lines,
+            Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+        };
+        for (line, text) in lines {
             for (word, replacement) in discouraged(&text) {
                 findings.push(ArmFinding {
                     path: Some(path.clone()),
@@ -316,7 +326,10 @@ pub(super) fn env_policy(
     let mut findings = Vec::new();
     for path in &selected {
         let family = extension(path).and_then(|found| environment::family(&found));
-        let text = decoded(root, path);
+        let text = match decoded(root, path) {
+            Ok(text) => text,
+            Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+        };
         let waived = environment::waived_lines(&text);
         for (line, source) in numbered(&text) {
             if waived.contains(&line) {
@@ -357,7 +370,11 @@ pub(super) fn env_name_ledger(declaration: ToolchainDeclaration, root: &Path) ->
     let mut referenced: BTreeMap<String, Vec<SourceLocus>> = BTreeMap::new();
     for path in &sources {
         let family = extension(path).and_then(|found| environment::family(&found));
-        for (line, text) in numbered_lines(root, path) {
+        let lines = match numbered_lines(root, path) {
+            Ok(lines) => lines,
+            Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+        };
+        for (line, text) in lines {
             for name in environment::references(family, &text) {
                 referenced.entry(name).or_default().push(SourceLocus {
                     path: path.clone(),
@@ -1042,12 +1059,16 @@ fn selected_changes(
     selected
 }
 
-/// One selected file decoded with replacement, empty when it cannot be read.
-fn decoded(root: &Path, path: &str) -> String {
-    fs::read(root.join(path)).map_or_else(
-        |_| String::new(),
-        |bytes| String::from_utf8_lossy(&bytes).into_owned(),
-    )
+/// One selected file decoded with replacement, or why it could not be read.
+///
+/// Decoding is lossy so a binary file that reads is scanned and simply yields
+/// nothing, which is what the path scanner's include promises. A read that
+/// fails is a different thing entirely and terminates the arm that asked: an
+/// analysis answering from empty text would report a clean file it never opened.
+fn decoded(root: &Path, path: &str) -> Result<String, String> {
+    fs::read(root.join(path))
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        .map_err(|error| format!("the selected source {path} could not be read: {error}"))
 }
 
 /// One decoded file as one-based numbered lines.
@@ -1063,8 +1084,8 @@ fn numbered(text: &str) -> Vec<(u32, String)> {
 }
 
 /// One selected file decoded with replacement, as one-based numbered lines.
-fn numbered_lines(root: &Path, path: &str) -> Vec<(u32, String)> {
-    numbered(&decoded(root, path))
+fn numbered_lines(root: &Path, path: &str) -> Result<Vec<(u32, String)>, String> {
+    Ok(numbered(&decoded(root, path)?))
 }
 
 /// Every discouraged word one line of prose contains, with its replacement.
