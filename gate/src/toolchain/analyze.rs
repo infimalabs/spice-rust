@@ -468,11 +468,15 @@ struct JavascriptInventory {
     references: BTreeMap<String, (usize, usize)>,
 }
 
-/// Resolve JavaScript declarations against every identifier in the selected modules.
+/// Resolve top-level JavaScript declarations against every reference in the
+/// selected modules.
 ///
-/// The production count includes a declaration's own identifier. Consequently
-/// `(1, 0)` means a production declaration is truly unused, while `(1, n)`
-/// means its only uses beyond the declaration occur in configured test roots.
+/// Only a module's own top-level declarations are candidates, because a symbol
+/// nested inside a function or block is that scope's to spend and its disuse is
+/// not this gate's finding. The production count includes a declaration's own
+/// identifier. Consequently `(1, 0)` means a production declaration is truly
+/// unused, while `(1, n)` means its only uses beyond the declaration occur in
+/// configured test roots.
 pub(super) fn javascript_unused(declaration: ToolchainDeclaration, root: &Path) -> Analysis {
     let inventory = match javascript_inventory(root) {
         Ok(inventory) => inventory,
@@ -545,6 +549,13 @@ pub(super) fn javascript_unused(declaration: ToolchainDeclaration, root: &Path) 
     Analysis::scanned(declaration.id, inventory.examined, findings)
 }
 
+/// Count every reference vocabulary where it applies across the selected modules.
+///
+/// Production code reaches a symbol by name, so identifiers and object
+/// shorthand are what a reference looks like there. Test harnesses additionally
+/// reach production symbols through a sandbox namespace as `context.symbol`, so
+/// a property identifier is a genuine test-side reference and is counted only
+/// under a configured test path, where that is what it means.
 fn javascript_inventory(root: &Path) -> Result<JavascriptInventory, String> {
     let sources = javascript_sources(root)?;
     let mut declarations = Vec::new();
@@ -586,6 +597,11 @@ fn javascript_inventory(root: &Path) -> Result<JavascriptInventory, String> {
                         counts.1 += 1;
                     } else {
                         counts.0 += 1;
+                    }
+                }
+                StructuralPattern::JavaScriptPropertyIdentifier => {
+                    if *in_test {
+                        references.entry(capture.text().to_owned()).or_default().1 += 1;
                     }
                 }
                 StructuralPattern::FunctionCall => {

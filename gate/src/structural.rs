@@ -11,10 +11,12 @@ use tree_sitter_language::LanguageFn;
 pub enum StructuralPattern {
     /// A direct call whose callee is one identifier.
     FunctionCall,
-    /// One named JavaScript declaration.
+    /// One named JavaScript declaration at a module's own top level.
     JavaScriptDeclaration,
     /// One JavaScript identifier occurrence.
     JavaScriptIdentifier,
+    /// One JavaScript property-identifier occurrence, as in `object.symbol`.
+    JavaScriptPropertyIdentifier,
 }
 
 impl StructuralPattern {
@@ -25,6 +27,7 @@ impl StructuralPattern {
             Self::FunctionCall => "function-call",
             Self::JavaScriptDeclaration => "javascript-declaration",
             Self::JavaScriptIdentifier => "javascript-identifier",
+            Self::JavaScriptPropertyIdentifier => "javascript-property-identifier",
         }
     }
 }
@@ -201,12 +204,20 @@ const JAVASCRIPT_SYMBOL_PATTERNS: &[PatternDeclaration] = &[
         pattern: StructuralPattern::JavaScriptIdentifier,
         match_capture: "match",
     },
+    PatternDeclaration {
+        pattern: StructuralPattern::JavaScriptPropertyIdentifier,
+        match_capture: "match",
+    },
 ];
 
-const JAVASCRIPT_SYMBOL_BINDINGS: &[PatternBinding] = &[
-    PatternBinding {
-        pattern: StructuralPattern::JavaScriptDeclaration,
-        query: concat!(
+/// The named declaration forms a module can carry, as one query alternation.
+///
+/// Expanded twice below because a declaration is top-level whether it stands
+/// directly in the program or is wrapped by one export statement, and a
+/// tree-sitter pattern names one parent at a time.
+macro_rules! javascript_declaration_forms {
+    () => {
+        concat!(
             "[",
             " (class_declaration name: (identifier) @class)",
             " (function_declaration name: (identifier) @function)",
@@ -218,11 +229,29 @@ const JAVASCRIPT_SYMBOL_BINDINGS: &[PatternBinding] = &[
             " (variable_declaration ",
             "(variable_declarator name: (identifier) @variable))",
             "] @match",
+        )
+    };
+}
+
+const JAVASCRIPT_SYMBOL_BINDINGS: &[PatternBinding] = &[
+    PatternBinding {
+        pattern: StructuralPattern::JavaScriptDeclaration,
+        query: concat!(
+            "(program ",
+            javascript_declaration_forms!(),
+            ")",
+            " (program (export_statement ",
+            javascript_declaration_forms!(),
+            "))",
         ),
     },
     PatternBinding {
         pattern: StructuralPattern::JavaScriptIdentifier,
-        query: "(identifier) @symbol @match",
+        query: "[(identifier) (shorthand_property_identifier)] @symbol @match",
+    },
+    PatternBinding {
+        pattern: StructuralPattern::JavaScriptPropertyIdentifier,
+        query: "(property_identifier) @symbol @match",
     },
 ];
 
@@ -288,7 +317,13 @@ pub fn scan_structural(
     scan(grammar, source, PATTERNS, grammar.patterns)
 }
 
-/// Parse JavaScript once and retain its named declarations and identifiers.
+/// Parse JavaScript once and retain its top-level declarations, its
+/// identifiers, and its property identifiers.
+///
+/// Only declarations a module states at its own top level are retained, because
+/// a symbol nested inside a function or block is local to it and is not the
+/// module's to leave unused. Identifiers and property identifiers are retained
+/// separately so a caller can count each vocabulary where it applies.
 ///
 /// This stays crate-internal because it is one domain-specific query set over
 /// the shared structural scanner, not a second public scanner contract.
@@ -528,6 +563,54 @@ mod tests {
                 .count(),
             2,
             "the declaration and call are distinct identifier occurrences"
+        );
+    }
+
+    /// The module's own declarations, and nobody else's locals.
+    ///
+    /// A nested symbol still occurs as a reference, so the counts a caller
+    /// builds are unaffected; only its candidacy as an unused module symbol is
+    /// withdrawn. Object shorthand is one identifier occurrence and a property
+    /// access is a property identifier, so both remain observable to a caller
+    /// that counts them where they mean a reference.
+    #[test]
+    fn javascript_symbol_scan_retains_only_top_level_declarations_and_every_reference() {
+        let source = concat!(
+            "export function outer() {\n",
+            "  const nestedLocal = 1;\n",
+            "  function nestedHelper() {}\n",
+            "  return { nestedLocal, nestedHelper };\n",
+            "}\n",
+            "const moduleConstant = 2;\n",
+            "context.moduleConstant;\n",
+        );
+        let matches = scan_javascript_symbols(source).expect("JavaScript symbols scan");
+        let symbols = |pattern: StructuralPattern| -> Vec<&str> {
+            matches
+                .iter()
+                .filter(|matched| matched.pattern() == pattern)
+                .flat_map(|matched| matched.captures())
+                .map(StructuralCapture::text)
+                .collect()
+        };
+
+        assert_eq!(
+            symbols(StructuralPattern::JavaScriptDeclaration),
+            ["outer", "moduleConstant"],
+            "a nested declaration is local to its scope, not the module's to expose"
+        );
+        assert_eq!(
+            symbols(StructuralPattern::JavaScriptIdentifier)
+                .into_iter()
+                .filter(|text| *text == "nestedLocal")
+                .count(),
+            2,
+            "the nested declaration and its object shorthand are both occurrences"
+        );
+        assert_eq!(
+            symbols(StructuralPattern::JavaScriptPropertyIdentifier),
+            ["moduleConstant"],
+            "a property access is the only property-identifier occurrence here"
         );
     }
 
