@@ -233,7 +233,7 @@ pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 8] = [
             field: "gate::toolchain::LOCAL_PATH_MARKER + PACKAGED_SCANNER_EXCLUDES",
         },
         tools: &[],
-        analysis: &["supplied local-path finding normalization"],
+        analysis: &["compiled LOCAL_PATH_MARKER scan over selected changes"],
     },
     ToolchainDeclaration {
         id: GateId::Taste,
@@ -250,7 +250,7 @@ pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 8] = [
             field: "gate::toolchain::PACKAGED_TASTE_WORDS + PACKAGED_SCANNER_EXCLUDES",
         },
         tools: &[],
-        analysis: &["supplied taste finding normalization"],
+        analysis: &["compiled PACKAGED_TASTE_WORDS scan over selected changes"],
     },
     ToolchainDeclaration {
         id: GateId::CanvasWebTypecheck,
