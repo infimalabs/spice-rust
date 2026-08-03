@@ -710,6 +710,16 @@ fn contract_repository(label: &str) -> Tree {
     repository
 }
 
+fn shape_contract_repository(label: &str) -> Tree {
+    let repository = git_repository(label);
+    repository.write(
+        "spice.toml",
+        "[policy]\npackage_roots = [\"src/sample\"]\nname_cluster_threshold = 3\n",
+    );
+    repository.write("baseline.toml", &workspace_document("baseline.toml"));
+    repository
+}
+
 fn acquired(repository: &Tree, claim: ClaimCapture) -> CoreReport {
     let tree = Selector::staged()
         .materialize(&repository.root)
@@ -771,12 +781,133 @@ fn acquisition_measures_every_compiled_provider_the_core_fixtures_assert() {
 }
 
 #[test]
+fn repository_shape_skips_when_tracked_policy_declares_no_package_roots() {
+    let repository = contract_repository("core-acquire-shape-skipped");
+    let report = acquired(&repository, ClaimCapture::Idle);
+    let shape = acquired_arm(&report, GateId::RepoShape);
+
+    assert_eq!(shape.standing(), CoreStanding::Skipped);
+    let CoreObservation::Skipped { reason } = shape.observation() else {
+        panic!("repository shape without package roots must skip");
+    };
+    assert!(reason.contains("no Python package roots"));
+
+    repository.remove();
+}
+
+#[test]
+fn repository_shape_skips_when_declared_roots_contain_no_modules() {
+    let repository = shape_contract_repository("core-acquire-shape-no-modules");
+    repository.write("src/sample/README.md", "# No Python here\n");
+    git_commit(&repository, "non-applicable shape fixture");
+
+    let report = acquired(&repository, ClaimCapture::Idle);
+    let shape = acquired_arm(&report, GateId::RepoShape);
+    assert_eq!(shape.standing(), CoreStanding::Skipped);
+    let CoreObservation::Skipped { reason } = shape.observation() else {
+        panic!("a package root without admitted modules must skip");
+    };
+    assert!(reason.contains("no admitted modules"));
+
+    repository.remove();
+}
+
+#[test]
+fn repository_shape_measures_a_clean_declared_package() {
+    let repository = shape_contract_repository("core-acquire-shape-clean");
+    repository.write("src/sample/feature.py", "VALUE = 1\n");
+    repository.write("tests/test_feature.py", "def test_feature():\n    pass\n");
+    git_commit(&repository, "clean shape fixture");
+
+    let report = acquired(&repository, ClaimCapture::Idle);
+    let shape = acquired_arm(&report, GateId::RepoShape);
+    assert_eq!(
+        shape.observation(),
+        &measured(CoreEvidence::RepoShape(RepoShapeEvidence::new(Vec::new())))
+    );
+    assert_eq!(shape.standing(), CoreStanding::Passed);
+
+    repository.remove();
+}
+
+#[test]
+fn repository_shape_exempts_the_declared_generated_subtree() {
+    let repository = git_repository("core-acquire-shape-generated");
+    repository.write(
+        "spice.toml",
+        concat!(
+            "[policy]\n",
+            "package_roots = [\"src/sample\"]\n",
+            "generated_paths = [\"src/sample/generated\"]\n",
+        ),
+    );
+    repository.write("baseline.toml", &workspace_document("baseline.toml"));
+    repository.write("src/sample/feature.py", "VALUE = 1\n");
+    repository.write("src/sample/generated/BadName.py", "GENERATED = True\n");
+    git_commit(&repository, "generated shape fixture");
+
+    let report = acquired(&repository, ClaimCapture::Idle);
+    let shape = acquired_arm(&report, GateId::RepoShape);
+    assert_eq!(
+        shape.observation(),
+        &measured(CoreEvidence::RepoShape(RepoShapeEvidence::new(Vec::new())))
+    );
+    assert_eq!(shape.standing(), CoreStanding::Passed);
+
+    repository.remove();
+}
+
+#[test]
+fn repository_shape_reports_the_exact_canonical_violation_set() {
+    let repository = shape_contract_repository("core-acquire-shape-violations");
+    repository.write("src/sample/__init__.py", "");
+    repository.write("src/sample/BadName.py", "");
+    repository.write("src/sample/sharedalpha.py", "");
+    repository.write("src/sample/sharedbeta.py", "");
+    repository.write("src/sample/sharedgamma.py", "");
+    git_commit(&repository, "violating shape fixture");
+
+    let report = acquired(&repository, ClaimCapture::Idle);
+    let shape = acquired_arm(&report, GateId::RepoShape);
+    let expected = RepoShapeEvidence::new(vec![
+        CoreFinding::new(
+            "namespace-package",
+            Some("src/sample/__init__.py"),
+            "__init__.py is forbidden under a declared namespace-package root",
+        )
+        .unwrap(),
+        CoreFinding::new(
+            "path-shape",
+            Some("src/sample/BadName.py"),
+            "file name violates the boundary-underscore module shape",
+        )
+        .unwrap(),
+        CoreFinding::new(
+            "name-cluster-prefix",
+            Some("src/sample"),
+            concat!(
+                "3 sibling modules share the prefix \"shared\" ",
+                "(sharedalpha.py, sharedbeta.py, sharedgamma.py); ",
+                "split the shared concept into a namespace subpackage"
+            ),
+        )
+        .unwrap(),
+    ]);
+    assert_eq!(
+        shape.observation(),
+        &measured(CoreEvidence::RepoShape(expected))
+    );
+    assert_eq!(shape.standing(), CoreStanding::Failed);
+
+    repository.remove();
+}
+
+#[test]
 fn an_arm_without_a_compiled_provider_crosses_as_unsupported_and_never_as_a_pass() {
     let repository = contract_repository("core-acquire-uncompiled");
     let report = acquired(&repository, ClaimCapture::Idle);
 
     for id in [
-        GateId::RepoShape,
         GateId::RepoDocs,
         GateId::ConfigKeyValidity,
         GateId::ConfigFalseDisable,

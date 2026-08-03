@@ -20,6 +20,7 @@ use wire::{Digest, Phase, TaskHandle};
 
 use super::admission::{validate_git_tree, validate_repo_path};
 use super::declaration::CoreArmDeclaration;
+use super::shape::repo_shape;
 use super::{
     CoreArmInput, CoreEvidence, CoreInputError, CoreInputs, CoreObservation, CoreProvenance,
     MergeIntegrityEvidence, MergeTreeCompletion, PlanPhaseEvidence, StagingEvidence,
@@ -70,6 +71,7 @@ pub enum ClaimCapture {
 pub struct CoreSource<'a> {
     repository: PathBuf,
     root: &'a Path,
+    jurisdiction: Jurisdiction,
     digest: Digest,
     claim: ClaimCapture,
 }
@@ -95,6 +97,7 @@ impl<'a> CoreSource<'a> {
         Ok(Self {
             repository: repository.into(),
             root: tree.root(),
+            jurisdiction,
             digest,
             claim,
         })
@@ -110,6 +113,11 @@ impl<'a> CoreSource<'a> {
     #[must_use]
     pub const fn root(&self) -> &Path {
         self.root
+    }
+
+    /// Admitted inventory that produced this source identity.
+    pub(super) const fn jurisdiction(&self) -> &Jurisdiction {
+        &self.jurisdiction
     }
 
     /// Identity every acquired arm is bound to.
@@ -152,7 +160,7 @@ pub fn acquire_core(
             declaration.id(),
             source.digest.clone(),
             provenance,
-            observe(declaration, source, contract),
+            observe(declaration, source, contract)?,
         )?);
     }
     CoreInputs::new(arms)
@@ -162,18 +170,18 @@ fn observe(
     declaration: &CoreArmDeclaration,
     source: &CoreSource<'_>,
     contract: &Contract,
-) -> CoreObservation {
-    match declaration.id() {
+) -> Result<CoreObservation, CoreInputError> {
+    Ok(match declaration.id() {
         GateId::MergeIntegrity => merge_integrity(source, contract.bounds()),
         GateId::PlanPhase => plan_phase(&source.claim),
+        GateId::RepoShape => return repo_shape(source, contract),
         GateId::Staging => staging(source, contract.bounds()),
-        id @ (GateId::RepoShape
-        | GateId::RepoDocs
+        id @ (GateId::RepoDocs
         | GateId::ConfigKeyValidity
         | GateId::ConfigFalseDisable
         | GateId::ConfigTrackedTrust) => uncompiled(id),
         id => unreachable!("{id} is not a compiled core declaration"),
-    }
+    })
 }
 
 fn plan_phase(claim: &ClaimCapture) -> CoreObservation {
@@ -197,10 +205,6 @@ fn plan_phase(claim: &ClaimCapture) -> CoreObservation {
 /// rather than reporting a measurement nobody made.
 fn uncompiled(id: GateId) -> CoreObservation {
     let (reason, recovery) = match id {
-        GateId::RepoShape => (
-            "this build compiles no repository-shape provider",
-            "compile the namespace, path-shape, and name-cluster scanners over the selected tree",
-        ),
         GateId::RepoDocs => (
             "this build compiles no repository-document bound resolver",
             "compile doctrine-document selection with its active caps and peer bound claims",
