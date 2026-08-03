@@ -1,6 +1,5 @@
 //! Production execution of the compiled battery from one selected tree.
 
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use wire::Digest;
@@ -13,7 +12,7 @@ use crate::GateId;
 use crate::core::{ClaimCapture, CoreSource, acquire_core, evaluate_core};
 use crate::hygiene::{HygieneConfiguration, HygieneSource, acquire_hygiene};
 use crate::input::Contract;
-use crate::toolchain::{ToolchainSource, acquire_toolchain, measure_toolchain};
+use crate::toolchain::{RimCapture, ToolchainSource, acquire_toolchain, measure_toolchain};
 use crate::tree::{SelectedTree, Selector};
 
 const FAMILY_COUNT: usize = 4;
@@ -47,8 +46,7 @@ pub struct RepositoryExecutor<'trace> {
     contract: Contract,
     source: Digest,
     claim: ClaimCapture,
-    search_path: Option<OsString>,
-    changes: Vec<String>,
+    rim: RimCapture,
     hygiene: HygieneConfiguration,
     context: Option<BatteryContext>,
     families: [Option<FamilyExecution>; FAMILY_COUNT],
@@ -58,12 +56,11 @@ pub struct RepositoryExecutor<'trace> {
 impl RepositoryExecutor<'_> {
     /// Materialize and retain one repository selection for a complete battery.
     ///
-    /// `changes` names the selected-tree-relative paths the caller resolved as
-    /// changed, which every arm declaring [`crate::TreeInput::SelectedChanges`]
-    /// scans and nothing else. It is supplied rather than derived here for the
-    /// same reason `search_path` is: an executor that read the repository back
-    /// would measure a set the caller never saw, and an executor that defaulted
-    /// to none would scan nothing and call every tree clean.
+    /// `rim` carries the directory, executable search path, and changed paths
+    /// the caller observed at the binary rim. All three are supplied rather than
+    /// derived here: an executor that read the repository back would measure a
+    /// set the caller never saw, and an executor that defaulted to none would
+    /// scan nothing and call every tree clean.
     ///
     /// # Errors
     ///
@@ -73,19 +70,10 @@ impl RepositoryExecutor<'_> {
         repository: impl Into<PathBuf>,
         selector: &Selector,
         claim: ClaimCapture,
-        search_path: Option<OsString>,
-        changes: Vec<String>,
+        rim: RimCapture,
         hygiene: HygieneConfiguration,
     ) -> Result<Self, BatteryError> {
-        Self::capture_inner(
-            repository,
-            selector,
-            claim,
-            search_path,
-            changes,
-            hygiene,
-            None,
-        )
+        Self::capture_inner(repository, selector, claim, rim, hygiene, None)
     }
 }
 
@@ -100,28 +88,18 @@ impl<'trace> RepositoryExecutor<'trace> {
         repository: impl Into<PathBuf>,
         selector: &Selector,
         claim: ClaimCapture,
-        search_path: Option<OsString>,
-        changes: Vec<String>,
+        rim: RimCapture,
         hygiene: HygieneConfiguration,
         trace: &'trace mut dyn FnMut(RepositoryExecutionEvent),
     ) -> Result<Self, BatteryError> {
-        Self::capture_inner(
-            repository,
-            selector,
-            claim,
-            search_path,
-            changes,
-            hygiene,
-            Some(trace),
-        )
+        Self::capture_inner(repository, selector, claim, rim, hygiene, Some(trace))
     }
 
     fn capture_inner(
         repository: impl Into<PathBuf>,
         selector: &Selector,
         claim: ClaimCapture,
-        search_path: Option<OsString>,
-        changes: Vec<String>,
+        rim: RimCapture,
         hygiene: HygieneConfiguration,
         trace: Option<&'trace mut dyn FnMut(RepositoryExecutionEvent)>,
     ) -> Result<Self, BatteryError> {
@@ -141,8 +119,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             contract,
             source,
             claim,
-            search_path,
-            changes,
+            rim,
             hygiene,
             context: None,
             families: std::array::from_fn(|_| None),
@@ -229,8 +206,7 @@ impl<'trace> RepositoryExecutor<'trace> {
     }
 
     fn acquire_toolchain_family(&self) -> Result<Vec<ArmEvidence>, String> {
-        let source =
-            ToolchainSource::capture(&self.tree, self.search_path.clone(), self.changes.clone());
+        let source = ToolchainSource::capture(&self.tree, self.rim.clone());
         let report = measure_toolchain(acquire_toolchain(&source, &self.contract))
             .map_err(|error| error.to_string())?;
         Ok(report

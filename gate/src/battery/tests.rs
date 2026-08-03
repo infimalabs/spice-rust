@@ -251,8 +251,7 @@ fn repository_executor_owns_one_capture_and_runs_each_family_once() {
         &repository,
         &selector,
         crate::ClaimCapture::Idle,
-        None,
-        changes,
+        crate::RimCapture::new(&repository, None, changes),
         hygiene,
         &mut record,
     )
@@ -380,8 +379,11 @@ fn the_scanning_arms_report_exact_findings_over_the_captured_changes() {
         &repository,
         &crate::Selector::staged(),
         crate::ClaimCapture::Idle,
-        None,
-        [MARKED, PROSE].map(str::to_owned).to_vec(),
+        crate::RimCapture::new(
+            &repository,
+            None,
+            [MARKED, PROSE].map(str::to_owned).to_vec(),
+        ),
         hygiene,
     )
     .expect("capture production battery source");

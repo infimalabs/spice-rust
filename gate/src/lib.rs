@@ -140,12 +140,12 @@ pub use toolchain::{
     PACKAGED_ENV_PROFILE, PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_SCANNER_EXCLUDES,
     PACKAGED_TASTE_WORDS, PACKAGED_TEST_PATHS, PackagedEnvironmentProfile, PredecessorComparison,
     PredecessorComparisonError, PredecessorConfiguration, PredecessorFinding,
-    PredecessorObservation, PredecessorResult, SourceLocus, TOOLCHAIN_ARMS,
+    PredecessorObservation, PredecessorResult, ProbeFailure, SourceLocus, TOOLCHAIN_ARMS,
     TOOLCHAIN_REPORT_VERSION, ToolEvidence, ToolRequirement, ToolchainDeclaration, ToolchainError,
     ToolchainReport, TreeInput, TreeJurisdiction, compare_predecessor, measure_toolchain,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use toolchain::{ToolchainSource, acquire_toolchain};
+pub use toolchain::{RimCapture, ToolchainSource, acquire_toolchain};
 #[cfg(not(target_arch = "wasm32"))]
 pub use tree::{SelectedTree, Selector, TreeError};
 pub use verdict::{

@@ -15,6 +15,24 @@ fn exact_tools(gate: GateId) -> Vec<ToolEvidence> {
         .collect()
 }
 
+/// The same declared tool, resolved to `resolved` and never identified.
+fn unprobed_like(evidence: &ToolEvidence, resolved: &str) -> ToolEvidence {
+    let ToolEvidence::Identified {
+        name,
+        requested_program,
+        ..
+    } = evidence
+    else {
+        panic!("fixture tools begin identified");
+    };
+    ToolEvidence::Unprobed {
+        name: name.clone(),
+        requested_program: requested_program.clone(),
+        resolved_program: resolved.to_owned(),
+        failure: ProbeFailure::Refused { code: 1 },
+    }
+}
+
 fn fixture_finding(gate: GateId, suffix: &str) -> ArmFinding {
     if matches!(
         gate,
@@ -671,6 +689,31 @@ fn typed_state_invariants_refuse_ambiguous_or_incomplete_evidence() {
             gate: GateId::LocalPaths,
             ..
         })
+    ));
+}
+
+/// A program that never answered refuses its arm, and can do nothing else.
+///
+/// `ToolUnavailable` beside exact versions is the only pairing it has. Riding a
+/// pass would launder a tool that produced no version into a measurement taken
+/// with it, and a row naming no file claims a program was resolved while
+/// carrying nothing an operator could go look at.
+#[test]
+fn unprobed_evidence_cannot_ride_a_pass_or_name_no_file() {
+    let gate = GateId::Formatters;
+
+    let mut passed = fixture_observation(gate, ArmOutcome::Passed);
+    passed.tools[0] = unprobed_like(&passed.tools[0], "/fixture/bin/unprobed");
+    assert!(matches!(
+        fixture_report_result_with(passed),
+        Err(ToolchainError::InvalidToolEvidence { gate: invalid, .. }) if invalid == gate
+    ));
+
+    let mut unnamed = fixture_observation(gate, ArmOutcome::ToolUnavailable);
+    unnamed.tools[0] = unprobed_like(&unnamed.tools[0], "");
+    assert!(matches!(
+        fixture_report_result_with(unnamed),
+        Err(ToolchainError::InvalidToolEvidence { gate: invalid, .. }) if invalid == gate
     ));
 }
 

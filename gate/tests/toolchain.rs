@@ -8,8 +8,9 @@ use std::process::Command;
 use gate::{
     ArmFinding, ArmObservation, ArmOutcome, Contract, EnvironmentLedgerKind, FindingDetail, GateId,
     JavascriptUnusedStatus, LOCAL_PATH_MARKER, PACKAGED_ENV_PROFILE,
-    PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_TASTE_WORDS, Selector, SourceLocus, TOOLCHAIN_ARMS,
-    TOOLCHAIN_REPORT_VERSION, ToolEvidence, ToolchainSource, acquire_toolchain, measure_toolchain,
+    PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_TASTE_WORDS, ProbeFailure, RimCapture, Selector,
+    SourceLocus, TOOLCHAIN_ARMS, TOOLCHAIN_REPORT_VERSION, ToolEvidence, ToolchainSource,
+    acquire_toolchain, measure_toolchain,
 };
 use wire::{Digest, Domain};
 
@@ -22,6 +23,9 @@ const DRIFTED_VERSION: &str = "cargo 0.0.0 (0000000000 1970-01-01)";
 
 /// The program the drift fixture makes wrong; every other stub stays exact.
 const DRIFTED_PROGRAM: &str = "cargo";
+
+/// The status every stub exits with when it is asked to refuse its probe.
+const REFUSING_STATUS: i32 = 41;
 
 /// The arms this build analyzes itself rather than owing an analyzer.
 const COMPILED_ARMS: [GateId; 7] = [
@@ -231,6 +235,81 @@ fn a_program_absent_from_the_captured_search_path_is_unavailable_with_missing_ev
     }
 
     measure_toolchain(observations).expect("unavailable observations are admitted");
+}
+
+/// An installed program that refuses its probe is unusable, never absent.
+///
+/// Every declared program is present and every one of them refuses, which is
+/// the state the old acquisition could not tell apart from an empty search
+/// path. The arm still refuses the battery, and admission still takes it, so
+/// the distinction costs nothing: what changes is that the report names the
+/// exact file to look at and what it did, instead of sending an operator to
+/// install a program that is already there.
+#[test]
+fn a_declared_program_that_refuses_its_probe_is_unavailable_and_not_missing() {
+    let repository = scanning_repository(
+        "toolchain-refused",
+        "fn main() {}\n",
+        "Every sentence here is ordinary.\n",
+    );
+    let stubs = refusing_stub_directory("toolchain-refused-probes");
+    let observations = acquired(
+        &repository,
+        Some(stubs.root.clone().into_os_string()),
+        &[SOURCE, PROSE],
+    );
+
+    for (declaration, observation) in TOOLCHAIN_ARMS.into_iter().zip(&observations) {
+        if declaration.tools().is_empty() {
+            continue;
+        }
+        assert_eq!(
+            observation.outcome,
+            ArmOutcome::ToolUnavailable,
+            "{} read a refusing program as {:?}",
+            declaration.id().as_str(),
+            observation.reason
+        );
+        for (requirement, evidence) in declaration.tools().iter().zip(&observation.tools) {
+            let ToolEvidence::Unprobed {
+                resolved_program,
+                failure,
+                ..
+            } = evidence
+            else {
+                panic!(
+                    "{} called {} absent though the search path holds it",
+                    declaration.id().as_str(),
+                    requirement.program()
+                );
+            };
+            assert_eq!(
+                Path::new(resolved_program),
+                stubs.path(requirement.program()),
+                "{} named a file the search path does not hold",
+                declaration.id().as_str()
+            );
+            assert_eq!(
+                *failure,
+                ProbeFailure::Refused {
+                    code: REFUSING_STATUS
+                },
+                "{} lost the status {} refused with",
+                declaration.id().as_str(),
+                requirement.program()
+            );
+            assert!(
+                observation.reason.contains(resolved_program),
+                "{} refused without naming the file to look at: {:?}",
+                declaration.id().as_str(),
+                observation.reason
+            );
+        }
+    }
+
+    measure_toolchain(observations).expect("unprobed observations are admitted");
+    repository.remove();
+    stubs.remove();
 }
 
 #[test]
@@ -584,11 +663,19 @@ fn acquired(
         .expect("materialize the captured index");
     let contract = Contract::load(tree.root()).expect("load the captured contract");
     let selected: Vec<String> = changes.iter().map(|path| (*path).to_owned()).collect();
-    let source = ToolchainSource::capture(&tree, search_path, selected.clone());
+    let source = ToolchainSource::capture(
+        &tree,
+        RimCapture::new(&repository.root, search_path, selected.clone()),
+    );
     assert_eq!(
         source.root(),
         tree.root(),
         "acquisition observes the captured tree and not the live repository"
+    );
+    assert_eq!(
+        source.rim().directory(),
+        repository.root,
+        "acquisition anchors the search path where the rim captured it"
     );
     assert_eq!(
         source.changes(),
@@ -654,7 +741,9 @@ fn acquired(
         );
         for (requirement, evidence) in declaration.tools().iter().zip(&observation.tools) {
             let name = match evidence {
-                ToolEvidence::Missing { name, .. } | ToolEvidence::Identified { name, .. } => name,
+                ToolEvidence::Missing { name, .. }
+                | ToolEvidence::Unprobed { name, .. }
+                | ToolEvidence::Identified { name, .. } => name,
             };
             assert_eq!(
                 name,
@@ -876,8 +965,11 @@ fn a_selected_source_that_cannot_be_read_terminates_every_decoding_arm() {
 
     let source = ToolchainSource::capture(
         &tree,
-        Some(toolchain_directory().into_os_string()),
-        sealed.iter().map(|path| (*path).to_owned()),
+        RimCapture::new(
+            &repository.root,
+            Some(toolchain_directory().into_os_string()),
+            sealed.iter().map(|path| (*path).to_owned()),
+        ),
     );
     let observations = acquire_toolchain(&source, &contract);
     for (file, mode) in restore {
@@ -981,6 +1073,26 @@ fn stub_directory(label: &str) -> Tree {
     stubs
 }
 
+/// One directory supplying every declared program, each refusing its probe.
+///
+/// The programs are present and executable, so nothing here is missing. They
+/// simply never answer the question their declaration asks them.
+fn refusing_stub_directory(label: &str) -> Tree {
+    let stubs = Tree::new(label);
+    for declaration in TOOLCHAIN_ARMS {
+        for requirement in declaration.tools() {
+            stubs.write(
+                requirement.program(),
+                &format!("#!/bin/sh\nexit {REFUSING_STATUS}\n"),
+            );
+            let path = stubs.path(requirement.program());
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+                .unwrap_or_else(|error| panic!("make {} executable: {error}", path.display()));
+        }
+    }
+    stubs
+}
+
 /// Exact-version stubs whose cargo analysis refuses before trunk can run.
 fn canvas_nonzero_directory(label: &str) -> Tree {
     let stubs = Tree::new(label);
@@ -1036,6 +1148,9 @@ fn canvas_nonzero_directory(label: &str) -> Tree {
 }
 
 /// Ask one resolved program for its version without going through the gate.
+///
+/// Nothing is trimmed, because the point of the comparison this feeds is that
+/// acquisition retained the bytes rather than a cleaned-up rendering of them.
 fn probe_directly(program: &Path, arguments: &[&str]) -> String {
     let output = Command::new(program)
         .args(arguments)
@@ -1046,8 +1161,5 @@ fn probe_directly(program: &Path, arguments: &[&str]) -> String {
         "{} refused its version probe",
         program.display()
     );
-    String::from_utf8(output.stdout)
-        .expect("version probes print UTF-8")
-        .trim_end_matches(['\n', '\r'])
-        .to_owned()
+    String::from_utf8(output.stdout).expect("version probes print UTF-8")
 }
