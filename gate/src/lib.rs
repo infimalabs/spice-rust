@@ -57,6 +57,8 @@ pub use core::{
     PredecessorObservation as CorePredecessorObservation, RepoDocLimit, RepoDocsEvidence,
     RepoShapeEvidence, StagingEvidence, core_declarations, evaluate_core,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use core::{ClaimCapture, CoreSource, acquire_core};
 pub use hygiene::{
     AnalysisEvidence, AnalyzerEvidence, EvidenceState, ExclusionEvidence, HYGIENE_ARMS,
     HYGIENE_REPORT_VERSION, HygieneAnalysisError, HygieneAnalyzer, HygieneConfiguration,
