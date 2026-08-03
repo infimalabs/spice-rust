@@ -1,5 +1,6 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
+use std::path::Path;
 use std::str::FromStr;
 
 use gate::{
@@ -704,7 +705,12 @@ fn acquisition_measures_every_compiled_provider_the_core_fixtures_assert() {
     let repository = contract_repository("core-acquire-clean");
     let report = acquired(&repository, ClaimCapture::Idle);
 
-    for id in [GateId::MergeIntegrity, GateId::PlanPhase, GateId::Staging] {
+    for id in [
+        GateId::MergeIntegrity,
+        GateId::PlanPhase,
+        GateId::Staging,
+        GateId::ConfigKeyValidity,
+    ] {
         let acquired = acquired_arm(&report, id);
         assert_eq!(
             acquired.observation(),
@@ -718,6 +724,66 @@ fn acquisition_measures_every_compiled_provider_the_core_fixtures_assert() {
             acquired.diagnostic()
         );
     }
+
+    repository.remove();
+}
+
+#[test]
+fn configuration_key_admission_names_the_unknown_active_layer_key() {
+    let repository = git_repository("core-acquire-config-key-unknown");
+    repository.write(
+        "spice.toml",
+        concat!("[tasks]\n", "stems = ['rim']\n", "strms = ['misspelled']\n",),
+    );
+    repository.write("baseline.toml", &workspace_document("baseline.toml"));
+    repository.write("src/app.rs", "pub fn app() {}\n");
+    git_commit(&repository, "unknown active configuration key");
+
+    let report = acquired(&repository, ClaimCapture::Idle);
+    let configuration = acquired_arm(&report, GateId::ConfigKeyValidity);
+    let expected = ConfigKeyEvidence::new(vec![
+        CoreFinding::new(
+            "unknown-key",
+            None::<String>,
+            concat!(
+                "tracked layer key tasks.strms is absent from the packaged ",
+                "configuration registry",
+            ),
+        )
+        .expect("unknown-key evidence"),
+    ]);
+    assert_eq!(
+        configuration.observation(),
+        &measured(CoreEvidence::ConfigKeyValidity(expected))
+    );
+    assert_eq!(configuration.standing(), CoreStanding::Failed);
+
+    repository.remove();
+}
+
+#[test]
+fn configuration_key_admission_names_a_known_key_forbidden_in_the_active_layer() {
+    let repository = git_repository("core-acquire-config-key-layer");
+    repository.write("spice.toml", "[say]\ncommand = ['/usr/bin/say']\n");
+    repository.write("baseline.toml", &workspace_document("baseline.toml"));
+    repository.write("src/app.rs", "pub fn app() {}\n");
+    git_commit(&repository, "forbidden active configuration layer");
+
+    let report = acquired(&repository, ClaimCapture::Idle);
+    let configuration = acquired_arm(&report, GateId::ConfigKeyValidity);
+    let expected = ConfigKeyEvidence::new(vec![
+        CoreFinding::new(
+            "forbidden-layer",
+            None::<String>,
+            "tracked layer key say.command is packaged for the local layer, not tracked",
+        )
+        .expect("layer-policy evidence"),
+    ]);
+    assert_eq!(
+        configuration.observation(),
+        &measured(CoreEvidence::ConfigKeyValidity(expected))
+    );
+    assert_eq!(configuration.standing(), CoreStanding::Failed);
 
     repository.remove();
 }
@@ -845,29 +911,228 @@ fn repository_shape_reports_the_exact_canonical_violation_set() {
 }
 
 #[test]
-fn an_arm_without_a_compiled_provider_crosses_as_unsupported_and_never_as_a_pass() {
-    let repository = contract_repository("core-acquire-uncompiled");
+fn false_disable_inventory_fails_when_a_declared_path_has_no_consumer() {
+    let repository = false_disable_repository("core-false-disable-missing", false);
     let report = acquired(&repository, ClaimCapture::Idle);
+    let arm = acquired_arm(&report, GateId::ConfigFalseDisable);
+    let evidence = false_disable_evidence(arm);
 
-    for id in [
-        GateId::ConfigKeyValidity,
-        GateId::ConfigFalseDisable,
-        GateId::ConfigTrackedTrust,
-    ] {
-        let acquired = acquired_arm(&report, id);
-        let CoreObservation::Unsupported { reason, recovery } = acquired.observation() else {
-            panic!("{id} claimed a measurement no compiled provider made");
-        };
-        assert!(!reason.trim().is_empty() && !recovery.trim().is_empty());
-        assert_eq!(acquired.standing(), CoreStanding::Unsupported);
-        assert!(
-            !acquired.standing().admits(),
-            "{id} must not admit the battery while its provider is missing"
-        );
-        assert!(acquired.diagnostic().contains(recovery));
-    }
+    assert_eq!(
+        evidence.declared(),
+        &[config_path(&["vendor", "codex", "fast_mode"])]
+    );
+    assert!(evidence.observed().is_empty());
+    assert!(evidence.violations().is_empty());
+    assert_eq!(arm.standing(), CoreStanding::Failed);
+    assert!(arm.diagnostic().contains("missing=vendor.codex.fast_mode"));
 
     repository.remove();
+}
+
+#[test]
+fn false_disable_inventory_passes_with_canonical_honored_paths() {
+    let repository = false_disable_repository("core-false-disable-honored", true);
+    let report = acquired(&repository, ClaimCapture::Idle);
+    let arm = acquired_arm(&report, GateId::ConfigFalseDisable);
+    let evidence = false_disable_evidence(arm);
+    let expected = [
+        config_path(&["alpha", "feature", "enabled"]),
+        config_path(&["vendor", "codex", "fast_mode"]),
+    ];
+
+    assert_eq!(evidence.declared(), expected);
+    assert_eq!(evidence.observed(), expected);
+    assert!(evidence.violations().is_empty());
+    assert_eq!(arm.standing(), CoreStanding::Passed);
+
+    repository.remove();
+}
+
+#[test]
+fn current_false_disable_registry_and_consumer_are_one_inventory() {
+    let repository = contract_repository("core-false-disable-current");
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    for path in ["spice/src/config.rs", "spice/src/agent_launch.rs"] {
+        let source = fs::read_to_string(workspace.join(path))
+            .unwrap_or_else(|error| panic!("read current {path}: {error}"));
+        repository.write(path, &source);
+    }
+    git_commit(&repository, "current false-disable sources");
+
+    let report = acquired(&repository, ClaimCapture::Idle);
+    let arm = acquired_arm(&report, GateId::ConfigFalseDisable);
+    let evidence = false_disable_evidence(arm);
+    let expected = [config_path(&["vendor", "codex", "fast_mode"])];
+
+    assert_eq!(evidence.declared(), expected);
+    assert_eq!(evidence.observed(), expected);
+    assert_eq!(arm.standing(), CoreStanding::Passed);
+
+    repository.remove();
+}
+
+fn false_disable_repository(label: &str, honored: bool) -> Tree {
+    let repository = contract_repository(label);
+    let alpha = if honored {
+        concat!(
+            "    fixed \"alpha.feature.enabled\" {\n",
+            "        kind: Boolean,\n",
+            "        builtin: Some(Builtin::Boolean(false)),\n",
+            "        layers: TRACKED,\n",
+            "        class: Policy,\n",
+            "        flag: None,\n",
+            "    }\n",
+        )
+    } else {
+        ""
+    };
+    let config = [
+        concat!(
+            "registry! {\n",
+            "    fixed \"vendor.codex.fast_mode\" {\n",
+            "        kind: Boolean,\n",
+            "        builtin: Some(Builtin::Boolean(false)),\n",
+            "        layers: TRACKED,\n",
+            "        class: Policy,\n",
+            "        flag: None,\n",
+            "    }\n",
+        ),
+        alpha,
+        "}\n",
+    ]
+    .concat();
+    repository.write("spice/src/config.rs", &config);
+    if honored {
+        repository.write(
+            "spice/src/consumer.rs",
+            concat!(
+                "fn consume(root: &Root) -> bool {\n",
+                "    let configured = root.vendor().codex();\n",
+                "    let fast = configured.fast_mode();\n",
+                "    let feature = root.alpha().feature();\n",
+                "    fast || feature.enabled()\n",
+                "}\n",
+            ),
+        );
+    }
+    git_commit(&repository, "false-disable inventory fixture");
+    repository
+}
+
+fn false_disable_evidence(arm: &CoreArmReport) -> &ConfigInventoryEvidence {
+    let CoreObservation::Measured {
+        evidence: CoreEvidence::ConfigFalseDisable(evidence),
+    } = arm.observation()
+    else {
+        panic!("false-disable acquisition must produce inventory evidence")
+    };
+    evidence
+}
+
+fn config_path(parts: &[&str]) -> Vec<String> {
+    parts.iter().map(|part| (*part).to_owned()).collect()
+}
+
+#[test]
+fn tracked_trust_inventory_fails_with_one_untracked_policy_source() {
+    let repository = untracked_trust_repository("core-tracked-trust-untracked");
+    let report = acquired(&repository, ClaimCapture::Idle);
+    let arm = acquired_arm(&report, GateId::ConfigTrackedTrust);
+    let evidence = tracked_trust_evidence(arm);
+    let expected = [
+        config_path(&["lane", "vendor"]),
+        config_path(&["vendor", "codex", "binary"]),
+    ];
+
+    assert_eq!(evidence.declared(), expected);
+    assert_eq!(evidence.observed(), &expected[..1]);
+    let [violation] = evidence.violations() else {
+        panic!("one untracked policy source must yield exactly one violation")
+    };
+    assert_eq!(violation.code(), "config-tracked-trust::untracked-source");
+    assert!(!violation.detail().trim().is_empty());
+    assert!(violation.detail().contains("vendor.codex.binary"));
+    assert_eq!(arm.standing(), CoreStanding::Failed);
+
+    repository.remove();
+}
+
+#[test]
+fn tracked_trust_inventory_passes_when_every_policy_source_is_tracked() {
+    let repository = contract_repository("core-tracked-trust-current");
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let config = fs::read_to_string(workspace.join("spice/src/config.rs"))
+        .expect("read current configuration registry");
+    repository.write("spice/src/config.rs", &config);
+    git_commit(&repository, "current tracked-trust registry");
+    let report = acquired(&repository, ClaimCapture::Idle);
+    let arm = acquired_arm(&report, GateId::ConfigTrackedTrust);
+    let evidence = tracked_trust_evidence(arm);
+
+    assert!(!evidence.declared().is_empty());
+    assert_eq!(evidence.observed(), evidence.declared());
+    assert!(
+        evidence
+            .declared()
+            .contains(&config_path(&["vendor", "codex", "binary"]))
+    );
+    assert!(
+        !evidence
+            .declared()
+            .contains(&config_path(&["say", "command"]))
+    );
+    assert!(evidence.violations().is_empty());
+    assert_eq!(arm.standing(), CoreStanding::Passed);
+
+    repository.remove();
+}
+
+fn untracked_trust_repository(label: &str) -> Tree {
+    let repository = contract_repository(label);
+    repository.write(
+        "spice/src/config.rs",
+        concat!(
+            "registry! {\n",
+            "    fixed \"lane.vendor\" {\n",
+            "        kind: String,\n",
+            "        builtin: Some(Builtin::String(\"codex\")),\n",
+            "        layers: TRACKED_FLAG,\n",
+            "        class: Policy,\n",
+            "        flag: None,\n",
+            "    }\n",
+            "    fixed \"vendor.codex.binary\" {\n",
+            "        kind: String,\n",
+            "        builtin: Some(Builtin::String(\"codex\")),\n",
+            "        layers: LOCAL,\n",
+            "        class: Policy,\n",
+            "        flag: None,\n",
+            "    }\n",
+            "    fixed \"say.command\" {\n",
+            "        kind: StringList,\n",
+            "        builtin: Some(Builtin::Strings(&[])),\n",
+            "        layers: LOCAL,\n",
+            "        class: MachineLocal,\n",
+            "        flag: None,\n",
+            "    }\n",
+            "}\n",
+        ),
+    );
+    git_commit(&repository, "tracked-trust inventory fixture");
+    repository
+}
+
+fn tracked_trust_evidence(arm: &CoreArmReport) -> &ConfigInventoryEvidence {
+    let CoreObservation::Measured {
+        evidence: CoreEvidence::ConfigTrackedTrust(evidence),
+    } = arm.observation()
+    else {
+        panic!("tracked-trust acquisition must produce inventory evidence")
+    };
+    evidence
 }
 
 #[test]

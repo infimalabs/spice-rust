@@ -20,6 +20,8 @@ use sill::{Argv, Completion, spawn};
 use wire::{Digest, Phase, TaskHandle};
 
 use super::admission::{validate_git_tree, validate_repo_path};
+use super::config_keys::config_keys;
+use super::configuration_inventory::ConfigurationInventorySource;
 use super::declaration::CoreArmDeclaration;
 use super::shape::repo_shape;
 use super::{
@@ -152,6 +154,7 @@ pub fn acquire_core(
     source: &CoreSource<'_>,
     contract: &Contract,
 ) -> Result<CoreInputs, CoreInputError> {
+    let configuration = ConfigurationInventorySource::capture(source)?;
     let mut arms = Vec::with_capacity(core_declarations().len());
     for declaration in core_declarations() {
         let predecessor = declaration.predecessor();
@@ -164,7 +167,7 @@ pub fn acquire_core(
             declaration.id(),
             source.digest.clone(),
             provenance,
-            observe(declaration, source, contract)?,
+            observe(declaration, source, contract, &configuration)?,
         )?);
     }
     CoreInputs::new(arms)
@@ -174,16 +177,17 @@ fn observe(
     declaration: &CoreArmDeclaration,
     source: &CoreSource<'_>,
     contract: &Contract,
+    configuration: &ConfigurationInventorySource,
 ) -> Result<CoreObservation, CoreInputError> {
     Ok(match declaration.id() {
         GateId::MergeIntegrity => merge_integrity(source, contract.bounds()),
         GateId::PlanPhase => plan_phase(&source.claim),
         GateId::RepoShape => return repo_shape(source, contract),
         GateId::Staging => staging(source, contract.bounds()),
+        GateId::ConfigKeyValidity => return config_keys(contract),
         GateId::RepoDocs => return repo_docs(source, contract),
-        id @ (GateId::ConfigKeyValidity
-        | GateId::ConfigFalseDisable
-        | GateId::ConfigTrackedTrust) => uncompiled(id),
+        GateId::ConfigFalseDisable => return configuration.false_disable(),
+        GateId::ConfigTrackedTrust => return configuration.tracked_trust(),
         id => unreachable!("{id} is not a compiled core declaration"),
     })
 }
@@ -267,32 +271,6 @@ fn plan_phase(claim: &ClaimCapture) -> CoreObservation {
         ClaimCapture::Absent { reason } => CoreObservation::Skipped {
             reason: reason.clone(),
         },
-    }
-}
-
-/// Arms whose compiled provider this build does not carry yet.
-///
-/// Each states the exact provider that is missing, so the report names the work
-/// rather than reporting a measurement nobody made.
-fn uncompiled(id: GateId) -> CoreObservation {
-    let (reason, recovery) = match id {
-        GateId::ConfigKeyValidity => (
-            "this build compiles no layered-configuration admission provider",
-            "compile packaged and active-layer key admission over the resolved configuration",
-        ),
-        GateId::ConfigFalseDisable => (
-            "this build compiles no false-disable registry inventory",
-            "compile the declared false-disable paths and the consumers that resolve them",
-        ),
-        GateId::ConfigTrackedTrust => (
-            "this build compiles no tracked-config trust inventory",
-            "compile the declared executable repository config paths and their approval guards",
-        ),
-        id => unreachable!("{id} has a compiled core provider"),
-    };
-    CoreObservation::Unsupported {
-        reason: reason.to_owned(),
-        recovery: recovery.to_owned(),
     }
 }
 
