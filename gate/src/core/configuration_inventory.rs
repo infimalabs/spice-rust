@@ -5,7 +5,10 @@ use std::fs;
 
 use syn::parse::{Parse, ParseStream};
 use syn::visit::{self, Visit};
-use syn::{Expr, FnArg, Ident, ItemFn, ItemMacro, Lit, LitStr, Pat, Token, Type, braced};
+use syn::{
+    Expr, FnArg, GenericParam, Ident, Item, ItemFn, ItemMacro, Lit, LitStr, Pat, PathArguments,
+    Stmt, Token, Type, UseTree, braced,
+};
 
 use super::acquire::CoreSource;
 use super::{ConfigInventoryEvidence, CoreEvidence, CoreFinding, CoreInputError, CoreObservation};
@@ -57,12 +60,12 @@ impl ConfigurationInventorySource {
             .map(|row| row.path)
             .collect();
 
-        let mut consumer = ConsumerVisitor::new(&declared);
+        let mut observed = BTreeSet::new();
         for source in &self.files {
+            let mut consumer = ConsumerVisitor::new(&declared);
             consumer.visit_file(&source.syntax);
+            observed.append(&mut consumer.observed);
         }
-        let observed = std::mem::take(&mut consumer.observed);
-        drop(consumer);
         let evidence = ConfigInventoryEvidence::new(
             declared.into_iter().collect(),
             observed.into_iter().collect(),
@@ -281,41 +284,99 @@ fn ungroup(expression: &Expr) -> &Expr {
 
 struct ConsumerVisitor<'a> {
     declared: &'a BTreeSet<Vec<String>>,
+    roots: BTreeSet<String>,
     observed: BTreeSet<Vec<String>>,
-    aliases: BTreeMap<String, Vec<String>>,
+    bindings: BTreeMap<String, Vec<String>>,
 }
 
 impl<'a> ConsumerVisitor<'a> {
     fn new(declared: &'a BTreeSet<Vec<String>>) -> Self {
         Self {
             declared,
+            roots: BTreeSet::new(),
             observed: BTreeSet::new(),
-            aliases: BTreeMap::new(),
+            bindings: BTreeMap::new(),
         }
     }
 }
 
 impl<'ast> Visit<'ast> for ConsumerVisitor<'_> {
+    fn visit_file(&mut self, node: &'ast syn::File) {
+        let outer = std::mem::replace(&mut self.roots, authoritative_root_imports(&node.items));
+        visit::visit_file(self, node);
+        self.roots = outer;
+    }
+
+    fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
+        let Some((_, items)) = &node.content else {
+            return;
+        };
+        let outer = std::mem::replace(&mut self.roots, authoritative_root_imports(items));
+        let outer_bindings = std::mem::take(&mut self.bindings);
+        for item in items {
+            self.visit_item(item);
+        }
+        self.bindings = outer_bindings;
+        self.roots = outer;
+    }
+
     fn visit_item_fn(&mut self, node: &'ast ItemFn) {
-        let outer = self.aliases.clone();
+        let outer = std::mem::take(&mut self.bindings);
+        let mut roots = self.roots.clone();
+        for parameter in &node.sig.generics.params {
+            if let GenericParam::Type(parameter) = parameter {
+                roots.remove(&parameter.ident.to_string());
+            }
+        }
         for argument in &node.sig.inputs {
             let FnArg::Typed(argument) = argument else {
                 continue;
             };
-            if root_type(&argument.ty)
+            if root_type(&argument.ty, &roots)
                 && let Pat::Ident(binding) = &*argument.pat
             {
-                self.aliases.insert(binding.ident.to_string(), Vec::new());
+                self.bindings.insert(binding.ident.to_string(), Vec::new());
             }
         }
         visit::visit_item_fn(self, node);
-        self.aliases = outer;
+        self.bindings = outer;
     }
 
     fn visit_block(&mut self, node: &'ast syn::Block) {
-        let outer = self.aliases.clone();
+        let outer = self.bindings.clone();
+        let outer_roots = self.roots.clone();
+        for statement in &node.stmts {
+            let Stmt::Item(item) = statement else {
+                continue;
+            };
+            match item {
+                Item::Use(import) => {
+                    apply_root_import(&import.tree, &mut Vec::new(), &mut self.roots);
+                }
+                Item::Enum(item) => {
+                    self.roots.remove(&item.ident.to_string());
+                }
+                Item::Struct(item) => {
+                    self.roots.remove(&item.ident.to_string());
+                }
+                Item::Trait(item) => {
+                    self.roots.remove(&item.ident.to_string());
+                }
+                Item::TraitAlias(item) => {
+                    self.roots.remove(&item.ident.to_string());
+                }
+                Item::Type(item) => {
+                    self.roots.remove(&item.ident.to_string());
+                }
+                Item::Union(item) => {
+                    self.roots.remove(&item.ident.to_string());
+                }
+                _ => {}
+            }
+        }
         visit::visit_block(self, node);
-        self.aliases = outer;
+        self.roots = outer_roots;
+        self.bindings = outer;
     }
 
     fn visit_local(&mut self, node: &'ast syn::Local) {
@@ -324,18 +385,18 @@ impl<'ast> Visit<'ast> for ConsumerVisitor<'_> {
             let path = node
                 .init
                 .as_ref()
-                .and_then(|initial| method_path(&initial.expr, &self.aliases));
+                .and_then(|initial| method_path(&initial.expr, &self.bindings));
             if let Some(path) = path {
-                self.aliases.insert(name, path);
+                self.bindings.insert(name, path);
             } else {
-                self.aliases.remove(&name);
+                self.bindings.remove(&name);
             }
         }
         visit::visit_local(self, node);
     }
 
     fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
-        if let Some(path) = method_call_path(node, &self.aliases)
+        if let Some(path) = method_call_path(node, &self.bindings)
             && self.declared.contains(&path)
         {
             self.observed.insert(path);
@@ -344,37 +405,98 @@ impl<'ast> Visit<'ast> for ConsumerVisitor<'_> {
     }
 }
 
-fn method_path(expression: &Expr, aliases: &BTreeMap<String, Vec<String>>) -> Option<Vec<String>> {
+fn method_path(expression: &Expr, bindings: &BTreeMap<String, Vec<String>>) -> Option<Vec<String>> {
     match ungroup(expression) {
-        Expr::MethodCall(call) => method_call_path(call, aliases),
+        Expr::MethodCall(call) => method_call_path(call, bindings),
         Expr::Path(path) if path.path.segments.len() == 1 => {
             let name = path.path.segments.first()?.ident.to_string();
-            aliases.get(&name).cloned()
+            bindings.get(&name).cloned()
         }
-        Expr::Reference(reference) => method_path(&reference.expr, aliases),
+        Expr::Reference(reference) => method_path(&reference.expr, bindings),
         _ => None,
     }
 }
 
 fn method_call_path(
     call: &syn::ExprMethodCall,
-    aliases: &BTreeMap<String, Vec<String>>,
+    bindings: &BTreeMap<String, Vec<String>>,
 ) -> Option<Vec<String>> {
-    let mut path = method_path(&call.receiver, aliases)?;
+    let mut path = method_path(&call.receiver, bindings)?;
     path.push(call.method.to_string());
     Some(path)
 }
 
-fn root_type(kind: &Type) -> bool {
+fn authoritative_root_imports(items: &[Item]) -> BTreeSet<String> {
+    let mut roots = BTreeSet::new();
+    for item in items {
+        if let Item::Use(import) = item {
+            apply_root_import(&import.tree, &mut Vec::new(), &mut roots);
+        }
+    }
+    roots
+}
+
+fn apply_root_import(tree: &UseTree, prefix: &mut Vec<String>, roots: &mut BTreeSet<String>) {
+    match tree {
+        UseTree::Path(path) => {
+            prefix.push(path.ident.to_string());
+            apply_root_import(&path.tree, prefix, roots);
+            prefix.pop();
+        }
+        UseTree::Name(name) => {
+            prefix.push(name.ident.to_string());
+            if authoritative_root_path(prefix.iter().map(String::as_str)) {
+                roots.insert(name.ident.to_string());
+            } else {
+                roots.remove(&name.ident.to_string());
+            }
+            prefix.pop();
+        }
+        UseTree::Rename(rename) => {
+            prefix.push(rename.ident.to_string());
+            if authoritative_root_path(prefix.iter().map(String::as_str)) {
+                roots.insert(rename.rename.to_string());
+            } else {
+                roots.remove(&rename.rename.to_string());
+            }
+            prefix.pop();
+        }
+        UseTree::Group(group) => {
+            for item in &group.items {
+                apply_root_import(item, prefix, roots);
+            }
+        }
+        UseTree::Glob(_) => {}
+    }
+}
+
+fn root_type(kind: &Type, roots: &BTreeSet<String>) -> bool {
     match kind {
-        Type::Group(group) => root_type(&group.elem),
-        Type::Paren(parenthesized) => root_type(&parenthesized.elem),
-        Type::Path(path) => path
-            .path
-            .segments
-            .last()
-            .is_some_and(|segment| segment.ident == "Root"),
-        Type::Reference(reference) => root_type(&reference.elem),
+        Type::Group(group) => root_type(&group.elem, roots),
+        Type::Paren(parenthesized) => root_type(&parenthesized.elem, roots),
+        Type::Path(path)
+            if path.qself.is_none()
+                && path.path.leading_colon.is_none()
+                && path
+                    .path
+                    .segments
+                    .iter()
+                    .all(|segment| matches!(segment.arguments, PathArguments::None)) =>
+        {
+            let segments: Vec<_> = path
+                .path
+                .segments
+                .iter()
+                .map(|segment| segment.ident.to_string())
+                .collect();
+            authoritative_root_path(segments.iter().map(String::as_str))
+                || matches!(segments.as_slice(), [name] if roots.contains(name))
+        }
+        Type::Reference(reference) => root_type(&reference.elem, roots),
         _ => false,
     }
+}
+
+fn authoritative_root_path<'a>(segments: impl Iterator<Item = &'a str>) -> bool {
+    segments.eq(["crate", "config", "Root"])
 }

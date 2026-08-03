@@ -949,6 +949,111 @@ fn false_disable_inventory_passes_with_canonical_honored_paths() {
 }
 
 #[test]
+fn false_disable_inventory_authenticates_the_configuration_root_type() {
+    let repository = contract_repository("core-false-disable-root-authority");
+    repository.write(
+        "spice/src/config.rs",
+        concat!(
+            "registry! {\n",
+            "    fixed \"direct.enabled\" {\n",
+            "        kind: Boolean,\n",
+            "        builtin: Some(Builtin::Boolean(false)),\n",
+            "        layers: TRACKED,\n",
+            "        class: Policy,\n",
+            "        flag: None,\n",
+            "    }\n",
+            "    fixed \"renamed.enabled\" {\n",
+            "        kind: Boolean,\n",
+            "        builtin: Some(Builtin::Boolean(false)),\n",
+            "        layers: TRACKED,\n",
+            "        class: Policy,\n",
+            "        flag: None,\n",
+            "    }\n",
+            "    fixed \"qualified.enabled\" {\n",
+            "        kind: Boolean,\n",
+            "        builtin: Some(Builtin::Boolean(false)),\n",
+            "        layers: TRACKED,\n",
+            "        class: Policy,\n",
+            "        flag: None,\n",
+            "    }\n",
+            "    fixed \"vendor.codex.fast_mode\" {\n",
+            "        kind: Boolean,\n",
+            "        builtin: Some(Builtin::Boolean(false)),\n",
+            "        layers: TRACKED,\n",
+            "        class: Policy,\n",
+            "        flag: None,\n",
+            "    }\n",
+            "}\n",
+        ),
+    );
+    repository.write(
+        "spice/src/direct.rs",
+        concat!(
+            "use crate::config::Root;\n",
+            "fn consume(root: &Root) -> bool {\n",
+            "    let direct = root.direct();\n",
+            "    direct.enabled()\n",
+            "}\n",
+        ),
+    );
+    repository.write(
+        "spice/src/renamed.rs",
+        concat!(
+            "use crate::config::Root as ConfigRoot;\n",
+            "fn consume(root: &ConfigRoot) -> bool {\n",
+            "    root.renamed().enabled()\n",
+            "}\n",
+        ),
+    );
+    repository.write(
+        "spice/src/qualified.rs",
+        concat!(
+            "fn consume(root: &crate::config::Root) -> bool {\n",
+            "    root.qualified().enabled()\n",
+            "}\n",
+        ),
+    );
+    repository.write(
+        "spice/src/unrelated.rs",
+        concat!(
+            "use crate::config::Root;\n",
+            "mod shadowed {\n",
+            "    struct Root;\n",
+            "    fn consume(root: &Root) -> bool {\n",
+            "        root.vendor().codex().fast_mode()\n",
+            "    }\n",
+            "}\n",
+            "fn generic<Root>(root: &Root) -> bool {\n",
+            "    root.vendor().codex().fast_mode()\n",
+            "}\n",
+        ),
+    );
+    git_commit(&repository, "configuration Root authority fixture");
+
+    let report = acquired(&repository, ClaimCapture::Idle);
+    let arm = acquired_arm(&report, GateId::ConfigFalseDisable);
+    let evidence = false_disable_evidence(arm);
+    let declared = [
+        config_path(&["direct", "enabled"]),
+        config_path(&["qualified", "enabled"]),
+        config_path(&["renamed", "enabled"]),
+        config_path(&["vendor", "codex", "fast_mode"]),
+    ];
+    let observed = [
+        config_path(&["direct", "enabled"]),
+        config_path(&["qualified", "enabled"]),
+        config_path(&["renamed", "enabled"]),
+    ];
+
+    assert_eq!(evidence.declared(), declared);
+    assert_eq!(evidence.observed(), observed);
+    assert_eq!(arm.standing(), CoreStanding::Failed);
+    assert!(arm.diagnostic().contains("missing=vendor.codex.fast_mode"));
+
+    repository.remove();
+}
+
+#[test]
 fn current_false_disable_registry_and_consumer_are_one_inventory() {
     let repository = contract_repository("core-false-disable-current");
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1008,6 +1113,7 @@ fn false_disable_repository(label: &str, honored: bool) -> Tree {
         repository.write(
             "spice/src/consumer.rs",
             concat!(
+                "use crate::config::Root;\n",
                 "fn consume(root: &Root) -> bool {\n",
                 "    let configured = root.vendor().codex();\n",
                 "    let fast = configured.fast_mode();\n",
