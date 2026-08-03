@@ -1,6 +1,13 @@
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
+
     use crate::toolchain::{PACKAGED_SCANNER_EXCLUDES, TOOLCHAIN_ARMS, declaration};
+    use sill::Deadlines;
+
+    static NEXT_CANVAS_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
     /// The compiled exclusions and the retained sentences are one rule set.
     ///
@@ -69,7 +76,10 @@ mod tests {
         for declaration in TOOLCHAIN_ARMS {
             let compiled = matches!(
                 declaration.id,
-                GateId::Formatters | GateId::LocalPaths | GateId::Taste
+                GateId::Formatters
+                    | GateId::LocalPaths
+                    | GateId::Taste
+                    | GateId::CanvasWebTypecheck
             );
             let owed = super::super::acquire::owed_analyzer(declaration.id);
             assert_eq!(
@@ -79,6 +89,119 @@ mod tests {
                 declaration.id.as_str()
             );
         }
+    }
+
+    #[test]
+    fn canvas_argument_vectors_are_exactly_the_two_declared_analyses() {
+        let declared = declaration(GateId::CanvasWebTypecheck)
+            .expect("canvas arm is declared")
+            .analysis;
+        let compiled = [
+            format!("{CARGO} {}", CARGO_WASM_ARGUMENTS.join(" ")),
+            format!("{TRUNK} {}", TRUNK_BUILD_ARGUMENTS.join(" ")),
+        ];
+
+        assert_eq!(compiled, declared);
+    }
+
+    #[test]
+    fn canvas_runs_both_declared_commands_in_order_from_their_owned_directories() {
+        let fixture = CanvasFixture::new("ordered", true);
+        let cargo = fixture.script("cargo", "exit 0");
+        let trunk = fixture.script("trunk", "exit 0");
+
+        let analysis = fixture.analyze(&cargo, &trunk, &canvas_bounds(Duration::from_secs(2)));
+
+        assert_eq!(analysis.outcome, ArmOutcome::Passed);
+        assert!(analysis.findings.is_empty());
+        assert_eq!(analysis.exit_code, None);
+        let root = fs::canonicalize(&fixture.root).expect("canonical fixture root");
+        assert_eq!(fixture.log_lines(), [
+            format!(
+                "{}|check --locked --workspace --target wasm32-unknown-unknown",
+                root.display()
+            ),
+            format!(
+                "{}|build index.html --release --locked --filehash=false",
+                root.join("app").display()
+            ),
+        ]);
+    }
+
+    #[test]
+    fn canvas_applicability_refuses_before_either_analysis_runs() {
+        let fixture = CanvasFixture::new("not-applicable", false);
+        let cargo = fixture.script("cargo", "exit 99");
+        let trunk = fixture.script("trunk", "exit 99");
+
+        let analysis = fixture.analyze(&cargo, &trunk, &canvas_bounds(Duration::from_secs(2)));
+
+        assert_eq!(analysis.outcome, ArmOutcome::NotApplicable);
+        assert!(fixture.log_lines().is_empty());
+    }
+
+    #[test]
+    fn canvas_typed_diagnostic_stops_the_pair_with_source_evidence() {
+        let fixture = CanvasFixture::new("diagnostic", true);
+        let cargo = fixture.script(
+            "cargo",
+            concat!(
+                "printf '%s\\n' 'error[E0308]: mismatched types' ",
+                "' --> app/src/lib.rs:7:9' >&2\n",
+                "exit 1",
+            ),
+        );
+        let trunk = fixture.script("trunk", "exit 99");
+
+        let analysis = fixture.analyze(&cargo, &trunk, &canvas_bounds(Duration::from_secs(2)));
+
+        assert_eq!(analysis.outcome, ArmOutcome::Findings);
+        assert_eq!(analysis.exit_code, None);
+        assert_eq!(analysis.findings, [ArmFinding {
+            path: Some("app/src/lib.rs".to_owned()),
+            line: Some(7),
+            column: Some(9),
+            detail: FindingDetail::CanvasWebOutput {
+                code: "E0308".to_owned(),
+                message: "mismatched types".to_owned(),
+            },
+        }]);
+        assert_eq!(fixture.log_lines().len(), 1, "trunk ran after a finding");
+    }
+
+    #[test]
+    fn canvas_unparsed_nonzero_retains_the_code_and_invents_no_findings() {
+        let fixture = CanvasFixture::new("nonzero", true);
+        let cargo = fixture.script("cargo", "printf 'opaque refusal\\n' >&2\nexit 17");
+        let trunk = fixture.script("trunk", "exit 99");
+
+        let analysis = fixture.analyze(&cargo, &trunk, &canvas_bounds(Duration::from_secs(2)));
+
+        assert_eq!(analysis.outcome, ArmOutcome::NonzeroAnalysis);
+        assert_eq!(analysis.exit_code, Some(17));
+        assert!(analysis.findings.is_empty());
+        assert_eq!(fixture.log_lines().len(), 1, "trunk ran after refusal");
+    }
+
+    #[test]
+    fn canvas_small_runtime_bound_reports_timeout_and_stops_the_pair() {
+        let fixture = CanvasFixture::new("timeout", true);
+        let cargo = fixture.script("cargo", "/bin/sleep 5\nexit 0");
+        let trunk = fixture.script("trunk", "exit 99");
+
+        let analysis = fixture.analyze(&cargo, &trunk, &canvas_bounds(Duration::from_millis(25)));
+
+        assert_eq!(analysis.outcome, ArmOutcome::Timeout);
+        assert_eq!(analysis.exit_code, None);
+        assert!(analysis.findings.is_empty());
+        assert!(analysis.reason.contains("cargo wasm32 check"));
+        assert!(
+            fixture
+                .log_lines()
+                .iter()
+                .all(|call| !call.contains("build index.html")),
+            "trunk ran after timeout"
+        );
     }
 
     #[test]
@@ -189,5 +312,92 @@ mod tests {
         let findings = differing_files(root, &printed);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].line, Some(8));
+    }
+
+    struct CanvasFixture {
+        root: PathBuf,
+        log: PathBuf,
+    }
+
+    impl CanvasFixture {
+        fn new(label: &str, applicable: bool) -> Self {
+            let sequence = NEXT_CANVAS_FIXTURE.fetch_add(1, Ordering::Relaxed);
+            let root = std::env::temp_dir().join(format!(
+                "gate-canvas-{label}-{}-{sequence}",
+                std::process::id()
+            ));
+            if root.exists() {
+                fs::remove_dir_all(&root).expect("remove stale canvas fixture");
+            }
+            fs::create_dir_all(root.join("app/src")).expect("create canvas fixture tree");
+            fs::write(root.join("app/src/lib.rs"), "pub fn canvas() {}\n")
+                .expect("write canvas source");
+            if applicable {
+                fs::write(root.join("Cargo.toml"), "[workspace]\n")
+                    .expect("write workspace manifest");
+                fs::write(root.join("app/index.html"), "<main></main>\n")
+                    .expect("write canvas entrypoint");
+            }
+            let log = root.join("calls.log");
+            Self { root, log }
+        }
+
+        fn script(&self, name: &str, body: &str) -> PathBuf {
+            let path = self.root.join(name);
+            let log = self.log.to_string_lossy();
+            assert!(!log.contains('\''), "fixture log path cannot be shell quoted");
+            fs::write(
+                &path,
+                format!(
+                    "#!/bin/sh\nprintf '%s|%s\\n' \"$(pwd)\" \"$*\" >> '{log}'\n{body}\n"
+                ),
+            )
+            .expect("write canvas tool stub");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+                .expect("make canvas tool stub executable");
+            path
+        }
+
+        fn analyze(&self, cargo: &Path, trunk: &Path, bounds: &Bounds) -> Analysis {
+            let programs = BTreeMap::from([
+                (CARGO, cargo.to_str().expect("UTF-8 cargo stub")),
+                (TRUNK, trunk.to_str().expect("UTF-8 trunk stub")),
+            ]);
+            canvas_web_typecheck(
+                declaration(GateId::CanvasWebTypecheck).expect("canvas arm is declared"),
+                &self.root,
+                bounds,
+                &programs,
+            )
+        }
+
+        fn log_lines(&self) -> Vec<String> {
+            let text = match fs::read_to_string(&self.log) {
+                Ok(text) => text,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+                Err(error) => panic!("read canvas call log: {error}"),
+            };
+            text
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        }
+    }
+
+    impl Drop for CanvasFixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.root).expect("remove canvas fixture");
+        }
+    }
+
+    fn canvas_bounds(runtime: Duration) -> Bounds {
+        Bounds::new(
+            "canvas analyzer test",
+            Deadlines::new(runtime, Duration::from_secs(1), Duration::from_secs(1))
+                .expect("valid canvas deadlines"),
+            Duration::from_millis(25),
+            16 * 1024,
+        )
+        .expect("valid canvas bounds")
     }
 }

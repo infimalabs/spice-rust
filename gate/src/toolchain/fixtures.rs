@@ -36,7 +36,7 @@ fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding {
         ),
         GateId::CanvasWebTypecheck => (
             format!("app/src/{suffix}.rs"),
-            FindingDetail::CanvasType {
+            FindingDetail::CanvasWebOutput {
                 code: "E0308".to_owned(),
                 message: "mismatched types".to_owned(),
             },
