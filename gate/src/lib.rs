@@ -29,6 +29,8 @@ pub mod policy;
 pub mod ratchet;
 pub mod report;
 pub mod state;
+#[cfg(not(target_arch = "wasm32"))]
+mod structural;
 pub mod toolchain;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tree;
@@ -120,6 +122,10 @@ pub use state::{
     ClaimStatus, CurrentState, KeyError, LatchEntry, LatchKind, LatchObservation, LatchTransition,
     PeerClaim, PendingState, PredecessorSources, RenameMap, StateDecision, StateError,
     StateErrorKind, StateKey, StateLedger, StateReceipt, current_state_path, varied_elastic_limit,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use structural::{
+    StructuralCapture, StructuralMatch, StructuralPattern, StructuralScanError, scan_structural,
 };
 pub use toolchain::{
     ArmFinding, ArmMeasurement, ArmObservation, ArmOutcome, ConfigurationSource,
