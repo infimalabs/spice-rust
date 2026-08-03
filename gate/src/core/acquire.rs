@@ -185,7 +185,8 @@ fn observe(
         GateId::Staging => staging(source, contract.bounds()),
         GateId::RepoDocs => return repo_docs(source, contract),
         GateId::ConfigFalseDisable => return configuration.false_disable(),
-        id @ (GateId::ConfigKeyValidity | GateId::ConfigTrackedTrust) => uncompiled(id),
+        GateId::ConfigTrackedTrust => return configuration.tracked_trust(),
+        GateId::ConfigKeyValidity => uncompiled(GateId::ConfigKeyValidity),
         id => unreachable!("{id} is not a compiled core declaration"),
     })
 }
@@ -281,10 +282,6 @@ fn uncompiled(id: GateId) -> CoreObservation {
         GateId::ConfigKeyValidity => (
             "this build compiles no layered-configuration admission provider",
             "compile packaged and active-layer key admission over the resolved configuration",
-        ),
-        GateId::ConfigTrackedTrust => (
-            "this build compiles no tracked-config trust inventory",
-            "compile the declared executable repository config paths and their approval guards",
         ),
         id => unreachable!("{id} has a compiled core provider"),
     };
