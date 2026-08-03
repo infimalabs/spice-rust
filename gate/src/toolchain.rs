@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::manifest::GateId;
 
 /// The only report schema emitted by this compiled arm family.
-pub const TOOLCHAIN_REPORT_VERSION: u64 = 1;
+pub const TOOLCHAIN_REPORT_VERSION: u64 = 2;
 
 /// A compiled source of configuration admitted by one arm.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -189,7 +189,11 @@ impl ToolchainDeclaration {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+mod acquire;
 mod declarations;
+#[cfg(not(target_arch = "wasm32"))]
+pub use acquire::{ToolchainSource, acquire_toolchain};
 pub use declarations::*;
 
 /// Operational evidence for one declared external tool.
@@ -349,6 +353,12 @@ pub enum ArmOutcome {
     ParseFailure,
     /// A direct analysis process returned an unexplained nonzero completion.
     NonzeroAnalysis,
+    /// This build compiles no analyzer for the declared analysis.
+    ///
+    /// Distinct from [`Self::NotApplicable`] and [`Self::Excluded`], which say
+    /// the tree does not need the arm. This says the arm is owed and unpaid, so
+    /// it refuses the battery instead of passing an unmeasured tree.
+    Unsupported,
 }
 
 impl ArmOutcome {
@@ -872,6 +882,7 @@ fn validate_external_tool_outcome(
                 })
             }
         }
+        ArmOutcome::Unsupported => require_all_declared(gate, declared, evidence),
         ArmOutcome::Passed
         | ArmOutcome::Findings
         | ArmOutcome::Timeout

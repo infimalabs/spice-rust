@@ -1,10 +1,14 @@
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Names tried before a scratch root is declared unobtainable.
 const CREATE_ATTEMPTS: usize = 128;
+
+/// The one program every fixture repository is built with.
+pub(crate) const GIT: &str = "/usr/bin/git";
 
 static NEXT_TREE: AtomicU32 = AtomicU32::new(0);
 
@@ -64,6 +68,76 @@ impl Drop for Tree {
         }
         let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+/// One initialized fixture repository with a committed identity.
+///
+/// Each integration binary compiles this module alone, so the fixture helpers
+/// only some binaries reach are still live code for the ones that do.
+#[allow(dead_code)]
+pub(crate) fn git_repository(label: &str) -> Tree {
+    let repository = Tree::new(label);
+    git(&repository, &["init", "-q", "-b", "main"]);
+    git(&repository, &["config", "user.name", "Gate Fixture"]);
+    git(
+        &repository,
+        &["config", "user.email", "gate@example.invalid"],
+    );
+    repository
+}
+
+/// Stage everything present and commit it under one message.
+#[allow(dead_code)]
+pub(crate) fn git_commit(repository: &Tree, message: &str) {
+    git(repository, &["add", "--all"]);
+    git(repository, &["commit", "-q", "-m", message]);
+}
+
+/// Run one fixture Git command that is required to succeed.
+#[allow(dead_code)]
+pub(crate) fn git(repository: &Tree, arguments: &[&str]) -> String {
+    let output = git_output(repository, arguments);
+    assert!(
+        output.status.success(),
+        "git {arguments:?} exited {}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .expect("Git fixture output is UTF-8")
+        .trim()
+        .to_owned()
+}
+
+/// Run one fixture Git command and return its complete completion.
+#[allow(dead_code)]
+pub(crate) fn git_output(repository: &Tree, arguments: &[&str]) -> Output {
+    Command::new(GIT)
+        .args(arguments)
+        .current_dir(&repository.root)
+        .env_clear()
+        .env("HOME", &repository.root)
+        .output()
+        .unwrap_or_else(|error| panic!("run git {arguments:?}: {error}"))
+}
+
+/// One tracked workspace document, read from the real workspace.
+#[allow(dead_code)]
+pub(crate) fn workspace_document(name: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(name);
+    fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("read {} for the fixture: {error}", path.display()))
+}
+
+/// One committed fixture repository carrying the tracked contract documents.
+#[allow(dead_code)]
+pub(crate) fn contract_repository(label: &str) -> Tree {
+    let repository = git_repository(label);
+    repository.write("spice.toml", &workspace_document("spice.toml"));
+    repository.write("baseline.toml", &workspace_document("baseline.toml"));
+    repository.write("src/app.rs", "fn main() {}\n");
+    git_commit(&repository, "fixture contract");
+    repository
 }
 
 /// The first candidate this call creates, never one it merely finds.

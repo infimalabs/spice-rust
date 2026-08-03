@@ -272,7 +272,7 @@ const fn toolchain_state(outcome: ArmOutcome) -> BatteryState {
     match outcome {
         ArmOutcome::Passed => BatteryState::Passed,
         ArmOutcome::ToolUnavailable => BatteryState::Unavailable,
-        ArmOutcome::UnsupportedVersion => BatteryState::Unsupported,
+        ArmOutcome::UnsupportedVersion | ArmOutcome::Unsupported => BatteryState::Unsupported,
         ArmOutcome::NotApplicable => BatteryState::NotApplicable,
         ArmOutcome::Excluded => BatteryState::Excluded,
         ArmOutcome::Timeout => BatteryState::TimedOut,
