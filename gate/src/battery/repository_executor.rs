@@ -43,7 +43,6 @@ enum FamilyExecution {
 /// set or refusal is cached, so the remaining canonical positions only project
 /// family-owned evidence and cannot run the family again.
 pub struct RepositoryExecutor<'trace> {
-    repository: PathBuf,
     tree: SelectedTree,
     contract: Contract,
     source: Digest,
@@ -126,19 +125,18 @@ impl<'trace> RepositoryExecutor<'trace> {
         hygiene: HygieneConfiguration,
         trace: Option<&'trace mut dyn FnMut(RepositoryExecutionEvent)>,
     ) -> Result<Self, BatteryError> {
-        let repository = repository.into();
+        let repository: PathBuf = repository.into();
         let tree = selector.materialize(&repository).map_err(|error| {
             BatteryError::new(format!("cannot capture battery source: {error}"))
         })?;
         let contract = Contract::load(tree.root()).map_err(|error| {
             BatteryError::new(format!("cannot load captured battery contract: {error}"))
         })?;
-        let source = CoreSource::capture(&repository, &tree, &contract, claim.clone())
+        let source = CoreSource::capture(&tree, &contract, claim.clone())
             .map_err(|error| BatteryError::new(format!("cannot identify battery source: {error}")))?
             .digest()
             .clone();
         Ok(Self {
-            repository,
             tree,
             contract,
             source,
@@ -219,13 +217,8 @@ impl<'trace> RepositoryExecutor<'trace> {
     }
 
     fn acquire_core_family(&self) -> Result<Vec<ArmEvidence>, String> {
-        let source = CoreSource::capture(
-            &self.repository,
-            &self.tree,
-            &self.contract,
-            self.claim.clone(),
-        )
-        .map_err(|error| error.to_string())?;
+        let source = CoreSource::capture(&self.tree, &self.contract, self.claim.clone())
+            .map_err(|error| error.to_string())?;
         let inputs = acquire_core(&source, &self.contract).map_err(|error| error.to_string())?;
         Ok(evaluate_core(&inputs)
             .arms()
