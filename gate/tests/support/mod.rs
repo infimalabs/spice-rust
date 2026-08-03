@@ -1,3 +1,8 @@
+use gate::{
+    CORE_GATE_IDS, ClaimCapture, Contract, CoreArmInput, CoreArmReport, CoreEvidence,
+    CoreObservation, CoreReport, CoreSource, GateId, Selector, acquire_core, evaluate_core,
+};
+
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -39,6 +44,7 @@ impl Tree {
         fs::write(&path, contents).expect("write a fixture file");
     }
 
+    #[allow(dead_code)]
     pub(crate) fn path(&self, relative: &str) -> PathBuf {
         self.root.join(relative)
     }
@@ -150,4 +156,55 @@ pub(crate) fn create_scratch_root(candidates: impl Iterator<Item = PathBuf>) -> 
         }
     }
     panic!("no fixture root was free within {CREATE_ATTEMPTS} attempts");
+}
+
+/// One fixture repository acquired and judged as a whole core battery.
+///
+/// Every acquisition is checked for the two invariants no arm may break: the
+/// battery covers each compiled declaration in canonical order, and every arm
+/// is labelled with the digest of the tree it was actually taken from.
+#[allow(dead_code)]
+pub(crate) fn acquired(repository: &Tree, claim: ClaimCapture) -> CoreReport {
+    let tree = Selector::staged()
+        .materialize(&repository.root)
+        .expect("materialize the captured index");
+    let contract = Contract::load(tree.root()).expect("load the captured contract");
+    let source =
+        CoreSource::capture(&tree, &contract, claim).expect("capture one immutable core source");
+    let inputs = acquire_core(&source, &contract).expect("acquire one complete core battery");
+
+    assert_eq!(
+        inputs
+            .arms()
+            .iter()
+            .map(CoreArmInput::id)
+            .collect::<Vec<_>>(),
+        CORE_GATE_IDS,
+        "acquisition covers every compiled declaration in canonical order"
+    );
+    for arm in inputs.arms() {
+        assert_eq!(
+            arm.tree(),
+            source.digest(),
+            "{} was acquired from a different tree than the captured source",
+            arm.id()
+        );
+    }
+    evaluate_core(&inputs)
+}
+
+/// The one arm of an acquired report a test is speaking about.
+#[allow(dead_code)]
+pub(crate) fn acquired_arm(report: &CoreReport, id: GateId) -> &CoreArmReport {
+    report
+        .arms()
+        .iter()
+        .find(|arm| arm.id() == id)
+        .unwrap_or_else(|| panic!("{id} is missing from an acquired report"))
+}
+
+/// The measured observation one piece of evidence stands for.
+#[allow(dead_code)]
+pub(crate) fn measured(evidence: CoreEvidence) -> CoreObservation {
+    CoreObservation::Measured { evidence }
 }

@@ -6,7 +6,7 @@ use super::runtime::{CompileError, ResolveError};
 use super::{PathSpecificity, REGEX_DIALECT_NAME, RuleId, ScopeAxis};
 
 #[derive(Debug, Clone)]
-pub(super) struct PathPattern {
+pub(crate) struct PathPattern {
     pub(super) source: String,
     literal: bool,
     expressions: Vec<Regex>,
@@ -14,10 +14,15 @@ pub(super) struct PathPattern {
 }
 
 impl PathPattern {
-    fn compile(rule: &RuleId, raw: &str) -> Result<Self, CompileError> {
-        let source = normalize_path(raw).map_err(|reason| {
-            CompileError::rule(rule, "scopes.paths", format!("{raw:?}: {reason}"))
-        })?;
+    /// Compile one tracked repository-path selector outside the rule model.
+    ///
+    /// Every tracked selector shares this contract, so a rule scope and a
+    /// `[policy]` path list cannot drift into two dialects. Nothing here is
+    /// gitignore syntax: a leading `!` is an ordinary character, not a
+    /// negation, and a pattern spelled that way selects the file literally
+    /// named that or nothing at all.
+    pub(crate) fn tracked(raw: &str) -> Result<Self, String> {
+        let source = normalize_path(raw).map_err(|reason| format!("{raw:?}: {reason}"))?;
         let literal = !has_glob_magic(&source);
         let expressions = if literal {
             Vec::new()
@@ -30,13 +35,7 @@ impl PathPattern {
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|reason| {
-                    CompileError::rule(
-                        rule,
-                        "scopes.paths",
-                        format!("pattern {source:?} is unsupported: {reason}"),
-                    )
-                })?
+                .map_err(|reason| format!("pattern {source:?} is unsupported: {reason}"))?
         };
         let specificity = path_specificity(&source);
         Ok(Self {
@@ -47,7 +46,11 @@ impl PathPattern {
         })
     }
 
-    pub(super) fn matches(&self, path: &str) -> bool {
+    fn compile(rule: &RuleId, raw: &str) -> Result<Self, CompileError> {
+        Self::tracked(raw).map_err(|reason| CompileError::rule(rule, "scopes.paths", reason))
+    }
+
+    pub(crate) fn matches(&self, path: &str) -> bool {
         if self.literal {
             let prefix = self.source.trim_end_matches('/');
             path == prefix
@@ -60,6 +63,37 @@ impl PathPattern {
                 .any(|expression| expression.is_match(path))
         }
     }
+
+    /// Whether this selector matches the path itself or any ancestor of it.
+    ///
+    /// A selector that names a directory root selects that directory's whole
+    /// subtree. A literal pattern already does so on its own; a glob pattern
+    /// matches one concrete directory, so its descendants are recognized by
+    /// asking the same question of each ancestor in turn.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn matches_or_ancestor(&self, path: &str) -> bool {
+        let mut candidate = path;
+        loop {
+            if self.matches(candidate) {
+                return true;
+            }
+            match candidate.rfind('/') {
+                Some(slash) => candidate = &candidate[..slash],
+                None => return false,
+            }
+        }
+    }
+
+    /// Whether this selector matches a strict ancestor of the path.
+    ///
+    /// This is the scanning question rather than the membership question: a
+    /// declared root is the thing being scanned, so the root itself is not one
+    /// of its own findings.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn matches_ancestor(&self, path: &str) -> bool {
+        path.rsplit_once('/')
+            .is_some_and(|(parent, _)| self.matches_or_ancestor(parent))
+    }
 }
 
 pub(super) fn compile_stem_pattern(rule: &RuleId, pattern: &str) -> Result<Regex, CompileError> {
@@ -67,7 +101,7 @@ pub(super) fn compile_stem_pattern(rule: &RuleId, pattern: &str) -> Result<Regex
         .map_err(|reason| CompileError::rule(rule, "stem_pattern", reason))
 }
 
-pub(super) fn compile_stem_expression(pattern: &str) -> Result<Regex, String> {
+pub(crate) fn compile_stem_expression(pattern: &str) -> Result<Regex, String> {
     let anchored = format!(r"\A(?:{pattern})\z");
     Regex::new(&anchored).map_err(|error| {
         format!(
