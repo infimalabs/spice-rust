@@ -22,6 +22,12 @@ pub enum SpiceVariable {
     /// Installed shell-hook directory.
     #[serde(rename = "SPICE_HOOKS")] // env-policy: allow
     Hooks,
+    /// Repository path supplied to the isolated hygiene acquisition fixture.
+    #[serde(rename = "SPICE_HYGIENE_ACQUIRE_REPOSITORY")] // env-policy: allow
+    HygieneAcquireRepository,
+    /// Interpreter-tripwire marker supplied to the isolated hygiene acquisition fixture.
+    #[serde(rename = "SPICE_HYGIENE_INTERPRETER_MARKER")] // env-policy: allow
+    HygieneInterpreterMarker,
     /// Rendered lane direction.
     #[serde(rename = "SPICE_INBOX")] // env-policy: allow
     Inbox,
@@ -55,6 +61,8 @@ impl SpiceVariable {
         Self::CodexThread,
         Self::AgentVendor,
         Self::Hooks,
+        Self::HygieneAcquireRepository,
+        Self::HygieneInterpreterMarker,
         Self::Inbox,
         Self::InstallTestPauseAction,
         Self::InstallTestPauseControl,
@@ -73,7 +81,13 @@ impl SpiceVariable {
             Self::CodexThread => "CODEX_THREAD_ID",          // env-policy: allow
             Self::AgentVendor => "SPICE_AGENT_VENDOR",       // env-policy: allow
             Self::Hooks => "SPICE_HOOKS",                    // env-policy: allow
-            Self::Inbox => "SPICE_INBOX",                    // env-policy: allow
+            Self::HygieneAcquireRepository => {
+                "SPICE_HYGIENE_ACQUIRE_REPOSITORY" // env-policy: allow
+            }
+            Self::HygieneInterpreterMarker => {
+                "SPICE_HYGIENE_INTERPRETER_MARKER" // env-policy: allow
+            }
+            Self::Inbox => "SPICE_INBOX", // env-policy: allow
             Self::InstallTestPauseAction => {
                 "SPICE_INSTALL_TEST_PAUSE_ACTION" // env-policy: allow
             }
