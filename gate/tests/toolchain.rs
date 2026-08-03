@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use gate::{
-    ArmFinding, ArmObservation, ArmOutcome, Contract, FindingDetail, GateId,
-    JavascriptUnusedStatus, LOCAL_PATH_MARKER, PACKAGED_JAVASCRIPT_EXEMPTIONS,
-    PACKAGED_TASTE_WORDS, Selector, TOOLCHAIN_ARMS, TOOLCHAIN_REPORT_VERSION, ToolEvidence,
-    ToolchainSource, acquire_toolchain, measure_toolchain,
+    ArmFinding, ArmObservation, ArmOutcome, Contract, EnvironmentLedgerKind, FindingDetail, GateId,
+    JavascriptUnusedStatus, LOCAL_PATH_MARKER, PACKAGED_ENV_PROFILE,
+    PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_TASTE_WORDS, Selector, SourceLocus, TOOLCHAIN_ARMS,
+    TOOLCHAIN_REPORT_VERSION, ToolEvidence, ToolchainSource, acquire_toolchain, measure_toolchain,
 };
 use wire::{Digest, Domain};
 
@@ -23,16 +23,23 @@ const DRIFTED_VERSION: &str = "cargo 0.0.0 (0000000000 1970-01-01)";
 /// The program the drift fixture makes wrong; every other stub stays exact.
 const DRIFTED_PROGRAM: &str = "cargo";
 
-/// The five arms this build analyzes itself rather than owing an analyzer.
-const COMPILED_ARMS: [GateId; 5] = [
+/// The arms this build analyzes itself rather than owing an analyzer.
+const COMPILED_ARMS: [GateId; 7] = [
     GateId::Formatters,
     GateId::LocalPaths,
     GateId::Taste,
     GateId::JavascriptUnused,
     GateId::CanvasWebTypecheck,
+    GateId::EnvPolicy,
+    GateId::EnvNameLedger,
 ];
 
-/// The four compiled scanners applicable to every shared source fixture.
+/// The compiled scanners applicable to every shared source fixture.
+///
+/// The environment arms are compiled too, and neither a Rust source nor a clean
+/// JavaScript module names an environment, so the shared fixture leaves them
+/// nothing to find and they are held to that in their own fixtures rather than
+/// here.
 const SCANNING_ARMS: [GateId; 4] = [
     GateId::Formatters,
     GateId::LocalPaths,
@@ -48,6 +55,26 @@ const PROSE: &str = "docs/guide.md";
 
 /// The Rust file the formatter reads and the marker scanner searches.
 const SOURCE: &str = "src/main.rs";
+
+/// The Python file carrying one waived access and one unwaived access.
+const SETTINGS: &str = "app/settings.py";
+
+/// The second Python file reading the same environment name.
+const WORKER: &str = "app/worker.py";
+
+/// The environment name only the waived access reads.
+///
+/// Both fixture names are drawn from the names this repository already declares
+/// in `[policy] env_names`. A fixture literal is a real reference as far as this
+/// repository's own environment ledger is concerned, so an invented name here
+/// would demand a manifest entry for a name nothing reads.
+const WAIVED_NAME: &str = "SPICE_HOOKS"; // env-policy: allow
+
+/// The environment name both fixture files read without a waiver.
+const SHARED_NAME: &str = "SPICE_LANE"; // env-policy: allow
+
+/// The exact unwaived read both fixture files spell.
+const READ: &str = "cache = os.getenv(\"SPICE_LANE\")";
 
 /// The clean JavaScript module that makes the complete-tree analysis applicable.
 const JAVASCRIPT: &str = "web/app.js";
@@ -616,6 +643,145 @@ fn scanning_repository(label: &str, source: &str, prose: &str) -> Tree {
     repository.write(JAVASCRIPT, "void 0;\n");
     git_commit(&repository, "fixture sources");
     repository
+}
+
+/// One committed fixture repository whose Python names the environment.
+///
+/// One access carries the waiver and one does not, and one name is read in two
+/// files, so each environment arm has exactly one thing to say about it.
+fn environment_repository(label: &str) -> Tree {
+    let repository = contract_repository(label);
+    repository.write(
+        "Cargo.toml",
+        "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
+    );
+    let marker = PACKAGED_ENV_PROFILE.allow_marker;
+    repository.write(
+        SETTINGS,
+        &format!("import os\n\nhome = os.getenv(\"{WAIVED_NAME}\")  # {marker}\n{READ}\n"),
+    );
+    repository.write(WORKER, &format!("import os\n\n{READ}\n"));
+    git_commit(&repository, "fixture environment sources");
+    repository
+}
+
+/// One waived access and one unwaived access are one finding, not two.
+///
+/// The waiver is the whole point of the arm: an access is admitted by being
+/// written down, so an arm that reported the annotated read too would make the
+/// inventory unreadable and an arm that reported neither would make it empty.
+#[test]
+fn the_environment_policy_arm_reports_only_the_unwaived_access() {
+    let repository = environment_repository("toolchain-env-policy");
+    let observations = acquired(
+        &repository,
+        Some(toolchain_directory().into_os_string()),
+        &[SETTINGS],
+    );
+
+    let observation = arm(&observations, GateId::EnvPolicy);
+    assert_eq!(
+        observation.outcome,
+        ArmOutcome::Findings,
+        "the policy arm read a tree with one unwaived access: {}",
+        observation.reason
+    );
+    let column = READ.find(SHARED_NAME).expect("the read names the literal") + 1;
+    assert_eq!(
+        observation.findings,
+        [ArmFinding {
+            path: Some(SETTINGS.to_owned()),
+            line: Some(4),
+            column: Some(u32::try_from(column).expect("a fixture column fits")),
+            detail: FindingDetail::EnvironmentAccess {
+                name: SHARED_NAME.to_owned(),
+                source: READ.to_owned(),
+            },
+        }],
+        "the policy arm named something other than the one unwaived access"
+    );
+
+    measure_toolchain(observations).expect("environment observations are admitted");
+}
+
+/// A name the profile never declared is unaccounted at every locus reading it.
+///
+/// The ledger is repository-wide, so it carries loci instead of a locus, and
+/// dropping either one would understate where the environment shapes behavior.
+/// Nothing was selected as changed here, which is also what proves the policy
+/// arm reaches `NotApplicable` only through its own declared predicate.
+#[test]
+fn the_environment_ledger_arm_accounts_an_unaccounted_name_at_every_locus() {
+    let repository = environment_repository("toolchain-env-ledger");
+    let observations = acquired(
+        &repository,
+        Some(toolchain_directory().into_os_string()),
+        &[],
+    );
+
+    let observation = arm(&observations, GateId::EnvNameLedger);
+    assert_eq!(
+        observation.outcome,
+        ArmOutcome::Findings,
+        "the ledger arm read a tree declaring none of the names it uses: {}",
+        observation.reason
+    );
+    let accounted = observation
+        .findings
+        .iter()
+        .find(|finding| match &finding.detail {
+            FindingDetail::EnvironmentLedger { name, .. } => name == SHARED_NAME,
+            _ => false,
+        })
+        .unwrap_or_else(|| panic!("the ledger never accounted {SHARED_NAME}"));
+    assert_eq!(
+        (accounted.path.as_deref(), accounted.line, accounted.column),
+        (None, None, None),
+        "a ledger finding is repository-wide and carries no locus of its own"
+    );
+    let FindingDetail::EnvironmentLedger {
+        mismatch,
+        references,
+        ..
+    } = &accounted.detail
+    else {
+        panic!("the accounted finding stopped being a ledger finding");
+    };
+    assert_eq!(*mismatch, EnvironmentLedgerKind::Unaccounted);
+    assert_eq!(
+        references,
+        &[
+            SourceLocus {
+                path: SETTINGS.to_owned(),
+                line: 4,
+            },
+            SourceLocus {
+                path: WORKER.to_owned(),
+                line: 3,
+            },
+        ]
+    );
+
+    let policy = arm(&observations, GateId::EnvPolicy);
+    assert_eq!(
+        policy.outcome,
+        ArmOutcome::NotApplicable,
+        "the policy arm skipped a tree for a reason other than its predicate: {}",
+        policy.reason
+    );
+    let applicability = TOOLCHAIN_ARMS
+        .into_iter()
+        .find(|declaration| declaration.id() == GateId::EnvPolicy)
+        .expect("env-policy is declared")
+        .jurisdiction()
+        .applicability();
+    assert!(
+        policy.reason.contains(applicability),
+        "the skip named something other than the declared predicate: {}",
+        policy.reason
+    );
+
+    measure_toolchain(observations).expect("environment observations are admitted");
 }
 
 /// The one observation carrying this identity.

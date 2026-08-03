@@ -94,6 +94,8 @@ mod tests {
                     | GateId::Taste
                     | GateId::JavascriptUnused
                     | GateId::CanvasWebTypecheck
+                    | GateId::EnvPolicy
+                    | GateId::EnvNameLedger
             );
             let owed = super::super::acquire::owed_analyzer(declaration.id);
             assert_eq!(

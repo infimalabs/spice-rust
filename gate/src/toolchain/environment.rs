@@ -1,0 +1,548 @@
+//! The compiled environment law both environment arms hold one line to.
+//!
+//! [`super::PACKAGED_ENV_PROFILE`] ships its patterns in the dialect the
+//! predecessor wrote them in, and two constructs of that dialect have no
+//! equivalent in the engine this build compiles with. Both are answered here
+//! rather than dropped. The escape guard `(?<!\\)` is lifted out of the
+//! spelling and re-applied to every match it would have rejected. A quoted
+//! literal the predecessor holds together with a back-reference is compiled
+//! once per quote character, which accepts exactly the literals one
+//! back-referenced spelling accepts.
+//!
+//! A packaged spelling this module cannot compile is a defect in the profile
+//! rather than an observation about a tree, so it panics at first use and a
+//! test compiles every packaged spelling to prove that cannot ship.
+//!
+//! Nothing here reads a file or produces a finding. [`super::analyze`] owns
+//! selection and outcome; this module owns only what one line of one language
+//! family says about the environment.
+
+use std::collections::BTreeSet;
+use std::sync::OnceLock;
+
+use regex::Regex;
+
+use super::PACKAGED_ENV_PROFILE;
+
+/// The compiled form of the packaged environment include globs, in order.
+pub(super) const ENV_EXTENSIONS: &[&str] = &[
+    "c", "cc", "cpp", "cs", "go", "h", "hpp", "java", "js", "kt", "m", "mm", "rs", "scala",
+    "swift", "ts", "lua", "php", "py", "rb", "bash", "sh", "zsh",
+];
+
+/// The literal shape every environment name in the ledger has.
+const NAME_LITERAL: &str = "[A-Z_][A-Z0-9_]*";
+
+/// The escape guard the packaged shell spellings open with.
+const ESCAPE_GUARD: &str = r"(?<!\\)";
+
+/// The hole a template carries where the captured name belongs.
+const NAME_HOLE: &str = "{name}";
+
+/// The hole a template carries where a quoted captured name belongs.
+const QUOTED_HOLE: &str = "{quoted}";
+
+/// The family whose destructuring idiom binds several names at once.
+const JAVASCRIPT: &str = "javascript";
+
+/// Access-site name templates per family, in predecessor order.
+///
+/// These read the literal name out of an access rather than deciding whether
+/// the access is one, which is what [`access_patterns`] does. A family absent
+/// here has access sites the ledger reads no name from.
+///
+/// [`access_patterns`]: super::PackagedEnvironmentProfile::access_patterns
+const ACCESS_NAME_TEMPLATES: &[(&str, &[&str])] = &[
+    (
+        "python",
+        &[
+            r"\bos\.(?:getenv|putenv|unsetenv)\(\s*{quoted}",
+            r"\bos\.environ\s*\[\s*{quoted}",
+            r"\bos\.environ\.(?:get|pop|setdefault)\(\s*{quoted}",
+        ],
+    ),
+    (
+        "csharp",
+        &[concat!(
+            r"\b(?:System\.)?Environment\.",
+            r"(?:GetEnvironmentVariable|SetEnvironmentVariable)\(\s*{quoted}"
+        )],
+    ),
+    ("lua", &[r"\bos\.getenv\(\s*{quoted}"]),
+    (
+        "javascript",
+        &[
+            r"\bprocess\.env\s*\[\s*{quoted}\s*\]",
+            r"\bprocess\.env\.{name}\b",
+        ],
+    ),
+    (
+        "shell",
+        &[
+            r"\bexport\s+{name}=",
+            r"(?<!\\)\$\{{name}(?::[^}]*)?\}",
+            r"(?<!\\)\${name}\b",
+        ],
+    ),
+];
+
+/// Declaration-site templates that bind one environment name to a symbol.
+const DECLARATION_NAME_TEMPLATES: &[&str] = &[
+    r"\b[A-Z][A-Z0-9_]*_ENV\s*=\s*(?:\(\s*)?{quoted}",
+    r"\b(?:bin_env|thread_id_env)\s*=\s*{quoted}",
+];
+
+/// The idioms that make a line about the environment without naming an access.
+const CONTEXT_TEMPLATE: &str = concat!(
+    r"\bbase_env\b|\bos\.environ\b|\benviron\b|",
+    r"\b(?:setenv|delenv|putenv|unsetenv)\b|",
+    r"\benv\s*(?:\[|\.get\(|\.pop\(|\.setdefault\()|process\.env"
+);
+
+/// Every quoted literal a line already about the environment names.
+const CONTEXT_NAME_TEMPLATE: &str = QUOTED_HOLE;
+
+/// The JavaScript idiom that binds several environment names in one pattern.
+const DESTRUCTURED_TEMPLATE: &str = r"\{(?P<body>[^}]+)\}\s*=\s*process\.env\b";
+
+/// One environment access one line commits, at the column it commits it.
+pub(super) struct Access {
+    /// One-based character column the access begins at.
+    pub(super) column: u32,
+    /// Literal environment name, or the family idiom for a dynamic read.
+    pub(super) name: String,
+}
+
+/// One compiled pattern and the escape guard its packaged spelling asked for.
+struct Guarded {
+    pattern: Regex,
+    guarded: bool,
+}
+
+impl Guarded {
+    /// Compile one packaged spelling, lifting its escape guard out of it.
+    fn compile(spelling: &str) -> Self {
+        let (guarded, body) = spelling
+            .strip_prefix(ESCAPE_GUARD)
+            .map_or((false, spelling), |body| (true, body));
+        let pattern = Regex::new(body).unwrap_or_else(|error| {
+            panic!("packaged environment pattern {spelling:?} does not compile: {error}")
+        });
+        Self { pattern, guarded }
+    }
+
+    /// Whether the guard admits one match beginning at `start`.
+    ///
+    /// The predecessor spells this as a negative look-behind for one backslash,
+    /// so a match the source escaped is not an access.
+    fn admits(&self, line: &str, start: usize) -> bool {
+        !self.guarded || !line[..start].ends_with('\\')
+    }
+
+    /// Where the first admitted match of this pattern begins in one line.
+    fn find(&self, line: &str) -> Option<usize> {
+        self.pattern
+            .find_iter(line)
+            .map(|found| found.start())
+            .find(|start| self.admits(line, *start))
+    }
+
+    /// Every admitted `name` capture of this pattern, by where the name begins.
+    fn names(&self, line: &str) -> Vec<(usize, String)> {
+        self.pattern
+            .captures_iter(line)
+            .filter_map(|captures| {
+                let whole = captures.get(0)?;
+                let name = captures.name("name")?;
+                self.admits(line, whole.start())
+                    .then(|| (name.start(), name.as_str().to_owned()))
+            })
+            .collect()
+    }
+}
+
+/// The language family one packaged extension belongs to, if any.
+///
+/// An extension in the include set with no family is scanned all the same: the
+/// watchlist reads it, and only the family-scoped access gate stays silent,
+/// because there is no idiom to recognize an access by.
+pub(super) fn family(extension: &str) -> Option<&'static str> {
+    let suffix = format!(".{extension}");
+    PACKAGED_ENV_PROFILE
+        .family_suffixes
+        .iter()
+        .find(|(_, suffixes)| suffixes.contains(&suffix.as_str()))
+        .map(|(family, _)| *family)
+}
+
+/// Whether one selected-tree path is the scanner's own implementation.
+pub(super) fn is_scanner_itself(path: &str) -> bool {
+    path.ends_with(PACKAGED_ENV_PROFILE.self_path_suffix)
+}
+
+/// Every one-based line of one decoded file the waiver marker covers.
+///
+/// A line carrying the marker is waived outright. Beyond that the marker waives
+/// the whole statement it sits in, and a standalone marker comment waives the
+/// statement that follows it, so a read spread over several lines does not have
+/// to repeat the waiver on whichever line the scanner happens to catch.
+pub(super) fn waived_lines(text: &str) -> BTreeSet<u32> {
+    let marker = PACKAGED_ENV_PROFILE.allow_marker;
+    let lines: Vec<&str> = text.lines().collect();
+    let carried: BTreeSet<usize> = numbered(&lines, |line| line.contains(marker));
+    let standalone: BTreeSet<usize> = numbered(&lines, |line| standalone_waiver(line, marker));
+    let mut waived = carried.clone();
+    for (start, end) in statement_spans(&lines) {
+        if standalone.contains(&(start - 1)) || (start..=end).any(|line| carried.contains(&line)) {
+            waived.extend(start..=end);
+        }
+    }
+    waived
+        .into_iter()
+        .filter_map(|line| u32::try_from(line).ok())
+        .collect()
+}
+
+/// Every environment access one line commits, by one-based character column.
+///
+/// The watchlist answers first and names the literal it caught. Only a line no
+/// watchlist pattern caught falls through to the access gate, which names the
+/// family idiom rather than a literal because a read under a name nobody wrote
+/// down has no literal to name. That fallthrough is the whole reason the gate
+/// exists: an inventory that saw only declared literals would miss every
+/// dynamic read.
+pub(super) fn accesses(family: Option<&str>, line: &str) -> Vec<Access> {
+    let mut caught: BTreeSet<(u32, String)> = BTreeSet::new();
+    for matcher in watchlist() {
+        for (start, name) in matcher.names(line) {
+            if let Some(column) = column_of(line, start) {
+                caught.insert((column, name));
+            }
+        }
+    }
+    if !caught.is_empty() {
+        return caught
+            .into_iter()
+            .map(|(column, name)| Access { column, name })
+            .collect();
+    }
+
+    let Some(family) = family.filter(|_| PACKAGED_ENV_PROFILE.access_gate) else {
+        return Vec::new();
+    };
+    let gate = access_gate()
+        .iter()
+        .find(|(named, _)| *named == family)
+        .map(|(_, patterns)| patterns.as_slice())
+        .unwrap_or_default();
+    gate.iter()
+        .find_map(|matcher| matcher.find(line))
+        .and_then(|start| column_of(line, start))
+        .map(|column| Access {
+            column,
+            name: finding_name(family),
+        })
+        .into_iter()
+        .collect()
+}
+
+/// Every environment name one line references, deduplicated and ordered.
+///
+/// A reference is any of the four things the predecessor counts: a literal read
+/// at an access site of the line's own family, a literal bound to a declaration
+/// symbol, any quoted literal on a line already about the environment, and any
+/// literal the watchlist recognizes. Waivers do not enter here, because a
+/// waived read is still a name the ledger has to account for.
+pub(super) fn references(family: Option<&str>, line: &str) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    if let Some(family) = family {
+        let access = access_names()
+            .iter()
+            .find(|(named, _)| *named == family)
+            .map(|(_, patterns)| patterns.as_slice())
+            .unwrap_or_default();
+        extend(&mut names, access, line);
+        if family == JAVASCRIPT {
+            names.extend(destructured_names(line));
+        }
+    }
+    extend(&mut names, declaration_names(), line);
+    if context().is_match(line) || line.contains(PACKAGED_ENV_PROFILE.allow_marker) {
+        extend(&mut names, context_names(), line);
+    }
+    extend(&mut names, watchlist(), line);
+    extend(&mut names, declared_names(), line);
+    names.retain(|name| is_ledger_name(name));
+    names
+}
+
+/// Add every name one group of patterns reads out of one line.
+fn extend(names: &mut BTreeSet<String>, matchers: &[Guarded], line: &str) {
+    for matcher in matchers {
+        names.extend(matcher.names(line).into_iter().map(|(_, name)| name));
+    }
+}
+
+/// Every name one JavaScript destructuring binding names.
+fn destructured_names(line: &str) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for captures in destructured().captures_iter(line) {
+        let Some(body) = captures.name("body") else {
+            continue;
+        };
+        for part in body.as_str().split(',') {
+            let part = part.trim();
+            if part.is_empty() || part.starts_with("...") {
+                continue;
+            }
+            let bound = part.split_once(':').map_or(part, |(before, _)| before);
+            let bound = bound.split_once('=').map_or(bound, |(before, _)| before);
+            names.insert(bound.trim().to_owned());
+        }
+    }
+    names
+}
+
+/// Whether one captured literal reads as a name the ledger accounts for.
+///
+/// Spelled out rather than compiled because the rule is a shape, not a search:
+/// upper case, digits, and underscores, opening on a letter or an underscore
+/// and never closing on one.
+fn is_ledger_name(name: &str) -> bool {
+    let opens = name
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_uppercase() || first == '_');
+    opens
+        && !name.ends_with('_')
+        && name.chars().all(|character| {
+            character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_'
+        })
+}
+
+/// The stable finding name one access family reports under.
+///
+/// The packaged table names every family it declares an idiom for. The
+/// predecessor still spells a default for a family it does not, and that
+/// spelling is carried here rather than invented at the call site.
+fn finding_name(family: &str) -> String {
+    PACKAGED_ENV_PROFILE
+        .finding_names
+        .iter()
+        .find(|(named, _)| *named == family)
+        .map_or_else(
+            || format!("{family} env access"),
+            |(_, name)| (*name).to_owned(),
+        )
+}
+
+/// The one-based line numbers of every line one predicate holds for.
+fn numbered(lines: &[&str], predicate: impl Fn(&str) -> bool) -> BTreeSet<usize> {
+    lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| predicate(line))
+        .map(|(index, _)| index + 1)
+        .collect()
+}
+
+/// Whether one line is a comment whose only business is the waiver.
+fn standalone_waiver(line: &str, marker: &str) -> bool {
+    let stripped = line.trim();
+    stripped.contains(marker) && (stripped.starts_with('#') || stripped.starts_with("//"))
+}
+
+/// Every one-based inclusive line span one statement of a file occupies.
+///
+/// A statement runs until its delimiters balance and it stops asking for a
+/// continuation line, which is what lets a waiver written above a multi-line
+/// call cover the argument the access is spelled in.
+fn statement_spans(lines: &[&str]) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut opened: Option<usize> = None;
+    let mut depth: i32 = 0;
+    for (index, raw) in lines.iter().enumerate() {
+        let number = index + 1;
+        if opened.is_none() && raw.trim().is_empty() {
+            continue;
+        }
+        let start = *opened.get_or_insert(number);
+        let structural = structural_line(raw);
+        depth = (depth + delimiter_delta(&structural)).max(0);
+        if depth == 0 && !structural.trim_end().ends_with('\\') {
+            spans.push((start, number));
+            opened = None;
+        }
+    }
+    if let Some(start) = opened {
+        spans.push((start, lines.len()));
+    }
+    spans
+}
+
+/// One line with its string contents and trailing comment removed.
+///
+/// Only the structure decides where a statement ends, so a bracket inside a
+/// string literal or a comment cannot open a span that never closes.
+fn structural_line(line: &str) -> String {
+    let mut structural = String::new();
+    let mut characters = line.chars().peekable();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    while let Some(character) = characters.next() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == open {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '#' => break,
+            '/' if characters.peek() == Some(&'/') => break,
+            '\'' | '"' => quote = Some(character),
+            _ => structural.push(character),
+        }
+    }
+    structural
+}
+
+/// How far one structural line opens or closes the delimiters it contains.
+fn delimiter_delta(line: &str) -> i32 {
+    line.chars().fold(0, |depth, character| match character {
+        '(' | '[' | '{' => depth + 1,
+        ')' | ']' | '}' => depth - 1,
+        _ => depth,
+    })
+}
+
+/// The one-based character column one byte offset names in a line.
+fn column_of(line: &str, start: usize) -> Option<u32> {
+    u32::try_from(line.get(..start)?.chars().count() + 1).ok()
+}
+
+/// Every regex spelling one template stands for, in quote-character order.
+///
+/// A template naming a quoted literal compiles twice, once per quote character,
+/// because the predecessor holds the opening and closing quote equal with a
+/// back-reference this engine has none of.
+fn spellings(template: &str) -> Vec<String> {
+    let named = template.replace(NAME_HOLE, &format!("(?P<name>{NAME_LITERAL})"));
+    if !named.contains(QUOTED_HOLE) {
+        return vec![named];
+    }
+    ['"', '\'']
+        .into_iter()
+        .map(|quote| {
+            named.replace(
+                QUOTED_HOLE,
+                &format!("{quote}(?P<name>{NAME_LITERAL}){quote}"),
+            )
+        })
+        .collect()
+}
+
+/// Compile every spelling of every template, in template order.
+fn compiled(templates: &[&str]) -> Vec<Guarded> {
+    templates
+        .iter()
+        .flat_map(|template| spellings(template))
+        .map(|spelling| Guarded::compile(&spelling))
+        .collect()
+}
+
+/// Compile one watchlist pattern into the quoted form the predecessor reads.
+///
+/// This is the predecessor's own quoted spelling for watchlist and declared
+/// names, which admits a literal opened and closed by different quote
+/// characters. It is deliberately not the back-referenced form used at access
+/// sites, and the difference is the predecessor's, not this build's.
+fn quoted_watch(patterns: impl IntoIterator<Item = String>) -> Vec<Guarded> {
+    patterns
+        .into_iter()
+        .map(|pattern| Guarded::compile(&format!(r#"["'](?P<name>{pattern})["']"#)))
+        .collect()
+}
+
+/// The compiled watchlist of packaged environment-name patterns.
+fn watchlist() -> &'static [Guarded] {
+    static WATCHLIST: OnceLock<Vec<Guarded>> = OnceLock::new();
+    WATCHLIST.get_or_init(|| {
+        quoted_watch(
+            PACKAGED_ENV_PROFILE
+                .name_patterns
+                .iter()
+                .map(|pattern| (*pattern).to_owned()),
+        )
+    })
+}
+
+/// The compiled exact declarations the packaged ledger accounts for.
+fn declared_names() -> &'static [Guarded] {
+    static DECLARED: OnceLock<Vec<Guarded>> = OnceLock::new();
+    DECLARED.get_or_init(|| {
+        quoted_watch(
+            PACKAGED_ENV_PROFILE
+                .declared_names
+                .iter()
+                .map(|name| regex::escape(name)),
+        )
+    })
+}
+
+/// The compiled access-site gate, family by family, in packaged order.
+fn access_gate() -> &'static [(&'static str, Vec<Guarded>)] {
+    static GATE: OnceLock<Vec<(&'static str, Vec<Guarded>)>> = OnceLock::new();
+    GATE.get_or_init(|| {
+        PACKAGED_ENV_PROFILE
+            .access_patterns
+            .iter()
+            .map(|(family, patterns)| (*family, compiled(patterns)))
+            .collect()
+    })
+}
+
+/// The compiled access-site name readers, family by family.
+fn access_names() -> &'static [(&'static str, Vec<Guarded>)] {
+    static NAMES: OnceLock<Vec<(&'static str, Vec<Guarded>)>> = OnceLock::new();
+    NAMES.get_or_init(|| {
+        ACCESS_NAME_TEMPLATES
+            .iter()
+            .map(|(family, templates)| (*family, compiled(templates)))
+            .collect()
+    })
+}
+
+/// The compiled declaration-site name readers.
+fn declaration_names() -> &'static [Guarded] {
+    static DECLARATIONS: OnceLock<Vec<Guarded>> = OnceLock::new();
+    DECLARATIONS.get_or_init(|| compiled(DECLARATION_NAME_TEMPLATES))
+}
+
+/// The compiled detector for a line already about the environment.
+fn context() -> &'static Regex {
+    static CONTEXT: OnceLock<Regex> = OnceLock::new();
+    CONTEXT.get_or_init(|| {
+        Regex::new(CONTEXT_TEMPLATE).expect("compiled environment context pattern is valid")
+    })
+}
+
+/// The compiled quoted-literal reader for an environment-context line.
+fn context_names() -> &'static [Guarded] {
+    static NAMES: OnceLock<Vec<Guarded>> = OnceLock::new();
+    NAMES.get_or_init(|| compiled(&[CONTEXT_NAME_TEMPLATE]))
+}
+
+/// The compiled JavaScript destructuring reader.
+fn destructured() -> &'static Regex {
+    static DESTRUCTURED: OnceLock<Regex> = OnceLock::new();
+    DESTRUCTURED.get_or_init(|| {
+        Regex::new(DESTRUCTURED_TEMPLATE).expect("compiled destructuring pattern is valid")
+    })
+}
+
+#[cfg(test)]
+include!("environment/tests.rs");
