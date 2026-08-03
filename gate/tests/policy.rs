@@ -286,6 +286,38 @@ fn generated_markdown_rules_retain_regex_one_letter_depth_and_priority() {
 }
 
 #[test]
+fn repository_document_selection_unifies_explicit_paths_and_generated_depth_rules() {
+    let policy = migrate_predecessor_policy(
+        "tracked/spice.toml",
+        r#"
+        [policy.repo_truth]
+        docs = ["NOTICE.txt", "./NOTICE.txt"]
+
+        [policy.markdown_depth_budget]
+        extensions = [".md"]
+        "#,
+    )
+    .expect("repository-document policy migrates");
+
+    assert_eq!(policy.document().repo_truth_docs(), ["NOTICE.txt"]);
+    assert!(
+        policy
+            .selects_repository_document("NOTICE.txt")
+            .expect("explicit path resolves")
+    );
+    assert!(
+        policy
+            .selects_repository_document("docs/guide.md")
+            .expect("generated markdown path resolves")
+    );
+    assert!(
+        !policy
+            .selects_repository_document("src/lib.rs")
+            .expect("ordinary path resolves")
+    );
+}
+
+#[test]
 fn current_named_rules_cover_every_scope_dimension_with_provenance() {
     let document: PolicyDocument = toml::from_str(EVERY_SCOPE).expect("current policy decodes");
     let encoded = serde_json::to_value(&document).expect("current policy serializes");

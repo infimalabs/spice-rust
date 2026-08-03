@@ -26,6 +26,7 @@ use crate::kill::{
     RateError, SurvivorRate,
 };
 use crate::measure::{Bounds, Metric, MetricError, Parser, Policy};
+use crate::policy::{Policy as RulePolicy, packaged_rule_policy};
 use crate::ratchet::Ratchet;
 
 /// Fixed tracked policy path within a selected repository tree.
@@ -112,6 +113,7 @@ impl KillProfile {
 pub struct Contract {
     gate_set: GateSet,
     policy: Policy,
+    rule_policy: RulePolicy,
     camp_policy: Policy,
     kill_profile: KillProfile,
     baseline: Baseline,
@@ -156,6 +158,12 @@ impl Contract {
         let gate_set = GateSet::current().map_err(ContractError::GateSet)?;
         let bounds = current_bounds().map_err(ContractError::Bounds)?;
         let ignore = tracked_ignore(policy_path, policy_text).map_err(ContractError::Policy)?;
+        let rule_policy = packaged_rule_policy().map_err(|source| {
+            ContractError::Policy(PolicyError::Rules {
+                path: policy_path.to_path_buf(),
+                source,
+            })
+        })?;
         let metrics: Vec<Metric> = gate_set
             .metrics
             .iter()
@@ -181,6 +189,7 @@ impl Contract {
         Ok(Self {
             gate_set,
             policy,
+            rule_policy,
             camp_policy,
             kill_profile,
             baseline,
@@ -200,6 +209,12 @@ impl Contract {
     #[must_use]
     pub const fn policy(&self) -> &Policy {
         &self.policy
+    }
+
+    /// Compiled named rules used by structural family acquisition.
+    #[must_use]
+    pub const fn rule_policy(&self) -> &RulePolicy {
+        &self.rule_policy
     }
 
     /// Compiled shared-bound profile.
