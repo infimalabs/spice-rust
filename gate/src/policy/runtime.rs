@@ -40,6 +40,17 @@ impl Policy {
     /// or ordering cannot be executed without changing its meaning.
     pub fn compile(mut document: PolicyDocument) -> Result<Self, CompileError> {
         validate_document(&document)?;
+        document.repo_truth_docs = document
+            .repo_truth_docs
+            .iter()
+            .map(|path| {
+                normalize_path(path).map_err(|reason| {
+                    CompileError::document("repo_truth_docs", format!("{path:?}: {reason}"))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        document.repo_truth_docs.sort();
+        document.repo_truth_docs.dedup();
         document.rules.sort_by_key(|rule| rule.source_order);
 
         let mut rules = Vec::with_capacity(document.rules.len());
@@ -72,6 +83,37 @@ impl Policy {
             });
         }
         Ok(Self { document, rules })
+    }
+
+    /// Whether one tracked path belongs to the repository-document battery.
+    ///
+    /// Explicit doctrine paths and generated markdown-depth rules are the only
+    /// selectors. Authored bound overrides can change a selected document's
+    /// limit, but cannot silently widen the document inventory.
+    pub fn selects_repository_document(&self, path: &str) -> Result<bool, ResolveError> {
+        let context = NormalizedContext::new(&PolicyContext::new().with_path(path))?;
+        if context
+            .path
+            .as_ref()
+            .is_some_and(|path| self.document.repo_truth_docs.binary_search(path).is_ok())
+        {
+            return Ok(true);
+        }
+        for rule in self.rules.iter().filter(|rule| {
+            rule.declaration.source.kind == RuleSourceKind::GeneratedMarkdownDepth
+                && rule
+                    .declaration
+                    .bounds
+                    .contains_key(&BoundName::RepoTruthDocChars)
+        }) {
+            if rule
+                .evaluate(BoundName::RepoTruthDocChars.as_str(), &context)?
+                .matched
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// The one current serializable declaration behind this compiled policy.

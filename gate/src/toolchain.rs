@@ -182,7 +182,7 @@ impl ToolchainDeclaration {
         self.tools
     }
 
-    /// Fixed external invocations or supplied-observation categories.
+    /// Fixed external invocations, compiled scans, or supplied categories.
     #[must_use]
     pub const fn analysis(self) -> &'static [&'static str] {
         self.analysis
@@ -191,6 +191,8 @@ impl ToolchainDeclaration {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod acquire;
+#[cfg(not(target_arch = "wasm32"))]
+mod analyze;
 mod declarations;
 #[cfg(not(target_arch = "wasm32"))]
 pub use acquire::{ToolchainSource, acquire_toolchain};

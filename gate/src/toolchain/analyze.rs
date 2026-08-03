@@ -1,0 +1,517 @@
+//! Compiled analyses for the toolchain arms this build answers itself.
+//!
+//! Three of the eight declared analyses need nothing beyond the captured tree
+//! and the compiled scanner vocabulary: the formatter check over the complete
+//! selected tree, the workstation-path scanner, and the prose scanner. Each
+//! reports only what it observed, and [`super::measure_toolchain`] remains the
+//! sole authority that admits it.
+//!
+//! Each declaration records its exclusions as English sentences and its
+//! includes as globs. Those strings are the retained evidence and the
+//! predicates here are the compiled form of the same rules, so every rule is
+//! written once in this module and the two spellings are proven equal in tests.
+
+use std::collections::BTreeMap;
+use std::ffi::OsStr;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use sill::{Argv, Completion, spawn};
+
+use super::{
+    ArmFinding, ArmOutcome, FindingDetail, LOCAL_PATH_MARKER, PACKAGED_TASTE_WORDS,
+    ToolchainDeclaration,
+};
+use crate::GateId;
+use crate::jurisdiction::{Ignore, Jurisdiction};
+use crate::measure::Bounds;
+
+/// What one compiled analysis observed about one arm.
+///
+/// The exit code is carried because [`super::measure_toolchain`] admits one
+/// only alongside [`ArmOutcome::NonzeroAnalysis`] and demands one there, so the
+/// code and the outcome it explains are produced together or not at all.
+pub(super) struct Analysis {
+    pub(super) outcome: ArmOutcome,
+    pub(super) reason: String,
+    pub(super) findings: Vec<ArmFinding>,
+    pub(super) exit_code: Option<i32>,
+}
+
+impl Analysis {
+    /// A terminal state that carries neither findings nor an exit code.
+    pub(super) fn terminal(outcome: ArmOutcome, reason: String) -> Self {
+        Self {
+            outcome,
+            reason,
+            findings: Vec::new(),
+            exit_code: None,
+        }
+    }
+
+    /// A direct analysis process refused without naming anything it examined.
+    fn refused(reason: String, code: i32) -> Self {
+        Self {
+            outcome: ArmOutcome::NonzeroAnalysis,
+            reason,
+            findings: Vec::new(),
+            exit_code: Some(code),
+        }
+    }
+
+    /// The result of one completed scan over `examined` selected paths.
+    fn scanned(id: GateId, examined: usize, findings: Vec<ArmFinding>) -> Self {
+        if findings.is_empty() {
+            return Self::terminal(
+                ArmOutcome::Passed,
+                format!(
+                    "{} found nothing across {examined} selected paths",
+                    id.as_str()
+                ),
+            );
+        }
+        Self {
+            outcome: ArmOutcome::Findings,
+            reason: format!(
+                "{} found {} across {examined} selected paths",
+                id.as_str(),
+                plural(findings.len(), "finding"),
+            ),
+            findings,
+            exit_code: None,
+        }
+    }
+
+    /// The declaration's own applicability predicate came out false.
+    ///
+    /// The sentence is read back off the declaration rather than repeated
+    /// here, so the reason a tree was skipped is the text the report retains.
+    fn not_applicable(declaration: ToolchainDeclaration) -> Self {
+        Self::terminal(
+            ArmOutcome::NotApplicable,
+            format!(
+                "{} requires {}",
+                declaration.id.as_str(),
+                declaration.jurisdiction.applicability
+            ),
+        )
+    }
+}
+
+/// One compiled path-component exclusion and the sentence that records it.
+///
+/// [`super::PACKAGED_SCANNER_EXCLUDES`] is the retained prose form of exactly
+/// this table, in this order, and the two are proven equal in tests.
+#[derive(Clone, Copy)]
+enum Exclusion {
+    /// A path component equal to this name.
+    Equals(&'static str),
+    /// A path component beginning with this prefix.
+    StartsWith(&'static str),
+}
+
+impl Exclusion {
+    /// Whether this rule removes one path component.
+    fn excludes(self, component: &str) -> bool {
+        match self {
+            Self::Equals(name) => component == name,
+            Self::StartsWith(prefix) => component.starts_with(prefix),
+        }
+    }
+
+    /// The exact sentence this rule is recorded as.
+    ///
+    /// Reports retain [`super::PACKAGED_SCANNER_EXCLUDES`] itself, so this
+    /// rendering exists only to prove the compiled table says the same thing.
+    #[cfg(test)]
+    fn sentence(self) -> String {
+        match self {
+            Self::Equals(name) => format!("any path component equal to {name}"),
+            Self::StartsWith(prefix) => format!("any path component starting with {prefix}"),
+        }
+    }
+}
+
+/// Every scanner exclusion, in the order the declarations record them.
+const SCANNER_EXCLUSIONS: &[Exclusion] = &[
+    Exclusion::Equals(".git"),
+    Exclusion::StartsWith(".spice"),
+    Exclusion::Equals(".venv"),
+    Exclusion::Equals(".ruff_cache"),
+    Exclusion::Equals(".pytest_cache"),
+    Exclusion::Equals("__pycache__"),
+    Exclusion::Equals("node_modules"),
+    Exclusion::Equals("site-packages"),
+];
+
+/// Every build-output exclusion, in the order the declarations record them.
+///
+/// The Formatters declaration excludes build output rather than scanner noise,
+/// and the two tables are genuinely different rules: these are top-level
+/// directories written as `name/**`, not components matched at any depth.
+const BUILD_EXCLUSIONS: &[&str] = &[".git", "target", "dist", "node_modules", ".venv", "vendor"];
+
+/// The compiled form of the Taste include globs, in declaration order.
+const PROSE_EXTENSIONS: &[&str] = &["md", "txt", "rst"];
+
+/// The compiled form of the Formatters Rust include glob.
+const RUST_EXTENSION: &str = "rs";
+
+/// The formatter whose canonical bytes every Formatters finding is measured against.
+const FORMATTER: &str = "rustfmt";
+
+/// The declared program the formatter check is invoked through.
+const CARGO: &str = "cargo";
+
+/// The line prefix `cargo fmt --check` writes before each differing region.
+const DIFF_PREFIX: &str = "Diff in ";
+
+/// Whether one selected-tree path sits under an excluded build directory.
+fn built(path: &str) -> bool {
+    path.split_once('/')
+        .is_some_and(|(top, _)| BUILD_EXCLUSIONS.contains(&top))
+}
+
+/// Whether any component of one selected-tree path is excluded from scanning.
+fn excluded(path: &str) -> bool {
+    path.split('/').any(|component| {
+        SCANNER_EXCLUSIONS
+            .iter()
+            .any(|exclusion| exclusion.excludes(component))
+    })
+}
+
+/// The lowercase extension of one selected-tree path, when it has one.
+fn extension(path: &str) -> Option<String> {
+    let name = path.rsplit('/').next()?;
+    let dot = name.rfind('.')?;
+    (dot > 0).then(|| name[dot + 1..].to_ascii_lowercase())
+}
+
+/// One count with the unit it counts, so a reason never reads "1 findings".
+fn plural(count: usize, unit: &str) -> String {
+    if count == 1 {
+        format!("{count} {unit}")
+    } else {
+        format!("{count} {unit}s")
+    }
+}
+
+/// Scan every selected change for the workstation path marker.
+///
+/// The include is every regular file, decoded as UTF-8 with replacement, so a
+/// binary file is read and simply yields no marker rather than being skipped
+/// for a reason the declaration never names.
+pub(super) fn local_paths(
+    declaration: ToolchainDeclaration,
+    root: &Path,
+    changes: &[String],
+) -> Analysis {
+    let selected = selected_changes(root, changes, |_| true);
+    if selected.is_empty() {
+        return Analysis::not_applicable(declaration);
+    }
+
+    let mut findings = Vec::new();
+    for path in &selected {
+        for (line, text) in numbered_lines(root, path) {
+            if text.contains(LOCAL_PATH_MARKER) {
+                findings.push(ArmFinding {
+                    path: Some(path.clone()),
+                    line: Some(line),
+                    column: None,
+                    detail: FindingDetail::LocalPath,
+                });
+            }
+        }
+    }
+    Analysis::scanned(declaration.id, selected.len(), findings)
+}
+
+/// Scan every selected prose change for the compiled discouraged vocabulary.
+pub(super) fn taste(
+    declaration: ToolchainDeclaration,
+    root: &Path,
+    changes: &[String],
+) -> Analysis {
+    let selected = selected_changes(root, changes, |path| {
+        extension(path).is_some_and(|found| PROSE_EXTENSIONS.contains(&found.as_str()))
+    });
+    if selected.is_empty() {
+        return Analysis::not_applicable(declaration);
+    }
+
+    let mut findings = Vec::new();
+    for path in &selected {
+        for (line, text) in numbered_lines(root, path) {
+            for (word, replacement) in discouraged(&text) {
+                findings.push(ArmFinding {
+                    path: Some(path.clone()),
+                    line: Some(line),
+                    column: None,
+                    detail: FindingDetail::Taste { word, replacement },
+                });
+            }
+        }
+    }
+    Analysis::scanned(declaration.id, selected.len(), findings)
+}
+
+/// Run the declared formatter check over the complete selected tree.
+///
+/// One finding per differing file, carrying the first region the formatter
+/// reported, because [`FindingDetail::Formatting`] records that the file is not
+/// canonical and no single region is more the cause than any other.
+pub(super) fn formatters(
+    declaration: ToolchainDeclaration,
+    root: &Path,
+    bounds: &Bounds,
+    programs: &BTreeMap<&str, &str>,
+) -> Analysis {
+    let sources = match rust_sources(root) {
+        Ok(sources) => sources,
+        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+    };
+    if sources == 0 {
+        return Analysis::not_applicable(declaration);
+    }
+    let Some(program) = programs.get(CARGO) else {
+        return Analysis::terminal(
+            ArmOutcome::ToolUnavailable,
+            format!("formatters declares no {CARGO} to invoke the check through"),
+        );
+    };
+
+    let arguments = ["fmt", "--all", "--", "--check"];
+    let Ok(argv) = Argv::new(program, arguments.iter().map(OsStr::new)) else {
+        return Analysis::terminal(
+            ArmOutcome::ParseFailure,
+            format!("{CARGO} argument vector was refused"),
+        );
+    };
+    let running = match spawn(bounds.spec(argv, root)) {
+        Ok(running) => running,
+        Err(error) => {
+            return Analysis::terminal(
+                ArmOutcome::ParseFailure,
+                format!("{CARGO} fmt did not start: {error}"),
+            );
+        }
+    };
+    let outcome = match running.wait() {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            return Analysis::terminal(
+                ArmOutcome::ParseFailure,
+                format!("{CARGO} fmt could not be waited on: {error}"),
+            );
+        }
+    };
+    let status = match outcome.completion() {
+        Completion::Exited(status) => status,
+        Completion::TimedOut(_) => {
+            return Analysis::terminal(
+                ArmOutcome::Timeout,
+                format!("{CARGO} fmt outlived the bounds it was given"),
+            );
+        }
+        Completion::Cancelled(_) => {
+            return Analysis::terminal(
+                ArmOutcome::ParseFailure,
+                format!("{CARGO} fmt was cancelled before it reported"),
+            );
+        }
+    };
+    let Some(stdout) = outcome.stdout() else {
+        return Analysis::terminal(
+            ArmOutcome::ParseFailure,
+            format!("{CARGO} fmt captured no stdout to read"),
+        );
+    };
+    if stdout.truncated() || !stdout.complete() {
+        return Analysis::terminal(
+            ArmOutcome::ParseFailure,
+            format!("{CARGO} fmt output was truncated before it could be read"),
+        );
+    }
+
+    let printed = String::from_utf8_lossy(stdout.bytes()).into_owned();
+    let findings = differing_files(root, &printed);
+    if findings.is_empty() && !status.success() {
+        let Some(code) = status.code() else {
+            return Analysis::terminal(
+                ArmOutcome::ParseFailure,
+                format!("{CARGO} fmt was signalled without naming a differing file"),
+            );
+        };
+        return Analysis::refused(
+            format!("{CARGO} fmt refused with {code} and named no differing file"),
+            code,
+        );
+    }
+    Analysis::scanned(declaration.id, sources, findings)
+}
+
+/// One finding per file `cargo fmt --check` reported a differing region in.
+fn differing_files(root: &Path, printed: &str) -> Vec<ArmFinding> {
+    let roots = reported_roots(root);
+    let mut first: BTreeMap<String, u32> = BTreeMap::new();
+    for line in printed.lines() {
+        let Some(rest) = line.strip_prefix(DIFF_PREFIX) else {
+            continue;
+        };
+        let located = rest.trim_end_matches(':');
+        let Some((path, number)) = located.rsplit_once(':') else {
+            continue;
+        };
+        let Ok(number) = number.parse::<u32>() else {
+            continue;
+        };
+        let Some(relative) = relative_to(&roots, path) else {
+            continue;
+        };
+        first
+            .entry(relative)
+            .and_modify(|earliest| *earliest = (*earliest).min(number.max(1)))
+            .or_insert_with(|| number.max(1));
+    }
+    first
+        .into_iter()
+        .map(|(path, line)| ArmFinding {
+            path: Some(path),
+            line: Some(line),
+            column: None,
+            detail: FindingDetail::Formatting {
+                formatter: FORMATTER.to_owned(),
+            },
+        })
+        .collect()
+}
+
+/// Every spelling the formatter may report the selected tree under.
+///
+/// A tree reached through a symlinked ancestor is reported canonically by the
+/// formatter and handed here uncanonically, so both spellings are offered and a
+/// path matching neither is genuinely outside the tree. Offering only one would
+/// silently discard every finding and call an unformatted tree clean.
+fn reported_roots(root: &Path) -> Vec<PathBuf> {
+    let mut roots = vec![root.to_owned()];
+    if let Ok(canonical) = fs::canonicalize(root)
+        && canonical != root
+    {
+        roots.push(canonical);
+    }
+    roots
+}
+
+/// Re-express one absolute reported path relative to the selected tree.
+fn relative_to(roots: &[PathBuf], reported: &str) -> Option<String> {
+    let reported = Path::new(reported);
+    let relative = roots
+        .iter()
+        .find_map(|root| reported.strip_prefix(root).ok())?
+        .to_str()?;
+    (!relative.is_empty()).then(|| relative.replace('\\', "/"))
+}
+
+/// Count the selected Rust sources the formatter check applies to.
+fn rust_sources(root: &Path) -> Result<usize, String> {
+    let walked = Jurisdiction::walk(root, &Ignore::default())
+        .map_err(|error| format!("the selected tree could not be walked: {error}"))?;
+    Ok(walked
+        .measurable()
+        .filter(|entry| !built(entry.path()))
+        .filter(|entry| extension(entry.path()).is_some_and(|found| found == RUST_EXTENSION))
+        .count())
+}
+
+/// The selected changes one scanner admits, sorted and deduplicated.
+///
+/// A captured change that is no longer a regular file in the selected tree is
+/// dropped rather than reported: a deletion is a change the scanners have
+/// nothing to read and nothing to say about.
+///
+/// Every path is held to [`super::valid_relative_path`], the same rule the
+/// report holds findings to. That is not defensiveness about a malformed rim:
+/// [`Path::join`] discards the root when given an absolute path, so admitting
+/// one would read a file outside the captured tree and report it as though it
+/// were inside.
+fn selected_changes(
+    root: &Path,
+    changes: &[String],
+    include: impl Fn(&str) -> bool,
+) -> Vec<String> {
+    let mut selected: Vec<String> = changes
+        .iter()
+        .filter(|path| super::valid_relative_path(path))
+        .filter(|path| !excluded(path) && include(path))
+        .filter(|path| root.join(path).is_file())
+        .cloned()
+        .collect();
+    selected.sort();
+    selected.dedup();
+    selected
+}
+
+/// One selected file decoded with replacement, as one-based numbered lines.
+fn numbered_lines(root: &Path, path: &str) -> Vec<(u32, String)> {
+    let Ok(bytes) = fs::read(root.join(path)) else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&bytes)
+        .lines()
+        .enumerate()
+        .filter_map(|(index, text)| {
+            u32::try_from(index + 1)
+                .ok()
+                .map(|line| (line, text.to_owned()))
+        })
+        .collect()
+}
+
+/// Every discouraged word one line of prose contains, with its replacement.
+///
+/// A trailing `*` in the compiled vocabulary matches any continuation of the
+/// same word, and the reported word is the text that actually appeared rather
+/// than the pattern that caught it.
+///
+/// One word repeated on one line is reported once. Findings carry a line and no
+/// column, so a second report of it would be a finding identical to the first,
+/// which the report refuses as a duplicate rather than retains as evidence.
+fn discouraged(text: &str) -> Vec<(String, String)> {
+    let mut found: Vec<(String, String)> = Vec::new();
+    for word in words(text) {
+        for (pattern, replacement) in PACKAGED_TASTE_WORDS {
+            if matches_pattern(pattern, &word) {
+                let caught = (word.clone(), (*replacement).to_owned());
+                if !found.contains(&caught) {
+                    found.push(caught);
+                }
+                break;
+            }
+        }
+    }
+    found
+}
+
+/// Whether one compiled pattern catches one whole word, ignoring case.
+///
+/// A trailing `*` is the glob it looks like and matches any continuation
+/// including none, so `orphan*` catches both `orphan` and `orphaned`.
+fn matches_pattern(pattern: &str, word: &str) -> bool {
+    let lowered = word.to_ascii_lowercase();
+    pattern
+        .strip_suffix('*')
+        .map_or_else(|| lowered == pattern, |stem| lowered.starts_with(stem))
+}
+
+/// Every whole word in one line, in the order they appear.
+fn words(text: &str) -> Vec<String> {
+    text.split(|character: char| !(character.is_alphanumeric() || character == '_'))
+        .filter(|word| !word.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+#[cfg(test)]
+include!("analyze/tests.rs");
