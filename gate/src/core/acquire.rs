@@ -21,6 +21,7 @@ use wire::{Digest, Phase, TaskHandle};
 
 use super::admission::{validate_git_tree, validate_repo_path};
 use super::config_keys::config_keys;
+use super::configuration_inventory::ConfigurationInventorySource;
 use super::declaration::CoreArmDeclaration;
 use super::shape::repo_shape;
 use super::{
@@ -153,6 +154,7 @@ pub fn acquire_core(
     source: &CoreSource<'_>,
     contract: &Contract,
 ) -> Result<CoreInputs, CoreInputError> {
+    let configuration = ConfigurationInventorySource::capture(source)?;
     let mut arms = Vec::with_capacity(core_declarations().len());
     for declaration in core_declarations() {
         let predecessor = declaration.predecessor();
@@ -165,7 +167,7 @@ pub fn acquire_core(
             declaration.id(),
             source.digest.clone(),
             provenance,
-            observe(declaration, source, contract)?,
+            observe(declaration, source, contract, &configuration)?,
         )?);
     }
     CoreInputs::new(arms)
@@ -175,6 +177,7 @@ fn observe(
     declaration: &CoreArmDeclaration,
     source: &CoreSource<'_>,
     contract: &Contract,
+    configuration: &ConfigurationInventorySource,
 ) -> Result<CoreObservation, CoreInputError> {
     Ok(match declaration.id() {
         GateId::MergeIntegrity => merge_integrity(source, contract.bounds()),
@@ -183,7 +186,8 @@ fn observe(
         GateId::Staging => staging(source, contract.bounds()),
         GateId::ConfigKeyValidity => return config_keys(contract),
         GateId::RepoDocs => return repo_docs(source, contract),
-        id @ (GateId::ConfigFalseDisable | GateId::ConfigTrackedTrust) => uncompiled(id),
+        GateId::ConfigFalseDisable => return configuration.false_disable(),
+        id @ GateId::ConfigTrackedTrust => uncompiled(id),
         id => unreachable!("{id} is not a compiled core declaration"),
     })
 }
@@ -276,10 +280,6 @@ fn plan_phase(claim: &ClaimCapture) -> CoreObservation {
 /// rather than reporting a measurement nobody made.
 fn uncompiled(id: GateId) -> CoreObservation {
     let (reason, recovery) = match id {
-        GateId::ConfigFalseDisable => (
-            "this build compiles no false-disable registry inventory",
-            "compile the declared false-disable paths and the consumers that resolve them",
-        ),
         GateId::ConfigTrackedTrust => (
             "this build compiles no tracked-config trust inventory",
             "compile the declared executable repository config paths and their approval guards",

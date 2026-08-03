@@ -10,6 +10,8 @@ mod acquire;
 mod admission;
 #[cfg(not(target_arch = "wasm32"))]
 mod config_keys;
+#[cfg(not(target_arch = "wasm32"))]
+mod configuration_inventory;
 mod declaration;
 mod evaluate;
 #[cfg(not(target_arch = "wasm32"))]
