@@ -45,6 +45,8 @@ pub use battery::{
     LatchEvidence, ReceiptRefusal, ResultProvenance, UnsupportedReceipt, run_battery,
     supported_pairs,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use battery::{RepositoryExecutionEvent, RepositoryExecutor};
 pub use camp::{
     BoundRelation, CAMP_REPORT_VERSION, Camp, CampError, CampFinding, CampReport, CampRunError,
     CampStanding, DistributionReport, LocusDistance, SharedBound,

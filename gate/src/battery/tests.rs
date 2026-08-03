@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use wire::{Digest, Domain};
@@ -225,6 +226,113 @@ fn runner_executes_all_25_once_in_order_with_complete_context() {
 
     let encoded = report.encode().expect("canonical report");
     assert_eq!(BatteryReport::decode(&encoded).expect("decode"), report);
+}
+
+#[test]
+fn repository_executor_owns_one_capture_and_runs_each_family_once() {
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    let hygiene = crate::HygieneConfiguration::new(["app/main.py"], ["tests"])
+        .expect("production hygiene roots");
+    let selector = crate::Selector::staged();
+    let mut events = Vec::new();
+    let mut record = |event| events.push(event);
+    let mut executor = RepositoryExecutor::capture_traced(
+        &repository,
+        &selector,
+        crate::ClaimCapture::Idle,
+        None,
+        hygiene,
+        &mut record,
+    )
+    .expect("capture production battery source");
+    let source = executor.source().clone();
+    assert_ne!(executor.root(), repository);
+
+    fs::write(repository.join("tests/test_main.py"), "def test_broken(:\n")
+        .expect("move the original repository after capture");
+    let inputs = fixture.inputs_for(&source);
+    let report = run_battery(&inputs, &mut executor).expect("complete production battery");
+    drop(executor);
+
+    let arm_events: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            RepositoryExecutionEvent::ArmInvoked { gate_id, .. } => Some(*gate_id),
+            RepositoryExecutionEvent::FamilyInvoked { .. } => None,
+        })
+        .collect();
+    assert_eq!(arm_events, GateId::ALL);
+    let family_events: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            RepositoryExecutionEvent::FamilyInvoked { family } => Some(*family),
+            RepositoryExecutionEvent::ArmInvoked { .. } => None,
+        })
+        .collect();
+    assert_eq!(
+        family_events,
+        [
+            ArmFamily::Core,
+            ArmFamily::Toolchain,
+            ArmFamily::Metrics,
+            ArmFamily::Hygiene,
+        ]
+    );
+
+    assert_eq!(report.results().len(), GateId::ALL.len());
+    for result in report.results() {
+        match result.family() {
+            ArmFamily::Core => {
+                assert!(matches!(result.evidence(), ArmEvidence::Core { .. }));
+            }
+            ArmFamily::Toolchain => {
+                assert!(matches!(result.evidence(), ArmEvidence::Toolchain { .. }));
+            }
+            ArmFamily::Metrics => {
+                let ArmEvidence::ExecutorFailure {
+                    gate_id,
+                    arm_family,
+                    declaration,
+                    reason,
+                } = result.evidence()
+                else {
+                    panic!("unavailable metrics acquisition must fail explicitly")
+                };
+                assert_eq!(*gate_id, result.gate_id());
+                assert_eq!(*arm_family, ArmFamily::Metrics);
+                assert_eq!(declaration, result.declaration());
+                assert!(reason.contains("metrics family acquisition is unavailable"));
+            }
+            ArmFamily::Hygiene => {
+                assert!(matches!(result.evidence(), ArmEvidence::Hygiene { .. }));
+            }
+        }
+    }
+    let hygiene_results: Vec<_> = report
+        .results()
+        .iter()
+        .filter(|result| result.family() == ArmFamily::Hygiene)
+        .collect();
+    assert!(hygiene_results.iter().all(|result| {
+        !matches!(
+            result.evidence(),
+            ArmEvidence::Hygiene { report }
+                if report.outcome == crate::HygieneOutcome::ParseFailure
+        )
+    }));
+
+    let encoded = report.encode().expect("encode production report");
+    assert_eq!(
+        BatteryReport::decode(&encoded).expect("decode production report"),
+        report
+    );
+    let receipt = BatteryReceipt::mint(report, &fixture_baseline("production executor"));
+    let receipt_bytes = receipt.encode().expect("encode production receipt");
+    assert_eq!(
+        BatteryReceipt::verify(&receipt_bytes).expect("verify production receipt"),
+        receipt
+    );
 }
 
 #[test]
@@ -1174,8 +1282,12 @@ impl Fixture {
     }
 
     fn inputs(&self) -> BatteryInputs<'_> {
+        self.inputs_for(&self.source)
+    }
+
+    fn inputs_for<'a>(&'a self, source: &'a Digest) -> BatteryInputs<'a> {
         BatteryInputs::new(
-            &self.source,
+            source,
             &self.actor,
             &self.scope,
             &self.configuration,
@@ -1193,6 +1305,74 @@ impl Fixture {
             &wire::encode(self.policy.document()).expect("policy JSON"),
         )
     }
+}
+
+fn production_repository(root: &Path) -> PathBuf {
+    let repository = root.join("repository");
+    fs::create_dir(&repository).expect("production repository root");
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    fs::write(
+        repository.join("spice.toml"),
+        fs::read(workspace.join("spice.toml")).expect("workspace spice.toml"),
+    )
+    .expect("fixture spice.toml");
+    fs::write(
+        repository.join("baseline.toml"),
+        fs::read(workspace.join("baseline.toml")).expect("workspace baseline.toml"),
+    )
+    .expect("fixture baseline.toml");
+    fs::write(
+        repository.join("pyproject.toml"),
+        "[project]\nname = 'battery-fixture'\n",
+    )
+    .expect("fixture pyproject.toml");
+    for directory in ["app", "tests", "src"] {
+        fs::create_dir(repository.join(directory)).expect("fixture source directory");
+    }
+    fs::write(
+        repository.join("app/__init__.py"),
+        "from .main import entry\n",
+    )
+    .expect("fixture package");
+    fs::write(
+        repository.join("app/main.py"),
+        "def entry():\n    return 1\n",
+    )
+    .expect("fixture production source");
+    fs::write(
+        repository.join("tests/test_main.py"),
+        "from app.main import entry\n\ndef test_entry():\n    assert entry() == 1\n",
+    )
+    .expect("fixture test source");
+    fs::write(repository.join("src/lib.rs"), "pub fn fixture() {}\n").expect("fixture Rust source");
+
+    fixture_git(&repository, &["init", "-q", "-b", "main"]);
+    fixture_git(&repository, &["config", "core.excludesFile", "/dev/null"]);
+    fixture_git(&repository, &["config", "user.name", "Battery Fixture"]);
+    fixture_git(
+        &repository,
+        &["config", "user.email", "battery@example.invalid"],
+    );
+    fixture_git(&repository, &["add", "--all"]);
+    fixture_git(&repository, &["commit", "-q", "-m", "fixture"]);
+    repository
+}
+
+fn fixture_git(repository: &Path, arguments: &[&str]) {
+    let output = Command::new("/usr/bin/git")
+        .args(arguments)
+        .current_dir(repository)
+        .env_clear()
+        .env("HOME", repository)
+        .output()
+        .expect("run fixture git");
+    assert!(
+        output.status.success(),
+        "git {arguments:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 impl Drop for Fixture {

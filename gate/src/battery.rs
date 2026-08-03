@@ -9,6 +9,8 @@ mod execution;
 mod family_evidence;
 mod manifest_contract;
 mod receipt;
+#[cfg(not(target_arch = "wasm32"))]
+mod repository_executor;
 
 use std::error::Error;
 use std::fmt;
@@ -33,6 +35,8 @@ pub use receipt::{
     BatteryReceipt, GATE_BATTERY_RECEIPT_VERSION, ReceiptRefusal, UnsupportedReceipt,
     supported_pairs,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use repository_executor::{RepositoryExecutionEvent, RepositoryExecutor};
 
 /// One declaration family behind the common runner boundary.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

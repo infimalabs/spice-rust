@@ -22,10 +22,10 @@ pub enum SpiceVariable {
     /// Installed shell-hook directory.
     #[serde(rename = "SPICE_HOOKS")] // env-policy: allow
     Hooks,
-    /// Debug hygiene-acquisition fixture repository.
+    /// Repository path supplied to the isolated hygiene acquisition fixture.
     #[serde(rename = "SPICE_HYGIENE_ACQUIRE_REPOSITORY")] // env-policy: allow
     HygieneAcquireRepository,
-    /// Debug hygiene-acquisition interpreter-tripwire marker.
+    /// Interpreter-tripwire marker supplied to the isolated hygiene acquisition fixture.
     #[serde(rename = "SPICE_HYGIENE_INTERPRETER_MARKER")] // env-policy: allow
     HygieneInterpreterMarker,
     /// Rendered lane direction.
