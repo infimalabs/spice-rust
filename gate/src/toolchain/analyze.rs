@@ -27,7 +27,7 @@ use sill::{Argv, Completion, Environment, spawn};
 use super::{
     ArmFinding, ArmOutcome, EnvironmentLedgerKind, FindingDetail, JavascriptUnusedStatus,
     LOCAL_PATH_MARKER, PACKAGED_ENV_PROFILE, PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_TASTE_WORDS,
-    PACKAGED_TEST_PATHS, SourceLocus, ToolchainDeclaration, environment,
+    PACKAGED_TEST_PATHS, SourceLocus, ToolchainDeclaration, column_of, environment,
 };
 use crate::GateId;
 use crate::jurisdiction::{Ignore, Jurisdiction};
@@ -275,6 +275,11 @@ pub(super) fn local_paths(
 }
 
 /// Scan every selected prose change for the compiled discouraged vocabulary.
+///
+/// One finding per occurrence rather than per word, each carrying the column it
+/// opens at. A word written twice on one line is two places the prose has to be
+/// rewritten, and the column is what keeps the second from arriving as a
+/// duplicate of the first and being refused.
 pub(super) fn taste(
     declaration: ToolchainDeclaration,
     root: &Path,
@@ -294,12 +299,15 @@ pub(super) fn taste(
             Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
         };
         for (line, text) in lines {
-            for (word, replacement) in discouraged(&text) {
+            for found in discouraged(&text) {
                 findings.push(ArmFinding {
                     path: Some(path.clone()),
                     line: Some(line),
-                    column: None,
-                    detail: FindingDetail::Taste { word, replacement },
+                    column: Some(found.column),
+                    detail: FindingDetail::Taste {
+                        word: found.word,
+                        replacement: found.replacement,
+                    },
                 });
             }
         }
@@ -1088,29 +1096,37 @@ fn numbered_lines(root: &Path, path: &str) -> Result<Vec<(u32, String)>, String>
     Ok(numbered(&decoded(root, path)?))
 }
 
+/// One discouraged word, where it sits on its line, and what to write instead.
+struct Discouraged {
+    column: u32,
+    word: String,
+    replacement: String,
+}
+
 /// Every discouraged word one line of prose contains, with its replacement.
 ///
 /// A trailing `*` in the compiled vocabulary matches any continuation of the
 /// same word, and the reported word is the text that actually appeared rather
 /// than the pattern that caught it.
 ///
-/// One word repeated on one line is reported once. Findings carry a line and no
-/// column, so a second report of it would be a finding identical to the first,
-/// which the report refuses as a duplicate rather than retains as evidence.
-fn discouraged(text: &str) -> Vec<(String, String)> {
-    let mut found: Vec<(String, String)> = Vec::new();
-    for word in words(text) {
-        for (pattern, replacement) in PACKAGED_TASTE_WORDS {
-            if matches_pattern(pattern, &word) {
-                let caught = (word.clone(), (*replacement).to_owned());
-                if !found.contains(&caught) {
-                    found.push(caught);
-                }
-                break;
-            }
-        }
-    }
-    found
+/// One word repeated on one line is reported once per occurrence, because each
+/// is a separate place the prose has to be rewritten. The column is what keeps
+/// the second from arriving as a finding identical to the first, which the
+/// report refuses as a duplicate rather than retains as evidence.
+fn discouraged(text: &str) -> Vec<Discouraged> {
+    words(text)
+        .into_iter()
+        .filter_map(|(column, word)| {
+            PACKAGED_TASTE_WORDS
+                .iter()
+                .find(|(pattern, _)| matches_pattern(pattern, &word))
+                .map(|(_, replacement)| Discouraged {
+                    column,
+                    word,
+                    replacement: (*replacement).to_owned(),
+                })
+        })
+        .collect()
 }
 
 /// Whether one compiled pattern catches one whole word, ignoring case.
@@ -1124,12 +1140,37 @@ fn matches_pattern(pattern: &str, word: &str) -> bool {
         .map_or_else(|| lowered == pattern, |stem| lowered.starts_with(stem))
 }
 
-/// Every whole word in one line, in the order they appear.
-fn words(text: &str) -> Vec<String> {
-    text.split(|character: char| !(character.is_alphanumeric() || character == '_'))
-        .filter(|word| !word.is_empty())
-        .map(ToOwned::to_owned)
-        .collect()
+/// Every whole word in one line, each with the column it opens at, in order.
+fn words(text: &str) -> Vec<(u32, String)> {
+    let mut found: Vec<(u32, String)> = Vec::new();
+    let mut opened: Option<usize> = None;
+    for (offset, character) in text.char_indices() {
+        match (is_word_character(character), opened) {
+            (true, None) => opened = Some(offset),
+            (false, Some(start)) => {
+                found.extend(word_at(text, start, offset));
+                opened = None;
+            }
+            (true, Some(_)) | (false, None) => {}
+        }
+    }
+    if let Some(start) = opened {
+        found.extend(word_at(text, start, text.len()));
+    }
+    found
+}
+
+/// Whether one character continues a word rather than ending it.
+fn is_word_character(character: char) -> bool {
+    character.is_alphanumeric() || character == '_'
+}
+
+/// One word taken from a line, at the column it opens at.
+///
+/// A line too long to name a column in is dropped rather than reported at an
+/// invented one, which is what [`numbered`] already does with its line numbers.
+fn word_at(text: &str, start: usize, end: usize) -> Option<(u32, String)> {
+    column_of(text, start).map(|column| (column, text[start..end].to_owned()))
 }
 
 #[cfg(test)]

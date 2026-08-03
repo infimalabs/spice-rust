@@ -247,29 +247,50 @@ mod tests {
         assert!(!matches_pattern("orphan*", "morphan"));
     }
 
-    /// One word twice on one line is one finding, because findings carry no column.
+    /// One word twice on one line is two occurrences at two columns.
+    ///
+    /// Each is a separate place the prose has to be rewritten. They agree in
+    /// word and replacement, so the column is the only thing that keeps the
+    /// second from being refused as a finding identical to the first.
     #[test]
-    fn a_word_repeated_on_one_line_is_caught_once() {
+    fn a_word_repeated_on_one_line_is_caught_at_every_occurrence() {
         let (pattern, replacement) = PACKAGED_TASTE_WORDS
             .first()
             .expect("the compiled vocabulary is not empty");
         let word = pattern.trim_end_matches('*');
-        assert_eq!(discouraged(&format!("{word} and {word} again")), [(
-            word.to_owned(),
-            (*replacement).to_owned()
-        )]);
+        let line = format!("{word} and {word} again");
+        let found = discouraged(&line);
+        assert_eq!(found.len(), 2, "one line, two occurrences, two findings");
+        for occurrence in &found {
+            assert_eq!(occurrence.word, word);
+            assert_eq!(occurrence.replacement, *replacement);
+        }
+        assert_eq!(found[0].column, 1);
+        assert_eq!(
+            u32::try_from(line.rfind(word).expect("the second occurrence") + 1),
+            Ok(found[1].column)
+        );
     }
 
     #[test]
     fn words_split_on_everything_that_is_not_a_word_character() {
         assert_eq!(words("a whitelist, and-a blacklist."), [
-            "a",
-            "whitelist",
-            "and",
-            "a",
-            "blacklist"
+            (1, "a".to_owned()),
+            (3, "whitelist".to_owned()),
+            (14, "and".to_owned()),
+            (18, "a".to_owned()),
+            (20, "blacklist".to_owned())
         ]);
-        assert_eq!(words("   "), Vec::<String>::new());
+        assert_eq!(words("   "), Vec::<(u32, String)>::new());
+    }
+
+    /// A column is a character count, not a byte count.
+    #[test]
+    fn a_word_after_a_multibyte_character_opens_at_a_character_column() {
+        assert_eq!(words("\u{e9}\u{e9} whitelist"), [
+            (1, "\u{e9}\u{e9}".to_owned()),
+            (4, "whitelist".to_owned())
+        ]);
     }
 
     /// A change path that is not tree-relative would read outside the tree.

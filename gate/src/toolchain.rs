@@ -689,6 +689,17 @@ fn valid_relative_path(path: &str) -> bool {
             .any(|part| part.is_empty() || part == "." || part == "..")
 }
 
+/// The one-based character column one byte offset names in a line.
+///
+/// Shared by every scanner that reports one, because a column is what tells two
+/// otherwise identical findings on one line apart and admission refuses the
+/// second of any pair that agrees in every field. It lives beside the scanners
+/// it serves, which this target does not compile.
+#[cfg(not(target_arch = "wasm32"))]
+fn column_of(line: &str, start: usize) -> Option<u32> {
+    u32::try_from(line.get(..start)?.chars().count() + 1).ok()
+}
+
 fn valid_finding_detail(detail: &FindingDetail) -> bool {
     match detail {
         FindingDetail::Formatting { formatter } => !formatter.is_empty(),
