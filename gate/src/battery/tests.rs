@@ -360,13 +360,12 @@ fn the_scanning_arms_report_exact_findings_over_the_captured_changes() {
     let repository = production_repository(&fixture.root);
     let (word, replacement) = discouraged_word();
     let marked = format!("// {LOCAL_PATH_MARKER}somebody/devel\n");
+    let prose = format!("This paragraph is {word} and nothing else.\n");
+    let column = u32::try_from(prose.find(&word).expect("the fixture names the word") + 1)
+        .expect("a fixture column fits");
     fs::write(repository.join(MARKED), &marked).expect("fixture marked source");
     fs::create_dir(repository.join("docs")).expect("fixture prose directory");
-    fs::write(
-        repository.join(PROSE),
-        format!("This paragraph is {word} and nothing else.\n"),
-    )
-    .expect("fixture discouraged prose");
+    fs::write(repository.join(PROSE), &prose).expect("fixture discouraged prose");
     fs::write(
         repository.join("docs/unselected.md"),
         format!("{marked}This paragraph is {word} as well.\n"),
@@ -425,7 +424,7 @@ fn the_scanning_arms_report_exact_findings_over_the_captured_changes() {
         [ArmFinding {
             path: Some(PROSE.to_owned()),
             line: Some(1),
-            column: None,
+            column: Some(column),
             detail: FindingDetail::Taste { word, replacement },
         }],
         "the prose scanner named something other than the one selected discouraged word"

@@ -320,13 +320,21 @@ fn the_compiled_scanners_pass_over_a_clean_tree() {
     measure_toolchain(observations).expect("clean observations are admitted");
 }
 
+/// The prose fixture writes one discouraged word twice on one line.
+///
+/// Both occurrences carry the same word and the same replacement on the same
+/// line of the same file, so the column is the only field that tells them
+/// apart. Admission refuses findings that agree in every field, which makes
+/// this the case that proves the second occurrence survives as its own place to
+/// fix rather than collapsing into the first.
 #[test]
 fn the_compiled_scanners_report_exact_findings_over_a_dirty_tree() {
     let (word, replacement) = discouraged_word();
+    let prose = format!("This paragraph is {word} and {word} again.\n");
     let repository = scanning_repository(
         "toolchain-dirty",
         &format!("// {LOCAL_PATH_MARKER}somebody/devel\nfn main( ) {{\n    let  x=1;\n}}\n"),
-        &format!("This paragraph is {word} and nothing else.\n"),
+        &prose,
     );
     let observations = acquired(
         &repository,
@@ -368,15 +376,22 @@ fn the_compiled_scanners_report_exact_findings_over_a_dirty_tree() {
         }],
         "the marker scanner named something other than the one marked line"
     );
+    let discouraged = |column| ArmFinding {
+        path: Some(PROSE.to_owned()),
+        line: Some(1),
+        column: Some(column),
+        detail: FindingDetail::Taste {
+            word: word.clone(),
+            replacement: replacement.clone(),
+        },
+    };
     assert_eq!(
         arm(&observations, GateId::Taste).findings,
-        [ArmFinding {
-            path: Some(PROSE.to_owned()),
-            line: Some(1),
-            column: None,
-            detail: FindingDetail::Taste { word, replacement },
-        }],
-        "the prose scanner named something other than the one discouraged word"
+        [
+            discouraged(fixture_column(&prose, &word)),
+            discouraged(fixture_column(&prose, &format!("{word} again"))),
+        ],
+        "the prose scanner named something other than the two discouraged occurrences"
     );
 
     measure_toolchain(observations).expect("finding observations are admitted");

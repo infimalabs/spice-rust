@@ -22,7 +22,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-use super::PACKAGED_ENV_PROFILE;
+use super::{PACKAGED_ENV_PROFILE, column_of};
 
 /// The compiled form of the packaged environment include globs, in order.
 pub(super) const ENV_EXTENSIONS: &[&str] = &[
@@ -434,11 +434,6 @@ fn delimiter_delta(line: &str) -> i32 {
         ')' | ']' | '}' => depth - 1,
         _ => depth,
     })
-}
-
-/// The one-based character column one byte offset names in a line.
-fn column_of(line: &str, start: usize) -> Option<u32> {
-    u32::try_from(line.get(..start)?.chars().count() + 1).ok()
 }
 
 /// Every regex spelling one template stands for, in quote-character order.
