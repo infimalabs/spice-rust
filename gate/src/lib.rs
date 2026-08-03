@@ -133,6 +133,8 @@ pub use toolchain::{
     ToolchainReport, TreeInput, TreeJurisdiction, compare_predecessor, measure_toolchain,
 };
 #[cfg(not(target_arch = "wasm32"))]
+pub use toolchain::{ToolchainSource, acquire_toolchain};
+#[cfg(not(target_arch = "wasm32"))]
 pub use tree::{SelectedTree, Selector, TreeError};
 pub use verdict::{
     CurrentRun, GATE_RECEIPT_VERSION, PublishError, ReceiptDecodeError, ReceiptTool, Run, RunError,
