@@ -337,6 +337,34 @@ fn partial_and_reordered_vectors_cannot_decode_as_complete() {
     ]);
 }
 
+/// `decode` validates every invariant before it compares bytes, which is what
+/// lets each forged candidate above name the invariant it violates. That
+/// ordering leaves the byte comparison itself as the only refusal no mutation
+/// reaches, so it is proven here directly: a report that is semantically
+/// perfect but reserialized in another key order must still be refused, because
+/// the gate-set identity binds bytes rather than fields.
+#[test]
+fn a_semantically_valid_report_in_another_key_order_is_still_refused() {
+    let fixture = Fixture::new();
+    let inputs = fixture.inputs();
+    let mut executor = RecordingExecutor::all_passed(&fixture.source);
+    let report = run_battery(&inputs, &mut executor).expect("complete report");
+    let canonical = report.encode().expect("encode");
+    BatteryReport::decode(&canonical).expect("canonical bytes decode");
+
+    // serde_json::Map is a BTreeMap here, so a Value round trip sorts the
+    // report's fields alphabetically instead of the order the struct declares.
+    let value: serde_json::Value = serde_json::from_slice(&canonical).expect("report JSON");
+    let reordered = serde_json::to_vec(&value).expect("candidate JSON");
+    assert_ne!(
+        reordered, canonical,
+        "a Value round trip must actually reorder the report, or this proves nothing"
+    );
+
+    let error = BatteryReport::decode(&reordered).expect_err("reordered bytes must be refused");
+    assert_eq!(error.detail(), "battery report bytes are not canonical");
+}
+
 #[test]
 fn decoded_run_context_cannot_be_forged() {
     let fixture = Fixture::new();
