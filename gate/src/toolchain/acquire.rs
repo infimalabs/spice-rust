@@ -258,7 +258,7 @@ fn resolved_programs(
 
 /// The exact analyzer one identity is still owed, or `None` once nothing is.
 ///
-/// Nothing is owed in two cases, and neither is a gap: the three analyses this
+/// Nothing is owed in two cases, and neither is a gap: the four analyses this
 /// build compiles answer for themselves, and an identity that is not a
 /// toolchain arm is not this family's to compile at all. Every identity is
 /// named outright, so a new [`GateId`] fails to compile here rather than
