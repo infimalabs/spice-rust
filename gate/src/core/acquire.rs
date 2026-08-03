@@ -21,6 +21,7 @@ use wire::{Digest, Phase, TaskHandle};
 
 use super::admission::{validate_git_tree, validate_repo_path};
 use super::declaration::CoreArmDeclaration;
+use super::shape::repo_shape;
 use super::{
     CoreArmInput, CoreEvidence, CoreInputError, CoreInputs, CoreObservation, CoreProvenance,
     DocMeasurement, MergeIntegrityEvidence, MergeTreeCompletion, PlanPhaseEvidence,
@@ -118,6 +119,11 @@ impl<'a> CoreSource<'a> {
         self.root
     }
 
+    /// Admitted inventory that produced this source identity.
+    pub(super) const fn jurisdiction(&self) -> &Jurisdiction {
+        &self.jurisdiction
+    }
+
     /// Identity every acquired arm is bound to.
     #[must_use]
     pub const fn digest(&self) -> &Digest {
@@ -169,18 +175,17 @@ fn observe(
     source: &CoreSource<'_>,
     contract: &Contract,
 ) -> Result<CoreObservation, CoreInputError> {
-    let observation = match declaration.id() {
+    Ok(match declaration.id() {
         GateId::MergeIntegrity => merge_integrity(source, contract.bounds()),
         GateId::PlanPhase => plan_phase(&source.claim),
+        GateId::RepoShape => return repo_shape(source, contract),
         GateId::Staging => staging(source, contract.bounds()),
         GateId::RepoDocs => return repo_docs(source, contract),
-        id @ (GateId::RepoShape
-        | GateId::ConfigKeyValidity
+        id @ (GateId::ConfigKeyValidity
         | GateId::ConfigFalseDisable
         | GateId::ConfigTrackedTrust) => uncompiled(id),
         id => unreachable!("{id} is not a compiled core declaration"),
-    };
-    Ok(observation)
+    })
 }
 
 fn repo_docs(
@@ -271,10 +276,6 @@ fn plan_phase(claim: &ClaimCapture) -> CoreObservation {
 /// rather than reporting a measurement nobody made.
 fn uncompiled(id: GateId) -> CoreObservation {
     let (reason, recovery) = match id {
-        GateId::RepoShape => (
-            "this build compiles no repository-shape provider",
-            "compile the namespace, path-shape, and name-cluster scanners over the selected tree",
-        ),
         GateId::ConfigKeyValidity => (
             "this build compiles no layered-configuration admission provider",
             "compile packaged and active-layer key admission over the resolved configuration",

@@ -114,6 +114,8 @@ pub struct Contract {
     gate_set: GateSet,
     policy: Policy,
     rule_policy: RulePolicy,
+    #[cfg(not(target_arch = "wasm32"))]
+    shape: ShapePolicy,
     camp_policy: Policy,
     kill_profile: KillProfile,
     baseline: Baseline,
@@ -157,7 +159,10 @@ impl Contract {
     ) -> Result<Self, ContractError> {
         let gate_set = GateSet::current().map_err(ContractError::GateSet)?;
         let bounds = current_bounds().map_err(ContractError::Bounds)?;
-        let ignore = tracked_ignore(policy_path, policy_text).map_err(ContractError::Policy)?;
+        let tracked = tracked_policy(policy_path, policy_text).map_err(ContractError::Policy)?;
+        let ignore = tracked_ignore(policy_path, &tracked).map_err(ContractError::Policy)?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let shape = ShapePolicy::from_tracked(&tracked.policy);
         let rule_policy = packaged_rule_policy().map_err(|source| {
             ContractError::Policy(PolicyError::Rules {
                 path: policy_path.to_path_buf(),
@@ -190,6 +195,8 @@ impl Contract {
             gate_set,
             policy,
             rule_policy,
+            #[cfg(not(target_arch = "wasm32"))]
+            shape,
             camp_policy,
             kill_profile,
             baseline,
@@ -215,6 +222,12 @@ impl Contract {
     #[must_use]
     pub const fn rule_policy(&self) -> &RulePolicy {
         &self.rule_policy
+    }
+
+    /// Admitted tracked intent for the repository-shape provider.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) const fn shape(&self) -> &ShapePolicy {
+        &self.shape
     }
 
     /// Compiled shared-bound profile.
@@ -295,13 +308,68 @@ fn read_tracked(path: &Path) -> Result<String, ContractError> {
 #[serde(default)]
 struct TrackedPolicy {
     gate: crate::config::Config,
+    #[cfg(not(target_arch = "wasm32"))]
+    policy: TrackedShapePolicy,
 }
 
-fn tracked_ignore(path: &Path, text: &str) -> Result<Ignore, PolicyError> {
-    let tracked = toml::from_str::<TrackedPolicy>(text).map_err(|source| PolicyError::Toml {
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct TrackedShapePolicy {
+    package_roots: Vec<String>,
+    generated_paths: Vec<String>,
+    name_cluster_threshold: Option<usize>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ShapePolicy {
+    package_roots: Vec<String>,
+    generated_paths: Vec<String>,
+    name_cluster_threshold: usize,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl ShapePolicy {
+    fn from_tracked(tracked: &TrackedShapePolicy) -> Self {
+        let normalize = |values: &[String]| {
+            let mut values: Vec<String> = values
+                .iter()
+                .map(|value| value.trim().trim_matches('/').to_owned())
+                .filter(|value| !value.is_empty())
+                .collect();
+            values.sort();
+            values.dedup();
+            values
+        };
+        Self {
+            package_roots: normalize(&tracked.package_roots),
+            generated_paths: normalize(&tracked.generated_paths),
+            name_cluster_threshold: tracked.name_cluster_threshold.unwrap_or(4),
+        }
+    }
+
+    pub(crate) fn package_roots(&self) -> &[String] {
+        &self.package_roots
+    }
+
+    pub(crate) fn generated_paths(&self) -> &[String] {
+        &self.generated_paths
+    }
+
+    pub(crate) const fn name_cluster_threshold(&self) -> usize {
+        self.name_cluster_threshold
+    }
+}
+
+fn tracked_policy(path: &Path, text: &str) -> Result<TrackedPolicy, PolicyError> {
+    toml::from_str::<TrackedPolicy>(text).map_err(|source| PolicyError::Toml {
         path: path.to_path_buf(),
         source,
-    })?;
+    })
+}
+
+fn tracked_ignore(path: &Path, tracked: &TrackedPolicy) -> Result<Ignore, PolicyError> {
     let defaults = Ignore::parse(&(DEFAULT_SKIP.join("\n") + "\n")).map_err(|source| {
         PolicyError::Selector {
             path: path.to_path_buf(),

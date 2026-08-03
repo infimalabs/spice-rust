@@ -74,6 +74,8 @@ pub use hygiene::{
     PredecessorResult as HygienePredecessorResult, PrivateCouplingException, PythonUnusedStatus,
     analyze_hygiene, compare_predecessor as compare_hygiene_predecessor,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use hygiene::{HygieneSource, acquire_hygiene};
 pub use input::{
     BASELINE_PATH, BASELINE_VERSION, Baseline, BaselineError, Contract, ContractError,
     ExecutableDeclaration, FieldError, Floor, FloorDeclaration, FloorKind, GateSet, GateSetError,
