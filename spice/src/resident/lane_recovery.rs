@@ -244,14 +244,6 @@ pub(super) fn import(
     command: &wire::AdmittedCommand,
     request: &LaneState,
 ) -> Outcome<CommandAnswer> {
-    if !matches!(command.actor(), Actor::Operator) {
-        return lane_refusal(
-            "command::authority",
-            Some("operator".into()),
-            Some(command.actor().to_string()),
-            "reconnect through the operator capability",
-        );
-    }
     if request.action != wire::intent::LaneAction::Wake {
         return lane_refusal(
             "lane::state-shape",
