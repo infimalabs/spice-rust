@@ -22,7 +22,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use wire::{Digest, Domain};
 
-use super::execution::{BatteryReport, gate_set_digest};
+use super::execution::{BatteryReport, RawReport, gate_set_digest};
 use super::manifest_contract::{BatteryManifest, CANONICAL_BATTERY_MANIFEST};
 use super::{
     ActorEvidence, BatteryArmResult, BatteryError, BatteryScope, BatteryToolEvidence,
@@ -40,6 +40,10 @@ pub const GATE_BATTERY_RECEIPT_VERSION: u64 = 1;
 /// invariant, and the canonical byte rule, and a door that does not exist
 /// cannot be walked through by mistake. [`BatteryReceipt::verify`] is the only
 /// way in, and it decodes through a private shape declared below.
+///
+/// ```compile_fail,E0277
+/// let receipt: gate::BatteryReceipt = serde_json::from_slice(b"{}").expect("no way in");
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct BatteryReceipt {
     version: u64,
@@ -50,6 +54,11 @@ pub struct BatteryReceipt {
 }
 
 /// The receipt shape exactly as it is spelled on disk, admitted nowhere else.
+///
+/// The nested run is spelled as a [`RawReport`] rather than a [`BatteryReport`]
+/// because the report carries no [`Deserialize`] either. One private shape per
+/// public type keeps the number of inbound doors equal to the number of
+/// constructors that validate.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawReceipt {
@@ -57,7 +66,7 @@ struct RawReceipt {
     manifest: Digest,
     baseline: Digest,
     report: Digest,
-    run: BatteryReport,
+    run: RawReport,
 }
 
 impl From<RawReceipt> for BatteryReceipt {
@@ -67,7 +76,7 @@ impl From<RawReceipt> for BatteryReceipt {
             manifest: raw.manifest,
             baseline: raw.baseline,
             report: raw.report,
-            run: raw.run,
+            run: BatteryReport::from(raw.run),
         }
     }
 }
@@ -76,11 +85,14 @@ impl BatteryReceipt {
     /// Bind one completed battery run to the current receipt schema.
     ///
     /// A [`BatteryReport`] is the only way in, and it cannot be assembled by
-    /// hand: its fields are private and both of its constructors validate, so a
-    /// partial, reordered, duplicated, or digest-mismatched vector is already
-    /// refused before it can reach a receipt. A second check here would be a
-    /// guard no caller could ever trip, so the same invariants are proven where
-    /// foreign bytes really do reach them, in
+    /// hand: its fields are private, it carries no [`Deserialize`], and both of
+    /// its constructors validate, so a partial, reordered, duplicated, or
+    /// digest-mismatched vector is already refused before it can reach a
+    /// receipt. Taking the report by value is what makes that load-bearing —
+    /// a derived deserializer on the report would be a way to mint from a
+    /// vector nothing ever checked. A second check here would be a guard no
+    /// caller could ever trip, so the same invariants are proven where foreign
+    /// bytes really do reach them, in
     /// `truncated_tampered_and_reordered_receipts_are_refused_by_the_invariant_they_break`,
     /// rather than restated here as unreachable code.
     #[must_use]
