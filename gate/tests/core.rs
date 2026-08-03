@@ -1,14 +1,17 @@
 use std::fs;
+use std::os::unix::fs::PermissionsExt as _;
+use std::path::Path;
 use std::process::{Command, Output};
 use std::str::FromStr;
 
 use gate::{
-    CORE_GATE_IDS, ConfigInventoryEvidence, ConfigKeyEvidence, CoreArmInput, CoreEvidence,
-    CoreFinding, CoreInputs, CoreObservation, CoreProvenance, CoreReport, CoreReportDecodeError,
-    CoreStanding, CoreTimeoutContract, CoreToolContract, DocMeasurement, GateId,
-    MergeIntegrityEvidence, MergeTreeCompletion, PREDECESSOR_GATE_RELEASE, PlanPhaseEvidence,
-    RepoDocLimit, RepoDocsEvidence, RepoShapeEvidence, StagingEvidence, core_declarations,
-    evaluate_core,
+    CORE_GATE_IDS, ClaimCapture, ConfigInventoryEvidence, ConfigKeyEvidence, Contract,
+    CoreArmInput, CoreArmReport, CoreEvidence, CoreFinding, CoreInputs, CoreObservation,
+    CoreProvenance, CoreReport, CoreReportDecodeError, CoreSource, CoreStanding,
+    CoreTimeoutContract, CoreToolContract, DocMeasurement, GateId, MergeIntegrityEvidence,
+    MergeTreeCompletion, PREDECESSOR_GATE_RELEASE, PlanPhaseEvidence, RepoDocLimit,
+    RepoDocsEvidence, RepoShapeEvidence, Selector, StagingEvidence, acquire_core,
+    core_declarations, evaluate_core,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -689,4 +692,255 @@ fn compared_merge(
         completion,
         conflicted_paths,
     }
+}
+
+fn workspace_document(name: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(name);
+    fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("read {} for the fixture: {error}", path.display()))
+}
+
+/// One committed fixture repository carrying the tracked contract documents.
+fn contract_repository(label: &str) -> Tree {
+    let repository = git_repository(label);
+    repository.write("spice.toml", &workspace_document("spice.toml"));
+    repository.write("baseline.toml", &workspace_document("baseline.toml"));
+    repository.write("src/app.rs", "fn main() {}\n");
+    git_commit(&repository, "fixture contract");
+    repository
+}
+
+fn acquired(repository: &Tree, claim: ClaimCapture) -> CoreReport {
+    let tree = Selector::staged()
+        .materialize(&repository.root)
+        .expect("materialize the captured index");
+    let contract = Contract::load(tree.root()).expect("load the captured contract");
+    let source = CoreSource::capture(&repository.root, &tree, &contract, claim)
+        .expect("capture one immutable core source");
+    let inputs = acquire_core(&source, &contract).expect("acquire one complete core battery");
+
+    assert_eq!(
+        inputs
+            .arms()
+            .iter()
+            .map(CoreArmInput::id)
+            .collect::<Vec<_>>(),
+        CORE_GATE_IDS,
+        "acquisition covers every compiled declaration in canonical order"
+    );
+    for arm in inputs.arms() {
+        assert_eq!(
+            arm.tree(),
+            source.digest(),
+            "{} was acquired from a different tree than the captured source",
+            arm.id()
+        );
+    }
+    evaluate_core(&inputs)
+}
+
+fn acquired_arm(report: &CoreReport, id: GateId) -> &CoreArmReport {
+    report
+        .arms()
+        .iter()
+        .find(|arm| arm.id() == id)
+        .unwrap_or_else(|| panic!("{id} is missing from an acquired report"))
+}
+
+#[test]
+fn acquisition_measures_every_compiled_provider_the_core_fixtures_assert() {
+    let repository = contract_repository("core-acquire-clean");
+    let report = acquired(&repository, ClaimCapture::Idle);
+
+    for id in [GateId::MergeIntegrity, GateId::PlanPhase, GateId::Staging] {
+        let acquired = acquired_arm(&report, id);
+        assert_eq!(
+            acquired.observation(),
+            &measured(passing_evidence(id)),
+            "{id} acquisition disagrees with the asserted core fixture evidence"
+        );
+        assert_eq!(
+            acquired.standing(),
+            CoreStanding::Passed,
+            "{id}: {}",
+            acquired.diagnostic()
+        );
+    }
+
+    repository.remove();
+}
+
+#[test]
+fn an_arm_without_a_compiled_provider_crosses_as_unsupported_and_never_as_a_pass() {
+    let repository = contract_repository("core-acquire-uncompiled");
+    let report = acquired(&repository, ClaimCapture::Idle);
+
+    for id in [
+        GateId::RepoShape,
+        GateId::RepoDocs,
+        GateId::ConfigKeyValidity,
+        GateId::ConfigFalseDisable,
+        GateId::ConfigTrackedTrust,
+    ] {
+        let acquired = acquired_arm(&report, id);
+        let CoreObservation::Unsupported { reason, recovery } = acquired.observation() else {
+            panic!("{id} claimed a measurement no compiled provider made");
+        };
+        assert!(!reason.trim().is_empty() && !recovery.trim().is_empty());
+        assert_eq!(acquired.standing(), CoreStanding::Unsupported);
+        assert!(
+            !acquired.standing().admits(),
+            "{id} must not admit the battery while its provider is missing"
+        );
+        assert!(acquired.diagnostic().contains(recovery));
+    }
+
+    repository.remove();
+}
+
+#[test]
+fn a_partially_staged_file_is_acquired_from_the_captured_repository() {
+    let repository = contract_repository("core-acquire-partial");
+    repository.write("src/app.rs", "fn main() {\n    // staged\n}\n");
+    git(&repository, &["add", "src/app.rs"]);
+    repository.write("src/app.rs", "fn main() {\n    // unstaged\n}\n");
+
+    let report = acquired(&repository, ClaimCapture::Idle);
+    let staging = acquired_arm(&report, GateId::Staging);
+
+    assert_eq!(
+        staging.observation(),
+        &measured(CoreEvidence::Staging(
+            StagingEvidence::new(["src/app.rs"]).expect("partial staging evidence")
+        )),
+        "acquisition must name the file that is both staged and unstaged"
+    );
+    assert_eq!(staging.standing(), CoreStanding::Failed);
+
+    repository.remove();
+}
+
+#[test]
+fn a_captured_claim_reaches_the_plan_phase_arm_without_the_gate_reading_a_journal() {
+    let repository = contract_repository("core-acquire-claim");
+    let task = TaskHandle::from_str("CORE-1kJWlbWK").expect("task handle");
+    let phase = Phase::from_str("plan").expect("phase");
+    let report = acquired(
+        &repository,
+        ClaimCapture::Active {
+            task: task.clone(),
+            phase: phase.clone(),
+        },
+    );
+
+    assert_eq!(
+        acquired_arm(&report, GateId::PlanPhase).observation(),
+        &measured(CoreEvidence::PlanPhase(PlanPhaseEvidence::Active {
+            task,
+            phase
+        })),
+    );
+
+    repository.remove();
+}
+
+#[test]
+fn a_repository_without_a_claim_store_skips_plan_phase_rather_than_measuring_it() {
+    let repository = contract_repository("core-acquire-no-store");
+    let report = acquired(
+        &repository,
+        ClaimCapture::Absent {
+            reason: "no claim store is configured for this repository".to_owned(),
+        },
+    );
+    let plan = acquired_arm(&report, GateId::PlanPhase);
+
+    assert_eq!(plan.standing(), CoreStanding::Skipped);
+    assert!(
+        plan.evidence().is_none(),
+        "an absent store measured nothing"
+    );
+
+    repository.remove();
+}
+
+#[test]
+fn an_unreadable_selected_tree_refuses_capture_with_a_typed_core_input_error() {
+    let repository = contract_repository("core-acquire-unreadable");
+    let tree = Selector::staged()
+        .materialize(&repository.root)
+        .expect("materialize the captured index");
+    let contract = Contract::load(tree.root()).expect("load the captured contract");
+
+    let sealed = tree.root().join("src");
+    let restore = fs::metadata(&sealed)
+        .expect("selected directory")
+        .permissions();
+    fs::set_permissions(&sealed, fs::Permissions::from_mode(0o000)).expect("seal the directory");
+    let refused = CoreSource::capture(&repository.root, &tree, &contract, ClaimCapture::Idle);
+    fs::set_permissions(&sealed, restore).expect("restore the directory");
+
+    let error = refused.expect_err("an unreadable selected tree cannot yield one identity");
+    assert!(
+        error.to_string().contains("core source"),
+        "capture must name the source it could not complete: {error}"
+    );
+
+    repository.remove();
+}
+
+#[test]
+fn an_empty_merge_is_acquired_from_the_repository_and_refused_by_the_engine() {
+    let repository = contract_repository("core-acquire-empty-merge");
+    git(&repository, &["checkout", "-q", "-b", "side"]);
+    repository.write("src/side.rs", "pub fn side() {}\n");
+    git_commit(&repository, "side work");
+
+    git(&repository, &["checkout", "-q", "main"]);
+    repository.write("src/main.rs", "pub fn main_work() {}\n");
+    git_commit(&repository, "main work");
+
+    let output = git_output(&repository, &["merge", "--no-commit", "--no-ff", "side"]);
+    assert!(
+        output.status.success(),
+        "the fixture merge must succeed cleanly: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(repository.path(".git/MERGE_HEAD").exists());
+    git(&repository, &["read-tree", "--reset", "-u", "HEAD"]);
+
+    let report = acquired(&repository, ClaimCapture::Idle);
+    let merge = acquired_arm(&report, GateId::MergeIntegrity);
+
+    let head_tree = git(&repository, &["rev-parse", "HEAD^{tree}"]);
+    let CoreObservation::Measured {
+        evidence:
+            CoreEvidence::MergeIntegrity(MergeIntegrityEvidence::Compared {
+                head_tree: acquired_head,
+                expected_tree,
+                completion,
+                conflicted_paths,
+            }),
+    } = merge.observation()
+    else {
+        panic!(
+            "an in-progress merge must be compared, not {:?}",
+            merge.observation()
+        );
+    };
+    assert_eq!(
+        acquired_head, &head_tree,
+        "acquisition read the real HEAD tree"
+    );
+    assert_eq!(*completion, MergeTreeCompletion::Clean);
+    assert!(conflicted_paths.is_empty());
+    assert_ne!(
+        expected_tree, &head_tree,
+        "git merge-tree must compute the merge this reset index would discard"
+    );
+
+    assert_eq!(merge.standing(), CoreStanding::Failed);
+    assert!(merge.diagnostic().contains("empty merge refused"));
+
+    repository.remove();
 }

@@ -5,6 +5,8 @@
 //! timeout, and applicability decisions cross as explicit evidence rather than
 //! being mistaken for a successful measurement.
 
+#[cfg(not(target_arch = "wasm32"))]
+mod acquire;
 mod admission;
 mod declaration;
 mod evaluate;
@@ -15,6 +17,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use wire::{Digest, Phase, TaskHandle};
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use acquire::{ClaimCapture, CoreSource, acquire_core};
 pub use declaration::{
     CoreArmDeclaration, CoreTimeoutContract, CoreToolContract, GitCommandContract,
     PredecessorObservation, core_declarations,

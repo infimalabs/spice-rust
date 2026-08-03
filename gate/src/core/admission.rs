@@ -90,7 +90,7 @@ fn validate_merge(evidence: &MergeIntegrityEvidence) -> Result<(), CoreInputErro
     }
 }
 
-fn validate_git_tree(tree: &str) -> Result<(), CoreInputError> {
+pub(super) fn validate_git_tree(tree: &str) -> Result<(), CoreInputError> {
     let valid_length = matches!(tree.len(), 40 | 64);
     let valid_bytes = tree
         .bytes()
