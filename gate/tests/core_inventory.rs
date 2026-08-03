@@ -116,38 +116,12 @@ fn false_disable_inventory_authenticates_the_configuration_root_type() {
     let repository = contract_repository("core-false-disable-root-authority");
     repository.write(
         "spice/src/config.rs",
-        concat!(
-            "registry! {\n",
-            "    fixed \"direct.enabled\" {\n",
-            "        kind: Boolean,\n",
-            "        builtin: Some(Builtin::Boolean(false)),\n",
-            "        layers: TRACKED,\n",
-            "        class: Policy,\n",
-            "        flag: None,\n",
-            "    }\n",
-            "    fixed \"renamed.enabled\" {\n",
-            "        kind: Boolean,\n",
-            "        builtin: Some(Builtin::Boolean(false)),\n",
-            "        layers: TRACKED,\n",
-            "        class: Policy,\n",
-            "        flag: None,\n",
-            "    }\n",
-            "    fixed \"qualified.enabled\" {\n",
-            "        kind: Boolean,\n",
-            "        builtin: Some(Builtin::Boolean(false)),\n",
-            "        layers: TRACKED,\n",
-            "        class: Policy,\n",
-            "        flag: None,\n",
-            "    }\n",
-            "    fixed \"vendor.codex.fast_mode\" {\n",
-            "        kind: Boolean,\n",
-            "        builtin: Some(Builtin::Boolean(false)),\n",
-            "        layers: TRACKED,\n",
-            "        class: Policy,\n",
-            "        flag: None,\n",
-            "    }\n",
-            "}\n",
-        ),
+        &false_disable_registry(&[
+            "direct.enabled",
+            "renamed.enabled",
+            "qualified.enabled",
+            "vendor.codex.fast_mode",
+        ]),
     );
     repository.write(
         "spice/src/direct.rs",
@@ -217,6 +191,112 @@ fn false_disable_inventory_authenticates_the_configuration_root_type() {
 }
 
 #[test]
+fn false_disable_inventory_drops_a_receiver_rebound_by_any_pattern_form() {
+    let repository = contract_repository("core-false-disable-shadowed");
+    let paths = [
+        "annotated.enabled",
+        "arm.enabled",
+        "closure.enabled",
+        "iterated.enabled",
+        "optional.enabled",
+        "tuple.enabled",
+    ];
+    repository.write("spice/src/config.rs", &false_disable_registry(&paths));
+    repository.write(
+        "spice/src/shadowed.rs",
+        concat!(
+            "use crate::config::Root;\n",
+            "fn closure_parameter(root: &Root, flag: &Flag) -> bool {\n",
+            "    let read = |root: &Flag| root.closure().enabled();\n",
+            "    read(flag)\n",
+            "}\n",
+            "fn match_arm(root: &Root, flag: Option<Flag>) -> bool {\n",
+            "    match flag {\n",
+            "        Some(root) => root.arm().enabled(),\n",
+            "        None => false,\n",
+            "    }\n",
+            "}\n",
+            "fn for_loop(root: &Root, flags: &[Flag]) -> bool {\n",
+            "    for root in flags {\n",
+            "        if root.iterated().enabled() {\n",
+            "            return true;\n",
+            "        }\n",
+            "    }\n",
+            "    false\n",
+            "}\n",
+            "fn annotated_let(root: &Root, flag: Flag) -> bool {\n",
+            "    let root: Flag = flag;\n",
+            "    root.annotated().enabled()\n",
+            "}\n",
+            "fn tuple_let(root: &Root, pair: (Flag, Flag)) -> bool {\n",
+            "    let (root, _spare) = pair;\n",
+            "    root.tuple().enabled()\n",
+            "}\n",
+            "fn optional_let(root: &Root, flag: Option<Flag>) -> bool {\n",
+            "    if let Some(root) = flag {\n",
+            "        return root.optional().enabled();\n",
+            "    }\n",
+            "    false\n",
+            "}\n",
+        ),
+    );
+    git_commit(&repository, "value-shadowed receiver fixture");
+
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
+    let arm = acquired_arm(&report, GateId::ConfigFalseDisable);
+    let evidence = false_disable_evidence(arm);
+    let declared: Vec<_> = paths
+        .iter()
+        .map(|path| config_path(&path.split('.').collect::<Vec<_>>()))
+        .collect();
+
+    assert_eq!(evidence.declared(), declared);
+    assert_eq!(evidence.observed(), Vec::<Vec<String>>::new());
+    assert_eq!(arm.standing(), CoreStanding::Failed);
+    assert!(
+        arm.diagnostic()
+            .contains(&format!("missing={}", paths.join(", ")))
+    );
+
+    repository.remove();
+}
+
+#[test]
+fn false_disable_inventory_seeds_an_inherent_method_parameter() {
+    let repository = contract_repository("core-false-disable-inherent");
+    repository.write(
+        "spice/src/config.rs",
+        &false_disable_registry(&["vendor.codex.fast_mode"]),
+    );
+    repository.write(
+        "spice/src/launcher.rs",
+        concat!(
+            "use crate::config::Root;\n",
+            "struct Launcher;\n",
+            "impl Launcher {\n",
+            "    fn compose(&self, root: &Root) -> bool {\n",
+            "        let configured = root.vendor().codex();\n",
+            "        configured.fast_mode()\n",
+            "    }\n",
+            "}\n",
+        ),
+    );
+    git_commit(&repository, "inherent method consumer fixture");
+
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
+    let arm = acquired_arm(&report, GateId::ConfigFalseDisable);
+    let evidence = false_disable_evidence(arm);
+    let expected = [config_path(&["vendor", "codex", "fast_mode"])];
+
+    assert_eq!(evidence.declared(), expected);
+    assert_eq!(evidence.observed(), expected);
+    assert!(evidence.violations().is_empty());
+    assert_eq!(arm.standing(), CoreStanding::Passed);
+
+    repository.remove();
+}
+
+#[test]
 fn current_false_disable_registry_and_consumer_are_one_inventory() {
     let repository = contract_repository("core-false-disable-current");
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -243,35 +323,11 @@ fn current_false_disable_registry_and_consumer_are_one_inventory() {
 
 fn false_disable_repository(label: &str, honored: bool) -> Tree {
     let repository = contract_repository(label);
-    let alpha = if honored {
-        concat!(
-            "    fixed \"alpha.feature.enabled\" {\n",
-            "        kind: Boolean,\n",
-            "        builtin: Some(Builtin::Boolean(false)),\n",
-            "        layers: TRACKED,\n",
-            "        class: Policy,\n",
-            "        flag: None,\n",
-            "    }\n",
-        )
-    } else {
-        ""
-    };
-    let config = [
-        concat!(
-            "registry! {\n",
-            "    fixed \"vendor.codex.fast_mode\" {\n",
-            "        kind: Boolean,\n",
-            "        builtin: Some(Builtin::Boolean(false)),\n",
-            "        layers: TRACKED,\n",
-            "        class: Policy,\n",
-            "        flag: None,\n",
-            "    }\n",
-        ),
-        alpha,
-        "}\n",
-    ]
-    .concat();
-    repository.write("spice/src/config.rs", &config);
+    let mut paths = vec!["vendor.codex.fast_mode"];
+    if honored {
+        paths.push("alpha.feature.enabled");
+    }
+    repository.write("spice/src/config.rs", &false_disable_registry(&paths));
     if honored {
         repository.write(
             "spice/src/consumer.rs",
@@ -288,6 +344,28 @@ fn false_disable_repository(label: &str, honored: bool) -> Tree {
     }
     git_commit(&repository, "false-disable inventory fixture");
     repository
+}
+
+/// One registry declaring every named path with a tracked false builtin.
+fn false_disable_registry(paths: &[&str]) -> String {
+    let rows: String = paths
+        .iter()
+        .map(|path| {
+            format!(
+                concat!(
+                    "    fixed \"{path}\" {{\n",
+                    "        kind: Boolean,\n",
+                    "        builtin: Some(Builtin::Boolean(false)),\n",
+                    "        layers: TRACKED,\n",
+                    "        class: Policy,\n",
+                    "        flag: None,\n",
+                    "    }}\n",
+                ),
+                path = path,
+            )
+        })
+        .collect();
+    ["registry! {\n", &rows, "}\n"].concat()
 }
 
 fn false_disable_evidence(arm: &CoreArmReport) -> &ConfigInventoryEvidence {
