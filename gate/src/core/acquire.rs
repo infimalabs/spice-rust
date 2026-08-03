@@ -20,6 +20,7 @@ use sill::{Argv, Completion, spawn};
 use wire::{Digest, Phase, TaskHandle};
 
 use super::admission::{validate_git_tree, validate_repo_path};
+use super::configuration_inventory::ConfigurationInventorySource;
 use super::declaration::CoreArmDeclaration;
 use super::shape::repo_shape;
 use super::{
@@ -152,6 +153,7 @@ pub fn acquire_core(
     source: &CoreSource<'_>,
     contract: &Contract,
 ) -> Result<CoreInputs, CoreInputError> {
+    let configuration = ConfigurationInventorySource::capture(source)?;
     let mut arms = Vec::with_capacity(core_declarations().len());
     for declaration in core_declarations() {
         let predecessor = declaration.predecessor();
@@ -164,7 +166,7 @@ pub fn acquire_core(
             declaration.id(),
             source.digest.clone(),
             provenance,
-            observe(declaration, source, contract)?,
+            observe(declaration, source, contract, &configuration)?,
         )?);
     }
     CoreInputs::new(arms)
@@ -174,6 +176,7 @@ fn observe(
     declaration: &CoreArmDeclaration,
     source: &CoreSource<'_>,
     contract: &Contract,
+    configuration: &ConfigurationInventorySource,
 ) -> Result<CoreObservation, CoreInputError> {
     Ok(match declaration.id() {
         GateId::MergeIntegrity => merge_integrity(source, contract.bounds()),
@@ -181,9 +184,8 @@ fn observe(
         GateId::RepoShape => return repo_shape(source, contract),
         GateId::Staging => staging(source, contract.bounds()),
         GateId::RepoDocs => return repo_docs(source, contract),
-        id @ (GateId::ConfigKeyValidity
-        | GateId::ConfigFalseDisable
-        | GateId::ConfigTrackedTrust) => uncompiled(id),
+        GateId::ConfigFalseDisable => return configuration.false_disable(),
+        id @ (GateId::ConfigKeyValidity | GateId::ConfigTrackedTrust) => uncompiled(id),
         id => unreachable!("{id} is not a compiled core declaration"),
     })
 }
@@ -279,10 +281,6 @@ fn uncompiled(id: GateId) -> CoreObservation {
         GateId::ConfigKeyValidity => (
             "this build compiles no layered-configuration admission provider",
             "compile packaged and active-layer key admission over the resolved configuration",
-        ),
-        GateId::ConfigFalseDisable => (
-            "this build compiles no false-disable registry inventory",
-            "compile the declared false-disable paths and the consumers that resolve them",
         ),
         GateId::ConfigTrackedTrust => (
             "this build compiles no tracked-config trust inventory",
