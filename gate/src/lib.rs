@@ -37,9 +37,11 @@ pub mod verdict;
 pub use battery::{
     ActorEvidence, ArmDisposition, ArmEvidence, ArmExecution, ArmFamily, BatteryArmResult,
     BatteryContext, BatteryError, BatteryExecutor, BatteryInputs, BatteryManifest,
-    BatteryManifestArm, BatteryReport, BatteryScope, BatteryState, BatteryToolEvidence,
-    BoundActorInputsEvidence, BoundEvidence, CANONICAL_BATTERY_MANIFEST, CompiledArm,
-    ConfigurationEvidence, GATE_BATTERY_VERSION, LatchEvidence, ResultProvenance, run_battery,
+    BatteryManifestArm, BatteryReceipt, BatteryReport, BatteryScope, BatteryState,
+    BatteryToolEvidence, BoundActorInputsEvidence, BoundEvidence, CANONICAL_BATTERY_MANIFEST,
+    CompiledArm, ConfigurationEvidence, GATE_BATTERY_RECEIPT_VERSION, GATE_BATTERY_VERSION,
+    LatchEvidence, ReceiptRefusal, ResultProvenance, UnsupportedReceipt, run_battery,
+    supported_pairs,
 };
 pub use camp::{
     BoundRelation, CAMP_REPORT_VERSION, Camp, CampError, CampFinding, CampReport, CampRunError,

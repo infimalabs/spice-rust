@@ -135,6 +135,12 @@ pub enum Domain {
     GateMeasurement,
     /// The complete current identity and ordered outcome of one gate run.
     GateReceipt,
+    /// The checked-in disposition document naming every compiled battery arm.
+    GateBatteryManifest,
+    /// The complete typed result vector one battery run produced.
+    GateBatteryReport,
+    /// The retained bytes of one published battery receipt, exactly as read.
+    GateBatteryReceipt,
     /// One complete current persistent gate-state ledger.
     GateStateLedger,
     /// One immutable accepted or rejected gate-state transition.
@@ -186,6 +192,9 @@ impl Domain {
             Self::GateInventory => "spice.gate.inventory.v1",
             Self::GateMeasurement => "spice.gate.measurement.v1",
             Self::GateReceipt => "spice.gate.receipt.v1",
+            Self::GateBatteryManifest => "spice.gate.battery-manifest.v1",
+            Self::GateBatteryReport => "spice.gate.battery-report.v1",
+            Self::GateBatteryReceipt => "spice.gate.battery-receipt.v1",
             Self::GateStateLedger => "spice.gate.state-ledger.v1",
             Self::GateStateReceipt => "spice.gate.state-receipt.v1",
             Self::ConfigExecutableSurface => "spice.config.executable-surface.v1",

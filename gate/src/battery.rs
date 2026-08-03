@@ -8,6 +8,7 @@ mod context;
 mod execution;
 mod family_evidence;
 mod manifest_contract;
+mod receipt;
 
 use std::error::Error;
 use std::fmt;
@@ -27,6 +28,10 @@ use manifest_contract::declaration_identity;
 pub use manifest_contract::{
     ArmDisposition, BatteryManifest, BatteryManifestArm, CANONICAL_BATTERY_MANIFEST,
     GATE_BATTERY_VERSION,
+};
+pub use receipt::{
+    BatteryReceipt, GATE_BATTERY_RECEIPT_VERSION, ReceiptRefusal, UnsupportedReceipt,
+    supported_pairs,
 };
 
 /// One declaration family behind the common runner boundary.
