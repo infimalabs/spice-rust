@@ -20,6 +20,7 @@ use sill::{Argv, Completion, spawn};
 use wire::{Digest, Phase, TaskHandle};
 
 use super::admission::{validate_git_tree, validate_repo_path};
+use super::config_keys::config_keys;
 use super::configuration_inventory::ConfigurationInventorySource;
 use super::declaration::CoreArmDeclaration;
 use super::shape::repo_shape;
@@ -183,10 +184,10 @@ fn observe(
         GateId::PlanPhase => plan_phase(&source.claim),
         GateId::RepoShape => return repo_shape(source, contract),
         GateId::Staging => staging(source, contract.bounds()),
+        GateId::ConfigKeyValidity => return config_keys(contract),
         GateId::RepoDocs => return repo_docs(source, contract),
         GateId::ConfigFalseDisable => return configuration.false_disable(),
         GateId::ConfigTrackedTrust => return configuration.tracked_trust(),
-        GateId::ConfigKeyValidity => uncompiled(GateId::ConfigKeyValidity),
         id => unreachable!("{id} is not a compiled core declaration"),
     })
 }
@@ -270,24 +271,6 @@ fn plan_phase(claim: &ClaimCapture) -> CoreObservation {
         ClaimCapture::Absent { reason } => CoreObservation::Skipped {
             reason: reason.clone(),
         },
-    }
-}
-
-/// Arms whose compiled provider this build does not carry yet.
-///
-/// Each states the exact provider that is missing, so the report names the work
-/// rather than reporting a measurement nobody made.
-fn uncompiled(id: GateId) -> CoreObservation {
-    let (reason, recovery) = match id {
-        GateId::ConfigKeyValidity => (
-            "this build compiles no layered-configuration admission provider",
-            "compile packaged and active-layer key admission over the resolved configuration",
-        ),
-        id => unreachable!("{id} has a compiled core provider"),
-    };
-    CoreObservation::Unsupported {
-        reason: reason.to_owned(),
-        recovery: recovery.to_owned(),
     }
 }
 

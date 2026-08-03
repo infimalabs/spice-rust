@@ -52,6 +52,10 @@ pub use camp::{
     CampStanding, DistributionReport, LocusDistance, SharedBound,
 };
 pub use config::{Config, WalkConfig};
+#[cfg(not(target_arch = "wasm32"))]
+pub use core::{
+    CONFIG_KEY_DECLARATIONS, ClaimCapture, ConfigKeyDeclaration, CoreSource, acquire_core,
+};
 pub use core::{
     CORE_GATE_IDS, CORE_REPORT_VERSION, ConfigInventoryEvidence, ConfigKeyEvidence,
     CoreArmDeclaration, CoreArmInput, CoreArmReport, CoreEvidence, CoreFinding, CoreInputError,
@@ -61,8 +65,6 @@ pub use core::{
     PredecessorObservation as CorePredecessorObservation, RepoDocLimit, RepoDocsEvidence,
     RepoShapeEvidence, StagingEvidence, core_declarations, evaluate_core,
 };
-#[cfg(not(target_arch = "wasm32"))]
-pub use core::{ClaimCapture, CoreSource, acquire_core};
 pub use hygiene::{
     AnalysisEvidence, AnalyzerEvidence, EvidenceState, ExclusionEvidence, HYGIENE_ARMS,
     HYGIENE_REPORT_VERSION, HygieneAnalysisError, HygieneAnalyzer, HygieneConfiguration,

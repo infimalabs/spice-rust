@@ -3,7 +3,7 @@
 //! [`super::measure_toolchain`] validates, orders, and canonicalizes; this
 //! module only observes. Every declaration produces exactly one
 //! [`ArmObservation`], in compiled order, whether or not this build can analyze
-//! it. Four declarations route to a compiled analysis in [`super::analyze`];
+//! it. Five declarations route to a compiled analysis in [`super::analyze`];
 //! the rest cross as [`ArmOutcome::Unsupported`], which is neither a pass nor a
 //! skip, so an unmeasured tree is never admitted by silence.
 //!
@@ -155,6 +155,12 @@ fn examine(
                 bounds,
                 &resolved_programs(declaration, tools),
             ),
+            GateId::CanvasWebTypecheck => analyze::canvas_web_typecheck(
+                declaration,
+                source.root,
+                bounds,
+                &resolved_programs(declaration, tools),
+            ),
             GateId::LocalPaths => analyze::local_paths(declaration, source.root, source.changes()),
             GateId::Taste => analyze::taste(declaration, source.root, source.changes()),
             GateId::JavascriptUnused => analyze::javascript_unused(declaration, source.root),
@@ -253,17 +259,18 @@ fn resolved_programs(
 
 /// The exact analyzer one identity is still owed, or `None` once nothing is.
 ///
-/// Nothing is owed in two cases, and neither is a gap: the three analyses this
+/// Nothing is owed in two cases, and neither is a gap: the five analyses this
 /// build compiles answer for themselves, and an identity that is not a
 /// toolchain arm is not this family's to compile at all. Every identity is
 /// named outright, so a new [`GateId`] fails to compile here rather than
 /// receiving a sentence written for something else.
 pub(super) const fn owed_analyzer(id: GateId) -> Option<&'static str> {
     match id {
-        GateId::Formatters | GateId::LocalPaths | GateId::Taste | GateId::JavascriptUnused => None,
-        GateId::CanvasWebTypecheck => {
-            Some("compile the wasm32 check and trunk release build analyses under bounds")
-        }
+        GateId::Formatters
+        | GateId::LocalPaths
+        | GateId::Taste
+        | GateId::CanvasWebTypecheck
+        | GateId::JavascriptUnused => None,
         GateId::PythonTypecheck => {
             Some("compile the pyright error-level analysis over selected sources")
         }

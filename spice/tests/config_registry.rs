@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use gate::CONFIG_KEY_DECLARATIONS;
 use spice::config::{Builtin, PathSegment, PolicyClass, Root, ValueKind, descriptor, descriptors};
 use toml::Value;
 use wire::ConfigSource;
@@ -459,6 +460,15 @@ fn templates_are_unique_canonical_non_overlapping_and_stably_ordered() {
                 "the registry must leave {name:?} to the lock name authority"
             );
         }
+    }
+}
+
+#[test]
+fn gate_key_admission_uses_the_resolvers_exact_packaged_registry() {
+    assert_eq!(CONFIG_KEY_DECLARATIONS.len(), descriptors().len());
+    for (gate, resolver) in CONFIG_KEY_DECLARATIONS.iter().zip(descriptors()) {
+        assert_eq!(gate.template(), resolver.template().as_str());
+        assert_eq!(gate.layers(), resolver.layers(), "{}", gate.template());
     }
 }
 

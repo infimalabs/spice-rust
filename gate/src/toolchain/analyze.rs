@@ -1,11 +1,10 @@
 //! Compiled analyses for the toolchain arms this build answers itself.
 //!
-//! Four of the eight declared analyses need nothing beyond the captured tree
-//! and the compiled scanner vocabulary: the formatter check over the complete
-//! selected tree, the workstation-path scanner, the prose scanner, and the
-//! JavaScript declaration/reference analysis. Each
-//! reports only what it observed, and [`super::measure_toolchain`] remains the
-//! sole authority that admits it.
+//! Five of the eight declared analyses are compiled here: the formatter check,
+//! the canvas Wasm check and build, the workstation-path scanner, the prose
+//! scanner, and the JavaScript declaration/reference analysis. Each reports
+//! only what it observed, and [`super::measure_toolchain`] remains the sole
+//! authority that admits it.
 //!
 //! Each declaration records its exclusions as English sentences and its
 //! includes as globs. Those strings are the retained evidence and the
@@ -17,7 +16,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use sill::{Argv, Completion, spawn};
+use sill::{Argv, Completion, Environment, spawn};
 
 use super::{
     ArmFinding, ArmOutcome, FindingDetail, JavascriptUnusedStatus, LOCAL_PATH_MARKER,
@@ -168,6 +167,35 @@ const FORMATTER: &str = "rustfmt";
 
 /// The declared program the formatter check is invoked through.
 const CARGO: &str = "cargo";
+
+/// The declared program that validates the canvas asset graph.
+const TRUNK: &str = "trunk";
+
+/// The first canvas analysis, kept in its declaration order.
+const CARGO_WASM_ARGUMENTS: &[&str] = &[
+    "check",
+    "--locked",
+    "--workspace",
+    "--target",
+    "wasm32-unknown-unknown",
+];
+
+/// The second canvas analysis, kept in its declaration order.
+const TRUNK_BUILD_ARGUMENTS: &[&str] = &[
+    "build",
+    "index.html",
+    "--release",
+    "--locked",
+    "--filehash=false",
+];
+
+#[derive(Clone, Copy)]
+struct CanvasInvocation<'a> {
+    name: &'static str,
+    program: &'a str,
+    arguments: &'static [&'static str],
+    cwd: &'a Path,
+}
 
 /// The line prefix `cargo fmt --check` writes before each differing region.
 const DIFF_PREFIX: &str = "Diff in ";
@@ -548,6 +576,233 @@ pub(super) fn formatters(
         );
     }
     Analysis::scanned(declaration.id, sources, findings)
+}
+
+/// Run the declared canvas checks in order and stop at the first non-clean one.
+pub(super) fn canvas_web_typecheck(
+    declaration: ToolchainDeclaration,
+    root: &Path,
+    bounds: &Bounds,
+    programs: &BTreeMap<&str, &str>,
+) -> Analysis {
+    if !root.join("Cargo.toml").is_file() || !root.join("app/index.html").is_file() {
+        return Analysis::not_applicable(declaration);
+    }
+    let Some(cargo) = programs.get(CARGO) else {
+        return Analysis::terminal(
+            ArmOutcome::ToolUnavailable,
+            format!("{} declares no {CARGO} program", declaration.id.as_str()),
+        );
+    };
+    let Some(trunk) = programs.get(TRUNK) else {
+        return Analysis::terminal(
+            ArmOutcome::ToolUnavailable,
+            format!("{} declares no {TRUNK} program", declaration.id.as_str()),
+        );
+    };
+    let environment = match canvas_environment(cargo, trunk) {
+        Ok(environment) => environment,
+        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+    };
+
+    let app = root.join("app");
+    let invocations = [
+        CanvasInvocation {
+            name: "cargo wasm32 check",
+            program: cargo,
+            arguments: CARGO_WASM_ARGUMENTS,
+            cwd: root,
+        },
+        CanvasInvocation {
+            name: "trunk canvas build",
+            program: trunk,
+            arguments: TRUNK_BUILD_ARGUMENTS,
+            cwd: app.as_path(),
+        },
+    ];
+    for invocation in invocations {
+        if let Err(analysis) =
+            run_canvas_analysis(declaration.id, root, invocation, bounds, &environment)
+        {
+            return analysis;
+        }
+    }
+    Analysis::terminal(
+        ArmOutcome::Passed,
+        format!(
+            "{} completed both declared canvas analyses",
+            declaration.id.as_str()
+        ),
+    )
+}
+
+fn run_canvas_analysis(
+    id: GateId,
+    root: &Path,
+    invocation: CanvasInvocation<'_>,
+    bounds: &Bounds,
+    environment: &Environment,
+) -> Result<(), Analysis> {
+    let CanvasInvocation {
+        name,
+        program,
+        arguments,
+        cwd,
+    } = invocation;
+    let argv = Argv::new(program, arguments.iter().map(OsStr::new)).map_err(|error| {
+        Analysis::terminal(
+            ArmOutcome::ParseFailure,
+            format!("{name} argument vector was refused: {error}"),
+        )
+    })?;
+    let mut spec = bounds.spec(argv, cwd);
+    spec.environment = environment.clone();
+    let running = spawn(spec).map_err(|error| {
+        Analysis::terminal(
+            ArmOutcome::ParseFailure,
+            format!("{name} did not start: {error}"),
+        )
+    })?;
+    let outcome = running.wait().map_err(|error| {
+        Analysis::terminal(
+            ArmOutcome::ParseFailure,
+            format!("{name} could not be waited on: {error}"),
+        )
+    })?;
+    let status = match outcome.completion() {
+        Completion::Exited(status) => status,
+        Completion::TimedOut(_) => {
+            return Err(Analysis::terminal(
+                ArmOutcome::Timeout,
+                format!("{name} outlived the bounds it was given"),
+            ));
+        }
+        Completion::Cancelled(_) => {
+            return Err(Analysis::terminal(
+                ArmOutcome::ParseFailure,
+                format!("{name} was cancelled before it reported"),
+            ));
+        }
+    };
+    let printed = complete_output(name, &outcome)
+        .map_err(|reason| Analysis::terminal(ArmOutcome::ParseFailure, reason))?;
+    let findings = canvas_findings(root, cwd, &printed);
+    if !findings.is_empty() {
+        return Err(Analysis {
+            outcome: ArmOutcome::Findings,
+            reason: format!(
+                "{} parsed {} from {name}",
+                id.as_str(),
+                plural(findings.len(), "diagnostic")
+            ),
+            findings,
+            exit_code: None,
+        });
+    }
+    if status.success() {
+        return Ok(());
+    }
+    let Some(code) = status.code() else {
+        return Err(Analysis::terminal(
+            ArmOutcome::ParseFailure,
+            format!("{name} was signalled without a typed diagnostic"),
+        ));
+    };
+    Err(Analysis::refused(
+        format!("{name} refused with {code} and emitted no typed diagnostic"),
+        code,
+    ))
+}
+
+fn canvas_environment(cargo: &str, trunk: &str) -> Result<Environment, String> {
+    let mut directories = Vec::new();
+    for program in [cargo, trunk] {
+        let Some(parent) = Path::new(program).parent() else {
+            return Err(format!("canvas tool {program:?} has no parent directory"));
+        };
+        if !directories.contains(&parent) {
+            directories.push(parent);
+        }
+    }
+    let path = std::env::join_paths(directories)
+        .map_err(|error| format!("canvas tool search path is invalid: {error}"))?;
+    Environment::new([("PATH", path)])
+        .map_err(|error| format!("canvas tool environment was refused: {error}"))
+}
+
+fn complete_output(name: &str, outcome: &sill::WaitOutcome) -> Result<String, String> {
+    if let Some(failure) = outcome.observation_failure() {
+        return Err(format!("{name} output observation failed: {failure}"));
+    }
+    let Some(stdout) = outcome.stdout() else {
+        return Err(format!("{name} captured no stdout to read"));
+    };
+    let Some(stderr) = outcome.stderr() else {
+        return Err(format!("{name} captured no stderr to read"));
+    };
+    if stdout.truncated() || stderr.truncated() || !stdout.complete() || !stderr.complete() {
+        return Err(format!(
+            "{name} output was truncated or incomplete before it could be read"
+        ));
+    }
+
+    let mut printed = String::from_utf8_lossy(stdout.bytes()).into_owned();
+    if !printed.is_empty() && !printed.ends_with('\n') {
+        printed.push('\n');
+    }
+    printed.push_str(&String::from_utf8_lossy(stderr.bytes()));
+    Ok(printed)
+}
+
+fn canvas_findings(root: &Path, cwd: &Path, printed: &str) -> Vec<ArmFinding> {
+    let mut pending: Option<(String, String)> = None;
+    let mut findings = BTreeSet::new();
+    for raw in printed.lines() {
+        let line = raw.trim_start();
+        if let Some(diagnostic) = canvas_diagnostic(line) {
+            pending = Some(diagnostic);
+            continue;
+        }
+        let Some(location) = line.strip_prefix("--> ") else {
+            continue;
+        };
+        let Some((code, message)) = pending.take() else {
+            continue;
+        };
+        let Some((path, line, column)) = canvas_locus(root, cwd, location) else {
+            continue;
+        };
+        findings.insert(ArmFinding {
+            path: Some(path),
+            line: Some(line),
+            column: Some(column),
+            detail: FindingDetail::CanvasWebOutput { code, message },
+        });
+    }
+    findings.into_iter().collect()
+}
+
+fn canvas_diagnostic(line: &str) -> Option<(String, String)> {
+    let rest = line.strip_prefix("error[")?;
+    let (code, message) = rest.split_once("]: ")?;
+    (!code.is_empty() && !message.is_empty()).then(|| (code.to_owned(), message.to_owned()))
+}
+
+fn canvas_locus(root: &Path, cwd: &Path, location: &str) -> Option<(String, u32, u32)> {
+    let (path_and_line, column) = location.rsplit_once(':')?;
+    let (reported, line) = path_and_line.rsplit_once(':')?;
+    let line = line.parse::<u32>().ok().filter(|line| *line > 0)?;
+    let column = column.parse::<u32>().ok().filter(|column| *column > 0)?;
+    let path = if Path::new(reported).is_absolute() {
+        relative_to(&reported_roots(root), reported)?
+    } else {
+        cwd.strip_prefix(root)
+            .ok()?
+            .join(reported)
+            .to_str()?
+            .replace('\\', "/")
+    };
+    super::valid_relative_path(&path).then_some((path, line, column))
 }
 
 /// One finding per file `cargo fmt --check` reported a differing region in.
