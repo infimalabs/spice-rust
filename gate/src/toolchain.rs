@@ -15,7 +15,10 @@ use serde::{Deserialize, Serialize};
 use crate::manifest::GateId;
 
 /// The only report schema emitted by this compiled arm family.
-pub const TOOLCHAIN_REPORT_VERSION: u64 = 2;
+///
+/// Version 3 adds the [`ToolEvidence::Unprobed`] discovery, which a version-2
+/// reader cannot decode, so the schema is renamed rather than widened silently.
+pub const TOOLCHAIN_REPORT_VERSION: u64 = 3;
 
 /// A compiled source of configuration admitted by one arm.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -197,8 +200,51 @@ mod declarations;
 #[cfg(not(target_arch = "wasm32"))]
 mod environment;
 #[cfg(not(target_arch = "wasm32"))]
-pub use acquire::{ToolchainSource, acquire_toolchain};
+pub use acquire::{RimCapture, ToolchainSource, acquire_toolchain};
 pub use declarations::*;
+
+/// What one resolved executable did instead of identifying itself.
+///
+/// A program that was found is not a program that was absent, so the reason it
+/// could not be identified is retained rather than folded into
+/// [`ToolEvidence::Missing`]. Each variant is a fact about the probe this
+/// machine ran, and none of them admits anything: an arm holding one is
+/// refused, never skipped.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(tag = "probe", rename_all = "kebab-case")]
+pub enum ProbeFailure {
+    /// The resolved file could not be read for its digest.
+    Unreadable,
+    /// The declared probe could not be launched at all.
+    NotStarted,
+    /// The probe outlived the deadline the contract bounds it with.
+    TimedOut,
+    /// The probe ended on a signal rather than exiting on its own.
+    Signaled,
+    /// The probe exited without success.
+    Refused {
+        /// Exact status the probe exited with.
+        code: i32,
+    },
+    /// The probe printed no complete version to identify the program by.
+    Incomplete,
+    /// The probe printed bytes that are not text.
+    Undecodable,
+}
+
+impl fmt::Display for ProbeFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unreadable => formatter.write_str("could not be read"),
+            Self::NotStarted => formatter.write_str("could not be launched"),
+            Self::TimedOut => formatter.write_str("outlived its bound"),
+            Self::Signaled => formatter.write_str("ended on a signal"),
+            Self::Refused { code } => write!(formatter, "exited with {code}"),
+            Self::Incomplete => formatter.write_str("printed no complete version"),
+            Self::Undecodable => formatter.write_str("printed bytes that are not text"),
+        }
+    }
+}
 
 /// Operational evidence for one declared external tool.
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -211,6 +257,22 @@ pub enum ToolEvidence {
         /// Exact program name that was searched.
         requested_program: String,
     },
+    /// One executable was resolved, and its declared probe did not identify it.
+    ///
+    /// Distinct from [`Self::Missing`], which says the search path holds no such
+    /// program at all. This names the exact file that was found and what the
+    /// probe did instead of printing a version, so a broken tool is never
+    /// reported as an absent one.
+    Unprobed {
+        /// Stable declaration name.
+        name: String,
+        /// Exact program name that was requested.
+        requested_program: String,
+        /// Resolved executable path retained as evidence.
+        resolved_program: String,
+        /// What the declared probe did instead of identifying the program.
+        failure: ProbeFailure,
+    },
     /// One executable was resolved and probed.
     Identified {
         /// Stable declaration name.
@@ -219,7 +281,7 @@ pub enum ToolEvidence {
         requested_program: String,
         /// Resolved executable path retained as evidence.
         resolved_program: String,
-        /// Unmodified version-probe output.
+        /// Exactly what the version probe printed, retained unmodified.
         version: String,
         /// Digest of the resolved executable bytes.
         digest: String,
@@ -229,13 +291,18 @@ pub enum ToolEvidence {
 impl ToolEvidence {
     fn name(&self) -> &str {
         match self {
-            Self::Missing { name, .. } | Self::Identified { name, .. } => name,
+            Self::Missing { name, .. }
+            | Self::Unprobed { name, .. }
+            | Self::Identified { name, .. } => name,
         }
     }
 
     fn requested_program(&self) -> &str {
         match self {
             Self::Missing {
+                requested_program, ..
+            }
+            | Self::Unprobed {
                 requested_program, ..
             }
             | Self::Identified {
@@ -343,7 +410,8 @@ pub enum ArmOutcome {
     Passed,
     /// Analysis completed with structured policy findings.
     Findings,
-    /// A sole declared executable could not be discovered.
+    /// A declared executable was not discovered, or was discovered and could
+    /// not be identified by the probe it declares.
     ToolUnavailable,
     /// A discovered executable did not match its exact version contract.
     UnsupportedVersion,
@@ -833,6 +901,16 @@ fn validate_tool_rows(
                 evidence: format!("{} has incomplete identity evidence", item.name()),
             });
         }
+        if let ToolEvidence::Unprobed {
+            resolved_program, ..
+        } = item
+            && resolved_program.is_empty()
+        {
+            return Err(ToolchainError::InvalidToolEvidence {
+                gate,
+                evidence: format!("{} named no program its probe failed on", item.name()),
+            });
+        }
     }
     Ok(())
 }
@@ -863,19 +941,19 @@ fn validate_external_tool_outcome(
         }
         ArmOutcome::ToolUnavailable => {
             require_all_declared(gate, declared, evidence)?;
-            let missing = evidence
+            let unusable = evidence
                 .iter()
-                .any(|item| matches!(item, ToolEvidence::Missing { .. }));
+                .any(|item| !matches!(item, ToolEvidence::Identified { .. }));
             let identified_are_exact = evidence.iter().zip(declared).all(|(item, tool)| {
                 identified_version(item).is_none_or(|version| version == tool.exact_version)
             });
-            if missing && identified_are_exact {
+            if unusable && identified_are_exact {
                 Ok(())
             } else {
                 Err(ToolchainError::InvalidToolEvidence {
                     gate,
                     evidence: concat!(
-                        "tool-unavailable result requires a missing program and exact versions ",
+                        "tool-unavailable result requires an unusable program and exact versions ",
                         "for every identified program"
                     )
                     .to_owned(),
@@ -954,11 +1032,30 @@ fn require_all_identified(
     }
 }
 
+/// The version one row offers its exact-version contract, or `None`.
+///
+/// Only an identified program has a version to offer. A missing one was never
+/// found and an unprobed one never printed a version this family will guess at,
+/// so both decline rather than supplying an empty string a contract could
+/// accidentally match.
 fn identified_version(evidence: &ToolEvidence) -> Option<&str> {
     match evidence {
-        ToolEvidence::Identified { version, .. } => Some(version),
-        ToolEvidence::Missing { .. } => None,
+        ToolEvidence::Identified { version, .. } => Some(contracted_version(version)),
+        ToolEvidence::Missing { .. } | ToolEvidence::Unprobed { .. } => None,
     }
+}
+
+/// One printed version with exactly one trailing line terminator removed.
+///
+/// Evidence retains exactly what the probe printed, because the printed bytes
+/// are the identity. The exact-version contracts are written without a
+/// terminator, so the single normalization they imply happens here, at the only
+/// place a version is ever compared, and never in the record. Removing exactly
+/// one terminator keeps a version that really does end in a blank line
+/// distinguishable from one that merely ends its line.
+fn contracted_version(version: &str) -> &str {
+    let line = version.strip_suffix('\n').unwrap_or(version);
+    line.strip_suffix('\r').unwrap_or(line)
 }
 
 mod predecessor;
