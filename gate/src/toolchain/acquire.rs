@@ -259,10 +259,10 @@ fn resolved_programs(
 
 /// The exact analyzer one identity is still owed, or `None` once nothing is.
 ///
-/// Nothing is owed in two cases, and neither is a gap: the five analyses this
-/// build compiles answer for themselves, and an identity that is not a
-/// toolchain arm is not this family's to compile at all. Every identity is
-/// named outright, so a new [`GateId`] fails to compile here rather than
+/// Nothing is owed in two cases, and neither is a gap: all five compiled
+/// variants named in the match below answer for themselves, and an identity
+/// that is not a toolchain arm is not this family's to compile at all. Every
+/// identity is named outright, so a new [`GateId`] fails to compile here rather than
 /// receiving a sentence written for something else.
 pub(super) const fn owed_analyzer(id: GateId) -> Option<&'static str> {
     match id {
