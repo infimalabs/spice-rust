@@ -75,12 +75,16 @@ project_max_depth = 3
 # the proof and reads the geometry back: the hooks directory it sources its
 # static stage from, the rendered direction it writes to stderr, and the lane
 # a shell is bound to. `gate` owns the mutation seed and attempt number it
-# repeats into every bounded cargo-mutants process.
+# repeats into every bounded cargo-mutants process. Its hygiene acquisition
+# fixture passes the captured repository and interpreter-tripwire marker to an
+# isolated copy of the current test process.
 env_names = [
     "CLAUDE_CODE_SESSION_ID",
     "CODEX_THREAD_ID",
     "SPICE_AGENT_VENDOR",
     "SPICE_HOOKS",
+    "SPICE_HYGIENE_ACQUIRE_REPOSITORY",
+    "SPICE_HYGIENE_INTERPRETER_MARKER",
     "SPICE_INBOX",
     "SPICE_INSTALL_TEST_PAUSE_ACTION",
     "SPICE_INSTALL_TEST_PAUSE_CONTROL",
