@@ -668,8 +668,8 @@ fn acquired(repository: &Tree, claim: ClaimCapture) -> CoreReport {
         .materialize(&repository.root)
         .expect("materialize the captured index");
     let contract = Contract::load(tree.root()).expect("load the captured contract");
-    let source = CoreSource::capture(&repository.root, &tree, &contract, claim)
-        .expect("capture one immutable core source");
+    let source =
+        CoreSource::capture(&tree, &contract, claim).expect("capture one immutable core source");
     let inputs = acquire_core(&source, &contract).expect("acquire one complete core battery");
 
     assert_eq!(
@@ -690,6 +690,14 @@ fn acquired(repository: &Tree, claim: ClaimCapture) -> CoreReport {
         );
     }
     evaluate_core(&inputs)
+}
+
+fn acquired_input(inputs: &CoreInputs, id: GateId) -> &CoreArmInput {
+    inputs
+        .arms()
+        .iter()
+        .find(|arm| arm.id() == id)
+        .unwrap_or_else(|| panic!("{id} is missing from an acquired battery"))
 }
 
 fn acquired_arm(report: &CoreReport, id: GateId) -> &CoreArmReport {
@@ -1309,6 +1317,64 @@ fn a_partially_staged_file_is_acquired_from_the_captured_repository() {
     repository.remove();
 }
 
+/// Staging evidence names the repository as the capture found it, never later.
+///
+/// The capture is clean. The index and the worktree are then mutated into the
+/// exact state the arm exists to fail on, and acquisition still crosses the
+/// clean observation under the captured digest. The second capture is the
+/// control: it proves the mutation is real, observable, and reported by this
+/// very code path, so the first result is a binding rather than a scanner that
+/// never sees anything. Both captures advertise one digest, because the
+/// selected tree is immutable, which leaves the capture moment as the only
+/// thing that distinguishes them.
+#[test]
+fn a_repository_mutated_after_capture_cannot_cross_later_staging_evidence() {
+    let repository = contract_repository("core-acquire-mutated");
+    let tree = Selector::staged()
+        .materialize(&repository.root)
+        .expect("materialize the captured index");
+    let contract = Contract::load(tree.root()).expect("load the captured contract");
+    let captured = CoreSource::capture(&tree, &contract, ClaimCapture::Idle)
+        .expect("capture one clean core source");
+
+    repository.write("src/app.rs", "fn main() {\n    // staged\n}\n");
+    git(&repository, &["add", "src/app.rs"]);
+    repository.write("src/app.rs", "fn main() {\n    // unstaged\n}\n");
+
+    let inputs = acquire_core(&captured, &contract).expect("acquire one complete core battery");
+    let staging = acquired_input(&inputs, GateId::Staging);
+    assert_eq!(
+        staging.observation(),
+        &measured(CoreEvidence::Staging(
+            StagingEvidence::new(Vec::<String>::new()).expect("clean staging evidence")
+        )),
+        "a repository mutated after capture reached acquisition"
+    );
+    assert_eq!(
+        staging.tree(),
+        captured.digest(),
+        "the staging arm is labelled with the digest its observation was taken under"
+    );
+
+    let later = CoreSource::capture(&tree, &contract, ClaimCapture::Idle)
+        .expect("capture the same tree over the mutated repository");
+    let later_inputs = acquire_core(&later, &contract).expect("acquire the later battery");
+    assert_eq!(
+        acquired_input(&later_inputs, GateId::Staging).observation(),
+        &measured(CoreEvidence::Staging(
+            StagingEvidence::new(["src/app.rs"]).expect("partial staging evidence")
+        )),
+        "the mutation this test relies on is not observable at all"
+    );
+    assert_eq!(
+        later.digest(),
+        captured.digest(),
+        "one immutable tree keeps one identity across both captures"
+    );
+
+    repository.remove();
+}
+
 #[test]
 fn a_captured_claim_reaches_the_plan_phase_arm_without_the_gate_reading_a_journal() {
     let repository = contract_repository("core-acquire-claim");
@@ -1366,7 +1432,7 @@ fn an_unreadable_selected_tree_refuses_capture_with_a_typed_core_input_error() {
         .expect("selected directory")
         .permissions();
     fs::set_permissions(&sealed, fs::Permissions::from_mode(0o000)).expect("seal the directory");
-    let refused = CoreSource::capture(&repository.root, &tree, &contract, ClaimCapture::Idle);
+    let refused = CoreSource::capture(&tree, &contract, ClaimCapture::Idle);
     fs::set_permissions(&sealed, restore).expect("restore the directory");
 
     let error = refused.expect_err("an unreadable selected tree cannot yield one identity");

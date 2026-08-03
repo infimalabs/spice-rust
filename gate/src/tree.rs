@@ -3,7 +3,9 @@
 //! A gate never measures the checkout. The bare selector captures one parsed
 //! index, while a revision selector resolves one immutable commit identity.
 //! Both sources pass through the same path, mode, object, and materialization
-//! checks before a private read-only root is returned to the caller.
+//! checks before a private read-only root is returned to the caller, named
+//! together with the repository it was taken from so that an arm which must
+//! observe that repository cannot be pointed at a different one.
 
 use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
@@ -95,7 +97,7 @@ impl Selector {
         make_immutable(&build.root)?;
         verify_immutable(&build.root, &items)?;
         source.verify(&repo)?;
-        Ok(build.finish())
+        Ok(build.finish(repository))
     }
 }
 
@@ -104,6 +106,7 @@ impl Selector {
 pub struct SelectedTree {
     workspace: PathBuf,
     root: PathBuf,
+    repository: PathBuf,
 }
 
 impl SelectedTree {
@@ -111,6 +114,18 @@ impl SelectedTree {
     #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Repository this selection was materialized from.
+    ///
+    /// Carried with the tree because the root alone cannot name it: the root is
+    /// a private copy in a scratch directory, and anything that must observe the
+    /// live repository the identity was taken from has no other way to reach the
+    /// right one. A caller that supplied it separately could supply a different
+    /// one, and the observation would be labelled with a tree it never saw.
+    #[must_use]
+    pub fn repository(&self) -> &Path {
+        &self.repository
     }
 }
 
@@ -171,11 +186,12 @@ impl BuildRoot {
         ))
     }
 
-    fn finish(&mut self) -> SelectedTree {
+    fn finish(&mut self, repository: &Path) -> SelectedTree {
         self.finished = true;
         SelectedTree {
             workspace: self.workspace.clone(),
             root: self.root.clone(),
+            repository: repository.to_path_buf(),
         }
     }
 }

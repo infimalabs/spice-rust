@@ -6,15 +6,20 @@
 //! an explicit non-completion state carrying its own recovery, so a missing
 //! provider is visible in the report instead of being an omitted row.
 //!
-//! Two arms declare exact `git` argument vectors. They observe the repository
-//! the source was captured from, under the contract's process bounds, and every
-//! process failure becomes typed evidence rather than an acquisition error. The
-//! only failures that refuse outright are the ones that would leave the battery
+//! Two arms declare exact `git` argument vectors. They run once, while the
+//! source is captured, under the contract's process bounds, and every process
+//! failure becomes typed evidence rather than an acquisition error. The only
+//! failures that refuse outright are the ones that would leave the battery
 //! incomplete: an unreadable selected tree and a malformed arm.
+//!
+//! Acquisition is handed no repository. Every arm reads either the immutable
+//! selected tree or an observation the capture already took, so a repository
+//! mutated or swapped after capture has nothing left to reach: there is no
+//! later state that can cross into a report under the captured digest.
 
 use std::ffi::OsStr;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use sill::{Argv, Completion, spawn};
 use wire::{Digest, Phase, TaskHandle};
@@ -71,48 +76,51 @@ pub enum ClaimCapture {
 
 /// One captured Git source and everything acquisition is permitted to read.
 ///
-/// Capture computes the immutable tree identity once, so every arm binds to the
-/// same digest and [`CoreInputs`] cannot be assembled from a moving tree.
+/// Capture computes the immutable tree identity once and, in the same moment,
+/// takes both Git-declared observations from the repository the tree was
+/// materialized from. Every arm therefore binds to the same digest, and
+/// [`CoreInputs`] cannot be assembled from a moving tree or a moving repository.
 #[derive(Debug)]
 pub struct CoreSource<'a> {
-    repository: PathBuf,
     root: &'a Path,
     jurisdiction: Jurisdiction,
     digest: Digest,
     claim: ClaimCapture,
+    git: GitObservations,
 }
 
 impl<'a> CoreSource<'a> {
     /// Capture one immutable source for the core family.
+    ///
+    /// The repository is taken from the tree rather than accepted beside it, so
+    /// no caller can name one source for the identity and another for the Git
+    /// evidence.
     ///
     /// # Errors
     ///
     /// Returns the walk or read failure that prevented one complete tree
     /// identity. A partially digested tree is never returned.
     pub fn capture(
-        repository: impl Into<PathBuf>,
         tree: &'a SelectedTree,
         contract: &Contract,
         claim: ClaimCapture,
     ) -> Result<Self, CoreInputError> {
+        // Taken before the walk because it is the only subject here that can
+        // still move: the selected tree was sealed at materialization, while
+        // the repository stays live and writable underneath the run.
+        let git = GitObservations::capture(tree.repository(), contract.bounds());
         let jurisdiction = Jurisdiction::walk(tree.root(), contract.policy().ignore())
             .map_err(|error| CoreInputError::new(format!("core source jurisdiction: {error}")))?;
         let digest = jurisdiction
             .tree_digest()
             .map_err(|error| CoreInputError::new(format!("core source tree identity: {error}")))?;
         Ok(Self {
-            repository: repository.into(),
             root: tree.root(),
             jurisdiction,
             digest,
             claim,
+            git,
         })
-    }
-
-    /// Repository the two Git-declared arms observe.
-    #[must_use]
-    pub fn repository(&self) -> &Path {
-        &self.repository
     }
 
     /// Immutable selected-tree root every compiled provider reads.
@@ -136,6 +144,28 @@ impl<'a> CoreSource<'a> {
     #[must_use]
     pub const fn claim(&self) -> &ClaimCapture {
         &self.claim
+    }
+}
+
+/// Both Git-declared observations, taken once when the source is captured.
+///
+/// Acquisition projects these rather than running the declared vectors again,
+/// so the repository is read exactly once, in the same capture that fixes the
+/// identity the arms are labelled with. Neither observation can refuse the
+/// capture: a Git failure is already typed evidence, and an arm that could not
+/// be measured crosses saying so.
+#[derive(Debug)]
+struct GitObservations {
+    merge_integrity: CoreObservation,
+    staging: CoreObservation,
+}
+
+impl GitObservations {
+    fn capture(repository: &Path, bounds: &Bounds) -> Self {
+        Self {
+            merge_integrity: merge_integrity(repository, bounds),
+            staging: staging(repository, bounds),
+        }
     }
 }
 
@@ -180,10 +210,10 @@ fn observe(
     configuration: &ConfigurationInventorySource,
 ) -> Result<CoreObservation, CoreInputError> {
     Ok(match declaration.id() {
-        GateId::MergeIntegrity => merge_integrity(source, contract.bounds()),
+        GateId::MergeIntegrity => source.git.merge_integrity.clone(),
         GateId::PlanPhase => plan_phase(&source.claim),
         GateId::RepoShape => return repo_shape(source, contract),
-        GateId::Staging => staging(source, contract.bounds()),
+        GateId::Staging => source.git.staging.clone(),
         GateId::ConfigKeyValidity => return config_keys(contract),
         GateId::RepoDocs => return repo_docs(source, contract),
         GateId::ConfigFalseDisable => return configuration.false_disable(),
@@ -274,9 +304,9 @@ fn plan_phase(claim: &ClaimCapture) -> CoreObservation {
     }
 }
 
-fn merge_integrity(source: &CoreSource<'_>, bounds: &Bounds) -> CoreObservation {
+fn merge_integrity(repository: &Path, bounds: &Bounds) -> CoreObservation {
     let merge_head = match git(
-        source,
+        repository,
         bounds,
         &["rev-parse", "--git-path", "MERGE_HEAD"],
         &[0],
@@ -284,17 +314,17 @@ fn merge_integrity(source: &CoreSource<'_>, bounds: &Bounds) -> CoreObservation 
         Ok((_, output)) => output,
         Err(refusal) => return refusal.into_observation(),
     };
-    if !source.repository.join(merge_head.trim()).exists() {
+    if !repository.join(merge_head.trim()).exists() {
         return measured(CoreEvidence::MergeIntegrity(
             MergeIntegrityEvidence::NoMerge,
         ));
     }
 
-    let staged_tree = match git_tree(source, bounds, &["write-tree"]) {
+    let staged_tree = match git_tree(repository, bounds, &["write-tree"]) {
         Ok(tree) => tree,
         Err(refusal) => return refusal.into_observation(),
     };
-    let head_tree = match git_tree(source, bounds, &["rev-parse", "HEAD^{tree}"]) {
+    let head_tree = match git_tree(repository, bounds, &["rev-parse", "HEAD^{tree}"]) {
         Ok(tree) => tree,
         Err(refusal) => return refusal.into_observation(),
     };
@@ -315,7 +345,7 @@ fn merge_integrity(source: &CoreSource<'_>, bounds: &Bounds) -> CoreObservation 
         "HEAD",
         "MERGE_HEAD",
     ];
-    let (code, output) = match git(source, bounds, arguments, &[0, 1]) {
+    let (code, output) = match git(repository, bounds, arguments, &[0, 1]) {
         Ok(pair) => pair,
         Err(refusal) => return refusal.into_observation(),
     };
@@ -365,12 +395,8 @@ fn parse_merge_tree(output: &str) -> Result<(String, Vec<String>), GitRefusal> {
     Ok((tree, conflicted))
 }
 
-fn git_tree(
-    source: &CoreSource<'_>,
-    bounds: &Bounds,
-    arguments: &[&str],
-) -> Result<String, GitRefusal> {
-    let (_, output) = git(source, bounds, arguments, &[0])?;
+fn git_tree(repository: &Path, bounds: &Bounds, arguments: &[&str]) -> Result<String, GitRefusal> {
+    let (_, output) = git(repository, bounds, arguments, &[0])?;
     let tree = output.trim().to_owned();
     validate_git_tree(&tree).map_err(|error| {
         GitRefusal::Unmeasured(format!(
@@ -381,13 +407,13 @@ fn git_tree(
     Ok(tree)
 }
 
-fn staging(source: &CoreSource<'_>, bounds: &Bounds) -> CoreObservation {
+fn staging(repository: &Path, bounds: &Bounds) -> CoreObservation {
     let arguments = &["diff", "--cached", "--name-only", "--diff-filter=ACMR"];
-    let staged = match git(source, bounds, arguments, &[0]) {
+    let staged = match git(repository, bounds, arguments, &[0]) {
         Ok((_, output)) => output,
         Err(refusal) => return refusal.into_observation(),
     };
-    let unstaged = match git(source, bounds, &["diff", "--name-only"], &[0]) {
+    let unstaged = match git(repository, bounds, &["diff", "--name-only"], &[0]) {
         Ok((_, output)) => output,
         Err(refusal) => return refusal.into_observation(),
     };
@@ -431,14 +457,14 @@ impl GitRefusal {
 /// each their own typed evidence. None of them is a measurement, and none of
 /// them refuses the battery.
 fn git(
-    source: &CoreSource<'_>,
+    repository: &Path,
     bounds: &Bounds,
     arguments: &[&str],
     accepted: &[i32],
 ) -> Result<(i32, String), GitRefusal> {
     let argv = Argv::new(GIT, arguments.iter().map(OsStr::new))
         .map_err(|error| GitRefusal::Unmeasured(format!("git argument vector: {error}")))?;
-    let outcome = spawn(bounds.spec(argv, &source.repository))
+    let outcome = spawn(bounds.spec(argv, repository))
         .map_err(|error| GitRefusal::Unavailable(format!("git did not start: {error}")))?
         .wait()
         .map_err(|error| GitRefusal::Unmeasured(format!("git was not reaped: {error}")))?;
