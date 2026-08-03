@@ -571,6 +571,83 @@ fn javascript_unused_reports_candidate_and_test_only_but_suppresses_the_exact_ex
     measure_toolchain(observations).expect("JavaScript findings are admitted");
 }
 
+/// What a module owns, and what counts as reaching it.
+///
+/// The nested locals below are declared and never read, so an inventory that
+/// admitted nested declarations would report both as unused. `shorthandUse` is
+/// reached only through object shorthand and `sandboxSymbol` only through a
+/// test harness namespace, so a scanner missing either vocabulary would report
+/// that symbol as unused too. The production property access on the last line
+/// names `bundle` without reaching it, because production code reaches a symbol
+/// by name; counting it there would rescue a symbol nobody uses. The exact list
+/// below is what survives all four.
+#[test]
+fn javascript_unused_scopes_candidates_to_top_level_and_counts_every_reference_form() {
+    let repository = scanning_repository(
+        "toolchain-javascript-scope",
+        "fn main() {}\n",
+        "Every sentence here is ordinary.\n",
+    );
+    repository.write(
+        "web/regression.mjs",
+        concat!(
+            "export function outer() {\n",
+            "  const nestedLocal = 1;\n",
+            "  function nestedHelper() {}\n",
+            "  return 0;\n",
+            "}\n",
+            "const shorthandUse = 2;\n",
+            "export const bundle = { shorthandUse };\n",
+            "export function sandboxSymbol() {}\n",
+            "outer();\n",
+            "globalThis.bundle;\n",
+        ),
+    );
+    repository.write("tests/regression.spec.cjs", "context.sandboxSymbol();\n");
+    git_commit(&repository, "javascript scope fixture");
+
+    let observations = acquired(
+        &repository,
+        Some(toolchain_directory().into_os_string()),
+        &[],
+    );
+    let observation = arm(&observations, GateId::JavascriptUnused);
+    assert_eq!(observation.outcome, ArmOutcome::Findings);
+    assert_eq!(
+        observation.findings,
+        [
+            ArmFinding {
+                path: Some("web/regression.mjs".to_owned()),
+                line: Some(7),
+                column: None,
+                detail: FindingDetail::JavascriptUnused {
+                    symbol: "bundle".to_owned(),
+                    declaration_kind: "constant".to_owned(),
+                    status: JavascriptUnusedStatus::CandidateUnused,
+                    reason: "no_references_outside_declaration".to_owned(),
+                    reference_count: 1,
+                    test_reference_count: 0,
+                },
+            },
+            ArmFinding {
+                path: Some("web/regression.mjs".to_owned()),
+                line: Some(8),
+                column: None,
+                detail: FindingDetail::JavascriptUnused {
+                    symbol: "sandboxSymbol".to_owned(),
+                    declaration_kind: "function".to_owned(),
+                    status: JavascriptUnusedStatus::TestOnly,
+                    reason: "references_only_in_tests".to_owned(),
+                    reference_count: 1,
+                    test_reference_count: 1,
+                },
+            },
+        ]
+    );
+
+    measure_toolchain(observations).expect("JavaScript findings are admitted");
+}
+
 /// A refusal the formatter cannot explain is retained with the code it gave.
 ///
 /// [`measure_toolchain`] admits an exit code only beside `NonzeroAnalysis` and
