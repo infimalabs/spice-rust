@@ -1,29 +1,46 @@
 //! Repository-shape acquisition over one captured selected-tree inventory.
+//!
+//! Three policy inputs decide what this arm looks at, and each of them has a
+//! derivation the repository never has to restate. Package roots fall back to
+//! the tree's own packaging metadata, test roots to pytest's own configuration,
+//! and the module-name shape to the packaged pattern. A repository that skips
+//! this arm therefore skips it because it is not a Python package, not because
+//! it declined to say so twice.
+
+mod packaging;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::Path;
 
-use gix_glob::Pattern;
 use regex::Regex;
+use toml::Value;
 
 use super::acquire::CoreSource;
 use super::admission::validate_repo_path;
 use super::{CoreEvidence, CoreFinding, CoreInputError, CoreObservation, RepoShapeEvidence};
 use crate::input::{Contract, ShapePolicy};
 use crate::jurisdiction::{Entry, Shape};
+use crate::policy::{PathPattern, compile_stem_expression};
+use packaging::derived_package_roots;
 
 const MIN_NAME_CLUSTER_THRESHOLD: usize = 3;
 const ALLOWED_FILES: &[&str] = &["__main__.py", "conftest.py", "py.typed"];
+
+/// The module-name shape a repository that declares none is held to.
+const PACKAGED_BOUNDARY_PATTERN: &str = "^_*[0-9a-z]+_*$";
+
+/// The test root a repository that configures none is scanned at.
+const DEFAULT_TEST_ROOT: &str = "tests";
+
+/// Packaging metadata this arm reads when tracked policy declares no roots.
+const PYPROJECT: &str = "pyproject.toml";
 
 pub(super) fn repo_shape(
     source: &CoreSource<'_>,
     contract: &Contract,
 ) -> Result<CoreObservation, CoreInputError> {
     let policy = contract.shape();
-    if policy.package_roots().is_empty() {
-        return Ok(CoreObservation::Skipped {
-            reason: "no Python package roots are declared in tracked policy".to_owned(),
-        });
-    }
     if policy.name_cluster_threshold() < MIN_NAME_CLUSTER_THRESHOLD {
         return Err(CoreInputError::new(format!(
             "policy.name_cluster_threshold must be at least {MIN_NAME_CLUSTER_THRESHOLD}"
@@ -31,8 +48,21 @@ pub(super) fn repo_shape(
     }
 
     let entries = source.jurisdiction().entries();
-    let generated = GeneratedPaths::compile(policy.generated_paths())?;
-    let roots = active_roots(entries, policy)?;
+    let tree = TreeIndex::new(entries);
+    let pyproject = pyproject(source.root())?;
+    let boundary = boundary_pattern(policy)?;
+    let generated = compile_patterns("policy.generated_paths", policy.generated_paths())?;
+    let tests = test_patterns(policy, &pyproject)?;
+    let declared = declared_roots(policy, &pyproject, &tree)?;
+    if declared.is_empty() {
+        return Ok(CoreObservation::Skipped {
+            reason: format!(
+                "no Python package roots are declared in tracked policy \
+                 or derivable from {PYPROJECT}"
+            ),
+        });
+    }
+    let roots = active_roots(&declared, &tree);
     if roots.is_empty() {
         return Ok(CoreObservation::Skipped {
             reason: "no declared Python package root exists in the selected tree".to_owned(),
@@ -43,17 +73,23 @@ pub(super) fn repo_shape(
             && entry.path().ends_with(".py")
             && roots.iter().any(|root| beneath(entry.path(), root))
             && !residue(entry.path())
-            && !generated.matches(entry)
+            && !generated_path(entry.path(), &generated)
     }) {
         return Ok(CoreObservation::Skipped {
             reason: "declared Python package roots contain no admitted modules".to_owned(),
         });
     }
 
-    let boundary = Regex::new(r"^_*[0-9a-z]+_*$").expect("compiled module-name policy");
     let mut findings = Vec::new();
     namespace_findings(entries, &roots, &generated, &mut findings)?;
-    path_shape_findings(entries, &roots, &generated, &boundary, &mut findings)?;
+    path_shape_findings(
+        entries,
+        &roots,
+        &tests,
+        &generated,
+        &boundary,
+        &mut findings,
+    )?;
     name_cluster_findings(
         entries,
         &roots,
@@ -67,30 +103,186 @@ pub(super) fn repo_shape(
     })
 }
 
-fn active_roots(entries: &[Entry], policy: &ShapePolicy) -> Result<Vec<String>, CoreInputError> {
-    let mut roots = Vec::new();
-    for root in policy.package_roots() {
+/// The whole packaging metadata of the captured tree, empty when it has none.
+///
+/// A file that is present and undecodable refuses. The predecessor read it as
+/// nothing, but nothing is what an absent file says, and answering both with a
+/// skip would let a broken `pyproject.toml` retire this arm quietly.
+///
+/// # Errors
+///
+/// Returns the read or decode failure of a present `pyproject.toml`.
+fn pyproject(root: &Path) -> Result<Value, CoreInputError> {
+    let path = root.join(PYPROJECT);
+    if !path.is_file() {
+        return Ok(Value::Table(toml::Table::new()));
+    }
+    let text = fs::read_to_string(&path)
+        .map_err(|error| CoreInputError::new(format!("{PYPROJECT} could not be read: {error}")))?;
+    toml::from_str(&text)
+        .map_err(|error| CoreInputError::new(format!("{PYPROJECT} is not valid TOML: {error}")))
+}
+
+/// Every package root this repository names, tracked or derived.
+fn declared_roots(
+    policy: &ShapePolicy,
+    pyproject: &Value,
+    tree: &TreeIndex<'_>,
+) -> Result<Vec<String>, CoreInputError> {
+    let declared = policy.package_roots();
+    let roots = if declared.is_empty() {
+        derived_package_roots(pyproject, tree)?
+    } else {
+        declared.to_vec()
+    };
+    for root in &roots {
         validate_repo_path(root)?;
-        if entries.iter().any(|entry| {
-            entry.path() == root && entry.admission().admits() && entry.shape() == Shape::Directory
-        }) {
-            roots.push(root.clone());
-        }
     }
     Ok(roots)
+}
+
+/// The declared roots that exist as admitted directories in this tree.
+fn active_roots(declared: &[String], tree: &TreeIndex<'_>) -> Vec<String> {
+    declared
+        .iter()
+        .filter(|root| tree.is_directory(root))
+        .cloned()
+        .collect()
+}
+
+/// The module-name shape every scanned name is held to.
+///
+/// Compiled as a whole-name match, which is what the predecessor's `fullmatch`
+/// means and what an unanchored tracked pattern would otherwise lose.
+fn boundary_pattern(policy: &ShapePolicy) -> Result<Regex, CoreInputError> {
+    let field = "policy.package.boundary_underscore_pattern";
+    let pattern = policy
+        .boundary_underscore_pattern()
+        .unwrap_or(PACKAGED_BOUNDARY_PATTERN);
+    if pattern.is_empty() {
+        return Err(CoreInputError::new(format!("{field} must not be empty")));
+    }
+    compile_stem_expression(pattern)
+        .map_err(|reason| CoreInputError::new(format!("{field}: {reason}")))
+}
+
+/// Test-root patterns in the predecessor's derivation precedence.
+///
+/// Tracked policy wins; pytest's own configuration answers next, because a
+/// repository that already told pytest where its tests live has told this arm
+/// too; `tests` is the last resort rather than the only answer.
+fn test_patterns(
+    policy: &ShapePolicy,
+    pyproject: &Value,
+) -> Result<Vec<PathPattern>, CoreInputError> {
+    if !policy.test_paths().is_empty() {
+        return compile_patterns("policy.test_paths", policy.test_paths());
+    }
+    let configured = pytest_testpaths(pyproject);
+    if !configured.is_empty() {
+        return compile_patterns(
+            "pyproject.toml:tool.pytest.ini_options.testpaths",
+            &configured,
+        );
+    }
+    compile_patterns("the default test root", &[DEFAULT_TEST_ROOT.to_owned()])
+}
+
+/// Test roots pytest is configured with, as a list or a whitespace-split string.
+fn pytest_testpaths(pyproject: &Value) -> Vec<String> {
+    let Some(configured) = pyproject
+        .get("tool")
+        .and_then(|tool| tool.get("pytest"))
+        .and_then(|pytest| pytest.get("ini_options"))
+        .and_then(|options| options.get("testpaths"))
+    else {
+        return Vec::new();
+    };
+    match configured {
+        Value::String(raw) => raw.split_whitespace().map(str::to_owned).collect(),
+        Value::Array(entries) => entries
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Compile one tracked path list against the shared repository-path contract.
+fn compile_patterns(field: &str, values: &[String]) -> Result<Vec<PathPattern>, CoreInputError> {
+    values
+        .iter()
+        .map(|value| {
+            PathPattern::tracked(value.trim().trim_end_matches('/'))
+                .map_err(|reason| CoreInputError::new(format!("{field} {reason}")))
+        })
+        .collect()
+}
+
+/// Whether one path is exempt as a declared generated path.
+///
+/// The exemption matches the path itself, exactly as the tracked contract
+/// spells it: a literal pattern carries its whole subtree, and a glob pattern
+/// carries only what it matches.
+fn generated_path(path: &str, generated: &[PathPattern]) -> bool {
+    generated.iter().any(|pattern| pattern.matches(path))
+}
+
+/// One selected-tree inventory, asked the questions packaging metadata asks.
+pub(super) struct TreeIndex<'a> {
+    entries: &'a [Entry],
+}
+
+impl<'a> TreeIndex<'a> {
+    fn new(entries: &'a [Entry]) -> Self {
+        Self { entries }
+    }
+
+    /// Whether this path is an admitted directory of the selected tree.
+    pub(super) fn is_directory(&self, path: &str) -> bool {
+        self.entries.iter().any(|entry| {
+            entry.path() == path && entry.admission().admits() && entry.shape() == Shape::Directory
+        })
+    }
+
+    /// Admitted directories directly inside one directory, in sorted order.
+    ///
+    /// An empty parent, or `.`, names the tree root itself.
+    pub(super) fn child_directories(&self, parent: &str) -> Vec<&'a str> {
+        let parent = parent.trim_end_matches('/');
+        let parent = if parent == "." { "" } else { parent };
+        let mut children: Vec<&str> = self
+            .entries
+            .iter()
+            .filter(|entry| entry.admission().admits() && entry.shape() == Shape::Directory)
+            .map(Entry::path)
+            .filter(|path| self::parent(path) == parent)
+            .collect();
+        children.sort_unstable();
+        children
+    }
+
+    /// Whether this path is a directory holding at least one admitted module.
+    pub(super) fn holds_module(&self, path: &str) -> bool {
+        self.is_directory(path)
+            && self.entries.iter().any(|entry| {
+                entry.measurable() && entry.path().ends_with(".py") && beneath(entry.path(), path)
+            })
+    }
 }
 
 fn namespace_findings(
     entries: &[Entry],
     roots: &[String],
-    generated: &GeneratedPaths,
+    generated: &[PathPattern],
     findings: &mut Vec<CoreFinding>,
 ) -> Result<(), CoreInputError> {
     for entry in entries.iter().filter(|entry| {
         entry.measurable()
             && file_name(entry.path()) == "__init__.py"
             && roots.iter().any(|root| beneath(entry.path(), root))
-            && !generated.matches(entry)
+            && !generated_path(entry.path(), generated)
     }) {
         findings.push(CoreFinding::new(
             "namespace-package",
@@ -104,19 +296,11 @@ fn namespace_findings(
 fn path_shape_findings(
     entries: &[Entry],
     roots: &[String],
-    generated: &GeneratedPaths,
+    tests: &[PathPattern],
+    generated: &[PathPattern],
     boundary: &Regex,
     findings: &mut Vec<CoreFinding>,
 ) -> Result<(), CoreInputError> {
-    let mut scan_roots = roots.to_vec();
-    if entries.iter().any(|entry| {
-        entry.path() == "tests" && entry.admission().admits() && entry.shape() == Shape::Directory
-    }) {
-        scan_roots.push("tests".to_owned());
-    }
-    scan_roots.sort();
-    scan_roots.dedup();
-
     let files: BTreeSet<&str> = entries
         .iter()
         .filter(|entry| entry.measurable())
@@ -124,11 +308,9 @@ fn path_shape_findings(
         .collect();
     for entry in entries.iter().filter(|entry| {
         entry.admission().admits()
-            && scan_roots
-                .iter()
-                .any(|root| entry.path() != root && beneath(entry.path(), root))
+            && scanned(entry.path(), roots, tests)
             && !residue(entry.path())
-            && !generated.matches(entry)
+            && !generated_path(entry.path(), generated)
     }) {
         let name = file_name(entry.path());
         if entry.shape() == Shape::Directory {
@@ -146,7 +328,7 @@ fn path_shape_findings(
         }
 
         let stem = name.trim_end_matches(".py");
-        let module = if beneath(entry.path(), "tests") {
+        let module = if test_path(entry.path(), tests) {
             stem.strip_prefix("test_")
         } else {
             Some(stem)
@@ -177,7 +359,7 @@ fn path_shape_findings(
 fn name_cluster_findings(
     entries: &[Entry],
     roots: &[String],
-    generated: &GeneratedPaths,
+    generated: &[PathPattern],
     boundary: &Regex,
     threshold: usize,
     findings: &mut Vec<CoreFinding>,
@@ -188,7 +370,7 @@ fn name_cluster_findings(
             && entry.path().ends_with(".py")
             && roots.iter().any(|root| beneath(entry.path(), root))
             && !residue(entry.path())
-            && !generated.matches(entry)
+            && !generated_path(entry.path(), generated)
             && !ALLOWED_FILES.contains(&file_name(entry.path()))
     }) {
         let stem = file_name(entry.path()).trim_end_matches(".py");
@@ -337,6 +519,22 @@ fn sibling_shard(path: &str, files: &BTreeSet<&str>) -> bool {
         >= 2
 }
 
+/// Whether one path lies inside a scanned root.
+///
+/// Package roots and every configured test root are scanned alike; a root is
+/// never a member of itself, so naming a root never indicts the root.
+fn scanned(path: &str, roots: &[String], tests: &[PathPattern]) -> bool {
+    roots.iter().any(|root| path != root && beneath(path, root))
+        || tests.iter().any(|pattern| pattern.matches_ancestor(path))
+}
+
+/// Whether one path lies at or inside a configured test root.
+fn test_path(path: &str, tests: &[PathPattern]) -> bool {
+    tests
+        .iter()
+        .any(|pattern| pattern.matches_or_ancestor(path))
+}
+
 fn beneath(path: &str, root: &str) -> bool {
     path == root
         || path
@@ -361,39 +559,5 @@ fn join(parent: &str, name: &str) -> String {
         name.to_owned()
     } else {
         format!("{parent}/{name}")
-    }
-}
-
-struct GeneratedPaths {
-    patterns: Vec<(String, Pattern)>,
-}
-
-impl GeneratedPaths {
-    fn compile(patterns: &[String]) -> Result<Self, CoreInputError> {
-        let mut compiled = Vec::new();
-        for pattern in patterns {
-            let Some(glob) = Pattern::from_bytes(pattern.as_bytes()) else {
-                return Err(CoreInputError::new(format!(
-                    "generated path pattern {pattern:?} is empty"
-                )));
-            };
-            compiled.push((pattern.clone(), glob));
-        }
-        Ok(Self { patterns: compiled })
-    }
-
-    fn matches(&self, entry: &Entry) -> bool {
-        self.patterns.iter().any(|(source, pattern)| {
-            if !source.contains(['*', '?', '[']) && beneath(entry.path(), source) {
-                return true;
-            }
-            pattern.matches_repo_relative_path(
-                entry.path().as_bytes().into(),
-                entry.path().rfind('/').map(|slash| slash + 1),
-                Some(entry.shape() == Shape::Directory),
-                gix_glob::pattern::Case::Sensitive,
-                gix_glob::wildmatch::Mode::NO_MATCH_SLASH_LITERAL,
-            )
-        })
     }
 }

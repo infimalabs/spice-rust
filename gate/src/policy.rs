@@ -16,6 +16,9 @@ use std::str::FromStr;
 use serde::de::{Deserializer, Error as _};
 use serde::{Deserialize, Serialize, Serializer};
 
+/// The repository-path and stem dialects, shared with the native-only arms.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use matcher::{PathPattern, compile_stem_expression};
 pub(crate) use migration::packaged_rule_policy;
 pub use migration::{MigrationError, migrate_predecessor_policy};
 pub use runtime::{CompileError, Policy, ResolveError};

@@ -332,6 +332,16 @@ struct TrackedShapePolicy {
     package_roots: Vec<String>,
     generated_paths: Vec<String>,
     name_cluster_threshold: Option<usize>,
+    test_paths: Vec<String>,
+    package: TrackedPackageShape,
+}
+
+/// The `[policy.package]` subtable, whose one admitted field names module shape.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct TrackedPackageShape {
+    boundary_underscore_pattern: Option<String>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -340,6 +350,8 @@ pub(crate) struct ShapePolicy {
     package_roots: Vec<String>,
     generated_paths: Vec<String>,
     name_cluster_threshold: usize,
+    test_paths: Vec<String>,
+    boundary_underscore_pattern: Option<String>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -359,6 +371,12 @@ impl ShapePolicy {
             package_roots: normalize(&tracked.package_roots),
             generated_paths: normalize(&tracked.generated_paths),
             name_cluster_threshold: tracked.name_cluster_threshold.unwrap_or(4),
+            test_paths: normalize(&tracked.test_paths),
+            boundary_underscore_pattern: tracked
+                .package
+                .boundary_underscore_pattern
+                .as_ref()
+                .map(|pattern| pattern.trim().to_owned()),
         }
     }
 
@@ -372,6 +390,25 @@ impl ShapePolicy {
 
     pub(crate) const fn name_cluster_threshold(&self) -> usize {
         self.name_cluster_threshold
+    }
+
+    /// Tracked test-root patterns, empty when the repository declares none.
+    ///
+    /// Emptiness is not a default: the provider still has the predecessor's
+    /// remaining derivation to run before it settles on `tests`, and a policy
+    /// that answered here would hide the pytest layer that sits between them.
+    pub(crate) fn test_paths(&self) -> &[String] {
+        &self.test_paths
+    }
+
+    /// Tracked module-name shape, present exactly when the repository set one.
+    ///
+    /// The packaged default is not substituted here. A key that is present and
+    /// blank is a different fact than a key nobody wrote, and only the consumer
+    /// that compiles the pattern can refuse the first while admitting the
+    /// second.
+    pub(crate) fn boundary_underscore_pattern(&self) -> Option<&str> {
+        self.boundary_underscore_pattern.as_deref()
     }
 }
 
