@@ -44,23 +44,41 @@ fn fixture_finding(gate: GateId, suffix: &str) -> ArmFinding {
     }
 }
 
+/// One current-shaped finding for a gate an external tool analyzes.
+///
+/// The column is chosen per gate because these three do not agree on having
+/// one, and one shared literal hid that. Each arm below carries the reason its
+/// own producer gives.
 fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding {
-    let (path, detail) = match gate {
+    let (path, column, detail) = match gate {
+        // The formatter records that a file is not formatted and carries the
+        // earliest differing region as a line, so its analysis reports no
+        // column at all and neither does this.
         GateId::Formatters => (
             format!("src/{suffix}.rs"),
+            None,
             FindingDetail::Formatting {
                 formatter: "rustfmt".to_owned(),
             },
         ),
+        // The canvas analysis parses `path:line:column` out of the location its
+        // tool printed and keeps only a positive column, so a positive literal
+        // is the shape it always produces.
         GateId::CanvasWebTypecheck => (
             format!("app/src/{suffix}.rs"),
+            Some(3),
             FindingDetail::CanvasWebOutput {
                 code: "E0308".to_owned(),
                 message: "mismatched types".to_owned(),
             },
         ),
+        // Python typechecking has no compiled analysis yet, which is why
+        // `owed_analyzer` still names the one it is owed, so there is no
+        // producer to ask. Pyright's own diagnostics carry a column, and this
+        // literal stands in for it until the analysis that parses one lands.
         GateId::PythonTypecheck => (
             format!("python/{suffix}.py"),
+            Some(3),
             FindingDetail::PythonType {
                 code: "reportAssignmentType".to_owned(),
                 message: "value is not assignable".to_owned(),
@@ -71,7 +89,7 @@ fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding {
     ArmFinding {
         path: Some(path),
         line: Some(7),
-        column: Some(3),
+        column,
         detail,
     }
 }
