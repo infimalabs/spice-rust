@@ -138,6 +138,10 @@ fn canonicalize_evidence_item(evidence: &mut AnalysisEvidence) {
             sort_dedup(helpers);
         }
         AnalysisEvidence::PrivateBoundaryResolution { packages, .. } => sort_dedup(packages),
+        AnalysisEvidence::PathSuppression { suppressed } => {
+            suppressed.sort();
+            suppressed.dedup();
+        }
         AnalysisEvidence::SymbolExtraction { .. }
         | AnalysisEvidence::PolicyDecision { .. }
         | AnalysisEvidence::Analyzer(_)
@@ -384,7 +388,8 @@ pub(super) const fn evidence_rank(evidence: &AnalysisEvidence) -> u8 {
         AnalysisEvidence::Deadline { .. } => 7,
         AnalysisEvidence::Parse { .. } => 8,
         AnalysisEvidence::Measurement { .. } => 9,
-        AnalysisEvidence::Exclusion(_) => 10,
+        AnalysisEvidence::PathSuppression { .. } => 10,
+        AnalysisEvidence::Exclusion(_) => 11,
     }
 }
 
@@ -431,6 +436,12 @@ fn validate_evidence_shape(
             }
             AnalysisEvidence::Exclusion(item) => {
                 !item.provenance.is_complete() || item.reason.is_empty()
+            }
+            AnalysisEvidence::PathSuppression { suppressed } => {
+                suppressed.is_empty()
+                    || suppressed
+                        .iter()
+                        .any(|item| !item.is_complete() || invalid_path(&item.path))
             }
             AnalysisEvidence::PrivateBoundaryResolution { packages, .. } => {
                 packages.iter().any(String::is_empty)

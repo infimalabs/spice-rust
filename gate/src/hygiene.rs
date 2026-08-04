@@ -493,6 +493,13 @@ impl AnalyzerEvidence {
     }
 }
 
+/// Release that owns every grammar this family decides with.
+const CURRENT_RELEASE: &str = "current";
+/// Layer of a law the battery ships rather than reads from a repository.
+const COMPILED_LAYER: &str = "compiled";
+/// Document a compiled law is attributed to.
+const COMPILED_DOCUMENT: &str = "<compiled-gate-battery>";
+
 /// Exact origin of one applicability or exclusion decision.
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct HygieneProvenance {
@@ -512,6 +519,27 @@ impl HygieneProvenance {
             && !self.layer.is_empty()
             && !self.document.is_empty()
             && !self.field.is_empty()
+    }
+}
+
+/// One hygiene candidate a walk rule removed before any analyzer saw it.
+///
+/// This is a path the selected tree contains and the analysis never measured.
+/// It is deliberately not an [`ExclusionEvidence`]: that one retires a whole
+/// arm, while this one retires a single file and leaves the arm measuring.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct SuppressedPath {
+    /// Selected-tree-relative path that reached no analyzer.
+    pub path: String,
+    /// Exact walk-rule text that decided the removal.
+    pub rule: String,
+    /// Exact release, layer, document, and field that supplied the rule.
+    pub provenance: HygieneProvenance,
+}
+
+impl SuppressedPath {
+    fn is_complete(&self) -> bool {
+        !self.path.is_empty() && !self.rule.is_empty() && self.provenance.is_complete()
     }
 }
 
@@ -622,6 +650,11 @@ pub enum AnalysisEvidence {
         state: EvidenceState,
         /// Stage that supplied the terminal state.
         stage: String,
+    },
+    /// Candidates this arm never measured because a walk rule removed them.
+    PathSuppression {
+        /// Every suppressed candidate in canonical order.
+        suppressed: Vec<SuppressedPath>,
     },
     /// Explicit skip provenance.
     Exclusion(ExclusionEvidence),

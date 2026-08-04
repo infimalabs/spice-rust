@@ -574,7 +574,68 @@ mod tests {
                 ..
             })
         ));
+
+        for suppressed in [Vec::new(), vec![unattributable_suppression()]] {
+            let mut forged: Vec<_> = HYGIENE_ARMS
+                .into_iter()
+                .map(|arm| observation(arm.id, HygieneOutcome::Passed))
+                .collect();
+            forged[0]
+                .evidence
+                .push(AnalysisEvidence::PathSuppression { suppressed });
+            assert!(
+                matches!(
+                    measure_hygiene(forged),
+                    Err(HygieneError::InvalidEvidence {
+                        gate: GateId::Reachability,
+                        ..
+                    })
+                ),
+                "a suppression a reader cannot trace back to a rule is not evidence"
+            );
+        }
+
+        let mut unordered: Vec<_> = HYGIENE_ARMS
+            .into_iter()
+            .map(|arm| observation(arm.id, HygieneOutcome::Passed))
+            .collect();
+        let late = suppression("tests/test_ignored.py");
+        let early = suppression("app/_ignored.py");
+        unordered[0].evidence.push(AnalysisEvidence::PathSuppression {
+            suppressed: vec![late.clone(), early.clone(), late.clone()],
+        });
+        let measured = measure_hygiene(unordered).expect("complete suppressions are admissible");
+        assert_eq!(
+            measured.arms[0].evidence.iter().find_map(|item| match item {
+                AnalysisEvidence::PathSuppression { suppressed } => Some(suppressed.as_slice()),
+                _ => None,
+            }),
+            Some([early, late].as_slice()),
+            "retained suppressions are one canonical set however they arrived"
+        );
     }
+
+    /// A suppression naming a path but no rule that removed it.
+    fn unattributable_suppression() -> SuppressedPath {
+        SuppressedPath {
+            rule: String::new(),
+            ..suppression("tests/test_ignored.py")
+        }
+    }
+
+    fn suppression(path: &str) -> SuppressedPath {
+        SuppressedPath {
+            path: path.to_owned(),
+            rule: path.to_owned(),
+            provenance: HygieneProvenance {
+                release: "current".to_owned(),
+                layer: "repository".to_owned(),
+                document: "spice.toml".to_owned(),
+                field: "gate.walk.skip[0]".to_owned(),
+            },
+        }
+    }
+
 
     #[test]
     fn external_provider_findings_require_exact_identity_evidence() {

@@ -495,7 +495,7 @@ fn module_name(path: &str) -> String {
     components.join(".")
 }
 
-fn is_python_path(path: &str) -> bool {
+pub(super) fn is_python_path(path: &str) -> bool {
     path.ends_with(".py") || path.ends_with(".pyi")
 }
 

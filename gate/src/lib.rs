@@ -77,7 +77,7 @@ pub use hygiene::{
     PredecessorComparisonError as HygienePredecessorComparisonError,
     PredecessorObservation as HygienePredecessorObservation,
     PredecessorResult as HygienePredecessorResult, PrivateCouplingException, PythonUnusedStatus,
-    analyze_hygiene, compare_predecessor as compare_hygiene_predecessor,
+    SuppressedPath, analyze_hygiene, compare_predecessor as compare_hygiene_predecessor,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use hygiene::{HygieneSource, acquire_hygiene};

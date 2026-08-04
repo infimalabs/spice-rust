@@ -143,6 +143,7 @@ pub struct Contract {
     ratchet: Ratchet,
     bounds: Bounds,
     tools: Vec<ToolIdentity>,
+    compiled_walk_rules: usize,
 }
 
 impl Contract {
@@ -184,7 +185,8 @@ impl Contract {
         let tracked_configuration =
             tracked_configuration(policy_path, policy_text).map_err(ContractError::Policy)?;
         let tracked = tracked_policy(policy_path, policy_text).map_err(ContractError::Policy)?;
-        let ignore = tracked_ignore(policy_path, &tracked).map_err(ContractError::Policy)?;
+        let (ignore, compiled_walk_rules) =
+            tracked_ignore(policy_path, &tracked).map_err(ContractError::Policy)?;
         #[cfg(not(target_arch = "wasm32"))]
         let shape = ShapePolicy::from_tracked(&tracked.policy);
         let rule_policy = packaged_rule_policy().map_err(|source| {
@@ -229,6 +231,7 @@ impl Contract {
             ratchet,
             bounds,
             tools,
+            compiled_walk_rules,
         })
     }
 
@@ -312,6 +315,16 @@ impl Contract {
     #[must_use]
     pub fn tools(&self) -> &[ToolIdentity] {
         &self.tools
+    }
+
+    /// Number of leading [`policy`](Self::policy) walk rules that are compiled.
+    ///
+    /// Rules below this index came from `DEFAULT_SKIP`; rules at or above it are
+    /// the tracked `gate.walk.skip` entries in declaration order. A deciding
+    /// rule index is only attributable to a layer through this boundary.
+    #[must_use]
+    pub const fn compiled_walk_rules(&self) -> usize {
+        self.compiled_walk_rules
     }
 }
 
@@ -446,7 +459,14 @@ fn tracked_configuration(path: &Path, text: &str) -> Result<toml::Value, PolicyE
     })
 }
 
-fn tracked_ignore(path: &Path, tracked: &TrackedPolicy) -> Result<Ignore, PolicyError> {
+/// Compose the walk policy and report how many of its rules are compiled.
+///
+/// The count is returned rather than recovered later from `DEFAULT_SKIP`,
+/// because this is the only place that knows it: everything downstream sees a
+/// single flat rule list, and an index into it means nothing without the point
+/// where the compiled defaults stop and `gate.walk.skip` begins. Evidence that
+/// names which layer excluded a path is built from exactly that boundary.
+fn tracked_ignore(path: &Path, tracked: &TrackedPolicy) -> Result<(Ignore, usize), PolicyError> {
     let defaults = Ignore::parse(&(DEFAULT_SKIP.join("\n") + "\n")).map_err(|source| {
         PolicyError::Selector {
             path: path.to_path_buf(),
@@ -455,8 +475,9 @@ fn tracked_ignore(path: &Path, tracked: &TrackedPolicy) -> Result<Ignore, Policy
         }
     })?;
     let mut rules = defaults.rules().to_vec();
+    let compiled = rules.len();
     rules.extend_from_slice(tracked.gate.walk().skip().rules());
-    Ok(Ignore::from_rules(rules))
+    Ok((Ignore::from_rules(rules), compiled))
 }
 
 fn required<'a>(
