@@ -101,14 +101,18 @@ const FIXTURE_MARKED_LINE: &str = concat!("// see /", "Users", "/somebody/devel"
 /// The line the taste fixture finding was read from.
 const FIXTURE_PROSE_LINE: &str = "one orphaned paragraph";
 
-/// One current-shaped scanner finding, carrying the column its scanner reports.
+/// One current-shaped scanner finding, carrying the column its scanner derives.
 ///
 /// Three scanners report one finding per occurrence and take its column from
 /// the line they matched in; the rest name a file or the repository and report
-/// none. The fixture asks those same producers instead of naming a number, so
-/// a scanner that stops reporting a column, or a predecessor conversion that
-/// starts, arrives here as a locus the two disagree on rather than as a field
-/// nothing compares.
+/// none. The fixture derives those three the way each scanner does instead of
+/// naming a number, so the value here is one a run could produce and the
+/// equality it feeds is not two empty fields agreeing.
+///
+/// It does not stand watch over the producers. Parity erases the column on
+/// both sides, so a scanner that stopped reporting one, or a predecessor
+/// conversion that started inventing one, would pass unremarked here. What
+/// this fixture holds is that the current side arrives with a column at all.
 fn fixture_scanner_finding(gate: GateId, suffix: &str) -> ArmFinding {
     let (path, column, detail) = match gate {
         GateId::LocalPaths => (
@@ -1059,7 +1063,7 @@ fn predecessor_differences_in_javascript_and_ledger_identity_do_not_compare_equa
 
 /// The three scanners that report a column, and the one field parity drops.
 ///
-/// Every current finding here carries the column its own scanner computed, so
+/// Every current finding here carries the column its scanner derives, so
 /// equality proves the comparison excludes the field rather than that both
 /// producers happened to leave it empty. Moving one line then proves the loci
 /// the comparison does hold are still compared.
