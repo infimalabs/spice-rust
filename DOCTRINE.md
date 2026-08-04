@@ -227,34 +227,3 @@ That file owns their blunt wording, near-universal word-glob bags, seed set,
 evidence aging, and commit-governed curation. Runtime facts record confirmed
 and cleared findings; they do not redefine membership or create a second
 policy register.
-
-## The interregnum
-
-Python spice is the named scaffold authority throughout construction. Its
-hooks, task allocation, and repository controls remain live while the Rust
-gate begins in measure-only posture from wave one. Rust fixtures operate on
-explicit foreign repositories and may prove vertical behavior, but they do
-not acquire governance merely by existing.
-
-The enforcement flip occurs only after the vertical slice proves fact,
-guarded append, authoritative head, fold, measure-only gate, and static binary
-as one path. The flip is a named genesis leaf with current evidence; before it,
-Python governs and Rust measures. After it, the Rust gate enforces one current
-law. No interval admits both as executable authority.
-
-Throughout the interregnum these port-owned records and the board are the
-living record of intent. Tasks are minted incrementally as work becomes
-current, and an amendment is a deliberate edit to the owning record with its
-references and executable checks following in the same change — never silent
-drift in a leaf, a reference, or an acceptance line.
-
-## Handle re-mint at cutover
-
-Cutover drains the Python-governed fleet, exports wanted work as a normalized
-task document, verifies backup, and starts the Rust appliance with empty
-authorities. Applying that document mints a new lower-case task UUID and a
-new `KEY-BORN` handle for every row and freezes new slugs under the current
-naming gate. Old handles remain in the
-archived evidence that explains the transition, but no alias, import, or
-mapping makes them current identity. The re-mint is the visible cost of the
-clean break and the proof that no hidden compatibility state crossed it.
