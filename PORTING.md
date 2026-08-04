@@ -184,10 +184,6 @@ Dropped: the Lua family (`lua-api`, `lua-contract`, `lua-entry-graph`,
 engine-navigation, timing, and simulation-lineage families. Those stay with
 Unity and VR.
 
-Still owed: `complexity-hotspots`, `mutations`, `subsumption`, and
-`suite-seam-reach` are marked `D` below, yet match no `GateId` in
-`gate/src/manifest.rs` and no Rust source at all.
-
 Grammar coverage still exceeds gate coverage. `studies/treesitter.py` parses two
 languages (`Literal["csharp", "javascript"]`, suffixes `.cjs .cs .js .jsx .mjs`)
 for four modules, and `magicnums.py` falls back to Python `ast`.
@@ -258,14 +254,14 @@ risk, not a fallback.
 - `dev serve-web-typecheck`: D -> verifier Wasm check.
 - `dev serve-web-types`: R -> shared Rust wire types plus verifier app-drift and Wasm checks.
 
-Each `study` path is D -> gate or verifier evidence, not a shipped verb.
+No `study` path is a shipped verb, and a ranking board is not a gate.
 
 - `study`: D.
 - `study assertion-free-tests`: D.
 - `study complexity`: D.
-- `study complexity-hotspots`: D.
+- `study complexity-hotspots`: D -> `GateId::Complexity`.
 - `study csharp-members`: D -> `MetricId::RoutineLength`, which measures the same
-  quantity for every language lizard parses; a ranking board is not a gate.
+  quantity for every language lizard parses.
 - `study csharp-unused-candidates`: D -> `GateId::CsharpUnusedCandidates`.
 - `study env-name-ledger`: D.
 - `study env-policy`: D.
@@ -273,13 +269,13 @@ Each `study` path is D -> gate or verifier evidence, not a shipped verb.
 - `study javascript-unused`: D.
 - `study magic-numbers`: D.
 - `study markdown-links`: D.
-- `study mutations`: D.
+- `study mutations`: P -> `STUDY-1kJxswrC`; `kill` gates Rust survivor debt.
 - `study private-internals`: D.
 - `study python-unused`: D.
 - `study reachability`: D.
 - `study shape`: D.
-- `study subsumption`: D.
-- `study suite-seam-reach`: D.
+- `study subsumption`: P -> `STUDY-1kJxswrC`.
+- `study suite-seam-reach`: P -> `STUDY-1kJxswrC`.
 - `study symbol-reachability`: D.
 - `study taste`: D.
 

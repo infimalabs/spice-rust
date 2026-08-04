@@ -646,16 +646,18 @@ mod tests {
             (123, 123)
         );
         assert_eq!(
-            report.python.pending_paths.len(),
-            0,
-            "recovery and demo successors must leave no pending installed Python path",
-        );
-        assert!(
             report
                 .python
                 .pending_paths
                 .iter()
-                .all(|path| path.path != "task capture" && !path.path.starts_with("task artifact"))
+                .map(|gap| (gap.path.as_str(), gap.owner.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("study mutations", "STUDY-1kJxswrC"),
+                ("study subsumption", "STUDY-1kJxswrC"),
+                ("study suite-seam-reach", "STUDY-1kJxswrC"),
+            ],
+            "only the studies with no Rust surface are owed, and one task owns them",
         );
         assert!(report.python.unconfirmed_deletions.is_empty());
         assert!(report.python.stale_deletion_confirmations.is_empty());
