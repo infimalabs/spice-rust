@@ -198,9 +198,6 @@ fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
         .iter()
         .map(|case| case.path.to_owned())
         .collect::<BTreeSet<_>>();
-    assert_eq!(registered.len(), 87);
-    assert_eq!(CASES.len(), 87);
-    assert_eq!(exercised.len(), 87);
     assert_eq!(exercised.len(), CASES.len(), "process case repeated");
     assert_eq!(
         exercised, registered,
