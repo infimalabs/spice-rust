@@ -1012,25 +1012,30 @@ fn missing_and_duplicate_declarations_refuse_and_fully_unwind_lane_add() {
     ] {
         let fixture = Fixture::new(&format!("lane-session-{name}"));
         let stopped = fixture.root.join("vendor-stopped");
+        let vendor_pid = fixture.root.join("vendor-pid");
         let script = if !duplicate {
             format!(
                 concat!(
                     "#!/bin/sh\n",
                     "trap 'printf stopped > {}; exit 0' TERM INT\n",
+                    "printf '%s\\n' \"$$\" > {}\n",
                     "while :; do sleep 1; done\n",
                 ),
                 shell_word(&stopped.display().to_string()),
+                shell_word(&vendor_pid.display().to_string()),
             )
         } else {
             format!(
                 concat!(
                     "#!/bin/sh\n",
                     "trap 'printf stopped > {}; exit 0' TERM INT\n",
+                    "printf '%s\\n' \"$$\" > {}\n",
                     "printf '%s\\n' {}\n",
                     "printf '%s\\n' {}\n",
                     "while :; do sleep 1; done\n",
                 ),
                 shell_word(&stopped.display().to_string()),
+                shell_word(&vendor_pid.display().to_string()),
                 shell_word(SESSION_RECORD),
                 shell_word(SESSION_RECORD),
             )
@@ -1047,16 +1052,8 @@ fn missing_and_duplicate_declarations_refuse_and_fully_unwind_lane_add() {
             reply_body::<wire::intent::LaneAnswer>(&invoke_args(&fixture, &["lane"], true, None));
         assert!(lanes.lanes.is_empty());
         // The refusal returns without waiting for the vendor's TERM trap, so the
-        // stop file is observed rather than read at the return.
-        let stop = wait_for_event(
-            &fixture.cleanup,
-            || {},
-            || {
-                fs::read_to_string(&stopped)
-                    .ok()
-                    .filter(|text| !text.is_empty())
-            },
-        );
+        // stop is observed rather than read at the return.
+        let stop = wait_for_vendor_stop(&fixture.cleanup, &vendor_pid, &stopped);
         assert_eq!(
             stop, "stopped",
             "refused vendor records bounded termination"
@@ -1093,16 +1090,19 @@ fn mismatched_resume_and_moved_tape_refuse_without_advancing_the_vacant_lane() {
     );
 
     let stopped = fixture.root.join("mismatched-vendor-stopped");
+    let vendor_pid = fixture.root.join("mismatched-vendor-pid");
     configure_vendor(
         &fixture,
         &format!(
             concat!(
                 "#!/bin/sh\n",
                 "trap 'printf stopped > {}; exit 0' TERM INT\n",
+                "printf '%s\\n' \"$$\" > {}\n",
                 "printf '%s\\n' {}\n",
                 "while :; do sleep 1; done\n",
             ),
             shell_word(&stopped.display().to_string()),
+            shell_word(&vendor_pid.display().to_string()),
             shell_word(MISMATCHED_SESSION_RECORD),
         ),
     );
@@ -1113,17 +1113,9 @@ fn mismatched_resume_and_moved_tape_refuse_without_advancing_the_vacant_lane() {
         None,
     );
     assert_eq!(refusal_reason(&mismatch), "lane::session-mismatched");
-    // The refusal returns without waiting for the vendor's TERM trap, so the stop
-    // file is observed rather than read at the return.
-    let stop = wait_for_event(
-        &fixture.cleanup,
-        || {},
-        || {
-            fs::read_to_string(&stopped)
-                .ok()
-                .filter(|text| !text.is_empty())
-        },
-    );
+    // The refusal returns without waiting for the vendor's TERM trap, so the
+    // stop is observed rather than read at the return.
+    let stop = wait_for_vendor_stop(&fixture.cleanup, &vendor_pid, &stopped);
     assert_eq!(stop, "stopped", "mismatched vendor was terminated");
     let vacant =
         reply_body::<wire::intent::LaneAnswer>(&invoke_args(&fixture, &["lane"], true, None));

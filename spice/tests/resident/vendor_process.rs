@@ -215,16 +215,19 @@ fn malformed_codex_session_refuses_and_reaps_before_lane_publication() {
     let fixture = Fixture::linked("vendor-malformed-codex-session");
     let rig = configure(&fixture);
     let stopped = fixture.cleanup.join("malformed-codex-stopped");
+    let vendor_pid = fixture.cleanup.join("malformed-codex-pid");
     fs::write(
         &rig.codex_binary,
         format!(
             concat!(
                 "#!/bin/sh\n",
                 "trap 'printf stopped > {}; exit 0' TERM INT\n",
+                "printf '%s\\n' \"$$\" > {}\n",
                 "printf '%s\\n' '{{\"type\":\"thread.started\"}}'\n",
                 "while :; do sleep 1; done\n",
             ),
             shell_word(&stopped.display().to_string()),
+            shell_word(&vendor_pid.display().to_string()),
         ),
     )
     .expect("malformed Codex vendor installs");
@@ -238,16 +241,8 @@ fn malformed_codex_session_refuses_and_reaps_before_lane_publication() {
     };
     assert_eq!(refusal.reason, "lane::session-missing");
     // The refusal returns to the operator without waiting for the vendor's TERM
-    // trap, so the stop file is observed rather than read at the return.
-    let stop = wait_for_event(
-        &fixture.cleanup,
-        || {},
-        || {
-            fs::read_to_string(&stopped)
-                .ok()
-                .filter(|text| !text.is_empty())
-        },
-    );
+    // trap, so the stop is observed rather than read at the return.
+    let stop = wait_for_vendor_stop(&fixture.cleanup, &vendor_pid, &stopped);
     assert_eq!(stop, "stopped");
     assert!(durable_head(&fixture).lanes.is_empty());
 
@@ -464,32 +459,6 @@ fn assert_processes_stopped(index: &Path, expected_per_vendor: usize) {
             assert!(!process_alive(child), "vendor child group survived drain");
         }
     }
-}
-
-#[cfg(target_os = "linux")]
-fn process_alive(pid: u32) -> bool {
-    match fs::read_to_string(format!("/proc/{pid}/stat")) {
-        Ok(stat) => stat
-            .rsplit_once(") ")
-            .and_then(|(_, fields)| fields.as_bytes().first().copied())
-            .is_none_or(|state| !matches!(state, b'Z' | b'X' | b'x')),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-        Err(_) => process_identity_exists(pid),
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn process_alive(pid: u32) -> bool {
-    process_identity_exists(pid)
-}
-
-fn process_identity_exists(pid: u32) -> bool {
-    Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .output()
-        .expect("process probe launches")
-        .status
-        .success()
 }
 
 fn binary(rig: &Rig, dialect: Dialect) -> &Path {
