@@ -97,6 +97,18 @@ fn decoded_run_context_cannot_be_forged() {
                     serde_json::json!("./src/lib.rs")
             }),
         ),
+        // More headroom than this actor's seed grants. The fixture measured 101
+        // against a real cap of 152, so raising both limits together leaves
+        // every flag and the latch transition exactly as they were: the two
+        // forgeries above cannot claim this kill, and only recomputing the
+        // variation from the retained actor inputs can refuse it.
+        (
+            "bound effective elastic limit disagrees with its retained actor inputs",
+            mutate(&value, |candidate| {
+                candidate["context"]["bounds"][0]["elastic_limit"] = serde_json::json!(200);
+                candidate["context"]["bounds"][0]["active_limit"] = serde_json::json!(200);
+            }),
+        ),
         (
             "invalid latch key shape",
             mutate(&value, |candidate| {
