@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use rusqlite::{Connection, params};
 use serde::de::DeserializeOwned;
@@ -13,6 +13,14 @@ use wire::{
     Actor, AnyFact, Envelope, FactKind, FoldReport, JournalBackup, JournalReindex, JournalReport,
     JournalRestore, JournalVerification, Origin, Outcome, Seq, ThreadReport, WireVersion,
 };
+
+#[path = "support/readiness.rs"]
+mod readiness;
+
+use readiness::Readiness;
+
+/// How long a battery waits for a freshly spawned resident to publish.
+const READY: Duration = Duration::from_secs(10);
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -101,22 +109,16 @@ impl RunningResident {
             .expect("launch foreground resident");
         let mut resident = Self { child: Some(child) };
         let canvas = fixture.root.join(".git/.spice-rust/canvas");
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !canvas.is_file() {
-            assert!(
-                resident
-                    .child
-                    .as_mut()
-                    .expect("resident child")
-                    .try_wait()
-                    .expect("resident status")
-                    .is_none(),
-                "resident exited before publishing discovery"
-            );
-            assert!(Instant::now() < deadline, "resident readiness timed out");
-            std::thread::sleep(Duration::from_millis(10));
+        match readiness::wait_until_ready(
+            resident.child.as_mut().expect("resident child"),
+            &fixture.root.join(".git"),
+            READY,
+            "resident discovery",
+            || canvas.is_file(),
+        ) {
+            Readiness::Ready => resident,
+            Readiness::Exited => panic!("resident exited before publishing discovery"),
         }
-        resident
     }
 
     fn stop(mut self, fixture: &Fixture) {

@@ -5,12 +5,20 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use spice::install::{InstallPreview, InstallReceipt, InstallStatus};
 use wire::Outcome;
+
+#[path = "support/readiness.rs"]
+mod readiness;
+
+use readiness::Readiness;
+
+/// How long a paused install is given to reach its mutation rendezvous.
+const RENDEZVOUS: Duration = Duration::from_secs(10);
 
 static PAUSE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -166,37 +174,28 @@ struct Paused {
 
 impl Paused {
     fn wait_until_ready(&mut self) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            if self.control.join("ready").is_file() {
-                return;
-            }
-            if self
+        let control = self.control.clone();
+        let rendezvous = control.join("ready");
+        let waited = readiness::wait_until_ready(
+            self.child.as_mut().expect("paused child is present"),
+            &control,
+            RENDEZVOUS,
+            "install mutation rendezvous",
+            || rendezvous.is_file(),
+        );
+        if matches!(waited, Readiness::Exited) {
+            let output = self
                 .child
-                .as_mut()
+                .take()
                 .expect("paused child is present")
-                .try_wait()
-                .expect("inspect paused install process")
-                .is_some()
-            {
-                let output = self
-                    .child
-                    .take()
-                    .expect("paused child is present")
-                    .wait_with_output()
-                    .expect("collect early install exit");
-                panic!(
-                    "install exited before rendezvous: status={:?}, stdout={}, stderr={}",
-                    output.status.code(),
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr),
-                );
-            }
-            assert!(
-                Instant::now() < deadline,
-                "install did not reach its mutation rendezvous"
+                .wait_with_output()
+                .expect("collect early install exit");
+            panic!(
+                "install exited before rendezvous: status={:?}, stdout={}, stderr={}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
             );
-            std::thread::sleep(Duration::from_millis(5));
         }
     }
 

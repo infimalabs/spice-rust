@@ -114,45 +114,20 @@ impl RunningResident {
     }
 
     fn assert_ready(&mut self, fixture: &Fixture) {
-        let (sender, receiver) = mpsc::channel::<notify::Result<notify::Event>>();
-        let mut watcher = notify::recommended_watcher(move |event| {
-            let _ = sender.send(event);
-        })
-        .expect("readiness watcher starts");
-        watcher
-            .watch(
-                fixture
-                    .runtime
-                    .parent()
-                    .expect("runtime has Git-common parent"),
-                RecursiveMode::Recursive,
-            )
-            .expect("readiness watcher arms before publication");
-        let deadline = Monotonic::now() + READINESS_DEADLINE;
-        loop {
-            assert!(
-                self.child
-                    .as_mut()
-                    .expect("resident child")
-                    .try_wait()
-                    .expect("resident status")
-                    .is_none(),
-                "foreground resident exited before readiness"
-            );
-            if fixture.canvas().is_file() {
-                return;
-            }
-            let remaining = deadline.saturating_duration_since(Monotonic::now());
-            match receiver.recv_timeout(remaining) {
-                Ok(Ok(_)) => {}
-                Ok(Err(error)) => panic!("readiness notification failed: {error}"),
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    panic!("resident did not publish discovery before {READINESS_DEADLINE:?}")
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    panic!("readiness watcher disconnected")
-                }
-            }
+        let watched = fixture
+            .runtime
+            .parent()
+            .expect("runtime has Git-common parent")
+            .to_path_buf();
+        match readiness::wait_until_ready(
+            self.child.as_mut().expect("resident child"),
+            &watched,
+            READINESS_DEADLINE,
+            "resident discovery",
+            || fixture.canvas().is_file(),
+        ) {
+            Readiness::Ready => {}
+            Readiness::Exited => panic!("foreground resident exited before readiness"),
         }
     }
 
@@ -961,6 +936,11 @@ fn process_identity_exists(pid: u32) -> bool {
 }
 
 /// Process cases share the transport and lifecycle fixtures defined above.
+#[path = "support/readiness.rs"]
+mod readiness;
+
+use readiness::Readiness;
+
 #[path = "resident/cases.rs"]
 mod cases;
 

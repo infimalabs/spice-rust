@@ -2,12 +2,20 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant as Monotonic};
+use std::time::Duration;
 
 use artifact::{AddRequest, ArtifactAnswer, ArtifactContent, Retention, Store};
 use serde::de::DeserializeOwned;
 use wire::intent::TaskAnswer;
 use wire::{JournalBackup, JournalRestore, Outcome, TaskHandle};
+
+#[path = "support/readiness.rs"]
+mod readiness;
+
+use readiness::Readiness;
+
+/// How long a battery waits for a freshly spawned resident to publish.
+const READY: Duration = Duration::from_secs(10);
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -82,22 +90,16 @@ impl Resident {
             .expect("start resident");
         let mut resident = Self(Some(child));
         let canvas = fixture.root.join(".git/.spice-rust/canvas");
-        let deadline = Monotonic::now() + Duration::from_secs(10);
-        while !canvas.is_file() {
-            assert!(
-                resident
-                    .0
-                    .as_mut()
-                    .expect("resident child")
-                    .try_wait()
-                    .expect("resident status")
-                    .is_none(),
-                "resident exited before readiness"
-            );
-            assert!(Monotonic::now() < deadline, "resident readiness timed out");
-            std::thread::sleep(Duration::from_millis(10));
+        match readiness::wait_until_ready(
+            resident.0.as_mut().expect("resident child"),
+            &fixture.root.join(".git"),
+            READY,
+            "resident discovery",
+            || canvas.is_file(),
+        ) {
+            Readiness::Ready => resident,
+            Readiness::Exited => panic!("resident exited before readiness"),
         }
-        resident
     }
 
     fn stop(mut self, fixture: &Fixture) {

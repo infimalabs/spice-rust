@@ -6,10 +6,15 @@ use std::os::unix::fs::{PermissionsExt as _, symlink};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant as Monotonic};
+use std::time::Duration;
 
 use sill::{Acquisition, LockFile, LockName};
 use wire::Outcome;
+
+#[path = "support/readiness.rs"]
+mod readiness;
+
+use readiness::Readiness;
 
 const READINESS_HORIZON: Duration = Duration::from_secs(10);
 
@@ -155,25 +160,15 @@ impl Resident {
     }
 
     fn wait_until_ready(&mut self, fixture: &Fixture) {
-        let deadline = Monotonic::now() + READINESS_HORIZON;
-        loop {
-            assert!(
-                self.child
-                    .as_mut()
-                    .expect("resident child exists")
-                    .try_wait()
-                    .expect("resident child status")
-                    .is_none(),
-                "resident exited before publishing Rust discovery",
-            );
-            if fixture.rust_state().join("canvas").is_file() {
-                return;
-            }
-            assert!(
-                Monotonic::now() < deadline,
-                "resident did not publish discovery within {READINESS_HORIZON:?}",
-            );
-            std::thread::sleep(Duration::from_millis(10));
+        match readiness::wait_until_ready(
+            self.child.as_mut().expect("resident child exists"),
+            &fixture.common(),
+            READINESS_HORIZON,
+            "Rust resident discovery",
+            || fixture.rust_state().join("canvas").is_file(),
+        ) {
+            Readiness::Ready => {}
+            Readiness::Exited => panic!("resident exited before publishing Rust discovery"),
         }
     }
 
