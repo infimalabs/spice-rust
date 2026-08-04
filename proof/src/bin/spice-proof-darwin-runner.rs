@@ -493,6 +493,40 @@ fn ambient_cargo_home() -> Result<PathBuf, String> {
         .ok_or_else(|| "the sealing environment names no Cargo home".to_owned())
 }
 
+/// The host dependency roots a sealed build is denied.
+///
+/// Every entry is a package manager prefix or the third-party framework
+/// directory, which is where a `-sys` crate's build script goes looking when it
+/// probes for a library to link. The container half cannot see any of them
+/// because it runs where the host filesystem is absent, so a build that found
+/// one here would link a dependency that half could never link, and both
+/// receipts would still read `host-dependencies=denied`. The pinned SDK,
+/// developer directory and toolchain are deliberately absent from this list:
+/// the build is meant to read those, and `/Library/Developer` stays readable
+/// precisely because the denial names `/Library/Frameworks` and not `/Library`.
+const HOST_DEPENDENCY_ROOTS: [&str; 6] = [
+    "/Library/Frameworks",
+    "/nix",
+    "/opt/homebrew",
+    "/opt/local",
+    "/sw",
+    "/usr/local",
+];
+
+/// The roots above as one denial in the sandbox dialect.
+///
+/// Spelled here rather than inside the profile literal so the fixture proving
+/// the denial bites can run the bytes this runner ships instead of a restated
+/// copy of them, which is the one difference a restatement could not show.
+fn host_dependency_denials() -> String {
+    let mut denial = "(deny file-read*".to_owned();
+    for root in HOST_DEPENDENCY_ROOTS {
+        let _ = write!(denial, " (subpath \"{root}\")");
+    }
+    denial.push_str(")\n");
+    denial
+}
+
 /// The boundary the attestation above claims, written in the sandbox dialect.
 ///
 /// Loopback is admitted because the battery's own corpus binds it: the members
@@ -501,6 +535,14 @@ fn ambient_cargo_home() -> Result<PathBuf, String> {
 /// proof needs denied is a route off this host, which is the same boundary the
 /// container half establishes with a network namespace that has nothing but a
 /// loopback interface in it.
+///
+/// `(allow default)` opens the profile, so every path this build reads is
+/// readable unless a later rule takes it away -- the dialect resolves a path by
+/// its last matching rule. That is why [`HOST_DEPENDENCY_ROOTS`] is denied
+/// below rather than an allow-list of everything a Rust toolchain touches being
+/// enumerated here, which would be a second and weaker copy of the toolchain's
+/// own knowledge of itself. It also means this profile still denies less than
+/// the container half does, which has no host filesystem to deny.
 fn sandbox_profile(workspace: &Path, pins: &Pins, temporary: &Temporary) -> Result<String, String> {
     let git_common = git_one_line(
         &pins.git.path,
@@ -521,12 +563,14 @@ fn sandbox_profile(workspace: &Path, pins: &Pins, temporary: &Temporary) -> Resu
             "(allow network-outbound (remote ip \"localhost:*\"))\n",
             "(deny file-write* (subpath \"{}\") (subpath \"{}\"))\n",
             "(deny file-read* (subpath \"{}\") (subpath \"{}\"))\n",
+            "{}",
             "(allow file-write* (subpath \"{}\"))\n"
         ),
         sandbox_string(workspace)?,
         sandbox_string(&git_common)?,
         sandbox_string(&host_registry)?,
         sandbox_string(&host_git)?,
+        host_dependency_denials(),
         sandbox_string(&temporary.root)?,
     ))
 }
@@ -685,6 +729,150 @@ fn escaped_path(path: &Path, label: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::allowed_cargo_arguments;
+
+    /// The attestation claims host dependencies are denied, and until the roots
+    /// below were named this profile denied none of them. The claim is only
+    /// worth its bytes if a library under one of them is actually unreachable,
+    /// so this runs the shipped denial through `sandbox-exec` and looks. The
+    /// binary here is this machine's rather than the pinned one, because a
+    /// workspace check-out has no pin document to read a path out of; what is
+    /// being measured is the dialect's answer, which does not vary by caller.
+    ///
+    /// Each root is measured twice, because a root that is unreadable for any
+    /// other reason -- absent, or unreadable to this user -- would refuse under
+    /// the denial too and prove nothing. The open profile establishes that the
+    /// denial is what took it away.
+    ///
+    /// The inventory is written out here rather than read from
+    /// `HOST_DEPENDENCY_ROOTS`, because a test that asks the subject which
+    /// roots to check loses the one mutation that matters: dropping a root
+    /// would drop its own check with it and pass. Measured -- deriving the list
+    /// from the constant, replacing `/opt/homebrew` with an absent path left
+    /// all tests green.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_host_dependency_root_is_unreachable_inside_the_boundary() {
+        use super::host_dependency_denials;
+        use std::path::Path;
+
+        const OPEN: &str = "(version 1)\n(allow default)\n";
+        const MUST_BE_UNREACHABLE: [&str; 6] = [
+            "/Library/Frameworks",
+            "/nix",
+            "/opt/homebrew",
+            "/opt/local",
+            "/sw",
+            "/usr/local",
+        ];
+        let denied = format!("{OPEN}{}", host_dependency_denials());
+
+        let present = MUST_BE_UNREACHABLE
+            .into_iter()
+            .filter(|root| Path::new(root).is_dir())
+            .collect::<Vec<_>>();
+        assert!(
+            !present.is_empty(),
+            "no host dependency root exists on this machine, so nothing here could fail",
+        );
+
+        let mut libraries = 0_usize;
+        for root in present {
+            assert!(
+                readable(OPEN, root),
+                "{root} was already unreachable without the denial, so its refusal proves nothing",
+            );
+            assert!(
+                !readable(&denied, root),
+                "{root} stayed readable inside the boundary that attests host-dependencies=denied",
+            );
+            let Some(library) = first_file_under(Path::new(root)) else {
+                continue;
+            };
+            let library = library.to_str().expect("a discovered path is UTF-8");
+            assert!(
+                contents_readable(OPEN, library),
+                "{library} was already unreadable without the denial",
+            );
+            assert!(
+                !contents_readable(&denied, library),
+                "{library} could still be read inside the boundary",
+            );
+            libraries += 1;
+        }
+        assert!(
+            libraries > 0,
+            "every present root was empty, so no host library was measured",
+        );
+
+        for kept in ["/usr/lib", "/Library/Developer"] {
+            if Path::new(kept).is_dir() {
+                assert!(
+                    readable(&denied, kept),
+                    "the denial reached past the host dependency roots and took {kept}",
+                );
+            }
+        }
+    }
+
+    /// Whether `sandbox-exec` lets a directory be listed under one profile.
+    #[cfg(target_os = "macos")]
+    fn readable(profile: &str, directory: &str) -> bool {
+        sandboxed(profile, "/bin/ls", directory)
+    }
+
+    /// Whether `sandbox-exec` lets a file's bytes be read under one profile.
+    ///
+    /// Listing a directory only asks the boundary about metadata. A library is
+    /// linked by reading it, so the claim is about this.
+    #[cfg(target_os = "macos")]
+    fn contents_readable(profile: &str, file: &str) -> bool {
+        sandboxed(profile, "/bin/cat", file)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn sandboxed(profile: &str, tool: &str, path: &str) -> bool {
+        std::process::Command::new("/usr/bin/sandbox-exec")
+            .args(["-p", profile, tool, path])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("macOS carries sandbox-exec, which this runner is pinned against")
+            .success()
+    }
+
+    /// The first regular file at or one level below a directory.
+    ///
+    /// Enough to put a real file under a denied root in front of the boundary
+    /// without walking a whole prefix, and `None` rather than a panic when a
+    /// root turns out to be empty, which the caller counts.
+    ///
+    /// The type comes from the directory entry, which does not follow symlinks,
+    /// so a link is skipped rather than followed. That is deliberate: a link
+    /// under a denied root can point outside it, and reading its target would
+    /// measure a path the denial never named. `Path::is_file` would follow it.
+    #[cfg(target_os = "macos")]
+    fn first_file_under(root: &std::path::Path) -> Option<std::path::PathBuf> {
+        let mut directories = Vec::new();
+        for entry in std::fs::read_dir(root).ok()?.flatten() {
+            let path = entry.path();
+            match entry.file_type() {
+                Ok(kind) if kind.is_file() => return Some(path),
+                Ok(kind) if kind.is_dir() => directories.push(path),
+                _ => {}
+            }
+        }
+        directories.into_iter().find_map(|directory| {
+            std::fs::read_dir(directory)
+                .ok()?
+                .flatten()
+                .find_map(|entry| {
+                    entry
+                        .file_type()
+                        .is_ok_and(|kind| kind.is_file())
+                        .then(|| entry.path())
+                })
+        })
+    }
 
     #[test]
     fn command_inventory_is_closed() {
