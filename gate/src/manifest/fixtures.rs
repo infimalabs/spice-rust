@@ -30,6 +30,19 @@ fn absent_from_battery(id: GateId) -> bool {
         .any(|(candidate, arm)| candidate == id && arm == PredecessorStandardArm::AbsentFromBattery)
 }
 
+/// Every spelling a predecessor document could have written one identity as.
+///
+/// Both the normalizing and the refusing fixture read the set from here, so
+/// neither can cover a spelling the other never sees.
+fn historical_spellings(id: GateId) -> BTreeSet<String> {
+    BTreeSet::from([
+        id.predecessor_str().to_owned(),
+        id.predecessor_str().replace('-', "_"),
+        id.predecessor_str().replace('-', " "),
+        format!("  {}  ", id.predecessor_str().to_ascii_uppercase()),
+    ])
+}
+
 fn declaration(manifest: &GateManifest, id: GateId) -> &GateDeclaration {
     manifest
         .gates()
@@ -199,14 +212,11 @@ fn an_omitted_builtin_selects_its_compiled_id_from_the_packaged_registry_root() 
 
 #[test]
 fn every_historical_spelling_normalizes_immediately_to_one_current_id() {
-    for id in GateId::ALL {
-        let spellings = BTreeSet::from([
-            id.predecessor_str().to_owned(),
-            id.predecessor_str().replace('-', "_"),
-            id.predecessor_str().replace('-', " "),
-            format!("  {}  ", id.predecessor_str().to_ascii_uppercase()),
-        ]);
-        for spelling in spellings {
+    for id in GateId::ALL
+        .into_iter()
+        .filter(|id| id.predecessor_declared())
+    {
+        for spelling in historical_spellings(id) {
             let repository = format!(
                 "[policy.pre_commit_builtins]\n{} = false\n",
                 toml_string(&spelling)
@@ -220,6 +230,58 @@ fn every_historical_spelling_normalizes_immediately_to_one_current_id() {
                 selected.id_provenance().field().last().map(String::as_str),
                 Some(spelling.as_str())
             );
+        }
+    }
+}
+
+#[test]
+fn every_spelling_of_an_identity_the_release_never_declared_is_refused_by_rule() {
+    for id in GateId::ALL
+        .into_iter()
+        .filter(|id| !id.predecessor_declared())
+    {
+        for spelling in historical_spellings(id) {
+            for entry in [
+                "false",
+                "true",
+                "{ enabled = false }",
+                "{ label = \"held\" }",
+            ] {
+                let repository = format!(
+                    "[policy.pre_commit_builtins]\n{} = {entry}\n",
+                    toml_string(&spelling)
+                );
+                let refusal = error(&repository, "");
+                assert_eq!(
+                    refusal.kind(),
+                    MigrationErrorKind::UndeclaredArm,
+                    "{id}: {spelling:?} = {entry}"
+                );
+                assert_eq!(refusal.layer(), OriginLayer::Repository);
+                assert_eq!(refusal.document(), "/repo/spice.toml");
+                assert_eq!(
+                    refusal.field().last().map(String::as_str),
+                    Some(spelling.as_str()),
+                    "{refusal}"
+                );
+                assert!(refusal.recovery().contains(&format!("declare {id}")));
+                let message = refusal.to_string();
+                assert!(message.contains("release=0.31.0"));
+                assert!(message.contains(&format!("compiled Rust gate {id}")));
+                assert!(message.contains("declared no standard arm for that identity"));
+            }
+
+            let named = format!(
+                "[policy.pre_commit_builtins]\n{} = true\n",
+                toml_string(&spelling)
+            );
+            let refusal = migrate_predecessor(PredecessorInputs::new(
+                "/installed/0.31.0/spice.toml",
+                &named,
+            ))
+            .expect_err("the packaged layer must refuse the same name");
+            assert_eq!(refusal.kind(), MigrationErrorKind::UndeclaredArm);
+            assert_eq!(refusal.layer(), OriginLayer::System);
         }
     }
 }
