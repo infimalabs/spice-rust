@@ -512,15 +512,13 @@ fn native_disposition(error: &NativeError) -> RuntimeDisposition {
     }
 }
 
+/// Render one member standing in the spelling its own identity already uses.
+///
+/// Spelling each standing again here let the two drift apart, and a standing
+/// added to the battery could reach an operator under a name the receipt never
+/// carried. The standing renders itself, so there is one spelling to change.
 fn standing(standing: CheckStanding) -> String {
-    match standing {
-        CheckStanding::Clean => "clean".to_owned(),
-        CheckStanding::Failed { code } => format!("failed{}", code_suffix(code)),
-        CheckStanding::TimedOut { code } => format!("timed-out{}", code_suffix(code)),
-        CheckStanding::Cancelled { code } => format!("cancelled{}", code_suffix(code)),
-        CheckStanding::OutputTruncated => "output-truncated".to_owned(),
-        CheckStanding::OutputIncomplete => "output-incomplete".to_owned(),
-    }
+    format!("{}{}", standing.as_str(), code_suffix(standing.code()))
 }
 
 fn code_suffix(code: Option<i32>) -> String {

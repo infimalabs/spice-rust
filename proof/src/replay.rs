@@ -43,6 +43,15 @@ impl CheckKind {
             Self::SupplyRebuild => "supply-rebuild",
         }
     }
+
+    /// Whether this member announces the corpus it selected before testing it.
+    ///
+    /// Only the mutation member can select nothing and still exit clean. Every
+    /// other member names one package and one target, and cargo refuses an
+    /// unknown name outright rather than running an empty selection.
+    const fn announces_a_corpus(self) -> bool {
+        matches!(self, Self::MutationCorpus)
+    }
 }
 
 /// One explicit command in the generated battery.
@@ -163,10 +172,21 @@ impl CheckVerdict {
     }
 }
 
+/// Exit code for a member whose scope selected nothing.
+///
+/// The original spice gritctl exited 5 when its scope selected nothing, after
+/// pytest's 5 for "no tests collected", and this member keeps that meaning. It
+/// is a standing of its own rather than a [`CheckStanding::Failed`] code
+/// because the pinned cargo-mutants already spends 5 on `FilterDiffMismatch`,
+/// and an empty corpus has to stay distinguishable from a real failure just as
+/// much as from a clean run.
+const EMPTY_SCOPE: i32 = 5;
+
 /// Why one declared battery member did or did not pass.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CheckStanding {
     Clean,
+    EmptyScope,
     Failed { code: Option<i32> },
     TimedOut { code: Option<i32> },
     Cancelled { code: Option<i32> },
@@ -190,9 +210,12 @@ impl CheckStanding {
         }
     }
 
-    const fn as_str(self) -> &'static str {
+    /// Stable spelling mixed into replay identities and shown to operators.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Clean => "clean",
+            Self::EmptyScope => "empty-scope",
             Self::Failed { .. } => "failed",
             Self::TimedOut { .. } => "timed-out",
             Self::Cancelled { .. } => "cancelled",
@@ -201,8 +224,12 @@ impl CheckStanding {
         }
     }
 
-    const fn code(self) -> Option<i32> {
+    /// Exit code this standing reports, which for an empty scope is the
+    /// conventional 5 for selecting nothing rather than the 0 the tool exited.
+    #[must_use]
+    pub const fn code(self) -> Option<i32> {
         match self {
+            Self::EmptyScope => Some(EMPTY_SCOPE),
             Self::Failed { code } | Self::TimedOut { code } | Self::Cancelled { code } => code,
             Self::Clean | Self::OutputTruncated | Self::OutputIncomplete => None,
         }
@@ -398,6 +425,11 @@ fn classify(kind: CheckKind, execution: Execution) -> CheckVerdict {
         {
             CheckStanding::OutputIncomplete
         }
+        ExecutionCompletion::Exited { success: true, .. }
+            if kind.announces_a_corpus() && !proved_a_corpus(&execution.stdout.bytes) =>
+        {
+            CheckStanding::EmptyScope
+        }
         ExecutionCompletion::Exited { success: true, .. } => CheckStanding::Clean,
     };
     CheckVerdict {
@@ -406,6 +438,28 @@ fn classify(kind: CheckKind, execution: Execution) -> CheckVerdict {
         stdout: execution.stdout.bytes,
         stderr: execution.stderr.bytes,
     }
+}
+
+/// Whether a clean mutation run proved it had a corpus to test.
+///
+/// The pinned cargo-mutants announces its corpus on stdout before testing
+/// anything, and an empty scope is not an error to it: measured on 27.1.0,
+/// `cargo mutants -p dist -f dist/src/no-such-file.rs` prints `Found 0 mutants
+/// to test`, warns on stderr, and exits 0, exactly as the real member exits 0
+/// after `Found 36 mutants to test`. The announced count is the only place the
+/// two differ. A run that announced no count at all proved no corpus either,
+/// and is refused for the same reason zero is: the member would otherwise pass
+/// while proving nothing, and the receipt would still name it.
+fn proved_a_corpus(stdout: &[u8]) -> bool {
+    String::from_utf8_lossy(stdout).lines().any(|line| {
+        line.strip_prefix("Found ")
+            .and_then(|announced| announced.strip_suffix(" to test"))
+            // Counted positionally so the tool's own pluralisation of the noun
+            // after it is never a spelling this reading has to know.
+            .and_then(|announced| announced.split_whitespace().next())
+            .and_then(|count| count.parse::<u64>().ok())
+            .is_some_and(|count| count > 0)
+    })
 }
 
 fn battery_digest(checks: &[Check]) -> Digest {
@@ -589,12 +643,23 @@ mod tests {
         );
     }
 
+    /// One clean mutation run, in the words the pinned cargo-mutants uses.
+    const MUTATION_EVIDENCE: &[u8] = concat!(
+        "Found 36 mutants to test\n",
+        "ok       Unmutated baseline in 7s build + 0s test\n",
+        "36 mutants tested in 22s: 12 caught, 24 unviable\n",
+    )
+    .as_bytes();
+
+    /// The same clean exit after the scope stopped selecting code.
+    const EMPTY_CORPUS_EVIDENCE: &[u8] = b"Found 0 mutants to test\n";
+
     #[test]
     fn replay_consumes_every_member_and_returns_one_typed_verdict() {
         let battery = Battery::current();
         let executor = FakeExecutor::new(vec![
             exited(true, b"gate evidence"),
-            exited(true, b"mutation evidence"),
+            exited(true, MUTATION_EVIDENCE),
             exited(true, b"dialect evidence"),
             exited(true, b"process evidence"),
             exited(true, b"supply evidence"),
@@ -615,7 +680,7 @@ mod tests {
         let battery = Battery::current();
         let executor = FakeExecutor::new(vec![
             exited(false, b"gate failed"),
-            exited(true, b"mutation evidence"),
+            exited(true, MUTATION_EVIDENCE),
             exited(false, b"dialect failed"),
             exited(true, b"process evidence"),
             exited(true, b"supply evidence"),
@@ -639,6 +704,51 @@ mod tests {
         assert_eq!(executor.ran.borrow().as_slice(), CheckKind::ALL);
     }
 
+    /// An empty corpus is a clean exit, and it proves nothing.
+    ///
+    /// cargo-mutants prints this and exits 0 the moment the member's scope
+    /// stops selecting code, so a renamed or folded package leaves every
+    /// member clean and the whole battery clean with it, while nothing was
+    /// mutated at all and the receipt still names the member.
+    #[test]
+    fn a_mutation_member_that_selected_no_corpus_refuses_the_battery() {
+        let executor = FakeExecutor::new(vec![
+            exited(true, b"gate evidence"),
+            exited(true, EMPTY_CORPUS_EVIDENCE),
+            exited(true, b"dialect evidence"),
+            exited(true, b"process evidence"),
+            exited(true, b"supply evidence"),
+        ]);
+
+        let verdict = run_with(&executor, &Battery::current()).expect("typed empty-corpus replay");
+
+        assert_eq!(verdict.checks()[1].kind(), CheckKind::MutationCorpus);
+        assert_eq!(verdict.checks()[1].standing(), CheckStanding::EmptyScope);
+        assert_eq!(verdict.checks()[1].standing().code(), Some(5));
+        assert_eq!(verdict.standing(), ProofStanding::Refused);
+    }
+
+    /// A member that announced no corpus proved no corpus.
+    ///
+    /// The reading admits only a run that said how much it selected, so a tool
+    /// that stops announcing cannot quietly become a clean member again: the
+    /// count is the whole evidence, and its absence is not a small one.
+    #[test]
+    fn a_mutation_member_that_announced_no_corpus_refuses_the_battery() {
+        let executor = FakeExecutor::new(vec![
+            exited(true, b"gate evidence"),
+            exited(true, b"mutation evidence"),
+            exited(true, b"dialect evidence"),
+            exited(true, b"process evidence"),
+            exited(true, b"supply evidence"),
+        ]);
+
+        let verdict = run_with(&executor, &Battery::current()).expect("typed silent-corpus replay");
+
+        assert_eq!(verdict.checks()[1].standing(), CheckStanding::EmptyScope);
+        assert_eq!(verdict.standing(), ProofStanding::Refused);
+    }
+
     #[test]
     fn receipt_construction_refuses_a_payload_for_another_target() {
         use wire::manifest::{BuildPins, TargetPayload};
@@ -647,7 +757,7 @@ mod tests {
         let verdict = run_with(
             &FakeExecutor::new(vec![
                 exited(true, b"gate"),
-                exited(true, b"mutation"),
+                exited(true, MUTATION_EVIDENCE),
                 exited(true, b"dialect"),
                 exited(true, b"process"),
                 exited(true, b"supply"),
