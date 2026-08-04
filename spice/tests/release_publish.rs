@@ -28,6 +28,14 @@ use wire::{
 
 const REFUSAL_EXIT: i32 = 2;
 const READY: Duration = Duration::from_secs(10);
+/// The client bound this battery needs for one durable publication.
+///
+/// Applying a plan publishes objects, signs receipts, and commits the journal
+/// before the resident can answer, and every lane on the host contends for the
+/// same disk while it happens. The battery states what it needs; `spice::cli`
+/// states what the client grants; a client that grants less reports the
+/// elapsed bound here rather than an unexplained transport failure.
+const PUBLICATION_ANSWER: Duration = Duration::from_secs(20);
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
@@ -141,6 +149,14 @@ impl Drop for Resident {
             let _ = child.wait();
         }
     }
+}
+
+#[test]
+fn the_client_grants_a_publication_the_bound_this_battery_needs() {
+    assert!(
+        spice::cli::answer_bound(wire::CommandKind::ReleasePublish) >= PUBLICATION_ANSWER,
+        "the client gives up on a publication before this battery finishes one",
+    );
 }
 
 #[test]

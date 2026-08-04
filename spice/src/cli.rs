@@ -4,9 +4,10 @@ use std::collections::BTreeSet;
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::ffi::OsString;
+use std::time::Duration;
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
-use wire::FactKind;
+use wire::{CommandKind, FactKind};
 
 mod syntax;
 mod tools;
@@ -106,6 +107,70 @@ impl ExitOutcome {
             Self::Refusal => 2,
             Self::Fault => 1,
         }
+    }
+}
+
+/// Bound for an answer the resident composes from state it already holds.
+const HELD_STATE_ANSWER: Duration = Duration::from_secs(3);
+
+/// Bound for an answer that first launches a process or publishes durable
+/// objects, both of which contend with every other lane on the host.
+const CONTENDED_ANSWER: Duration = Duration::from_secs(20);
+
+/// How long the native client blocks for one command's answer.
+///
+/// This is the registry. The match is exhaustive, so a command added without a
+/// stated bound fails to compile: the bound cannot be inherited or guessed,
+/// only stated. A command reaches the contended bound when its answer waits on
+/// work the host schedules against every other lane, and an answer that has not
+/// arrived by then is reported as an elapsed deadline rather than as a peer
+/// that failed.
+#[must_use]
+pub const fn answer_bound(kind: CommandKind) -> Duration {
+    match kind {
+        CommandKind::LaneSeat | CommandKind::LaneState | CommandKind::ReleasePublish => {
+            CONTENDED_ANSWER
+        }
+        CommandKind::BoardRead
+        | CommandKind::BoardGraph
+        | CommandKind::BoardHandout
+        | CommandKind::DocLedger
+        | CommandKind::TaskAdd
+        | CommandKind::TaskOopsAdd
+        | CommandKind::TaskEdit
+        | CommandKind::TaskNote
+        | CommandKind::TaskDefer
+        | CommandKind::TaskWake
+        | CommandKind::TaskDepends
+        | CommandKind::TaskPhase
+        | CommandKind::TaskDone
+        | CommandKind::TaskReview
+        | CommandKind::TaskAssign
+        | CommandKind::ClaimWin
+        | CommandKind::ClaimCarry
+        | CommandKind::ClaimRenew
+        | CommandKind::ClaimFree
+        | CommandKind::ClaimLapse
+        | CommandKind::DocApply
+        | CommandKind::SteerSend
+        | CommandKind::SteerInbox
+        | CommandKind::SteerResend
+        | CommandKind::SteerDispose
+        | CommandKind::SteerCancel
+        | CommandKind::ConsentRead
+        | CommandKind::ConsentPolicy
+        | CommandKind::ConsentDecide
+        | CommandKind::TrustPend
+        | CommandKind::TrustGrant
+        | CommandKind::TrustRevoke
+        | CommandKind::LaneRead
+        | CommandKind::LaneRecall
+        | CommandKind::TasteRecord
+        | CommandKind::CanaryRecognize
+        | CommandKind::VendorRecognize
+        | CommandKind::CommitRecognize
+        | CommandKind::ProofRecognize
+        | CommandKind::UpChange => HELD_STATE_ANSWER,
     }
 }
 

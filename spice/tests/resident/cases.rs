@@ -485,7 +485,7 @@ fn command_client_process_bounds_an_unanswered_request() {
     let Outcome::Fault(fault) = outcome(&output) else {
         panic!("unanswered request must fault");
     };
-    assert_eq!(fault.reason, "canvas::receive-failed", "{fault:?}");
+    assert_eq!(fault.reason, "canvas::deadline-elapsed", "{fault:?}");
     assert!(
         elapsed < CLIENT_DEADLINE_BOUND,
         "read deadline was not bounded: {elapsed:?}"
@@ -501,7 +501,7 @@ fn command_client_process_shares_one_deadline_across_dripped_socket_phases() {
     let Outcome::Fault(fault) = outcome(&output) else {
         panic!("a response dripped beyond the total deadline must fault");
     };
-    assert_eq!(fault.reason, "canvas::receive-failed", "{fault:?}");
+    assert_eq!(fault.reason, "canvas::deadline-elapsed", "{fault:?}");
     assert!(
         fixture.runtime.join("deadline-response").is_file(),
         "the peer must reach command response after dripping opening and Hello"
@@ -521,7 +521,7 @@ fn command_client_process_bounds_unlimited_control_frames_and_control_writes() {
     let Outcome::Fault(fault) = outcome(&output) else {
         panic!("unlimited control frames must fault at the total deadline");
     };
-    assert_eq!(fault.reason, "canvas::receive-failed");
+    assert_eq!(fault.reason, "canvas::deadline-elapsed");
     assert!(
         elapsed < CLIENT_DEADLINE_BOUND,
         "control frames renewed the receive deadline: {elapsed:?}"
@@ -532,7 +532,7 @@ fn command_client_process_bounds_unlimited_control_frames_and_control_writes() {
     let Outcome::Fault(fault) = outcome(&output) else {
         panic!("a saturated automatic control write must fault");
     };
-    assert_eq!(fault.reason, "canvas::send-failed");
+    assert_eq!(fault.reason, "canvas::deadline-elapsed");
     assert!(
         elapsed < CLIENT_DEADLINE_BOUND,
         "control write deadline was not bounded: {elapsed:?}"

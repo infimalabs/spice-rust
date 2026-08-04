@@ -202,6 +202,79 @@ fn every_landed_task_mutation_leaf_uses_one_current_command_kind() {
 }
 
 #[test]
+fn a_transport_failure_names_the_elapsed_bound_before_it_names_a_direction() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("classifier peer binds");
+    let address = listener.local_addr().expect("classifier peer address");
+    let bound = Duration::from_secs(3);
+    let mut stream = DeadlineStream::connect(&address, bound).expect("classifier peer accepts");
+
+    for (recorded, assumed, reason) in [
+        (None, IoDirection::Read, "canvas::receive-failed"),
+        (None, IoDirection::Write, "canvas::send-failed"),
+        (
+            Some((IoDirection::Read, false)),
+            IoDirection::Write,
+            "canvas::receive-failed",
+        ),
+        (
+            Some((IoDirection::Write, false)),
+            IoDirection::Read,
+            "canvas::send-failed",
+        ),
+        (
+            Some((IoDirection::Read, true)),
+            IoDirection::Read,
+            "canvas::deadline-elapsed",
+        ),
+        (
+            Some((IoDirection::Write, true)),
+            IoDirection::Read,
+            "canvas::deadline-elapsed",
+        ),
+    ] {
+        stream.last_failure = recorded.map(|(direction, deadline_elapsed)| IoFailure {
+            direction,
+            deadline_elapsed,
+        });
+        let Outcome::Fault(fault) = transport_fault(&stream, "peer detail", assumed) else {
+            panic!("a transport failure must fault");
+        };
+        assert_eq!(fault.reason, reason);
+        assert_eq!(fault.class, FaultClass::Environment);
+        assert!(fault.detail.contains("peer detail"), "{fault:?}");
+        assert_eq!(
+            fault.detail.contains("3s"),
+            reason == "canvas::deadline-elapsed",
+            "only an elapsed bound names itself: {fault:?}"
+        );
+    }
+}
+
+/// A command whose answer contends with the host declares the wider bound.
+///
+/// Every other command keeps the bound an answer composed from held state
+/// needs, so an unanswering peer is still detected as promptly as before.
+#[test]
+fn the_answer_bound_registry_widens_exactly_the_contended_commands() {
+    let contended = [
+        CommandKind::LaneSeat,
+        CommandKind::LaneState,
+        CommandKind::ReleasePublish,
+    ];
+    for kind in CommandKind::ALL {
+        assert_eq!(
+            crate::cli::answer_bound(*kind),
+            if contended.contains(kind) {
+                Duration::from_secs(20)
+            } else {
+                Duration::from_secs(3)
+            },
+            "{kind} declares the wrong answer bound",
+        );
+    }
+}
+
+#[test]
 fn discovery_replacement_is_detected_by_file_identity() {
     let fixture = Fixture::new("replacement");
     let original = fixture.publish();
