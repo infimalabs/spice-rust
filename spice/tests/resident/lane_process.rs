@@ -1046,9 +1046,20 @@ fn missing_and_duplicate_declarations_refuse_and_fully_unwind_lane_add() {
         let lanes =
             reply_body::<wire::intent::LaneAnswer>(&invoke_args(&fixture, &["lane"], true, None));
         assert!(lanes.lanes.is_empty());
+        // The refusal returns without waiting for the vendor's TERM trap, so the
+        // stop file is observed rather than read at the return.
+        let stop = wait_for_event(
+            &fixture.cleanup,
+            || {},
+            || {
+                fs::read_to_string(&stopped)
+                    .ok()
+                    .filter(|text| !text.is_empty())
+            },
+        );
         assert_eq!(
-            fs::read_to_string(&stopped).expect("refused vendor records bounded termination"),
-            "stopped"
+            stop, "stopped",
+            "refused vendor records bounded termination"
         );
 
         let down = invoke(&fixture, "down");
@@ -1102,10 +1113,18 @@ fn mismatched_resume_and_moved_tape_refuse_without_advancing_the_vacant_lane() {
         None,
     );
     assert_eq!(refusal_reason(&mismatch), "lane::session-mismatched");
-    assert_eq!(
-        fs::read_to_string(&stopped).expect("mismatched vendor was terminated"),
-        "stopped"
+    // The refusal returns without waiting for the vendor's TERM trap, so the stop
+    // file is observed rather than read at the return.
+    let stop = wait_for_event(
+        &fixture.cleanup,
+        || {},
+        || {
+            fs::read_to_string(&stopped)
+                .ok()
+                .filter(|text| !text.is_empty())
+        },
     );
+    assert_eq!(stop, "stopped", "mismatched vendor was terminated");
     let vacant =
         reply_body::<wire::intent::LaneAnswer>(&invoke_args(&fixture, &["lane"], true, None));
     assert_eq!(
