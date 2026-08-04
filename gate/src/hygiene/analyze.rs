@@ -281,11 +281,19 @@ impl Error for HygieneAnalysisError {
 /// decisions, and elapsed time are derived inside this function; callers cannot
 /// provide observations or measurement counts.
 ///
+/// A bare [`Jurisdiction`] cannot say which layer asked for each of its walk
+/// skips, so a report analyzed straight from one is silently missing its
+/// suppression evidence rather than refusing to exist. Only [`HygieneSource`]
+/// holds that attribution, which is why [`acquire_hygiene`] is the sole way in.
+///
+/// [`HygieneSource`]: super::HygieneSource
+/// [`acquire_hygiene`]: super::acquire_hygiene
+///
 /// # Errors
 ///
 /// Returns an internal contract error if source-derived observations cannot be
 /// represented by the closed report schema.
-pub fn analyze_hygiene(
+pub(crate) fn analyze_hygiene(
     jurisdiction: &Jurisdiction,
     configuration: &HygieneConfiguration,
 ) -> Result<HygieneReport, HygieneAnalysisError> {
