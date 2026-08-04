@@ -115,6 +115,10 @@ pub enum Domain {
     ProofReceiptV2,
     /// The exact bytes of one admitted native proof runner executable.
     ProofNativeRunner,
+    /// The bytes of one file inside a native proof source closure.
+    ProofNativeClosureFile,
+    /// The vendored source closure one native proof run compiles against.
+    ProofNativeClosure,
     /// The bytes of one file inside a gate's jurisdiction.
     GateFile,
     /// The admitted file set of one gate jurisdiction, by content.
@@ -182,6 +186,8 @@ impl Domain {
             Self::ProofReplayV2 => "spice.proof.replay.v2",
             Self::ProofReceiptV2 => "spice.proof.receipt.v2",
             Self::ProofNativeRunner => "spice.proof.native-runner.v1",
+            Self::ProofNativeClosureFile => "spice.proof.native-closure-file.v1",
+            Self::ProofNativeClosure => "spice.proof.native-closure.v1",
             Self::GateFile => "spice.gate.file.v1",
             Self::GateTree => "spice.gate.tree.v1",
             Self::GateSet => "spice.gate.set.v1",

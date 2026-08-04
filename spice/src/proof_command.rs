@@ -494,7 +494,11 @@ fn native_disposition(error: &NativeError) -> RuntimeDisposition {
         NativeError::CreateChallenge(_)
         | NativeError::Spawn(_)
         | NativeError::Wait(_)
-        | NativeError::MissingCapture(_) => RuntimeDisposition::Process,
+        | NativeError::MissingCapture(_)
+        | NativeError::PreflightOutputIncomplete
+        | NativeError::PreflightFailed { .. }
+        | NativeError::PreflightTimedOut { .. }
+        | NativeError::PreflightCancelled { .. } => RuntimeDisposition::Process,
         NativeError::Command(error) => container_disposition(error),
         NativeError::Spec(_) => RuntimeDisposition::Protocol,
         NativeError::RunnerNotAbsolute(_)

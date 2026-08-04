@@ -518,7 +518,8 @@ fn selected_runtime(fixture: &Fixture) -> String {
             "challenge=$3\n",
             "printf 'spice-proof-native-attestation-v1:runner=%s:challenge=%s:",
             "repository=read-only:cargo-home=fresh-empty:cargo-target=fresh-empty:",
-            "network=denied:host-dependencies=denied\\n' \"$identity\" \"$challenge\" >&2\n",
+            "network=loopback-only:host-dependencies=denied\\n' ",
+            "\"$identity\" \"$challenge\" >&2\n",
             "printf 'battery\\n' >> '{}'\n",
             "[ ! -f '{}' ] || exit 19\n",
             "exit 0\n"
