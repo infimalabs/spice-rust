@@ -147,6 +147,7 @@ impl<'trace> BatteryCapture<'trace> {
         let resolved_actor = run_actor(&actor)?;
         let scope = selected_scope(selector, &repository)?;
         let state = live_ledger(&repository)?;
+        reconcile_claims(&state, &actor)?;
         let executor =
             RepositoryExecutor::capture(&repository, selector, claim, actor, rim, hygiene, trace)?;
         let contract = executor.contract();
@@ -244,6 +245,35 @@ fn live_ledger(repository: &Path) -> Result<StateLedger, BatteryError> {
     let state = CurrentState::load(current_state_path(&common_git), &sources)
         .map_err(|error| BatteryError::new(format!("cannot load battery state: {error}")))?;
     Ok(state.before().clone())
+}
+
+/// Refuse a capture whose two readings of one ledger cannot be the same read.
+///
+/// This capture reads the ledger itself and publishes it as the run's state
+/// authority, while the repository-document arm answers `peer_claim` from the
+/// bound claims the caller hands over. The caller supplies those because expiry
+/// needs a clock and the gate holds none, so it reads this same ledger and
+/// keeps what its run clock still calls active. A clock only drops claims, so
+/// every bound claim is still one the ledger holds verbatim; one that is not
+/// came from another repository or another moment, and the report would then
+/// publish a state authority that contradicts a measurement resolved against
+/// it. Refusing is the reconciliation: nothing here can tell which reading was
+/// the stale one, and inventing an order between them would pick for the caller.
+fn reconcile_claims(state: &StateLedger, actor: &ActorCapture) -> Result<(), BatteryError> {
+    let ActorCapture::Acting { bound_claims, .. } = actor else {
+        return Ok(());
+    };
+    for claim in bound_claims {
+        if !state.claims().contains(claim) {
+            return Err(BatteryError::new(format!(
+                "battery bound claim on {:?} held by {:?} is not one the state authority holds: \
+                 the run clock only drops claims, so these are two different readings",
+                claim.path(),
+                claim.actor()
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Digest every value the tracked configuration document resolved.
