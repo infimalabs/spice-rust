@@ -160,6 +160,40 @@ manifest-referenced task-artifact generation with the journal authority and
 roll both planes back together on failed finalization. `doctor`, `version`,
 `up`, and `down` execute end to end against isolated Rust state in both forms.
 
+## Structural-scan lineage
+
+Read 2026-08-03 from Grit (`~/devel/Grit-*`) and `~/devel/spice-a`; nothing here
+is asserted from memory. The Python spice was extracted at Grit `7419c5cb1`
+(2026-06-28, 266 files, +1489/-46274). Its parent
+`7419c5cb1^:gritctl/cli/study/specs.py` declares 22 top-level studies; gritctl
+HEAD `700a92a88` declares 19, so only `complexity`, `hotspots`, and
+`magic-numbers` left gritctl outright.
+
+Carried forward: `complexity` and `hotspots` to `studies/complexity.py` (486
+lines), `magic-numbers` to `magicnums.py` (558), `csharp-members` to
+`csharpmembers.py` (247), `csharp-unused-candidates` to `csharpunused.py` (552),
+`file-loc` to `fileloc.py` (660), `python-policy` to `shape.py` (525). The last
+four are still implemented in gritctl (`gritctl/csharpmembers.py`,
+`csharpunused.py`, `fileloc.py`), so they are residue awaiting removal there,
+not a finished handoff. JavaScript came by its own path: Grit `f09565281`
+(2026-06-03) added `gritctl/javascriptunused.py`, Grit `a7d955171` (2026-06-28)
+deleted it, and it survives only as `studies/javascriptunused.py` (354).
+
+Dropped: the Lua family (`lua-api`, `lua-contract`, `lua-entry-graph`,
+`lua-event-surface`, `lua-unused-author`), `unity`, `unity-meta`, and Grit's
+engine-navigation, timing, and simulation-lineage families. Those stay with
+Unity and VR.
+
+Still owed: `complexity-hotspots`, `csharp-members`, `csharp-unused-candidates`,
+`mutations`, `subsumption`, and `suite-seam-reach` are marked `D` below, yet
+match no `GateId` in `gate/src/manifest.rs` and no Rust source at all.
+
+Grammar coverage already exceeds gate coverage. `studies/treesitter.py` parses
+two languages (`Literal["csharp", "javascript"]`, suffixes `.cjs .cs .js .jsx
+.mjs`) for four modules, and `magicnums.py` falls back to Python `ast`.
+`gate/src/structural.rs` binds five grammars, python and rust and javascript and
+csharp and lua, but no `GateId` reads csharp or lua.
+
 ## Installed Python paths
 
 The parser has 123 paths. `R` means a landed behavioral replacement, `D` a
