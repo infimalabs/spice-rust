@@ -42,9 +42,13 @@ equality is not a check the repository declines to make; it is one no host can
 pass, so the alternative to a single owning environment is not a stricter check
 but a stage nobody can reproduce.
 
-`cargo xtask stage-app` refuses on every other host and names both
-environments, so a developer cannot quietly replace image-built bytes with
-local ones. Stage from the repository root with the workspace writable, the
+`cargo xtask stage-app` enforces that as a tuple: it admits only a program
+compiled for `x86_64-unknown-linux-gnu` and refuses every other host, naming
+the observed tuple and this image's digest. What the guard reads is the tuple,
+not the image, so another host reporting that exact tuple with the toolchain
+`rust-toolchain.toml` pins is admitted too; what it forecloses is the quiet
+substitution, because no macOS or musl host can pass, and those are the hosts
+a developer actually stages from. Stage from the repository root with the workspace writable, the
 image's Cargo home named explicitly, and the build root on a writable mount,
 because the app build writes nothing under the workspace:
 
