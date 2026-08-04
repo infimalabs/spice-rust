@@ -65,6 +65,7 @@ pub struct ReleaseEnvironment {
     home: Option<OsString>,
     cargo_home: Option<OsString>,
     rustup_home: Option<OsString>,
+    rustup_toolchain: Option<OsString>,
     temporary: Option<OsString>,
     sdk_root: Option<OsString>,
     developer_dir: Option<OsString>,
@@ -78,6 +79,7 @@ impl ReleaseEnvironment {
         home: Option<OsString>,
         cargo_home: Option<OsString>,
         rustup_home: Option<OsString>,
+        rustup_toolchain: Option<OsString>,
         temporary: Option<OsString>,
         sdk_root: Option<OsString>,
         developer_dir: Option<OsString>,
@@ -87,6 +89,7 @@ impl ReleaseEnvironment {
             home,
             cargo_home,
             rustup_home,
+            rustup_toolchain,
             temporary,
             sdk_root,
             developer_dir,
@@ -571,6 +574,12 @@ impl SystemExecutor {
             ("PATH", release.path.as_ref()),
             ("HOME", release.home.as_ref()),
             ("RUSTUP_HOME", release.rustup_home.as_ref()),
+            // Without the selected toolchain a rustup proxy falls back to the
+            // tracked `rust-toolchain.toml`, and honoring that file means
+            // reaching the network for the components and targets it names.
+            // The sealed appliance selects its one installed toolchain this
+            // way, so dropping the name is what makes an offline build fail.
+            ("RUSTUP_TOOLCHAIN", release.rustup_toolchain.as_ref()),
             ("TMPDIR", release.temporary.as_ref()),
             ("SDKROOT", release.sdk_root.as_ref()),
             ("DEVELOPER_DIR", release.developer_dir.as_ref()),
@@ -1138,6 +1147,7 @@ mod tests {
             Some(OsString::from("/tool/bin")),
             Some(OsString::from("/home/release")),
             Some(OsString::from("/cargo/home")),
+            None,
             None,
             None,
             None,
