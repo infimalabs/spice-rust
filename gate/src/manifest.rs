@@ -674,6 +674,7 @@ pub enum MigrationErrorKind {
     Malformed,
     UnknownGate,
     DuplicateGate,
+    UndeclaredArm,
     UnsupportedField,
     ConflictingExecution,
     UnresolvedMount,
@@ -687,6 +688,7 @@ impl fmt::Display for MigrationErrorKind {
             Self::Malformed => "malformed",
             Self::UnknownGate => "unknown-gate",
             Self::DuplicateGate => "duplicate-gate",
+            Self::UndeclaredArm => "undeclared-arm",
             Self::UnsupportedField => "unsupported-field",
             Self::ConflictingExecution => "conflicting-execution",
             Self::UnresolvedMount => "unresolved-mount",
@@ -812,6 +814,11 @@ struct ResolvedEntry {
     value: Value,
     root: SourceRef,
     sources: BTreeMap<Vec<String>, SourceRef>,
+    /// Whether a predecessor document named this identity at all.
+    ///
+    /// Every identity starts from an implicit entry, so the value alone cannot
+    /// say whether a document asked for this gate or the migration supplied it.
+    named: bool,
 }
 
 impl ResolvedEntry {
@@ -826,10 +833,12 @@ impl ResolvedEntry {
             value: Value::Boolean(true),
             root,
             sources,
+            named: false,
         }
     }
 
     fn merge(&mut self, incoming: &Value, source: SourceRef) {
+        self.named = true;
         if let Value::Table(incoming) = incoming {
             if !self.value.is_table() {
                 self.value = Value::Table(Table::new());
@@ -962,8 +971,8 @@ impl CommandRegistry {
 ///
 /// # Errors
 ///
-/// Returns the first exact syntax, name, shape, layer-merge, mount, or
-/// executable-declaration refusal. No partial manifest is returned.
+/// Returns the first exact syntax, name, identity, shape, layer-merge, mount,
+/// or executable-declaration refusal. No partial manifest is returned.
 pub fn migrate_predecessor(inputs: PredecessorInputs<'_>) -> Result<GateManifest, MigrationError> {
     let mut entries = GateId::ALL
         .into_iter()
@@ -1214,16 +1223,19 @@ fn interpret_entry(
 ) -> Result<GateDeclaration, MigrationError> {
     let id_source = entry.root.provenance();
     match &entry.value {
-        Value::Boolean(enabled) => Ok(GateDeclaration {
-            id,
-            enabled: *enabled,
-            display: None,
-            provenance: DeclarationProvenance {
-                id: id_source,
-                enabled: entry.root.provenance(),
+        Value::Boolean(enabled) => {
+            undeclared_refusal(id, &entry)?;
+            Ok(GateDeclaration {
+                id,
+                enabled: *enabled,
                 display: None,
-            },
-        }),
+                provenance: DeclarationProvenance {
+                    id: id_source,
+                    enabled: entry.root.provenance(),
+                    display: None,
+                },
+            })
+        }
         Value::String(mount) => {
             let argv = commands.resolve(mount, &entry.root)?;
             Err(executable_refusal(id, &entry.root, &argv))
@@ -1242,6 +1254,7 @@ fn interpret_entry(
                 };
                 return Err(executable_refusal(id, source, &argv));
             }
+            undeclared_refusal(id, &entry)?;
             let enabled = table
                 .get("enabled")
                 .and_then(Value::as_bool)
@@ -1265,6 +1278,32 @@ fn interpret_entry(
         }
         _ => unreachable!("every layer value was validated before merge"),
     }
+}
+
+/// Refuse a declaration for an identity the predecessor release never declared.
+///
+/// [`GateId::predecessor`] answers for every current identity, so a document
+/// naming a gate this workspace grew past resolves and is then rejected by this
+/// rule rather than by failing to recognize the name. Only a named entry can
+/// trip it: every identity starts from an implicit entry the migration itself
+/// supplies, and refusing that would refuse every migration outright.
+fn undeclared_refusal(id: GateId, entry: &ResolvedEntry) -> Result<(), MigrationError> {
+    if !entry.named || id.predecessor_declared() {
+        return Ok(());
+    }
+    Err(entry.root.error(
+        MigrationErrorKind::UndeclaredArm,
+        format!(
+            concat!(
+                "predecessor builtin selects compiled Rust gate {id}; release ",
+                "{release} declared no standard arm for that identity, so no ",
+                "predecessor declaration answers for it"
+            ),
+            id = id,
+            release = PREDECESSOR_GATE_RELEASE
+        ),
+        format!("remove the entry and let the compiled battery declare {id}"),
+    ))
 }
 
 fn executable_refusal(id: GateId, source: &SourceRef, argv: &[String]) -> MigrationError {
