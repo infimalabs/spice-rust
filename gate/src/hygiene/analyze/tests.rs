@@ -193,6 +193,55 @@ mod tests {
         tree
     }
 
+    /// One import chain, entered by one test at each end.
+    ///
+    /// `tests/test_middle.py` names the middle and reaches the leaf through
+    /// it; `tests/test_leaf.py` names the leaf outright. The leaf therefore
+    /// separates the two counts while the middle holds them equal, so a
+    /// ranking that confused them could not report both rows.
+    fn reach_chain_tree() -> FixtureTree {
+        let tree = FixtureTree::new();
+        tree.write("app/__init__.py", "");
+        tree.write(
+            "app/main.py",
+            concat!(
+                "from app.middle import passthrough\n",
+                "\n",
+                "def entry():\n",
+                "    return passthrough()\n",
+            ),
+        );
+        tree.write(
+            "app/middle.py",
+            concat!(
+                "from app.leaf import deep\n",
+                "\n",
+                "def passthrough():\n",
+                "    return deep()\n",
+            ),
+        );
+        tree.write("app/leaf.py", "def deep():\n    return 1\n");
+        tree.write(
+            "tests/test_middle.py",
+            concat!(
+                "from app.middle import passthrough\n",
+                "\n",
+                "def test_passthrough():\n",
+                "    assert passthrough() == 1\n",
+            ),
+        );
+        tree.write(
+            "tests/test_leaf.py",
+            concat!(
+                "from app.leaf import deep\n",
+                "\n",
+                "def test_deep():\n",
+                "    assert deep() == 1\n",
+            ),
+        );
+        tree
+    }
+
     fn arm(report: &HygieneReport, gate: GateId) -> &HygieneMeasurement {
         report
             .arms
@@ -210,6 +259,40 @@ mod tests {
                 _ => None,
             })
             .expect("graph arm retains graph evidence")
+    }
+
+    fn graph_reach(measurement: &HygieneMeasurement) -> &[ModuleReach] {
+        measurement
+            .evidence
+            .iter()
+            .find_map(|item| match item {
+                AnalysisEvidence::GraphConstruction { reach, .. } => Some(reach.as_slice()),
+                _ => None,
+            })
+            .expect("graph arm retains graph evidence")
+    }
+
+    /// The suite reaches further than it imports, and the ranking says how far.
+    ///
+    /// `tests/test_middle.py` never names `app/leaf.py`, yet importing the
+    /// middle binds it to the leaf just as tightly once the process runs. A
+    /// count of direct imports alone would rank the leaf level with the middle
+    /// and hide that changing the leaf leaves a test unrun by whoever reads
+    /// only the tests that name it.
+    #[test]
+    fn the_reach_ranking_counts_a_test_that_reaches_a_module_without_naming_it() {
+        let tree = reach_chain_tree();
+        let report =
+            analyze_hygiene(&tree.jurisdiction(), &configuration()).expect("reach chain report");
+
+        assert_eq!(
+            graph_reach(arm(&report, GateId::Reachability))
+                .iter()
+                .map(|entry| (entry.path.as_str(), entry.reached_by, entry.imported_by))
+                .collect::<Vec<_>>(),
+            [("app/leaf.py", 2, 1), ("app/middle.py", 1, 1)],
+            "the leaf is reached by both tests and named by one"
+        );
     }
 
     #[test]

@@ -10,7 +10,7 @@ use crate::core::{
 use crate::hygiene::{
     AnalysisEvidence, AnalyzerEvidence, EvidenceState as HygieneStage, ExclusionEvidence,
     HYGIENE_ARMS, HygieneObservation, HygieneOutcome, HygieneProvenance, HygieneTraversal,
-    measure_hygiene,
+    ModuleReach, measure_hygiene,
 };
 use crate::manifest::GateId;
 use crate::metrics::{
@@ -407,6 +407,11 @@ fn completed_hygiene_evidence(
                 test_roots: vec!["tests/test_cli.py".to_owned()],
                 nodes: 9,
                 edges: 14,
+                reach: vec![ModuleReach {
+                    path: "spice/cli/entry.py".to_owned(),
+                    reached_by: 1,
+                    imported_by: 1,
+                }],
             },
             HygieneTraversal::SymbolGraph | HygieneTraversal::PythonDeclarations => {
                 AnalysisEvidence::SymbolExtraction {

@@ -56,6 +56,21 @@ mod tests {
             ],
             nodes: 9,
             edges: 14,
+            // The two counts differ on the entry module and agree on the hook,
+            // so a fixture reading this carries the gap the measurement is for
+            // rather than one number repeated under two names.
+            reach: vec![
+                ModuleReach {
+                    path: "spice/cli/entry.py".to_owned(),
+                    reached_by: 2,
+                    imported_by: 1,
+                },
+                ModuleReach {
+                    path: "spice/hooks/precommit.py".to_owned(),
+                    reached_by: 1,
+                    imported_by: 1,
+                },
+            ],
         }
     }
 
@@ -347,6 +362,40 @@ mod tests {
         .expect("fixture observations satisfy declarations")
     }
 
+    /// More importers than reachers is two graphs published as one.
+    ///
+    /// A test module naming a module directly also reaches it, so the direct
+    /// count is the narrower of the two by construction. Evidence where it is
+    /// wider was never measured from one traversal, and a report carrying it
+    /// would rank a module by a reach nothing walked.
+    #[test]
+    fn graph_evidence_counting_more_importers_than_reachers_is_refused() {
+        let forged = HYGIENE_ARMS.into_iter().map(|arm| {
+            let mut observed = observation(arm.id, HygieneOutcome::Passed);
+            if arm.id == GateId::Reachability {
+                for evidence in &mut observed.evidence {
+                    if let AnalysisEvidence::GraphConstruction { reach, .. } = evidence {
+                        reach[0].imported_by = reach[0].reached_by + 1;
+                    }
+                }
+            }
+            observed
+        });
+
+        let Err(error) = measure_hygiene(forged) else {
+            panic!("evidence counting more importers than reachers must be refused")
+        };
+        assert!(
+            matches!(
+                &error,
+                HygieneError::InvalidEvidence { gate, evidence }
+                    if *gate == GateId::Reachability
+                        && evidence == "malformed typed stage evidence"
+            ),
+            "unexpected refusal: {error}"
+        );
+    }
+
     #[test]
     fn declarations_are_the_exact_final_battery_interval() {
         let ids: Vec<_> = HYGIENE_ARMS.iter().map(|arm| arm.id()).collect();
@@ -415,15 +464,24 @@ mod tests {
                 test_roots,
                 nodes,
                 edges,
-            } => Some((production_roots, test_roots, nodes, edges)),
+                reach,
+            } => Some((production_roots, test_roots, nodes, edges, reach)),
             _ => None,
         });
-        let Some((production, tests, nodes, edges)) = graph else {
+        let Some((production, tests, nodes, edges, reach)) = graph else {
             panic!("graph evidence retained");
         };
         assert_eq!(production.len(), 2);
         assert_eq!(tests.len(), 2);
         assert_eq!((*nodes, *edges), (9, 14));
+        assert_eq!(
+            reach
+                .iter()
+                .map(|entry| (entry.reached_by, entry.imported_by))
+                .collect::<Vec<_>>(),
+            [(2, 1), (1, 1)],
+            "graph evidence retains the reach ranking widest first"
+        );
 
         for gate in GateId::ALL[21..].iter().copied() {
             let report = report_with(gate, HygieneOutcome::Findings);

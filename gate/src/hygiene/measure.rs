@@ -127,6 +127,10 @@ fn canonicalize_evidence_item(evidence: &mut AnalysisEvidence) {
         AnalysisEvidence::LanguageApplicability {
             project_markers, ..
         } => sort_dedup(project_markers),
+        // The reach ranking is left as the analyzer emitted it. Sorting these
+        // roots imposes an order collection did not fix, while the ranking is
+        // ordered by the measurement itself, widest reach first, and sorting it
+        // by path would discard the one thing it was built to say.
         AnalysisEvidence::GraphConstruction {
             production_roots,
             test_roots,
@@ -408,10 +412,17 @@ fn validate_evidence_shape(
             AnalysisEvidence::GraphConstruction {
                 production_roots,
                 test_roots,
+                reach,
                 ..
             } => {
                 production_roots.iter().any(|path| invalid_path(path))
                     || test_roots.iter().any(|path| invalid_path(path))
+                    // A test module importing a module directly also reaches
+                    // it, so more importers than reachers is not a narrower
+                    // count of one graph: it is two graphs reported as one.
+                    || reach.iter().any(|entry| {
+                        invalid_path(&entry.path) || entry.imported_by > entry.reached_by
+                    })
             }
             AnalysisEvidence::Analyzer(item) => item.name().is_empty(),
             AnalysisEvidence::Deadline {

@@ -71,7 +71,7 @@ pub use hygiene::{
     HYGIENE_REPORT_VERSION, HygieneAnalyzer, HygieneConfigurationSource, HygieneDeclaration,
     HygieneError, HygieneFinding, HygieneFindingDetail, HygieneJurisdiction, HygieneMeasurement,
     HygieneOutcome, HygieneProvenance, HygieneReport, HygieneTraversal,
-    MigrationRefusal as HygieneMigrationRefusal,
+    MigrationRefusal as HygieneMigrationRefusal, ModuleReach,
     PredecessorComparison as HygienePredecessorComparison,
     PredecessorComparisonError as HygienePredecessorComparisonError,
     PredecessorObservation as HygienePredecessorObservation,

@@ -653,11 +653,10 @@ mod tests {
                 .map(|gap| (gap.path.as_str(), gap.owner.as_str()))
                 .collect::<Vec<_>>(),
             [
-                ("study mutations", "STUDY-1kJxswrC"),
-                ("study subsumption", "STUDY-1kJxswrC"),
-                ("study suite-seam-reach", "STUDY-1kJxswrC"),
+                ("study mutations", "STUDY-1kK7CHkN"),
+                ("study subsumption", "STUDY-1kK7CQXr"),
             ],
-            "only the studies with no Rust surface are owed, and one task owns them",
+            "only the studies with no Rust surface are owed, each by the task that owes it",
         );
         assert!(report.python.unconfirmed_deletions.is_empty());
         assert!(report.python.stale_deletion_confirmations.is_empty());

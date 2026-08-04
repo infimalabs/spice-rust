@@ -162,6 +162,7 @@ impl Corpus {
                 test_roots: self.root_paths(&self.test_modules),
                 nodes: u32::try_from(self.modules.len()).unwrap_or(u32::MAX),
                 edges: u32::try_from(self.edges.len()).unwrap_or(u32::MAX),
+                reach: self.suite_reach(),
             },
             HygieneTraversal::SymbolGraph | HygieneTraversal::PythonDeclarations => {
                 let resolved = self.resolved_references();
@@ -391,6 +392,55 @@ impl Corpus {
                 }),
         );
         findings
+    }
+
+    /// Rank the modules the suite reaches by how much of the suite reaches them.
+    ///
+    /// One traversal per test module rather than the single traversal from all
+    /// of them the arms already hold: that union answers whether anything
+    /// reaches a module, and this answers how much, which is the number that
+    /// separates a module a lane can verify from one whose change leaves the
+    /// rest of the suite unrun. Modules nothing reaches are absent rather than
+    /// ranked at zero, because a module no test reaches never widens a run.
+    fn suite_reach(&self) -> Vec<ModuleReach> {
+        let mut reached: BTreeMap<String, u32> = BTreeMap::new();
+        let mut imported: BTreeMap<String, u32> = BTreeMap::new();
+        for test in &self.test_modules {
+            let direct: BTreeSet<String> = self
+                .edges
+                .iter()
+                .filter(|(from, _)| from == test)
+                .map(|(_, to)| to.clone())
+                .collect();
+            for module in &direct {
+                *imported.entry(module.clone()).or_default() += 1;
+            }
+            // Seeded with the direct imports rather than the test itself, so a
+            // test module never counts as reaching itself, and seeded as a set
+            // so one test importing a module twice still counts once.
+            for module in reachable(&direct, &self.edges) {
+                *reached.entry(module).or_default() += 1;
+            }
+        }
+        let mut ranked: Vec<_> = reached
+            .into_iter()
+            .filter(|(name, _)| !self.test_modules.contains(name))
+            .filter_map(|(name, reached_by)| {
+                let module = self.modules.get(&name)?;
+                Some(ModuleReach {
+                    path: module.path.clone(),
+                    reached_by,
+                    imported_by: imported.get(&name).copied().unwrap_or_default(),
+                })
+            })
+            .collect();
+        ranked.sort_by(|left, right| {
+            right
+                .reached_by
+                .cmp(&left.reached_by)
+                .then_with(|| left.path.cmp(&right.path))
+        });
+        ranked
     }
 
     fn root_paths(&self, roots: &BTreeSet<String>) -> Vec<String> {
