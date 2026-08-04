@@ -4,8 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::thread;
-use std::time::{Duration, Instant as Monotonic};
+use std::time::Duration;
 
 use bus::{Bus, CommitOutcome};
 use journal::{FactCause, JournalWrite};
@@ -13,6 +12,11 @@ use serde::de::DeserializeOwned;
 use wire::body::{TasteCleared, TasteConfirmed};
 use wire::intent::{BoardAnswer, CommandAnswer, TaskAdd, TaskAnswer};
 use wire::{Actor, FactKind, Instant, Outcome, Producer, ReplyPosition};
+
+#[path = "support/readiness.rs"]
+mod readiness;
+
+use readiness::Readiness;
 
 const READY: Duration = Duration::from_secs(10);
 const REFUSAL_EXIT: i32 = 2;
@@ -98,22 +102,16 @@ impl Resident {
             .spawn()
             .expect("resident starts");
         let mut resident = Self { child: Some(child) };
-        let deadline = Monotonic::now() + READY;
-        while !fixture.canvas.is_file() {
-            assert!(
-                resident
-                    .child
-                    .as_mut()
-                    .expect("resident child")
-                    .try_wait()
-                    .expect("resident status")
-                    .is_none(),
-                "resident exited before readiness"
-            );
-            assert!(Monotonic::now() < deadline, "resident readiness timed out");
-            thread::sleep(Duration::from_millis(10));
+        match readiness::wait_until_ready(
+            resident.child.as_mut().expect("resident child"),
+            &fixture.root.join(".git"),
+            READY,
+            "resident discovery",
+            || fixture.canvas.is_file(),
+        ) {
+            Readiness::Ready => resident,
+            Readiness::Exited => panic!("resident exited before readiness"),
         }
-        resident
     }
 
     fn stop(mut self, fixture: &Fixture) {
