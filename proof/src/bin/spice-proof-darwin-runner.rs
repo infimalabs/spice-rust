@@ -220,13 +220,18 @@ impl Pins {
     }
 }
 
+/// One executable this runner is sealed against.
+///
+/// The pin is the exact bytes at an exact absolute path. A tool cannot report
+/// a version its bytes do not already determine, so there is nothing to ask it:
+/// every pinned tool is exercised for real on the path that uses it -- `git`
+/// reading the source, `sandbox-exec` establishing the boundary, and `cargo`
+/// driving `rustc` or `cargo-mutants` inside it.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Tool {
     path: PathBuf,
     digest: Digest,
-    #[serde(default)]
-    version: Option<String>,
 }
 
 impl Tool {
@@ -249,26 +254,6 @@ impl Tool {
             return Err(format!(
                 "pinned {name} changed: expected {}, observed {observed}",
                 self.digest
-            ));
-        }
-        let Some(expected) = &self.version else {
-            return Ok(());
-        };
-        let output = Command::new(&self.path)
-            .arg("--version")
-            .env_clear()
-            .output()
-            .map_err(|error| format!("cannot run pinned {name}: {error}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "pinned {name} version command failed with {}",
-                output.status
-            ));
-        }
-        let observed = one_line(&output.stdout, name)?;
-        if &observed != expected {
-            return Err(format!(
-                "pinned {name} version changed: expected {expected:?}, observed {observed:?}"
             ));
         }
         Ok(())

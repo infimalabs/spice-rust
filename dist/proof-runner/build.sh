@@ -47,22 +47,18 @@ pins=$(printf '%s\n' \
     '[cargo]' \
     "path = \"$cargo_path\"" \
     "digest = \"$(unsealed tool-digest "$cargo_path")\"" \
-    "version = \"$("$cargo_path" --version)\"" \
     '' \
     '[rustc]' \
     "path = \"$rustc_path\"" \
     "digest = \"$(unsealed tool-digest "$rustc_path")\"" \
-    "version = \"$("$rustc_path" --version)\"" \
     '' \
     '[cargo_mutants]' \
     "path = \"$mutants_path\"" \
     "digest = \"$(unsealed tool-digest "$mutants_path")\"" \
-    "version = \"$("$mutants_path" --version)\"" \
     '' \
     '[git]' \
     "path = \"$git_path\"" \
     "digest = \"$(unsealed tool-digest "$git_path")\"" \
-    "version = \"$("$git_path" --version)\"" \
     '' \
     '[sandbox_exec]' \
     "path = \"$sandbox_path\"" \
