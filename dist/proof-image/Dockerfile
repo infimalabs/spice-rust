@@ -38,7 +38,16 @@ RUN tar -xzf /tmp/binaryen.tar.gz --strip-components=2 \
     /opt/spice/tools/bin/wasm-opt --version
 
 COPY vendor /opt/spice/vendor
-COPY cargo-config.toml /opt/spice/cargo-config.toml
+# Cargo reads a config from the working directory and every parent up to the
+# filesystem root, so the root is the one location every Cargo in this image
+# reads no matter which binary runs it or where it runs. That matters because
+# `cargo-mutants` copies the workspace under `CARGO_TARGET_DIR` and re-invokes
+# the toolchain binary itself: a replacement supplied on the command line by
+# the wrapper below could never reach that copy, and `CARGO_HOME` cannot carry
+# it either, because the proof boundary requires that directory to be an empty
+# tmpfs. Placed after the installs above, which are the only steps allowed to
+# reach the network.
+COPY cargo-config.toml /.cargo/config.toml
 COPY cargo-wrapper.sh /opt/spice/bin/cargo
 
 RUN chmod 0755 /opt/spice/bin/cargo && \
