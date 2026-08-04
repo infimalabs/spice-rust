@@ -19,12 +19,33 @@ use serde::{Deserialize, Serialize, Serializer};
 /// The repository-path and stem dialects, shared with the native-only arms.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use matcher::{PathPattern, compile_stem_expression};
-pub(crate) use migration::packaged_rule_policy;
 pub use migration::{MigrationError, migrate_predecessor_policy};
+pub(crate) use migration::{compile_rule_policy, repo_truth_inventory};
 pub use runtime::{CompileError, Policy, ResolveError};
 
 /// The explicitly supported stem-pattern dialect.
 pub const REGEX_DIALECT_NAME: &str = "rust-regex-1";
+
+/// One repository's declaration of the documents that carry its doctrine.
+///
+/// An absent `docs` is not an empty inventory: it is the packaged one. That is
+/// the whole reason this is an option rather than a defaulted list, because a
+/// repository that wants nothing measured has to be able to say so distinctly
+/// from a repository that has said nothing at all.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RepoTruthPolicy {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    docs: Option<Vec<String>>,
+}
+
+impl RepoTruthPolicy {
+    /// Documents this repository names, or `None` when it names none.
+    #[must_use]
+    pub fn docs(&self) -> Option<&[String]> {
+        self.docs.as_deref()
+    }
+}
 
 /// The six predecessor numeric policy metrics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

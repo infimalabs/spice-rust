@@ -17,6 +17,8 @@ const DEFAULT_MAGIC_THRESHOLD: u64 = 10;
 const DEFAULT_MARKDOWN_BASE: u64 = 10_000;
 const DEFAULT_MARKDOWN_MAX: u64 = 30_000;
 const DEFAULT_REPO_TRUTH_DOCS: &[&str] = &["AGENTS.md"];
+/// Source location every packaged rule and packaged refusal is attributed to.
+const PACKAGED_RULE_SOURCE: &str = "gate packaged rule policy";
 
 /// Translate one predecessor policy document into the sole compiled current
 /// representation.
@@ -63,42 +65,57 @@ pub fn migrate_predecessor_policy(
     Policy::compile(document).map_err(|error| compile_error(&source, &error))
 }
 
-pub(crate) fn packaged_rule_policy() -> Result<Policy, MigrationError> {
-    let source = "gate packaged rule policy";
+/// Compile the named rules this release packages over one document inventory.
+///
+/// Every rule, bound, and ratchet here is packaged: no tracked byte reaches
+/// them, so a refusal is a defect in this battery rather than in a repository,
+/// and it names [`PACKAGED_RULE_SOURCE`] rather than any repository file. The
+/// document inventory is the one caller-supplied input, and
+/// [`repo_truth_inventory`] has already normalized and refused it, which is
+/// what keeps the two layers' refusals separable.
+pub(crate) fn compile_rule_policy(repo_truth_docs: Vec<String>) -> Result<Policy, MigrationError> {
     let markdown = MarkdownPolicy {
         extensions: vec![".md".to_owned()],
         stem_pattern: None,
         base_chars: DEFAULT_MARKDOWN_BASE,
         max_bounded_chars: DEFAULT_MARKDOWN_MAX,
     };
-    let rules = generated_markdown_rules(source, &markdown)?;
+    let rules = generated_markdown_rules(PACKAGED_RULE_SOURCE, &markdown)?;
     let document = PolicyDocument::predecessor(
         BoundLimits::PREDECESSOR,
         GlobalRatchet::PREDECESSOR,
         DEFAULT_MAGIC_THRESHOLD,
-        DEFAULT_REPO_TRUTH_DOCS
-            .iter()
-            .map(|path| (*path).to_owned())
-            .collect(),
+        repo_truth_docs,
         rules,
     );
-    Policy::compile(document).map_err(|error| compile_error(source, &error))
+    Policy::compile(document).map_err(|error| compile_error(PACKAGED_RULE_SOURCE, &error))
 }
 
-fn parse_repo_truth_docs(
-    policy: Option<&toml::Table>,
+/// Resolve the repository-document inventory one policy layer declares.
+///
+/// A layer that declares nothing takes the packaged inventory, and a layer that
+/// declares documents names the whole set it wants measured. Normalization
+/// happens here so a compiled policy can never carry a spelling this refusal
+/// would have rejected, and so the refusal names the declaring field rather
+/// than the compiled document it would have become.
+///
+/// # Errors
+///
+/// Returns the declared path that is not a repository-relative spelling.
+pub(crate) fn repo_truth_inventory(
+    declared: Option<&[String]>,
     source: &str,
 ) -> Result<Vec<String>, MigrationError> {
-    let table = optional_nested(policy, "repo_truth", "policy.repo_truth", source)?;
-    reject_unknown(table, &["docs"], "policy.repo_truth", source)?;
-    let paths = match table.and_then(|table| table.get("docs")) {
-        Some(value) => string_list(value, "policy.repo_truth.docs", source, true)?,
-        None => DEFAULT_REPO_TRUTH_DOCS
-            .iter()
-            .map(|path| (*path).to_owned())
-            .collect(),
-    };
-    paths
+    declared
+        .map_or_else(
+            || {
+                DEFAULT_REPO_TRUTH_DOCS
+                    .iter()
+                    .map(|path| (*path).to_owned())
+                    .collect()
+            },
+            <[String]>::to_vec,
+        )
         .into_iter()
         .map(|path| {
             normalize_path(&path).map_err(|reason| {
@@ -110,6 +127,19 @@ fn parse_repo_truth_docs(
             })
         })
         .collect()
+}
+
+fn parse_repo_truth_docs(
+    policy: Option<&toml::Table>,
+    source: &str,
+) -> Result<Vec<String>, MigrationError> {
+    let table = optional_nested(policy, "repo_truth", "policy.repo_truth", source)?;
+    reject_unknown(table, &["docs"], "policy.repo_truth", source)?;
+    let declared = table
+        .and_then(|table| table.get("docs"))
+        .map(|value| string_list(value, "policy.repo_truth.docs", source, true))
+        .transpose()?;
+    repo_truth_inventory(declared.as_deref(), source)
 }
 
 #[derive(Debug)]

@@ -113,9 +113,10 @@ pub use names::{RETIRED_NAMES, RetiredMatch, RetiredName, retired_matches};
 pub use policy::{
     BoundLimits, BoundName, CompileError as PolicyCompileError, GlobalRatchet, MagicRule,
     MigrationError as PolicyMigrationError, OneLetterBehavior, Policy as RulePolicy, PolicyContext,
-    PolicyDocument, RegexDialect, ResolveError as PolicyResolveError, ResolvedBound, ResolvedMagic,
-    RuleDeclaration, RuleId, RuleSettings, RuleSource, RuleSourceKind, ScopeAxis, ScopeSelector,
-    SelectionProvenance, SelectorSpecificity, migrate_predecessor_policy,
+    PolicyDocument, RegexDialect, RepoTruthPolicy, ResolveError as PolicyResolveError,
+    ResolvedBound, ResolvedMagic, RuleDeclaration, RuleId, RuleSettings, RuleSource,
+    RuleSourceKind, ScopeAxis, ScopeSelector, SelectionProvenance, SelectorSpecificity,
+    migrate_predecessor_policy,
 };
 pub use ratchet::{Finding, Movement, Ratchet, RatchetError};
 pub use report::{
