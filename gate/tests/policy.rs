@@ -19,7 +19,6 @@ routine_ccn = 12
 
 [policy.magic]
 examine_threshold = 10
-baseline_ref = "HEAD"
 
 [policy.markdown_depth_budget]
 extensions = []

@@ -17,8 +17,6 @@ const DEFAULT_MAGIC_THRESHOLD: u64 = 10;
 const DEFAULT_MARKDOWN_BASE: u64 = 10_000;
 const DEFAULT_MARKDOWN_MAX: u64 = 30_000;
 const DEFAULT_REPO_TRUTH_DOCS: &[&str] = &["AGENTS.md"];
-/// Source location every packaged rule and packaged refusal is attributed to.
-const PACKAGED_RULE_SOURCE: &str = "gate packaged rule policy";
 
 /// Translate one predecessor policy document into the sole compiled current
 /// representation.
@@ -65,32 +63,6 @@ pub fn migrate_predecessor_policy(
     Policy::compile(document).map_err(|error| compile_error(&source, &error))
 }
 
-/// Compile the named rules this release packages over one document inventory.
-///
-/// Every rule, bound, and ratchet here is packaged: no tracked byte reaches
-/// them, so a refusal is a defect in this battery rather than in a repository,
-/// and it names [`PACKAGED_RULE_SOURCE`] rather than any repository file. The
-/// document inventory is the one caller-supplied input, and
-/// [`repo_truth_inventory`] has already normalized and refused it, which is
-/// what keeps the two layers' refusals separable.
-pub(crate) fn compile_rule_policy(repo_truth_docs: Vec<String>) -> Result<Policy, MigrationError> {
-    let markdown = MarkdownPolicy {
-        extensions: vec![".md".to_owned()],
-        stem_pattern: None,
-        base_chars: DEFAULT_MARKDOWN_BASE,
-        max_bounded_chars: DEFAULT_MARKDOWN_MAX,
-    };
-    let rules = generated_markdown_rules(PACKAGED_RULE_SOURCE, &markdown)?;
-    let document = PolicyDocument::predecessor(
-        BoundLimits::PREDECESSOR,
-        GlobalRatchet::PREDECESSOR,
-        DEFAULT_MAGIC_THRESHOLD,
-        repo_truth_docs,
-        rules,
-    );
-    Policy::compile(document).map_err(|error| compile_error(PACKAGED_RULE_SOURCE, &error))
-}
-
 /// Resolve the repository-document inventory one policy layer declares.
 ///
 /// A layer that declares nothing takes the packaged inventory, and a layer that
@@ -102,7 +74,7 @@ pub(crate) fn compile_rule_policy(repo_truth_docs: Vec<String>) -> Result<Policy
 /// # Errors
 ///
 /// Returns the declared path that is not a repository-relative spelling.
-pub(crate) fn repo_truth_inventory(
+fn repo_truth_inventory(
     declared: Option<&[String]>,
     source: &str,
 ) -> Result<Vec<String>, MigrationError> {
@@ -219,6 +191,7 @@ fn parse_legacy_ratchet(
 
 fn parse_magic(policy: Option<&toml::Table>, source: &str) -> Result<u64, MigrationError> {
     let table = optional_nested(policy, "magic", "policy.magic", source)?;
+    reject_unknown(table, &["examine_threshold"], "policy.magic", source)?;
     let Some(value) = table.and_then(|table| table.get("examine_threshold")) else {
         return Ok(DEFAULT_MAGIC_THRESHOLD);
     };

@@ -73,6 +73,52 @@ fn configuration_key_admission_names_a_known_key_forbidden_in_the_active_layer()
     repository.remove();
 }
 
+/// Every `[policy]` subtable the rule-policy migration reads is admitted.
+///
+/// None of these belong to the resolver registry; they are the predecessor
+/// surfaces the contract still compiles its rule policy from. A repository that
+/// declares them is spelling tracked configuration, so admission has to
+/// recognise all six rather than call the document it is required to read
+/// unknown.
+#[test]
+fn configuration_key_admission_admits_every_migrated_policy_subtable() {
+    let repository = git_repository("core-acquire-config-key-migrated");
+    repository.write(
+        "spice.toml",
+        concat!(
+            "[policy.limits]\n",
+            "file_loc = 1234\n",
+            "[policy.flex]\n",
+            "ratio = 2.25\n",
+            "jitter_percent = 7\n",
+            "[policy.magic]\n",
+            "examine_threshold = 33\n",
+            "[policy.markdown_depth]\n",
+            "base_chars = 100\n",
+            "max_bounded_chars = 300\n",
+            "[policy.markdown_depth_budget]\n",
+            "extensions = ['.rst']\n",
+            "[[policy.rules]]\n",
+            "routine_length = { max = 55 }\n",
+        ),
+    );
+    repository.write("baseline.toml", &workspace_document("baseline.toml"));
+    repository.write("src/app.rs", "pub fn app() {}\n");
+    git_commit(&repository, "every migrated policy subtable");
+
+    let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
+    let configuration = acquired_arm(&report, GateId::ConfigKeyValidity);
+    assert_eq!(
+        configuration.observation(),
+        &measured(CoreEvidence::ConfigKeyValidity(ConfigKeyEvidence::new(
+            Vec::new()
+        )))
+    );
+    assert_eq!(configuration.standing(), CoreStanding::Passed);
+
+    repository.remove();
+}
+
 #[test]
 fn false_disable_inventory_fails_when_a_declared_path_has_no_consumer() {
     let repository = false_disable_repository("core-false-disable-missing", false);
