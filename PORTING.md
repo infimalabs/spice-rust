@@ -269,13 +269,13 @@ No `study` path is a shipped verb, and a ranking board is not a gate.
 - `study javascript-unused`: D.
 - `study magic-numbers`: D.
 - `study markdown-links`: D.
-- `study mutations`: P -> `STUDY-1kJxswrC`; `kill` gates Rust survivor debt.
+- `study mutations`: P -> `STUDY-1kK7CHkN`; `kill` gates Rust survivor debt.
 - `study private-internals`: D.
 - `study python-unused`: D.
 - `study reachability`: D.
 - `study shape`: D.
-- `study subsumption`: P -> `STUDY-1kJxswrC`.
-- `study suite-seam-reach`: P -> `STUDY-1kJxswrC`.
+- `study subsumption`: P -> `STUDY-1kK7CQXr`.
+- `study suite-seam-reach`: D -> `hygiene::ModuleReach`.
 - `study symbol-reachability`: D.
 - `study taste`: D.
 

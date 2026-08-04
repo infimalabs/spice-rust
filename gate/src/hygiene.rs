@@ -563,6 +563,24 @@ pub struct ExclusionEvidence {
     pub reason: String,
 }
 
+/// How much of the test suite one module holds, counted both ways.
+///
+/// A lane runs the tests it believes its change touches, and that belief is a
+/// direct-import view: `imported_by` counts only the test modules that name
+/// this one themselves, while `reached_by` follows import chains to their end.
+/// For a shared module the two diverge by an order of magnitude, and that gap
+/// is the whole measurement. Every test module that imports a module directly
+/// also reaches it, so `imported_by` can never exceed `reached_by`.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct ModuleReach {
+    /// Selected path of the reached module.
+    pub path: String,
+    /// Test modules reaching this one through any chain of imports.
+    pub reached_by: u32,
+    /// Test modules naming this one in their own imports.
+    pub imported_by: u32,
+}
+
 /// Typed evidence from one analysis stage.
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(tag = "evidence", rename_all = "kebab-case")]
@@ -590,6 +608,8 @@ pub enum AnalysisEvidence {
         nodes: u32,
         /// Distinct directed graph edges.
         edges: u32,
+        /// Every reached module, widest suite reach first.
+        reach: Vec<ModuleReach>,
     },
     /// Declaration/reference extraction evidence.
     SymbolExtraction {
