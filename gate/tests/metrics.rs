@@ -42,7 +42,6 @@ jitter_percent = 7
 
 [policy.magic]
 examine_threshold = 10
-baseline_ref = "HEAD"
 
 [policy.markdown_depth_budget]
 extensions = [".mdoc"]

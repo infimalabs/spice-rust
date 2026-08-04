@@ -95,8 +95,20 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
 // These tracked predecessor fields coexist during cutover but do not belong to
 // the current resolver registry. Their consumers still admit their values from
 // the same captured document.
+//
+// The six subtables the rule-policy migration reads are registered whole rather
+// than key by key. Which table belongs to the tracked layer is this registry's
+// question; which keys are legal inside one is the migration's, and it closes
+// every one of them with its own refusal naming the exact field. Spelling the
+// leaves here too would be a second place to forget one.
 const COEXISTING_TRACKED_KEYS: &[&str] = &[
     "policy.repo_truth.docs",
+    "policy.limits",
+    "policy.flex",
+    "policy.magic",
+    "policy.markdown_depth",
+    "policy.markdown_depth_budget",
+    "policy.rules",
     "policy.package_roots",
     "policy.generated_paths",
     "policy.name_cluster_threshold",
