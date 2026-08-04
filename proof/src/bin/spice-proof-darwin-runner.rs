@@ -115,24 +115,43 @@ fn execute_protocol(
     validate_source(&workspace, &pins)?;
     validate_closure(&workspace, &pins)?;
 
+    // Everything past this point is joined with the removal below, so a refusal
+    // between creating the fresh directories and running the member takes them
+    // with it: a leaked root would make the next run under the same challenge
+    // refuse for a reason that has nothing to do with what it was asked.
     let temporary = Temporary::fresh(&challenge)?;
-    let profile = sandbox_profile(&workspace, &pins, &temporary)?;
-    temporary.write_cargo_config(&workspace)?;
+    let execution = prepared(
+        arguments, &workspace, &pins, &temporary, &identity, &challenge,
+    );
+    let cleanup = temporary.remove();
+    match (execution, cleanup) {
+        (Ok(status), Ok(())) => Ok(status),
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+        (Err(execution), Err(cleanup)) => Err(format!(
+            "{execution}; native proof cleanup also failed: {cleanup}"
+        )),
+    }
+}
+
+/// Establish the boundary, attest it, and run the member inside it.
+fn prepared(
+    arguments: &[OsString],
+    workspace: &Path,
+    pins: &Pins,
+    temporary: &Temporary,
+    identity: &Digest,
+    challenge: &Challenge,
+) -> Result<i32, String> {
+    let profile = sandbox_profile(workspace, pins, temporary)?;
+    temporary.write_cargo_config(workspace)?;
 
     eprintln!("{ATTESTATION}:runner={identity}:challenge={challenge}:{ISOLATION}");
     io::stderr()
         .flush()
         .map_err(|error| format!("cannot flush runner attestation: {error}"))?;
 
-    let execution = run_sandboxed(arguments, &workspace, &pins, &temporary, &profile);
-    let cleanup = temporary.remove();
-    match (execution, cleanup) {
-        (Ok(status), Ok(())) => Ok(status.code().unwrap_or(1)),
-        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
-        (Err(execution), Err(cleanup)) => Err(format!(
-            "{execution}; native proof cleanup also failed: {cleanup}"
-        )),
-    }
+    run_sandboxed(arguments, workspace, pins, temporary, &profile)
+        .map(|status| status.code().unwrap_or(1))
 }
 
 fn allowed_cargo_arguments(arguments: &[OsString]) -> bool {
@@ -382,6 +401,13 @@ struct Temporary {
     cargo_home: PathBuf,
     cargo_target: PathBuf,
     home: PathBuf,
+    /// Where the mutation member writes its `mutants.out`.
+    ///
+    /// The battery names one command per member and no locations, because the
+    /// locations are what an isolation boundary owns: the workspace is read-only
+    /// wherever the battery runs, so the boundary has to say where the writing
+    /// goes, the same way it already does for the Cargo home and target.
+    mutants: PathBuf,
     temporary: PathBuf,
 }
 
@@ -398,6 +424,7 @@ impl Temporary {
             cargo_home: root.join("cargo-home"),
             cargo_target: root.join("cargo-target"),
             home: root.join("home"),
+            mutants: root.join("mutants"),
             temporary: root.join("tmp"),
             root,
         };
@@ -405,6 +432,7 @@ impl Temporary {
             &instance.cargo_home,
             &instance.cargo_target,
             &instance.home,
+            &instance.mutants,
             &instance.temporary,
         ] {
             fs::create_dir(path).map_err(|error| {
@@ -522,6 +550,7 @@ fn run_sandboxed(
         .env("CARGO_TARGET_DIR", &temporary.cargo_target)
         .env("CARGO_BUILD_BUILD_DIR", temporary.root.join("build"))
         .env("CARGO_INCREMENTAL", "0")
+        .env("CARGO_MUTANTS_OUTPUT", &temporary.mutants)
         .env("CARGO_NET_OFFLINE", "true")
         .env("DEVELOPER_DIR", &pins.developer_dir)
         .env("HOME", &temporary.home)
