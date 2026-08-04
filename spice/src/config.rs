@@ -267,6 +267,12 @@ pub struct WorkspacePolicy {
     env_names: Vec<String>,
     commit_message: gate::CommitMessagePolicy,
     repo_truth: gate::RepoTruthPolicy,
+    package_roots: Vec<String>,
+    generated_paths: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name_cluster_threshold: Option<usize>,
+    test_paths: Vec<String>,
+    package: gate::PackagePolicy,
 }
 
 impl WorkspacePolicy {
@@ -289,6 +295,36 @@ impl WorkspacePolicy {
     #[must_use]
     pub const fn commit_message(&self) -> &gate::CommitMessagePolicy {
         &self.commit_message
+    }
+
+    /// Roots the repository declares its packages under.
+    #[must_use]
+    pub fn package_roots(&self) -> &[String] {
+        &self.package_roots
+    }
+
+    /// Paths the repository declares as generated rather than authored.
+    #[must_use]
+    pub fn generated_paths(&self) -> &[String] {
+        &self.generated_paths
+    }
+
+    /// Cluster size at which the repository wants related names reported.
+    #[must_use]
+    pub const fn name_cluster_threshold(&self) -> Option<usize> {
+        self.name_cluster_threshold
+    }
+
+    /// Roots the repository declares its tests under.
+    #[must_use]
+    pub fn test_paths(&self) -> &[String] {
+        &self.test_paths
+    }
+
+    /// Module-name shape the repository declares.
+    #[must_use]
+    pub const fn package(&self) -> &gate::PackagePolicy {
+        &self.package
     }
 }
 

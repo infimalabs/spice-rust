@@ -54,8 +54,8 @@ pub use camp::{
 pub use config::{Config, WalkConfig};
 #[cfg(not(target_arch = "wasm32"))]
 pub use core::{
-    ActorCapture, CONFIG_KEY_DECLARATIONS, ClaimCapture, ConfigKeyDeclaration, CoreSource,
-    acquire_core,
+    ActorCapture, COEXISTING_TRACKED_KEYS, CONFIG_KEY_DECLARATIONS, ClaimCapture,
+    ConfigKeyDeclaration, CoreSource, acquire_core,
 };
 pub use core::{
     CORE_GATE_IDS, CORE_REPORT_VERSION, ConfigInventoryEvidence, ConfigKeyEvidence,
@@ -114,11 +114,11 @@ pub use message::{
 pub use names::{RETIRED_NAMES, RetiredMatch, RetiredName, retired_matches};
 pub use policy::{
     BoundLimits, BoundName, CompileError as PolicyCompileError, GlobalRatchet, MagicRule,
-    MigrationError as PolicyMigrationError, OneLetterBehavior, Policy as RulePolicy, PolicyContext,
-    PolicyDocument, RegexDialect, RepoTruthPolicy, ResolveError as PolicyResolveError,
-    ResolvedBound, ResolvedMagic, RuleDeclaration, RuleId, RuleSettings, RuleSource,
-    RuleSourceKind, ScopeAxis, ScopeSelector, SelectionProvenance, SelectorSpecificity,
-    migrate_predecessor_policy,
+    MigrationError as PolicyMigrationError, OneLetterBehavior, PackagePolicy, Policy as RulePolicy,
+    PolicyContext, PolicyDocument, RegexDialect, RepoTruthPolicy,
+    ResolveError as PolicyResolveError, ResolvedBound, ResolvedMagic, RuleDeclaration, RuleId,
+    RuleSettings, RuleSource, RuleSourceKind, ScopeAxis, ScopeSelector, SelectionProvenance,
+    SelectorSpecificity, migrate_predecessor_policy,
 };
 pub use ratchet::{Finding, Movement, Ratchet, RatchetError};
 pub use report::{

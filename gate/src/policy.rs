@@ -46,6 +46,26 @@ impl RepoTruthPolicy {
     }
 }
 
+/// One repository's declaration of the shape its module names take.
+///
+/// A present but blank pattern is a different fact than a key nobody wrote, so
+/// this stays an option and the consumer that compiles it refuses the first
+/// while admitting the second.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PackagePolicy {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    boundary_underscore_pattern: Option<String>,
+}
+
+impl PackagePolicy {
+    /// Module-name shape this repository names, or `None` when it names none.
+    #[must_use]
+    pub fn boundary_underscore_pattern(&self) -> Option<&str> {
+        self.boundary_underscore_pattern.as_deref()
+    }
+}
+
 /// The six predecessor numeric policy metrics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
