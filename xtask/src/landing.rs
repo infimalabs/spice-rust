@@ -302,6 +302,36 @@ mod tests {
         );
     }
 
+    /// Gate advertises policy keys a live repository may declare while the
+    /// predecessor still shares the document. This workspace is such a
+    /// repository, so its own tracked bytes must survive declaring them under
+    /// the strict admission that guards landing.
+    #[test]
+    fn tracked_configuration_admits_every_advertised_coexisting_key() {
+        let current = include_str!("../../spice.toml");
+        // Four advertised keys sit directly under `[policy]`, and TOML refuses a
+        // reopened table, so they join the one the document already carries.
+        assert_eq!(current.matches("[policy]\n").count(), 1);
+        let declared = format!(
+            "{}\n[policy.repo_truth]\ndocs = [\"DOCTRINE.md\"]\n\
+             \n[policy.package]\nboundary_underscore_pattern = \"^[a-z][a-z0-9_]*$\"\n",
+            current.replace(
+                "[policy]\n",
+                "[policy]\npackage_roots = [\"spice\"]\ngenerated_paths = [\"dist/stage\"]\n\
+                 name_cluster_threshold = 3\ntest_paths = [\"tests\"]\n",
+            ),
+        );
+        for key in gate::COEXISTING_TRACKED_KEYS {
+            let leaf = key.rsplit('.').next().expect("a key names a leaf");
+            assert!(
+                declared.contains(&format!("\n{leaf} = ")),
+                "{key} undeclared"
+            );
+        }
+
+        assert_eq!(admit_tracked_configuration(&declared), Ok(()));
+    }
+
     fn rows(landed: usize, gaps: usize, unaccounted: usize) -> Vec<RustInput> {
         let mut rows = Vec::new();
         for index in 0..landed {
