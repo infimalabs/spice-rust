@@ -3,8 +3,8 @@
 `build.sh` seals the `aarch64-apple-darwin` half of the release appliance: the
 `proof` crate's `spice-proof-darwin-runner` binary, built with one compiled pin
 document naming the exact source commit, the vendored closure of `Cargo.lock`,
-the SDK and developer directory, and the path and bytes of every tool it will
-run. Seal the runner from the repository root:
+the SDK, developer, and Cargo cache directories, and the path and bytes of
+every tool it will run. Seal the runner from the repository root:
 
 ```sh
 dist/proof-runner/build.sh

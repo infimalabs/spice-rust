@@ -43,6 +43,7 @@ pins=$(printf '%s\n' \
     "vendor_digest = \"$(unsealed closure-digest "$vendor")\"" \
     "sdk_path = \"$(xcrun --show-sdk-path)\"" \
     "developer_dir = \"$(xcode-select -p)\"" \
+    "cargo_home = \"$(unsealed cargo-home)\"" \
     '' \
     '[cargo]' \
     "path = \"$cargo_path\"" \

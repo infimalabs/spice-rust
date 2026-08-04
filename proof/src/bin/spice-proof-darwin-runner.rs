@@ -72,6 +72,10 @@ fn dispatch(arguments: Vec<OsString>) -> Result<i32, String> {
             );
             Ok(0)
         }
+        [operation] if operation == OsStr::new("cargo-home") => {
+            println!("{}", ambient_cargo_home()?.display());
+            Ok(0)
+        }
         [protocol, identity, challenge, program, command @ ..]
             if protocol == OsStr::new(PROTOCOL) =>
         {
@@ -170,6 +174,14 @@ struct Pins {
     vendor_digest: Digest,
     sdk_path: PathBuf,
     developer_dir: PathBuf,
+    /// The warm Cargo caches the sealed build is denied, so they cannot stand
+    /// in for the vendored closure.
+    ///
+    /// This is sealed rather than read back from the environment because the
+    /// host launches the runner with no environment to read: naming the caches
+    /// is the sealing host's statement about itself, and the runner refuses
+    /// below if that statement stopped describing this machine.
+    cargo_home: PathBuf,
     cargo: Tool,
     rustc: Tool,
     cargo_mutants: Tool,
@@ -208,6 +220,7 @@ impl Pins {
         for (label, path) in [
             ("SDK", &self.sdk_path),
             ("developer directory", &self.developer_dir),
+            ("Cargo home", &self.cargo_home),
         ] {
             if !path.is_dir() {
                 return Err(format!(
@@ -428,12 +441,12 @@ impl Temporary {
     }
 }
 
-/// The Cargo caches the invoking environment owns, which the sealed build is
-/// denied so a warm host cache cannot stand in for the vendored closure.
+/// Where the sealing host keeps the warm Cargo caches the sealed build is denied.
 ///
-/// This is deliberately observed rather than pinned: the caches worth denying
-/// are the ones the ambient environment would have used, named exactly the way
-/// Cargo itself names them.
+/// Only sealing asks this, and it asks the runner rather than the shell so
+/// every pin the sealed build enforces was computed by the one implementation
+/// that enforces it. The sealed runner reads the answer back from its pins,
+/// because the host launches it with no environment left to read.
 #[expect(
     clippy::disallowed_methods,
     reason = "the runner rim owns ambient acquisition of the caches it denies"
@@ -444,7 +457,7 @@ fn ambient_cargo_home() -> Result<PathBuf, String> {
     }
     env::var_os("HOME")
         .map(|home| PathBuf::from(home).join(".cargo"))
-        .ok_or_else(|| "the invoking environment names no Cargo home".to_owned())
+        .ok_or_else(|| "the sealing environment names no Cargo home".to_owned())
 }
 
 fn sandbox_profile(workspace: &Path, pins: &Pins, temporary: &Temporary) -> Result<String, String> {
@@ -455,9 +468,8 @@ fn sandbox_profile(workspace: &Path, pins: &Pins, temporary: &Temporary) -> Resu
     )?;
     let git_common = fs::canonicalize(git_common)
         .map_err(|error| format!("cannot resolve Git common directory: {error}"))?;
-    let ambient = ambient_cargo_home()?;
-    let ambient_registry = ambient.join("registry");
-    let ambient_git = ambient.join("git");
+    let host_registry = pins.cargo_home.join("registry");
+    let host_git = pins.cargo_home.join("git");
     Ok(format!(
         concat!(
             "(version 1)\n",
@@ -469,8 +481,8 @@ fn sandbox_profile(workspace: &Path, pins: &Pins, temporary: &Temporary) -> Resu
         ),
         sandbox_string(workspace)?,
         sandbox_string(&git_common)?,
-        sandbox_string(&ambient_registry)?,
-        sandbox_string(&ambient_git)?,
+        sandbox_string(&host_registry)?,
+        sandbox_string(&host_git)?,
         sandbox_string(&temporary.root)?,
     ))
 }
