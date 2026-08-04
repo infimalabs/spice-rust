@@ -719,41 +719,6 @@ fn emit_compaction(
     )
 }
 
-fn wait_for_event<T>(
-    path: &Path,
-    trigger: impl FnOnce(),
-    mut observe: impl FnMut() -> Option<T>,
-) -> T {
-    let (sender, receiver) = mpsc::channel::<notify::Result<notify::Event>>();
-    let mut watcher = notify::recommended_watcher(move |event| {
-        let _ = sender.send(event);
-    })
-    .expect("event watcher starts");
-    watcher
-        .watch(path, RecursiveMode::Recursive)
-        .expect("event watcher arms before trigger");
-    trigger();
-    if let Some(observed) = observe() {
-        return observed;
-    }
-    let deadline = Monotonic::now() + READINESS_DEADLINE;
-    loop {
-        let remaining = deadline.saturating_duration_since(Monotonic::now());
-        match receiver.recv_timeout(remaining) {
-            Ok(Ok(_)) => {
-                if let Some(observed) = observe() {
-                    return observed;
-                }
-            }
-            Ok(Err(error)) => panic!("event notification failed: {error}"),
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                panic!("event was not observed before {READINESS_DEADLINE:?}")
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => panic!("event watcher disconnected"),
-        }
-    }
-}
-
 fn fact_body<T: serde::de::DeserializeOwned>(fact: &wire::Envelope<wire::AnyFact>) -> Option<T> {
     wire::encode(fact.fact.body())
         .ok()

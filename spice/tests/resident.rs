@@ -827,6 +827,49 @@ fn instant(value: &str) -> Instant {
     value.parse().expect("canonical fixture instant")
 }
 
+/// Block until `observe` sees the effect of `trigger` under `path`.
+///
+/// The watcher arms before `trigger` runs and `observe` is polled once before
+/// any wait, so an effect that lands between those two points is still seen.
+/// A trigger that already ran passes `|| {}` and relies on that first poll.
+///
+/// Panics report the waiting call site rather than this shared helper.
+#[track_caller]
+fn wait_for_event<T>(
+    path: &Path,
+    trigger: impl FnOnce(),
+    mut observe: impl FnMut() -> Option<T>,
+) -> T {
+    let (sender, receiver) = mpsc::channel::<notify::Result<notify::Event>>();
+    let mut watcher = notify::recommended_watcher(move |event| {
+        let _ = sender.send(event);
+    })
+    .expect("event watcher starts");
+    watcher
+        .watch(path, RecursiveMode::Recursive)
+        .expect("event watcher arms before trigger");
+    trigger();
+    if let Some(observed) = observe() {
+        return observed;
+    }
+    let deadline = Monotonic::now() + READINESS_DEADLINE;
+    loop {
+        let remaining = deadline.saturating_duration_since(Monotonic::now());
+        match receiver.recv_timeout(remaining) {
+            Ok(Ok(_)) => {
+                if let Some(observed) = observe() {
+                    return observed;
+                }
+            }
+            Ok(Err(error)) => panic!("event notification failed: {error}"),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                panic!("event was not observed before {READINESS_DEADLINE:?}")
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => panic!("event watcher disconnected"),
+        }
+    }
+}
+
 /// Process cases share the transport and lifecycle fixtures defined above.
 #[path = "resident/cases.rs"]
 mod cases;

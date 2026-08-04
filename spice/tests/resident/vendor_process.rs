@@ -237,10 +237,18 @@ fn malformed_codex_session_refuses_and_reaps_before_lane_publication() {
         panic!("malformed session must refuse")
     };
     assert_eq!(refusal.reason, "lane::session-missing");
-    assert_eq!(
-        fs::read_to_string(&stopped).expect("malformed vendor stopped"),
-        "stopped"
+    // The refusal returns to the operator without waiting for the vendor's TERM
+    // trap, so the stop file is observed rather than read at the return.
+    let stop = wait_for_event(
+        &fixture.cleanup,
+        || {},
+        || {
+            fs::read_to_string(&stopped)
+                .ok()
+                .filter(|text| !text.is_empty())
+        },
     );
+    assert_eq!(stop, "stopped");
     assert!(durable_head(&fixture).lanes.is_empty());
 
     let down = operator(&fixture, &["down"], true);
