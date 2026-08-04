@@ -200,7 +200,7 @@ mod declarations;
 #[cfg(not(target_arch = "wasm32"))]
 mod environment;
 #[cfg(not(target_arch = "wasm32"))]
-pub use acquire::{RimCapture, ToolchainSource, acquire_toolchain};
+pub use acquire::{RimCapture, RimDirectoryError, ToolchainSource, acquire_toolchain};
 pub use declarations::*;
 
 /// What one resolved executable did instead of identifying itself.

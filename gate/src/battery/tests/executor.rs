@@ -132,7 +132,8 @@ fn one_capture_reads_every_authority_and_runs_each_family_once() {
         &selector,
         crate::ClaimCapture::Idle,
         acting("battery-actor"),
-        crate::RimCapture::new(&repository, None, changes),
+        crate::RimCapture::new(&repository, None, changes)
+            .expect("the fixture repository root is absolute"),
         hygiene,
         &mut record,
     )
@@ -172,7 +173,8 @@ fn a_capture_without_an_acting_actor_is_refused() {
         &crate::Selector::staged(),
         crate::ClaimCapture::Idle,
         crate::ActorCapture::Absent,
-        crate::RimCapture::new(&repository, None, Vec::new()),
+        crate::RimCapture::new(&repository, None, Vec::new())
+            .expect("the fixture repository root is absolute"),
         crate::HygieneConfiguration::new(["app/main.py"], ["tests"]).expect("hygiene roots"),
     ) else {
         panic!("a battery with no actor must be refused")
@@ -529,7 +531,8 @@ fn the_scanning_arms_report_exact_findings_over_the_captured_changes() {
             &repository,
             None,
             [MARKED, PROSE].map(str::to_owned).to_vec(),
-        ),
+        )
+        .expect("the fixture repository root is absolute"),
         hygiene,
     )
     .expect("capture production battery source");

@@ -820,7 +820,8 @@ fn acquired(
     let selected: Vec<String> = changes.iter().map(|path| (*path).to_owned()).collect();
     let source = ToolchainSource::capture(
         &tree,
-        RimCapture::new(&repository.root, search_path, selected.clone()),
+        RimCapture::new(&repository.root, search_path, selected.clone())
+            .expect("the fixture repository root is absolute"),
     );
     assert_eq!(
         source.root(),

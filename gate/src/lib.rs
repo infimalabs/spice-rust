@@ -151,7 +151,7 @@ pub use toolchain::{
     TreeJurisdiction, compare_predecessor, measure_toolchain,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use toolchain::{RimCapture, ToolchainSource, acquire_toolchain};
+pub use toolchain::{RimCapture, RimDirectoryError, ToolchainSource, acquire_toolchain};
 #[cfg(not(target_arch = "wasm32"))]
 pub use tree::{SelectedTree, Selector, TreeError};
 pub use verdict::{
