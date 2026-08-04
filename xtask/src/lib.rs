@@ -55,7 +55,14 @@ pub fn reference_transaction(
 /// that owns the socket, which makes that far side shipped code rather than a
 /// portability courtesy.
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
-const CARGO_HOME: &str = concat!(env!("HOME"), "/.cargo");
+
+/// The path the app build's Cargo home is remapped to.
+///
+/// The build is told to read crates from wherever the rim resolved, and told to
+/// record that it read them from here. Only the second half can be a constant:
+/// the recorded spelling has to be the same on every host or the artifact stops
+/// being reproducible, which is the whole reason the remapping exists.
+const REMAPPED_CARGO_HOME: &str = "/cargo-home";
 
 const APP_FILES: [&str; 4] = ["app.module", "app_bg.wasm", "canvas-app.html", "style.css"];
 const RELEASE_STAGE_DIRECTORIES: [&str; 2] = ["objects", "targets"];
@@ -104,17 +111,33 @@ const VERIFY_ACTIONS: [Action; 8] = [
 
 /// Compile the browser app with the pinned Trunk adapter and replace the
 /// committed stage with exactly those generated assets.
-pub fn stage_app(output: &mut impl Write) -> Result<(), AppBuildError> {
+///
+/// # Errors
+///
+/// Returns a missing Cargo home, Trunk execution failure, or a refused
+/// generated stage.
+pub fn stage_app(
+    environment: &ReleaseEnvironment,
+    output: &mut impl Write,
+) -> Result<(), AppBuildError> {
     let root = workspace_root()?;
     let stage = root.join("dist/stage");
-    run_trunk(&root, &stage, output)
+    run_trunk(&root, environment, &stage, output)
 }
 
 /// Rebuild the browser app outside the committed stage and compare every byte.
-pub fn check_app(output: &mut impl Write) -> Result<(), AppBuildError> {
+///
+/// # Errors
+///
+/// Returns a missing Cargo home, Trunk execution failure, or the first staged
+/// asset that differs from the rebuild.
+pub fn check_app(
+    environment: &ReleaseEnvironment,
+    output: &mut impl Write,
+) -> Result<(), AppBuildError> {
     let root = workspace_root()?;
-    let temporary = root
-        .join("target")
+    let temporary = environment
+        .build_root(&root)
         .join(format!("xtask-canvas-check-{}", std::process::id()));
     if temporary.exists() {
         fs::remove_dir_all(&temporary).map_err(|source| AppBuildError::Io {
@@ -122,7 +145,7 @@ pub fn check_app(output: &mut impl Write) -> Result<(), AppBuildError> {
             source,
         })?;
     }
-    let result = run_trunk(&root, &temporary, output)
+    let result = run_trunk(&root, environment, &temporary, output)
         .and_then(|()| compare_stage(&root.join("dist/stage"), &temporary));
     let cleanup = fs::remove_dir_all(&temporary).map_err(|source| AppBuildError::Io {
         path: temporary,
@@ -131,12 +154,21 @@ pub fn check_app(output: &mut impl Write) -> Result<(), AppBuildError> {
     result.and(cleanup)
 }
 
-fn run_trunk(root: &Path, stage: &Path, output: &mut impl Write) -> Result<(), AppBuildError> {
-    prepare_app_build(root)?;
+fn run_trunk(
+    root: &Path,
+    environment: &ReleaseEnvironment,
+    stage: &Path,
+    output: &mut impl Write,
+) -> Result<(), AppBuildError> {
+    let build_root = environment.build_root(root);
+    let cargo_home = environment
+        .cargo_home()
+        .ok_or(AppBuildError::MissingCargoHome)?;
+    prepare_app_build(&build_root)?;
     writeln!(output, "[app] trunk 0.21.14 -> {}", stage.display())
         .map_err(AppBuildError::Output)?;
-    let rustflags = remapped_rustflags(root)?;
-    let status = trunk_command(root, stage, rustflags)
+    let rustflags = remapped_rustflags(root, &cargo_home)?;
+    let status = trunk_command(root, &build_root, &cargo_home, stage, rustflags)
         .status()
         .map_err(AppBuildError::Launch)?;
     if !status.success() {
@@ -145,27 +177,33 @@ fn run_trunk(root: &Path, stage: &Path, output: &mut impl Write) -> Result<(), A
     finalize_stage(stage)
 }
 
-fn app_build_directory(root: &Path) -> PathBuf {
-    root.join("target/xtask-app-build")
+fn app_build_directory(build_root: &Path) -> PathBuf {
+    build_root.join("xtask-app-build")
 }
 
-fn prepare_app_build(root: &Path) -> Result<(), AppBuildError> {
-    let build = app_build_directory(root);
+fn prepare_app_build(build_root: &Path) -> Result<(), AppBuildError> {
+    let build = app_build_directory(build_root);
     fs::create_dir_all(&build).map_err(|source| AppBuildError::Io {
         path: build,
         source,
     })
 }
 
-fn trunk_command(root: &Path, stage: &Path, rustflags: String) -> Command {
-    let target = root.join("target/xtask-app");
-    let build = app_build_directory(root);
+fn trunk_command(
+    root: &Path,
+    build_root: &Path,
+    cargo_home: &OsStr,
+    stage: &Path,
+    rustflags: String,
+) -> Command {
+    let target = build_root.join("xtask-app");
+    let build = app_build_directory(build_root);
     let mut command = Command::new("trunk");
     command
         .current_dir(root.join("app"))
         .env("CARGO_BUILD_BUILD_DIR", build)
         .env("CARGO_ENCODED_RUSTFLAGS", rustflags)
-        .env("CARGO_HOME", CARGO_HOME)
+        .env("CARGO_HOME", cargo_home)
         .env("CARGO_INCREMENTAL", "0")
         .env("CARGO_TARGET_DIR", target)
         .env("NO_COLOR", "true")
@@ -218,13 +256,16 @@ fn finalize_stage(stage: &Path) -> Result<(), AppBuildError> {
     })
 }
 
-fn remapped_rustflags(root: &Path) -> Result<String, AppBuildError> {
+fn remapped_rustflags(root: &Path, cargo_home: &OsStr) -> Result<String, AppBuildError> {
     let root = root
         .to_str()
         .ok_or_else(|| AppBuildError::NonUtf8(root.to_path_buf()))?;
+    let cargo_home = cargo_home
+        .to_str()
+        .ok_or_else(|| AppBuildError::NonUtf8(PathBuf::from(cargo_home)))?;
     Ok([
         format!("--remap-path-prefix={root}=/workspace"),
-        format!("--remap-path-prefix={CARGO_HOME}=/cargo-home"),
+        format!("--remap-path-prefix={cargo_home}={REMAPPED_CARGO_HOME}"),
     ]
     .join("\u{1f}"))
 }
@@ -319,6 +360,7 @@ pub enum AppBuildError {
         source: io::Error,
     },
     NonUtf8(PathBuf),
+    MissingCargoHome,
     GeneratedStage(String),
     Inventory {
         expected: Vec<String>,
@@ -336,6 +378,9 @@ impl fmt::Display for AppBuildError {
             Self::Exit(None) => formatter.write_str("trunk was terminated by a signal"),
             Self::Io { path, source } => write!(formatter, "{}: {source}", path.display()),
             Self::NonUtf8(path) => write!(formatter, "stage path is not UTF-8: {}", path.display()),
+            Self::MissingCargoHome => formatter.write_str(
+                "the app build needs CARGO_HOME or HOME to locate the crates it compiles",
+            ),
             Self::GeneratedStage(reason) => {
                 write!(formatter, "generated app stage refused: {reason}")
             }
@@ -556,11 +601,22 @@ mod tests {
         }
     }
 
+    /// The build root here is deliberately outside the workspace, which is how
+    /// the sealed image presents it: sources on a read-only mount, writes on a
+    /// separate scratch. Every writable name the command carries must land on
+    /// the scratch, while the directory it reads sources from must not move.
     #[test]
     fn app_build_command_owns_cache_and_wrapper_inputs() {
         let root = Path::new("/workspace");
+        let build_root = Path::new("/cargo-target");
         let stage = Path::new("/stage");
-        let command = trunk_command(root, stage, "remapped-flags".to_owned());
+        let command = trunk_command(
+            root,
+            build_root,
+            OsStr::new("/cargo-home"),
+            stage,
+            "remapped-flags".to_owned(),
+        );
         let environment = command
             .get_envs()
             .map(|(key, value)| {
@@ -576,17 +632,17 @@ mod tests {
             BTreeMap::from([
                 (
                     "CARGO_BUILD_BUILD_DIR".to_owned(),
-                    Some("/workspace/target/xtask-app-build".to_owned()),
+                    Some("/cargo-target/xtask-app-build".to_owned()),
                 ),
                 (
                     "CARGO_ENCODED_RUSTFLAGS".to_owned(),
                     Some("remapped-flags".to_owned()),
                 ),
-                ("CARGO_HOME".to_owned(), Some(CARGO_HOME.to_owned())),
+                ("CARGO_HOME".to_owned(), Some("/cargo-home".to_owned())),
                 ("CARGO_INCREMENTAL".to_owned(), Some("0".to_owned())),
                 (
                     "CARGO_TARGET_DIR".to_owned(),
-                    Some("/workspace/target/xtask-app".to_owned()),
+                    Some("/cargo-target/xtask-app".to_owned()),
                 ),
                 ("NO_COLOR".to_owned(), Some("true".to_owned())),
                 ("RUSTC_WORKSPACE_WRAPPER".to_owned(), Some(String::new())),
