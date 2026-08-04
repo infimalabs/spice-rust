@@ -388,24 +388,22 @@ fn non_regular_and_non_utf8_documents_are_accumulated() {
 
 #[cfg(unix)]
 #[test]
-fn unreadable_acquisition_and_other_layer_decode_issue_are_both_returned() {
-    use std::os::unix::fs::PermissionsExt;
+fn symlink_acquisition_and_other_layer_decode_issue_are_both_returned() {
+    use std::os::unix::fs::symlink;
 
     let scratch = Scratch::new();
-    let root = repository(&scratch, "unreadable");
+    let root = repository(&scratch, "linked tracked document");
     let tracked = root.join("spice.toml");
-    write(&tracked, b"[listen]\nwindow = \"2m\"\n");
+    symlink(root.join("absent-tracked-document.toml"), &tracked)
+        .expect("create dangling tracked document link");
     write(local_path(&root), b"[tasks]\nowner = \"local\"\n");
-    fs::set_permissions(&tracked, fs::Permissions::from_mode(0o000))
-        .expect("make tracked unreadable");
 
     let error = load(&root, &[]).expect_err("acquisition and decode refuse");
-    fs::set_permissions(&tracked, fs::Permissions::from_mode(0o600))
-        .expect("restore tracked permissions");
 
     assert_eq!(error.acquisition().len(), 1);
-    assert_eq!(error.acquisition()[0].kind(), AcquisitionKind::Unreadable);
-    assert!(error.acquisition()[0].io_error().is_some());
+    assert_eq!(error.acquisition()[0].source(), ConfigSource::Tracked);
+    assert_eq!(error.acquisition()[0].kind(), AcquisitionKind::Symlink);
+    assert_eq!(error.acquisition()[0].path(), tracked);
     let resolution = error.resolution().expect("other layer was still decoded");
     assert!(resolution.issues().iter().any(|issue| {
         issue.source() == ConfigSource::Local

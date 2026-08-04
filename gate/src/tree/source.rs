@@ -1,4 +1,8 @@
+#[cfg(target_os = "linux")]
+use std::cell::RefCell;
 use std::collections::BTreeSet;
+#[cfg(target_os = "linux")]
+use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
@@ -13,14 +17,66 @@ use super::{
     open_repository, resolve_revision, write_private_source,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub(super) struct IndexSeal {
+    snapshot: IndexSnapshot,
+    changes: IndexChangeSeal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct IndexSnapshot {
     files: Vec<ObservedFile>,
     directory: ObservedDirectory,
 }
 
 impl IndexSeal {
     pub(super) fn capture(repo: &gix::Repository) -> Result<Self, TreeError> {
+        let changes = IndexChangeSeal::start(repo)?;
+        let first = IndexSnapshot::capture_once(repo)?;
+        changes.watch_files(first.files.iter().map(|file| file.path.as_path()), repo)?;
+        let second = IndexSnapshot::capture_once(repo).map_err(|_| TreeError::IndexChanged {
+            path: repo.index_path(),
+        })?;
+        if first != second || changes.changed(repo)? {
+            return Err(TreeError::IndexChanged {
+                path: repo.index_path(),
+            });
+        }
+        Ok(Self {
+            snapshot: second,
+            changes,
+        })
+    }
+
+    pub(super) fn open(
+        &self,
+        repo: &gix::Repository,
+        workspace: &Path,
+    ) -> Result<gix::index::File, TreeError> {
+        self.snapshot.open(repo, workspace)
+    }
+
+    pub(super) fn verify(&self, repo: &gix::Repository) -> Result<(), TreeError> {
+        if self.changes.changed(repo)? {
+            return Err(TreeError::IndexChanged {
+                path: repo.index_path(),
+            });
+        }
+        let observed =
+            IndexSnapshot::capture_stable(repo).map_err(|_| TreeError::IndexChanged {
+                path: repo.index_path(),
+            })?;
+        if observed != self.snapshot || self.changes.changed(repo)? {
+            return Err(TreeError::IndexChanged {
+                path: repo.index_path(),
+            });
+        }
+        Ok(())
+    }
+}
+
+impl IndexSnapshot {
+    fn capture_stable(repo: &gix::Repository) -> Result<Self, TreeError> {
         let first = Self::capture_once(repo)?;
         let second = Self::capture_once(repo).map_err(|_| TreeError::IndexChanged {
             path: repo.index_path(),
@@ -75,7 +131,7 @@ impl IndexSeal {
         Ok(Self { files, directory })
     }
 
-    pub(super) fn open(
+    fn open(
         &self,
         repo: &gix::Repository,
         workspace: &Path,
@@ -110,6 +166,137 @@ impl IndexSeal {
             path: original_index,
             evidence: error.to_string(),
         })
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+struct IndexChangeSeal {
+    inotify: RefCell<inotify::Inotify>,
+    directory_watch: inotify::WatchDescriptor,
+}
+
+#[cfg(target_os = "linux")]
+impl IndexChangeSeal {
+    fn start(repo: &gix::Repository) -> Result<Self, TreeError> {
+        let index = repo.index_path();
+        let directory = index.parent().ok_or_else(|| TreeError::IndexUnreadable {
+            path: index.clone(),
+            evidence: "the index has no parent directory".to_owned(),
+        })?;
+        let inotify = inotify::Inotify::init()
+            .map_err(|source| TreeError::io("creating an index change seal", &index, source))?;
+        let mask = inotify::WatchMask::ATTRIB
+            | inotify::WatchMask::CLOSE_WRITE
+            | inotify::WatchMask::CREATE
+            | inotify::WatchMask::DELETE
+            | inotify::WatchMask::DELETE_SELF
+            | inotify::WatchMask::MODIFY
+            | inotify::WatchMask::MOVE
+            | inotify::WatchMask::MOVE_SELF;
+        let directory_watch = inotify
+            .watches()
+            .add(directory, mask)
+            .map_err(|source| TreeError::io("watching the index directory", directory, source))?;
+        Ok(Self {
+            inotify: RefCell::new(inotify),
+            directory_watch,
+        })
+    }
+
+    fn watch_files<'a>(
+        &self,
+        paths: impl Iterator<Item = &'a Path>,
+        repo: &gix::Repository,
+    ) -> Result<(), TreeError> {
+        let mask = inotify::WatchMask::ATTRIB
+            | inotify::WatchMask::CLOSE_WRITE
+            | inotify::WatchMask::DELETE_SELF
+            | inotify::WatchMask::MODIFY
+            | inotify::WatchMask::MOVE_SELF;
+        for path in paths {
+            self.inotify
+                .borrow()
+                .watches()
+                .add(path, mask)
+                .map_err(|source| {
+                    if source.kind() == io::ErrorKind::NotFound {
+                        TreeError::IndexChanged {
+                            path: repo.index_path(),
+                        }
+                    } else {
+                        TreeError::io("watching an index source", path, source)
+                    }
+                })?;
+        }
+        Ok(())
+    }
+
+    fn changed(&self, repo: &gix::Repository) -> Result<bool, TreeError> {
+        let mut inotify = self.inotify.borrow_mut();
+        let mut buffer = [0_u8; 16 * 1024];
+        loop {
+            match inotify.read_events(&mut buffer) {
+                Ok(events) => {
+                    for event in events {
+                        if event.mask.intersects(
+                            inotify::EventMask::Q_OVERFLOW
+                                | inotify::EventMask::IGNORED
+                                | inotify::EventMask::UNMOUNT,
+                        ) {
+                            return Ok(true);
+                        }
+                        if event.wd != self.directory_watch {
+                            return Ok(true);
+                        }
+                        if event.name.is_none_or(is_index_source_name) {
+                            return Ok(true);
+                        }
+                    }
+                }
+                Err(source) if source.kind() == io::ErrorKind::WouldBlock => return Ok(false),
+                Err(source) if source.kind() == io::ErrorKind::Interrupted => continue,
+                Err(source) => {
+                    return Err(TreeError::io(
+                        "reading the index change seal",
+                        &repo.index_path(),
+                        source,
+                    ));
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn is_index_source_name(name: &OsStr) -> bool {
+    name == OsStr::new("index")
+        || name
+            .as_bytes()
+            .strip_prefix(b"sharedindex.")
+            .is_some_and(|suffix| !suffix.is_empty())
+}
+
+#[cfg(not(target_os = "linux"))]
+#[derive(Debug)]
+struct IndexChangeSeal;
+
+#[cfg(not(target_os = "linux"))]
+impl IndexChangeSeal {
+    fn start(_repo: &gix::Repository) -> Result<Self, TreeError> {
+        Ok(Self)
+    }
+
+    fn watch_files<'a>(
+        &self,
+        _paths: impl Iterator<Item = &'a Path>,
+        _repo: &gix::Repository,
+    ) -> Result<(), TreeError> {
+        Ok(())
+    }
+
+    fn changed(&self, _repo: &gix::Repository) -> Result<bool, TreeError> {
+        Ok(false)
     }
 }
 

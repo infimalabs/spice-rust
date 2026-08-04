@@ -20,6 +20,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use sill::{Argv, Completion, Environment, spawn};
@@ -168,6 +169,17 @@ const JAVASCRIPT_EXTENSIONS: &[&str] = &["js", "mjs", "cjs"];
 /// The compiled form of the Formatters Rust include glob.
 const RUST_EXTENSION: &str = "rs";
 
+/// Byte acquisition used by the source-decoding analyses.
+///
+/// Production always supplies [`fs::read`]. Keeping the operation explicit
+/// lets tests prove read-refusal behavior without depending on effective-user
+/// permission semantics.
+type SourceReader = fn(&Path) -> io::Result<Vec<u8>>;
+
+fn read_source(path: &Path) -> io::Result<Vec<u8>> {
+    fs::read(path)
+}
+
 /// The formatter whose canonical bytes every Formatters finding is measured against.
 const FORMATTER: &str = "rustfmt";
 
@@ -254,6 +266,15 @@ pub(super) fn local_paths(
     root: &Path,
     changes: &[String],
 ) -> Analysis {
+    local_paths_with(declaration, root, changes, read_source)
+}
+
+fn local_paths_with(
+    declaration: ToolchainDeclaration,
+    root: &Path,
+    changes: &[String],
+    read_source: SourceReader,
+) -> Analysis {
     let selected = selected_changes(root, changes, |_| true);
     if selected.is_empty() {
         return Analysis::not_applicable(declaration);
@@ -261,7 +282,7 @@ pub(super) fn local_paths(
 
     let mut findings = Vec::new();
     for path in &selected {
-        let lines = match numbered_lines(root, path) {
+        let lines = match numbered_lines(root, path, read_source) {
             Ok(lines) => lines,
             Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
         };
@@ -290,6 +311,15 @@ pub(super) fn taste(
     root: &Path,
     changes: &[String],
 ) -> Analysis {
+    taste_with(declaration, root, changes, read_source)
+}
+
+fn taste_with(
+    declaration: ToolchainDeclaration,
+    root: &Path,
+    changes: &[String],
+    read_source: SourceReader,
+) -> Analysis {
     let selected = selected_changes(root, changes, |path| {
         extension(path).is_some_and(|found| PROSE_EXTENSIONS.contains(&found.as_str()))
     });
@@ -299,7 +329,7 @@ pub(super) fn taste(
 
     let mut findings = Vec::new();
     for path in &selected {
-        let lines = match numbered_lines(root, path) {
+        let lines = match numbered_lines(root, path, read_source) {
             Ok(lines) => lines,
             Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
         };
@@ -331,6 +361,15 @@ pub(super) fn env_policy(
     root: &Path,
     changes: &[String],
 ) -> Analysis {
+    env_policy_with(declaration, root, changes, read_source)
+}
+
+fn env_policy_with(
+    declaration: ToolchainDeclaration,
+    root: &Path,
+    changes: &[String],
+    read_source: SourceReader,
+) -> Analysis {
     let selected = selected_changes(root, changes, env_language);
     if selected.is_empty() {
         return Analysis::not_applicable(declaration);
@@ -339,7 +378,7 @@ pub(super) fn env_policy(
     let mut findings = Vec::new();
     for path in &selected {
         let family = extension(path).and_then(|found| environment::family(&found));
-        let text = match decoded(root, path) {
+        let text = match decoded(root, path, read_source) {
             Ok(text) => text,
             Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
         };
@@ -372,6 +411,14 @@ pub(super) fn env_policy(
 /// place to point at. Both directions are reported, so the ledger cannot drift
 /// in either one without saying so.
 pub(super) fn env_name_ledger(declaration: ToolchainDeclaration, root: &Path) -> Analysis {
+    env_name_ledger_with(declaration, root, read_source)
+}
+
+fn env_name_ledger_with(
+    declaration: ToolchainDeclaration,
+    root: &Path,
+    read_source: SourceReader,
+) -> Analysis {
     let sources = match env_sources(root) {
         Ok(sources) => sources,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
@@ -383,7 +430,7 @@ pub(super) fn env_name_ledger(declaration: ToolchainDeclaration, root: &Path) ->
     let mut referenced: BTreeMap<String, Vec<SourceLocus>> = BTreeMap::new();
     for path in &sources {
         let family = extension(path).and_then(|found| environment::family(&found));
-        let lines = match numbered_lines(root, path) {
+        let lines = match numbered_lines(root, path, read_source) {
             Ok(lines) => lines,
             Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
         };
@@ -697,7 +744,13 @@ pub(super) fn formatters(
             format!("{CARGO} argument vector was refused"),
         );
     };
-    let running = match spawn(bounds.spec(argv, root)) {
+    let environment = match tool_environment("formatters", &[*program]) {
+        Ok(environment) => environment,
+        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+    };
+    let mut spec = bounds.spec(argv, root);
+    spec.environment = environment;
+    let running = match spawn(spec) {
         Ok(running) => running,
         Err(error) => {
             return Analysis::terminal(
@@ -897,19 +950,29 @@ fn run_canvas_analysis(
 }
 
 fn canvas_environment(cargo: &str, trunk: &str) -> Result<Environment, String> {
+    tool_environment("canvas", &[cargo, trunk])
+}
+
+/// A hermetic search path containing only the resolved analysis programs.
+///
+/// Cargo subcommands and the tools they dispatch are resolved through `PATH`
+/// even when Cargo itself was invoked by absolute path. Preserve the empty
+/// process environment everywhere else while making those declared programs
+/// mutually discoverable.
+fn tool_environment(label: &str, programs: &[&str]) -> Result<Environment, String> {
     let mut directories = Vec::new();
-    for program in [cargo, trunk] {
+    for program in programs {
         let Some(parent) = Path::new(program).parent() else {
-            return Err(format!("canvas tool {program:?} has no parent directory"));
+            return Err(format!("{label} tool {program:?} has no parent directory"));
         };
         if !directories.contains(&parent) {
             directories.push(parent);
         }
     }
     let path = std::env::join_paths(directories)
-        .map_err(|error| format!("canvas tool search path is invalid: {error}"))?;
+        .map_err(|error| format!("{label} tool search path is invalid: {error}"))?;
     Environment::new([("PATH", path)])
-        .map_err(|error| format!("canvas tool environment was refused: {error}"))
+        .map_err(|error| format!("{label} tool environment was refused: {error}"))
 }
 
 fn complete_output(name: &str, outcome: &sill::WaitOutcome) -> Result<String, String> {
@@ -1094,8 +1157,8 @@ fn selected_changes(
 /// nothing, which is what the path scanner's include promises. A read that
 /// fails is a different thing entirely and terminates the arm that asked: an
 /// analysis answering from empty text would report a clean file it never opened.
-fn decoded(root: &Path, path: &str) -> Result<String, String> {
-    fs::read(root.join(path))
+fn decoded(root: &Path, path: &str, read_source: SourceReader) -> Result<String, String> {
+    read_source(&root.join(path))
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
         .map_err(|error| format!("the selected source {path} could not be read: {error}"))
 }
@@ -1113,8 +1176,12 @@ fn numbered(text: &str) -> Vec<(u32, String)> {
 }
 
 /// One selected file decoded with replacement, as one-based numbered lines.
-fn numbered_lines(root: &Path, path: &str) -> Result<Vec<(u32, String)>, String> {
-    Ok(numbered(&decoded(root, path)?))
+fn numbered_lines(
+    root: &Path,
+    path: &str,
+    read_source: SourceReader,
+) -> Result<Vec<(u32, String)>, String> {
+    Ok(numbered(&decoded(root, path, read_source)?))
 }
 
 /// One discouraged word, where it sits on its line, and what to write instead.

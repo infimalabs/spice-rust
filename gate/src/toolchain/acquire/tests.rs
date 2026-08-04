@@ -68,6 +68,16 @@ mod tests {
 
         /// Probe the declared program against one captured search path.
         fn evidence(&self, search_path: &str, bounds: &Bounds) -> ToolEvidence {
+            self.evidence_with(search_path, bounds, read_program)
+        }
+
+        /// Probe through one selected byte reader.
+        fn evidence_with(
+            &self,
+            search_path: &str,
+            bounds: &Bounds,
+            read_program: ProgramReader,
+        ) -> ToolEvidence {
             let source = ToolchainSource {
                 root: &self.tree,
                 rim: RimCapture::new(
@@ -76,7 +86,7 @@ mod tests {
                     Vec::new(),
                 ),
             };
-            probe(&requirement(), &source, bounds)
+            probe_with(&requirement(), &source, bounds, read_program)
         }
     }
 
@@ -233,13 +243,18 @@ mod tests {
     fn a_resolved_program_that_cannot_be_read_is_unprobed_rather_than_missing() {
         let fixture = ProbeFixture::new("unreadable");
         let planted = fixture.version_stub(&fixture.rim.join(PROGRAM), RIM_VERSION);
-        fs::set_permissions(&planted, fs::Permissions::from_mode(0o111))
-            .expect("seal the planted stub against reading");
 
-        let evidence = fixture.evidence("", &probe_bounds(Duration::from_secs(10)));
+        let evidence = fixture.evidence_with(
+            "",
+            &probe_bounds(Duration::from_secs(10)),
+            |_| {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "injected executable read refusal",
+                ))
+            },
+        );
 
-        fs::set_permissions(&planted, fs::Permissions::from_mode(0o755))
-            .expect("restore the planted stub");
         assert_eq!(
             evidence,
             unprobed(&planted, ProbeFailure::Unreadable),

@@ -15,6 +15,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(target_os = "linux")]
+use std::cell::RefCell;
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::MetadataExt as _;
 #[cfg(not(target_family = "unix"))]
@@ -271,6 +273,7 @@ pub(crate) struct Snapshot {
     jurisdiction: Jurisdiction,
     tree: Digest,
     seals: Vec<Seal>,
+    changes: SnapshotChangeSeal,
 }
 
 pub(crate) struct SnapshotChange {
@@ -282,6 +285,15 @@ pub(crate) struct SnapshotChange {
 struct SnapshotRoot {
     path: PathBuf,
 }
+
+#[cfg(target_os = "linux")]
+struct SnapshotChangeSeal {
+    inotify: RefCell<inotify::Inotify>,
+    watched: Vec<(inotify::WatchDescriptor, String, Shape)>,
+}
+
+#[cfg(not(target_os = "linux"))]
+struct SnapshotChangeSeal;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Seal {
@@ -452,11 +464,13 @@ impl Snapshot {
         };
         let tree = jurisdiction.tree_digest()?;
         let seals = seal_tree(&root.path)?;
+        let changes = SnapshotChangeSeal::capture(&root.path, &seals)?;
         Ok(Self {
             root,
             jurisdiction,
             tree,
             seals,
+            changes,
         })
     }
 
@@ -469,10 +483,24 @@ impl Snapshot {
     }
 
     pub(crate) fn verify(&self) -> Result<Option<SnapshotChange>, WalkError> {
+        if let Some(path) = self.changes.changed(&self.root.path)? {
+            return Ok(Some(SnapshotChange {
+                path,
+                tree: self.tree.clone(),
+                observed_tree: self.jurisdiction.tree_digest().ok(),
+            }));
+        }
         let observed_seals = seal_tree(&self.root.path)?;
         if observed_seals != self.seals {
             return Ok(Some(SnapshotChange {
                 path: first_changed_path(&self.seals, &observed_seals),
+                tree: self.tree.clone(),
+                observed_tree: self.jurisdiction.tree_digest().ok(),
+            }));
+        }
+        if let Some(path) = self.changes.changed(&self.root.path)? {
+            return Ok(Some(SnapshotChange {
+                path,
                 tree: self.tree.clone(),
                 observed_tree: self.jurisdiction.tree_digest().ok(),
             }));
@@ -484,6 +512,101 @@ impl Snapshot {
             tree: self.tree.clone(),
             observed_tree: Some(observed_tree),
         }))
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl SnapshotChangeSeal {
+    fn capture(root: &Path, seals: &[Seal]) -> Result<Self, WalkError> {
+        let inotify = inotify::Inotify::init()
+            .map_err(|source| WalkError::io("creating a snapshot change seal", root, source))?;
+        let mask = inotify::WatchMask::ATTRIB
+            | inotify::WatchMask::CLOSE_WRITE
+            | inotify::WatchMask::CREATE
+            | inotify::WatchMask::DELETE
+            | inotify::WatchMask::DELETE_SELF
+            | inotify::WatchMask::MODIFY
+            | inotify::WatchMask::MOVE
+            | inotify::WatchMask::MOVE_SELF;
+        let mut watched = Vec::with_capacity(seals.len());
+        for seal in seals {
+            let path = if seal.path == "." {
+                root.to_path_buf()
+            } else {
+                root.join(&seal.path)
+            };
+            let descriptor = inotify
+                .watches()
+                .add(&path, mask)
+                .map_err(|source| WalkError::io("watching a snapshot path", &path, source))?;
+            watched.push((descriptor, seal.path.clone(), seal.shape));
+        }
+        Ok(Self {
+            inotify: RefCell::new(inotify),
+            watched,
+        })
+    }
+
+    fn changed(&self, root: &Path) -> Result<Option<String>, WalkError> {
+        let mut inotify = self.inotify.borrow_mut();
+        let mut buffer = [0_u8; 16 * 1024];
+        loop {
+            match inotify.read_events(&mut buffer) {
+                Ok(events) => {
+                    let mut events = events;
+                    if let Some(event) = events.next() {
+                        if event.mask.intersects(
+                            inotify::EventMask::Q_OVERFLOW | inotify::EventMask::UNMOUNT,
+                        ) {
+                            return Ok(Some("snapshot".to_owned()));
+                        }
+                        let Some((_, relative, shape)) = self
+                            .watched
+                            .iter()
+                            .find(|(descriptor, _, _)| descriptor == &event.wd)
+                        else {
+                            return Ok(Some("snapshot".to_owned()));
+                        };
+                        if event.mask.contains(inotify::EventMask::IGNORED) {
+                            return Ok(Some(relative.clone()));
+                        }
+                        if *shape == Shape::Directory
+                            && let Some(name) = event.name
+                        {
+                            let Some(name) = name.to_str() else {
+                                return Ok(Some("snapshot".to_owned()));
+                            };
+                            return Ok(Some(if relative == "." {
+                                name.to_owned()
+                            } else {
+                                format!("{relative}/{name}")
+                            }));
+                        }
+                        return Ok(Some(relative.clone()));
+                    }
+                }
+                Err(source) if source.kind() == io::ErrorKind::WouldBlock => return Ok(None),
+                Err(source) if source.kind() == io::ErrorKind::Interrupted => continue,
+                Err(source) => {
+                    return Err(WalkError::io(
+                        "reading the snapshot change seal",
+                        root,
+                        source,
+                    ));
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+impl SnapshotChangeSeal {
+    fn capture(_root: &Path, _seals: &[Seal]) -> Result<Self, WalkError> {
+        Ok(Self)
+    }
+
+    fn changed(&self, _root: &Path) -> Result<Option<String>, WalkError> {
+        Ok(None)
     }
 }
 

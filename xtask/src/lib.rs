@@ -132,6 +132,7 @@ pub fn check_app(output: &mut impl Write) -> Result<(), AppBuildError> {
 }
 
 fn run_trunk(root: &Path, stage: &Path, output: &mut impl Write) -> Result<(), AppBuildError> {
+    prepare_app_build(root)?;
     writeln!(output, "[app] trunk 0.21.14 -> {}", stage.display())
         .map_err(AppBuildError::Output)?;
     let rustflags = remapped_rustflags(root)?;
@@ -144,9 +145,21 @@ fn run_trunk(root: &Path, stage: &Path, output: &mut impl Write) -> Result<(), A
     finalize_stage(stage)
 }
 
+fn app_build_directory(root: &Path) -> PathBuf {
+    root.join("target/xtask-app-build")
+}
+
+fn prepare_app_build(root: &Path) -> Result<(), AppBuildError> {
+    let build = app_build_directory(root);
+    fs::create_dir_all(&build).map_err(|source| AppBuildError::Io {
+        path: build,
+        source,
+    })
+}
+
 fn trunk_command(root: &Path, stage: &Path, rustflags: String) -> Command {
     let target = root.join("target/xtask-app");
-    let build = root.join("target/xtask-app-build");
+    let build = app_build_directory(root);
     let mut command = Command::new("trunk");
     command
         .current_dir(root.join("app"))
@@ -599,6 +612,26 @@ mod tests {
                 "/stage",
             ]
         );
+    }
+
+    #[test]
+    fn app_build_preparation_creates_the_dedicated_build_directory() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-xtask-app-build-preparation-{}",
+            std::process::id(),
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale app-build fixture");
+        }
+
+        prepare_app_build(&root).expect("prepare the app-build directory");
+
+        let build = app_build_directory(&root);
+        assert!(
+            build.is_dir(),
+            "the dedicated Cargo build directory is absent"
+        );
+        fs::remove_dir_all(root).expect("remove app-build fixture");
     }
 
     #[test]

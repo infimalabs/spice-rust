@@ -586,47 +586,6 @@ fn live_resident_excludes_every_lock_held_recovery_mutation() {
     resident.stop(&fixture);
 }
 
-#[cfg(unix)]
-#[test]
-fn interrupted_restore_staging_preserves_the_old_authority() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let fixture = Fixture::new();
-    fixture.reply::<JournalBackup>(&[
-        "backup",
-        fixture.bundle.to_str().expect("UTF-8 backup path"),
-    ]);
-    fs::remove_file(&fixture.authority).expect("remove authority for interruption predecessor");
-    drop(
-        journal::Journal::open(&fixture.authority)
-            .expect("create interruption predecessor authority"),
-    );
-    let preview = fixture.reply::<JournalRestore>(&[
-        "restore",
-        fixture.bundle.to_str().expect("UTF-8 bundle path"),
-    ]);
-    let before = fs::read(&fixture.authority).expect("read interruption predecessor");
-    let parent = fixture.authority.parent().expect("authority data parent");
-    fs::set_permissions(parent, fs::Permissions::from_mode(0o500))
-        .expect("make restore staging unavailable");
-    let output = fixture.invoke(&[
-        "restore",
-        fixture.bundle.to_str().expect("UTF-8 bundle path"),
-        &format!("--apply={}", preview.body.plan),
-    ]);
-    fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
-        .expect("restore data directory permissions");
-    assert!(
-        !output.status.success(),
-        "unwritable staging unexpectedly applied"
-    );
-    assert_eq!(
-        fs::read(&fixture.authority).expect("read predecessor after interruption"),
-        before,
-        "interrupted staging replaced the old authority"
-    );
-}
-
 fn assert_refusal(output: &Output, reason: &str) {
     assert_eq!(output.status.code(), Some(2));
     let Outcome::Refusal(refusal) =

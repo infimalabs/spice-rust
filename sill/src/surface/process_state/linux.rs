@@ -19,7 +19,7 @@ pub(super) fn process_group_members_terminal(pid: u32) -> bool {
         let Some(member) = process
             .file_name()
             .to_str()
-            .and_then(|name| name.parse().ok())
+            .and_then(|name| name.parse::<u32>().ok())
         else {
             continue;
         };

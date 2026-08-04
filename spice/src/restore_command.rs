@@ -219,6 +219,13 @@ fn admit_apply(prepared: &PreparedRestore, requested: &str) -> Result<JournalLoc
 }
 
 fn publish_authority(destination: &Path, bytes: &[u8]) -> Result<(), Failure> {
+    publish_authority_with(destination, |staged| staged.write_all(bytes))
+}
+
+fn publish_authority_with<F>(destination: &Path, write: F) -> Result<(), Failure>
+where
+    F: FnOnce(&mut atomic::StagedWrite) -> io::Result<()>,
+{
     let parent = destination
         .parent()
         .expect("repository journal path has a data parent");
@@ -244,7 +251,7 @@ fn publish_authority(destination: &Path, bytes: &[u8]) -> Result<(), Failure> {
         )
     })?;
     set_private(staged.temporary_path())?;
-    staged.write_all(bytes).map_err(|error| {
+    write(&mut staged).map_err(|error| {
         fault(
             FaultClass::Environment,
             "restore::stage-failed",
@@ -698,5 +705,60 @@ impl Failure {
             Self::Refusal(refusal) => Outcome::Refusal(refusal),
             Self::Fault(fault) => Outcome::Fault(fault),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn interrupted_staging_preserves_the_predecessor_authority() {
+        let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "spice-restore-publication-{}-{sequence}",
+            std::process::id(),
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale restore publication fixture");
+        }
+        fs::create_dir(&root).expect("create restore publication fixture");
+        let destination = root.join("spicejournal.sqlite3");
+        let predecessor = b"predecessor authority";
+        fs::write(&destination, predecessor).expect("write predecessor authority");
+
+        let error = publish_authority_with(&destination, |staged| {
+            staged.write_all(b"partial replacement")?;
+            Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "injected staging interruption",
+            ))
+        })
+        .expect_err("an interrupted staged write must refuse publication");
+
+        let Failure::Fault(fault) = error else {
+            panic!("an interrupted staged write was not an environment fault");
+        };
+        assert_eq!(fault.class, FaultClass::Environment);
+        assert_eq!(fault.reason, "restore::stage-failed");
+        assert_eq!(
+            fs::read(&destination).expect("read predecessor after interruption"),
+            predecessor,
+            "interrupted staging replaced the predecessor authority",
+        );
+        let entries = fs::read_dir(&root)
+            .expect("read restore publication fixture")
+            .map(|entry| entry.expect("restore publication entry").path())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            entries,
+            [destination],
+            "interrupted staging left a temporary publication behind",
+        );
+
+        fs::remove_dir_all(root).expect("remove restore publication fixture");
     }
 }

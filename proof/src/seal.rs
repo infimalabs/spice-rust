@@ -267,8 +267,11 @@ mod tests {
             ),
             invocations.display()
         );
-        fs::write(&runner, script).expect("write native runner");
-        make_executable(&runner);
+        {
+            let _write_guard = crate::test_support::executable_write_guard();
+            fs::write(&runner, script).expect("write native runner");
+            make_executable(&runner);
+        }
         let config = Config::fixture(None, Some(runner));
 
         let evidence = super::seal(&fixture.layout(), &config, &fixture.worktree, limits())

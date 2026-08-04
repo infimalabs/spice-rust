@@ -236,7 +236,12 @@ fn observe_runtime_kind(binary: &Path, limits: Limits) -> Result<RuntimeKind, Co
         redaction: Redaction::None,
         grace: limits.grace,
     };
-    let running = sill::spawn(spec).map_err(ContainerError::SpawnRuntimeProbe)?;
+    let running = {
+        #[cfg(test)]
+        let _spawn_guard = crate::test_support::process_spawn_guard();
+        sill::spawn(spec)
+    }
+    .map_err(ContainerError::SpawnRuntimeProbe)?;
     let outcome = running.wait().map_err(ContainerError::WaitRuntimeProbe)?;
     let completion = format!("{:?}", outcome.completion());
     let stdout = outcome.stdout().map(Captured::from).ok_or_else(|| {
@@ -417,8 +422,12 @@ impl Container {
         arguments: &[String],
     ) -> Result<Execution, ContainerError> {
         let attestation = Attestation::fresh()?;
-        let running = sill::spawn(self.spec(program, arguments, &attestation)?)
-            .map_err(ContainerError::SpawnRuntime)?;
+        let running = {
+            #[cfg(test)]
+            let _spawn_guard = crate::test_support::process_spawn_guard();
+            sill::spawn(self.spec(program, arguments, &attestation)?)
+        }
+        .map_err(ContainerError::SpawnRuntime)?;
         let outcome = running.wait().map_err(ContainerError::Wait)?;
         let completion = match outcome.completion() {
             Completion::Exited(status) => ExecutionCompletion::Exited {
@@ -895,6 +904,7 @@ exit 0
 
     #[test]
     fn the_embedded_preflight_is_valid_posix_shell() {
+        let _spawn_guard = crate::test_support::process_spawn_guard();
         let status = std::process::Command::new("/bin/sh")
             .args(["-n", "-c", super::PREFLIGHT_SCRIPT])
             .status()
@@ -927,8 +937,11 @@ exit 0
             let workspace = root.join("workspace");
             let runtime = root.join("docker");
             fs::create_dir_all(&workspace).expect("fixture workspace");
-            fs::write(&runtime, script).expect("fixture runtime");
-            make_executable(&runtime);
+            {
+                let _write_guard = crate::test_support::executable_write_guard();
+                fs::write(&runtime, script).expect("fixture runtime");
+                make_executable(&runtime);
+            }
             Self {
                 root,
                 runtime,

@@ -252,13 +252,7 @@ enum SelectionSeal {
 impl SelectionSeal {
     fn verify(&self, repo: &gix::Repository) -> Result<(), TreeError> {
         match self {
-            Self::Index(before) => {
-                if IndexSeal::capture(repo).ok().as_ref() != Some(before) {
-                    return Err(TreeError::IndexChanged {
-                        path: repo.index_path(),
-                    });
-                }
-            }
+            Self::Index(before) => before.verify(repo)?,
             Self::Revision { before, revision } => {
                 if RevisionSeal::capture(repo, revision).ok().as_ref() != Some(before) {
                     return Err(TreeError::RevisionChanged {

@@ -85,7 +85,16 @@ fn invoke_at(argv: &[&str], current_dir: &Path) -> Spoken {
 
 fn invoke_configured(argv: &[&str], inbox: Option<&OsStr>, current_dir: Option<&Path>) -> Spoken {
     let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
-    command.args(argv).env_remove(steer::hook::INBOX);
+    command
+        .args(argv)
+        .env_remove(steer::hook::INBOX)
+        // Assertions below exercise the CLI's words, not terminal styling.
+        // Refuse ambient color-forcing variables so captured output remains
+        // stable under developer shells, CI runners, and test harnesses.
+        .env_remove("CLICOLOR")
+        .env_remove("CLICOLOR_FORCE")
+        .env_remove("FORCE_COLOR")
+        .env("NO_COLOR", "1");
     if let Some(inbox) = inbox {
         command.env(steer::hook::INBOX, inbox);
     }

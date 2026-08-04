@@ -7,6 +7,25 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+    static EXECUTABLE_FIXTURE_BARRIER: RwLock<()> = RwLock::new(());
+
+    pub(crate) fn process_spawn_guard() -> RwLockReadGuard<'static, ()> {
+        EXECUTABLE_FIXTURE_BARRIER
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(crate) fn executable_write_guard() -> RwLockWriteGuard<'static, ()> {
+        EXECUTABLE_FIXTURE_BARRIER
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 mod challenge;
 pub mod config;
 pub mod container;

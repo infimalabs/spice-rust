@@ -17,7 +17,7 @@ pub(super) fn process_absent(pid: u32) -> bool {
     kernel_identity_absent(pid)
 }
 
-pub(super) fn process_terminal(pid: u32) -> bool {
+pub(crate) fn process_terminal(pid: u32) -> bool {
     process_zombie(pid) || process_absent(pid)
 }
 
@@ -25,7 +25,7 @@ pub(super) fn process_zombie(pid: u32) -> bool {
     platform::process_zombie(pid)
 }
 
-pub(super) fn process_group_terminal(pid: u32) -> bool {
+pub(crate) fn process_group_terminal(pid: u32) -> bool {
     process_group_absent(pid) || platform::process_group_members_terminal(pid)
 }
 

@@ -511,21 +511,24 @@ mod tests {
             let container = root.join("container");
             let runner = root.join("runner");
             fs::create_dir_all(&workspace).expect("fixture workspace");
-            fs::write(
-                &container,
-                concat!(
-                    "#!/bin/sh\n",
-                    "if [ \"$1\" = --version ]; then\n",
-                    "    printf 'Docker version fixture\\n'\n",
-                    "    exit 0\n",
-                    "fi\n",
-                    "exit 0\n"
-                ),
-            )
-            .expect("fixture container runtime");
-            fs::write(&runner, "#!/bin/sh\nexit 0\n").expect("fixture native runner");
-            make_executable(&container);
-            make_executable(&runner);
+            {
+                let _write_guard = crate::test_support::executable_write_guard();
+                fs::write(
+                    &container,
+                    concat!(
+                        "#!/bin/sh\n",
+                        "if [ \"$1\" = --version ]; then\n",
+                        "    printf 'Docker version fixture\\n'\n",
+                        "    exit 0\n",
+                        "fi\n",
+                        "exit 0\n"
+                    ),
+                )
+                .expect("fixture container runtime");
+                fs::write(&runner, "#!/bin/sh\nexit 0\n").expect("fixture native runner");
+                make_executable(&container);
+                make_executable(&runner);
+            }
             Self {
                 root,
                 workspace,

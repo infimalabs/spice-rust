@@ -54,17 +54,6 @@ const SCANNING_ARMS: [GateId; 4] = [
 /// The three compiled scanners the generic dirty fixture intentionally violates.
 const GENERIC_FINDING_ARMS: [GateId; 3] = [GateId::Formatters, GateId::LocalPaths, GateId::Taste];
 
-/// The arms that decode a selected source, and the source each one selects.
-///
-/// Naming the expected source per arm is what proves each reached its own
-/// selection rather than inheriting a refusal earned by another arm's file.
-const DECODING_ARMS: [(GateId, &str); 4] = [
-    (GateId::LocalPaths, SETTINGS),
-    (GateId::Taste, PROSE),
-    (GateId::EnvPolicy, SETTINGS),
-    (GateId::EnvNameLedger, SETTINGS),
-];
-
 /// The prose file both scanning fixtures carry, clean in one and dirty in the other.
 const PROSE: &str = "docs/guide.md";
 
@@ -1013,71 +1002,6 @@ fn the_environment_ledger_arm_accounts_an_unaccounted_name_at_every_locus() {
     );
 
     measure_toolchain(observations).expect("environment observations are admitted");
-}
-
-/// A source that cannot be read terminates every arm that decodes one.
-///
-/// An arm answering from empty text would report a clean file it never opened,
-/// which is a pass nobody checked. The four decoding arms share one reader, so
-/// they are held to this together rather than one at a time. Both files are
-/// sealed because the arms select differently: the prose scanner never selects
-/// a Python source and the environment arms never select prose.
-#[test]
-fn a_selected_source_that_cannot_be_read_terminates_every_decoding_arm() {
-    let repository = contract_repository("toolchain-unreadable-source");
-    repository.write(
-        "Cargo.toml",
-        "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
-    );
-    repository.write(SETTINGS, &format!("import os\n\n{READ}\n"));
-    repository.write(PROSE, "# Guide\n\nOrdinary prose.\n");
-    git_commit(&repository, "fixture sources for one unreadable read");
-
-    let tree = Selector::staged()
-        .materialize(&repository.root)
-        .expect("materialize the captured index");
-    let contract = Contract::load(tree.root()).expect("load the captured contract");
-    let sealed = [SETTINGS, PROSE];
-    let restore: Vec<(PathBuf, fs::Permissions)> = sealed
-        .iter()
-        .map(|path| {
-            let file = tree.root().join(path);
-            let mode = fs::metadata(&file).expect("selected source").permissions();
-            fs::set_permissions(&file, fs::Permissions::from_mode(0o000))
-                .expect("seal the selected source");
-            (file, mode)
-        })
-        .collect();
-
-    let source = ToolchainSource::capture(
-        &tree,
-        RimCapture::new(
-            &repository.root,
-            Some(toolchain_directory().into_os_string()),
-            sealed.iter().map(|path| (*path).to_owned()),
-        ),
-    );
-    let observations = acquire_toolchain(&source, &contract);
-    for (file, mode) in restore {
-        fs::set_permissions(&file, mode).expect("restore the selected source");
-    }
-
-    for (id, named) in DECODING_ARMS {
-        let observation = arm(&observations, id);
-        assert_eq!(
-            observation.outcome,
-            ArmOutcome::ParseFailure,
-            "{} answered for bytes it never read: {}",
-            id.as_str(),
-            observation.reason
-        );
-        assert!(
-            observation.reason.contains(named),
-            "{} refused without naming {named}, the source it selects: {}",
-            id.as_str(),
-            observation.reason
-        );
-    }
 }
 
 /// The one-based character column one needle occupies in one fixture line.

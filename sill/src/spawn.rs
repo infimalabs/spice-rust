@@ -4,6 +4,8 @@ use crate::observe::{Observation, ObservationFailure};
 #[cfg(unix)]
 use crate::spec::ProcessGroup;
 use crate::spec::Spec;
+#[cfg(unix)]
+use crate::surface::process_state::process_group_terminal;
 use std::error::Error;
 use std::fmt;
 #[cfg(unix)]
@@ -22,6 +24,8 @@ use std::time::Instant;
 
 #[cfg(unix)]
 const WAKE_BYTE: &[u8] = &[1];
+#[cfg(unix)]
+const GROUP_POLL: Duration = Duration::from_millis(10);
 
 #[cfg(unix)]
 use capture::{CaptureHandle, FailureContext};
@@ -305,7 +309,7 @@ impl Running {
         let started = Instant::now();
         loop {
             self.drain_outputs()?;
-            if let Some(status) = self.take_child_exit()? {
+            if let Some(status) = self.take_execution_exit()? {
                 let completion = self.completion(status)?;
                 return self.finish(completion).map(WaitStep::Exited);
             }
@@ -362,17 +366,17 @@ impl Running {
     }
 
     fn terminate_and_reap(&mut self) -> Result<ExitStatus, WaitError> {
-        if let Some(status) = self.take_child_exit()? {
+        if let Some(status) = self.take_execution_exit()? {
             return Ok(status);
         }
 
         self.signal(platform::SIGTERM)?;
-        if let Some(status) = self.await_child_for(self.spec.grace)? {
+        if let Some(status) = self.await_execution_for(self.spec.grace)? {
             return Ok(status);
         }
 
         self.signal(platform::SIGKILL)?;
-        if let Some(status) = self.await_child_for(self.spec.deadlines.reap())? {
+        if let Some(status) = self.await_execution_for(self.spec.deadlines.reap())? {
             return Ok(status);
         }
 
@@ -382,10 +386,10 @@ impl Running {
         })
     }
 
-    fn await_child_for(&mut self, duration: Duration) -> Result<Option<ExitStatus>, WaitError> {
+    fn await_execution_for(&mut self, duration: Duration) -> Result<Option<ExitStatus>, WaitError> {
         let started = Instant::now();
         loop {
-            if let Some(status) = self.take_child_exit()? {
+            if let Some(status) = self.take_execution_exit()? {
                 return Ok(Some(status));
             }
             let elapsed = started.elapsed();
@@ -411,21 +415,27 @@ impl Running {
             )?;
         }
 
+        let observation_failure = self.observation_failure()?;
+        let stdout = self
+            .stdout
+            .take()
+            .map(CaptureHandle::finish)
+            .transpose()
+            .map_err(|source| self.io_error("finishing stdout capture", source))?;
+        let stderr = self
+            .stderr
+            .take()
+            .map(CaptureHandle::finish)
+            .transpose()
+            .map_err(|source| self.io_error("finishing stderr capture", source))?;
+        if self.requires_group_terminal() && !self.execution_group_terminal() {
+            self.terminate_and_reap()?;
+        }
         let outcome = WaitOutcome {
             completion,
-            observation_failure: self.observation_failure()?,
-            stdout: self
-                .stdout
-                .take()
-                .map(CaptureHandle::finish)
-                .transpose()
-                .map_err(|source| self.io_error("finishing stdout capture", source))?,
-            stderr: self
-                .stderr
-                .take()
-                .map(CaptureHandle::finish)
-                .transpose()
-                .map_err(|source| self.io_error("finishing stderr capture", source))?,
+            observation_failure,
+            stdout,
+            stderr,
         };
         if guardian::group_absent(self.pid)
             && let Some(guardian) = self.guardian.take()
@@ -448,11 +458,11 @@ impl Running {
             if let Some(failure) = &completion.cleanup_failure {
                 return Err(self.io_error("cleaning up failed observation", failure.error()));
             }
-            if let Some(status) = completion.status
-                && !completion.taken
-            {
-                completion.taken = true;
-                self.child.take();
+            if let Some(status) = completion.status {
+                if !completion.taken {
+                    completion.taken = true;
+                    self.child.take();
+                }
                 return Ok(Some(status));
             }
             completion.notice.clone()
@@ -469,6 +479,25 @@ impl Running {
             }
             None => Ok(None),
         }
+    }
+
+    fn take_execution_exit(&mut self) -> Result<Option<ExitStatus>, WaitError> {
+        let Some(status) = self.take_child_exit()? else {
+            return Ok(None);
+        };
+        if self.execution_group_terminal() {
+            Ok(Some(status))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn execution_group_terminal(&self) -> bool {
+        !self.requires_group_terminal() || process_group_terminal(self.pid)
+    }
+
+    fn requires_group_terminal(&self) -> bool {
+        self.spec.group == ProcessGroup::New && self.guardian.is_none()
     }
 
     fn completion(&self, status: ExitStatus) -> Result<Completion, WaitError> {
@@ -491,6 +520,17 @@ impl Running {
     fn block_for(&mut self, duration: Duration) -> Result<(), WaitError> {
         use std::os::fd::AsRawFd;
 
+        let duration = if self.requires_group_terminal()
+            && self
+                .process
+                .completion
+                .lock()
+                .is_ok_and(|completion| completion.status.is_some())
+        {
+            duration.min(GROUP_POLL)
+        } else {
+            duration
+        };
         let mut descriptors = Vec::with_capacity(1);
         descriptors.push(platform::PollFd::read(self.wake_receiver.as_raw_fd()));
 
@@ -615,14 +655,10 @@ impl Running {
 #[cfg(unix)]
 impl Drop for Running {
     fn drop(&mut self) {
-        let reaped = self
-            .process
-            .completion
-            .lock()
-            .is_ok_and(|completion| completion.status.is_some());
-        if !reaped {
+        let complete = self.take_execution_exit().ok().flatten().is_some();
+        if !complete {
             let _signal_result = self.signal(platform::SIGKILL);
-            let _reap_result = self.await_child_for(self.spec.deadlines.reap());
+            let _reap_result = self.await_execution_for(self.spec.deadlines.reap());
         }
     }
 }
@@ -663,7 +699,7 @@ fn abort_process(context: &FailureContext) -> Result<(), IoFailure> {
         kind: io::ErrorKind::Other,
         detail: error.to_string(),
     })?;
-    if wait_for_exit_notice(&context.process, context.grace)? {
+    if wait_for_exit_notice(context.pid, context.group, &context.process, context.grace)? {
         reap_process(context.pid, &context.process).map_err(IoFailure::capture)?;
         return Ok(());
     }
@@ -678,7 +714,7 @@ fn abort_process(context: &FailureContext) -> Result<(), IoFailure> {
         kind: io::ErrorKind::Other,
         detail: error.to_string(),
     })?;
-    if wait_for_exit_notice(&context.process, context.reap)? {
+    if wait_for_exit_notice(context.pid, context.group, &context.process, context.reap)? {
         reap_process(context.pid, &context.process).map_err(IoFailure::capture)?;
         return Ok(());
     }
@@ -693,24 +729,45 @@ fn abort_process(context: &FailureContext) -> Result<(), IoFailure> {
 }
 
 #[cfg(unix)]
-fn wait_for_exit_notice(process: &ProcessState, duration: Duration) -> Result<bool, IoFailure> {
-    let completion = process.completion.lock().map_err(|_| IoFailure {
+fn wait_for_exit_notice(
+    pid: u32,
+    group: ProcessGroup,
+    process: &ProcessState,
+    duration: Duration,
+) -> Result<bool, IoFailure> {
+    let started = Instant::now();
+    let mut completion = process.completion.lock().map_err(|_| IoFailure {
         kind: io::ErrorKind::Other,
         detail: "child completion lock is poisoned".to_owned(),
     })?;
-    let (completion, _timeout) = process
-        .exited
-        .wait_timeout_while(completion, duration, |completion| {
-            completion.notice.is_none() && completion.status.is_none()
-        })
-        .map_err(|_| IoFailure {
-            kind: io::ErrorKind::Other,
-            detail: "child completion lock is poisoned".to_owned(),
-        })?;
-    match &completion.notice {
-        Some(Err(failure)) => Err(failure.clone()),
-        Some(Ok(())) => Ok(true),
-        None => Ok(completion.status.is_some()),
+
+    loop {
+        if let Some(Err(failure)) = &completion.notice {
+            return Err(failure.clone());
+        }
+        let child_exited =
+            completion.status.is_some() || matches!(completion.notice.as_ref(), Some(Ok(())));
+        if child_exited && (group != ProcessGroup::New || process_group_terminal(pid)) {
+            return Ok(true);
+        }
+
+        let elapsed = started.elapsed();
+        if elapsed >= duration {
+            return Ok(false);
+        }
+        let remaining = duration.saturating_sub(elapsed);
+        let wait = if child_exited && group == ProcessGroup::New {
+            remaining.min(GROUP_POLL)
+        } else {
+            remaining
+        };
+        (completion, _) = process
+            .exited
+            .wait_timeout(completion, wait)
+            .map_err(|_| IoFailure {
+                kind: io::ErrorKind::Other,
+                detail: "child completion lock is poisoned".to_owned(),
+            })?;
     }
 }
 

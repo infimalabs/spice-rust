@@ -46,6 +46,12 @@ use crate::input::Contract;
 use crate::measure::Bounds;
 use crate::tree::SelectedTree;
 
+type ProgramReader = fn(&Path) -> std::io::Result<Vec<u8>>;
+
+fn read_program(path: &Path) -> std::io::Result<Vec<u8>> {
+    fs::read(path)
+}
+
 /// Everything the binary rim observed about itself, captured as one value.
 ///
 /// The three travel together because none of them is complete alone. A
@@ -389,6 +395,20 @@ fn probe(
     source: &ToolchainSource<'_>,
     bounds: &Bounds,
 ) -> ToolEvidence {
+    probe_with(requirement, source, bounds, read_program)
+}
+
+/// Probe one executable through the supplied byte reader.
+///
+/// The reader boundary keeps the acquisition contract testable under privileged
+/// users without changing the production path, where [`fs::read`] remains the
+/// sole source of executable bytes.
+fn probe_with(
+    requirement: &ToolRequirement,
+    source: &ToolchainSource<'_>,
+    bounds: &Bounds,
+    read_program: ProgramReader,
+) -> ToolEvidence {
     let rim = source.rim();
     let Some(resolved) = resolve(requirement.program, rim.directory(), rim.search_path()) else {
         return ToolEvidence::Missing {
@@ -402,7 +422,7 @@ fn probe(
         resolved_program: resolved.to_string_lossy().into_owned(),
         failure,
     };
-    let Ok(bytes) = fs::read(&resolved) else {
+    let Ok(bytes) = read_program(&resolved) else {
         return unprobed(ProbeFailure::Unreadable);
     };
     match version_output(&resolved, requirement.version_argv, source.root, bounds) {

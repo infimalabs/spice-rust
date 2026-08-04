@@ -1,5 +1,4 @@
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
 use std::str::FromStr;
 
 use gate::{
@@ -811,22 +810,18 @@ fn a_repository_without_a_claim_store_skips_plan_phase_rather_than_measuring_it(
 }
 
 #[test]
-fn an_unreadable_selected_tree_refuses_capture_with_a_typed_core_input_error() {
-    let repository = contract_repository("core-acquire-unreadable");
+fn a_disappeared_selected_tree_refuses_capture_with_a_typed_core_input_error() {
+    let repository = contract_repository("core-acquire-disappeared");
     let tree = Selector::staged()
         .materialize(&repository.root)
         .expect("materialize the captured index");
     let contract = Contract::load(tree.root()).expect("load the captured contract");
 
-    let sealed = tree.root().join("src");
-    let restore = fs::metadata(&sealed)
-        .expect("selected directory")
-        .permissions();
-    fs::set_permissions(&sealed, fs::Permissions::from_mode(0o000)).expect("seal the directory");
+    let displaced = tree.root().with_file_name("displaced-root");
+    fs::rename(tree.root(), &displaced).expect("displace the selected tree root");
     let refused = CoreSource::capture(&tree, &contract, ClaimCapture::Idle, ActorCapture::Absent);
-    fs::set_permissions(&sealed, restore).expect("restore the directory");
 
-    let error = refused.expect_err("an unreadable selected tree cannot yield one identity");
+    let error = refused.expect_err("a disappeared selected tree cannot yield one identity");
     assert!(
         error.to_string().contains("core source"),
         "capture must name the source it could not complete: {error}"

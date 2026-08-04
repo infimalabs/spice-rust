@@ -102,7 +102,12 @@ impl NativeRunner {
         self.verify_identity()?;
         let challenge = Challenge::fresh().map_err(NativeError::CreateChallenge)?;
         let spec = self.spec(program, arguments, &challenge)?;
-        let running = sill::spawn(spec).map_err(NativeError::Spawn)?;
+        let running = {
+            #[cfg(test)]
+            let _spawn_guard = crate::test_support::process_spawn_guard();
+            sill::spawn(spec)
+        }
+        .map_err(NativeError::Spawn)?;
         let outcome = running.wait().map_err(NativeError::Wait)?;
         let completion = match outcome.completion() {
             Completion::Exited(status) => ExecutionCompletion::Exited {
@@ -529,8 +534,11 @@ exit 0
     fn runner_byte_mutation_after_admission_refuses_before_process_start() {
         let fixture = Fixture::new(VALID_RUNNER, limits());
         let runner = fixture.runner();
-        fs::write(&fixture.runner, FAILED_RUNNER).expect("mutate admitted runner");
-        make_executable(&fixture.runner);
+        {
+            let _write_guard = crate::test_support::executable_write_guard();
+            fs::write(&fixture.runner, FAILED_RUNNER).expect("mutate admitted runner");
+            make_executable(&fixture.runner);
+        }
 
         assert!(matches!(
             runner.execute("cargo", &["test".to_owned()]),
@@ -556,8 +564,11 @@ exit 0
             let runner = root.join("runner");
             let workspace = root.join("workspace");
             fs::create_dir_all(&workspace).expect("fixture workspace");
-            fs::write(&runner, script).expect("fixture runner");
-            make_executable(&runner);
+            {
+                let _write_guard = crate::test_support::executable_write_guard();
+                fs::write(&runner, script).expect("fixture runner");
+                make_executable(&runner);
+            }
             Self {
                 root,
                 runner,

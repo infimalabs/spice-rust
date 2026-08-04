@@ -798,6 +798,7 @@ dependencies = [
  "csv",
  "gix",
  "gix-glob",
+ "inotify",
  "regex",
  "rustpython-ast",
  "rustpython-parser",

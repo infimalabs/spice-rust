@@ -20,7 +20,7 @@ use crate::{
 use crate::{Running, Spec};
 
 #[cfg(unix)]
-mod process_state;
+pub(crate) mod process_state;
 #[cfg(unix)]
 use process_state::{process_absent, process_group_terminal, process_terminal};
 

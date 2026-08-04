@@ -62,7 +62,11 @@ fn invoke(
     command
         .args(arguments)
         .current_dir(repository)
-        .env("PATH", search_path);
+        .env("PATH", search_path)
+        .env_remove("CLICOLOR")
+        .env_remove("CLICOLOR_FORCE")
+        .env_remove("FORCE_COLOR")
+        .env("NO_COLOR", "1");
     for variable in SpiceVariable::ALL {
         command.env_remove(variable.as_str());
     }

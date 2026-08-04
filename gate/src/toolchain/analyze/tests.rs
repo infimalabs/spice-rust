@@ -8,6 +8,7 @@ mod tests {
     use sill::Deadlines;
 
     static NEXT_CANVAS_FIXTURE: AtomicU64 = AtomicU64::new(0);
+    static NEXT_DECODING_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
     /// The compiled exclusions and the retained sentences are one rule set.
     ///
@@ -349,6 +350,116 @@ mod tests {
         let findings = differing_files(root, &printed);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].line, Some(8));
+    }
+
+    /// Every analysis that decodes selected bytes refuses the same read fault.
+    ///
+    /// Effective-user privilege can make mode-bit fixtures readable even after
+    /// a test removes every read bit. Injecting the acquisition failure at the
+    /// private reader boundary proves the semantic contract on every platform
+    /// and under every container user without changing production acquisition.
+    #[test]
+    fn a_source_read_refusal_terminates_every_decoding_arm() {
+        const SETTINGS: &str = "app/settings.py";
+        const PROSE: &str = "docs/guide.md";
+
+        fn refused_source(_path: &Path) -> io::Result<Vec<u8>> {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "injected source read refusal",
+            ))
+        }
+
+        let fixture = DecodingFixture::new();
+        let settings = vec![SETTINGS.to_owned()];
+        let prose = vec![PROSE.to_owned()];
+        let analyses = [
+            (
+                GateId::LocalPaths,
+                SETTINGS,
+                local_paths_with(
+                    declaration(GateId::LocalPaths).expect("local-paths declaration"),
+                    &fixture.root,
+                    &settings,
+                    refused_source,
+                ),
+            ),
+            (
+                GateId::Taste,
+                PROSE,
+                taste_with(
+                    declaration(GateId::Taste).expect("taste declaration"),
+                    &fixture.root,
+                    &prose,
+                    refused_source,
+                ),
+            ),
+            (
+                GateId::EnvPolicy,
+                SETTINGS,
+                env_policy_with(
+                    declaration(GateId::EnvPolicy).expect("env-policy declaration"),
+                    &fixture.root,
+                    &settings,
+                    refused_source,
+                ),
+            ),
+            (
+                GateId::EnvNameLedger,
+                SETTINGS,
+                env_name_ledger_with(
+                    declaration(GateId::EnvNameLedger).expect("env-name-ledger declaration"),
+                    &fixture.root,
+                    refused_source,
+                ),
+            ),
+        ];
+
+        for (id, source, analysis) in analyses {
+            assert_eq!(
+                analysis.outcome,
+                ArmOutcome::ParseFailure,
+                "{} answered for bytes it never read: {}",
+                id.as_str(),
+                analysis.reason,
+            );
+            assert!(
+                analysis.reason.contains(source),
+                "{} refused without naming {source}: {}",
+                id.as_str(),
+                analysis.reason,
+            );
+        }
+    }
+
+    struct DecodingFixture {
+        root: PathBuf,
+    }
+
+    impl DecodingFixture {
+        fn new() -> Self {
+            let sequence = NEXT_DECODING_FIXTURE.fetch_add(1, Ordering::Relaxed);
+            let root = std::env::temp_dir().join(format!(
+                "gate-decoding-{}-{sequence}",
+                std::process::id(),
+            ));
+            if root.exists() {
+                fs::remove_dir_all(&root).expect("remove stale decoding fixture");
+            }
+            fs::create_dir_all(root.join("app")).expect("create application fixture directory");
+            fs::create_dir_all(root.join("docs")).expect("create prose fixture directory");
+            fs::write(root.join("app/settings.py"), "import os\n")
+                .expect("write environment fixture source");
+            fs::write(root.join("docs/guide.md"), "Ordinary prose.\n")
+                .expect("write prose fixture source");
+            Self { root }
+        }
+    }
+
+    impl Drop for DecodingFixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.root).expect("remove decoding fixture");
+        }
     }
 
     struct CanvasFixture {

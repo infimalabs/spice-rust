@@ -1,6 +1,6 @@
 use super::capture::{CaptureWorker, FailureContext, start_capture};
 use super::launch::spawn_inner_refusing_descriptor_setup;
-use super::{Completion, spawn, spawn_observed};
+use super::{Completion, WaitStep, spawn, spawn_observed};
 use crate::lock::{Acquisition, LockFile, LockName, tests::unique_lock_path};
 use crate::observe::{
     Observation, ObservationFailure, ObserveError, ObservedRecord, OutputStream, RecordBoundary,
@@ -505,6 +505,67 @@ fn runtime_deadline_terminates_the_whole_process_group() {
         .expect("reap timed-out process group");
 
     assert!(matches!(outcome.completion(), Completion::TimedOut(_)));
+}
+
+#[test]
+fn leader_exit_does_not_complete_while_a_group_member_remains_live() {
+    let pid_file = unique_lock_path("residual-process-group");
+    let spec = test_spec(
+        "/bin/sh",
+        [
+            "-c",
+            concat!(
+                "trap '' TERM; ",
+                "/usr/bin/tail -f /dev/null >/dev/null 2>&1 & ",
+                "printf '%s\\n' \"$!\" > \"$PID_FILE\"; ",
+                "exit 0",
+            ),
+        ],
+        Environment::new([("PID_FILE", pid_file.as_os_str())]).expect("valid environment"),
+        Cancellation::Never,
+        Duration::from_secs(1),
+        StreamPolicy::Null,
+    );
+    let running = spawn(spec).expect("spawn residual process group");
+
+    let running = match running
+        .wait_for(Duration::from_millis(100))
+        .expect("observe leader exit")
+    {
+        WaitStep::Running(running) => *running,
+        WaitStep::Exited(_) => panic!("leader exit was mistaken for process-group completion"),
+    };
+    let child = fs::read_to_string(&pid_file)
+        .expect("residual child pid reads")
+        .trim()
+        .parse::<u32>()
+        .expect("residual child pid parses");
+
+    running
+        .signal_terminate()
+        .expect("terminate residual process group");
+    let running = match running
+        .wait_for(Duration::from_millis(30))
+        .expect("observe ignored termination")
+    {
+        WaitStep::Running(running) => *running,
+        WaitStep::Exited(_) => panic!("TERM-ignoring group was reported complete"),
+    };
+    running.signal_kill().expect("kill residual process group");
+    let outcome = match running
+        .wait_for(Duration::from_secs(1))
+        .expect("reap residual process group")
+    {
+        WaitStep::Exited(outcome) => outcome,
+        WaitStep::Running(_) => panic!("killed process group survived its reap bound"),
+    };
+
+    assert!(matches!(outcome.completion(), Completion::Exited(status) if status.success()));
+    assert!(
+        crate::surface::process_state::process_terminal(child),
+        "residual group member remained live"
+    );
+    fs::remove_file(pid_file).expect("remove residual pid fixture");
 }
 
 #[test]

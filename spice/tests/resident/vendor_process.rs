@@ -458,7 +458,24 @@ fn assert_processes_stopped(index: &Path, expected_per_vendor: usize) {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn process_alive(pid: u32) -> bool {
+    match fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat
+            .rsplit_once(") ")
+            .and_then(|(_, fields)| fields.as_bytes().first().copied())
+            .is_none_or(|state| !matches!(state, b'Z' | b'X' | b'x')),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(_) => process_identity_exists(pid),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_alive(pid: u32) -> bool {
+    process_identity_exists(pid)
+}
+
+fn process_identity_exists(pid: u32) -> bool {
     Command::new("kill")
         .args(["-0", &pid.to_string()])
         .output()
