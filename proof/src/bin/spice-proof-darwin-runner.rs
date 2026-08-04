@@ -12,18 +12,10 @@ use std::process::{Command, ExitCode, ExitStatus, Stdio};
 
 use proof::Battery;
 use proof::challenge::{Challenge, ChallengeError};
+use proof::native::{ATTESTATION_PREFIX, ISOLATION_CLAIMS, PROTOCOL};
 use serde::Deserialize;
 use wire::{Digest, Domain, IdentError};
 
-const PROTOCOL: &str = "spice-proof-native-runner-v1";
-const ATTESTATION: &str = "spice-proof-native-attestation-v1";
-const ISOLATION: &str = concat!(
-    "repository=read-only:",
-    "cargo-home=fresh-empty:",
-    "cargo-target=fresh-empty:",
-    "network=loopback-only:",
-    "host-dependencies=denied"
-);
 const VENDOR_RELATIVE: &str = "target/proof-native-darwin/vendor";
 
 /// Every pin this runner was sealed with, as `dist/proof-runner/build.sh` wrote
@@ -146,7 +138,7 @@ fn prepared(
     let profile = sandbox_profile(workspace, pins, temporary)?;
     temporary.write_cargo_config(workspace)?;
 
-    eprintln!("{ATTESTATION}:runner={identity}:challenge={challenge}:{ISOLATION}");
+    eprintln!("{ATTESTATION_PREFIX}:runner={identity}:challenge={challenge}:{ISOLATION_CLAIMS}");
     io::stderr()
         .flush()
         .map_err(|error| format!("cannot flush runner attestation: {error}"))?;
