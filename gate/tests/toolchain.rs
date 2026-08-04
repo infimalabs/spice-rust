@@ -661,6 +661,12 @@ fn javascript_unused_reports_candidate_and_test_only_but_suppresses_the_exact_ex
     measure_toolchain(observations).expect("JavaScript findings are admitted");
 }
 
+/// Four members go unreached here and only the three private ones are named.
+///
+/// The fourth is an interface member, which C# publishes through the interface
+/// itself and which therefore carries no access modifier to say so. A member
+/// that says nothing is otherwise private, so without the interface exception
+/// the arm would claim a member the whole world may call.
 #[test]
 fn csharp_unused_reports_private_candidates_and_separates_what_policy_retains() {
     let repository = scanning_repository(
@@ -677,7 +683,8 @@ fn csharp_unused_reports_private_candidates_and_separates_what_policy_retains() 
             "    [Obsolete]\n    private void AttributeRetained() { }\n\n",
             "    private void Loose() { }\n\n",
             "    private void Reached() { }\n\n",
-            "    public void Entry()\n    {\n        Reached();\n    }\n}\n",
+            "    public void Entry()\n    {\n        Reached();\n    }\n}\n\n",
+            "public interface IContract\n{\n    void Unreached();\n}\n",
         ),
     );
     git_commit(&repository, "csharp declaration fixture");
