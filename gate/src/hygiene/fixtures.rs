@@ -362,6 +362,55 @@ mod tests {
         .expect("fixture observations satisfy declarations")
     }
 
+    /// A reach ranking out of its own order is refused, and so is a zero rank.
+    ///
+    /// Nothing downstream re-sorts this ranking, because sorting it by path
+    /// would discard the one thing it says. That leaves the order load-bearing
+    /// on arrival: a ranking whose narrowest reach comes first names the wrong
+    /// module as the one a lane cannot verify alone. A module no test reaches
+    /// is left out rather than ranked at zero, so a zero row is the same kind
+    /// of claim about a walk that never happened.
+    #[test]
+    fn graph_evidence_ranked_against_its_own_order_or_at_zero_is_refused() {
+        for (label, edit) in [
+            ("narrowest first", (|reach| reach.reverse()) as fn(&mut Vec<ModuleReach>)),
+            ("tied rows out of path order", |reach: &mut Vec<ModuleReach>| {
+                reach[0].reached_by = reach[1].reached_by;
+                reach[0].imported_by = reach[1].imported_by;
+                reach.swap(0, 1);
+            }),
+            ("reached by nothing", |reach: &mut Vec<ModuleReach>| {
+                reach[1].reached_by = 0;
+                reach[1].imported_by = 0;
+            }),
+        ] {
+            let forged = HYGIENE_ARMS.into_iter().map(|arm| {
+                let mut observed = observation(arm.id, HygieneOutcome::Passed);
+                if arm.id == GateId::Reachability {
+                    for evidence in &mut observed.evidence {
+                        if let AnalysisEvidence::GraphConstruction { reach, .. } = evidence {
+                            edit(reach);
+                        }
+                    }
+                }
+                observed
+            });
+
+            let Err(error) = measure_hygiene(forged) else {
+                panic!("a ranking {label} must be refused")
+            };
+            assert!(
+                matches!(
+                    &error,
+                    HygieneError::InvalidEvidence { gate, evidence }
+                        if *gate == GateId::Reachability
+                            && evidence == "malformed typed stage evidence"
+                ),
+                "{label}: unexpected refusal: {error}"
+            );
+        }
+    }
+
     /// More importers than reachers is two graphs published as one.
     ///
     /// A test module naming a module directly also reaches it, so the direct

@@ -420,8 +420,24 @@ fn validate_evidence_shape(
                     // A test module importing a module directly also reaches
                     // it, so more importers than reachers is not a narrower
                     // count of one graph: it is two graphs reported as one.
+                    // A module no test reaches is left out rather than ranked
+                    // at zero, so a zero row is a rank nothing measured.
                     || reach.iter().any(|entry| {
-                        invalid_path(&entry.path) || entry.imported_by > entry.reached_by
+                        invalid_path(&entry.path)
+                            || entry.imported_by > entry.reached_by
+                            || entry.reached_by == 0
+                    })
+                    // The order is the measurement. Nothing downstream re-sorts
+                    // this ranking, precisely so the widest reach stays first,
+                    // which leaves a ranking that arrives out of order saying
+                    // the opposite of what it was walked to say.
+                    || reach.windows(2).any(|pair| {
+                        let [wider, narrower] = pair else {
+                            return false;
+                        };
+                        wider.reached_by < narrower.reached_by
+                            || (wider.reached_by == narrower.reached_by
+                                && wider.path > narrower.path)
                     })
             }
             AnalysisEvidence::Analyzer(item) => item.name().is_empty(),
