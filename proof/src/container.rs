@@ -383,6 +383,17 @@ fn observe_runtime_kind(binary: &Path, limits: Limits) -> Result<RuntimeKind, Co
 /// The one platform the sealed Linux appliance is assembled for.
 const IMAGE_PLATFORM: &str = "amd64 linux";
 
+/// The same platform in the spelling `run` takes, rather than the one
+/// `image inspect --format` reports.
+///
+/// Stated rather than left to the runtime's default, because a runtime that
+/// infers it from the host writes a mismatch warning onto the stream the
+/// attestation is read from, and every non-amd64 host would then fail admission
+/// with output it never produced. Nothing outside can repair that: the runtime
+/// is spawned with an empty environment, so `DOCKER_DEFAULT_PLATFORM` cannot
+/// reach it.
+const RUN_PLATFORM: &str = "linux/amd64";
+
 /// Resolve the pinned identity against what this host actually holds.
 ///
 /// A digest reference does not verify itself. Docker looks a bare image ID up
@@ -520,6 +531,8 @@ impl Container {
         );
         let mut runtime_arguments = vec![
             "run".to_owned(),
+            "--platform".to_owned(),
+            RUN_PLATFORM.to_owned(),
             "--rm".to_owned(),
             "--network=none".to_owned(),
             "--read-only".to_owned(),
@@ -968,6 +981,11 @@ exit 0
             arguments,
             [
                 "run".to_owned(),
+                // Named here rather than inferred, so a host whose own
+                // architecture differs cannot have a runtime warning written
+                // across the attestation stream.
+                "--platform".to_owned(),
+                "linux/amd64".to_owned(),
                 "--rm".to_owned(),
                 "--network=none".to_owned(),
                 "--read-only".to_owned(),
