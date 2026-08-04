@@ -128,7 +128,7 @@ pub struct Contract {
 /// Whether one registered leaf has executable Rust dispatch today.
 ///
 /// A gap names the public task that owns it. `Unaccounted` exists so a newly
-/// registered leaf fails the succession check instead of quietly joining the
+/// registered leaf fails the landing check instead of quietly joining the
 /// terminal release refusal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Landing {
@@ -1101,7 +1101,7 @@ pub const fn contracts() -> &'static [Contract] {
     CONTRACTS
 }
 
-/// Classify executable succession independently from parser registration.
+/// Classify executable landing independently from parser registration.
 ///
 /// This second closed table is intentional: adding a command contract does
 /// not make its implementation real. The closure test requires every current

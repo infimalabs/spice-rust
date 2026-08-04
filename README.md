@@ -22,7 +22,7 @@ The activation script refuses unless all three native hooks are executable. The
 native pre-commit hook runs the canonical Rust verifier, which performs
 formatting, Clippy, native and browser-target builds, deterministic app
 verification, workspace tests, doctests, the machine-readable
-succession-readiness check, and the still-installed Python policy gate during
+contract-landing check, and the still-installed Python policy gate during
 coexistence. It prints each command before execution and names the first
 command and exit status when verification fails. The native commit-msg hook
 preserves the current fixed message-hygiene law and additionally requires every

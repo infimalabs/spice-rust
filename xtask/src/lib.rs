@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 mod commit_message;
+mod landing;
 mod reference_transaction;
 mod release;
-mod succession;
 
 pub use commit_message::{CommitMessageError, WRAP_LIMIT as COMMIT_MESSAGE_WRAP_LIMIT};
 pub use reference_transaction::ReferenceTransactionError;
@@ -122,7 +122,7 @@ const VERIFY_ACTIONS: [Action; 8] = [
         "cargo test --locked --workspace --doc",
         &["test", "--locked", "--workspace", "--doc"],
     )),
-    Action::Readiness,
+    Action::Landing,
     Action::Command(Step::new(
         "spice",
         "spice dev pre-commit",
@@ -488,14 +488,14 @@ impl Step {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Action {
     Command(Step),
-    Readiness,
+    Landing,
 }
 
 impl Action {
     const fn label(self) -> &'static str {
         match self {
             Self::Command(step) => step.label,
-            Self::Readiness => succession::LABEL,
+            Self::Landing => landing::LABEL,
         }
     }
 }
@@ -508,7 +508,7 @@ struct Status {
 
 trait Runner {
     fn run(&mut self, step: Step) -> io::Result<Status>;
-    fn readiness(&mut self) -> Result<succession::Report, succession::Error>;
+    fn landing(&mut self) -> Result<landing::Report, landing::Error>;
 }
 
 struct SystemRunner;
@@ -522,8 +522,8 @@ impl Runner for SystemRunner {
         })
     }
 
-    fn readiness(&mut self) -> Result<succession::Report, succession::Error> {
-        succession::inspect()
+    fn landing(&mut self) -> Result<landing::Report, landing::Error> {
+        landing::inspect()
     }
 }
 
@@ -553,14 +553,14 @@ fn verify_with<R: Runner>(runner: &mut R, output: &mut impl Write) -> Result<(),
                     });
                 }
             }
-            Action::Readiness => {
+            Action::Landing => {
                 let report = runner
-                    .readiness()
-                    .map_err(|source| VerifyError::Readiness(source.to_string()))?;
+                    .landing()
+                    .map_err(|source| VerifyError::Landing(source.to_string()))?;
                 serde_json::to_writer(&mut *output, &report).map_err(VerifyError::Encode)?;
                 writeln!(output).map_err(VerifyError::Output)?;
                 if !report.admitted() {
-                    return Err(VerifyError::ReadinessRefused);
+                    return Err(VerifyError::LandingRefused);
                 }
             }
         }
@@ -573,8 +573,8 @@ fn verify_with<R: Runner>(runner: &mut R, output: &mut impl Write) -> Result<(),
 pub enum VerifyError {
     Output(io::Error),
     Encode(serde_json::Error),
-    Readiness(String),
-    ReadinessRefused,
+    Landing(String),
+    LandingRefused,
     Launch {
         label: &'static str,
         source: io::Error,
@@ -589,11 +589,11 @@ impl fmt::Display for VerifyError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Output(source) => write!(formatter, "[verify] output failed: {source}"),
-            Self::Encode(source) => write!(formatter, "[verify] readiness output failed: {source}"),
-            Self::Readiness(detail) => {
-                write!(formatter, "[verify] readiness acquisition failed: {detail}")
+            Self::Encode(source) => write!(formatter, "[verify] landing output failed: {source}"),
+            Self::Landing(detail) => {
+                write!(formatter, "[verify] landing acquisition failed: {detail}")
             }
-            Self::ReadinessRefused => formatter.write_str("[verify] succession readiness refused"),
+            Self::LandingRefused => formatter.write_str("[verify] contract landing refused"),
             Self::Launch { label, source } => {
                 write!(formatter, "[verify] failed to launch: {label} ({source})")
             }
@@ -613,7 +613,7 @@ impl std::error::Error for VerifyError {
         match self {
             Self::Output(source) | Self::Launch { source, .. } => Some(source),
             Self::Encode(source) => Some(source),
-            Self::Readiness(_) | Self::ReadinessRefused | Self::Exit { .. } => None,
+            Self::Landing(_) | Self::LandingRefused | Self::Exit { .. } => None,
         }
     }
 }
@@ -632,7 +632,7 @@ mod tests {
 
     struct FakeRunner {
         outcomes: VecDeque<Outcome>,
-        readiness: Option<Result<succession::Report, succession::Error>>,
+        landing: Option<Result<landing::Report, landing::Error>>,
         calls: Vec<&'static str>,
     }
 
@@ -652,11 +652,11 @@ mod tests {
             }
         }
 
-        fn readiness(&mut self) -> Result<succession::Report, succession::Error> {
-            self.calls.push(succession::LABEL);
-            self.readiness
+        fn landing(&mut self) -> Result<landing::Report, landing::Error> {
+            self.calls.push(landing::LABEL);
+            self.landing
                 .take()
-                .expect("fixture has one readiness outcome")
+                .expect("fixture has one landing outcome")
         }
     }
 
@@ -867,13 +867,13 @@ mod tests {
 
         assert_eq!(runner.calls, labels());
         let output = String::from_utf8(output).expect("labels are UTF-8");
-        let report = serde_json::to_string(&succession::fixture_report(true))
-            .expect("fixture report encodes");
+        let report =
+            serde_json::to_string(&landing::fixture_report(true)).expect("fixture report encodes");
         let expected = VERIFY_ACTIONS
             .into_iter()
             .map(|action| match action {
                 Action::Command(step) => format!("[verify] {}\n", step.label),
-                Action::Readiness => format!("[verify] {}\n{report}\n", succession::LABEL),
+                Action::Landing => format!("[verify] {}\n{report}\n", landing::LABEL),
             })
             .collect::<String>();
         assert_eq!(output, expected);
@@ -920,7 +920,7 @@ mod tests {
                 "cargo test --locked --workspace --doc",
                 &["test", "--locked", "--workspace", "--doc"],
             )),
-            Action::Readiness,
+            Action::Landing,
             Action::Command(Step::new(
                 "spice",
                 "spice dev pre-commit",
@@ -945,7 +945,7 @@ mod tests {
             .expect("the verifier has a doctest step");
 
         assert_eq!(step.arguments, ["test", "--locked", "--workspace", "--doc"]);
-        assert_eq!(VERIFY_ACTIONS[index + 1], Action::Readiness);
+        assert_eq!(VERIFY_ACTIONS[index + 1], Action::Landing);
     }
 
     /// The battery builds for a second target, and says which one.
@@ -999,26 +999,26 @@ mod tests {
     }
 
     #[test]
-    fn readiness_refusal_stops_before_the_python_policy_step() {
+    fn landing_refusal_stops_before_the_python_policy_step() {
         let mut runner = runner(successful_commands());
-        runner.readiness = Some(Ok(succession::fixture_report(false)));
+        runner.landing = Some(Ok(landing::fixture_report(false)));
         let mut output = Vec::new();
 
-        let error = verify_with(&mut runner, &mut output).expect_err("readiness refuses");
+        let error = verify_with(&mut runner, &mut output).expect_err("landing refuses");
 
-        assert!(matches!(error, VerifyError::ReadinessRefused));
+        assert!(matches!(error, VerifyError::LandingRefused));
         assert_eq!(runner.calls, labels()[..7]);
     }
 
     #[test]
-    fn readiness_acquisition_failure_stops_before_the_python_policy_step() {
+    fn landing_acquisition_failure_stops_before_the_python_policy_step() {
         let mut runner = runner(successful_commands());
-        runner.readiness = Some(Err(succession::fixture_error()));
+        runner.landing = Some(Err(landing::fixture_error()));
         let mut output = Vec::new();
 
-        let error = verify_with(&mut runner, &mut output).expect_err("readiness fails");
+        let error = verify_with(&mut runner, &mut output).expect_err("landing fails");
 
-        assert!(matches!(error, VerifyError::Readiness(_)));
+        assert!(matches!(error, VerifyError::Landing(_)));
         assert_eq!(runner.calls, labels()[..7]);
     }
 
@@ -1045,7 +1045,7 @@ mod tests {
     fn runner(outcomes: impl IntoIterator<Item = Outcome>) -> FakeRunner {
         FakeRunner {
             outcomes: outcomes.into_iter().collect(),
-            readiness: Some(Ok(succession::fixture_report(true))),
+            landing: Some(Ok(landing::fixture_report(true))),
             calls: Vec::new(),
         }
     }

@@ -341,16 +341,16 @@ fn not_landed_from(path: &[&str], landing: cli::Landing) -> Outcome<()> {
         }),
         cli::Landing::GapOwned(owner) => Outcome::Refusal(Refusal {
             reason: "release::not-landed".to_owned(),
-            witness: Some("succession-owner".to_owned()),
+            witness: Some("landing-owner".to_owned()),
             expected: Some(owner.to_owned()),
             observed: Some(path.join(" ")),
             remedy: format!("complete the owning task {owner}"),
         }),
         cli::Landing::Unaccounted => Outcome::Fault(Fault {
             class: FaultClass::Protocol,
-            reason: "release::succession-unaccounted".to_owned(),
+            reason: "release::landing-unaccounted".to_owned(),
             detail: format!(
-                "registered command has no succession disposition: {}",
+                "registered command has no landing disposition: {}",
                 path.join(" ")
             ),
         }),
@@ -867,7 +867,7 @@ mod tests {
     }
 
     #[test]
-    fn succession_terminal_distinguishes_owned_and_unaccounted_paths() {
+    fn landing_terminal_distinguishes_owned_and_unaccounted_paths() {
         let Outcome::Refusal(owned) = not_landed_from(
             &["fixture", "owned"],
             cli::Landing::GapOwned("FIXTURE-owner01"),
@@ -883,7 +883,7 @@ mod tests {
         else {
             panic!("an unaccounted path must fault");
         };
-        assert_eq!(unaccounted.reason, "release::succession-unaccounted");
+        assert_eq!(unaccounted.reason, "release::landing-unaccounted");
     }
 
     /// The stream an outcome speaks on and the exit it carries read the same.
