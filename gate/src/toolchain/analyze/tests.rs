@@ -4,7 +4,9 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
 
-    use crate::toolchain::{PACKAGED_SCANNER_EXCLUDES, TOOLCHAIN_ARMS, declaration};
+    use crate::toolchain::{
+        PACKAGED_SCANNER_EXCLUDES, TOOLCHAIN_ARMS, declaration, fixture_external_finding,
+    };
     use sill::Deadlines;
 
     static NEXT_CANVAS_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -338,6 +340,27 @@ mod tests {
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].path.as_deref(), Some("src/app.rs"));
         assert_eq!(findings[0].line, Some(9));
+    }
+
+    /// The formatter fixture reports the column this producer reports.
+    ///
+    /// Nothing downstream would notice them drifting: this arm refuses
+    /// predecessor comparison before any finding equality runs, so a fixture
+    /// naming a column would describe a locus the formatter has no way to
+    /// report and would never be contradicted. Asking the producer is what
+    /// makes the disagreement arrive here instead of nowhere.
+    #[test]
+    fn the_formatter_fixture_reports_the_column_this_arm_does() {
+        let root = Path::new("/selected/tree");
+        let printed = format!("{DIFF_PREFIX}/selected/tree/src/app.rs:9:\n");
+        let findings = differing_files(root, &printed);
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].column,
+            fixture_external_finding(GateId::Formatters, "a").column,
+            "the formatter arm and its fixture disagree on the column"
+        );
     }
 
     /// Many reported regions in one file are still one unformatted file.
