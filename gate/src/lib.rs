@@ -68,19 +68,21 @@ pub use core::{
 };
 pub use hygiene::{
     AnalysisEvidence, AnalyzerEvidence, EvidenceState, ExclusionEvidence, HYGIENE_ARMS,
-    HYGIENE_REPORT_VERSION, HygieneAnalysisError, HygieneAnalyzer, HygieneConfiguration,
-    HygieneConfigurationSource, HygieneDeclaration, HygieneError, HygieneExclusion, HygieneFinding,
-    HygieneFindingDetail, HygieneJurisdiction, HygieneMeasurement, HygieneOutcome,
-    HygieneProvenance, HygieneReport, HygieneTraversal,
+    HYGIENE_REPORT_VERSION, HygieneAnalyzer, HygieneConfigurationSource, HygieneDeclaration,
+    HygieneError, HygieneFinding, HygieneFindingDetail, HygieneJurisdiction, HygieneMeasurement,
+    HygieneOutcome, HygieneProvenance, HygieneReport, HygieneTraversal,
     MigrationRefusal as HygieneMigrationRefusal,
     PredecessorComparison as HygienePredecessorComparison,
     PredecessorComparisonError as HygienePredecessorComparisonError,
     PredecessorObservation as HygienePredecessorObservation,
-    PredecessorResult as HygienePredecessorResult, PrivateCouplingException, PythonUnusedStatus,
-    SuppressedPath, analyze_hygiene, compare_predecessor as compare_hygiene_predecessor,
+    PredecessorResult as HygienePredecessorResult, PythonUnusedStatus, SuppressedPath,
+    compare_predecessor as compare_hygiene_predecessor,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use hygiene::{HygieneSource, acquire_hygiene};
+pub use hygiene::{
+    HygieneAnalysisError, HygieneConfiguration, HygieneExclusion, HygieneSource,
+    PrivateCouplingException, acquire_hygiene,
+};
 pub use input::{
     BASELINE_PATH, BASELINE_VERSION, Baseline, BaselineError, Contract, ContractError,
     ExecutableDeclaration, FieldError, Floor, FloorDeclaration, FloorKind, GateSet, GateSetError,

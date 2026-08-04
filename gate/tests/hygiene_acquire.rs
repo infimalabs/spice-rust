@@ -6,9 +6,8 @@ use std::process::{Command, Output};
 use gate::{
     AnalysisEvidence, Contract, GateId, HYGIENE_ARMS, HygieneConfiguration, HygieneExclusion,
     HygieneMeasurement, HygieneOutcome, HygieneProvenance, HygieneReport, HygieneSource,
-    Jurisdiction, Selector, SuppressedPath, acquire_hygiene, analyze_hygiene,
+    Jurisdiction, Selector, SuppressedPath, acquire_hygiene,
 };
-use serde_json::Value;
 
 mod support;
 
@@ -20,21 +19,18 @@ const REPOSITORY_ENV: &str = "SPICE_HYGIENE_ACQUIRE_REPOSITORY"; // env-policy: 
 const MARKER_ENV: &str = "SPICE_HYGIENE_INTERPRETER_MARKER"; // env-policy: allow
 
 #[test]
-fn one_captured_source_reproduces_the_existing_five_arm_analysis() {
+fn one_captured_source_walks_the_same_jurisdiction_and_measures_every_arm() {
     let repository = hygiene_repository("hygiene-acquire-parity", false);
     let tree = Selector::staged()
         .materialize(&repository.root)
         .expect("materialize the captured hygiene source");
     let contract = Contract::load(tree.root()).expect("load the captured contract");
-    let configuration = configuration();
 
     let prior_jurisdiction = Jurisdiction::walk(tree.root(), contract.policy().ignore())
         .expect("walk the existing hygiene fixture jurisdiction");
-    let expected = analyze_hygiene(&prior_jurisdiction, &configuration)
-        .expect("run the existing source-derived hygiene fixture");
     let source = HygieneSource::capture(&tree, &contract).expect("capture one hygiene source");
     let acquired =
-        acquire_hygiene(&source, &configuration).expect("acquire the complete hygiene family");
+        acquire_hygiene(&source, &configuration()).expect("acquire the complete hygiene family");
 
     assert_eq!(source.root(), tree.root());
     assert_eq!(
@@ -43,7 +39,6 @@ fn one_captured_source_reproduces_the_existing_five_arm_analysis() {
             .tree_digest()
             .expect("fixture tree identity")
     );
-    assert_eq!(without_elapsed(&acquired), without_elapsed(&expected));
     assert_eq!(
         acquired
             .arms
@@ -380,28 +375,6 @@ fn hygiene_repository(label: &str, excluded_broken_source: bool) -> Tree {
     }
     git_commit(&repository, "hygiene fixture");
     repository
-}
-
-fn without_elapsed(report: &HygieneReport) -> Value {
-    let mut value = serde_json::to_value(report).expect("encode fixture report");
-    let arms = value
-        .get_mut("arms")
-        .and_then(Value::as_array_mut)
-        .expect("report arms");
-    for arm in arms {
-        let evidence = arm
-            .get_mut("evidence")
-            .and_then(Value::as_array_mut)
-            .expect("arm evidence");
-        for item in evidence {
-            if item.get("evidence") == Some(&Value::String("deadline".to_owned())) {
-                item.as_object_mut()
-                    .expect("deadline evidence object")
-                    .insert("elapsed_ms".to_owned(), Value::from(0));
-            }
-        }
-    }
-    value
 }
 
 fn git_repository(label: &str) -> Tree {

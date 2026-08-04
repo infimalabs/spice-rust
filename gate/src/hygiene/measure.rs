@@ -8,6 +8,7 @@ use super::*;
 ///
 /// Refuses foreign, duplicate, missing, or inconsistent observations. No
 /// partial report is returned.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn measure_hygiene(
     observations: impl IntoIterator<Item = HygieneObservation>,
 ) -> Result<HygieneReport, HygieneError> {

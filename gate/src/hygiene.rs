@@ -11,18 +11,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::manifest::GateId;
 
+// Analysis reads a walked selected tree, so it is native for the same reason
+// acquisition is. Nothing on the browser target can produce a jurisdiction to
+// analyze, and now that acquisition is the only door into the analyzers there
+// is no longer an exported symbol holding them on that target.
 #[cfg(not(target_arch = "wasm32"))]
 mod acquire;
+#[cfg(not(target_arch = "wasm32"))]
 mod analyze;
 mod measure;
 mod predecessor;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use acquire::{HygieneSource, acquire_hygiene};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use analyze::analyze_hygiene;
+#[cfg(not(target_arch = "wasm32"))]
 pub use analyze::{
     HygieneAnalysisError, HygieneConfiguration, HygieneExclusion, PrivateCouplingException,
-    analyze_hygiene,
 };
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use measure::measure_hygiene;
 pub use predecessor::{
     MigrationRefusal, PredecessorComparison, PredecessorComparisonError, PredecessorObservation,
@@ -494,10 +502,13 @@ impl AnalyzerEvidence {
 }
 
 /// Release that owns every grammar this family decides with.
+#[cfg(not(target_arch = "wasm32"))]
 const CURRENT_RELEASE: &str = "current";
 /// Layer of a law the battery ships rather than reads from a repository.
+#[cfg(not(target_arch = "wasm32"))]
 const COMPILED_LAYER: &str = "compiled";
 /// Document a compiled law is attributed to.
+#[cfg(not(target_arch = "wasm32"))]
 const COMPILED_DOCUMENT: &str = "<compiled-gate-battery>";
 
 /// Exact origin of one applicability or exclusion decision.
