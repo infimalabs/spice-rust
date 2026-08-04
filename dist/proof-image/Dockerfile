@@ -21,6 +21,22 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo install --locked --root /opt/spice/tools --version 27.1.0 cargo-mutants && \
     cargo install --locked --root /opt/spice/tools --version 0.2.126 wasm-bindgen-cli
 
+# Trunk downloads `wasm-opt` the first time it optimizes a release module, so the
+# appliance is offline only once that binary is already here. Offline Trunk asks
+# for `wasm-opt` at any version and resolves it from `PATH`, never from the
+# versioned tool cache it populates when it downloads one itself, so this
+# installs alongside the other pinned tools rather than shadowing a private
+# cache layout. One file is installed because the release links `libbinaryen`
+# statically and ships the rest of `bin` for tools nothing here runs.
+ADD --checksum=sha256:e959f2170af4c20c552e9de3a0253704d6a9d2766e8fdb88e4d6ac4bae9388fe \
+    https://github.com/WebAssembly/binaryen/releases/download/version_123/binaryen-version_123-x86_64-linux.tar.gz \
+    /tmp/binaryen.tar.gz
+
+RUN tar -xzf /tmp/binaryen.tar.gz --strip-components=2 \
+        -C /opt/spice/tools/bin binaryen-version_123/bin/wasm-opt && \
+    rm /tmp/binaryen.tar.gz && \
+    /opt/spice/tools/bin/wasm-opt --version
+
 COPY vendor /opt/spice/vendor
 COPY cargo-config.toml /opt/spice/cargo-config.toml
 COPY cargo-wrapper.sh /opt/spice/bin/cargo
