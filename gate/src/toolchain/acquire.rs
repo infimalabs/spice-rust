@@ -12,7 +12,9 @@
 //! all ambient configuration. Each is captured at the binary rim and handed in
 //! whole rather than read back from the process or the repository here, so two
 //! machines cannot silently resolve two different programs or scan two
-//! different sets.
+//! different sets. Reading nothing back is also why a relative rim directory is
+//! refused by [`RimCapture::new`] instead of resolved there: resolving it would
+//! read the one piece of process state this module declines to consult.
 //!
 //! A declared program is probed exactly once, at one absolute path, and the
 //! probe answers with one of three observations: not found, found and not
@@ -30,6 +32,7 @@
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -76,24 +79,41 @@ pub struct RimCapture {
 impl RimCapture {
     /// Capture one rim's directory, executable search path, and changed paths.
     ///
+    /// The directory must be absolute, and a relative one is refused here
+    /// rather than resolved. This constructor takes everything it holds as an
+    /// argument and reads nothing ambient, so the only directory it could
+    /// anchor a relative one against is whatever directory this process happens
+    /// to have been started in, which is the reader-dependent anchor the
+    /// capture exists to remove. Refusing is what makes [`Self::directory`]
+    /// absolute for every reader instead of only for the well-behaved caller.
+    ///
     /// Changed paths are selected-tree-relative. A path that does not name a
     /// regular file in the captured tree is retained here and dropped by the
     /// scanner that reads it, because a deletion is a change with nothing to
     /// read rather than a defect in the capture.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Refuses a relative directory, which cannot anchor a search path.
     pub fn new(
         directory: impl Into<PathBuf>,
         search_path: Option<OsString>,
         changes: impl IntoIterator<Item = String>,
-    ) -> Self {
-        Self {
-            directory: directory.into(),
+    ) -> Result<Self, RimDirectoryError> {
+        let directory = directory.into();
+        if !directory.is_absolute() {
+            return Err(RimDirectoryError(directory));
+        }
+        Ok(Self {
+            directory,
             search_path,
             changes: changes.into_iter().collect(),
-        }
+        })
     }
 
     /// Absolute directory the search path was captured in.
+    ///
+    /// Absolute by construction: [`Self::new`] admits nothing else.
     #[must_use]
     pub fn directory(&self) -> &Path {
         &self.directory
@@ -111,6 +131,22 @@ impl RimCapture {
         &self.changes
     }
 }
+
+/// A directory that cannot anchor one rim's search path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RimDirectoryError(PathBuf);
+
+impl fmt::Display for RimDirectoryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "rim directory must be absolute to anchor a search path: {:?}",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for RimDirectoryError {}
 
 /// One captured tree and the rim that named the programs and changes to use.
 ///

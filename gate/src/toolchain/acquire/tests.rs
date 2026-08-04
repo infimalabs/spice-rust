@@ -84,7 +84,8 @@ mod tests {
                     self.rim.clone(),
                     Some(OsString::from(search_path)),
                     Vec::new(),
-                ),
+                )
+                .expect("the fixture rim directory is absolute"),
             };
             probe_with(&requirement(), &source, bounds, read_program)
         }
@@ -198,6 +199,26 @@ mod tests {
             version,
             &format!("{RIM_VERSION}\n"),
             "the probe answered from the selected tree and not from the rim"
+        );
+    }
+
+    /// The anchor those entries are joined onto is absolute or it is nothing.
+    ///
+    /// Anchoring turns a relative entry into one absolute file only when the
+    /// rim itself is absolute, which is what the two tests above rely on. A
+    /// relative rim would join a relative candidate that this process reads and
+    /// hashes against the directory it was started in while the probe runs it
+    /// against the selected tree, so the digest and the version would be free to
+    /// describe two different programs. That reading is refused where it is
+    /// written down, so no capture ever carries it as far as `resolve`.
+    #[test]
+    fn a_relative_rim_directory_never_becomes_a_capture() {
+        let relative = Path::new("rim");
+
+        assert_eq!(
+            RimCapture::new(relative, Some(OsString::from("bin")), Vec::new()).unwrap_err(),
+            RimDirectoryError(relative.to_path_buf()),
+            "a relative directory became a capture whose program has two readings"
         );
     }
 
