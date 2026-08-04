@@ -288,6 +288,11 @@ fn ungroup(expression: &Expr) -> &Expr {
 /// an initializer that already carries a path. Every pattern that rebinds a name
 /// evicts it for the construct that scopes the pattern; a let-expression pattern
 /// evicts to the end of its block, which can only lose a chain, never invent one.
+///
+/// A type parameter withdraws the root name it spells for as long as it is in
+/// scope, whether it is declared by the signature reached or by the impl block
+/// around it, because a generic receiver is any type at all and never the one
+/// configuration root.
 struct ConsumerVisitor<'a> {
     declared: &'a BTreeSet<Vec<String>>,
     roots: BTreeSet<String>,
@@ -380,6 +385,17 @@ impl<'ast> Visit<'ast> for ConsumerVisitor<'_> {
         let outer = self.enter_body(&node.sig);
         visit::visit_item_fn(self, node);
         self.bindings = outer;
+    }
+
+    fn visit_item_impl(&mut self, node: &'ast syn::ItemImpl) {
+        let outer = self.roots.clone();
+        for parameter in &node.generics.params {
+            if let GenericParam::Type(parameter) = parameter {
+                self.roots.remove(&parameter.ident.to_string());
+            }
+        }
+        visit::visit_item_impl(self, node);
+        self.roots = outer;
     }
 
     fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
