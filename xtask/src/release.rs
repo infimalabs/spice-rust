@@ -632,13 +632,23 @@ impl SystemExecutor {
         if let Some(cargo_home) = release.cargo_home() {
             entries.push(("CARGO_HOME".into(), cargo_home));
         }
+        let build_root = release.build_root(root);
         entries.extend([
+            // Named rather than dropped, because one of the commands below is
+            // this same binary: `app-build` re-invokes `xtask check-app`, which
+            // resolves its own build root from this variable at its own rim. An
+            // absent value there is not a neutral default but a second answer —
+            // the app rebuild would write under the workspace while everything
+            // else wrote here, which is exactly the split a read-only workspace
+            // makes fatal. Cargo's own builds are unaffected: every one of them
+            // carries an explicit `--target-dir`, which outranks this.
+            (
+                OsString::from("CARGO_TARGET_DIR"),
+                build_root.clone().into_os_string(),
+            ),
             (
                 OsString::from("CARGO_BUILD_BUILD_DIR"),
-                release
-                    .build_root(root)
-                    .join("release-appliance-build")
-                    .into_os_string(),
+                build_root.join("release-appliance-build").into_os_string(),
             ),
             (OsString::from("CARGO_INCREMENTAL"), OsString::from("0")),
             (OsString::from("CARGO_NET_OFFLINE"), OsString::from("true")),
@@ -1220,10 +1230,12 @@ mod tests {
                 .as_os_str()
         );
         assert_eq!(value("CARGO_INCREMENTAL"), "0");
-        assert!(
-            entries
-                .iter()
-                .all(|(key, _)| key != OsStr::new("CARGO_TARGET_DIR"))
+        // Pinned to the resolved answer rather than left absent: absence would
+        // let the one child that reads this variable — `xtask check-app` — pick
+        // a build root of its own.
+        assert_eq!(
+            value("CARGO_TARGET_DIR"),
+            fixture.root.join("target").as_os_str()
         );
         assert_eq!(value("RUSTC_WRAPPER"), "");
         assert_eq!(value("RUSTC_WORKSPACE_WRAPPER"), "");
@@ -1251,17 +1263,22 @@ mod tests {
 
         let executor = SystemExecutor::new(root, &release_environment(Some("/cargo-target")))
             .expect("release executor");
-        assert_eq!(
-            executor
-                .environment
-                .entries()
+        let entries = executor.environment.entries();
+        let value = |name: &str| {
+            entries
                 .iter()
-                .find_map(
-                    |(key, value)| (key == "CARGO_BUILD_BUILD_DIR").then_some(value.as_os_str())
-                )
-                .expect("missing release environment CARGO_BUILD_BUILD_DIR"),
+                .find_map(|(key, value)| (key == name).then_some(value.as_os_str()))
+                .unwrap_or_else(|| panic!("missing release environment {name}"))
+        };
+        assert_eq!(
+            value("CARGO_BUILD_BUILD_DIR"),
             OsStr::new("/cargo-target/release-appliance-build"),
         );
+        // The `app-build` step runs this same binary, which acquires its build
+        // root from `CARGO_TARGET_DIR` at its own rim. Withholding it here
+        // would send the app rebuild back under the workspace no matter what
+        // the resolver above decided.
+        assert_eq!(value("CARGO_TARGET_DIR"), OsStr::new("/cargo-target"));
     }
 
     /// `HOME` is Cargo's own rule for locating a Cargo home, so the fallback
