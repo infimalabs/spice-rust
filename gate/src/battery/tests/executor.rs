@@ -186,6 +186,60 @@ fn a_capture_without_an_acting_actor_is_refused() {
     );
 }
 
+/// One capture reads the ledger twice and both readings must be the same read.
+///
+/// The caller filters expiry under its own run clock because the gate has none,
+/// and filtering can only drop claims. A bound claim the ledger does not hold
+/// is therefore not a filtered reading of it, and letting it through would
+/// publish a state authority saying a peer holds `app/main.py` beside a
+/// repository-document measurement resolved from a claim that authority never
+/// contained.
+#[test]
+fn a_bound_claim_the_state_authority_does_not_hold_is_refused() {
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    seed_one_claim(&repository, "peer-actor");
+    let held = live_ledger(&repository).claims().to_vec();
+    assert_eq!(held.len(), 1, "the seeded ledger holds exactly one claim");
+
+    let capture = |bound_claims: Vec<crate::PeerClaim>| {
+        crate::BatteryCapture::capture(
+            &repository,
+            &crate::Selector::staged(),
+            crate::ClaimCapture::Idle,
+            crate::ActorCapture::Acting {
+                actor: "battery-actor".to_owned(),
+                bound_claims,
+            },
+            crate::RimCapture::new(&repository, None, Vec::new())
+                .expect("the fixture repository root is absolute"),
+            crate::HygieneConfiguration::new(["app/main.py"], ["tests"]).expect("hygiene roots"),
+        )
+        .map(|_| ())
+    };
+
+    capture(held.clone()).expect("the ledger's own claims are what the caller read");
+
+    // The same path the ledger holds, under an owner it never recorded: two
+    // readings that cannot both have come from this repository.
+    let forged: crate::PeerClaim = serde_json::from_str(&format!(
+        r#"{{"path":"{}","actor":"other-actor","created_at":{},"expires_at":{}}}"#,
+        held[0].path(),
+        held[0].created_at(),
+        held[0].expires_at()
+    ))
+    .expect("a claim shape the ledger itself would decode");
+    let Err(error) = capture(vec![forged]) else {
+        panic!("a bound claim outside the state authority must be refused")
+    };
+
+    assert_eq!(
+        error.detail(),
+        "battery bound claim on \"app/main.py\" held by \"other-actor\" is not one the state \
+         authority holds: the run clock only drops claims, so these are two different readings"
+    );
+}
+
 /// One acting identity with no peer holding any bound claim.
 fn acting(actor: &str) -> crate::ActorCapture {
     crate::ActorCapture::Acting {
