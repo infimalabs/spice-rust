@@ -26,7 +26,9 @@ use crate::kill::{
     RateError, SurvivorRate,
 };
 use crate::measure::{Bounds, Metric, MetricError, Parser, Policy};
-use crate::policy::{Policy as RulePolicy, packaged_rule_policy};
+use crate::policy::{
+    Policy as RulePolicy, RepoTruthPolicy, compile_rule_policy, repo_truth_inventory,
+};
 use crate::ratchet::Ratchet;
 
 /// Fixed tracked policy path within a selected repository tree.
@@ -189,12 +191,15 @@ impl Contract {
             tracked_ignore(policy_path, &tracked).map_err(ContractError::Policy)?;
         #[cfg(not(target_arch = "wasm32"))]
         let shape = ShapePolicy::from_tracked(&tracked.policy);
-        let rule_policy = packaged_rule_policy().map_err(|source| {
-            ContractError::Policy(PolicyError::Rules {
+        let repo_truth_docs = repo_truth_inventory(tracked.policy.repo_truth.docs(), POLICY_PATH)
+            .map_err(|source| {
+            ContractError::Policy(PolicyError::TrackedRules {
                 path: policy_path.to_path_buf(),
                 source,
             })
         })?;
+        let rule_policy = compile_rule_policy(repo_truth_docs)
+            .map_err(|source| ContractError::Policy(PolicyError::PackagedRules { source }))?;
         let metrics: Vec<Metric> = gate_set
             .metrics
             .iter()
@@ -353,18 +358,28 @@ fn read_tracked(path: &Path) -> Result<String, ContractError> {
 #[serde(default)]
 struct TrackedPolicy {
     gate: crate::config::Config,
-    #[cfg(not(target_arch = "wasm32"))]
-    policy: TrackedShapePolicy,
+    policy: TrackedPolicyTable,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+/// The `[policy]` table, whose admitted fields are predecessor spellings that
+/// coexist with the current `[gate]` registry until each one is cut over.
+///
+/// The repository-document inventory is admitted on every target because the
+/// rule policy it feeds is compiled on every target. The shape fields are read
+/// only by the native repository-shape provider.
 #[derive(Default, Deserialize)]
 #[serde(default)]
-struct TrackedShapePolicy {
+struct TrackedPolicyTable {
+    repo_truth: RepoTruthPolicy,
+    #[cfg(not(target_arch = "wasm32"))]
     package_roots: Vec<String>,
+    #[cfg(not(target_arch = "wasm32"))]
     generated_paths: Vec<String>,
+    #[cfg(not(target_arch = "wasm32"))]
     name_cluster_threshold: Option<usize>,
+    #[cfg(not(target_arch = "wasm32"))]
     test_paths: Vec<String>,
+    #[cfg(not(target_arch = "wasm32"))]
     package: TrackedPackageShape,
 }
 
@@ -388,7 +403,7 @@ pub(crate) struct ShapePolicy {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl ShapePolicy {
-    fn from_tracked(tracked: &TrackedShapePolicy) -> Self {
+    fn from_tracked(tracked: &TrackedPolicyTable) -> Self {
         let normalize = |values: &[String]| {
             let mut values: Vec<String> = values
                 .iter()

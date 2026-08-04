@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use gate::{
     BASELINE_PATH, BaselineError, Contract, ContractError, LONG_LINE_LIMIT, PINNED_CARGO_MUTANTS,
-    PolicyError, Standing,
+    POLICY_PATH, PolicyError, Standing,
 };
 use serde::Deserialize;
 
@@ -284,6 +284,67 @@ fn malformed_policy_and_unknown_gate_fields_refuse_before_a_contract_exists() {
         configured.gate.walk().skip().rules(),
         "input policy must retain the domain configuration's exact admitted rules"
     );
+}
+
+/// The tracked document inventory is the one the contract compiles.
+///
+/// `AGENTS.md` is packaged, so a contract that never reads the declaration keeps
+/// naming it and can produce none of the three other inventories below. The
+/// declared documents deliberately carry no markdown suffix, because the
+/// packaged markdown-depth rules select every `.md` path on their own and would
+/// hide whether the declaration was read at all.
+#[test]
+fn the_tracked_repository_document_inventory_reaches_the_compiled_rule_policy() {
+    let packaged = fixture_contract(TRACKED_POLICY, TRACKED_BASELINE)
+        .expect("the tracked workspace declares no repository documents");
+    assert_eq!(
+        packaged.rule_policy().document().repo_truth_docs(),
+        ["AGENTS.md"],
+        "a repository that declares nothing measures the packaged inventory"
+    );
+
+    let declared = fixture_contract(
+        &declaring("docs = [\"./NOTICE.txt\", \"charter/CHARTER.txt\"]"),
+        TRACKED_BASELINE,
+    )
+    .expect("a declared repository-document inventory is admitted");
+    assert_eq!(
+        declared.rule_policy().document().repo_truth_docs(),
+        ["NOTICE.txt", "charter/CHARTER.txt"],
+        "the declared inventory is the compiled one, normalized and ordered"
+    );
+    assert!(
+        declared
+            .rule_policy()
+            .selects_repository_document("NOTICE.txt")
+            .expect("a declared document resolves"),
+        "a declared document no packaged rule can reach was left unselected"
+    );
+
+    let none = fixture_contract(&declaring("docs = []"), TRACKED_BASELINE)
+        .expect("declaring no repository documents is admitted");
+    assert!(
+        none.rule_policy().document().repo_truth_docs().is_empty(),
+        "declaring an empty inventory is not the same as declaring nothing"
+    );
+
+    let refused = fixture_contract(&declaring("docs = [\"../escape.txt\"]"), TRACKED_BASELINE)
+        .expect_err("a document outside the repository is refused");
+    let ContractError::Policy(PolicyError::TrackedRules {
+        path,
+        source: refusal,
+    }) = refused
+    else {
+        panic!("an escaping document lost its typed tracked refusal: {refused:?}");
+    };
+    assert_eq!(path, policy_path());
+    assert_eq!(refusal.source(), POLICY_PATH);
+    assert_eq!(refusal.field(), "policy.repo_truth.docs");
+}
+
+/// The tracked workspace policy plus one `[policy.repo_truth]` declaration.
+fn declaring(docs: &str) -> String {
+    format!("{TRACKED_POLICY}\n[policy.repo_truth]\n{docs}\n")
 }
 
 #[derive(Deserialize)]

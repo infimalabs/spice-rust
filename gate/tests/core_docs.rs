@@ -11,7 +11,7 @@ use gate::{
 
 mod support;
 
-use support::{Tree, acquired, acquired_arm, contract_repository, git_commit};
+use support::{Tree, acquired, acquired_arm, contract_repository, git_commit, workspace_document};
 
 /// One document, two actors, two caps.
 ///
@@ -176,6 +176,79 @@ fn assert_claimed_document(
         "a document inside its bound breached nothing to be claimed over"
     );
     assert!(!arm.diagnostic().contains("GUIDE"));
+}
+
+/// The tracked declaration decides which documents the arm measures.
+///
+/// Neither `NOTICE.txt` nor `CHARTER.txt` carries a markdown suffix, so no
+/// packaged rule can reach either one and the declaration is the only thing
+/// that can put one in front of the arm. `CHARTER.txt` is present and
+/// undeclared in both halves, so an arm that measured every tracked file would
+/// fail here; `GUIDE.md` is measured in both, so an arm that measured nothing
+/// at all would fail too.
+#[test]
+fn a_tracked_document_declaration_decides_what_the_arm_measures() {
+    let silent = document_repository("core-acquire-repo-docs-undeclared", None);
+    assert_eq!(
+        measured_documents(&silent),
+        ["GUIDE.md"],
+        "a repository declaring nothing measured a document nothing selects"
+    );
+    silent.remove();
+
+    let declared = document_repository(
+        "core-acquire-repo-docs-declared",
+        Some("docs = [\"NOTICE.txt\"]"),
+    );
+    assert_eq!(
+        measured_documents(&declared),
+        ["GUIDE.md", "NOTICE.txt"],
+        "the declared document never reached the arm that measures it"
+    );
+    declared.remove();
+}
+
+/// One fixture carrying two undeclarable documents and an optional declaration.
+fn document_repository(label: &str, declaration: Option<&str>) -> Tree {
+    let repository = contract_repository(label);
+    repository.write("GUIDE.md", "a document well inside its bound");
+    repository.write("NOTICE.txt", "doctrine a repository can declare");
+    repository.write("CHARTER.txt", "doctrine no repository declared");
+    if let Some(docs) = declaration {
+        repository.write(
+            "spice.toml",
+            &format!(
+                "{}\n[policy.repo_truth]\n{docs}\n",
+                workspace_document("spice.toml")
+            ),
+        );
+    }
+    git_commit(&repository, "repository document declaration fixture");
+    repository
+}
+
+/// Every document path this repository's arm measured, in acquired order.
+fn measured_documents(repository: &Tree) -> Vec<String> {
+    let report = acquired(
+        repository,
+        ClaimCapture::Idle,
+        ActorCapture::Acting {
+            actor: "worktree-author".to_owned(),
+            bound_claims: Vec::new(),
+        },
+    );
+    let arm = acquired_arm(&report, GateId::RepoDocs);
+    let CoreObservation::Measured {
+        evidence: CoreEvidence::RepoDocs(evidence),
+    } = arm.observation()
+    else {
+        panic!("repository-document provider emitted no measurement: {arm:?}");
+    };
+    evidence
+        .measurements()
+        .iter()
+        .map(|measurement| measurement.path().to_owned())
+        .collect()
 }
 
 /// Genuine claims over both fixture documents, created by `actor` through the

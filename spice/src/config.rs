@@ -266,6 +266,7 @@ pub struct WorkspacePolicy {
     #[serde(deserialize_with = "unique_names")]
     env_names: Vec<String>,
     commit_message: gate::CommitMessagePolicy,
+    repo_truth: gate::RepoTruthPolicy,
 }
 
 impl WorkspacePolicy {
@@ -273,6 +274,15 @@ impl WorkspacePolicy {
     #[must_use]
     pub fn env_names(&self) -> &[String] {
         &self.env_names
+    }
+
+    /// Documents the workspace measures as repository truth.
+    ///
+    /// Gate compiles this into its rule policy from the same tracked document,
+    /// so admitting it here is what lets a repository declare it at all.
+    #[must_use]
+    pub const fn repo_truth(&self) -> &gate::RepoTruthPolicy {
+        &self.repo_truth
     }
 
     /// Commit trailer policy shared by launch attribution and the native hook.

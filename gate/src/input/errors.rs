@@ -200,11 +200,23 @@ pub enum PolicyError {
         /// Typed TOML decoder refusal with source position.
         source: toml::de::Error,
     },
-    /// Tracked policy could not compile into the current named-rule model.
-    Rules {
+    /// A tracked policy field did not survive compilation into named rules.
+    ///
+    /// This variant carries the repository path because tracked bytes decided
+    /// it. The packaged half of the same policy reads none, so it refuses
+    /// through [`PolicyError::PackagedRules`], which has no path to name.
+    TrackedRules {
         /// Fixed policy path.
         path: PathBuf,
-        /// Typed migration or compilation refusal.
+        /// Typed migration refusal naming the exact tracked field.
+        source: crate::policy::MigrationError,
+    },
+    /// The named rules this release packages do not compile.
+    ///
+    /// No tracked byte reaches these rules, so nothing a repository can edit
+    /// causes this and no repository path may be named by it.
+    PackagedRules {
+        /// Typed compilation refusal naming the packaged rule source.
         source: crate::policy::MigrationError,
     },
     /// A compiled default skip is not a current jurisdiction spelling.
@@ -228,11 +240,14 @@ impl fmt::Display for PolicyError {
                     path.display()
                 )
             }
-            Self::Rules { path, source } => write!(
+            Self::TrackedRules { path, source } => write!(
                 formatter,
                 "{} does not compile into current rule policy: {source}",
                 path.display()
             ),
+            Self::PackagedRules { source } => {
+                write!(formatter, "packaged rule policy does not compile: {source}")
+            }
             Self::Selector {
                 path,
                 field,
@@ -246,7 +261,8 @@ impl Error for PolicyError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Toml { source, .. } => Some(source),
-            Self::Rules { source, .. } => Some(source),
+            Self::TrackedRules { source, .. } => Some(source),
+            Self::PackagedRules { source } => Some(source),
             Self::Selector { source, .. } => Some(source),
         }
     }

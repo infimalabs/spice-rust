@@ -96,6 +96,7 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
 // the current resolver registry. Their consumers still admit their values from
 // the same captured document.
 const COEXISTING_TRACKED_KEYS: &[&str] = &[
+    "policy.repo_truth.docs",
     "policy.package_roots",
     "policy.generated_paths",
     "policy.name_cluster_threshold",
