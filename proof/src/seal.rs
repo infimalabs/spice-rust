@@ -263,6 +263,10 @@ mod tests {
                 "printf '%s:runner=%s:challenge=%s:%s\\n' ",
                 "\"$marker\" \"$identity\" \"$challenge\" \"$claims\" >&2\n",
                 "printf 'ran\\n' >> '{}'\n",
+                // The mutation member announces its corpus, as the pinned
+                // cargo-mutants does, because a member that announces none is
+                // refused rather than sealed.
+                "case \" $* \" in *' mutants '*) printf 'Found 36 mutants to test\\n' ;; esac\n",
                 "exit 0\n"
             ),
             invocations.display()
