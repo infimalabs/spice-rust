@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -59,13 +59,24 @@ impl Fixture {
     }
 
     fn invoke(&self, arguments: &[&str]) -> std::process::Output {
-        Command::new(env!("CARGO_BIN_EXE_spice"))
+        self.invoke_with(arguments, &[])
+    }
+
+    fn invoke_with(
+        &self,
+        arguments: &[&str],
+        environment: &[(&str, &Path)],
+    ) -> std::process::Output {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+        command
             .args(arguments)
             .current_dir(&self.scratch)
             .env("PATH", &self.ambient_bin)
-            .env_remove(steer::hook::INBOX)
-            .output()
-            .expect("native demo process launches")
+            .env_remove(steer::hook::INBOX);
+        for (name, value) in environment {
+            command.env(name, value);
+        }
+        command.output().expect("native demo process launches")
     }
 
     fn assert_ambient_untouched(&self, expected: &[u8]) {
@@ -191,6 +202,50 @@ fn seed_only_process_is_anchored_recoverable_and_python_inert() {
     };
     assert_eq!(refusal.reason, "demo::root-not-empty");
     assert_eq!(fs::read(sentinel).unwrap(), b"preserve me\n");
+    fixture.assert_ambient_untouched(&ambient_before);
+}
+
+/// The operator's own Git configuration must not reach the seeded branch.
+///
+/// `init.defaultBranch` is what a plain init consults to point a new `HEAD`,
+/// so an operator who renamed their default branch would seed a root whose
+/// commit sits on `main` while `HEAD` names an unborn branch beside it. That
+/// root is untouched, and yet the reuse the seed just printed refuses it: the
+/// unit fixture pins `ref: refs/heads/operator` to exactly the
+/// `demo::commit-moved` observation `refs/heads/operator at no commit`, and
+/// the remedy of seeding a new root would only reproduce it. Only a child
+/// process can be handed a hostile ambient config without racing the rest of
+/// this suite, so the seeded bytes are read back here.
+#[test]
+fn a_seeded_root_is_born_on_main_under_a_renamed_ambient_default_branch() {
+    let fixture = Fixture::new();
+    let ambient_before = fs::read(&fixture.ambient_spice).expect("snapshot ambient authority");
+    let ambient_git = fixture.scratch.join("ambient-gitconfig");
+    fs::write(&ambient_git, "[init]\n\tdefaultBranch = operator\n")
+        .expect("plant ambient Git authority");
+    let root = fixture.root("renamed default branch");
+    let seeded = fixture.invoke_with(
+        &[
+            "--json",
+            "demo",
+            "--seed-only",
+            "--root",
+            root.to_str().expect("fixture root is UTF-8"),
+        ],
+        &[("GIT_CONFIG_GLOBAL", ambient_git.as_path())],
+    );
+
+    assert_eq!(seeded.status.code(), Some(0));
+    let root = fs::canonicalize(root).expect("seeded root is canonical");
+    assert_eq!(
+        fs::read_to_string(root.join(".git/HEAD")).expect("read seeded HEAD"),
+        "ref: refs/heads/main\n",
+        "an ambient default branch moved the seeded head"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".git/refs/heads/main")).expect("read seeded branch"),
+        format!("{SEED_COMMIT}\n")
+    );
     fixture.assert_ambient_untouched(&ambient_before);
 }
 
