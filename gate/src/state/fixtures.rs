@@ -246,13 +246,23 @@ fn one_shot_import_translates_all_ledgers_and_both_key_shapes() {
             && entry.key().repo_path() == "src/old.rs"
             && entry.key().function_name().is_none()
     }));
-    // The document ledger is named rather than left to the count above,
-    // because importing it under any other path-shaped kind keeps the count
-    // at five and leaves both assertions above keyed on the source path.
+    // Every remaining ledger is named rather than left to the count above,
+    // because importing one under another kind of the same key shape keeps the
+    // count at five and leaves the assertions above keyed on their own paths.
     assert!(state.before().latches().iter().any(|entry| {
         entry.kind() == LatchKind::RepoDocChars
             && entry.key().repo_path() == "README.md"
             && entry.key().function_name().is_none()
+    }));
+    assert!(state.before().latches().iter().any(|entry| {
+        entry.kind() == LatchKind::FileBytes
+            && entry.key().repo_path() == "src/bytes.rs"
+            && entry.key().function_name().is_none()
+    }));
+    assert!(state.before().latches().iter().any(|entry| {
+        entry.kind() == LatchKind::ComplexityLength
+            && entry.key().repo_path() == "src/long.rs"
+            && entry.key().function_name() == Some("render")
     }));
 
     let error = import_error(
