@@ -93,6 +93,35 @@ impl NativeRunner {
         &self.binary
     }
 
+    /// Exercise the complete runner admission and isolation handshake before
+    /// release staging starts.
+    ///
+    /// # Errors
+    ///
+    /// Returns the runner protocol error or refuses a non-clean Cargo version
+    /// probe after the attestation has been removed from captured stderr.
+    pub fn preflight(&self) -> Result<(), NativeError> {
+        let execution = self.execute("cargo", &["--version".to_owned()])?;
+        if execution.stdout.truncated
+            || !execution.stdout.complete
+            || execution.stderr.truncated
+            || !execution.stderr.complete
+        {
+            return Err(NativeError::PreflightOutputIncomplete);
+        }
+        match execution.completion {
+            ExecutionCompletion::Exited {
+                success: true,
+                code: Some(0),
+            } => Ok(()),
+            ExecutionCompletion::Exited { code, .. } => Err(NativeError::PreflightFailed { code }),
+            ExecutionCompletion::TimedOut { code } => Err(NativeError::PreflightTimedOut { code }),
+            ExecutionCompletion::Cancelled { code } => {
+                Err(NativeError::PreflightCancelled { code })
+            }
+        }
+    }
+
     pub(crate) fn execute(
         &self,
         program: &str,
@@ -242,6 +271,10 @@ pub enum NativeError {
     MissingCapture(&'static str),
     IncompleteAttestation { truncated: bool, complete: bool },
     RunnerNotAttested { expected: String, observed: String },
+    PreflightOutputIncomplete,
+    PreflightFailed { code: Option<i32> },
+    PreflightTimedOut { code: Option<i32> },
+    PreflightCancelled { code: Option<i32> },
 }
 
 impl fmt::Display for NativeError {
@@ -324,6 +357,27 @@ impl fmt::Display for NativeError {
                 ),
                 expected, observed
             ),
+            Self::PreflightOutputIncomplete => {
+                formatter.write_str("native proof runner preflight output is incomplete")
+            }
+            Self::PreflightFailed { code } => {
+                write!(
+                    formatter,
+                    "native proof runner preflight failed with code {code:?}"
+                )
+            }
+            Self::PreflightTimedOut { code } => {
+                write!(
+                    formatter,
+                    "native proof runner preflight timed out with code {code:?}"
+                )
+            }
+            Self::PreflightCancelled { code } => {
+                write!(
+                    formatter,
+                    "native proof runner preflight was cancelled with code {code:?}"
+                )
+            }
         }
     }
 }
@@ -346,7 +400,11 @@ impl Error for NativeError {
             | Self::WorkspaceNotDirectory(_)
             | Self::MissingCapture(_)
             | Self::IncompleteAttestation { .. }
-            | Self::RunnerNotAttested { .. } => None,
+            | Self::RunnerNotAttested { .. }
+            | Self::PreflightOutputIncomplete
+            | Self::PreflightFailed { .. }
+            | Self::PreflightTimedOut { .. }
+            | Self::PreflightCancelled { .. } => None,
         }
     }
 }
@@ -410,6 +468,16 @@ exit 0
 "#;
     const SILENT_RUNNER: &str = "#!/bin/sh\nexit 0\n";
     const FAILED_RUNNER: &str = "#!/bin/sh\nexit 70\n";
+    const ATTESTED_FAILED_RUNNER: &str = r#"#!/bin/sh
+identity=$2
+challenge=$3
+marker=spice-proof-native-attestation-v1
+claims=repository=read-only:cargo-home=fresh-empty:
+claims=${claims}cargo-target=fresh-empty:network=denied:
+claims=${claims}host-dependencies=denied
+printf '%s:runner=%s:challenge=%s:%s\n' "$marker" "$identity" "$challenge" "$claims" >&2
+exit 70
+"#;
     const TIMED_OUT_RUNNER: &str = "#!/bin/sh\n/bin/sleep 2\n";
 
     #[test]
@@ -510,6 +578,23 @@ exit 0
             .expect_err("timed-out attestation cannot create Execution");
 
         assert!(matches!(error, NativeError::RunnerNotAttested { .. }));
+    }
+
+    #[test]
+    fn preflight_requires_an_attested_clean_cargo_probe() {
+        Fixture::new(VALID_RUNNER, limits())
+            .runner()
+            .preflight()
+            .expect("valid runner preflight");
+
+        let error = Fixture::new(ATTESTED_FAILED_RUNNER, limits())
+            .runner()
+            .preflight()
+            .expect_err("nonzero attested probe is not a clean preflight");
+        assert!(matches!(
+            error,
+            NativeError::PreflightFailed { code: Some(70) }
+        ));
     }
 
     #[test]

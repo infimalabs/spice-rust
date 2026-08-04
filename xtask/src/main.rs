@@ -3,6 +3,9 @@ use std::ffi::{OsStr, OsString};
 use std::io::{self, Read};
 use std::path::Path;
 use std::process::ExitCode;
+use std::time::Duration;
+
+use sill::Deadlines;
 
 const USAGE_EXIT: u8 = 2;
 const USAGE: &str = concat!(
@@ -36,9 +39,11 @@ fn main() -> ExitCode {
                 eprintln!("{USAGE}");
                 return ExitCode::from(USAGE_EXIT);
             };
-            xtask::stage_target(target, release_environment(), &mut output)
-                .map(|_| ())
-                .map_err(Into::into)
+            preflight_native_release(target).and_then(|()| {
+                xtask::stage_target(target, release_environment(), &mut output)
+                    .map(|_| ())
+                    .map_err(Into::into)
+            })
         }
         Some(value) if value == OsStr::new("commit-msg") && arguments.len() == 1 => {
             let path = arguments
@@ -77,6 +82,30 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn preflight_native_release(target: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if target != "aarch64-apple-darwin" {
+        return Ok(());
+    }
+    let repository = spice::repository::Repository::discover(Path::new("."))?;
+    let config = spice::config::load_repository(&repository, &[])?;
+    let runner = config.root().proof().runner().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "proof.runner is required before Darwin release staging",
+        )
+    })?;
+    let deadlines = Deadlines::new(
+        Duration::from_secs(60),
+        Duration::from_secs(10),
+        Duration::from_secs(10),
+    )?;
+    let limits = proof::Limits::new(deadlines, Duration::from_secs(5), 1024 * 1024)?;
+    let admitted =
+        proof::NativeRunner::attest(runner.as_path(), repository.worktree_root(), limits)?;
+    admitted.preflight()?;
+    Ok(())
 }
 
 fn release_environment() -> xtask::ReleaseEnvironment {

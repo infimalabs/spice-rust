@@ -92,6 +92,7 @@ env_names = [
     "SPICE_LANE",
     "SPICE_MUTATION_ATTEMPT",
     "SPICE_MUTATION_SEED",
+    "SPICE_NATIVE_PINS",
     "SPICE_PROOF",
 ]
 

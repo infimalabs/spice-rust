@@ -26,7 +26,7 @@ pub(crate) mod test_support {
     }
 }
 
-mod challenge;
+pub mod challenge;
 pub mod config;
 pub mod container;
 pub mod environment;
