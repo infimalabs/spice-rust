@@ -1,6 +1,6 @@
 //! Conformance for the doctrine of record.
 //!
-//! `DOCTRINE.md` is the port-owned doctrine of record. This test compiles its
+//! `DOCTRINE.md` is the doctrine of record. This test compiles its
 //! settled population map into executable checks, so a slot cannot quietly
 //! empty, a decision cannot shed the deletions that make it a decision rather
 //! than a preference, and a record link cannot rot into a dead reference.
@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 /// The doctrine of record.
 const DOCTRINE: &str = "DOCTRINE.md";
 
-/// Port-owned records that must remain present and internally linked.
+/// Records that must remain present and internally linked.
 const RECORDS: &[&str] = &[DOCTRINE, "TASTES.md", "LATER.md"];
 
 /// Every required `DOCTRINE.md` section, in its settled order.
@@ -21,8 +21,6 @@ const SLOTS: &[&str] = &[
     "The decision records",
     "The why-Rust ledger",
     "The tastes as repo truth",
-    "The interregnum",
-    "Handle re-mint at cutover",
 ];
 
 /// Every settled kernel invariant, one paragraph each.
