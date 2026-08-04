@@ -128,6 +128,24 @@ mod tests {
         assert_eq!(found[1].column, column_at(line, "os.environ"));
     }
 
+    /// The same line read the other way around is still ordered by column.
+    ///
+    /// Here the dynamic read comes first and the watchlisted one second, so the
+    /// idiom the gate names sits to the left of the literal the watchlist
+    /// names. The two extractors are read in a fixed order, literals and then
+    /// idioms, which is the opposite of the order this line commits them in,
+    /// so only sorting the accesses by column puts them where the line reads.
+    #[test]
+    fn a_dynamic_read_before_a_watchlisted_read_is_ordered_by_column() {
+        let line = "value = os.environ[key] or os.getenv(\"SPICE_HOOKS\")";
+        let found = accesses(Some("python"), line);
+        assert_eq!(found.len(), 2, "one dynamic read and one literal read");
+        assert_eq!(found[0].name, "os env access");
+        assert_eq!(found[0].column, column_at(line, "os.environ"));
+        assert_eq!(found[1].name, "SPICE_HOOKS");
+        assert_eq!(found[1].column, column_at(line, "SPICE_HOOKS"));
+    }
+
     /// One read both extractors catch is one access, named by its literal.
     ///
     /// The gate matches the idiom and the watchlist matches the literal inside
