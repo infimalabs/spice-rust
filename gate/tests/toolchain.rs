@@ -6,13 +6,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use gate::{
-    ArmFinding, ArmObservation, ArmOutcome, Contract, CsharpUnusedStatus, EnvironmentLedgerKind,
-    FindingDetail, GateId, JavascriptUnusedStatus, LOCAL_PATH_MARKER, PACKAGED_ENV_PROFILE,
-    PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_TASTE_WORDS, PredecessorComparison,
-    PredecessorComparisonError, PredecessorConfiguration, PredecessorFinding,
-    PredecessorObservation, PredecessorResult, ProbeFailure, RimCapture, Selector, SourceLocus,
-    TOOLCHAIN_ARMS, TOOLCHAIN_REPORT_VERSION, ToolEvidence, ToolchainSource, acquire_toolchain,
-    compare_predecessor, measure_toolchain,
+    ArmEvidence, ArmFinding, ArmObservation, ArmOutcome, BatteryState, Contract,
+    CsharpUnusedStatus, EnvironmentLedgerKind, FindingDetail, GateId, JavascriptUnusedStatus,
+    LOCAL_PATH_MARKER, PACKAGED_ENV_PROFILE, PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_TASTE_WORDS,
+    PredecessorComparison, PredecessorComparisonError, PredecessorConfiguration,
+    PredecessorFinding, PredecessorObservation, PredecessorResult, ProbeFailure, RimCapture,
+    Selector, SourceLocus, TOOLCHAIN_ARMS, TOOLCHAIN_REPORT_VERSION, ToolEvidence, ToolchainSource,
+    acquire_toolchain, compare_predecessor, measure_toolchain,
 };
 use wire::{Digest, Domain};
 
@@ -708,29 +708,127 @@ fn csharp_unused_reports_private_candidates_and_separates_what_policy_retains() 
             reference_count: 1,
         },
     };
-    let retained = |symbol: &str, line, reason: &str| ArmFinding {
-        path: Some("dotnet/Surface.cs".to_owned()),
-        line: Some(line),
-        column: None,
-        detail: FindingDetail::CsharpUnused {
-            symbol: symbol.to_owned(),
-            declaration_kind: "method".to_owned(),
-            status: CsharpUnusedStatus::Retained,
-            reason: reason.to_owned(),
-            reference_count: 1,
-        },
-    };
     assert_eq!(
         observation.findings,
-        [
-            retained("RetainedByPartial", 3, "partial_declaration"),
-            retained("AttributeRetained", 8, "attribute_retained"),
-            candidate("Loose", 11),
-        ],
-        "the C# scanner named something other than the three unreached private members"
+        [candidate("Loose", 11)],
+        "the C# scanner named something other than the one member it will stand behind"
+    );
+    assert!(
+        observation.reason.ends_with(
+            "; 2 unreached members retained (attribute_retained 1, partial_declaration 1)"
+        ),
+        "the retained members left no trace: {}",
+        observation.reason
     );
 
     measure_toolchain(observations).expect("C# findings are admitted");
+}
+
+/// An explicitly implemented interface member is not the class's to delete.
+///
+/// C# forbids an access modifier on an explicit implementation, so the silence
+/// that otherwise means private means published here. The interface is declared
+/// in a second file on purpose: references are counted per file, so the member's
+/// own name is the only occurrence in the file that declares it, and an arm
+/// reading silence as privacy accuses live contract code whose deletion would
+/// not compile. `Loose` shares the file so the tree still proves the arm runs
+/// and can accuse.
+#[test]
+fn csharp_unused_withdraws_an_explicit_interface_implementation() {
+    let repository = scanning_repository(
+        "toolchain-csharp-explicit",
+        "fn main() {}\n",
+        "Every sentence here is ordinary.\n",
+    );
+    repository.write(
+        "dotnet/IPersist.cs",
+        "public interface IPersist\n{\n    void Save();\n}\n",
+    );
+    repository.write(
+        "dotnet/Persister.cs",
+        concat!(
+            "public class Persister : IPersist\n{\n",
+            "    void IPersist.Save() { }\n\n",
+            "    private void Loose() { }\n}\n",
+        ),
+    );
+    git_commit(&repository, "csharp explicit implementation fixture");
+
+    let observations = acquired(
+        &repository,
+        Some(toolchain_directory().into_os_string()),
+        &[],
+    );
+    let observation = arm(&observations, GateId::CsharpUnusedCandidates);
+    let named: Vec<&str> = observation
+        .findings
+        .iter()
+        .filter_map(|finding| match &finding.detail {
+            FindingDetail::CsharpUnused { symbol, .. } => Some(symbol.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        named,
+        ["Loose"],
+        "the arm claimed a member the interface publishes"
+    );
+
+    measure_toolchain(observations).expect("C# findings are admitted");
+}
+
+/// A tree holding every unreached member live must not fail the battery.
+///
+/// An arm carries findings only under `ArmOutcome::Findings`, and that outcome
+/// is the one route to `BatteryState::Failed`, so a retention that arrived as a
+/// row would fail the gate on evidence that the member must be kept. The state
+/// is read through the same mapping the battery uses rather than restated here.
+#[test]
+fn csharp_unused_retention_alone_leaves_the_battery_passing() {
+    let repository = scanning_repository(
+        "toolchain-csharp-retained",
+        "fn main() {}\n",
+        "Every sentence here is ordinary.\n",
+    );
+    repository.write(
+        "dotnet/Held.cs",
+        concat!(
+            "public partial class Held\n{\n",
+            "    private void HeldByPartial() { }\n}\n\n",
+            "public class Marked\n{\n",
+            "    [Obsolete]\n    private void MarkedRetained() { }\n\n",
+            "    private void Reached() { }\n\n",
+            "    public void Entry()\n    {\n        Reached();\n    }\n}\n",
+        ),
+    );
+    git_commit(&repository, "csharp retention fixture");
+
+    let observations = acquired(
+        &repository,
+        Some(toolchain_directory().into_os_string()),
+        &[],
+    );
+    let observation = arm(&observations, GateId::CsharpUnusedCandidates);
+    assert_eq!(observation.outcome, ArmOutcome::Passed);
+    assert!(observation.findings.is_empty());
+
+    let report = measure_toolchain(observations).expect("retained-only C# evidence is admitted");
+    let measured = report
+        .arms
+        .into_iter()
+        .find(|measured| measured.gate_id == GateId::CsharpUnusedCandidates)
+        .expect("the C# arm is measured");
+    assert!(
+        measured.reason.ends_with(
+            "; 2 unreached members retained (attribute_retained 1, partial_declaration 1)"
+        ),
+        "the retained members left no trace: {}",
+        measured.reason
+    );
+    let state = ArmEvidence::Toolchain { report: measured }
+        .state()
+        .expect("a toolchain arm states one battery state");
+    assert_eq!(state, BatteryState::Passed);
 }
 
 /// What a module owns, and what counts as reaching it.
