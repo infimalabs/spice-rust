@@ -36,8 +36,9 @@ pub(crate) use typed::execute_typed;
 #[cfg(test)]
 use typed::kind_for;
 
-const SOCKET_TIMEOUT: Duration = Duration::from_secs(3);
-const LANE_CHANGE_TIMEOUT: Duration = Duration::from_secs(20);
+/// Bound for an opening that proves a contract and sends no command, so no
+/// registry row governs it.
+const OPENING_BOUND: Duration = Duration::from_secs(3);
 const MAX_DISCOVERY_BYTES: u64 = 16 * 1024;
 
 type ClientResult<T> = Result<T, Outcome<CommandAnswer>>;
@@ -148,7 +149,7 @@ pub(crate) fn authenticate(
     }
     let connection = ambient_lane_identity()?.map_or(Connection::Operator, Connection::Lane);
     let discovery = DiscoveryRead::open(&selected_discovery_path(discovery_path, connection))?;
-    let session = open_session(contract, discovery, SOCKET_TIMEOUT)?;
+    let session = open_session(contract, discovery, OPENING_BOUND)?;
     Ok(session.accepted.epoch)
 }
 
@@ -402,10 +403,7 @@ fn request(
     mapped: MappedCommand,
     discovery: DiscoveryRead,
 ) -> Outcome<CommandAnswer> {
-    let timeout = match mapped.kind {
-        CommandKind::LaneSeat | CommandKind::LaneState => LANE_CHANGE_TIMEOUT,
-        _ => SOCKET_TIMEOUT,
-    };
+    let timeout = crate::cli::answer_bound(mapped.kind);
     let mut session = match open_session(contract, discovery, timeout) {
         Ok(session) => session,
         Err(outcome) => return outcome,
@@ -440,20 +438,43 @@ enum IoDirection {
     Write,
 }
 
+/// The last transport failure, and whether the bound is what ended it.
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct IoFailure {
+    direction: IoDirection,
+    deadline_elapsed: bool,
+}
+
 struct DeadlineStream {
     stream: TcpStream,
+    bound: Duration,
     deadline: Instant,
-    last_failure: Option<IoDirection>,
+    last_failure: Option<IoFailure>,
 }
 
 impl DeadlineStream {
-    fn connect(address: &SocketAddr, deadline: Instant) -> io::Result<Self> {
+    fn connect(address: &SocketAddr, bound: Duration) -> io::Result<Self> {
+        let deadline = Instant::now() + bound;
         let stream = TcpStream::connect_timeout(address, remaining(deadline)?)?;
         Ok(Self {
             stream,
+            bound,
             deadline,
             last_failure: None,
         })
+    }
+
+    fn record(&mut self, direction: IoDirection, error: &io::Error) {
+        self.last_failure = Some(IoFailure {
+            direction,
+            // A socket that reaches its configured timeout reports it as a
+            // would-block on Unix and as a timeout elsewhere; `remaining`
+            // raises the same timeout once the whole bound is spent.
+            deadline_elapsed: matches!(
+                error.kind(),
+                io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+            ),
+        });
     }
 
     fn read_timeout(&mut self) -> io::Result<Duration> {
@@ -476,13 +497,13 @@ impl Read for DeadlineStream {
         }
         self.last_failure = None;
         if let Err(error) = self.read_timeout() {
-            self.last_failure = Some(IoDirection::Read);
+            self.record(IoDirection::Read, &error);
             return Err(error);
         }
         match self.stream.read(bytes) {
             Ok(read) => Ok(read),
             Err(error) => {
-                self.last_failure = Some(IoDirection::Read);
+                self.record(IoDirection::Read, &error);
                 Err(error)
             }
         }
@@ -496,13 +517,13 @@ impl Write for DeadlineStream {
         }
         self.last_failure = None;
         if let Err(error) = self.write_timeout() {
-            self.last_failure = Some(IoDirection::Write);
+            self.record(IoDirection::Write, &error);
             return Err(error);
         }
         match self.stream.write(bytes) {
             Ok(written) => Ok(written),
             Err(error) => {
-                self.last_failure = Some(IoDirection::Write);
+                self.record(IoDirection::Write, &error);
                 Err(error)
             }
         }
@@ -511,13 +532,13 @@ impl Write for DeadlineStream {
     fn flush(&mut self) -> io::Result<()> {
         self.last_failure = None;
         if let Err(error) = self.write_timeout() {
-            self.last_failure = Some(IoDirection::Write);
+            self.record(IoDirection::Write, &error);
             return Err(error);
         }
         match self.stream.flush() {
             Ok(()) => Ok(()),
             Err(error) => {
-                self.last_failure = Some(IoDirection::Write);
+                self.record(IoDirection::Write, &error);
                 Err(error)
             }
         }
@@ -538,8 +559,7 @@ fn open_session(
 ) -> ClientResult<AuthenticatedSession> {
     let (authority, address) = loopback_endpoint(&discovery.value.endpoint)?;
     discovery.verify_current()?;
-    let deadline = Instant::now() + timeout;
-    let stream = match DeadlineStream::connect(&address, deadline) {
+    let stream = match DeadlineStream::connect(&address, timeout) {
         Ok(stream) => stream,
         Err(error) => {
             return Err(environment_fault(
@@ -777,7 +797,38 @@ fn send<T: Serialize>(socket: &mut WebSocket<DeadlineStream>, value: &T) -> Clie
     })?;
     socket
         .send(Message::Binary(bytes.into()))
-        .map_err(|error| environment_fault("canvas::send-failed", &error.to_string()))
+        .map_err(|error| transport_fault(socket.get_ref(), &error.to_string(), IoDirection::Write))
+}
+
+/// Name a transport failure by what ended it.
+///
+/// The bound elapsing is not a peer that failed: the resident may still be
+/// composing the answer, and a reader deciding whether to retry or to
+/// investigate the resident needs those two apart. The direction is only
+/// consulted once the bound is ruled out, because a socket implementation
+/// writes control frames underneath a read the caller asked for.
+fn transport_fault(
+    stream: &DeadlineStream,
+    detail: &str,
+    assumed: IoDirection,
+) -> Outcome<CommandAnswer> {
+    let failure = stream.last_failure.unwrap_or(IoFailure {
+        direction: assumed,
+        deadline_elapsed: false,
+    });
+    if failure.deadline_elapsed {
+        return environment_fault(
+            "canvas::deadline-elapsed",
+            &format!(
+                "resident did not answer within the {:?} client bound: {detail}",
+                stream.bound
+            ),
+        );
+    }
+    match failure.direction {
+        IoDirection::Read => environment_fault("canvas::receive-failed", detail),
+        IoDirection::Write => environment_fault("canvas::send-failed", detail),
+    }
 }
 
 fn receive(socket: &mut WebSocket<DeadlineStream>) -> ClientResult<Vec<u8>> {
@@ -785,12 +836,11 @@ fn receive(socket: &mut WebSocket<DeadlineStream>) -> ClientResult<Vec<u8>> {
         let message = match socket.read() {
             Ok(message) => message,
             Err(error) => {
-                let reason = if socket.get_ref().last_failure == Some(IoDirection::Write) {
-                    "canvas::send-failed"
-                } else {
-                    "canvas::receive-failed"
-                };
-                return Err(environment_fault(reason, &error.to_string()));
+                return Err(transport_fault(
+                    socket.get_ref(),
+                    &error.to_string(),
+                    IoDirection::Read,
+                ));
             }
         };
         match message {
