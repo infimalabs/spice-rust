@@ -1194,6 +1194,9 @@ exit 0
     }
 
     /// Whether the shipped rule calls that directory isolated.
+    ///
+    /// Captures the shell's streams rather than inheriting them, because a
+    /// directory the rule cannot classify makes it report the unreadable file.
     fn network_isolated(directory: &std::path::Path) -> bool {
         let _spawn_guard = crate::test_support::process_spawn_guard();
         std::process::Command::new("/bin/sh")
@@ -1203,8 +1206,9 @@ exit 0
                 std::ffi::OsStr::new("sh"),
                 directory.as_os_str(),
             ])
-            .status()
+            .output()
             .expect("host POSIX shell runs the network rule")
+            .status
             .success()
     }
 
@@ -1311,6 +1315,17 @@ exit 0
         assert!(
             !network_isolated(&named_eth0),
             "an up adapter beside real loopback reaches the network"
+        );
+    }
+
+    #[test]
+    fn an_interface_whose_flags_cannot_be_read_is_refused_rather_than_skipped() {
+        let directory = network_directory(&[("lo", 0x9)]);
+        fs::create_dir_all(directory.join("eth0")).expect("fixture interface without flags");
+
+        assert!(
+            !network_isolated(&directory),
+            "an interface this rule cannot classify is not an interface it may pass over"
         );
     }
 
