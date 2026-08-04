@@ -875,6 +875,9 @@ mod tests {
             panic!("an owned gap must remain one visible refusal");
         };
         assert_eq!(owned.reason, "release::not-landed");
+        // The witness serializes beside the reason, so it is a string an
+        // operator matches on rather than private naming.
+        assert_eq!(owned.witness.as_deref(), Some("landing-owner"));
         assert_eq!(owned.expected.as_deref(), Some("FIXTURE-owner01"));
         assert_eq!(owned.observed.as_deref(), Some("fixture owned"));
 
