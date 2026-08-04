@@ -20,7 +20,44 @@ const WORKSPACE_MOUNT: &str = "/workspace";
 const CARGO_HOME: &str = "/cargo-home";
 const CARGO_TARGET: &str = "/cargo-target";
 const ATTESTATION_PREFIX: &str = "spice-proof-attestation-v2:";
-const PREFLIGHT_SCRIPT: &str = r#"
+
+/// The rule deciding whether a network namespace can carry traffic off
+/// loopback, as one shell function over a `/sys/class/net` directory.
+///
+/// A fresh namespace is not an empty one. The kernel materializes DOWN tunnel
+/// stubs — `gre0`, `sit0`, `tunl0`, `ip6tnl0` and their relatives — as soon as
+/// those modules are loaded anywhere on the host, and `/sys/class/net` also
+/// holds `bonding_masters`, which is a control file and not an interface at
+/// all. Deciding on the name `lo` therefore turned away exactly the isolated
+/// `--network=none` container this boundary exists to admit.
+///
+/// So the rule asks what an interface can do rather than what it is called.
+/// Only an administratively up interface can carry a packet, which admits
+/// every stub while it stays down, and `IFF_LOOPBACK` is set by the kernel for
+/// the loopback device alone, which is what a name comparison could not check:
+/// a real adapter renamed `lo` used to pass on its name and no longer does.
+///
+/// Kept as its own text so the rule the tests exercise is the rule the sealed
+/// container runs, rather than a second copy that could drift from it.
+macro_rules! network_rule {
+    () => {
+        r#"
+network_isolated() {
+    for interface in "$1"/*; do
+        [ -d "$interface" ] || continue
+        read -r flags < "$interface/flags" || return 1
+        [ $(( flags & 0x1 )) -ne 0 ] || continue
+        [ $(( flags & 0x8 )) -ne 0 ] || return 1
+    done
+    return 0
+}
+"#
+    };
+}
+
+const PREFLIGHT_SCRIPT: &str = concat!(
+    network_rule!(),
+    r#"
 refuse() {
     printf 'spice-proof-preflight-refused:%s\n' "$1" >&2
     exit 70
@@ -52,17 +89,15 @@ for cache in /cargo-home /cargo-target; do
         [ ! -e "$entry" ] || refuse cache-not-empty
     done
 done
-for interface in /sys/class/net/*; do
-    [ -e "$interface" ] || continue
-    [ "${interface##*/}" = lo ] || refuse network-interface-present
-done
+network_isolated /sys/class/net || refuse network-reaches-past-loopback
 
 dialect=$1
 challenge=$2
 shift 2
 printf 'spice-proof-attestation-v2:%s:%s\n' "$dialect" "$challenge" >&2
 exec "$@"
-"#;
+"#
+);
 
 /// One observed OCI runtime interface.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1103,6 +1138,74 @@ exit 0
         assert!(
             status.success(),
             "the sealed preflight must parse before use"
+        );
+    }
+
+    /// A `/sys/class/net` directory holding the named interfaces and their
+    /// flags, alongside the `bonding_masters` control file the kernel puts
+    /// there, which is a file rather than an interface directory.
+    fn network_directory(interfaces: &[(&str, u32)]) -> std::path::PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "spice-proof-net-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).expect("fixture network directory");
+        fs::write(root.join("bonding_masters"), "\n").expect("fixture control file");
+        for (name, flags) in interfaces {
+            let interface = root.join(name);
+            fs::create_dir_all(&interface).expect("fixture interface");
+            fs::write(interface.join("flags"), format!("{flags:#x}\n")).expect("fixture flags");
+        }
+        root
+    }
+
+    /// Whether the shipped rule calls that directory isolated.
+    fn network_isolated(directory: &std::path::Path) -> bool {
+        let _spawn_guard = crate::test_support::process_spawn_guard();
+        std::process::Command::new("/bin/sh")
+            .args([
+                std::ffi::OsStr::new("-c"),
+                std::ffi::OsStr::new(concat!(network_rule!(), "\nnetwork_isolated \"$1\"\n")),
+                std::ffi::OsStr::new("sh"),
+                directory.as_os_str(),
+            ])
+            .status()
+            .expect("host POSIX shell runs the network rule")
+            .success()
+    }
+
+    #[test]
+    fn a_fresh_namespace_of_down_tunnel_stubs_is_isolated() {
+        let directory = network_directory(&[
+            ("lo", 0x9),
+            ("erspan0", 0x1002),
+            ("gre0", 0x80),
+            ("gretap0", 0x1002),
+            ("ip6tnl0", 0x80),
+            ("sit0", 0x80),
+            ("tunl0", 0x80),
+        ]);
+
+        assert!(
+            network_isolated(&directory),
+            "a --network=none namespace carries no traffic through interfaces that are all down"
+        );
+    }
+
+    #[test]
+    fn an_interface_that_can_carry_traffic_is_refused_whatever_it_is_named() {
+        let named_lo = network_directory(&[("lo", 0x1003)]);
+        let named_eth0 = network_directory(&[("lo", 0x9), ("eth0", 0x1003)]);
+
+        assert!(
+            !network_isolated(&named_lo),
+            "an up adapter without IFF_LOOPBACK reaches the network under any name"
+        );
+        assert!(
+            !network_isolated(&named_eth0),
+            "an up adapter beside real loopback reaches the network"
         );
     }
 
