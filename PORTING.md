@@ -269,7 +269,8 @@ No `study` path is a shipped verb, and a ranking board is not a gate.
 - `study javascript-unused`: D.
 - `study magic-numbers`: D.
 - `study markdown-links`: D.
-- `study mutations`: P -> `STUDY-1kK7CHkN`; `kill` gates Rust survivor debt.
+- `study mutations`: D -> `gate::kill`; the zero-constraint board gated nothing
+  and does not survive, because the tool reports no test name per mutant.
 - `study private-internals`: D.
 - `study python-unused`: D.
 - `study reachability`: D.
