@@ -537,11 +537,21 @@ impl HygieneProvenance {
 ///
 /// This is a path the selected tree contains and the analysis never measured.
 /// It is deliberately not an [`ExclusionEvidence`]: that one retires a whole
-/// arm, while this one retires a single file and leaves the arm measuring.
+/// arm, while this one retires a single file or one unentered subtree and
+/// leaves the arm measuring.
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct SuppressedPath {
     /// Selected-tree-relative path that reached no analyzer.
     pub path: String,
+    /// Whether one file was removed or a whole subtree was never entered.
+    ///
+    /// A rule that prunes a directory removes every candidate beneath it
+    /// without naming one, and the walk cannot say how many because it stops at
+    /// the directory. The path alone does not separate the two cases: a
+    /// directory may be named `generated.py` and be no candidate at all. This
+    /// is [`crate::jurisdiction::Shape::as_str`], the spelling the inventory
+    /// already uses.
+    pub shape: String,
     /// Exact walk-rule text that decided the removal.
     pub rule: String,
     /// Exact release, layer, document, and field that supplied the rule.
@@ -550,7 +560,10 @@ pub struct SuppressedPath {
 
 impl SuppressedPath {
     fn is_complete(&self) -> bool {
-        !self.path.is_empty() && !self.rule.is_empty() && self.provenance.is_complete()
+        !self.path.is_empty()
+            && !self.shape.is_empty()
+            && !self.rule.is_empty()
+            && self.provenance.is_complete()
     }
 }
 

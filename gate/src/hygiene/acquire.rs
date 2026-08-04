@@ -77,7 +77,7 @@ impl<'a> HygieneSource<'a> {
         &self.digest
     }
 
-    /// Hygiene candidates this jurisdiction removed, each naming its rule.
+    /// What this jurisdiction withheld from measurement, each naming its rule.
     ///
     /// The jurisdiction retains a rule *index*, and the rule list it indexes
     /// lives only here, so this is the last point at which a suppression can be
@@ -108,11 +108,17 @@ pub fn acquire_hygiene(
     analyze_hygiene(source.jurisdiction(), &configuration)
 }
 
-/// Every Python candidate the walk removed, paired with the rule that removed
-/// it.
+/// Everything the walk withheld from measurement, paired with the rule that
+/// withheld it.
 ///
-/// Only ignored regular files count. A pruned directory never yields the files
-/// beneath it, and a readmitted path was measured, so neither is a suppression.
+/// Two shapes withhold: an ignored Python file, which is one candidate lost,
+/// and an ignored directory, which loses every candidate beneath it at once.
+/// The walk records the pruned directory and stops there, so nothing downstream
+/// can name those candidates or count them. The directory itself is the whole
+/// truth available: a region of the selected tree no analyzer entered, and the
+/// rule that closed it. Reporting it is what keeps that loss from being silent.
+/// A readmitted path was measured, and an ignored file that is no Python
+/// candidate was never going to be, so neither withholds anything.
 fn suppressed_candidates(
     jurisdiction: &Jurisdiction,
     ignore: &Ignore,
@@ -123,8 +129,11 @@ fn suppressed_candidates(
         let Admission::Ignored(rule) = entry.admission() else {
             continue;
         };
-        if entry.shape() != Shape::File || !is_python_path(entry.path()) {
-            continue;
+        let shape = entry.shape();
+        match shape {
+            Shape::File if is_python_path(entry.path()) => {}
+            Shape::Directory => {}
+            Shape::File | Shape::Other => continue,
         }
         let Some((rule, provenance)) = ignore.rules().get(rule).zip(provenance.get(rule)) else {
             return Err(HygieneAnalysisError::Source(format!(
@@ -134,6 +143,7 @@ fn suppressed_candidates(
         };
         suppressed.push(SuppressedPath {
             path: entry.path().to_owned(),
+            shape: shape.as_str().to_owned(),
             rule: rule.to_string(),
             provenance: provenance.clone(),
         });
@@ -223,9 +233,11 @@ fn compiled_arm_provenance() -> HygieneProvenance {
 mod tests {
     use super::*;
 
-    /// The compiled defaults prune whole directories, so no selected file can
-    /// ever be attributed to them through a repository fixture. The boundary
-    /// arithmetic that would attribute one is still exercised here.
+    /// The compiled defaults prune whole directories, and a pruned directory is
+    /// a suppression, so a repository that tracks a path under `target/`
+    /// reaches the compiled half through a real acquisition;
+    /// `gate/tests/hygiene_acquire.rs` does exactly that. What stays here is
+    /// the arithmetic over a boundary no fixture has to arrange.
     #[test]
     fn the_boundary_decides_which_layer_owns_each_walk_rule() {
         let provenance = walk_provenance(4, 2);

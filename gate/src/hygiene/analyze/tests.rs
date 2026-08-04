@@ -665,6 +665,7 @@ mod tests {
     fn a_suppression_missing_any_part_of_its_origin_is_refused_at_admission() {
         let complete = SuppressedPath {
             path: "tests/test_ignored.py".to_owned(),
+            shape: "file".to_owned(),
             rule: "tests/test_ignored.py".to_owned(),
             provenance: HygieneProvenance {
                 release: "current".to_owned(),
@@ -679,6 +680,7 @@ mod tests {
 
         for blank in [
             |item: &mut SuppressedPath| item.path.clear(),
+            |item: &mut SuppressedPath| item.shape.clear(),
             |item: &mut SuppressedPath| item.rule.clear(),
             |item: &mut SuppressedPath| item.provenance.release.clear(),
             |item: &mut SuppressedPath| item.provenance.layer.clear(),
