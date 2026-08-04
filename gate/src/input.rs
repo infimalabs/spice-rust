@@ -52,6 +52,8 @@ include!("input/baseline.rs");
 pub struct ToolIdentity {
     name: String,
     program: PathBuf,
+    version: String,
+    executable: Digest,
     digest: Digest,
 }
 
@@ -66,6 +68,23 @@ impl ToolIdentity {
     #[must_use]
     pub fn program(&self) -> &Path {
         &self.program
+    }
+
+    /// Exactly what the declared probe printed, retained unmodified.
+    ///
+    /// Kept beside the digests because neither of them can be read back into
+    /// what the tool said about itself. A probe that prints a version prints one
+    /// here; a probe that prints a compiled sentinel prints that, and either way
+    /// this is the tool's own answer rather than a name the gate chose for it.
+    #[must_use]
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+
+    /// Identity of the executable bytes alone.
+    #[must_use]
+    pub const fn executable(&self) -> &Digest {
+        &self.executable
     }
 
     /// Identity binding declaration and executable bytes.
@@ -547,6 +566,10 @@ fn identify_tool(
     Ok(ToolIdentity {
         name: declaration.name.clone(),
         program: program.to_path_buf(),
+        // The probe's own bytes, admitted above as byte-equal to the declared
+        // output, so this is what the tool printed rather than what was expected.
+        version: declaration.probe_output.clone(),
+        executable: binary,
         digest: Digest::compute(Domain::GateTool, identity.as_bytes()),
     })
 }

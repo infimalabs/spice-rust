@@ -307,12 +307,8 @@ impl Fixture {
     }
 
     fn inputs(&self) -> BatteryInputs<'_> {
-        self.inputs_for(&self.source)
-    }
-
-    fn inputs_for<'a>(&'a self, source: &'a Digest) -> BatteryInputs<'a> {
         BatteryInputs::new(
-            source,
+            &self.source,
             &self.actor,
             &self.scope,
             &self.configuration,

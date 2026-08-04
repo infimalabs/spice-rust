@@ -101,6 +101,15 @@ pub enum ActorCapture {
 }
 
 impl ActorCapture {
+    /// The identity acting in this worktree, when one is.
+    #[must_use]
+    pub fn active_actor(&self) -> Option<&str> {
+        match self {
+            Self::Acting { actor, .. } => Some(actor),
+            Self::Absent => None,
+        }
+    }
+
     /// Resolve one candidate path's jitter seed through the documented order.
     ///
     /// [`ActorInputs`] is the single resolver both this family and every bound

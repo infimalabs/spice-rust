@@ -46,7 +46,7 @@ pub use battery::{
     supported_pairs,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use battery::{RepositoryExecutionEvent, RepositoryExecutor};
+pub use battery::{BatteryCapture, RepositoryExecutionEvent};
 pub use camp::{
     BoundRelation, CAMP_REPORT_VERSION, Camp, CampError, CampFinding, CampReport, CampRunError,
     CampStanding, DistributionReport, LocusDistance, SharedBound,
@@ -128,7 +128,8 @@ pub use state::{
     ActorInputs, ActorResolution, ActorSource, BoundDecision, BoundError, BoundRule, ClaimDecision,
     ClaimStatus, CurrentState, KeyError, LatchEntry, LatchKind, LatchObservation, LatchTransition,
     PeerClaim, PendingState, PredecessorSources, RenameMap, StateDecision, StateError,
-    StateErrorKind, StateKey, StateLedger, StateReceipt, current_state_path, varied_elastic_limit,
+    StateErrorKind, StateKey, StateLedger, StateReceipt, current_state_path,
+    predecessor_state_sources, varied_elastic_limit,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use structural::{

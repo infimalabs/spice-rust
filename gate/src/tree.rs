@@ -218,6 +218,18 @@ impl Drop for BuildRoot {
     }
 }
 
+/// The Git directories one live repository publishes durable state below.
+///
+/// Both are named because a linked worktree has two: its own directory, which
+/// is where a predecessor wrote per-worktree state, and the common directory
+/// every linked worktree shares, which is where one authority lives. A caller
+/// that resolved only one of them would either give every worktree a private
+/// ledger or give them all one worktree's imports.
+pub(crate) fn git_directories(repository: &Path) -> Result<(PathBuf, PathBuf), TreeError> {
+    let repo = open_repository(repository)?;
+    Ok((repo.path().to_path_buf(), repo.common_dir().to_path_buf()))
+}
+
 fn open_repository(path: &Path) -> Result<gix::Repository, TreeError> {
     let options = gix::open::Options::isolated()
         .strict_config(true)
