@@ -55,8 +55,39 @@ network_isolated() {
     };
 }
 
+/// The rule deciding whether the caller's mounts are the ones this boundary
+/// grants, as one shell function over a `mountinfo` file.
+///
+/// It names the first bound not met rather than returning a bare failure, so
+/// the refusal a member sees still says which mount was wrong. Kept as its own
+/// text for the same reason as [`network_rule`]: the mount flags on the other
+/// side of this contract change, and an assertion nothing exercises is an
+/// assertion that could stop biting without anyone noticing.
+macro_rules! mount_rule {
+    () => {
+        r#"
+mount_violation() {
+    workspace_read_only=false
+    cargo_home_tmpfs=false
+    cargo_target_tmpfs=false
+    while IFS= read -r mount; do
+        case "$mount" in
+            *" /workspace ro,"*|*" /workspace ro "*) workspace_read_only=true ;;
+            *" /cargo-home "*" - tmpfs "*) cargo_home_tmpfs=true ;;
+            *" /cargo-target "*" - tmpfs "*) cargo_target_tmpfs=true ;;
+        esac
+    done < "$1"
+    [ "$workspace_read_only" = true ] || { echo workspace-not-read-only; return; }
+    [ "$cargo_home_tmpfs" = true ] || { echo cargo-home-not-tmpfs; return; }
+    [ "$cargo_target_tmpfs" = true ] || { echo cargo-target-not-tmpfs; return; }
+}
+"#
+    };
+}
+
 const PREFLIGHT_SCRIPT: &str = concat!(
     network_rule!(),
+    mount_rule!(),
     r#"
 refuse() {
     printf 'spice-proof-preflight-refused:%s\n' "$1" >&2
@@ -70,19 +101,8 @@ refuse() {
 [ -d /cargo-target ] || refuse cargo-target-missing
 [ -d /sys/class/net ] || refuse network-state-unavailable
 
-workspace_read_only=false
-cargo_home_tmpfs=false
-cargo_target_tmpfs=false
-while IFS= read -r mount; do
-    case "$mount" in
-        *" /workspace ro,"*|*" /workspace ro "*) workspace_read_only=true ;;
-        *" /cargo-home "*" - tmpfs "*) cargo_home_tmpfs=true ;;
-        *" /cargo-target "*" - tmpfs "*) cargo_target_tmpfs=true ;;
-    esac
-done < /proc/self/mountinfo
-[ "$workspace_read_only" = true ] || refuse workspace-not-read-only
-[ "$cargo_home_tmpfs" = true ] || refuse cargo-home-not-tmpfs
-[ "$cargo_target_tmpfs" = true ] || refuse cargo-target-not-tmpfs
+violation=$(mount_violation /proc/self/mountinfo)
+[ -z "$violation" ] || refuse "$violation"
 
 for cache in /cargo-home /cargo-target; do
     for entry in "$cache"/* "$cache"/.[!.]* "$cache"/..?*; do
@@ -507,10 +527,22 @@ impl Container {
             "--security-opt=no-new-privileges".to_owned(),
             "--mount".to_owned(),
             mount,
-            "--mount".to_owned(),
-            format!("type=tmpfs,destination={CARGO_HOME},tmpfs-mode=0700"),
-            "--mount".to_owned(),
-            format!("type=tmpfs,destination={CARGO_TARGET},tmpfs-mode=0700"),
+            // Spelled with `--tmpfs` rather than `--mount type=tmpfs` because
+            // only this flag takes the execute permission below: both admitted
+            // runtimes accept arbitrary mount options here, while `--mount`
+            // accepts only a size and a mode and rejects anything else. The
+            // size default is unchanged by the switch, half of memory either
+            // way, and both mounts stay `nosuid,nodev` and stay tmpfs, which is
+            // what the preflight reads them for.
+            "--tmpfs".to_owned(),
+            format!("{CARGO_HOME}:rw,noexec,mode=0700"),
+            // The one mount that may execute, because it is the one members
+            // write programs to: every member compiles into `CARGO_TARGET_DIR`
+            // and then runs what it compiled, build scripts first and test
+            // binaries after. Granted here alone rather than to both, so the
+            // Cargo home stays a directory nothing can be run out of.
+            "--tmpfs".to_owned(),
+            format!("{CARGO_TARGET}:rw,exec,mode=0700"),
             "--workdir".to_owned(),
             WORKSPACE_MOUNT.to_owned(),
             "--env".to_owned(),
@@ -950,10 +982,10 @@ exit 0
                         .expect("canonical workspace")
                         .display()
                 ),
-                "--mount".to_owned(),
-                "type=tmpfs,destination=/cargo-home,tmpfs-mode=0700".to_owned(),
-                "--mount".to_owned(),
-                "type=tmpfs,destination=/cargo-target,tmpfs-mode=0700".to_owned(),
+                "--tmpfs".to_owned(),
+                "/cargo-home:rw,noexec,mode=0700".to_owned(),
+                "--tmpfs".to_owned(),
+                "/cargo-target:rw,exec,mode=0700".to_owned(),
                 "--workdir".to_owned(),
                 "/workspace".to_owned(),
                 "--env".to_owned(),
@@ -1174,6 +1206,79 @@ exit 0
             .status()
             .expect("host POSIX shell runs the network rule")
             .success()
+    }
+
+    /// The mountinfo line the boundary produces for one destination.
+    fn mountinfo_line(destination: &str, options: &str, filesystem: &str) -> String {
+        format!("153 144 0:77 / {destination} {options},relatime - {filesystem} {filesystem} rw")
+    }
+
+    /// Which bound the shipped rule reports unmet, empty when all are met.
+    fn mount_violation(lines: &[String]) -> String {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let _spawn_guard = crate::test_support::process_spawn_guard();
+        let path = std::env::temp_dir().join(format!(
+            "spice-proof-mountinfo-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::write(&path, lines.join("\n") + "\n").expect("fixture mountinfo");
+        let output = std::process::Command::new("/bin/sh")
+            .args([
+                std::ffi::OsStr::new("-c"),
+                std::ffi::OsStr::new(concat!(mount_rule!(), "\nmount_violation \"$1\"\n")),
+                std::ffi::OsStr::new("sh"),
+                path.as_os_str(),
+            ])
+            .output()
+            .expect("host POSIX shell runs the mount rule");
+        String::from_utf8(output.stdout)
+            .expect("refusal names are ASCII")
+            .trim()
+            .to_owned()
+    }
+
+    /// The mounts this boundary actually grants, as the runtime reports them.
+    fn granted_mounts() -> Vec<String> {
+        vec![
+            mountinfo_line("/workspace", "ro,relatime", "ext4"),
+            mountinfo_line("/cargo-home", "rw,nosuid,nodev,noexec", "tmpfs"),
+            mountinfo_line("/cargo-target", "rw,nosuid,nodev", "tmpfs"),
+        ]
+    }
+
+    #[test]
+    fn the_mounts_this_boundary_grants_meet_every_bound_it_asserts() {
+        assert_eq!(
+            mount_violation(&granted_mounts()),
+            "",
+            "the executable target mount must still satisfy the preflight it passes today"
+        );
+    }
+
+    #[test]
+    fn each_unmet_mount_bound_is_refused_by_its_own_name() {
+        let writable_workspace = vec![
+            mountinfo_line("/workspace", "rw,relatime", "ext4"),
+            mountinfo_line("/cargo-home", "rw,nosuid,nodev,noexec", "tmpfs"),
+            mountinfo_line("/cargo-target", "rw,nosuid,nodev", "tmpfs"),
+        ];
+        let disk_backed_home = vec![
+            mountinfo_line("/workspace", "ro,relatime", "ext4"),
+            mountinfo_line("/cargo-home", "rw,nosuid,nodev,noexec", "ext4"),
+            mountinfo_line("/cargo-target", "rw,nosuid,nodev", "tmpfs"),
+        ];
+        let absent_target = vec![
+            mountinfo_line("/workspace", "ro,relatime", "ext4"),
+            mountinfo_line("/cargo-home", "rw,nosuid,nodev,noexec", "tmpfs"),
+        ];
+
+        assert_eq!(
+            mount_violation(&writable_workspace),
+            "workspace-not-read-only"
+        );
+        assert_eq!(mount_violation(&disk_backed_home), "cargo-home-not-tmpfs");
+        assert_eq!(mount_violation(&absent_target), "cargo-target-not-tmpfs");
     }
 
     #[test]
