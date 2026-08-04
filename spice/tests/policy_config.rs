@@ -1,7 +1,7 @@
 use consent::Answer;
 use gate::Shape;
 use lane::life::Life;
-use spice::config::Root;
+use spice::config::{Document, Inputs, Root};
 
 const COMPLETE: &str = r#"
 [taste.zeta]
@@ -257,29 +257,66 @@ fn malformed_policy_values_are_refused_under_their_domain_paths() {
 /// registry without a spelling this schema admits fails here.
 #[test]
 fn every_coexisting_tracked_key_is_one_this_schema_admits() {
-    // Each value is distinct so no reading can be satisfied by another's bytes.
-    let declared = [
-        ("policy.repo_truth.docs", "[\"DOCTRINE.md\"]"),
-        ("policy.package_roots", "[\"src/sample\"]"),
-        ("policy.generated_paths", "[\"build/derived\"]"),
-        ("policy.name_cluster_threshold", "3"),
-        ("policy.test_paths", "[\"suite\"]"),
-        ("policy.package.boundary_underscore_pattern", "\"^[a-z]+$\""),
-    ];
     assert_eq!(
-        declared.map(|(key, _)| key).as_slice(),
+        COEXISTING_DECLARATIONS.map(|(key, _)| key).as_slice(),
         gate::COEXISTING_TRACKED_KEYS,
         "the coexisting registry and the keys this schema admits disagree"
     );
 
-    let document = declared
-        .iter()
-        .map(|(key, value)| format!("{key} = {value}\n"))
-        .collect::<String>();
-    let policy = decode(&document)
+    let policy = decode(&coexisting_document())
         .expect("every coexisting key declared together loads")
         .policy()
         .clone();
+    assert_coexisting_values(&policy);
+}
+
+/// Every coexisting key reaches its accessor through the resolver door.
+///
+/// The schema test above proves serde accepts these spellings, but a tracked
+/// document reaches serde only after `resolve` sanitizes it against the
+/// descriptor registry. A key missing from that registry is refused as
+/// `IssueKind::Unknown` under strict resolution and dropped without a word
+/// under coexisting resolution, leaving the accessor empty while Gate still
+/// advertises the setting. Both modes are exercised because live repository
+/// commands resolve coexisting and the landing verifier resolves strict, so a
+/// key that only works in one door is still broken for someone.
+#[test]
+fn every_coexisting_tracked_key_reaches_its_accessor_through_both_resolver_doors() {
+    let document = coexisting_document();
+    for (mode, inputs) in [
+        (
+            "strict",
+            Inputs::new(Some(Document::new("spice.toml", &document)), None, &[]),
+        ),
+        (
+            "coexisting",
+            Inputs::coexisting(Some(Document::new("spice.toml", &document)), None, &[]),
+        ),
+    ] {
+        let resolved = spice::config::resolve(inputs)
+            .unwrap_or_else(|error| panic!("{mode} resolution refused a coexisting key: {error}"));
+        assert_coexisting_values(resolved.root().policy());
+    }
+}
+
+/// Each value is distinct so no reading can be satisfied by another's bytes.
+const COEXISTING_DECLARATIONS: [(&str, &str); 6] = [
+    ("policy.repo_truth.docs", "[\"DOCTRINE.md\"]"),
+    ("policy.package_roots", "[\"src/sample\"]"),
+    ("policy.generated_paths", "[\"build/derived\"]"),
+    ("policy.name_cluster_threshold", "3"),
+    ("policy.test_paths", "[\"suite\"]"),
+    ("policy.package.boundary_underscore_pattern", "\"^[a-z]+$\""),
+];
+
+fn coexisting_document() -> String {
+    COEXISTING_DECLARATIONS
+        .iter()
+        .map(|(key, value)| format!("{key} = {value}\n"))
+        .collect()
+}
+
+fn assert_coexisting_values(policy: &spice::config::WorkspacePolicy) {
     assert_eq!(
         policy.repo_truth().docs(),
         Some(["DOCTRINE.md".to_owned()].as_slice())

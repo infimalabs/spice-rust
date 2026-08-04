@@ -67,7 +67,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert_eq!(missing.root(), &spice::config::Root::default());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 41);
+    assert_eq!(missing.provenance().len(), 47);
     assert!(
         missing
             .provenance()
@@ -170,20 +170,29 @@ fn speech_configuration_refuses_untrusted_or_malformed_execution() {
     }
 }
 
+/// Coexistence projects out predecessor spellings, not the tables holding them.
+///
+/// The declared values are non-empty so that admitting a key and dropping it
+/// are distinguishable readings: an empty list would satisfy both. `policy`
+/// carries one key this release declares beside one only the predecessor
+/// spells, because the whole point of the narrowed rule is that those two share
+/// a table and only the second may vanish.
 #[test]
-fn coexistence_admits_current_task_metadata_and_ignores_the_policy_scaffold() {
+fn coexistence_admits_current_metadata_and_projects_out_only_predecessor_spellings() {
     let tracked = concat!(
         "[tasks]\nbase_stems = ['task']\nstems = ['rim']\nhidden_stems = ['sandbox']\n",
-        "[policy]\nenv_names = []\n",
+        "[policy]\nenv_names = ['FIXTURE_INBOX']\npredecessor_only = ['scaffold']\n",
         "[taste.polling]\nwords = ['poll*']\nmessage = 'use events'\n",
     );
     let local = "[lock.worker]\ndirectory = 'locks/worker'\nshards = 2\n";
 
-    let strict_tracked = tracked.replace("base_stems = ['task']\n", "");
+    let strict_tracked = tracked
+        .replace("base_stems = ['task']\n", "")
+        .replace("predecessor_only = ['scaffold']\n", "");
     let strict = resolve(documents(Some(&strict_tracked), Some(local)))
         .expect("strict resolution admits typed shared metadata");
     assert_eq!(strict.root().tasks().stems(), ["rim"]);
-    assert!(strict.root().policy().env_names().is_empty());
+    assert_eq!(strict.root().policy().env_names(), ["FIXTURE_INBOX"]);
 
     let coexisting = resolve(coexisting_documents(Some(tracked), Some(local)))
         .expect("coexistence projects out only predecessor roots");
@@ -200,7 +209,7 @@ fn coexistence_admits_current_task_metadata_and_ignores_the_policy_scaffold() {
         coexisting.root().tasks().project_max_depth(),
         dialect::PROJECT_MAX_DEPTH as u64
     );
-    assert!(coexisting.root().policy().env_names().is_empty());
+    assert_eq!(coexisting.root().policy().env_names(), ["FIXTURE_INBOX"]);
     assert_eq!(coexisting.root().taste().bag().tastes().len(), 1);
     assert_eq!(coexisting.root().lock().named().len(), 1);
     assert_eq!(
@@ -616,6 +625,16 @@ project_max_depth = 3
 
 [policy]
 env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
+package_roots = ["src/fixture"]
+generated_paths = ["build/fixture"]
+name_cluster_threshold = 4
+test_paths = ["tests/fixture"]
+
+[policy.repo_truth]
+docs = ["DOCTRINE.md"]
+
+[policy.package]
+boundary_underscore_pattern = "^[a-z][a-z0-9_]*$"
 
 [policy.commit_message]
 allowed_trailers = ["Spice-Origin"]

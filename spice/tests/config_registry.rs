@@ -14,6 +14,16 @@ project_max_depth = 3
 
 [policy]
 env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
+package_roots = ["src/fixture"]
+generated_paths = ["build/fixture"]
+name_cluster_threshold = 4
+test_paths = ["tests/fixture"]
+
+[policy.repo_truth]
+docs = ["DOCTRINE.md"]
+
+[policy.package]
+boundary_underscore_pattern = "^[a-z][a-z0-9_]*$"
 
 [policy.commit_message]
 allowed_trailers = ["Spice-Origin", "Reviewed-By"]
@@ -343,66 +353,78 @@ fn registry_builtins_are_the_typed_root_defaults() {
     }
 }
 
+/// Every leaf the registry publishes, in the order a reader meets it.
+///
+/// Order is part of the contract: help output and provenance reports walk the
+/// registry as declared, so a row that moves is a visible change even when the
+/// set is unchanged.
+const EXPECTED_TEMPLATES: &[&str] = &[
+    "tasks.stems",
+    "tasks.hidden_stems",
+    "tasks.project_min_depth",
+    "tasks.project_max_depth",
+    "policy.env_names",
+    "policy.commit_message.allowed_trailers",
+    "policy.commit_message.blocked_trailers",
+    "policy.repo_truth.docs",
+    "policy.package_roots",
+    "policy.generated_paths",
+    "policy.name_cluster_threshold",
+    "policy.test_paths",
+    "policy.package.boundary_underscore_pattern",
+    "taste.<name>.words",
+    "taste.<name>.message",
+    "consent.posture",
+    "consent.rule[].name",
+    "consent.rule[].tool",
+    "consent.rule[].answer",
+    "consent.rule[].budget",
+    "gate.walk.skip",
+    "board.next.review",
+    "board.next.band",
+    "lane.life",
+    "lane.lease",
+    "lane.vendor",
+    "lane.deaths",
+    "lane.young",
+    "lane.hold",
+    "steer.expiry",
+    "steer.resend",
+    "vendor.claude.binary",
+    "vendor.claude.model",
+    "vendor.claude.effort",
+    "vendor.claude.auto_compact_window_tokens",
+    "vendor.codex.binary",
+    "vendor.codex.model",
+    "vendor.codex.effort",
+    "vendor.codex.personality",
+    "vendor.codex.fast_mode",
+    "listen.window",
+    "lock.busy",
+    "lock.taken",
+    "lock.full",
+    "lock.<name>.path",
+    "lock.<name>.directory",
+    "lock.<name>.shards",
+    "canvas.pack.rows",
+    "say.backend",
+    "say.command",
+    "say.voice",
+    "say.content_type",
+    "say.words_per_minute",
+    "proof.image",
+    "proof.container",
+    "proof.runner",
+];
+
 #[test]
 fn templates_are_unique_canonical_non_overlapping_and_stably_ordered() {
-    let expected = [
-        "tasks.stems",
-        "tasks.hidden_stems",
-        "tasks.project_min_depth",
-        "tasks.project_max_depth",
-        "policy.env_names",
-        "policy.commit_message.allowed_trailers",
-        "policy.commit_message.blocked_trailers",
-        "taste.<name>.words",
-        "taste.<name>.message",
-        "consent.posture",
-        "consent.rule[].name",
-        "consent.rule[].tool",
-        "consent.rule[].answer",
-        "consent.rule[].budget",
-        "gate.walk.skip",
-        "board.next.review",
-        "board.next.band",
-        "lane.life",
-        "lane.lease",
-        "lane.vendor",
-        "lane.deaths",
-        "lane.young",
-        "lane.hold",
-        "steer.expiry",
-        "steer.resend",
-        "vendor.claude.binary",
-        "vendor.claude.model",
-        "vendor.claude.effort",
-        "vendor.claude.auto_compact_window_tokens",
-        "vendor.codex.binary",
-        "vendor.codex.model",
-        "vendor.codex.effort",
-        "vendor.codex.personality",
-        "vendor.codex.fast_mode",
-        "listen.window",
-        "lock.busy",
-        "lock.taken",
-        "lock.full",
-        "lock.<name>.path",
-        "lock.<name>.directory",
-        "lock.<name>.shards",
-        "canvas.pack.rows",
-        "say.backend",
-        "say.command",
-        "say.voice",
-        "say.content_type",
-        "say.words_per_minute",
-        "proof.image",
-        "proof.container",
-        "proof.runner",
-    ];
     assert_eq!(
         descriptors()
             .iter()
             .map(|entry| entry.template().as_str())
             .collect::<Vec<_>>(),
-        expected
+        EXPECTED_TEMPLATES
     );
 
     let mut unique = BTreeSet::new();
@@ -463,12 +485,36 @@ fn templates_are_unique_canonical_non_overlapping_and_stably_ordered() {
     }
 }
 
+/// Gate admits exactly the keys the resolver can carry, counting both lists.
+///
+/// Gate admits a tracked key from `CONFIG_KEY_DECLARATIONS` or from
+/// `COEXISTING_TRACKED_KEYS`, so the resolver registry must cover their union:
+/// a key gate admits but the resolver cannot place makes the whole document
+/// refuse to load, and a resolver row gate does not admit is a setting the
+/// gate would report as unknown. Layers are compared only for the declared
+/// half because the coexisting half carries no layer of its own.
 #[test]
 fn gate_key_admission_uses_the_resolvers_exact_packaged_registry() {
-    assert_eq!(CONFIG_KEY_DECLARATIONS.len(), descriptors().len());
-    for (gate, resolver) in CONFIG_KEY_DECLARATIONS.iter().zip(descriptors()) {
-        assert_eq!(gate.template(), resolver.template().as_str());
-        assert_eq!(gate.layers(), resolver.layers(), "{}", gate.template());
+    let resolver = descriptors()
+        .iter()
+        .map(|entry| entry.template().as_str())
+        .collect::<BTreeSet<_>>();
+    let admitted = CONFIG_KEY_DECLARATIONS
+        .iter()
+        .map(|entry| entry.template())
+        .chain(gate::COEXISTING_TRACKED_KEYS.iter().copied())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        resolver, admitted,
+        "gate admission and the resolver disagree"
+    );
+
+    for gate in CONFIG_KEY_DECLARATIONS {
+        let entry = descriptors()
+            .iter()
+            .find(|entry| entry.template().as_str() == gate.template())
+            .unwrap_or_else(|| panic!("resolver row for {}", gate.template()));
+        assert_eq!(gate.layers(), entry.layers(), "{}", gate.template());
     }
 }
 

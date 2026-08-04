@@ -698,6 +698,48 @@ registry! {
         class: Policy,
         flag: None,
     }
+    fixed "policy.repo_truth.docs" {
+        kind: StringList,
+        builtin: Some(Builtin::Absent),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "policy.package_roots" {
+        kind: StringList,
+        builtin: Some(Builtin::Strings(&[])),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "policy.generated_paths" {
+        kind: StringList,
+        builtin: Some(Builtin::Strings(&[])),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "policy.name_cluster_threshold" {
+        kind: UnsignedInteger,
+        builtin: Some(Builtin::Absent),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "policy.test_paths" {
+        kind: StringList,
+        builtin: Some(Builtin::Strings(&[])),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "policy.package.boundary_underscore_pattern" {
+        kind: String,
+        builtin: Some(Builtin::Absent),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
     named "taste.<name>.words" {
         kind: StringList,
         builtin: None,

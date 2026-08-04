@@ -579,9 +579,6 @@ fn sanitize(
     issues: &mut Vec<Issue>,
     leaves: &mut Vec<ConcretePath>,
 ) -> bool {
-    if coexist && is_scaffold_root(path) {
-        return false;
-    }
     let borrowed = path.borrowed();
     if let Some(entry) = descriptor(&borrowed) {
         if !entry.layers().contains(&source) {
@@ -623,7 +620,7 @@ fn sanitize(
         .iter()
         .any(|entry| entry.template().accepts_prefix(&borrowed))
     {
-        if coexist && is_coexisting_task_extra(path) {
+        if coexist && (is_coexisting_task_extra(path) || is_scaffold_policy_extra(path)) {
             return false;
         }
         issues.push(Issue::at(
@@ -670,10 +667,17 @@ fn sanitize(
     }
 }
 
-fn is_scaffold_root(path: &ConcretePath) -> bool {
+/// Whether a `policy` path the registry does not know is a predecessor spelling.
+///
+/// While the Python scaffold shares the tracked document it declares `policy`
+/// keys this release never adopted. Those are projected out instead of refused,
+/// but only the ones the registry cannot place: a key the registry does declare
+/// must reach its accessor under coexistence too, because Gate advertises those
+/// spellings as settings a live repository may declare today.
+fn is_scaffold_policy_extra(path: &ConcretePath) -> bool {
     matches!(
         path.0.as_slice(),
-        [OwnedSegment::Key(root)] if root == "policy"
+        [OwnedSegment::Key(root), ..] if root == "policy"
     )
 }
 
