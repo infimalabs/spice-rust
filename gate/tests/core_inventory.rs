@@ -229,6 +229,12 @@ fn false_disable_inventory_authenticates_the_configuration_root_type() {
             "fn generic<Root>(root: &Root) -> bool {\n",
             "    root.vendor().codex().fast_mode()\n",
             "}\n",
+            "struct Adapter<Root>(Root);\n",
+            "impl<Root> Adapter<Root> {\n",
+            "    fn consume(&self, root: &Root) -> bool {\n",
+            "        root.vendor().codex().fast_mode()\n",
+            "    }\n",
+            "}\n",
         ),
     );
     git_commit(&repository, "configuration Root authority fixture");
