@@ -18,6 +18,7 @@ use wire::{
     Actor, CanonicalUuid, Command, Outcome, Producer, Refusal, Reply, ReplyPosition, SeqRange,
 };
 
+use super::lane_surface::{record_stream, resume_session, session_fact};
 use super::shutdown::{current_residency, guard_residency};
 use super::{
     CommandResult, RuntimePaths, commit, new_uuid, seq, store_fault, typed_outcome, write,
@@ -776,133 +777,6 @@ fn declaration_reporter(
     })
 }
 
-fn resume_session(
-    paths: &RuntimePaths,
-    row: &wire::LaneResidency,
-) -> CommandResult<vendor::Resume> {
-    let session = validate_session_head(row)?;
-    let dialect = session_dialect(&row.vendor)?;
-    prove_session_tape(paths, row, session, dialect)?;
-    let identity = vendor::SessionId::new(session.identity.clone()).map_err(|error| {
-        session_refusal(
-            "lane::session-identity-invalid",
-            Some("nonempty vendor identity".into()),
-            Some(error.to_string()),
-            "repair durable session authority",
-        )
-    })?;
-    Ok(vendor::Resume::Session(identity))
-}
-
-fn validate_session_head(row: &wire::LaneResidency) -> CommandResult<&wire::LaneSession> {
-    let session = row.session.as_ref().ok_or_else(|| {
-        session_refusal(
-            "lane::session-authority-missing",
-            Some("current declared authority".into()),
-            None,
-            "drain and re-seat this legacy lane",
-        )
-    })?;
-    if session.lane != row.lane || session.worktree != row.worktree || session.vendor != row.vendor
-    {
-        return Err(session_refusal(
-            "lane::session-head-moved",
-            Some("exact lane/worktree/vendor".into()),
-            Some(format!(
-                "{}/{}/{}",
-                session.lane, session.worktree, session.vendor
-            )),
-            "restore the exact session head",
-        ));
-    }
-    let ancestor = row.lineage.last().copied().ok_or_else(|| {
-        session_refusal(
-            "lane::session-lineage-missing",
-            Some("latest predecessor".into()),
-            None,
-            "repair durable lane lineage",
-        )
-    })?;
-    if session.occupant != ancestor || session.stream != "stdout" {
-        return Err(session_refusal(
-            "lane::session-authority-moved",
-            Some(format!("{ancestor}/stdout")),
-            Some(format!("{}/{}", session.occupant, session.stream)),
-            "restore the latest selected-stream declaration",
-        ));
-    }
-    Ok(session)
-}
-
-fn session_dialect(name: &wire::Name) -> CommandResult<listen::Dialect> {
-    match name.as_str() {
-        "claude" => Ok(listen::Dialect::Claude),
-        "codex" => Ok(listen::Dialect::Codex),
-        other => Err(session_refusal(
-            "lane::session-vendor-unsupported",
-            Some("claude or codex".into()),
-            Some(other.into()),
-            "select a current session dialect",
-        )),
-    }
-}
-
-fn prove_session_tape(
-    paths: &RuntimePaths,
-    row: &wire::LaneResidency,
-    session: &wire::LaneSession,
-    dialect: listen::Dialect,
-) -> CommandResult<()> {
-    let tape = tape::Tape::open_existing(
-        paths
-            .tape
-            .join(row.lane.to_string())
-            .join(row.vendor.as_str()),
-    )
-    .map_err(|error| {
-        session_refusal(
-            "lane::session-tape-moved",
-            Some("exact durable tape".into()),
-            Some(error.to_string()),
-            "restore the preserved tape",
-        )
-    })?;
-    let locus = listen::Locus::new(
-        session.locus.member,
-        session.locus.offset,
-        session.locus.length,
-    );
-    let bytes = tape.read(locus).map_err(|error| {
-        session_refusal(
-            "lane::session-tape-moved",
-            Some(locus.to_string()),
-            Some(error.to_string()),
-            "restore the exact declaration bytes",
-        )
-    })?;
-    let decoded = listen::decode(dialect, &bytes, locus).map_err(|error| {
-        session_refusal(
-            "lane::session-tape-moved",
-            Some(session.identity.clone()),
-            Some(error.to_string()),
-            "restore the exact declaration record",
-        )
-    })?;
-    let declared = decoded.events().iter().find_map(|event| match event {
-        listen::Event::Session(declaration) => Some(declaration.identity.as_str()),
-        _ => None,
-    });
-    if declared != Some(session.identity.as_str()) {
-        return Err(session_refusal(
-            "lane::session-tape-moved",
-            Some(session.identity.clone()),
-            declared.map(str::to_owned),
-            "restore the durable declaration locus",
-        ));
-    }
-    Ok(())
-}
-
 fn await_session(
     receiver: mpsc::Receiver<Result<wire::LaneSession, SessionProofError>>,
 ) -> Result<wire::LaneSession, SessionProofError> {
@@ -965,21 +839,6 @@ fn validate_worktree(paths: &RuntimePaths, worktree: &str) -> CommandResult<()> 
     Ok(())
 }
 
-fn session_fact(session: &wire::LaneSession) -> wire::body::LaneSessionDeclared {
-    wire::body::LaneSessionDeclared {
-        lane: session.lane,
-        occupant: session.occupant,
-        worktree: session.worktree.clone(),
-        vendor: session.vendor.clone(),
-        epoch: session.epoch,
-        stream: session.stream.clone(),
-        identity: session.identity.clone(),
-        member: session.locus.member,
-        offset: session.locus.offset,
-        length: session.locus.length,
-    }
-}
-
 fn command_result<B: serde::Serialize>(
     write: &mut JournalWrite,
     admitted: &wire::AdmittedCommand,
@@ -1025,21 +884,6 @@ fn configuration_refusal(error: &spice::config::LoadError) -> Outcome<()> {
     )
 }
 
-fn session_refusal(
-    reason: &str,
-    expected: Option<String>,
-    observed: Option<String>,
-    remedy: &str,
-) -> Outcome<()> {
-    Outcome::Refusal(Refusal {
-        reason: reason.into(),
-        witness: Some("lane-session-head".into()),
-        expected,
-        observed,
-        remedy: remedy.into(),
-    })
-}
-
 fn lane_refusal_unit(
     reason: &str,
     expected: Option<String>,
@@ -1068,13 +912,6 @@ fn lane_refusal(
         observed,
         remedy: remedy.into(),
     })
-}
-
-fn record_stream(stream: vendor::RecordStream) -> &'static str {
-    match stream {
-        vendor::RecordStream::Stdout => "stdout",
-        vendor::RecordStream::Stderr => "stderr",
-    }
 }
 
 #[cfg(test)]
