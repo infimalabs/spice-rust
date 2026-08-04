@@ -169,15 +169,15 @@ is asserted from memory. The Python spice was extracted at Grit `7419c5cb1`
 HEAD `700a92a88` declares 19, so only `complexity`, `hotspots`, and
 `magic-numbers` left gritctl outright.
 
-Carried forward: `complexity` and `hotspots` to `studies/complexity.py` (486
-lines), `magic-numbers` to `magicnums.py` (558), `csharp-members` to
-`csharpmembers.py` (247), `csharp-unused-candidates` to `csharpunused.py` (552),
-`file-loc` to `fileloc.py` (660), `python-policy` to `shape.py` (525). The last
-four are still implemented in gritctl (`gritctl/csharpmembers.py`,
-`csharpunused.py`, `fileloc.py`), so they are residue awaiting removal there,
-not a finished handoff. JavaScript came by its own path: Grit `f09565281`
-(2026-06-03) added `gritctl/javascriptunused.py`, Grit `a7d955171` (2026-06-28)
-deleted it, and it survives only as `studies/javascriptunused.py` (354).
+Carried forward: `complexity` and `hotspots` to `studies/complexity.py`,
+`magic-numbers` to `magicnums.py`, `csharp-members` to `csharpmembers.py`,
+`csharp-unused-candidates` to `csharpunused.py`, `file-loc` to `fileloc.py`,
+`python-policy` to `shape.py`. The rest still have gritctl implementations:
+`csharpmembers.py`, `csharpunused.py`, `fileloc.py`, and
+`run_python_policy_study_cli` in `study.py`. Those are residue awaiting removal
+there, not a finished handoff. JavaScript came by its own path: Grit
+`f09565281` (2026-06-03) added `gritctl/javascriptunused.py`, Grit `a7d955171`
+(2026-06-28) deleted it, and it survives only as `studies/javascriptunused.py`.
 
 Dropped: the Lua family (`lua-api`, `lua-contract`, `lua-entry-graph`,
 `lua-event-surface`, `lua-unused-author`), `unity`, `unity-meta`, and Grit's
