@@ -193,6 +193,16 @@ fn refused_batteries_keep_receipt_and_repository_bytes_unchanged_in_both_forms()
                 .as_deref()
                 .is_some_and(|observed| observed.contains("gate=failed(code=19)"))
         );
+        // `refusal_pair` has already proved the text form is exactly the reason
+        // and the remedy, so a remedy that names the member is the text form
+        // naming it. Stated against the remedy because that is the only field
+        // of the four the text rendering keeps.
+        assert!(
+            refusal.remedy.starts_with("repair gate")
+                && refusal.remedy.ends_with("and rerun the proof leaf"),
+            "the text remedy must name the members to repair: {}",
+            refusal.remedy,
+        );
     }
 
     assert_eq!(snapshot(fixture.repository()), before);

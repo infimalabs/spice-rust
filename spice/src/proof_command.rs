@@ -368,21 +368,42 @@ impl Failure {
 
     fn battery(refusal: ReplayRefusal) -> Self {
         let replay = refusal.replay();
-        let mut observed = replay
+        let failing = replay
             .checks()
             .iter()
             .filter(|check| !check.standing().passes())
-            .map(|check| format!("{}={}", check.kind().as_str(), standing(check.standing())))
             .collect::<Vec<_>>();
-        if observed.is_empty() {
-            observed.push("standing=refused".to_owned());
-        }
+        assert!(
+            !failing.is_empty(),
+            "a refused battery is refused by a member, so at least one must have failed",
+        );
         Self::Refusal(Refusal {
             reason: "proof::battery-refused".to_owned(),
             witness: Some(replay.replay_digest().to_string()),
             expected: Some("every generated proof battery member to complete cleanly".to_owned()),
-            observed: Some(observed.join(", ")),
-            remedy: "repair every named battery failure and rerun the proof leaf".to_owned(),
+            observed: Some(
+                failing
+                    .iter()
+                    .map(|check| {
+                        format!("{}={}", check.kind().as_str(), standing(check.standing()))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ),
+            // The members are named here and not left to `observed` alone,
+            // because the text rendering prints the reason and the remedy and
+            // drops every other field. A remedy that says to repair the named
+            // failures has to be where the names are, or the only form most
+            // callers read sends them back to rerun the battery to learn what
+            // it already knew.
+            remedy: format!(
+                "repair {} and rerun the proof leaf",
+                failing
+                    .iter()
+                    .map(|check| check.kind().as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         })
     }
 
