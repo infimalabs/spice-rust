@@ -172,11 +172,11 @@ struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "spice-succession-process-{}-{}",
+            "spice-landing-process-{}-{}",
             std::process::id(),
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed),
         ));
-        fs::create_dir(&path).expect("create isolated succession fixture");
+        fs::create_dir(&path).expect("create isolated landing fixture");
         Self(path)
     }
 
@@ -187,7 +187,7 @@ impl Scratch {
 
 impl Drop for Scratch {
     fn drop(&mut self) {
-        fs::remove_dir_all(&self.0).expect("remove isolated succession fixture");
+        fs::remove_dir_all(&self.0).expect("remove isolated landing fixture");
     }
 }
 
@@ -339,7 +339,7 @@ fn assert_no_placeholder(output: &Output, path: &str) {
     for placeholder in [
         "release::not-landed",
         "release::dispatch-gap",
-        "release::succession-unaccounted",
+        "release::landing-unaccounted",
         "command::handler-not-landed",
     ] {
         assert!(

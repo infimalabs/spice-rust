@@ -1,4 +1,4 @@
-//! Canonical succession readiness derived from the tracked authorities.
+//! Canonical contract landing derived from the tracked authorities.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -10,7 +10,7 @@ use serde::Serialize;
 use spice::cli::{self, Landing};
 use spice::config::{Document, Inputs};
 
-pub(super) const LABEL: &str = "succession readiness";
+pub(super) const LABEL: &str = "contract landing";
 const REPORT_VERSION: u8 = 3;
 const LANDED_THRESHOLD_PERCENT: usize = 95;
 
@@ -213,11 +213,11 @@ pub(super) fn fixture_report(admitted: bool) -> Report {
 /// shape that can really reach it.
 #[cfg(test)]
 pub(super) fn fixture_error() -> Error {
-    read_text(Path::new("readiness-input-that-is-absent"))
-        .expect_err("an absent readiness input refuses")
+    read_text(Path::new("landing-input-that-is-absent"))
+        .expect_err("an absent landing input refuses")
 }
 
-/// Failure to acquire the one readiness input this verifier reads.
+/// Failure to acquire the one landing input this verifier reads.
 #[derive(Debug)]
 pub(super) struct Error {
     path: PathBuf,

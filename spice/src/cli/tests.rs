@@ -103,7 +103,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 }
 
 #[test]
-fn every_contract_has_an_executable_succession_disposition() {
+fn every_contract_has_an_executable_landing_disposition() {
     assert_eq!(contracts().len(), 87);
 
     let unaccounted = contracts()
