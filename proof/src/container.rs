@@ -28,6 +28,7 @@ refuse() {
 
 [ "${CARGO_HOME:-}" = /cargo-home ] || refuse cargo-home-environment
 [ "${CARGO_TARGET_DIR:-}" = /cargo-target ] || refuse cargo-target-environment
+[ "${CARGO_MUTANTS_OUTPUT:-}" = /cargo-target ] || refuse mutants-output-environment
 [ -d /cargo-home ] || refuse cargo-home-missing
 [ -d /cargo-target ] || refuse cargo-target-missing
 [ -d /sys/class/net ] || refuse network-state-unavailable
@@ -481,6 +482,13 @@ impl Container {
             format!("CARGO_HOME={CARGO_HOME}"),
             "--env".to_owned(),
             format!("CARGO_TARGET_DIR={CARGO_TARGET}"),
+            // The mutation member writes `mutants.out` beside the sources it
+            // mutates unless it is told otherwise, and the sources are the
+            // read-only mount above. Pointed at the target tmpfs, which is the
+            // writable scratch this boundary already grants, so the member is
+            // given the one thing it needs rather than the mount being relaxed.
+            "--env".to_owned(),
+            format!("CARGO_MUTANTS_OUTPUT={CARGO_TARGET}"),
             "--env".to_owned(),
             "CARGO_NET_OFFLINE=true".to_owned(),
             self.image.to_string(),
@@ -917,6 +925,8 @@ exit 0
                 "CARGO_HOME=/cargo-home".to_owned(),
                 "--env".to_owned(),
                 "CARGO_TARGET_DIR=/cargo-target".to_owned(),
+                "--env".to_owned(),
+                "CARGO_MUTANTS_OUTPUT=/cargo-target".to_owned(),
                 "--env".to_owned(),
                 "CARGO_NET_OFFLINE=true".to_owned(),
                 format!("registry.example/proof@sha256:{}", "4".repeat(64)),

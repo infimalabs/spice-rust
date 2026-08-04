@@ -57,7 +57,15 @@ impl Check {
     fn current(kind: CheckKind) -> Self {
         let arguments = match kind {
             CheckKind::Gate => ["test", "--locked", "-p", "gate", "--all-targets"].as_slice(),
-            CheckKind::MutationCorpus => ["mutants", "--workspace"].as_slice(),
+            // Scoped to the one package `SupplyRebuild` already runs, so the two
+            // members ask complementary questions about a single corpus: whether
+            // the pipeline passes, and whether it would notice if it were wrong.
+            // The scope is what makes the member fit its bound. `--workspace`
+            // enumerates 14161 mutants and can never finish inside the runtime
+            // every member is given, while this corpus is fully killed in
+            // seconds, and it drops the worktree the wider corpus required from
+            // a copy cargo-mutants takes without one.
+            CheckKind::MutationCorpus => ["mutants", "-p", "dist"].as_slice(),
             CheckKind::DialectRefusals => {
                 ["test", "--locked", "-p", "listen", "--test", "corpus"].as_slice()
             }
@@ -560,7 +568,7 @@ mod tests {
                 (
                     CheckKind::MutationCorpus,
                     "cargo",
-                    vec!["mutants", "--workspace"]
+                    vec!["mutants", "-p", "dist"]
                 ),
                 (
                     CheckKind::DialectRefusals,
