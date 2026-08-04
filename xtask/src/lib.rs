@@ -511,11 +511,9 @@ trait Runner {
     fn readiness(&mut self) -> Result<succession::Report, succession::Error>;
 }
 
-struct SystemRunner<'a> {
-    search_path: Option<&'a OsStr>,
-}
+struct SystemRunner;
 
-impl Runner for SystemRunner<'_> {
+impl Runner for SystemRunner {
     fn run(&mut self, step: Step) -> io::Result<Status> {
         let status = Command::new(step.program).args(step.arguments).status()?;
         Ok(Status {
@@ -525,11 +523,7 @@ impl Runner for SystemRunner<'_> {
     }
 
     fn readiness(&mut self) -> Result<succession::Report, succession::Error> {
-        let root = std::env::current_dir().map_err(|source| succession::Error::Io {
-            path: PathBuf::from("."),
-            source,
-        })?;
-        succession::inspect(&root, self.search_path)
+        succession::inspect()
     }
 }
 
@@ -539,8 +533,8 @@ impl Runner for SystemRunner<'_> {
 ///
 /// Returns the first output, launch, or command failure and does not start any
 /// subsequent command.
-pub fn verify(search_path: Option<&OsStr>, output: &mut impl Write) -> Result<(), VerifyError> {
-    verify_with(&mut SystemRunner { search_path }, output)
+pub fn verify(output: &mut impl Write) -> Result<(), VerifyError> {
+    verify_with(&mut SystemRunner, output)
 }
 
 fn verify_with<R: Runner>(runner: &mut R, output: &mut impl Write) -> Result<(), VerifyError> {
@@ -1019,7 +1013,7 @@ mod tests {
     #[test]
     fn readiness_acquisition_failure_stops_before_the_python_policy_step() {
         let mut runner = runner(successful_commands());
-        runner.readiness = Some(Err(succession::Error::PythonLedgerBoundary));
+        runner.readiness = Some(Err(succession::fixture_error()));
         let mut output = Vec::new();
 
         let error = verify_with(&mut runner, &mut output).expect_err("readiness fails");

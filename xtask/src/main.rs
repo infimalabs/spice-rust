@@ -13,10 +13,6 @@ const USAGE: &str = concat!(
     "commit-msg MESSAGE_FILE|reference-transaction STATE>"
 );
 
-#[allow(
-    clippy::disallowed_methods,
-    reason = "PATH is acquired once at the binary rim and passed inward as typed input"
-)]
 fn main() -> ExitCode {
     let mut arguments = env::args_os().skip(1);
     let command = arguments.next();
@@ -24,8 +20,7 @@ fn main() -> ExitCode {
     let mut output = io::stdout().lock();
     let result: Result<(), Box<dyn std::error::Error>> = match command.as_deref() {
         Some(value) if value == OsStr::new("verify") && arguments.len() == 0 => {
-            let search_path = env::var_os("PATH");
-            xtask::verify(search_path.as_deref(), &mut output).map_err(Into::into)
+            xtask::verify(&mut output).map_err(Into::into)
         }
         Some(value) if value == OsStr::new("stage-app") && arguments.len() == 0 => {
             xtask::stage_app(&release_environment(), &mut output).map_err(Into::into)

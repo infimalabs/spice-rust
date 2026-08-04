@@ -193,8 +193,11 @@ impl Drop for Scratch {
 
 #[test]
 fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
-    let registered = landed_ledger_paths();
-    let exercised = CASES.iter().map(|case| case.path).collect::<BTreeSet<_>>();
+    let registered = landed_contract_paths();
+    let exercised = CASES
+        .iter()
+        .map(|case| case.path.to_owned())
+        .collect::<BTreeSet<_>>();
     assert_eq!(registered.len(), 87);
     assert_eq!(CASES.len(), 87);
     assert_eq!(exercised.len(), 87);
@@ -284,17 +287,13 @@ fn assert_exit(case: &Case, output: &Output, form: &str) {
     }
 }
 
-fn landed_ledger_paths() -> BTreeSet<&'static str> {
-    include_str!("../../PORTING.md")
-        .split_once("### Landed")
-        .expect("the ledger names landed Rust leaves")
-        .1
-        .split_once("## Installed Python paths")
-        .expect("the landed inventory has a finite boundary")
-        .0
-        .lines()
-        .filter_map(|line| line.strip_prefix("- `"))
-        .filter_map(|line| line.split_once('`').map(|(path, _)| path))
+/// Every landed leaf, read from the registry that actually dispatches rather
+/// than from a second copy of it, so this sweep measures the live surface.
+fn landed_contract_paths() -> BTreeSet<String> {
+    spice::cli::contracts()
+        .iter()
+        .filter(|contract| spice::cli::landing(contract.path) == spice::cli::Landing::Landed)
+        .map(|contract| contract.path.join(" "))
         .collect()
 }
 
