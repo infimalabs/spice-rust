@@ -492,6 +492,28 @@ fn command_client_process_bounds_an_unanswered_request() {
     );
 }
 
+/// A resident that has not answered the upgrade is not a peer that failed.
+///
+/// Accepting the socket costs the resident nothing, so under load it accepts
+/// long before it answers, and the bound elapses here first. The handshake
+/// spells that as an interrupted would-block, which is the exact shape the
+/// elapsed bound exists to keep apart from a transport that broke.
+#[test]
+fn command_client_process_names_the_bound_a_stalled_opening_spent() {
+    let fixture = Fixture::new("client-opening-stall");
+    let (output, elapsed) = fake_down(&fixture, FakeBehavior::OpeningStall, true);
+
+    assert_eq!(output.status.code(), Some(FAULT_EXIT));
+    let Outcome::Fault(fault) = outcome(&output) else {
+        panic!("a stalled opening must fault");
+    };
+    assert_eq!(fault.reason, "canvas::deadline-elapsed", "{fault:?}");
+    assert!(
+        elapsed < CLIENT_DEADLINE_BOUND,
+        "the opening deadline was not bounded: {elapsed:?}"
+    );
+}
+
 #[test]
 fn command_client_process_shares_one_deadline_across_dripped_socket_phases() {
     let fixture = Fixture::new("client-total-deadline");
