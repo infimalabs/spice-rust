@@ -71,8 +71,12 @@ env SPICE_NATIVE_PINS="$pins" \
 runner="$bundle/bin/spice-proof-darwin-runner" # env-policy: allow
 install -m 555 "$root/target/release/spice-proof-darwin-runner" "$runner" # env-policy: allow
 identity=$("$runner" runner-identity "$runner") # env-policy: allow
-"$runner" spice-proof-native-runner-v1 "$identity" \
-    0000000000000000000000000000000000000000000000000000000000000000 \
+# The runner names its scratch root after the challenge, so this exercise mints
+# a fresh one the way the host does. A fixed spelling collides with any seal
+# running beside it, and one interrupted seal would leave a root behind that
+# refuses every later seal on this machine for a reason that is not about it.
+challenge=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n') # env-policy: allow
+"$runner" spice-proof-native-runner-v1 "$identity" "$challenge" \
     cargo --version # env-policy: allow
 
 printf '%s\n' "$pins" > "$bundle/pins.toml" # env-policy: allow

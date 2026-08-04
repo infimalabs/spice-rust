@@ -16,9 +16,21 @@ use crate::container::{
     validate_command,
 };
 
-const PROTOCOL: &str = "spice-proof-native-runner-v1";
-const ATTESTATION_PREFIX: &str = "spice-proof-native-attestation-v1";
-const ISOLATION_CLAIMS: &str = concat!(
+/// The first argument every admitted runner is launched with.
+pub const PROTOCOL: &str = "spice-proof-native-runner-v1";
+
+/// The marker opening the one attestation line an admitted runner writes.
+pub const ATTESTATION_PREFIX: &str = "spice-proof-native-attestation-v1";
+
+/// The boundary an attesting runner establishes, spelled exactly once.
+///
+/// A runner implementation reads this back rather than restating it, the same
+/// way the repository-owned runner reads its admitted commands back from the
+/// compiled battery. [`NativeRunner`] admits these claims by exact bytes, so a
+/// second copy is the one thing that could leave a runner attesting a boundary
+/// this host could never admit -- and that divergence would surface only on a
+/// real sealed run, never in the workspace battery.
+pub const ISOLATION_CLAIMS: &str = concat!(
     "repository=read-only:",
     "cargo-home=fresh-empty:",
     "cargo-target=fresh-empty:",
