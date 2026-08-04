@@ -433,14 +433,26 @@ fn canonical_demo_root(root: &Path) -> DemoResult<PathBuf> {
 /// Create one demo repository already born on its seeded `main` commit.
 ///
 /// Tree, identity, message, and time are all compiled in, so every disposable
-/// root reaches the same commit id and reopening can hold a root to it.
+/// root reaches the same commit id and reopening can hold a root to it. The
+/// branch has to be compiled in the same way: a plain init resolves the initial
+/// `HEAD` through the operator's own `init.defaultBranch`, which would park a
+/// freshly seeded root on an unborn branch beside the seeded commit and make
+/// reopening refuse a root nobody moved. Isolated options read no configuration
+/// outside this root, so the seed describes itself and not the machine.
 fn born_repository(root: &Path) -> DemoResult<()> {
-    let repository = gix::init(root).map_err(|error| {
+    let repository = gix::ThreadSafeRepository::init_opts(
+        root,
+        gix::create::Kind::WithWorktree,
+        gix::create::Options::default(),
+        gix::open::Options::isolated(),
+    )
+    .map_err(|error| {
         environment_fault(
             "demo::git-init-failed",
             format!("{}: {error}", root.display()),
         )
-    })?;
+    })?
+    .to_thread_local();
     let empty_tree = repository
         .write_object(gix::objs::Tree::default())
         .map_err(|error| environment_fault("demo::seed-commit-failed", error.to_string()))?;
