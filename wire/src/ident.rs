@@ -127,6 +127,8 @@ pub enum Domain {
     GateSet,
     /// The enforcement policy one gate run read.
     GatePolicy,
+    /// One resolved value of the tracked configuration a gate run read.
+    GateConfiguration,
     /// The process bounds every current gate tool answers to.
     GateBounds,
     /// The complete versioned lower-is-better floor state.
@@ -192,6 +194,7 @@ impl Domain {
             Self::GateTree => "spice.gate.tree.v1",
             Self::GateSet => "spice.gate.set.v1",
             Self::GatePolicy => "spice.gate.policy.v1",
+            Self::GateConfiguration => "spice.gate.configuration.v1",
             Self::GateBounds => "spice.gate.bounds.v1",
             Self::GateBaseline => "spice.gate.baseline.v1",
             Self::GateTool => "spice.gate.tool.v1",

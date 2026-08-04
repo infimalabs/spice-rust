@@ -35,6 +35,7 @@ const CURRENT_STATE_DIRECTORY: &str = ".spice-rust";
 const CURRENT_STATE_DATA_DIRECTORY: &str = "data";
 const CURRENT_STATE_FILE: &str = "gate-state.json";
 const CURRENT_STATE_LOCK_FILE: &str = "gate-state.lock";
+const PREDECESSOR_STATE_DIRECTORY: &str = ".spice";
 const PREDECESSOR_CLAIMS_FILE: &str = "flex-slice-claims.json";
 
 /// The Rust-owned gate-state path below one canonical Git common directory.
@@ -44,6 +45,24 @@ pub fn current_state_path(common_git_directory: &Path) -> PathBuf {
         .join(CURRENT_STATE_DIRECTORY)
         .join(CURRENT_STATE_DATA_DIRECTORY)
         .join(CURRENT_STATE_FILE)
+}
+
+/// The predecessor ledgers one repository's two Git directories still hold.
+///
+/// Both directories are named because a linked worktree has two: the five
+/// sticky ledgers were written per worktree, while the claim ledger was shared
+/// by every worktree of one repository. Resolving either from the other would
+/// import one worktree's sticky state everywhere or give every worktree its
+/// own private claims.
+#[must_use]
+pub fn predecessor_state_sources(
+    worktree_git_directory: &Path,
+    common_git_directory: &Path,
+) -> PredecessorSources {
+    PredecessorSources::new(
+        &worktree_git_directory.join(PREDECESSOR_STATE_DIRECTORY),
+        &common_git_directory.join(PREDECESSOR_STATE_DIRECTORY),
+    )
 }
 
 include!("state/bound.rs");

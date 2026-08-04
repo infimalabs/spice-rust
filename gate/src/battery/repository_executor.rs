@@ -61,7 +61,7 @@ pub struct RepositoryExecutor<'trace> {
     trace: Option<&'trace mut dyn FnMut(RepositoryExecutionEvent)>,
 }
 
-impl RepositoryExecutor<'_> {
+impl<'trace> RepositoryExecutor<'trace> {
     /// Materialize and retain one repository selection for a complete battery.
     ///
     /// `rim` carries the directory, executable search path, and changed paths
@@ -70,52 +70,21 @@ impl RepositoryExecutor<'_> {
     /// set the caller never saw, and an executor that defaulted to none would
     /// scan nothing and call every tree clean.
     ///
+    /// Every arm and family invocation is emitted to `trace` when one is given,
+    /// which observes execution without gaining any authority over it.
+    ///
+    /// Reached only through [`BatteryCapture`], which is what keeps an executor
+    /// from being run against inputs no capture ever read.
+    ///
     /// # Errors
     ///
     /// Refuses selection, tracked-contract, or source-identity failure before
     /// an executor can be used. A core family that refuses to acquire is not
     /// one of these: the capture succeeded, and the refusal it produced is the
     /// evidence every core position projects.
-    pub fn capture(
-        repository: impl Into<PathBuf>,
-        selector: &Selector,
-        claim: ClaimCapture,
-        actor: ActorCapture,
-        rim: RimCapture,
-        hygiene: HygieneConfiguration,
-    ) -> Result<Self, BatteryError> {
-        Self::capture_inner(repository, selector, claim, actor, rim, hygiene, None)
-    }
-}
-
-impl<'trace> RepositoryExecutor<'trace> {
-    /// Capture one repository and emit every arm and family invocation to
-    /// `trace` without granting it authority over execution.
     ///
-    /// # Errors
-    ///
-    /// Refuses the same pre-execution failures as [`Self::capture`].
-    pub fn capture_traced(
-        repository: impl Into<PathBuf>,
-        selector: &Selector,
-        claim: ClaimCapture,
-        actor: ActorCapture,
-        rim: RimCapture,
-        hygiene: HygieneConfiguration,
-        trace: &'trace mut dyn FnMut(RepositoryExecutionEvent),
-    ) -> Result<Self, BatteryError> {
-        Self::capture_inner(
-            repository,
-            selector,
-            claim,
-            actor,
-            rim,
-            hygiene,
-            Some(trace),
-        )
-    }
-
-    fn capture_inner(
+    /// [`BatteryCapture`]: super::BatteryCapture
+    pub(super) fn capture(
         repository: impl Into<PathBuf>,
         selector: &Selector,
         claim: ClaimCapture,
@@ -165,6 +134,11 @@ impl<'trace> RepositoryExecutor<'trace> {
     #[must_use]
     pub fn root(&self) -> &Path {
         self.tree.root()
+    }
+
+    /// The tracked contract this capture loaded from the selected tree.
+    pub(super) const fn contract(&self) -> &Contract {
+        &self.contract
     }
 
     fn bind_inputs(&mut self, inputs: &BatteryInputs<'_>) -> Result<(), BatteryError> {

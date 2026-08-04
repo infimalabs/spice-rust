@@ -4,6 +4,8 @@
 //! ordered orchestration: one checked-in disposition manifest, one immutable
 //! run context, one call per compiled arm, and one total typed result vector.
 
+#[cfg(not(target_arch = "wasm32"))]
+mod authorities;
 mod context;
 mod execution;
 mod family_evidence;
@@ -17,6 +19,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use authorities::BatteryCapture;
 pub use context::{
     ActorEvidence, BatteryContext, BatteryInputs, BatteryScope, BatteryToolEvidence,
     BoundActorInputsEvidence, BoundEvidence, ConfigurationEvidence, LatchEvidence,
@@ -36,7 +40,7 @@ pub use receipt::{
     supported_pairs,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use repository_executor::{RepositoryExecutionEvent, RepositoryExecutor};
+pub use repository_executor::RepositoryExecutionEvent;
 
 /// One declaration family behind the common runner boundary.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

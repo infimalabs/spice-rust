@@ -661,18 +661,20 @@ impl StateFixture {
             NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
         ));
         let common_git = root.join("common.git");
-        let worktree_state = root.join("worktree.git/.spice");
-        let shared_state = common_git.join(".spice");
+        let worktree_git = root.join("worktree.git");
+        let sources = predecessor_state_sources(&worktree_git, &common_git);
         let current = current_state_path(&common_git);
-        fs::create_dir_all(&worktree_state).expect("create worktree predecessor state");
-        fs::create_dir_all(&shared_state).expect("create shared predecessor state");
+        fs::create_dir_all(worktree_git.join(PREDECESSOR_STATE_DIRECTORY))
+            .expect("create worktree predecessor state");
+        fs::create_dir_all(common_git.join(PREDECESSOR_STATE_DIRECTORY))
+            .expect("create shared predecessor state");
         fs::create_dir_all(current.parent().expect("current state parent"))
             .expect("create current state parent");
         Self {
             root,
             common_git,
             current,
-            sources: PredecessorSources::new(&worktree_state, &shared_state),
+            sources,
         }
     }
 

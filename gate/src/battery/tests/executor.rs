@@ -109,10 +109,16 @@ fn runner_executes_all_26_once_in_order_with_complete_context() {
 /// anything. An executor that acquired the core family on first request would
 /// report the partial staging and the merge, and its report would name a
 /// capture that never held either.
+///
+/// Nothing here supplies an authority. The context the report carries is
+/// asserted against the same tracked documents the repository was built from,
+/// so a capture that quietly invented a policy, scope, configuration, or tool
+/// would disagree with the repository it claims to describe.
 #[test]
-fn repository_executor_owns_one_capture_and_runs_each_family_once() {
+fn one_capture_reads_every_authority_and_runs_each_family_once() {
     let fixture = Fixture::new();
     let repository = production_repository(&fixture.root);
+    seed_one_claim(&repository, "peer-actor");
     let hygiene = crate::HygieneConfiguration::new(["app/main.py"], ["tests"])
         .expect("production hygiene roots");
     let selector = crate::Selector::staged();
@@ -121,24 +127,23 @@ fn repository_executor_owns_one_capture_and_runs_each_family_once() {
     let changes = ["app/main.py", "src/lib.rs", "tests/test_main.py"]
         .map(str::to_owned)
         .to_vec();
-    let mut executor = RepositoryExecutor::capture_traced(
+    let mut capture = crate::BatteryCapture::capture_traced(
         &repository,
         &selector,
         crate::ClaimCapture::Idle,
-        crate::ActorCapture::Absent,
+        acting("battery-actor"),
         crate::RimCapture::new(&repository, None, changes),
         hygiene,
         &mut record,
     )
     .expect("capture production battery source");
-    let source = executor.source().clone();
-    assert_ne!(executor.root(), repository);
+    assert_ne!(capture.root(), repository);
 
     move_the_repository_after_capture(&repository);
 
-    let inputs = fixture.inputs_for(&source);
-    let report = run_battery(&inputs, &mut executor).expect("complete production battery");
-    drop(executor);
+    let report = capture.execute().expect("complete production battery");
+    assert_captured_authorities(&report, &capture, &repository);
+    drop(capture);
 
     assert_each_family_ran_once(&events);
     assert_every_family_projected_its_own_evidence(&report);
@@ -154,6 +159,178 @@ fn repository_executor_owns_one_capture_and_runs_each_family_once() {
     assert_eq!(
         BatteryReceipt::verify(&receipt_bytes).expect("verify production receipt"),
         receipt
+    );
+}
+
+/// A battery run names who ran it, so a capture with no actor is refused.
+#[test]
+fn a_capture_without_an_acting_actor_is_refused() {
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    let Err(error) = crate::BatteryCapture::capture(
+        &repository,
+        &crate::Selector::staged(),
+        crate::ClaimCapture::Idle,
+        crate::ActorCapture::Absent,
+        crate::RimCapture::new(&repository, None, Vec::new()),
+        crate::HygieneConfiguration::new(["app/main.py"], ["tests"]).expect("hygiene roots"),
+    ) else {
+        panic!("a battery with no actor must be refused")
+    };
+
+    assert_eq!(
+        error.detail(),
+        "battery capture requires an acting actor: a battery report names who ran it"
+    );
+}
+
+/// One acting identity with no peer holding any bound claim.
+fn acting(actor: &str) -> crate::ActorCapture {
+    crate::ActorCapture::Acting {
+        actor: actor.to_owned(),
+        bound_claims: Vec::new(),
+    }
+}
+
+/// The durable ledger one repository shares across its worktrees.
+fn live_ledger(repository: &Path) -> crate::StateLedger {
+    let (worktree_git, common_git) = crate::tree::git_directories(repository)
+        .expect("the repository names both Git directories");
+    let sources = crate::predecessor_state_sources(&worktree_git, &common_git);
+    CurrentState::load(crate::current_state_path(&common_git), &sources)
+        .expect("load the shared ledger")
+        .before()
+        .clone()
+}
+
+/// Persist one claim into the repository's shared ledger before capture.
+///
+/// A battery's state authority is published as a digest, so an empty ledger
+/// cannot tell a capture that read the repository from one that read nothing.
+/// This gives the ledger something to say first.
+fn seed_one_claim(repository: &Path, actor: &str) {
+    let (worktree_git, common_git) = crate::tree::git_directories(repository)
+        .expect("the repository names both Git directories");
+    let sources = crate::predecessor_state_sources(&worktree_git, &common_git);
+    let mut state = CurrentState::load(crate::current_state_path(&common_git), &sources)
+        .expect("load the shared ledger");
+    state
+        .begin_run(&crate::RenameMap::default(), ["app/main.py"], 100.0)
+        .expect("begin one seeding run");
+    state
+        .reconcile([])
+        .expect("no latch observation to reconcile");
+    state
+        .claim(
+            ["app/main.py"],
+            &ActorInputs::new("app/main.py")
+                .expect("seeding actor provenance")
+                .with_active_actor(actor),
+        )
+        .expect("one seeded claim");
+    state
+        .finish()
+        .expect("finish the seeding run")
+        .accept()
+        .expect("persist the seeded claim");
+}
+
+/// Every authority in the published context came from the captured repository.
+///
+/// Each expectation is derived from the tracked documents the fixture
+/// repository was built from rather than restated here, so an authority that
+/// drifted from its source fails against the source instead of against a copy
+/// of the drift.
+fn assert_captured_authorities(
+    report: &BatteryReport,
+    capture: &crate::BatteryCapture<'_>,
+    repository: &Path,
+) {
+    let context = report.context();
+    assert_eq!(context.source(), capture.source());
+    assert_eq!(context.actor().source(), "active-actor");
+    assert_eq!(context.actor().value(), "battery-actor");
+
+    assert_eq!(context.scope().name(), "staged-index");
+    assert_eq!(
+        context.scope().provenance(),
+        format!("the index of {}", repository.display())
+    );
+
+    let tracked: toml::Value = toml::from_str(
+        &fs::read_to_string(repository.join("spice.toml")).expect("tracked policy document"),
+    )
+    .expect("tracked policy parses");
+    let expected = tracked
+        .get("policy")
+        .and_then(|policy| policy.get("env_names"))
+        .expect("the tracked document declares policy.env_names");
+    let evidence = context
+        .configuration()
+        .iter()
+        .find(|evidence| evidence.key() == "policy.env_names")
+        .expect("the resolved configuration names every tracked leaf");
+    assert_eq!(evidence.release(), "current");
+    assert_eq!(evidence.layer(), OriginLayer::Repository);
+    assert_eq!(evidence.document(), "spice.toml");
+    assert_eq!(evidence.field(), ["policy", "env_names"]);
+    assert_eq!(
+        evidence.value_digest(),
+        &Digest::compute(
+            Domain::GateConfiguration,
+            &wire::encode(expected).expect("tracked value encodes")
+        )
+    );
+    assert!(
+        context
+            .configuration()
+            .iter()
+            .all(|evidence| evidence.document() == "spice.toml"),
+        "every resolved value must name the document it was read from"
+    );
+
+    let reloaded = crate::Contract::load(repository).expect("the tracked contract reloads");
+    assert_eq!(
+        context.policy(),
+        &Digest::compute(
+            Domain::GatePolicy,
+            &wire::encode(reloaded.rule_policy().document()).expect("policy encodes")
+        )
+    );
+
+    let ledger = live_ledger(repository);
+    assert_eq!(
+        ledger
+            .claims()
+            .iter()
+            .map(crate::PeerClaim::actor)
+            .collect::<Vec<_>>(),
+        ["peer-actor"],
+        "the repository must still hold the claim the capture was meant to read"
+    );
+    assert_eq!(context.state(), &ledger.digest());
+    assert!(
+        context.bounds().is_empty() && context.latches().is_empty(),
+        "no structural family ran, so no bound or latch was decided"
+    );
+
+    let declared = reloaded
+        .tools()
+        .first()
+        .expect("the contract probed its one declared tool");
+    let tool = context
+        .tools()
+        .iter()
+        .find(|tool| tool.name() == declared.name())
+        .expect("the published context names every probed tool");
+    assert_eq!(tool.program(), declared.program().display().to_string());
+    assert_eq!(tool.version(), Some(declared.version()));
+    assert_eq!(
+        tool.executable_digest(),
+        Some(&Digest::compute(
+            Domain::GateTool,
+            &fs::read(declared.program()).expect("the declared executable")
+        ))
     );
 }
 
@@ -333,11 +510,11 @@ fn the_scanning_arms_report_exact_findings_over_the_captured_changes() {
 
     let hygiene = crate::HygieneConfiguration::new(["app/main.py"], ["tests"])
         .expect("production hygiene roots");
-    let mut executor = RepositoryExecutor::capture(
+    let mut capture = crate::BatteryCapture::capture(
         &repository,
         &crate::Selector::staged(),
         crate::ClaimCapture::Idle,
-        crate::ActorCapture::Absent,
+        acting("scanning-actor"),
         crate::RimCapture::new(
             &repository,
             None,
@@ -346,9 +523,7 @@ fn the_scanning_arms_report_exact_findings_over_the_captured_changes() {
         hygiene,
     )
     .expect("capture production battery source");
-    let source = executor.source().clone();
-    let inputs = fixture.inputs_for(&source);
-    let report = run_battery(&inputs, &mut executor).expect("complete production battery");
+    let report = capture.execute().expect("complete production battery");
 
     let scanned = |gate_id: GateId| {
         let result = report
