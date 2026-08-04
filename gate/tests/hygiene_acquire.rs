@@ -21,6 +21,22 @@ const MARKER_ENV: &str = "SPICE_HYGIENE_INTERPRETER_MARKER"; // env-policy: allo
 #[test]
 fn one_captured_source_walks_the_same_jurisdiction_and_measures_every_arm() {
     let repository = hygiene_repository("hygiene-acquire-parity", false);
+    // Two digests agree because both walks applied the same rules only when a
+    // path is subject to one. This module is excluded by the tracked policy and
+    // by nothing compiled, so a capture that dropped the repository's own rules
+    // would admit it and digest differently.
+    repository.write("third_party/copied.py", "def copied():\n    return 1\n");
+    repository.write(
+        "spice.toml",
+        &format!(
+            "{}\n[gate.walk]\nskip = [\"third_party/copied.py\"]\n",
+            workspace_document("spice.toml")
+        ),
+    );
+    git_commit(
+        &repository,
+        "hygiene parity fixture with a tracked exclusion",
+    );
     let tree = Selector::staged()
         .materialize(&repository.root)
         .expect("materialize the captured hygiene source");
@@ -32,6 +48,15 @@ fn one_captured_source_walks_the_same_jurisdiction_and_measures_every_arm() {
     let acquired =
         acquire_hygiene(&source, &configuration()).expect("acquire the complete hygiene family");
 
+    let excluded = prior_jurisdiction
+        .entries()
+        .iter()
+        .find(|entry| entry.path() == "third_party/copied.py")
+        .expect("the tracked exclusion stays in the total inventory");
+    assert!(
+        !excluded.admission().admits(),
+        "the parity fixture proves nothing about rules unless the tracked skip excludes a path"
+    );
     assert_eq!(source.root(), tree.root());
     assert_eq!(
         source.digest(),
