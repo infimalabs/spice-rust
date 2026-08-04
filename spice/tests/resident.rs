@@ -870,6 +870,89 @@ fn wait_for_event<T>(
     }
 }
 
+/// Block until the fixture vendor records its stop, or fail as soon as the
+/// vendor is gone without recording one.
+///
+/// The stop file is a proxy for the event these tests want, which is the vendor
+/// ending. A vendor whose TERM trap outlives its termination grace is killed
+/// before the trap writes, and the file it would have written can never appear.
+/// Waiting for it would only delay the failure and then report a timeout, which
+/// describes the observation rather than what happened to the vendor.
+///
+/// The operator command returns only after the resident has terminated and
+/// reaped the vendor, so in that case the first observation already sees a
+/// vendor that is gone and reports it.
+///
+/// Panics report the waiting call site rather than this shared helper.
+#[track_caller]
+fn wait_for_vendor_stop(watch: &Path, pid_file: &Path, stopped: &Path) -> String {
+    let observed = wait_for_event(
+        watch,
+        || {},
+        || {
+            if let Some(stop) = recorded_stop(stopped) {
+                return Some(Ok(stop));
+            }
+            let pid = recorded_pid(pid_file)?;
+            if process_alive(pid) {
+                return None;
+            }
+            // The vendor is gone. One more read closes the window where it
+            // wrote its stop between these two observations.
+            Some(recorded_stop(stopped).ok_or(pid))
+        },
+    );
+    match observed {
+        Ok(stop) => stop,
+        Err(pid) => panic!(
+            "vendor {pid} ended without recording a stop in {}; \
+             its TERM trap did not complete within the termination grace",
+            stopped.display()
+        ),
+    }
+}
+
+/// The stop a fixture vendor finished recording, if it recorded one.
+///
+/// The trap redirect creates the file before the write lands, so an empty file
+/// is a vendor still writing rather than a vendor that stopped.
+fn recorded_stop(stopped: &Path) -> Option<String> {
+    fs::read_to_string(stopped)
+        .ok()
+        .filter(|text| !text.is_empty())
+}
+
+/// The identity a fixture vendor recorded for itself, if it got that far.
+fn recorded_pid(pid_file: &Path) -> Option<u32> {
+    fs::read_to_string(pid_file).ok()?.trim().parse().ok()
+}
+
+#[cfg(target_os = "linux")]
+fn process_alive(pid: u32) -> bool {
+    match fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat
+            .rsplit_once(") ")
+            .and_then(|(_, fields)| fields.as_bytes().first().copied())
+            .is_none_or(|state| !matches!(state, b'Z' | b'X' | b'x')),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(_) => process_identity_exists(pid),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_alive(pid: u32) -> bool {
+    process_identity_exists(pid)
+}
+
+fn process_identity_exists(pid: u32) -> bool {
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .output()
+        .expect("process probe launches")
+        .status
+        .success()
+}
+
 /// Process cases share the transport and lifecycle fixtures defined above.
 #[path = "resident/cases.rs"]
 mod cases;
