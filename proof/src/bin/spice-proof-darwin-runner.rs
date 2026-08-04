@@ -814,6 +814,74 @@ mod tests {
         }
     }
 
+    /// The profile this runner ships carries the denial proved above.
+    ///
+    /// That proof composes its own profile out of [`host_dependency_denials`],
+    /// so what it measures is the dialect, not the runner. [`sandbox_profile`]
+    /// has one other caller and it is the sealed run, so nothing else can
+    /// observe the bytes that actually seal a build. Measured -- deleting the
+    /// denial from the profile left every test green, and the boundary would
+    /// have denied nothing while still attesting `host-dependencies=denied`.
+    ///
+    /// The pin set is written here rather than admitted, because a workspace
+    /// check-out carries no pin document and the profile reads only two paths
+    /// out of it. The Git path is this machine's for the same reason.
+    ///
+    /// Position is asserted as well as presence: the dialect resolves a path by
+    /// its last matching rule, so a denial spelled above `(allow default)` is in
+    /// the profile and does nothing.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_shipped_profile_denies_the_host_dependency_roots() {
+        use super::{
+            Digest, Domain, Pins, Temporary, Tool, host_dependency_denials, sandbox_profile,
+        };
+        use std::path::{Path, PathBuf};
+
+        fn pinned(path: &str) -> Tool {
+            Tool {
+                path: PathBuf::from(path),
+                digest: Digest::compute(Domain::GateTool, b""),
+            }
+        }
+
+        let root = PathBuf::from("/private/tmp/spice-proof-native-profile-fixture");
+        let temporary = Temporary {
+            cargo_home: root.join("cargo-home"),
+            cargo_target: root.join("cargo-target"),
+            home: root.join("home"),
+            mutants: root.join("mutants"),
+            temporary: root.join("tmp"),
+            root,
+        };
+        let pins = Pins {
+            source_commit: "0".repeat(40),
+            vendor_digest: Digest::compute(Domain::ProofNativeClosure, b""),
+            sdk_path: PathBuf::from("/nonexistent/sdk"),
+            developer_dir: PathBuf::from("/nonexistent/developer"),
+            cargo_home: PathBuf::from("/nonexistent/cargo-home"),
+            cargo: pinned("/nonexistent/cargo"),
+            rustc: pinned("/nonexistent/rustc"),
+            cargo_mutants: pinned("/nonexistent/cargo-mutants"),
+            git: pinned("/usr/bin/git"),
+            sandbox_exec: pinned("/usr/bin/sandbox-exec"),
+        };
+
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let profile = sandbox_profile(workspace, &pins, &temporary)
+            .expect("the sealed profile composes for a workspace check-out");
+        let Some(denied) = profile.find(&host_dependency_denials()) else {
+            panic!("the profile this runner ships denies no host dependency root:\n{profile}");
+        };
+        let opened = profile
+            .find("(allow default)")
+            .expect("the profile opens by allowing what it does not deny");
+        assert!(
+            opened < denied,
+            "the denial is spelled above (allow default), which takes it back:\n{profile}",
+        );
+    }
+
     /// Whether `sandbox-exec` lets a directory be listed under one profile.
     #[cfg(target_os = "macos")]
     fn readable(profile: &str, directory: &str) -> bool {
