@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::{fs, io};
 
 use dist::{
-    BuildError, Builder, PinError, PinName, Pipeline, PublishError, Publisher, RequiredPins,
-    StageError,
+    BuildError, Builder, FilePublisher, PinError, PinName, Pipeline, PublishError, Publisher,
+    RequiredPins, StageError,
 };
 use wire::manifest::{BuildPins, ReleaseTarget, TargetPayload};
 use wire::{Digest, Domain};
@@ -240,6 +241,74 @@ fn proof_container_must_be_bound_by_an_oci_digest() {
     let mut bare = pins();
     bare.proof_container = format!("sha256:{}", "0".repeat(64));
     RequiredPins::new(bare).expect("the compiled bare digest form is pinned");
+}
+
+#[test]
+fn the_file_publisher_writes_bytes_and_mode_through_a_nested_relative_path() {
+    let fixture = fixture_root();
+    let root = fixture.join("stage");
+    let mut publisher = FilePublisher::new(&root);
+
+    publisher
+        .publish(Path::new("objects/nested/artifact.bin"), 0o640, b"staged")
+        .expect("a wholly relative path publishes");
+
+    let published = root.join("objects/nested/artifact.bin");
+    assert_eq!(
+        fs::read(&published).expect("published bytes"),
+        b"staged".to_vec(),
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let permissions = fs::metadata(&published)
+            .expect("published metadata")
+            .permissions();
+        assert_eq!(
+            permissions.mode() & 0o777,
+            0o640,
+            "the requested mode is not the published mode",
+        );
+    }
+    fs::remove_dir_all(fixture).expect("remove fixture");
+}
+
+#[test]
+fn the_file_publisher_refuses_a_stage_path_before_touching_the_filesystem() {
+    let fixture = fixture_root();
+    let root = fixture.join("stage");
+    let mut publisher = FilePublisher::new(&root);
+
+    // One case per way a path stops being wholly relative: no path at all, a
+    // component that climbs out of the root, and a prefix that ignores it.
+    for escape in ["", "../escape", "/absolute"] {
+        let path = Path::new(escape);
+        let error = publisher
+            .publish(path, 0o640, b"escaped")
+            .expect_err("a path that is not wholly relative is refused");
+        assert!(
+            matches!(&error, PublishError::InvalidPath(refused) if refused == path),
+            "{escape:?} was refused as {error}, not as an invalid stage path",
+        );
+    }
+
+    assert!(
+        !root.exists(),
+        "a refused publication still created its stage root",
+    );
+    fs::remove_dir_all(fixture).expect("remove fixture");
+}
+
+fn fixture_root() -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "spice-dist-publisher-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir_all(&root).expect("fixture directory");
+    root
 }
 
 struct Run {

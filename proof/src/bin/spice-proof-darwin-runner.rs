@@ -10,6 +10,7 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, ExitStatus, Stdio};
 
+use proof::Battery;
 use proof::challenge::{Challenge, ChallengeError};
 use serde::Deserialize;
 use wire::{Digest, Domain, IdentError};
@@ -154,22 +155,34 @@ fn prepared(
         .map(|status| status.code().unwrap_or(1))
 }
 
+/// Admit the toolchain probe and whatever the compiled battery names, only.
+///
+/// The members are read back from [`Battery::current`] rather than restated
+/// here. The refusal above already says "outside the compiled proof battery",
+/// and a second copy of the member list is the one thing that could make that
+/// sentence false: a scope changed in the battery would keep passing the
+/// unchanged copy, and the receipt would publish an identity for commands this
+/// boundary never actually admitted.
+///
+/// An argument that is not UTF-8 is refused rather than compared. Every member
+/// argument is a `String`, so no such argument can be one.
 fn allowed_cargo_arguments(arguments: &[OsString]) -> bool {
-    const ALLOWED: [&[&str]; 6] = [
-        &["--version"],
-        &["test", "--locked", "-p", "gate", "--all-targets"],
-        &["mutants", "--workspace"],
-        &["test", "--locked", "-p", "listen", "--test", "corpus"],
-        &["test", "--locked", "-p", "sill", "--lib"],
-        &["test", "--locked", "-p", "dist", "--test", "pipeline"],
-    ];
-    ALLOWED.iter().any(|expected| {
-        arguments.len() == expected.len()
-            && arguments
-                .iter()
-                .zip(*expected)
-                .all(|(observed, expected)| observed == OsStr::new(expected))
-    })
+    let Some(observed) = arguments
+        .iter()
+        .map(|argument| argument.to_str())
+        .collect::<Option<Vec<_>>>()
+    else {
+        return false;
+    };
+    // Not a member: the sealed build probes the toolchain with it before any
+    // member runs, so it is admitted beside them rather than declared as one.
+    if observed == ["--version"] {
+        return true;
+    }
+    Battery::current()
+        .checks()
+        .iter()
+        .any(|check| check.program() == "cargo" && observed == check.arguments())
 }
 
 fn validate_self(expected: &Digest) -> Result<(), String> {
