@@ -592,13 +592,14 @@ fn open_session(
         }
     };
     request.headers_mut().insert(ORIGIN, origin);
+    let opening = OpeningBound {
+        bound: stream.bound,
+        deadline: stream.deadline,
+    };
     let (mut socket, _) = match tungstenite::client(request, stream) {
         Ok(opened) => opened,
         Err(error) => {
-            return Err(environment_fault(
-                "canvas::opening-failed",
-                &error.to_string(),
-            ));
+            return Err(opening_fault(opening, &error.to_string()));
         }
     };
     discovery.verify_current()?;
@@ -829,6 +830,34 @@ fn transport_fault(
         IoDirection::Read => environment_fault("canvas::receive-failed", detail),
         IoDirection::Write => environment_fault("canvas::send-failed", detail),
     }
+}
+
+/// What the opening handshake was bounded by, kept past the stream it came from.
+#[derive(Clone, Copy)]
+struct OpeningBound {
+    bound: Duration,
+    deadline: Instant,
+}
+
+/// Name a failed opening by whether the client's own bound is what ended it.
+///
+/// The handshake consumes the stream, so the direction `transport_fault` reads
+/// is out of reach by the time the failure surfaces; the deadline the stream
+/// was configured from outlives it. A resident under load accepts the socket
+/// long before it answers the upgrade, so this is the first place the bound can
+/// elapse, and tungstenite spells that arrival as an interrupted handshake --
+/// the same would-block shape a reader must not mistake for a peer that failed.
+fn opening_fault(opening: OpeningBound, detail: &str) -> Outcome<CommandAnswer> {
+    if Instant::now() >= opening.deadline {
+        return environment_fault(
+            "canvas::deadline-elapsed",
+            &format!(
+                "resident did not open a socket within the {:?} client bound: {detail}",
+                opening.bound
+            ),
+        );
+    }
+    environment_fault("canvas::opening-failed", detail)
 }
 
 fn receive(socket: &mut WebSocket<DeadlineStream>) -> ClientResult<Vec<u8>> {

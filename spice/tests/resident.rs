@@ -247,6 +247,7 @@ enum FakeBehavior {
     TotalDeadlineDrip,
     ControlFrames,
     WriteTimeout,
+    OpeningStall,
 }
 
 fn fake_down(fixture: &Fixture, behavior: FakeBehavior, json: bool) -> (Output, Duration) {
@@ -287,6 +288,12 @@ fn run_fake_resident(
 ) {
     if matches!(behavior, FakeBehavior::TotalDeadlineDrip) {
         run_deadline_drip(listener, &discovery, &canvas, stop);
+        return;
+    }
+    if matches!(behavior, FakeBehavior::OpeningStall) {
+        let (stream, _) = listener.accept().expect("fake resident accepts");
+        hold_adversarial_peer(&stop);
+        drop(stream);
         return;
     }
     let mut socket = accept_fake(listener);
