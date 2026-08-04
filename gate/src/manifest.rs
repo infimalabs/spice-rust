@@ -46,6 +46,8 @@ pub enum GateId {
     CanvasWebTypecheck,
     #[serde(rename = "javascript-unused")]
     JavascriptUnused,
+    #[serde(rename = "csharp-unused-candidates")]
+    CsharpUnusedCandidates,
     #[serde(rename = "python-typecheck")]
     PythonTypecheck,
     #[serde(rename = "env-policy")]
@@ -74,7 +76,7 @@ pub enum GateId {
 
 impl GateId {
     /// Every compiled identity in predecessor battery order.
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 26] = [
         Self::MergeIntegrity,
         Self::PlanPhase,
         Self::RepoShape,
@@ -88,6 +90,7 @@ impl GateId {
         Self::Taste,
         Self::CanvasWebTypecheck,
         Self::JavascriptUnused,
+        Self::CsharpUnusedCandidates,
         Self::PythonTypecheck,
         Self::EnvPolicy,
         Self::EnvNameLedger,
@@ -119,6 +122,7 @@ impl GateId {
             Self::Taste => "taste",
             Self::CanvasWebTypecheck => "canvas-web-typecheck",
             Self::JavascriptUnused => "javascript-unused",
+            Self::CsharpUnusedCandidates => "csharp-unused-candidates",
             Self::PythonTypecheck => "python-typecheck",
             Self::EnvPolicy => "env-policy",
             Self::EnvNameLedger => "env-name-ledger",
@@ -146,12 +150,29 @@ impl GateId {
     }
 
     /// Exact release 0.31.0 standard-arm spelling.
+    ///
+    /// Only meaningful where [`Self::predecessor_declared`] holds. An identity
+    /// this workspace grew past the release still answers with its current
+    /// spelling, because normalizing a predecessor document has to reject that
+    /// name by a rule rather than by failing to recognize it.
     #[must_use]
     pub const fn predecessor_name(self) -> &'static str {
         match self {
             Self::CanvasWebTypecheck => concat!("ser", "ve-web-typecheck"),
             _ => self.as_str(),
         }
+    }
+
+    /// Whether release 0.31.0's standard battery declared this identity at all.
+    ///
+    /// The battery kept every arm the release ran, so this answered true for
+    /// every identity until this workspace grew one the release never had.
+    /// Nothing downstream may attribute a predecessor arm to an identity that
+    /// answers false, which is what keeps a migration refusal from citing a
+    /// step that never existed.
+    #[must_use]
+    pub const fn predecessor_declared(self) -> bool {
+        !matches!(self, Self::CsharpUnusedCandidates)
     }
 
     #[cfg(test)]
@@ -162,12 +183,18 @@ impl GateId {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PredecessorStandardArm {
+    /// Release 0.31.0 answered for this identity with an in-process callable.
     InternalBuiltin,
+    /// No release 0.31.0 pre-commit step answered for this identity at all.
+    AbsentFromBattery,
 }
 
 // Release 0.31.0's packaged `_builtin_pre_commit_steps` battery declares one
-// in-process `PreCommitStep` callable for each identity in this exact order.
-const PREDECESSOR_STANDARD_ARMS: [(GateId, PredecessorStandardArm); 25] = [
+// in-process `PreCommitStep` callable for each identity in this exact order,
+// except where the pairing says the battery declared nothing. A gate this
+// workspace grew past the predecessor has no argv to normalize away from, and
+// naming that outright keeps the refusal from inventing a step that never ran.
+const PREDECESSOR_STANDARD_ARMS: [(GateId, PredecessorStandardArm); 26] = [
     (
         GateId::MergeIntegrity,
         PredecessorStandardArm::InternalBuiltin,
@@ -198,6 +225,10 @@ const PREDECESSOR_STANDARD_ARMS: [(GateId, PredecessorStandardArm); 25] = [
     (
         GateId::JavascriptUnused,
         PredecessorStandardArm::InternalBuiltin,
+    ),
+    (
+        GateId::CsharpUnusedCandidates,
+        PredecessorStandardArm::AbsentFromBattery,
     ),
     (
         GateId::PythonTypecheck,
@@ -1246,6 +1277,20 @@ fn executable_refusal(id: GateId, source: &SourceRef, argv: &[String]) -> Migrat
                     "release-declared standard arm for compiled Rust gate {id}; ",
                     "release {release} declares that standard arm as an internal ",
                     "PreCommitStep builtin, not executable argv"
+                ),
+                argv = argv,
+                id = id,
+                release = PREDECESSOR_GATE_RELEASE
+            ),
+            format!("remove the executable replacement and select compiled gate ID {id}"),
+        ),
+        PredecessorStandardArm::AbsentFromBattery => source.error(
+            MigrationErrorKind::ExecutableReplacement,
+            format!(
+                concat!(
+                    "resolved executable argv {argv:?} cannot normalize to compiled Rust ",
+                    "gate {id}; release {release} declared no standard arm for that ",
+                    "identity, so no predecessor argv answers for it"
                 ),
                 argv = argv,
                 id = id,

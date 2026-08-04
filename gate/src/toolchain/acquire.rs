@@ -226,6 +226,7 @@ fn examine(
             GateId::LocalPaths => analyze::local_paths(declaration, source.root, source.changes()),
             GateId::Taste => analyze::taste(declaration, source.root, source.changes()),
             GateId::JavascriptUnused => analyze::javascript_unused(declaration, source.root),
+            GateId::CsharpUnusedCandidates => analyze::csharp_unused(declaration, source.root),
             GateId::EnvPolicy => analyze::env_policy(declaration, source.root, source.changes()),
             GateId::EnvNameLedger => analyze::env_name_ledger(declaration, source.root),
             id => Analysis::terminal(
@@ -355,6 +356,7 @@ pub(super) const fn owed_analyzer(id: GateId) -> Option<&'static str> {
         | GateId::Taste
         | GateId::CanvasWebTypecheck
         | GateId::JavascriptUnused
+        | GateId::CsharpUnusedCandidates
         | GateId::EnvPolicy
         | GateId::EnvNameLedger => None,
         GateId::PythonTypecheck => {

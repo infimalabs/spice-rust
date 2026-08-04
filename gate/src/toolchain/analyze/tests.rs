@@ -84,7 +84,7 @@ mod tests {
         assert_eq!(declared, expected);
     }
 
-    /// Every declared arm routes somewhere named, so a ninth cannot drift in.
+    /// Every declared arm routes somewhere named, so one more cannot drift in.
     #[test]
     fn every_declared_arm_has_a_named_analysis_or_a_named_owed_analyzer() {
         for declaration in TOOLCHAIN_ARMS {
@@ -94,6 +94,7 @@ mod tests {
                     | GateId::LocalPaths
                     | GateId::Taste
                     | GateId::JavascriptUnused
+                    | GateId::CsharpUnusedCandidates
                     | GateId::CanvasWebTypecheck
                     | GateId::EnvPolicy
                     | GateId::EnvNameLedger

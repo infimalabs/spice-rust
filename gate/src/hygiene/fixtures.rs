@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn declarations_are_the_exact_final_battery_interval() {
         let ids: Vec<_> = HYGIENE_ARMS.iter().map(|arm| arm.id()).collect();
-        assert_eq!(ids, GateId::ALL[20..]);
+        assert_eq!(ids, GateId::ALL[21..]);
         for arm in HYGIENE_ARMS {
             assert!(arm
                 .native_component()
@@ -425,7 +425,7 @@ mod tests {
         assert_eq!(tests.len(), 2);
         assert_eq!((*nodes, *edges), (9, 14));
 
-        for gate in GateId::ALL[20..].iter().copied() {
+        for gate in GateId::ALL[21..].iter().copied() {
             let report = report_with(gate, HygieneOutcome::Findings);
             let measured = report
                 .arms
@@ -631,7 +631,7 @@ mod tests {
 
     #[test]
     fn predecessor_builtins_are_equivalent_and_old_providers_refuse() {
-        for gate in GateId::ALL[20..].iter().copied() {
+        for gate in GateId::ALL[21..].iter().copied() {
             for outcome in [HygieneOutcome::Passed, HygieneOutcome::Findings] {
                 let report = report_with(gate, outcome);
                 let current = report
@@ -735,7 +735,7 @@ mod tests {
             HygieneOutcome::ParseFailure,
             HygieneOutcome::Failed,
         ];
-        for gate in GateId::ALL[20..].iter().copied() {
+        for gate in GateId::ALL[21..].iter().copied() {
             for outcome in states {
                 let report = report_with(gate, outcome);
                 let current = report

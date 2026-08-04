@@ -346,6 +346,14 @@ pub enum FindingDetail {
         reference_count: u32,
         test_reference_count: u32,
     },
+    /// C# declaration has no admitted references.
+    CsharpUnused {
+        symbol: String,
+        declaration_kind: String,
+        status: CsharpUnusedStatus,
+        reason: String,
+        reference_count: u32,
+    },
     /// Pyright diagnostic.
     PythonType { code: String, message: String },
     /// Environment access violates the compiled access law.
@@ -366,6 +374,21 @@ pub enum JavascriptUnusedStatus {
     CandidateUnused,
     /// References exist only in configured test paths.
     TestOnly,
+}
+
+/// Finding-bearing predecessor status for a C# declaration.
+///
+/// A C# member can be reached by a framework rather than by name, so the
+/// predecessor never reports a bare absence of references as a deletion. It
+/// separates a candidate from a declaration that policy or the language holds
+/// live, which is why the retained status carries its own reason.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CsharpUnusedStatus {
+    /// No reference remains after the declaration's own name is discounted.
+    CandidateUnused,
+    /// A reference is absent, but an admitted retention reason holds it live.
+    Retained,
 }
 
 /// Exact predecessor environment-ledger mismatch kind.
@@ -395,6 +418,7 @@ impl FindingDetail {
             Self::Taste { .. } => GateId::Taste,
             Self::CanvasWebOutput { .. } => GateId::CanvasWebTypecheck,
             Self::JavascriptUnused { .. } => GateId::JavascriptUnused,
+            Self::CsharpUnused { .. } => GateId::CsharpUnusedCandidates,
             Self::PythonType { .. } => GateId::PythonTypecheck,
             Self::EnvironmentAccess { .. } => GateId::EnvPolicy,
             Self::EnvironmentLedger { .. } => GateId::EnvNameLedger,
@@ -799,6 +823,41 @@ fn valid_finding_detail(detail: &FindingDetail) -> bool {
                     reason == "references_only_in_tests"
                         && *reference_count == 1
                         && *test_reference_count > 0
+                }
+            };
+            !symbol.is_empty() && kind_is_valid && status_is_valid
+        }
+        FindingDetail::CsharpUnused {
+            symbol,
+            declaration_kind,
+            status,
+            reason,
+            reference_count,
+        } => {
+            let kind_is_valid = matches!(
+                declaration_kind.as_str(),
+                "class"
+                    | "interface"
+                    | "struct"
+                    | "enum"
+                    | "method"
+                    | "property"
+                    | "field"
+                    | "event"
+            );
+            let status_is_valid = match status {
+                // A candidate is the declaration's own name and nothing else.
+                CsharpUnusedStatus::CandidateUnused => {
+                    reason == "no_references_outside_declaration" && *reference_count == 1
+                }
+                // Retention answers the same absence with a named reason, so it
+                // carries the same count and must say which rule held it.
+                CsharpUnusedStatus::Retained => {
+                    *reference_count == 1
+                        && matches!(
+                            reason.as_str(),
+                            "attribute_retained" | "partial_declaration"
+                        )
                 }
             };
             !symbol.is_empty() && kind_is_valid && status_is_valid

@@ -26,14 +26,15 @@ use std::path::{Path, PathBuf};
 use sill::{Argv, Completion, Environment, spawn};
 
 use super::{
-    ArmFinding, ArmOutcome, EnvironmentLedgerKind, FindingDetail, JavascriptUnusedStatus,
-    LOCAL_PATH_MARKER, PACKAGED_ENV_PROFILE, PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_TASTE_WORDS,
-    PACKAGED_TEST_PATHS, SourceLocus, ToolchainDeclaration, column_of, environment,
+    ArmFinding, ArmOutcome, CsharpUnusedStatus, EnvironmentLedgerKind, FindingDetail,
+    JavascriptUnusedStatus, LOCAL_PATH_MARKER, PACKAGED_ENV_PROFILE,
+    PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_TASTE_WORDS, PACKAGED_TEST_PATHS, SourceLocus,
+    ToolchainDeclaration, column_of, environment,
 };
 use crate::GateId;
 use crate::jurisdiction::{Ignore, Jurisdiction};
 use crate::measure::Bounds;
-use crate::structural::{StructuralPattern, scan_javascript_symbols};
+use crate::structural::{StructuralPattern, scan_csharp_symbols, scan_javascript_symbols};
 
 /// What one compiled analysis observed about one arm.
 ///
@@ -656,7 +657,9 @@ fn javascript_inventory(root: &Path) -> Result<JavascriptInventory, String> {
                         references.entry(capture.text().to_owned()).or_default().1 += 1;
                     }
                 }
-                StructuralPattern::FunctionCall => {
+                StructuralPattern::FunctionCall
+                | StructuralPattern::CSharpDeclaration
+                | StructuralPattern::CSharpIdentifier => {
                     return Err(format!(
                         "javascript-unused received an unrelated structural match in {path}"
                     ));
@@ -705,6 +708,229 @@ fn javascript_exempt(path: &str, symbol: &str) -> bool {
     PACKAGED_JAVASCRIPT_EXEMPTIONS
         .iter()
         .any(|(exempt_path, exempt_symbol, _)| path == *exempt_path && symbol == *exempt_symbol)
+}
+
+/// One C# declaration retained with the span the scanner proved it occupies.
+#[derive(Debug)]
+struct CsharpDeclaration {
+    kind: String,
+    symbol: String,
+    line: u32,
+    start_byte: usize,
+    end_byte: usize,
+}
+
+/// The declaration kinds a type can enclose, and which can therefore go unused.
+const CSHARP_MEMBER_KINDS: &[&str] = &["method", "property", "field", "event"];
+/// The declaration kinds that open a type context around their members.
+const CSHARP_TYPE_KINDS: &[&str] = &["class", "interface", "struct"];
+/// Access modifiers that publish a member beyond its declaring type.
+const CSHARP_PUBLISHING_MODIFIERS: &[&str] = &["public", "protected", "internal"];
+
+/// Report C# members that no name in their own file reaches.
+///
+/// Only a type's own members are candidates, and only where the declaring file
+/// is the whole audience: a member reachable from outside its type is reached by
+/// a name this arm cannot see, so publishing modifiers withdraw candidacy rather
+/// than producing a finding this gate cannot stand behind. A member's own
+/// declaration is one identifier occurrence, so exactly one occurrence means no
+/// reference remains.
+///
+/// Absence is reported as a candidate, never as a deletion. A C# member can be
+/// reached by a framework through an attribute, and a partial type states
+/// outright that the rest of its declaration is in another file, so both answer
+/// the same absence with a retention reason instead of a candidacy.
+pub(super) fn csharp_unused(declaration: ToolchainDeclaration, root: &Path) -> Analysis {
+    let sources = match csharp_sources(root) {
+        Ok(sources) => sources,
+        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+    };
+    if sources.is_empty() {
+        return Analysis::not_applicable(declaration);
+    }
+
+    let mut findings = Vec::new();
+    for (path, source) in &sources {
+        let (declarations, references) = match csharp_inventory(source) {
+            Ok(inventory) => inventory,
+            Err(reason) => {
+                return Analysis::terminal(
+                    ArmOutcome::ParseFailure,
+                    format!("csharp-unused-candidates could not parse {path}: {reason}"),
+                );
+            }
+        };
+        for declared in &declarations {
+            if !CSHARP_MEMBER_KINDS.contains(&declared.kind.as_str()) {
+                continue;
+            }
+            let enclosing = csharp_enclosing_type(&declarations, declared);
+            if !csharp_is_private(source, declared, enclosing) {
+                continue;
+            }
+            if references
+                .get(&declared.symbol)
+                .copied()
+                .unwrap_or_default()
+                != 1
+            {
+                continue;
+            }
+            let (status, reason) = csharp_disposition(source, declared, enclosing);
+            findings.push(ArmFinding {
+                path: Some(path.clone()),
+                line: Some(declared.line),
+                column: None,
+                detail: FindingDetail::CsharpUnused {
+                    symbol: declared.symbol.clone(),
+                    declaration_kind: declared.kind.clone(),
+                    status,
+                    reason: reason.to_owned(),
+                    reference_count: 1,
+                },
+            });
+        }
+    }
+    Analysis::scanned(declaration.id, sources.len(), findings)
+}
+
+/// Separate the declarations from the reference tally in one parse.
+fn csharp_inventory(
+    source: &str,
+) -> Result<(Vec<CsharpDeclaration>, BTreeMap<String, usize>), String> {
+    let matches = scan_csharp_symbols(source).map_err(|error| error.to_string())?;
+    let mut declarations = Vec::new();
+    let mut references: BTreeMap<String, usize> = BTreeMap::new();
+    for matched in matches {
+        let [capture] = matched.captures() else {
+            return Err(format!(
+                "a malformed {} match was received",
+                matched.pattern().as_str()
+            ));
+        };
+        match matched.pattern() {
+            StructuralPattern::CSharpDeclaration => {
+                let line = source_line(source, matched.start_byte())
+                    .ok_or_else(|| "a declaration line overflowed".to_owned())?;
+                declarations.push(CsharpDeclaration {
+                    kind: capture.name().to_owned(),
+                    symbol: capture.text().to_owned(),
+                    line,
+                    start_byte: matched.start_byte(),
+                    end_byte: matched.end_byte(),
+                });
+            }
+            StructuralPattern::CSharpIdentifier => {
+                *references.entry(capture.text().to_owned()).or_default() += 1;
+            }
+            StructuralPattern::FunctionCall
+            | StructuralPattern::JavaScriptDeclaration
+            | StructuralPattern::JavaScriptIdentifier
+            | StructuralPattern::JavaScriptPropertyIdentifier => {
+                return Err("an unrelated structural match was received".to_owned());
+            }
+        }
+    }
+    Ok((declarations, references))
+}
+
+/// The innermost type declaration whose span encloses this member.
+///
+/// Containment is read from the spans the scanner already proved, so no second
+/// traversal can disagree with the parse that produced them.
+fn csharp_enclosing_type<'a>(
+    declarations: &'a [CsharpDeclaration],
+    member: &CsharpDeclaration,
+) -> Option<&'a CsharpDeclaration> {
+    declarations
+        .iter()
+        .filter(|candidate| CSHARP_TYPE_KINDS.contains(&candidate.kind.as_str()))
+        .filter(|candidate| {
+            candidate.start_byte <= member.start_byte && member.end_byte <= candidate.end_byte
+        })
+        .min_by_key(|candidate| candidate.end_byte - candidate.start_byte)
+}
+
+/// The modifier and attribute prefix a C# declaration states before its type.
+///
+/// Attributes and modifiers precede the declared type and name, so the text
+/// before the first type, parameter, body, or initializer token is exactly the
+/// prefix. The span is the one the scanner proved, so this reads inside a single
+/// declaration and never spills into its neighbours.
+fn csharp_prefix<'a>(source: &'a str, declared: &CsharpDeclaration) -> &'a str {
+    let text = source
+        .get(declared.start_byte..declared.end_byte)
+        .unwrap_or_default();
+    let end = text.find(['{', '(', '=', ';', ':']).unwrap_or(text.len());
+    text.get(..end).unwrap_or_default()
+}
+
+/// Whether a member is the declaring type's alone to spend.
+///
+/// C# defaults type members to private, so a member is private when it says so
+/// and also when it says nothing. An interface member is the exception: it is
+/// published by the interface itself and never carries an access modifier.
+fn csharp_is_private(
+    source: &str,
+    member: &CsharpDeclaration,
+    enclosing: Option<&CsharpDeclaration>,
+) -> bool {
+    let prefix = csharp_prefix(source, member);
+    let words: Vec<&str> = prefix.split_whitespace().collect();
+    if words.contains(&"private") {
+        return true;
+    }
+    if enclosing.is_some_and(|found| found.kind == "interface") {
+        return false;
+    }
+    !words
+        .iter()
+        .any(|word| CSHARP_PUBLISHING_MODIFIERS.contains(word))
+}
+
+/// Whether an absence of references is a candidacy or an admitted retention.
+fn csharp_disposition(
+    source: &str,
+    member: &CsharpDeclaration,
+    enclosing: Option<&CsharpDeclaration>,
+) -> (CsharpUnusedStatus, &'static str) {
+    if csharp_prefix(source, member).trim_start().starts_with('[') {
+        return (CsharpUnusedStatus::Retained, "attribute_retained");
+    }
+    let enclosing_is_partial = enclosing.is_some_and(|found| {
+        csharp_prefix(source, found)
+            .split_whitespace()
+            .any(|word| word == "partial")
+    });
+    if enclosing_is_partial {
+        return (CsharpUnusedStatus::Retained, "partial_declaration");
+    }
+    (
+        CsharpUnusedStatus::CandidateUnused,
+        "no_references_outside_declaration",
+    )
+}
+
+fn csharp_sources(root: &Path) -> Result<Vec<(String, String)>, String> {
+    let walked = Jurisdiction::walk(root, &Ignore::default())
+        .map_err(|error| format!("the selected tree could not be walked: {error}"))?;
+    let mut paths: Vec<String> = walked
+        .measurable()
+        .map(|entry| entry.path().to_owned())
+        .filter(|path| !excluded(path))
+        .filter(|path| extension(path).is_some_and(|found| found == "cs"))
+        .collect();
+    paths.sort();
+
+    paths
+        .into_iter()
+        .map(|path| {
+            let source = fs::read_to_string(root.join(&path)).map_err(|error| {
+                format!("csharp-unused-candidates could not read {path} as UTF-8: {error}")
+            })?;
+            Ok((path, source))
+        })
+        .collect()
 }
 
 fn source_line(source: &str, start_byte: usize) -> Option<u32> {

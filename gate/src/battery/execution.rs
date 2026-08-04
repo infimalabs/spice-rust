@@ -62,7 +62,7 @@ impl ArmExecution {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompiledArm {
     position: usize,
-    predecessor: String,
+    predecessor: Option<String>,
     gate_id: GateId,
     family: ArmFamily,
     declaration: String,
@@ -75,10 +75,10 @@ impl CompiledArm {
         self.position
     }
 
-    /// Exact predecessor standard-arm name.
+    /// Exact predecessor standard-arm name, absent for a native arm.
     #[must_use]
-    pub fn predecessor(&self) -> &str {
-        &self.predecessor
+    pub fn predecessor(&self) -> Option<&str> {
+        self.predecessor.as_deref()
     }
 
     /// Stable compiled identity.
@@ -115,7 +115,8 @@ pub trait BatteryExecutor {
 #[serde(deny_unknown_fields)]
 pub struct BatteryArmResult {
     position: usize,
-    predecessor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    predecessor: Option<String>,
     gate_id: GateId,
     declaration: String,
     family: ArmFamily,
@@ -133,10 +134,10 @@ impl BatteryArmResult {
         self.position
     }
 
-    /// Exact predecessor standard-arm name.
+    /// Exact predecessor standard-arm name, absent for a native arm.
     #[must_use]
-    pub fn predecessor(&self) -> &str {
-        &self.predecessor
+    pub fn predecessor(&self) -> Option<&str> {
+        self.predecessor.as_deref()
     }
 
     /// Compiled gate identity.
@@ -244,7 +245,7 @@ impl BatteryReport {
         &self.context
     }
 
-    /// Exactly 25 visible entries in canonical order.
+    /// Every visible entry in canonical order.
     #[must_use]
     pub fn results(&self) -> &[BatteryArmResult] {
         &self.results
@@ -465,7 +466,9 @@ pub(super) fn gate_set_digest(manifest: &BatteryManifest) -> Digest {
     for (position, arm) in manifest.arms.iter().enumerate() {
         bytes.extend_from_slice(position.to_string().as_bytes());
         bytes.push(0);
-        bytes.extend_from_slice(arm.predecessor.as_bytes());
+        // An absent predecessor writes an empty field between its delimiters,
+        // which no declared arm name can produce.
+        bytes.extend_from_slice(arm.predecessor.as_deref().unwrap_or_default().as_bytes());
         bytes.push(0);
         let ArmDisposition::Compiled { declaration, .. } = &arm.disposition;
         bytes.extend_from_slice(declaration.as_bytes());

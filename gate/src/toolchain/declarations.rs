@@ -199,8 +199,8 @@ const PYRIGHT_TOOLS: &[ToolRequirement] = &[ToolRequirement {
     role: "Python type analyzer",
 }];
 
-/// All eight declarations in their fixed interval of the predecessor battery.
-pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 8] = [
+/// Every toolchain declaration in its fixed interval of the predecessor battery.
+pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 9] = [
     ToolchainDeclaration {
         id: GateId::Formatters,
         measurement_engine: MeasurementEngine::ToolchainV1,
@@ -299,6 +299,23 @@ pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 8] = [
         },
         tools: &[],
         analysis: &["supplied JavaScript declaration/reference normalization"],
+    },
+    ToolchainDeclaration {
+        id: GateId::CsharpUnusedCandidates,
+        measurement_engine: MeasurementEngine::ToolchainV1,
+        jurisdiction: TreeJurisdiction {
+            input: TreeInput::CompleteSelectedTree,
+            roots: &["."],
+            includes: &["**/*.cs"],
+            excludes: PACKAGED_SCANNER_EXCLUDES,
+            applicability: "at least one selected C# compilation unit",
+        },
+        configuration: ConfigurationSource {
+            source: "gate crate",
+            field: "gate::toolchain::analyze C# retention dispositions + PACKAGED_SCANNER_EXCLUDES",
+        },
+        tools: &[],
+        analysis: &["supplied C# declaration/reference normalization"],
     },
     ToolchainDeclaration {
         id: GateId::PythonTypecheck,

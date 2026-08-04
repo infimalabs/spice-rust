@@ -17,6 +17,10 @@ pub enum StructuralPattern {
     JavaScriptIdentifier,
     /// One JavaScript property-identifier occurrence, as in `object.symbol`.
     JavaScriptPropertyIdentifier,
+    /// One named C# type or member declaration.
+    CSharpDeclaration,
+    /// One C# identifier occurrence.
+    CSharpIdentifier,
 }
 
 impl StructuralPattern {
@@ -28,6 +32,8 @@ impl StructuralPattern {
             Self::JavaScriptDeclaration => "javascript-declaration",
             Self::JavaScriptIdentifier => "javascript-identifier",
             Self::JavaScriptPropertyIdentifier => "javascript-property-identifier",
+            Self::CSharpDeclaration => "csharp-declaration",
+            Self::CSharpIdentifier => "csharp-identifier",
         }
     }
 }
@@ -210,6 +216,41 @@ const JAVASCRIPT_SYMBOL_PATTERNS: &[PatternDeclaration] = &[
     },
 ];
 
+const CSHARP_SYMBOL_PATTERNS: &[PatternDeclaration] = &[
+    PatternDeclaration {
+        pattern: StructuralPattern::CSharpDeclaration,
+        match_capture: "match",
+    },
+    PatternDeclaration {
+        pattern: StructuralPattern::CSharpIdentifier,
+        match_capture: "match",
+    },
+];
+
+const CSHARP_SYMBOL_BINDINGS: &[PatternBinding] = &[
+    PatternBinding {
+        pattern: StructuralPattern::CSharpDeclaration,
+        query: concat!(
+            "[",
+            " (class_declaration name: (identifier) @class)",
+            " (interface_declaration name: (identifier) @interface)",
+            " (struct_declaration name: (identifier) @struct)",
+            " (enum_declaration name: (identifier) @enum)",
+            " (method_declaration name: (identifier) @method)",
+            " (property_declaration name: (identifier) @property)",
+            " (field_declaration (variable_declaration ",
+            "(variable_declarator name: (identifier) @field)))",
+            " (event_field_declaration (variable_declaration ",
+            "(variable_declarator name: (identifier) @event)))",
+            "] @match",
+        ),
+    },
+    PatternBinding {
+        pattern: StructuralPattern::CSharpIdentifier,
+        query: "(identifier) @symbol @match",
+    },
+];
+
 /// The named declaration forms a module can carry, as one query alternation.
 ///
 /// Expanded twice below because a declaration is top-level whether it stands
@@ -336,6 +377,29 @@ pub(crate) fn scan_javascript_symbols(
         source,
         JAVASCRIPT_SYMBOL_PATTERNS,
         JAVASCRIPT_SYMBOL_BINDINGS,
+    )
+}
+
+/// Parse C# once and retain its named type and member declarations alongside
+/// every identifier occurrence.
+///
+/// A C# declaration is named through a `name` field on the declaration itself,
+/// except for fields and events, which name themselves through the variable
+/// declarator they wrap. Identifiers are retained separately so a caller can
+/// count references, where a declaration's own name is one of the occurrences.
+///
+/// This stays crate-internal for the same reason as
+/// [`scan_javascript_symbols`]: it is one domain-specific query set over the
+/// shared structural scanner, not a second public scanner contract.
+pub(crate) fn scan_csharp_symbols(
+    source: &str,
+) -> Result<Vec<StructuralMatch>, StructuralScanError> {
+    let grammar = grammar("csharp")?;
+    scan(
+        grammar,
+        source,
+        CSHARP_SYMBOL_PATTERNS,
+        CSHARP_SYMBOL_BINDINGS,
     )
 }
 
@@ -612,6 +676,81 @@ mod tests {
             ["moduleConstant"],
             "a property access is the only property-identifier occurrence here"
         );
+    }
+
+    /// Every declaration form a C# type can carry names itself exactly once.
+    ///
+    /// Fields and events are the asymmetric pair: they carry no `name` field of
+    /// their own and are named by the variable declarator they wrap, so a query
+    /// that only reads declaration-level names would silently drop them.
+    #[test]
+    fn csharp_symbol_scan_retains_every_supported_declaration_kind() {
+        let source = concat!(
+            "class Fixture {\n",
+            "  private int field;\n",
+            "  public int Property { get; set; }\n",
+            "  private void Method() {}\n",
+            "  private event Action Fired;\n",
+            "}\n",
+            "interface IFixture { void Contract(); }\n",
+            "struct Point { public int X; }\n",
+            "enum Shade { Deep }\n",
+        );
+        let matches = scan_csharp_symbols(source).expect("C# symbols scan");
+        let declarations: Vec<(&str, &str)> = matches
+            .iter()
+            .filter(|matched| matched.pattern() == StructuralPattern::CSharpDeclaration)
+            .map(|matched| {
+                let [capture] = matched.captures() else {
+                    panic!("declaration has unexpected captures: {matched:?}");
+                };
+                (capture.name(), capture.text())
+            })
+            .collect();
+        assert_eq!(
+            declarations,
+            [
+                ("class", "Fixture"),
+                ("field", "field"),
+                ("property", "Property"),
+                ("method", "Method"),
+                ("event", "Fired"),
+                ("interface", "IFixture"),
+                ("method", "Contract"),
+                ("struct", "Point"),
+                ("field", "X"),
+                ("enum", "Shade"),
+            ],
+            "every named declaration is retained once, in source order, with its kind",
+        );
+    }
+
+    /// A declaration's own name is an identifier occurrence, so an unused
+    /// symbol counts one and a referenced one counts more.
+    #[test]
+    fn csharp_symbol_scan_counts_a_declaration_name_as_its_own_occurrence() {
+        let source = concat!(
+            "class Fixture {\n",
+            "  private int unusedField;\n",
+            "  private int usedField;\n",
+            "  public int Read() { return usedField; }\n",
+            "}\n",
+        );
+        let matches = scan_csharp_symbols(source).expect("C# symbols scan");
+        let occurrences = |symbol: &str| -> usize {
+            matches
+                .iter()
+                .filter(|matched| {
+                    matched.pattern() == StructuralPattern::CSharpIdentifier
+                        && matched
+                            .captures()
+                            .iter()
+                            .any(|capture| capture.text() == symbol)
+                })
+                .count()
+        };
+        assert_eq!(occurrences("unusedField"), 1, "only its own declaration");
+        assert_eq!(occurrences("usedField"), 2, "its declaration and one read");
     }
 
     #[test]

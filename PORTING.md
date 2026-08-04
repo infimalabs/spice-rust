@@ -184,15 +184,16 @@ Dropped: the Lua family (`lua-api`, `lua-contract`, `lua-entry-graph`,
 engine-navigation, timing, and simulation-lineage families. Those stay with
 Unity and VR.
 
-Still owed: `complexity-hotspots`, `csharp-members`, `csharp-unused-candidates`,
-`mutations`, `subsumption`, and `suite-seam-reach` are marked `D` below, yet
-match no `GateId` in `gate/src/manifest.rs` and no Rust source at all.
+Still owed: `complexity-hotspots`, `mutations`, `subsumption`, and
+`suite-seam-reach` are marked `D` below, yet match no `GateId` in
+`gate/src/manifest.rs` and no Rust source at all.
 
-Grammar coverage already exceeds gate coverage. `studies/treesitter.py` parses
-two languages (`Literal["csharp", "javascript"]`, suffixes `.cjs .cs .js .jsx
-.mjs`) for four modules, and `magicnums.py` falls back to Python `ast`.
+Grammar coverage still exceeds gate coverage. `studies/treesitter.py` parses two
+languages (`Literal["csharp", "javascript"]`, suffixes `.cjs .cs .js .jsx .mjs`)
+for four modules, and `magicnums.py` falls back to Python `ast`.
 `gate/src/structural.rs` binds five grammars, python and rust and javascript and
-csharp and lua, but no `GateId` reads csharp or lua.
+csharp and lua. `GateId::CsharpUnusedCandidates` is the first arm to read one,
+and the first the release never declared; no `GateId` reads lua.
 
 ## Installed Python paths
 
@@ -263,8 +264,9 @@ Each `study` path is D -> gate or verifier evidence, not a shipped verb.
 - `study assertion-free-tests`: D.
 - `study complexity`: D.
 - `study complexity-hotspots`: D.
-- `study csharp-members`: D.
-- `study csharp-unused-candidates`: D.
+- `study csharp-members`: D -> `MetricId::RoutineLength`, which measures the same
+  quantity for every language lizard parses; a ranking board is not a gate.
+- `study csharp-unused-candidates`: D -> `GateId::CsharpUnusedCandidates`.
 - `study env-name-ledger`: D.
 - `study env-policy`: D.
 - `study file-loc`: D.
