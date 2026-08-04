@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use wire::manifest::ProofImage;
 
-/// Proof image sealed into the compiled defaults documented by `CONFIG.md`.
+/// Proof image sealed into this build's compiled configuration defaults.
 ///
 /// This is the exact OCI identity of the `linux/amd64` appliance assembled by
 /// `dist/proof-image/build.sh`, and `dist/proof-image/identity.txt` is the same
