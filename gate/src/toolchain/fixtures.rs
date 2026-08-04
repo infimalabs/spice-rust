@@ -76,14 +76,31 @@ fn fixture_external_finding(gate: GateId, suffix: &str) -> ArmFinding {
     }
 }
 
+/// The line the environment fixture finding was read from.
+const FIXTURE_ENV_SOURCE: &str = "let hooks = std::env::var(\"SPICE_HOOKS\");"; // env-policy: allow
+/// The line the local-path fixture finding was read from.
+const FIXTURE_MARKED_LINE: &str = concat!("// see /", "Users", "/somebody/devel");
+/// The line the taste fixture finding was read from.
+const FIXTURE_PROSE_LINE: &str = "one orphaned paragraph";
+
+/// One current-shaped scanner finding, carrying the column its scanner reports.
+///
+/// Three scanners report one finding per occurrence and take its column from
+/// the line they matched in; the rest name a file or the repository and report
+/// none. The fixture asks those same producers instead of naming a number, so
+/// a scanner that stops reporting a column, or a predecessor conversion that
+/// starts, arrives here as a locus the two disagree on rather than as a field
+/// nothing compares.
 fn fixture_scanner_finding(gate: GateId, suffix: &str) -> ArmFinding {
-    let (path, detail) = match gate {
+    let (path, column, detail) = match gate {
         GateId::LocalPaths => (
             Some(format!("notes/{suffix}.txt")),
+            fixture_column(FIXTURE_MARKED_LINE, LOCAL_PATH_MARKER),
             FindingDetail::LocalPath,
         ),
         GateId::Taste => (
             Some(format!("notes/{suffix}.md")),
+            fixture_column(FIXTURE_PROSE_LINE, "orphaned"),
             FindingDetail::Taste {
                 word: "orphaned".to_owned(),
                 replacement: "loose".to_owned(),
@@ -91,6 +108,7 @@ fn fixture_scanner_finding(gate: GateId, suffix: &str) -> ArmFinding {
         ),
         GateId::JavascriptUnused => (
             Some(format!("web/{suffix}.js")),
+            None,
             FindingDetail::JavascriptUnused {
                 symbol: "orphan".to_owned(),
                 declaration_kind: "function".to_owned(),
@@ -102,6 +120,7 @@ fn fixture_scanner_finding(gate: GateId, suffix: &str) -> ArmFinding {
         ),
         GateId::CsharpUnusedCandidates => (
             Some(format!("dotnet/{suffix}.cs")),
+            None,
             FindingDetail::CsharpUnused {
                 symbol: "Loose".to_owned(),
                 declaration_kind: "method".to_owned(),
@@ -112,13 +131,14 @@ fn fixture_scanner_finding(gate: GateId, suffix: &str) -> ArmFinding {
         ),
         GateId::EnvPolicy => (
             Some(format!("src/{suffix}.rs")),
+            fixture_access_column(),
             FindingDetail::EnvironmentAccess {
                 name: "SPICE_HOOKS".to_owned(), // env-policy: allow
-                // env-policy: allow
-                source: "let hooks = std::env::var(\"SPICE_HOOKS\");".to_owned(),
+                source: FIXTURE_ENV_SOURCE.to_owned(),
             },
         ),
         GateId::EnvNameLedger => (
+            None,
             None,
             FindingDetail::EnvironmentLedger {
                 mismatch: EnvironmentLedgerKind::Unaccounted,
@@ -140,9 +160,31 @@ fn fixture_scanner_finding(gate: GateId, suffix: &str) -> ArmFinding {
     ArmFinding {
         line: path.as_ref().map(|_| 7),
         path,
-        column: None,
+        column,
         detail,
     }
+}
+
+/// The column one scanner reports for `needle` in a line it matched.
+///
+/// The needle must be present and `column_of` must place it, because a `None`
+/// reached by either failing is exactly the empty column this fixture exists to
+/// stop producing.
+fn fixture_column(line: &str, needle: &str) -> Option<u32> {
+    let start = line
+        .find(needle)
+        .unwrap_or_else(|| panic!("fixture line {line:?} must contain {needle:?}"));
+    Some(column_of(line, start).expect("a byte offset inside the line has a column"))
+}
+
+/// The column the compiled environment scanner reports for the fixture access.
+fn fixture_access_column() -> Option<u32> {
+    let accesses = environment::accesses(environment::family("rs"), FIXTURE_ENV_SOURCE);
+    let access = accesses
+        .iter()
+        .find(|access| access.name == "SPICE_HOOKS") // env-policy: allow
+        .expect("the fixture source line commits the environment access it reports");
+    Some(access.column)
 }
 
 fn predecessor_finding(gate: GateId, suffix: &str) -> PredecessorFinding {
@@ -180,7 +222,7 @@ fn predecessor_finding(gate: GateId, suffix: &str) -> PredecessorFinding {
             path: format!("src/{suffix}.rs"),
             line: 7,
             name: "SPICE_HOOKS".to_owned(), // env-policy: allow
-            source: "let hooks = std::env::var(\"SPICE_HOOKS\");".to_owned(), // env-policy: allow
+            source: FIXTURE_ENV_SOURCE.to_owned(),
         },
         GateId::EnvNameLedger => PredecessorFinding::EnvironmentLedger {
             kind: EnvironmentLedgerKind::Unaccounted,
@@ -989,6 +1031,62 @@ fn predecessor_differences_in_javascript_and_ledger_identity_do_not_compare_equa
             gate_name: gate.as_str().to_owned(),
             configuration: PredecessorConfiguration::PackagedDefaults,
             result: PredecessorResult::Findings(findings),
+        };
+        assert_eq!(
+            compare_predecessor(&predecessor, current),
+            Err(PredecessorComparisonError::ResultMismatch(gate))
+        );
+    }
+}
+
+/// The three scanners that report a column, and the one field parity drops.
+///
+/// Every current finding here carries the column its own scanner computed, so
+/// equality proves the comparison excludes the field rather than that both
+/// producers happened to leave it empty. Moving one line then proves the loci
+/// the comparison does hold are still compared.
+#[test]
+fn column_reporting_scanners_compare_equal_across_the_column_alone() {
+    for gate in [GateId::LocalPaths, GateId::Taste, GateId::EnvPolicy] {
+        let report = fixture_report_with(fixture_observation(gate, ArmOutcome::Findings));
+        let current = report
+            .arms
+            .iter()
+            .find(|measurement| measurement.gate_id == gate)
+            .expect("scanner measurement");
+        assert!(
+            current
+                .findings
+                .iter()
+                .all(|finding| finding.column.is_some()),
+            "{} reports a column, so equality here is not two empty fields agreeing",
+            gate.as_str()
+        );
+        let findings = vec![
+            predecessor_finding(gate, "z"),
+            predecessor_finding(gate, "a"),
+        ];
+        let predecessor = PredecessorObservation {
+            gate_name: gate.as_str().to_owned(),
+            configuration: PredecessorConfiguration::PackagedDefaults,
+            result: PredecessorResult::Findings(findings.clone()),
+        };
+        assert_eq!(
+            compare_predecessor(&predecessor, current),
+            Ok(PredecessorComparison::Equivalent)
+        );
+
+        let mut moved = findings;
+        match &mut moved[0] {
+            PredecessorFinding::LocalPath { line, .. }
+            | PredecessorFinding::Taste { line, .. }
+            | PredecessorFinding::EnvironmentAccess { line, .. } => *line += 1,
+            _ => unreachable!("fixture selected a column-reporting scanner"),
+        }
+        let predecessor = PredecessorObservation {
+            gate_name: gate.as_str().to_owned(),
+            configuration: PredecessorConfiguration::PackagedDefaults,
+            result: PredecessorResult::Findings(moved),
         };
         assert_eq!(
             compare_predecessor(&predecessor, current),

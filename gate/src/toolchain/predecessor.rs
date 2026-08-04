@@ -95,6 +95,17 @@ impl PredecessorFinding {
         }
     }
 
+    /// The current-shaped finding one release-shaped scanner result names.
+    ///
+    /// Every column here is empty because release 0.31.0 reported a path and a
+    /// line and nothing finer, so the column is a locus the predecessor cannot
+    /// supply rather than one it disagreed about. Scanner equality therefore
+    /// drops the field on both sides; comparing it would report every current
+    /// finding as changed for saying where in its line it sits, and filling one
+    /// in here would invent a number no predecessor run ever produced.
+    ///
+    /// Two occurrences on one line are one place to the predecessor and two to
+    /// the current scanners, which is the granularity this comparison holds.
     fn scanner_to_current(&self) -> ArmFinding {
         match self {
             Self::LocalPath { path, line } => ArmFinding {
@@ -298,13 +309,11 @@ pub fn compare_predecessor(
     let equivalent = match (&predecessor.result, current.outcome) {
         (PredecessorResult::Passed, ArmOutcome::Passed) => true,
         (PredecessorResult::Findings(findings), ArmOutcome::Findings) => {
-            let mut normalized: Vec<_> = findings
+            let released: Vec<_> = findings
                 .iter()
                 .map(PredecessorFinding::to_current)
                 .collect();
-            normalize_findings(&mut normalized);
-            normalized.sort();
-            normalized == current.findings
+            comparable(released) == comparable(current.findings.clone())
         }
         _ => false,
     };
@@ -313,6 +322,21 @@ pub fn compare_predecessor(
     } else {
         Err(PredecessorComparisonError::ResultMismatch(gate))
     }
+}
+
+/// One canonical finding list for scanner equality, without the column.
+///
+/// Both sides pass through here rather than the predecessor alone, so dropping
+/// the column is a property of the comparison instead of an artifact of which
+/// producer left the field empty. Erasing it can reorder a list the current
+/// measurement already sorted, which is why the sort is repeated after.
+fn comparable(mut findings: Vec<ArmFinding>) -> Vec<ArmFinding> {
+    for finding in &mut findings {
+        finding.column = None;
+    }
+    normalize_findings(&mut findings);
+    findings.sort();
+    findings
 }
 
 fn validate_predecessor_observation(
