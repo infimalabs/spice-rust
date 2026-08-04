@@ -207,10 +207,58 @@ impl Limits {
     }
 }
 
-fn observe_runtime_kind(binary: &Path, limits: Limits) -> Result<RuntimeKind, ContainerError> {
+/// Why one bounded runtime probe produced no evidence.
+///
+/// The three process failures stay typed because they say something about this
+/// host rather than about the runtime's answer; everything else collapses into
+/// the single observation string its caller reports.
+enum ProbeRefusal {
+    Spec(SpecError),
+    Spawn(io::Error),
+    Wait(WaitError),
+    Observed(String),
+}
+
+impl ProbeRefusal {
+    fn dialect(self) -> ContainerError {
+        match self {
+            Self::Spec(source) => ContainerError::RuntimeProbeSpec(source),
+            Self::Spawn(source) => ContainerError::SpawnRuntimeProbe(source),
+            Self::Wait(source) => ContainerError::WaitRuntimeProbe(source),
+            Self::Observed(observed) => ContainerError::RuntimeDialectNotAttested { observed },
+        }
+    }
+
+    fn image(self, image: &ProofImage) -> ContainerError {
+        match self {
+            Self::Spec(source) => ContainerError::RuntimeProbeSpec(source),
+            Self::Spawn(source) => ContainerError::SpawnRuntimeProbe(source),
+            Self::Wait(source) => ContainerError::WaitRuntimeProbe(source),
+            Self::Observed(observed) => ContainerError::ImageNotResolved {
+                image: image.as_str().to_owned(),
+                observed,
+            },
+        }
+    }
+}
+
+/// Run one bounded runtime question and return the exact bytes it answered.
+///
+/// An answer counts only when the process exited successfully, both streams
+/// were captured whole, and stderr stayed silent. Anything else is the
+/// observation, and the caller decides which refusal it names.
+fn probe(
+    binary: &Path,
+    arguments: &[&str],
+    label: &'static str,
+    limits: Limits,
+) -> Result<Vec<u8>, ProbeRefusal> {
     let spec = Spec {
-        argv: Argv::new(binary.as_os_str().to_owned(), [OsString::from("--version")])
-            .map_err(ContainerError::RuntimeProbeSpec)?,
+        argv: Argv::new(
+            binary.as_os_str().to_owned(),
+            arguments.iter().map(OsString::from),
+        )
+        .map_err(ProbeRefusal::Spec)?,
         cwd: binary
             .parent()
             .expect("a canonical absolute executable has a parent")
@@ -218,12 +266,8 @@ fn observe_runtime_kind(binary: &Path, limits: Limits) -> Result<RuntimeKind, Co
         environment: Environment::empty(),
         group: ProcessGroup::New,
         deadlines: limits.deadlines,
-        wait: WaitPolicy::new(
-            "sealed OCI runtime identity probe",
-            Cancellation::Never,
-            RestartDisposition::Never,
-        )
-        .map_err(ContainerError::RuntimeProbeSpec)?,
+        wait: WaitPolicy::new(label, Cancellation::Never, RestartDisposition::Never)
+            .map_err(ProbeRefusal::Spec)?,
         output: Output::new(
             StdinPolicy::Null,
             StreamPolicy::Capture {
@@ -241,18 +285,14 @@ fn observe_runtime_kind(binary: &Path, limits: Limits) -> Result<RuntimeKind, Co
         let _spawn_guard = crate::test_support::process_spawn_guard();
         sill::spawn(spec)
     }
-    .map_err(ContainerError::SpawnRuntimeProbe)?;
-    let outcome = running.wait().map_err(ContainerError::WaitRuntimeProbe)?;
+    .map_err(ProbeRefusal::Spawn)?;
+    let outcome = running.wait().map_err(ProbeRefusal::Wait)?;
     let completion = format!("{:?}", outcome.completion());
     let stdout = outcome.stdout().map(Captured::from).ok_or_else(|| {
-        ContainerError::RuntimeDialectNotAttested {
-            observed: format!("completion={completion}, stdout capture missing"),
-        }
+        ProbeRefusal::Observed(format!("completion={completion}, stdout capture missing"))
     })?;
     let stderr = outcome.stderr().map(Captured::from).ok_or_else(|| {
-        ContainerError::RuntimeDialectNotAttested {
-            observed: format!("completion={completion}, stderr capture missing"),
-        }
+        ProbeRefusal::Observed(format!("completion={completion}, stderr capture missing"))
     })?;
     let observed = format!(
         "completion={completion}, stdout={:?}, stderr={:?}",
@@ -266,10 +306,60 @@ fn observe_runtime_kind(binary: &Path, limits: Limits) -> Result<RuntimeKind, Co
         || !stderr.complete
         || !stderr.bytes.is_empty()
     {
-        return Err(ContainerError::RuntimeDialectNotAttested { observed });
+        return Err(ProbeRefusal::Observed(observed));
     }
+    Ok(stdout.bytes)
+}
 
-    parse_runtime_kind(&stdout.bytes).ok_or(ContainerError::RuntimeDialectNotAttested { observed })
+fn observe_runtime_kind(binary: &Path, limits: Limits) -> Result<RuntimeKind, ContainerError> {
+    let stdout = probe(
+        binary,
+        &["--version"],
+        "sealed OCI runtime identity probe",
+        limits,
+    )
+    .map_err(ProbeRefusal::dialect)?;
+    parse_runtime_kind(&stdout).ok_or_else(|| ContainerError::RuntimeDialectNotAttested {
+        observed: format!("stdout={:?}", String::from_utf8_lossy(&stdout)),
+    })
+}
+
+/// The one platform the sealed Linux appliance is assembled for.
+const IMAGE_PLATFORM: &str = "amd64 linux";
+
+/// Resolve the pinned identity against what this host actually holds.
+///
+/// A digest reference does not verify itself. Docker looks a bare image ID up
+/// directly, but Podman resolves a manifest digest through its local store and
+/// can answer with an image carrying a different identity, so the identity is
+/// read back rather than assumed. Resolution is also the only step that tells a
+/// host which never loaded the appliance apart from one holding the wrong one,
+/// and the platform is read in the same breath because an `arm64` image would
+/// otherwise satisfy every later check while building the wrong binaries.
+fn resolve_image(
+    runtime: &OciRuntime,
+    image: &ProofImage,
+    limits: Limits,
+) -> Result<(), ContainerError> {
+    let stdout = probe(
+        &runtime.binary,
+        &[
+            "image",
+            "inspect",
+            "--format",
+            "{{.Id}} {{.Architecture}} {{.Os}}",
+            image.as_str(),
+        ],
+        "sealed proof image resolution",
+        limits,
+    )
+    .map_err(|refusal| refusal.image(image))?;
+    let observed = String::from_utf8_lossy(&stdout).trim().to_owned();
+    let expected = format!("{} {IMAGE_PLATFORM}", image.as_str());
+    if observed != expected {
+        return Err(ContainerError::ImageIdentityDrift { expected, observed });
+    }
+    Ok(())
 }
 
 fn parse_runtime_kind(bytes: &[u8]) -> Option<RuntimeKind> {
@@ -341,6 +431,7 @@ impl Container {
         if spelling.contains([',', '\n', '\r']) {
             return Err(ContainerError::UnrepresentableWorkspace(workspace));
         }
+        resolve_image(&runtime, &image, limits)?;
 
         Ok(Self {
             runtime,
@@ -517,6 +608,8 @@ pub enum ContainerError {
     WaitRuntimeProbe(WaitError),
     RuntimeDialectNotAttested { observed: String },
     ImageNotDigestPinned(String),
+    ImageNotResolved { image: String, observed: String },
+    ImageIdentityDrift { expected: String, observed: String },
     InspectWorkspace { path: PathBuf, source: io::Error },
     WorkspaceNotDirectory(PathBuf),
     UnrepresentableWorkspace(PathBuf),
@@ -588,6 +681,16 @@ impl fmt::Display for ContainerError {
                 formatter,
                 "proof image must be an exact sha256 digest reference, not a tag: {image:?}"
             ),
+            Self::ImageNotResolved { image, observed } => write!(
+                formatter,
+                "proof runtime does not hold proof image {image}, so load it with \
+                 dist/proof-image/load.sh before sealing: {observed}"
+            ),
+            Self::ImageIdentityDrift { expected, observed } => write!(
+                formatter,
+                "proof runtime resolved a different appliance: expected {expected:?}, \
+                 observed {observed:?}"
+            ),
             Self::InspectWorkspace { path, source } => write!(
                 formatter,
                 "cannot inspect proof workspace {}: {source}",
@@ -648,6 +751,8 @@ impl Error for ContainerError {
             | Self::RuntimeNotExecutable(_)
             | Self::RuntimeDialectNotAttested { .. }
             | Self::ImageNotDigestPinned(_)
+            | Self::ImageNotResolved { .. }
+            | Self::ImageIdentityDrift { .. }
             | Self::WorkspaceNotDirectory(_)
             | Self::UnrepresentableWorkspace(_)
             | Self::ZeroOutputLimit
@@ -692,6 +797,10 @@ mod tests {
     use super::{Attestation, Container, ContainerError, Limits, OciRuntime, RuntimeKind};
 
     const SILENT_RUNTIME: &str = r#"#!/bin/sh
+if [ "$1" = image ]; then
+    printf '%s amd64 linux\n' "$5"
+    exit 0
+fi
 if [ "$1" = --version ]; then
     printf 'Docker version 1.0.0, build fixture\n'
     exit 0
@@ -699,6 +808,10 @@ fi
 exit 0
 "#;
     const FIXED_MARKER_RUNTIME: &str = r#"#!/bin/sh
+if [ "$1" = image ]; then
+    printf '%s amd64 linux\n' "$5"
+    exit 0
+fi
 if [ "$1" = --version ]; then
     printf 'Docker version 1.0.0, build fixture\n'
     exit 0
@@ -707,8 +820,51 @@ printf 'spice-proof-attestation-v2:docker:fixed-challenge\n' >&2
 exit 0
 "#;
     const PODMAN_RUNTIME: &str = r#"#!/bin/sh
+if [ "$1" = image ]; then
+    printf '%s amd64 linux\n' "$5"
+    exit 0
+fi
 if [ "$1" = --version ]; then
     printf 'podman version 1.0.0\n'
+    exit 0
+fi
+exit 0
+"#;
+
+    /// A runtime that resolves the sealed digest to some other stored image.
+    const SUBSTITUTING_RUNTIME: &str = r#"#!/bin/sh
+if [ "$1" = image ]; then
+    printf 'sha256:0000000000000000000000000000000000000000000000000000000000000000 amd64 linux\n'
+    exit 0
+fi
+if [ "$1" = --version ]; then
+    printf 'Docker version 1.0.0, build fixture\n'
+    exit 0
+fi
+exit 0
+"#;
+
+    /// A runtime holding the sealed digest built for the wrong machine.
+    const FOREIGN_PLATFORM_RUNTIME: &str = r#"#!/bin/sh
+if [ "$1" = image ]; then
+    printf '%s arm64 linux\n' "$5"
+    exit 0
+fi
+if [ "$1" = --version ]; then
+    printf 'Docker version 1.0.0, build fixture\n'
+    exit 0
+fi
+exit 0
+"#;
+
+    /// A runtime whose store has never seen the sealed appliance.
+    const EMPTY_STORE_RUNTIME: &str = r#"#!/bin/sh
+if [ "$1" = image ]; then
+    printf 'Error: no such image\n' >&2
+    exit 1
+fi
+if [ "$1" = --version ]; then
+    printf 'Docker version 1.0.0, build fixture\n'
     exit 0
 fi
 exit 0
@@ -795,6 +951,30 @@ exit 0
         .expect_err("tagged images are not sealed");
 
         assert!(matches!(error, ContainerError::ImageNotDigestPinned(_)));
+    }
+
+    #[test]
+    fn a_runtime_that_cannot_produce_the_sealed_image_refuses_before_any_work() {
+        let sealed = format!("registry.example/proof@sha256:{}", "4".repeat(64));
+        for (script, expected) in [
+            (SUBSTITUTING_RUNTIME, "resolved a different appliance"),
+            (FOREIGN_PLATFORM_RUNTIME, "arm64"),
+            (EMPTY_STORE_RUNTIME, "does not hold proof image"),
+        ] {
+            let fixture = Fixture::with_runtime(script);
+            let error = Container::new(
+                OciRuntime::attest(&fixture.runtime, limits()).expect("fixture runtime"),
+                sealed.clone(),
+                &fixture.workspace,
+                limits(),
+            )
+            .expect_err("a runtime that cannot produce the sealed image is not sealed");
+
+            assert!(
+                error.to_string().contains(expected),
+                "the refusal did not name {expected}: {error}",
+            );
+        }
     }
 
     #[test]

@@ -9,8 +9,14 @@ use serde::{Deserialize, Serialize};
 use wire::manifest::ProofImage;
 
 /// Proof image sealed into the compiled defaults documented by `CONFIG.md`.
+///
+/// This is the exact OCI identity of the `linux/amd64` appliance assembled by
+/// `dist/proof-image/build.sh`, and `dist/proof-image/identity.txt` is the same
+/// digest in the one spelling a shell can read. The two are proven equal by
+/// [`the_shell_readable_identity_names_the_compiled_image`], so the image a
+/// host loads and the image this build demands cannot drift apart silently.
 pub const DEFAULT_IMAGE: &str =
-    "sha256:2f1f7a4c9e6d0b835a1c47e9d20b6f83c15d9a047e6b3a92c8d05e714f6a9b3c";
+    "sha256:a4ec5ae01e79236d5d9e339e34e4c7008612d4556009943df318d1ae0de98318";
 
 /// An exact lower-case SHA-256 image reference.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -123,5 +129,28 @@ impl Config {
             container: container.map(ExecutablePath),
             runner: runner.map(ExecutablePath),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The identity `dist/proof-image/build.sh` and `load.sh` compare against.
+    const SHELL_READABLE_IDENTITY: &str =
+        include_str!("../../dist/proof-image/identity.txt").trim_ascii();
+
+    #[test]
+    fn the_shell_readable_identity_names_the_compiled_image() {
+        assert_eq!(
+            SHELL_READABLE_IDENTITY, DEFAULT_IMAGE,
+            "dist/proof-image/identity.txt and proof::DEFAULT_IMAGE name different images, so a \
+             host would load one appliance and this build would demand another"
+        );
+    }
+
+    #[test]
+    fn the_compiled_image_is_a_canonical_digest_reference() {
+        assert_eq!(Image::default().as_str(), DEFAULT_IMAGE);
     }
 }

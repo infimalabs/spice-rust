@@ -29,8 +29,6 @@ const GRACE: Duration = Duration::from_secs(5);
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
 const PINNED_TRUNK: &str = "trunk 0.21.14";
 const PINNED_MUTANTS: &str = "cargo-mutants 27.1.0";
-const PINNED_PROOF_IMAGE: &str =
-    "sha256:2f1f7a4c9e6d0b835a1c47e9d20b6f83c15d9a047e6b3a92c8d05e714f6a9b3c";
 const APP_ARTIFACT: &str = "dist/stage/app_bg.wasm";
 const EMBEDDED_ARTIFACT: &str = "dist/stage/canvas-app.html";
 
@@ -180,7 +178,7 @@ fn required_pins() -> BuildPins {
         wasm_target: WASM_TARGET.to_owned(),
         trunk: PINNED_TRUNK.to_owned(),
         cargo_mutants: PINNED_MUTANTS.to_owned(),
-        proof_container: PINNED_PROOF_IMAGE.to_owned(),
+        proof_container: proof::DEFAULT_IMAGE.to_owned(),
     }
 }
 
@@ -221,7 +219,7 @@ fn observe_pins<E: Executor>(
         wasm_target: WASM_TARGET.to_owned(),
         trunk: one_line(&trunk.stdout, "Trunk version")?,
         cargo_mutants: one_line(&mutants.stdout, "cargo-mutants version")?,
-        proof_container: PINNED_PROOF_IMAGE.to_owned(),
+        proof_container: proof::DEFAULT_IMAGE.to_owned(),
     })
 }
 
@@ -398,30 +396,37 @@ fn capture_commit<E: Executor>(executor: &E, git: &Path) -> Result<String, Targe
     Ok(commit)
 }
 
+/// The only untracked paths a release build is allowed to have produced.
+const RELEASE_OUTPUT: [&str; 2] = ["dist/stage/objects/", "dist/stage/targets/"];
+
+/// The porcelain code and separator an untracked entry is reported under.
+const UNTRACKED: &str = "?? ";
+
 fn verify_checkout<E: Executor>(executor: &E, git: &Path) -> Result<(), TargetBuildError> {
-    let tracked = executor.execute(CommandSpec::new(
-        "source-tracked",
+    // One porcelain status answers both questions, and it is the only spelling
+    // that answers them truthfully. `git diff-index` trusts the index stat
+    // cache, so a checkout whose files are byte-identical to HEAD still reads
+    // as modified whenever that cache is stale -- exactly what a fresh clone
+    // observed through another kernel's view of the same bytes produces, which
+    // is the sealed proof image reading a mounted host checkout. `git status`
+    // refreshes the index before it compares, so it reports content.
+    let status = successful(executor.execute(CommandSpec::new(
+        "source-status",
         git,
-        ["diff-index", "--quiet", "HEAD", "--"],
-    ))?;
-    if !tracked.success() {
-        return Err(TargetBuildError::SourceDirty(
-            "tracked source differs from HEAD".to_owned(),
-        ));
-    }
-    let untracked = successful(executor.execute(CommandSpec::new(
-        "source-untracked",
-        git,
-        ["ls-files", "--others", "--exclude-standard"],
+        ["status", "--porcelain=v1", "--untracked-files=all"],
     ))?)?;
-    let untracked = text(&untracked.stdout, "untracked source inventory")?;
-    let unexpected = untracked.lines().find(|path| {
-        !path.starts_with("dist/stage/objects/") && !path.starts_with("dist/stage/targets/")
-    });
-    if let Some(path) = unexpected {
-        return Err(TargetBuildError::SourceDirty(format!(
-            "untracked source path is outside release output: {path}"
-        )));
+    let status = text(&status.stdout, "source status inventory")?;
+    for entry in status.lines() {
+        let Some(path) = entry.strip_prefix(UNTRACKED) else {
+            return Err(TargetBuildError::SourceDirty(format!(
+                "tracked source differs from HEAD: {entry}"
+            )));
+        };
+        if !RELEASE_OUTPUT.iter().any(|root| path.starts_with(root)) {
+            return Err(TargetBuildError::SourceDirty(format!(
+                "untracked source path is outside release output: {path}"
+            )));
+        }
     }
     Ok(())
 }
@@ -957,6 +962,7 @@ mod tests {
         trunk: RefCell<String>,
         trunk_drift_after_native: Cell<bool>,
         tracked_dirty: Cell<bool>,
+        untracked: RefCell<String>,
         moved_after_native: Cell<bool>,
         native_ran: Cell<bool>,
         records: RefCell<Vec<CommandRecord>>,
@@ -970,6 +976,7 @@ mod tests {
                 trunk: RefCell::new(PINNED_TRUNK.to_owned()),
                 trunk_drift_after_native: Cell::new(false),
                 tracked_dirty: Cell::new(false),
+                untracked: RefCell::new(String::new()),
                 moved_after_native: Cell::new(false),
                 native_ran: Cell::new(false),
                 records: RefCell::new(Vec::new()),
@@ -1010,18 +1017,15 @@ mod tests {
                 "app-build" | "embed-build" | "native-build" => {
                     format!("{} complete\n", command.label).into_bytes()
                 }
-                "source-tracked" | "source-untracked" => Vec::new(),
+                "source-status" if self.tracked_dirty.get() => b" M xtask/src/lib.rs\n".to_vec(),
+                "source-status" => self.untracked.borrow().clone().into_bytes(),
                 label => panic!("unexpected command label {label}"),
             };
             let record = CommandRecord {
                 label: command.label,
                 program: command.program,
                 arguments: command.arguments,
-                code: if command.label == "source-tracked" && self.tracked_dirty.get() {
-                    Some(1)
-                } else {
-                    Some(0)
-                },
+                code: Some(0),
                 stdout,
                 stderr: Vec::new(),
             };
@@ -1051,8 +1055,7 @@ mod tests {
                 executor.labels(),
                 [
                     "source-commit",
-                    "source-tracked",
-                    "source-untracked",
+                    "source-status",
                     "rust-version",
                     "installed-targets",
                     "trunk-version",
@@ -1061,8 +1064,7 @@ mod tests {
                     "embed-build",
                     "native-build",
                     "source-commit",
-                    "source-tracked",
-                    "source-untracked",
+                    "source-status",
                     "rust-version",
                     "installed-targets",
                     "trunk-version",
@@ -1227,8 +1229,35 @@ mod tests {
             .expect_err("dirty source refuses");
 
         assert!(matches!(error, TargetBuildError::SourceDirty(_)));
-        assert_eq!(executor.labels(), ["source-commit", "source-tracked"]);
+        assert_eq!(executor.labels(), ["source-commit", "source-status"]);
         assert!(!fixture.pointer(target).exists());
+    }
+
+    #[test]
+    fn only_untracked_release_output_survives_the_source_check() {
+        let fixture = Fixture::new();
+        let executor = FakeExecutor::new(&fixture.root, ReleaseTarget::Aarch64AppleDarwin);
+        let git = fixture.root.join("git");
+
+        *executor.untracked.borrow_mut() =
+            "?? dist/stage/objects/1f/2e\n?? dist/stage/targets/aarch64-apple-darwin\n".to_owned();
+        verify_checkout(&executor, &git).expect("release output is the build's own product");
+
+        *executor.untracked.borrow_mut() = "?? dist/stage/objects/1f/2e\n?? LATER.md\n".to_owned();
+        let stray = verify_checkout(&executor, &git).expect_err("a stray untracked path refuses");
+        assert!(
+            matches!(&stray, TargetBuildError::SourceDirty(reason) if reason.ends_with("LATER.md")),
+            "{stray:?}"
+        );
+
+        executor.tracked_dirty.set(true);
+        let modified =
+            verify_checkout(&executor, &git).expect_err("a modified tracked path refuses");
+        assert!(
+            matches!(&modified, TargetBuildError::SourceDirty(reason)
+                if reason.starts_with("tracked source differs from HEAD")),
+            "{modified:?}"
+        );
     }
 
     #[test]

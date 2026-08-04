@@ -38,7 +38,7 @@ const EXPECTED: &[(&str, &[&str])] = &[
     ("taste", &["fold", "journal", "listen", "wire"]),
     ("vendor", &["listen", "sill", "wire"]),
     ("wire", &[]),
-    ("xtask", &["dist", "gate", "sill", "spice", "wire"]),
+    ("xtask", &["dist", "gate", "proof", "sill", "spice", "wire"]),
 ];
 
 #[test]
