@@ -321,21 +321,31 @@ fn repository_shape_refuses_a_boundary_pattern_that_cannot_govern() {
 
 #[test]
 fn repository_shape_scans_every_configured_test_root() {
+    // Both configured roots carry an internal underscore, which the boundary
+    // shape forbids, so a root scanned as a member of itself would indict its
+    // own name. A test root is the thing being scanned, exactly as a package
+    // root is, and neither is one of its own findings.
     let repository = git_repository("core-acquire-shape-test-roots");
     repository.write(
         "spice.toml",
         concat!(
             "[policy]\n",
             "package_roots = [\"src/sample\"]\n",
-            "test_paths = [\"checks\", \"suites/*\"]\n",
+            "test_paths = [\"check_suite\", \"suites/*\"]\n",
         ),
     );
     repository.write("baseline.toml", &workspace_document("baseline.toml"));
     repository.write("src/sample/feature.py", "VALUE = 1\n");
-    repository.write("checks/test_feature.py", "def test_feature():\n    pass\n");
-    repository.write("checks/BadName.py", "");
-    repository.write("suites/unit/test_unit.py", "def test_unit():\n    pass\n");
-    repository.write("suites/unit/BadName.py", "");
+    repository.write(
+        "check_suite/test_feature.py",
+        "def test_feature():\n    pass\n",
+    );
+    repository.write("check_suite/BadName.py", "");
+    repository.write(
+        "suites/deep_unit/test_unit.py",
+        "def test_unit():\n    pass\n",
+    );
+    repository.write("suites/deep_unit/BadName.py", "");
     repository.write("tests/BadName.py", "");
     git_commit(&repository, "configured test root fixture");
 
@@ -344,13 +354,13 @@ fn repository_shape_scans_every_configured_test_root() {
     let expected = RepoShapeEvidence::new(vec![
         CoreFinding::new(
             "path-shape",
-            Some("checks/BadName.py"),
+            Some("check_suite/BadName.py"),
             "file name violates the boundary-underscore module shape",
         )
         .unwrap(),
         CoreFinding::new(
             "path-shape",
-            Some("suites/unit/BadName.py"),
+            Some("suites/deep_unit/BadName.py"),
             "file name violates the boundary-underscore module shape",
         )
         .unwrap(),
@@ -360,7 +370,8 @@ fn repository_shape_scans_every_configured_test_root() {
         &measured(CoreEvidence::RepoShape(expected)),
         concat!(
             "configured test roots, including glob-selected ones, are scanned, ",
-            "and the literal tests/ this repository never configured is not",
+            "the literal tests/ this repository never configured is not, ",
+            "and no configured root is indicted for its own name",
         )
     );
     assert_eq!(shape.standing(), CoreStanding::Failed);
