@@ -247,6 +247,53 @@ fn malformed_policy_values_are_refused_under_their_domain_paths() {
     assert!(duplicate.contains("consent.rule"), "{duplicate}");
 }
 
+/// Every key Gate admits as coexisting is one this schema also accepts.
+///
+/// Gate's registry decides that a tracked key is legitimate; this schema
+/// decides whether the document carrying it loads at all. When the two
+/// disagree the registry advertises a setting that makes the whole file
+/// refuse, so each declaration below is checked against `COEXISTING_TRACKED_KEYS`
+/// itself rather than against a second copy of the list. Adding a key to that
+/// registry without a spelling this schema admits fails here.
+#[test]
+fn every_coexisting_tracked_key_is_one_this_schema_admits() {
+    // Each value is distinct so no reading can be satisfied by another's bytes.
+    let declared = [
+        ("policy.repo_truth.docs", "[\"DOCTRINE.md\"]"),
+        ("policy.package_roots", "[\"src/sample\"]"),
+        ("policy.generated_paths", "[\"build/derived\"]"),
+        ("policy.name_cluster_threshold", "3"),
+        ("policy.test_paths", "[\"suite\"]"),
+        ("policy.package.boundary_underscore_pattern", "\"^[a-z]+$\""),
+    ];
+    assert_eq!(
+        declared.map(|(key, _)| key).as_slice(),
+        gate::COEXISTING_TRACKED_KEYS,
+        "the coexisting registry and the keys this schema admits disagree"
+    );
+
+    let document = declared
+        .iter()
+        .map(|(key, value)| format!("{key} = {value}\n"))
+        .collect::<String>();
+    let policy = decode(&document)
+        .expect("every coexisting key declared together loads")
+        .policy()
+        .clone();
+    assert_eq!(
+        policy.repo_truth().docs(),
+        Some(["DOCTRINE.md".to_owned()].as_slice())
+    );
+    assert_eq!(policy.package_roots(), ["src/sample".to_owned()]);
+    assert_eq!(policy.generated_paths(), ["build/derived".to_owned()]);
+    assert_eq!(policy.name_cluster_threshold(), Some(3));
+    assert_eq!(policy.test_paths(), ["suite".to_owned()]);
+    assert_eq!(
+        policy.package().boundary_underscore_pattern(),
+        Some("^[a-z]+$")
+    );
+}
+
 #[test]
 fn unknown_fields_name_their_domain_and_key() {
     for (document, domain) in [

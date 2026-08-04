@@ -73,15 +73,15 @@ fn configuration_key_admission_names_a_known_key_forbidden_in_the_active_layer()
     repository.remove();
 }
 
-/// Every `[policy]` subtable the rule-policy migration reads is admitted.
+/// No `[policy]` subtable the rule-policy migration reads is admitted.
 ///
-/// None of these belong to the resolver registry; they are the predecessor
-/// surfaces the contract still compiles its rule policy from. A repository that
-/// declares them is spelling tracked configuration, so admission has to
-/// recognise all six rather than call the document it is required to read
-/// unknown.
+/// These are predecessor spellings a one-time migration translates, not
+/// settings a current repository declares, and the workspace schema refuses
+/// every one of them. Admitting them here would tell a repository it may write
+/// a key that makes its whole document fail to load, so admission names each
+/// one instead.
 #[test]
-fn configuration_key_admission_admits_every_migrated_policy_subtable() {
+fn configuration_key_admission_refuses_every_migrated_policy_subtable() {
     let repository = git_repository("core-acquire-config-key-migrated");
     repository.write(
         "spice.toml",
@@ -108,13 +108,33 @@ fn configuration_key_admission_admits_every_migrated_policy_subtable() {
 
     let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let configuration = acquired_arm(&report, GateId::ConfigKeyValidity);
+    let expected = ConfigKeyEvidence::new(
+        [
+            "policy.flex",
+            "policy.limits",
+            "policy.magic",
+            "policy.markdown_depth",
+            "policy.markdown_depth_budget",
+            "policy.rules",
+        ]
+        .into_iter()
+        .map(|key| {
+            CoreFinding::new(
+                "unknown-key",
+                None::<String>,
+                format!(
+                    "tracked layer key {key} is absent from the packaged configuration registry"
+                ),
+            )
+            .expect("migrated subtable evidence")
+        })
+        .collect(),
+    );
     assert_eq!(
         configuration.observation(),
-        &measured(CoreEvidence::ConfigKeyValidity(ConfigKeyEvidence::new(
-            Vec::new()
-        )))
+        &measured(CoreEvidence::ConfigKeyValidity(expected))
     );
-    assert_eq!(configuration.standing(), CoreStanding::Passed);
+    assert_eq!(configuration.standing(), CoreStanding::Failed);
 
     repository.remove();
 }

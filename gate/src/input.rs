@@ -26,6 +26,8 @@ use crate::kill::{
     RateError, SurvivorRate,
 };
 use crate::measure::{Bounds, Metric, MetricError, Parser, Policy};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::policy::PackagePolicy;
 use crate::policy::{Policy as RulePolicy, RepoTruthPolicy, migrate_predecessor_policy};
 use crate::ratchet::Ratchet;
 
@@ -376,15 +378,7 @@ struct TrackedPolicyTable {
     #[cfg(not(target_arch = "wasm32"))]
     test_paths: Vec<String>,
     #[cfg(not(target_arch = "wasm32"))]
-    package: TrackedPackageShape,
-}
-
-/// The `[policy.package]` subtable, whose one admitted field names module shape.
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Default, Deserialize)]
-#[serde(default)]
-struct TrackedPackageShape {
-    boundary_underscore_pattern: Option<String>,
+    package: PackagePolicy,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -417,8 +411,7 @@ impl ShapePolicy {
             test_paths: normalize(&tracked.test_paths),
             boundary_underscore_pattern: tracked
                 .package
-                .boundary_underscore_pattern
-                .as_ref()
+                .boundary_underscore_pattern()
                 .map(|pattern| pattern.trim().to_owned()),
         }
     }

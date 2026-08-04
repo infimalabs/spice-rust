@@ -26,7 +26,7 @@ use wire::{Digest, Phase, TaskHandle};
 #[cfg(not(target_arch = "wasm32"))]
 pub use acquire::{ActorCapture, ClaimCapture, CoreSource, acquire_core};
 #[cfg(not(target_arch = "wasm32"))]
-pub use config_keys::{CONFIG_KEY_DECLARATIONS, ConfigKeyDeclaration};
+pub use config_keys::{COEXISTING_TRACKED_KEYS, CONFIG_KEY_DECLARATIONS, ConfigKeyDeclaration};
 pub use declaration::{
     CoreArmDeclaration, CoreTimeoutContract, CoreToolContract, GitCommandContract,
     PredecessorObservation, core_declarations,

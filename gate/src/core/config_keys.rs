@@ -92,23 +92,22 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("proof.runner", LOCAL),
 ];
 
-// These tracked predecessor fields coexist during cutover but do not belong to
-// the current resolver registry. Their consumers still admit their values from
-// the same captured document.
-//
-// The six subtables the rule-policy migration reads are registered whole rather
-// than key by key. Which table belongs to the tracked layer is this registry's
-// question; which keys are legal inside one is the migration's, and it closes
-// every one of them with its own refusal naming the exact field. Spelling the
-// leaves here too would be a second place to forget one.
-const COEXISTING_TRACKED_KEYS: &[&str] = &[
+/// Tracked predecessor fields that coexist with the current resolver registry.
+///
+/// These belong to the tracked layer but not to [`CONFIG_KEY_DECLARATIONS`],
+/// because their consumers still admit their values from the same captured
+/// document under predecessor spellings. Every entry here must be a key the
+/// workspace schema also accepts, or this registry would advertise a setting
+/// that makes the whole document refuse to load; `spice` proves that agreement
+/// against this list rather than against a second copy of it.
+///
+/// The subtables `migrate_predecessor_policy` reads are deliberately absent.
+/// That migration exists to translate a predecessor document into this release,
+/// so its spellings are inputs to a one-time translation rather than settings a
+/// current repository declares, and admitting them here would promise a door
+/// the workspace schema keeps shut.
+pub const COEXISTING_TRACKED_KEYS: &[&str] = &[
     "policy.repo_truth.docs",
-    "policy.limits",
-    "policy.flex",
-    "policy.magic",
-    "policy.markdown_depth",
-    "policy.markdown_depth_budget",
-    "policy.rules",
     "policy.package_roots",
     "policy.generated_paths",
     "policy.name_cluster_threshold",
