@@ -476,6 +476,28 @@ fn import_refuses_a_durable_lane_carrying_no_predecessor_lineage() {
     finish(fixture);
 }
 
+/// Import resumes through the one durable-session chain the seat and recall
+/// surfaces already use, so it refuses every head that chain refuses. Which
+/// heads those are is proven once, beside that chain.
+#[test]
+fn import_refuses_a_lane_whose_durable_session_head_no_longer_holds() {
+    let fixture = fixture();
+    let (worktree, common) = real_worktree();
+    seed_lanes(&fixture, vec![vacant_row(&fixture)]);
+    let paths = runtime_paths(&fixture, common);
+    assert_eq!(
+        refusal_reason(admit_import(
+            &fixture.bus,
+            &paths,
+            fixture.old_epoch,
+            &Seats::new(),
+            &wake(fixture.lane, Some(&worktree)),
+        )),
+        "lane::session-authority-missing"
+    );
+    finish(fixture);
+}
+
 #[test]
 fn import_refuses_a_lane_whose_predecessor_still_holds_the_seat() {
     let fixture = fixture();

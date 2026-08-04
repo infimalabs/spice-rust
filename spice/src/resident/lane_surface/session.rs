@@ -186,7 +186,9 @@ impl CaptureReporter for DeclarationReporter {
     }
 }
 
-pub(super) fn session_fact(session: &wire::LaneSession) -> wire::body::LaneSessionDeclared {
+pub(in crate::resident) fn session_fact(
+    session: &wire::LaneSession,
+) -> wire::body::LaneSessionDeclared {
     wire::body::LaneSessionDeclared {
         lane: session.lane,
         occupant: session.occupant,
@@ -201,7 +203,7 @@ pub(super) fn session_fact(session: &wire::LaneSession) -> wire::body::LaneSessi
     }
 }
 
-pub(super) fn record_stream(stream: vendor::RecordStream) -> &'static str {
+pub(in crate::resident) fn record_stream(stream: vendor::RecordStream) -> &'static str {
     match stream {
         vendor::RecordStream::Stdout => "stdout",
         vendor::RecordStream::Stderr => "stderr",
@@ -227,7 +229,12 @@ pub(super) fn await_session(
     }
 }
 
-pub(super) fn resume_session(
+/// Resume one lane onto the session its durable head declares.
+///
+/// Reached by the seat and recall surfaces and by predecessor import, which
+/// held a second copy of this chain until RECOVER-1kK7Bxbt: one durable
+/// condition now refuses under one reason whichever surface asks.
+pub(in crate::resident) fn resume_session(
     paths: &RuntimePaths,
     row: &wire::LaneResidency,
 ) -> CommandResult<vendor::Resume> {
@@ -350,14 +357,14 @@ fn prove_session_tape(
             "restore the exact declaration bytes before resuming this lane",
         )
     })?;
-    let decoded = listen::decode(dialect, &bytes, locus).map_err(|error| {
-        session_head_refusal(
-            "lane::session-tape-moved",
-            Some(session.identity.clone()),
-            Some(error.to_string()),
-            "restore the exact declaration record before resuming this lane",
-        )
-    })?;
+    // The one error a decode can raise is a locus whose length disagrees with
+    // the bytes handed to it, and the read above answers this exact locus or
+    // refuses, so a disagreement here is a broken tape contract rather than a
+    // moved tape. A record the dialect cannot read is not an error at all: it
+    // decodes to residue, declares nothing, and is refused below with every
+    // other locus that no longer holds the declaration the head names.
+    let decoded =
+        listen::decode(dialect, &bytes, locus).expect("a tape read answers its exact locus length");
     let declared = decoded.events().iter().find_map(|event| match event {
         listen::Event::Session(declaration) => Some(declaration.identity.as_str()),
         _ => None,
@@ -396,3 +403,7 @@ fn session_head_refusal(
         remedy: remedy.to_owned(),
     })
 }
+
+#[cfg(test)]
+#[path = "session_tests.rs"]
+mod tests;

@@ -30,10 +30,8 @@ use reply::{
     answer, authority_refusal, command_result, committed_lane_reply, fact_lane, lane_refusal,
     missing_lane, recall_provenance, relevant, typed_environment_fault,
 };
-use session::{
-    DeclarationReporter, DeclarationState, SessionProofError, await_session, record_stream,
-    resume_session, session_fact,
-};
+use session::{DeclarationReporter, DeclarationState, SessionProofError, await_session};
+pub(super) use session::{record_stream, resume_session, session_fact};
 
 use super::shutdown::{current_residency, guard_residency};
 use super::{
