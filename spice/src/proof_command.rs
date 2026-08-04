@@ -475,6 +475,8 @@ fn container_disposition(error: &ContainerError) -> RuntimeDisposition {
         | ContainerError::RuntimeNotExecutable(_)
         | ContainerError::RuntimeDialectNotAttested { .. }
         | ContainerError::ImageNotDigestPinned(_)
+        | ContainerError::ImageNotResolved { .. }
+        | ContainerError::ImageIdentityDrift { .. }
         | ContainerError::WorkspaceNotDirectory(_)
         | ContainerError::UnrepresentableWorkspace(_)
         | ContainerError::RuntimeNotAttested { .. } => RuntimeDisposition::Refusal,

@@ -517,6 +517,10 @@ mod tests {
                     &container,
                     concat!(
                         "#!/bin/sh\n",
+                        "if [ \"$1\" = image ]; then\n",
+                        "    printf '%s amd64 linux\\n' \"$5\"\n",
+                        "    exit 0\n",
+                        "fi\n",
                         "if [ \"$1\" = --version ]; then\n",
                         "    printf 'Docker version fixture\\n'\n",
                         "    exit 0\n",

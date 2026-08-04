@@ -403,7 +403,16 @@ fn symlink_acquisition_and_other_layer_decode_issue_are_both_returned() {
     assert_eq!(error.acquisition().len(), 1);
     assert_eq!(error.acquisition()[0].source(), ConfigSource::Tracked);
     assert_eq!(error.acquisition()[0].kind(), AcquisitionKind::Symlink);
-    assert_eq!(error.acquisition()[0].path(), tracked);
+    // The loader reports paths under the canonical repository root, and the
+    // platform temporary directory is not always canonical: macOS hands out
+    // `/var/folders/...`, a symlink to `/private/var/folders/...`. Only the
+    // expectation is canonicalized, because a scratch tree rooted at the
+    // longer spelling overruns `SUN_LEN` for the socket fixtures above.
+    let canonical_root = fs::canonicalize(&root).expect("canonical fixture root");
+    assert_eq!(
+        error.acquisition()[0].path(),
+        canonical_root.join("spice.toml")
+    );
     let resolution = error.resolution().expect("other layer was still decoded");
     assert!(resolution.issues().iter().any(|issue| {
         issue.source() == ConfigSource::Local

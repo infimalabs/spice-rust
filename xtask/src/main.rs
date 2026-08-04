@@ -85,6 +85,7 @@ fn release_environment() -> xtask::ReleaseEnvironment {
         bootstrap_environment("HOME"),
         bootstrap_environment("CARGO_HOME"),
         bootstrap_environment("RUSTUP_HOME"),
+        bootstrap_environment("RUSTUP_TOOLCHAIN"),
         bootstrap_environment("TMPDIR"),
         bootstrap_environment("SDKROOT"),
         bootstrap_environment("DEVELOPER_DIR"),
