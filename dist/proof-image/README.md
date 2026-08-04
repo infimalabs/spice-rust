@@ -30,3 +30,34 @@ runtime for the pinned digest and refuses unless it resolves to an `amd64
 linux` image with exactly that identity, so a host missing the appliance or
 holding a substitute is turned away before any battery runs. Replay itself adds
 the read-only workspace, empty tmpfs caches, and disabled network boundary.
+
+## The image owns the staged app bytes
+
+This image is the one environment allowed to write `dist/stage`. Its `rustc`
+reports `x86_64-unknown-linux-gnu`, and Cargo folds `rustc --version
+--verbose` — which names that triple — into every crate's `-Cmetadata`. The
+same sources therefore compile to different wasm-bindgen disambiguator symbols
+and a differently hashed `canvas-app.html` on any other host. Cross-host byte
+equality is not a check the repository declines to make; it is one no host can
+pass, so the alternative to a single owning environment is not a stricter check
+but a stage nobody can reproduce.
+
+`cargo xtask stage-app` refuses on every other host and names both
+environments, so a developer cannot quietly replace image-built bytes with
+local ones. Stage from the repository root with the workspace writable, the
+image's Cargo home named explicitly, and the build root on a writable mount,
+because the app build writes nothing under the workspace:
+
+```sh
+docker run --rm --platform linux/amd64 --network none \
+  -v "$PWD:/workspace" -v spice-stage-target:/cargo-target \
+  -e CARGO_HOME=/usr/local/cargo -e CARGO_TARGET_DIR=/cargo-target \
+  "$(cat dist/proof-image/identity.txt)" cargo xtask stage-app
+```
+
+`cargo xtask check-app` runs everywhere and splits its answer accordingly. Every
+host rebuilds the app and compares the staged inventory, which is the part a
+rebuild anywhere can settle; only this image goes on to compare bytes. A macOS
+or other non-Linux `cargo xtask verify` therefore still proves the app builds
+and stages the assets it is supposed to, and says in its output which
+comparison it withheld and why.

@@ -69,6 +69,7 @@ pub struct ReleaseEnvironment {
     temporary: Option<OsString>,
     sdk_root: Option<OsString>,
     developer_dir: Option<OsString>,
+    cargo_target_dir: Option<OsString>,
 }
 
 impl ReleaseEnvironment {
@@ -83,6 +84,7 @@ impl ReleaseEnvironment {
         temporary: Option<OsString>,
         sdk_root: Option<OsString>,
         developer_dir: Option<OsString>,
+        cargo_target_dir: Option<OsString>,
     ) -> Self {
         Self {
             path,
@@ -93,7 +95,39 @@ impl ReleaseEnvironment {
             temporary,
             sdk_root,
             developer_dir,
+            cargo_target_dir,
         }
+    }
+
+    /// Where every build this binary starts is allowed to write.
+    ///
+    /// The workspace is the default, and it is only the default. The sealed
+    /// image mounts the workspace read-only and names its writable scratch in
+    /// `CARGO_TARGET_DIR`, so a build root rooted at the workspace is not a
+    /// slower path there but an impossible one. Resolved once, here, so that
+    /// every directory below is a name under a single answer rather than a
+    /// separate guess at where writing is permitted.
+    #[must_use]
+    pub fn build_root(&self, root: &Path) -> PathBuf {
+        self.cargo_target_dir
+            .as_ref()
+            .map_or_else(|| root.join("target"), PathBuf::from)
+    }
+
+    /// The Cargo home the builds this binary starts must read crates from.
+    ///
+    /// `HOME` supplies the same default Cargo itself would, so the fallback is
+    /// Cargo's own rule rather than a second one. Both are acquired at the rim
+    /// because the answer belongs to the running process: the sealed image
+    /// mounts a vendored `/cargo-home` that no compile-time constant baked on
+    /// the building host could ever have named.
+    #[must_use]
+    pub fn cargo_home(&self) -> Option<OsString> {
+        self.cargo_home.clone().or_else(|| {
+            self.home
+                .as_ref()
+                .map(|home| PathBuf::from(home).join(".cargo").into_os_string())
+        })
     }
 }
 
@@ -111,7 +145,13 @@ pub fn stage_target(
     let root = workspace_root()?;
     let programs = Programs::discover(&environment)?;
     let executor = SystemExecutor::new(&root, &environment)?;
-    match stage_with(&root, target, &programs, &executor) {
+    match stage_with(
+        &root,
+        &environment.build_root(&root),
+        target,
+        &programs,
+        &executor,
+    ) {
         Ok(build) => {
             render_records(output, &build)?;
             Ok(build)
@@ -125,6 +165,7 @@ pub fn stage_target(
 
 fn stage_with<E: Executor>(
     root: &Path,
+    build_root: &Path,
     target: ReleaseTarget,
     programs: &Programs,
     executor: &E,
@@ -136,7 +177,7 @@ fn stage_with<E: Executor>(
     required.verify(&observed)?;
 
     let pipeline = Pipeline::new(required.clone());
-    let target_dir = root.join("target/release-appliance");
+    let target_dir = build_root.join("release-appliance");
     let mut builder = CommandBuilder {
         root,
         target,
@@ -588,19 +629,16 @@ impl SystemExecutor {
                 entries.push((key.into(), value.clone()));
             }
         }
-        let cargo_home = release.cargo_home.clone().or_else(|| {
-            release
-                .home
-                .as_ref()
-                .map(|home| PathBuf::from(home).join(".cargo").into_os_string())
-        });
-        if let Some(cargo_home) = cargo_home {
+        if let Some(cargo_home) = release.cargo_home() {
             entries.push(("CARGO_HOME".into(), cargo_home));
         }
         entries.extend([
             (
                 OsString::from("CARGO_BUILD_BUILD_DIR"),
-                root.join("target/release-appliance-build").into_os_string(),
+                release
+                    .build_root(root)
+                    .join("release-appliance-build")
+                    .into_os_string(),
             ),
             (OsString::from("CARGO_INCREMENTAL"), OsString::from("0")),
             (OsString::from("CARGO_NET_OFFLINE"), OsString::from("true")),
@@ -1057,8 +1095,14 @@ mod tests {
             let programs = fixture.programs();
             let executor = FakeExecutor::new(&fixture.root, target);
 
-            let build = stage_with(&fixture.root, target, &programs, &executor)
-                .expect("target stage succeeds");
+            let build = stage_with(
+                &fixture.root,
+                &fixture.root.join("target"),
+                target,
+                &programs,
+                &executor,
+            )
+            .expect("target stage succeeds");
 
             assert_eq!(
                 executor.labels(),
@@ -1140,10 +1184,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn system_executor_overrides_machine_local_cargo_build_state() {
-        let fixture = Fixture::new();
-        let release = ReleaseEnvironment::new(
+    fn release_environment(cargo_target_dir: Option<&str>) -> ReleaseEnvironment {
+        ReleaseEnvironment::new(
             Some(OsString::from("/tool/bin")),
             Some(OsString::from("/home/release")),
             Some(OsString::from("/cargo/home")),
@@ -1152,7 +1194,14 @@ mod tests {
             None,
             None,
             None,
-        );
+            cargo_target_dir.map(OsString::from),
+        )
+    }
+
+    #[test]
+    fn system_executor_overrides_machine_local_cargo_build_state() {
+        let fixture = Fixture::new();
+        let release = release_environment(None);
 
         let executor = SystemExecutor::new(&fixture.root, &release).expect("release executor");
         let entries = executor.environment.entries();
@@ -1178,6 +1227,75 @@ mod tests {
         );
         assert_eq!(value("RUSTC_WRAPPER"), "");
         assert_eq!(value("RUSTC_WORKSPACE_WRAPPER"), "");
+    }
+
+    /// The workspace default and the acquired value are asserted against
+    /// different roots on purpose. A sealed image mounts the workspace
+    /// read-only, so a build root that silently stayed under it would be the
+    /// one failure this resolver exists to prevent, and two cases that agreed
+    /// on a path could not tell the two arms apart.
+    #[test]
+    fn the_build_root_is_the_acquired_scratch_or_the_workspace_and_never_both() {
+        let root = Path::new("/workspace");
+
+        assert_eq!(
+            release_environment(None).build_root(root),
+            root.join("target"),
+            "an unset CARGO_TARGET_DIR must fall back to the workspace",
+        );
+        assert_eq!(
+            release_environment(Some("/cargo-target")).build_root(root),
+            Path::new("/cargo-target"),
+            "an acquired CARGO_TARGET_DIR must displace the workspace entirely",
+        );
+
+        let executor = SystemExecutor::new(root, &release_environment(Some("/cargo-target")))
+            .expect("release executor");
+        assert_eq!(
+            executor
+                .environment
+                .entries()
+                .iter()
+                .find_map(
+                    |(key, value)| (key == "CARGO_BUILD_BUILD_DIR").then_some(value.as_os_str())
+                )
+                .expect("missing release environment CARGO_BUILD_BUILD_DIR"),
+            OsStr::new("/cargo-target/release-appliance-build"),
+        );
+    }
+
+    /// `HOME` is Cargo's own rule for locating a Cargo home, so the fallback
+    /// has to reproduce it rather than invent a second answer, and an explicit
+    /// `CARGO_HOME` has to win over it.
+    #[test]
+    fn the_cargo_home_prefers_the_acquired_value_and_falls_back_to_cargos_own_rule() {
+        assert_eq!(
+            release_environment(None).cargo_home(),
+            Some(OsString::from("/cargo/home")),
+        );
+
+        let inherited = ReleaseEnvironment::new(
+            None,
+            Some(OsString::from("/home/release")),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(
+            inherited.cargo_home(),
+            Some(OsString::from("/home/release/.cargo")),
+        );
+
+        let bare = ReleaseEnvironment::new(None, None, None, None, None, None, None, None, None);
+        assert_eq!(
+            bare.cargo_home(),
+            None,
+            "with neither value there is no Cargo home to guess at",
+        );
     }
 
     #[cfg(unix)]
@@ -1214,8 +1332,14 @@ mod tests {
         let executor = FakeExecutor::new(&fixture.root, target);
         *executor.trunk.borrow_mut() = "trunk 0.21.13".to_owned();
 
-        let error = stage_with(&fixture.root, target, &programs, &executor)
-            .expect_err("tool drift refuses");
+        let error = stage_with(
+            &fixture.root,
+            &fixture.root.join("target"),
+            target,
+            &programs,
+            &executor,
+        )
+        .expect_err("tool drift refuses");
 
         assert!(matches!(error, TargetBuildError::Pins(_)));
         assert!(
@@ -1235,8 +1359,14 @@ mod tests {
         let executor = FakeExecutor::new(&fixture.root, target);
         executor.tracked_dirty.set(true);
 
-        let error = stage_with(&fixture.root, target, &programs, &executor)
-            .expect_err("dirty source refuses");
+        let error = stage_with(
+            &fixture.root,
+            &fixture.root.join("target"),
+            target,
+            &programs,
+            &executor,
+        )
+        .expect_err("dirty source refuses");
 
         assert!(matches!(error, TargetBuildError::SourceDirty(_)));
         assert_eq!(executor.labels(), ["source-commit", "source-status"]);
@@ -1281,8 +1411,14 @@ mod tests {
         fs::create_dir_all(pointer.parent().expect("pointer parent")).expect("target directory");
         fs::write(&pointer, b"previous complete target").expect("previous pointer");
 
-        let error = stage_with(&fixture.root, target, &programs, &executor)
-            .expect_err("source movement refuses pointer");
+        let error = stage_with(
+            &fixture.root,
+            &fixture.root.join("target"),
+            target,
+            &programs,
+            &executor,
+        )
+        .expect_err("source movement refuses pointer");
 
         assert!(matches!(error, TargetBuildError::Stage(_)));
         assert_eq!(
@@ -1310,8 +1446,14 @@ mod tests {
         fs::create_dir_all(pointer.parent().expect("pointer parent")).expect("target directory");
         fs::write(&pointer, b"previous complete target").expect("previous pointer");
 
-        let error = stage_with(&fixture.root, target, &programs, &executor)
-            .expect_err("tool drift refuses pointer");
+        let error = stage_with(
+            &fixture.root,
+            &fixture.root.join("target"),
+            target,
+            &programs,
+            &executor,
+        )
+        .expect_err("tool drift refuses pointer");
 
         assert!(matches!(error, TargetBuildError::Stage(_)));
         assert_eq!(

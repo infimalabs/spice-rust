@@ -28,10 +28,10 @@ fn main() -> ExitCode {
             xtask::verify(search_path.as_deref(), &mut output).map_err(Into::into)
         }
         Some(value) if value == OsStr::new("stage-app") && arguments.len() == 0 => {
-            xtask::stage_app(&mut output).map_err(Into::into)
+            xtask::stage_app(&release_environment(), &mut output).map_err(Into::into)
         }
         Some(value) if value == OsStr::new("check-app") && arguments.len() == 0 => {
-            xtask::check_app(&mut output).map_err(Into::into)
+            xtask::check_app(&release_environment(), &mut output).map_err(Into::into)
         }
         Some(value) if value == OsStr::new("stage-target") && arguments.len() == 1 => {
             let target = arguments.next().expect("one release target was admitted");
@@ -118,6 +118,7 @@ fn release_environment() -> xtask::ReleaseEnvironment {
         bootstrap_environment("TMPDIR"),
         bootstrap_environment("SDKROOT"),
         bootstrap_environment("DEVELOPER_DIR"),
+        bootstrap_environment("CARGO_TARGET_DIR"),
     )
 }
 
