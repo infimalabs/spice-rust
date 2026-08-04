@@ -5,11 +5,13 @@ use std::path::Path;
 
 use wire::Digest;
 
+use super::analyze::is_python_path;
 use super::{
-    HYGIENE_ARMS, HygieneAnalysisError, HygieneConfiguration, HygieneReport, analyze_hygiene,
+    COMPILED_DOCUMENT, COMPILED_LAYER, CURRENT_RELEASE, HYGIENE_ARMS, HygieneAnalysisError,
+    HygieneConfiguration, HygieneProvenance, HygieneReport, SuppressedPath, analyze_hygiene,
 };
 use crate::input::Contract;
-use crate::jurisdiction::{Ignore, Jurisdiction, Rule};
+use crate::jurisdiction::{Admission, Ignore, Jurisdiction, Rule, Shape};
 use crate::tree::SelectedTree;
 
 /// Declaration metadata that names tracked policy rather than a path pattern.
@@ -26,6 +28,7 @@ pub struct HygieneSource<'a> {
     root: &'a Path,
     jurisdiction: Jurisdiction,
     digest: Digest,
+    suppressed: Vec<SuppressedPath>,
 }
 
 impl<'a> HygieneSource<'a> {
@@ -40,17 +43,19 @@ impl<'a> HygieneSource<'a> {
         tree: &'a SelectedTree,
         contract: &Contract,
     ) -> Result<Self, HygieneAnalysisError> {
-        let ignore = hygiene_ignore(contract)?;
+        let (ignore, provenance) = hygiene_ignore(contract)?;
         let jurisdiction = Jurisdiction::walk(tree.root(), &ignore).map_err(|error| {
             HygieneAnalysisError::Source(format!("hygiene source jurisdiction: {error}"))
         })?;
         let digest = jurisdiction.tree_digest().map_err(|error| {
             HygieneAnalysisError::Source(format!("hygiene source tree identity: {error}"))
         })?;
+        let suppressed = suppressed_candidates(&jurisdiction, &ignore, &provenance)?;
         Ok(Self {
             root: tree.root(),
             jurisdiction,
             digest,
+            suppressed,
         })
     }
 
@@ -71,6 +76,16 @@ impl<'a> HygieneSource<'a> {
     pub const fn digest(&self) -> &Digest {
         &self.digest
     }
+
+    /// Hygiene candidates this jurisdiction removed, each naming its rule.
+    ///
+    /// The jurisdiction retains a rule *index*, and the rule list it indexes
+    /// lives only here, so this is the last point at which a suppression can be
+    /// attributed to the layer that asked for it.
+    #[must_use]
+    pub fn suppressed(&self) -> &[SuppressedPath] {
+        &self.suppressed
+    }
 }
 
 /// Acquire all five hygiene measurements from one captured source.
@@ -87,11 +102,56 @@ pub fn acquire_hygiene(
     source: &HygieneSource<'_>,
     configuration: &HygieneConfiguration,
 ) -> Result<HygieneReport, HygieneAnalysisError> {
-    analyze_hygiene(source.jurisdiction(), configuration)
+    let configuration = configuration
+        .clone()
+        .with_suppressions(source.suppressed().to_vec())?;
+    analyze_hygiene(source.jurisdiction(), &configuration)
 }
 
-fn hygiene_ignore(contract: &Contract) -> Result<Ignore, HygieneAnalysisError> {
+/// Every Python candidate the walk removed, paired with the rule that removed
+/// it.
+///
+/// Only ignored regular files count. A pruned directory never yields the files
+/// beneath it, and a readmitted path was measured, so neither is a suppression.
+fn suppressed_candidates(
+    jurisdiction: &Jurisdiction,
+    ignore: &Ignore,
+    provenance: &[HygieneProvenance],
+) -> Result<Vec<SuppressedPath>, HygieneAnalysisError> {
+    let mut suppressed = Vec::new();
+    for entry in jurisdiction.entries() {
+        let Admission::Ignored(rule) = entry.admission() else {
+            continue;
+        };
+        if entry.shape() != Shape::File || !is_python_path(entry.path()) {
+            continue;
+        }
+        let Some((rule, provenance)) = ignore.rules().get(rule).zip(provenance.get(rule)) else {
+            return Err(HygieneAnalysisError::Source(format!(
+                "hygiene walk decided {} by rule {rule} but the composed policy has no such rule",
+                entry.path()
+            )));
+        };
+        suppressed.push(SuppressedPath {
+            path: entry.path().to_owned(),
+            rule: rule.to_string(),
+            provenance: provenance.clone(),
+        });
+    }
+    Ok(suppressed)
+}
+
+/// Compose the hygiene walk policy and the origin of each rule in it.
+///
+/// The returned provenance is index-aligned with [`Ignore::rules`], which is
+/// what an [`Admission::Ignored`] index means. Three ordered ranges make it up:
+/// the compiled walk defaults, the tracked `gate.walk.skip` entries, and the
+/// compiled per-arm excludes appended here.
+fn hygiene_ignore(
+    contract: &Contract,
+) -> Result<(Ignore, Vec<HygieneProvenance>), HygieneAnalysisError> {
     let mut rules = contract.policy().ignore().rules().to_vec();
+    let mut provenance = walk_provenance(rules.len(), contract.compiled_walk_rules());
     let mut compiled = BTreeSet::new();
     for declaration in HYGIENE_ARMS {
         for exclusion in declaration.jurisdiction().excludes() {
@@ -110,7 +170,88 @@ fn hygiene_ignore(contract: &Contract) -> Result<Ignore, HygieneAnalysisError> {
                     ))
                 })?;
             rules.push(rule);
+            provenance.push(compiled_arm_provenance());
         }
     }
-    Ok(Ignore::from_rules(rules))
+    Ok((Ignore::from_rules(rules), provenance))
+}
+
+/// Attribute each walk rule to the layer that supplied it.
+///
+/// The first `compiled` rules are the compiled defaults and the rest are
+/// tracked, so a tracked rule's own declaration index is its distance past the
+/// boundary. This is the whole reason the boundary is carried rather than
+/// recomputed: nothing downstream of the composed list can recover it.
+fn walk_provenance(rules: usize, compiled: usize) -> Vec<HygieneProvenance> {
+    (0..rules)
+        .map(|index| {
+            index
+                .checked_sub(compiled)
+                .map_or_else(compiled_walk_provenance, tracked_walk_provenance)
+        })
+        .collect()
+}
+
+fn compiled_walk_provenance() -> HygieneProvenance {
+    HygieneProvenance {
+        release: CURRENT_RELEASE.to_owned(),
+        layer: COMPILED_LAYER.to_owned(),
+        document: COMPILED_DOCUMENT.to_owned(),
+        field: "gate::input::DEFAULT_SKIP".to_owned(),
+    }
+}
+
+fn tracked_walk_provenance(index: usize) -> HygieneProvenance {
+    HygieneProvenance {
+        release: CURRENT_RELEASE.to_owned(),
+        layer: "repository".to_owned(),
+        document: "spice.toml".to_owned(),
+        field: format!("gate.walk.skip[{index}]"),
+    }
+}
+
+fn compiled_arm_provenance() -> HygieneProvenance {
+    HygieneProvenance {
+        release: CURRENT_RELEASE.to_owned(),
+        layer: COMPILED_LAYER.to_owned(),
+        document: COMPILED_DOCUMENT.to_owned(),
+        field: "gate::hygiene::HygieneJurisdiction::excludes".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The compiled defaults prune whole directories, so no selected file can
+    /// ever be attributed to them through a repository fixture. The boundary
+    /// arithmetic that would attribute one is still exercised here.
+    #[test]
+    fn the_boundary_decides_which_layer_owns_each_walk_rule() {
+        let provenance = walk_provenance(4, 2);
+
+        assert_eq!(
+            provenance
+                .iter()
+                .map(|item| (item.layer.as_str(), item.field.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("compiled", "gate::input::DEFAULT_SKIP"),
+                ("compiled", "gate::input::DEFAULT_SKIP"),
+                ("repository", "gate.walk.skip[0]"),
+                ("repository", "gate.walk.skip[1]"),
+            ]
+        );
+        assert!(provenance.iter().all(HygieneProvenance::is_complete));
+    }
+
+    #[test]
+    fn a_policy_of_only_compiled_defaults_attributes_nothing_to_the_repository() {
+        assert!(
+            walk_provenance(2, 2)
+                .iter()
+                .all(|item| item.layer == "compiled")
+        );
+        assert!(walk_provenance(0, 0).is_empty());
+    }
 }

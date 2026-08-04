@@ -96,6 +96,7 @@ pub struct HygieneConfiguration {
     assertion_free_limit: u32,
     deadline_ms: u64,
     exclusions: Vec<HygieneExclusion>,
+    suppressions: Vec<SuppressedPath>,
 }
 
 impl HygieneConfiguration {
@@ -131,6 +132,7 @@ impl HygieneConfiguration {
             assertion_free_limit: 0,
             deadline_ms: DEFAULT_DEADLINE_MS,
             exclusions: Vec::new(),
+            suppressions: Vec::new(),
         })
     }
 
@@ -206,6 +208,35 @@ impl HygieneConfiguration {
             return Err(HygieneAnalysisError::Configuration(
                 "a hygiene arm may have at most one exclusion".to_owned(),
             ));
+        }
+        Ok(self)
+    }
+
+    /// Retain the candidates a walk rule removed from the selected tree.
+    ///
+    /// These never reach an analyzer, so nothing downstream can rediscover
+    /// them; carrying them here is what lets a measuring arm still name what it
+    /// was not allowed to measure. Canonical order is imposed once, where every
+    /// other evidence row gets it, so it also covers a report read back in.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a suppression missing its path, deciding rule, or any provenance
+    /// component, because partial provenance cannot be audited.
+    pub fn with_suppressions(
+        mut self,
+        suppressions: impl IntoIterator<Item = SuppressedPath>,
+    ) -> Result<Self, HygieneAnalysisError> {
+        self.suppressions = suppressions.into_iter().collect();
+        if let Some(incomplete) = self
+            .suppressions
+            .iter()
+            .find(|item| !item.is_complete() || invalid_identity(&item.path))
+        {
+            return Err(HygieneAnalysisError::Configuration(format!(
+                "suppressed path {:?} requires a deciding rule and complete provenance",
+                incomplete.path
+            )));
         }
         Ok(self)
     }
@@ -641,6 +672,11 @@ impl<'a> AnalyzerRun<'a> {
                 stage: "policy-decision".to_owned(),
             },
         ];
+        if !self.configuration.suppressions.is_empty() {
+            evidence.push(AnalysisEvidence::PathSuppression {
+                suppressed: self.configuration.suppressions.clone(),
+            });
+        }
         for traversal in declaration.traversals {
             let item = self
                 .corpus
@@ -691,9 +727,9 @@ impl<'a> AnalyzerRun<'a> {
             project_markers: self.project_markers.clone(),
             applicable,
             provenance: HygieneProvenance {
-                release: "current".to_owned(),
-                layer: "compiled".to_owned(),
-                document: "<compiled-gate-battery>".to_owned(),
+                release: CURRENT_RELEASE.to_owned(),
+                layer: COMPILED_LAYER.to_owned(),
+                document: COMPILED_DOCUMENT.to_owned(),
                 field: "gate::hygiene::HygieneJurisdiction::applicability".to_owned(),
             },
         }

@@ -578,6 +578,42 @@ mod tests {
         }));
     }
 
+    #[test]
+    fn a_suppression_missing_any_part_of_its_origin_is_refused_at_admission() {
+        let complete = SuppressedPath {
+            path: "tests/test_ignored.py".to_owned(),
+            rule: "tests/test_ignored.py".to_owned(),
+            provenance: HygieneProvenance {
+                release: "current".to_owned(),
+                layer: "repository".to_owned(),
+                document: "spice.toml".to_owned(),
+                field: "gate.walk.skip[0]".to_owned(),
+            },
+        };
+        configuration()
+            .with_suppressions([complete.clone()])
+            .expect("a complete suppression is admitted");
+
+        for blank in [
+            |item: &mut SuppressedPath| item.path.clear(),
+            |item: &mut SuppressedPath| item.rule.clear(),
+            |item: &mut SuppressedPath| item.provenance.release.clear(),
+            |item: &mut SuppressedPath| item.provenance.layer.clear(),
+            |item: &mut SuppressedPath| item.provenance.document.clear(),
+            |item: &mut SuppressedPath| item.provenance.field.clear(),
+        ] {
+            let mut incomplete = complete.clone();
+            blank(&mut incomplete);
+            assert!(
+                matches!(
+                    configuration().with_suppressions([incomplete.clone()]),
+                    Err(HygieneAnalysisError::Configuration(_))
+                ),
+                "{incomplete:?} is not auditable and must not be admitted"
+            );
+        }
+    }
+
     #[derive(Clone, Copy)]
     enum BoundaryState {
         Available,

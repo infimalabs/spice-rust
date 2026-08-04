@@ -5,8 +5,8 @@ use std::process::{Command, Output};
 
 use gate::{
     AnalysisEvidence, Contract, GateId, HYGIENE_ARMS, HygieneConfiguration, HygieneExclusion,
-    HygieneOutcome, HygieneProvenance, HygieneReport, HygieneSource, Jurisdiction, Selector,
-    acquire_hygiene, analyze_hygiene,
+    HygieneMeasurement, HygieneOutcome, HygieneProvenance, HygieneReport, HygieneSource,
+    Jurisdiction, Selector, SuppressedPath, acquire_hygiene, analyze_hygiene,
 };
 use serde_json::Value;
 
@@ -121,8 +121,95 @@ fn compiled_and_tracked_exclusions_are_visible_in_the_acquired_evidence() {
             if evidence.provenance == provenance
                 && evidence.reason == "tracked private-boundary exclusion"
     ));
+    assert_eq!(
+        suppressed_paths(arm(&report, GateId::AssertionFreeTests)),
+        Some(
+            [SuppressedPath {
+                path: ".venv/broken.py".to_owned(),
+                rule: ".venv/**".to_owned(),
+                provenance: HygieneProvenance {
+                    release: "current".to_owned(),
+                    layer: "compiled".to_owned(),
+                    document: "<compiled-gate-battery>".to_owned(),
+                    field: "gate::hygiene::HygieneJurisdiction::excludes".to_owned(),
+                },
+            }]
+            .as_slice()
+        ),
+        "a compiled arm exclusion is retained by the layer that shipped it"
+    );
 
     repository.remove();
+}
+
+#[test]
+fn a_tracked_walk_skip_suppresses_its_candidate_while_retaining_where_it_came_from() {
+    let measured = suppression_repository("hygiene-acquire-suppression-measured", &[]);
+    let suppressed = suppression_repository(
+        "hygiene-acquire-suppression",
+        &[
+            "tests/test_ignored.py",
+            "app/_ignored.py",
+            "notes.txt",
+            "app/generated.py",
+        ],
+    );
+
+    let measured_report = acquired_report(&measured);
+    let measured_arm = arm(&measured_report, GateId::AssertionFreeTests);
+    assert!(
+        measured_arm
+            .findings
+            .iter()
+            .any(|finding| finding.path == "tests/test_ignored.py"),
+        "the candidate must be measurable before a skip can be shown to suppress it: {:?}",
+        measured_arm.findings
+    );
+    assert_eq!(suppressed_paths(measured_arm), None);
+
+    let report = acquired_report(&suppressed);
+    let measurement = arm(&report, GateId::AssertionFreeTests);
+    assert_eq!(measurement.outcome, HygieneOutcome::Findings);
+    assert!(
+        !measurement
+            .findings
+            .iter()
+            .any(|finding| finding.path == "tests/test_ignored.py"),
+        "the skip must remove the candidate: {:?}",
+        measurement.findings
+    );
+    assert_eq!(
+        suppressed_paths(measurement),
+        Some(
+            vec![
+                SuppressedPath {
+                    path: "app/_ignored.py".to_owned(),
+                    rule: "app/_ignored.py".to_owned(),
+                    provenance: tracked_walk_provenance(1),
+                },
+                SuppressedPath {
+                    path: "tests/test_ignored.py".to_owned(),
+                    rule: "tests/test_ignored.py".to_owned(),
+                    provenance: tracked_walk_provenance(0),
+                },
+            ]
+            .as_slice()
+        )
+    );
+
+    let decoded: HygieneReport = serde_json::from_slice(&report.canonical_json())
+        .expect("a report carrying suppressions decodes");
+    assert_eq!(decoded, report);
+    assert!(
+        !measurement
+            .evidence
+            .iter()
+            .any(|evidence| matches!(evidence, AnalysisEvidence::Exclusion(_))),
+        "a suppressed path must not retire the arm that still measured the rest"
+    );
+
+    suppressed.remove();
+    measured.remove();
 }
 
 #[test]
@@ -181,6 +268,74 @@ fn acquisition_process_fixture() {
     let report =
         acquire_hygiene(&source, &configuration()).expect("acquire without an interpreter");
     assert_eq!(report.arms.len(), HYGIENE_ARMS.len());
+}
+
+/// Acquire one complete family from a fixture repository, as production does.
+fn acquired_report(repository: &Tree) -> HygieneReport {
+    let tree = Selector::staged()
+        .materialize(&repository.root)
+        .expect("materialize the captured hygiene source");
+    let contract = Contract::load(tree.root()).expect("load the captured contract");
+    let source = HygieneSource::capture(&tree, &contract).expect("capture one hygiene source");
+    acquire_hygiene(&source, &configuration()).expect("acquire the complete hygiene family")
+}
+
+fn arm(report: &HygieneReport, gate_id: GateId) -> &HygieneMeasurement {
+    report
+        .arms
+        .iter()
+        .find(|measurement| measurement.gate_id == gate_id)
+        .unwrap_or_else(|| panic!("{} is one of the five arms", gate_id.as_str()))
+}
+
+fn suppressed_paths(measurement: &HygieneMeasurement) -> Option<&[SuppressedPath]> {
+    measurement
+        .evidence
+        .iter()
+        .find_map(|evidence| match evidence {
+            AnalysisEvidence::PathSuppression { suppressed } => Some(suppressed.as_slice()),
+            _ => None,
+        })
+}
+
+fn tracked_walk_provenance(index: usize) -> HygieneProvenance {
+    HygieneProvenance {
+        release: "current".to_owned(),
+        layer: "repository".to_owned(),
+        document: "spice.toml".to_owned(),
+        field: format!("gate.walk.skip[{index}]"),
+    }
+}
+
+/// A repository whose skippable paths are skipped or not.
+///
+/// Every path exists either way, so the only difference between the two
+/// fixtures is the tracked `gate.walk.skip` list under test. Alongside the two
+/// Python candidates it holds a non-Python file and a directory whose name ends
+/// in `.py`, because neither is a hygiene candidate and neither may appear as a
+/// suppression however the walk classifies it.
+fn suppression_repository(label: &str, skip: &[&str]) -> Tree {
+    let repository = hygiene_repository(label, false);
+    repository.write("tests/test_ignored.py", "def test_ignored():\n    pass\n");
+    repository.write("app/_ignored.py", "def _ignored():\n    return 1\n");
+    repository.write("notes.txt", "not a hygiene candidate\n");
+    repository.write("app/generated.py/emitted.txt", "generated output\n");
+    if !skip.is_empty() {
+        let entries = skip
+            .iter()
+            .map(|value| format!("\"{value}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        repository.write(
+            "spice.toml",
+            &format!(
+                "{}\n[gate.walk]\nskip = [{entries}]\n",
+                workspace_document("spice.toml")
+            ),
+        );
+    }
+    git_commit(&repository, "hygiene suppression fixture");
+    repository
 }
 
 fn configuration() -> HygieneConfiguration {
