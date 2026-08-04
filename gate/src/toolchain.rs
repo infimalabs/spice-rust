@@ -378,17 +378,16 @@ pub enum JavascriptUnusedStatus {
 
 /// Finding-bearing predecessor status for a C# declaration.
 ///
-/// A C# member can be reached by a framework rather than by name, so the
-/// predecessor never reports a bare absence of references as a deletion. It
-/// separates a candidate from a declaration that policy or the language holds
-/// live, which is why the retained status carries its own reason.
+/// A C# member can be reached by a framework rather than by name, so a bare
+/// absence of references is never reported as a deletion. A declaration that
+/// policy or the language holds live is withdrawn before it becomes a row, so
+/// the one status here is the only thing a row can say: every C# finding this
+/// arm emits is a candidacy, and a retention cannot be spelled as one.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CsharpUnusedStatus {
     /// No reference remains after the declaration's own name is discounted.
     CandidateUnused,
-    /// A reference is absent, but an admitted retention reason holds it live.
-    Retained,
 }
 
 /// Exact predecessor environment-ledger mismatch kind.
@@ -849,15 +848,6 @@ fn valid_finding_detail(detail: &FindingDetail) -> bool {
                 // A candidate is the declaration's own name and nothing else.
                 CsharpUnusedStatus::CandidateUnused => {
                     reason == "no_references_outside_declaration" && *reference_count == 1
-                }
-                // Retention answers the same absence with a named reason, so it
-                // carries the same count and must say which rule held it.
-                CsharpUnusedStatus::Retained => {
-                    *reference_count == 1
-                        && matches!(
-                            reason.as_str(),
-                            "attribute_retained" | "partial_declaration"
-                        )
                 }
             };
             !symbol.is_empty() && kind_is_valid && status_is_valid
