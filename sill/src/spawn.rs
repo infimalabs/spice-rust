@@ -74,6 +74,7 @@ pub struct WaitOutcome {
     observation_failure: Option<ObservationFailure>,
     stdout: Option<CapturedOutput>,
     stderr: Option<CapturedOutput>,
+    outputs_drained: bool,
 }
 
 /// One bounded passive observation of a running child.
@@ -102,6 +103,20 @@ impl WaitOutcome {
     #[must_use]
     pub const fn observation_failure(&self) -> Option<&ObservationFailure> {
         self.observation_failure.as_ref()
+    }
+
+    /// Whether every capture finished before the output-drain deadline.
+    ///
+    /// A false answer means the drain was abandoned with a reader or an
+    /// observer still working, so the bytes below and every record the
+    /// observer was to report are partial. Nothing else here carries that:
+    /// [`CapturedOutput::complete`] says only that the reader reached end of
+    /// output, which an observer still draining its queue leaves true, and
+    /// [`Self::observation_failure`] names an observer that broke rather than
+    /// one that was merely still going when the deadline arrived.
+    #[must_use]
+    pub const fn outputs_drained(&self) -> bool {
+        self.outputs_drained
     }
 }
 
@@ -402,10 +417,15 @@ impl Running {
 
     fn finish(mut self, completion: Completion) -> Result<WaitOutcome, WaitError> {
         let started = Instant::now();
-        loop {
+        // Completion is checked before the deadline so a drain that finished
+        // exactly as the bound arrived is reported as the completion it was.
+        let outputs_drained = loop {
             self.drain_outputs()?;
-            if self.outputs_complete() || started.elapsed() >= self.spec.deadlines.output_drain() {
-                break;
+            if self.outputs_complete() {
+                break true;
+            }
+            if started.elapsed() >= self.spec.deadlines.output_drain() {
+                break false;
             }
             self.block_for(
                 self.spec
@@ -413,7 +433,7 @@ impl Running {
                     .output_drain()
                     .saturating_sub(started.elapsed()),
             )?;
-        }
+        };
 
         let observation_failure = self.observation_failure()?;
         let stdout = self
@@ -436,6 +456,7 @@ impl Running {
             observation_failure,
             stdout,
             stderr,
+            outputs_drained,
         };
         if guardian::group_absent(self.pid)
             && let Some(guardian) = self.guardian.take()

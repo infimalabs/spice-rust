@@ -170,6 +170,132 @@ fn one_blocked_sink_call_terminates_and_reaps_without_more_output() {
     changed.notify_all();
 }
 
+/// Far enough past the spec's drain deadline that reaching it is unmistakable.
+const OBSERVER_BOUND: Duration = Duration::from_secs(10);
+
+/// A reader that says when it has reached end of output.
+///
+/// The capture worker records end of output as its own fact one statement
+/// after this returns zero, so announcing it here is what lets a test know the
+/// reader half of completion is settled without watching a clock for it.
+struct AnnouncedEof {
+    bytes: io::Cursor<Vec<u8>>,
+    ended: mpsc::Sender<()>,
+}
+
+impl Read for AnnouncedEof {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let read = self.bytes.read(buffer)?;
+        if read == 0 {
+            let _sent = self.ended.send(());
+        }
+        Ok(read)
+    }
+}
+
+#[test]
+fn an_observer_still_working_at_the_drain_deadline_is_named_rather_than_read_as_complete() {
+    let (ended, reader_ended) = mpsc::channel();
+    let (entered, observed_entered) = mpsc::channel();
+    let (failures, observed_failure) = mpsc::channel();
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let observer: Arc<dyn RecordObserver> = Arc::new(BlockingObserver {
+        entered,
+        release: Arc::clone(&release),
+        failures,
+    });
+    let mut running = spawn(test_spec(
+        "/usr/bin/true",
+        std::iter::empty::<&str>(),
+        Environment::empty(),
+        Cancellation::Never,
+        Duration::from_secs(10),
+        StreamPolicy::Null,
+    ))
+    .expect("abandoned-drain child launches");
+    let context = Arc::new(FailureContext {
+        pid: running.pid,
+        group: running.spec.group,
+        owner: running.spec.wait.owner().to_owned(),
+        grace: running.spec.grace,
+        reap: running.spec.deadlines.reap(),
+        process: Arc::clone(&running.process),
+        wake: running
+            .cancellation_wake
+            .try_clone()
+            .expect("fixture wake clones"),
+        failed: std::sync::atomic::AtomicBool::new(false),
+    });
+    // The reader reaches end of output while the observer is still held, which
+    // forces the two halves of capture completion apart. The observer's own
+    // bound is set far past the spec's drain deadline so the record is merely
+    // outstanding rather than failed: nothing here is broken, it is unfinished.
+    // The record ends in a newline, so the framer has nothing left to flush at
+    // end of output and the worker goes straight from the announcement below to
+    // recording it.
+    running.stderr = Some(start_capture(
+        AnnouncedEof {
+            bytes: io::Cursor::new(b"record\n".to_vec()),
+            ended,
+        },
+        64,
+        CaptureWorker {
+            stream: OutputStream::Stderr,
+            observation: Some(
+                Observation::new(OutputStream::Stderr, 32, 1, Arc::clone(&observer))
+                    .expect("abandoned-drain observation"),
+            ),
+            failure_observer: Some(Arc::clone(&observer)),
+            sink_deadline: OBSERVER_BOUND,
+            failure: context,
+            wake: running
+                .cancellation_wake
+                .try_clone()
+                .expect("capture wake clones"),
+            observer_wake: Some(
+                running
+                    .cancellation_wake
+                    .try_clone()
+                    .expect("observer wake clones"),
+            ),
+        },
+    ));
+    observed_entered
+        .recv_timeout(Duration::from_secs(2))
+        .expect("observer begins the record it will not finish");
+    reader_ended
+        .recv_timeout(Duration::from_secs(2))
+        .expect("reader reaches end of output");
+
+    let started = std::time::Instant::now();
+    let outcome = running.wait().expect("abandoned-drain child reaps");
+    let elapsed = started.elapsed();
+
+    assert!(
+        !outcome.outputs_drained(),
+        "an outstanding record was reported as a completed drain"
+    );
+    assert!(
+        elapsed < OBSERVER_BOUND / 4,
+        "the drain was abandoned on the observer's bound, not the spec's: {elapsed:?}"
+    );
+    // The two answers a caller already had cannot see this: the reader did
+    // reach end of output, and an observer that is still going has not failed.
+    assert!(
+        outcome
+            .stderr()
+            .expect("diagnostics were captured")
+            .complete(),
+        "the reader reached end of output"
+    );
+    assert!(outcome.observation_failure().is_none());
+    assert!(observed_failure.try_recv().is_err());
+
+    let (lock, changed) = &*release;
+    *lock.lock().expect("release lock") = true;
+    changed.notify_all();
+}
+
 #[derive(Debug)]
 struct RefusingObserver {
     failures: mpsc::Sender<ObservationFailure>,
