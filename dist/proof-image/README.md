@@ -65,3 +65,23 @@ rebuild anywhere can settle; only this image goes on to compare bytes. A macOS
 or other non-Linux `cargo xtask verify` therefore still proves the app builds
 and stages the assets it is supposed to, and says in its output which
 comparison it withheld and why.
+
+## What a host that cannot stage can still conclude
+
+A staging run records what it compiled in `dist/stage-sources.txt`: one digest
+and repository-relative path per build input, covering `Cargo.lock`, the `app`
+crate's manifest, page, stylesheet and sources, and the `wire` crate's manifest
+and sources. `cargo xtask check-app` recomputes that listing on every host and
+refuses before it rebuilds anything when the two disagree, naming each input
+that moved. Nothing else writes the file: it is renewed only by the staging run
+that publishes the bytes it describes, so a claim cannot be refreshed without
+refreshing what it is a claim about.
+
+A host that cannot reproduce the staged bytes can therefore conclude whether
+the stage was built from the sources now in the tree, and name the source that
+moved if it was not. It still cannot conclude that the staged bytes are the
+bytes those sources produce; only this image can settle that, and only by
+compiling them. The listing is a claim about inputs alone, so a matching
+listing means the inputs are unchanged, not that the stage is correct: anything
+that moves the output without moving an input, a different Trunk or `wasm-opt`
+among them, passes it untouched.
