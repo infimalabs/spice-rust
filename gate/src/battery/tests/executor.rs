@@ -3,7 +3,7 @@
 use super::*;
 
 #[test]
-fn runner_executes_all_25_once_in_order_with_complete_context() {
+fn runner_executes_all_26_once_in_order_with_complete_context() {
     let fixture = Fixture::new();
     let inputs = fixture.inputs();
     let mut executor = RecordingExecutor::all_passed(&fixture.source);
@@ -79,7 +79,12 @@ fn runner_executes_all_25_once_in_order_with_complete_context() {
 
     for (position, (result, expected)) in report.results().iter().zip(GateId::ALL).enumerate() {
         assert_eq!(result.position(), position);
-        assert_eq!(result.predecessor(), expected.predecessor_name());
+        assert_eq!(
+            result.predecessor(),
+            expected
+                .predecessor_declared()
+                .then(|| expected.predecessor_name())
+        );
         assert_eq!(result.gate_id(), expected);
         assert_eq!(result.state(), BatteryState::Passed);
         assert_eq!(result.evidence().gate_id(), expected);
@@ -394,9 +399,9 @@ fn every_nonpass_state_refuses_without_erasing_later_results() {
     let mut executor = RecordingExecutor::nonpassing(&fixture.source);
     let report = run_battery(&inputs, &mut executor).expect("total nonpass report");
 
-    assert_eq!(executor.calls.len(), 25);
+    assert_eq!(executor.calls.len(), 26);
     assert_eq!(executor.calls.last(), Some(&GateId::PrivateInternals));
-    assert_eq!(report.results().len(), 25);
+    assert_eq!(report.results().len(), 26);
     assert!(!report.admits());
     for state in [
         BatteryState::Failed,
@@ -439,7 +444,7 @@ fn executor_refusals_and_invalid_evidence_stay_visible_and_total() {
     let report = run_battery(&inputs, &mut executor).expect("total executor-failure report");
 
     assert_eq!(executor.calls, GateId::ALL);
-    assert_eq!(report.results().len(), 25);
+    assert_eq!(report.results().len(), 26);
     assert_eq!(report.results()[3].state(), BatteryState::Failed);
     assert_eq!(
         report.results()[3].reason(),

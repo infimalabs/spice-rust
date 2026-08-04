@@ -100,6 +100,16 @@ fn fixture_scanner_finding(gate: GateId, suffix: &str) -> ArmFinding {
                 test_reference_count: 1,
             },
         ),
+        GateId::CsharpUnusedCandidates => (
+            Some(format!("dotnet/{suffix}.cs")),
+            FindingDetail::CsharpUnused {
+                symbol: "Loose".to_owned(),
+                declaration_kind: "method".to_owned(),
+                status: CsharpUnusedStatus::CandidateUnused,
+                reason: "no_references_outside_declaration".to_owned(),
+                reference_count: 1,
+            },
+        ),
         GateId::EnvPolicy => (
             Some(format!("src/{suffix}.rs")),
             FindingDetail::EnvironmentAccess {
@@ -230,7 +240,7 @@ fn fixture_report_result_with(
 
 #[test]
 fn declarations_are_closed_ordered_explicit_and_never_python_wrappers() {
-    let expected = &GateId::ALL[8..16];
+    let expected = &GateId::ALL[8..17];
     assert_eq!(
         TOOLCHAIN_ARMS.map(|arm| arm.id).as_slice(),
         expected,
@@ -784,6 +794,23 @@ fn predecessor_fixture_matrix_compares_scanners_and_refuses_changed_executors() 
     ];
     for (outcome, report) in reports {
         for current in &report.arms {
+            // Release 0.31.0 ran no step for an arm this workspace grew past
+            // it, so an observation claiming one is refused outright instead of
+            // being compared against anything.
+            if !current.gate_id.predecessor_declared() {
+                let fabricated = PredecessorObservation {
+                    gate_name: current.gate_id.as_str().to_owned(),
+                    configuration: PredecessorConfiguration::PackagedDefaults,
+                    result: PredecessorResult::Passed,
+                };
+                assert_eq!(
+                    compare_predecessor(&fabricated, current),
+                    Err(PredecessorComparisonError::UnknownGate(
+                        current.gate_id.as_str().to_owned()
+                    ))
+                );
+                continue;
+            }
             let predecessor_name = match current.gate_id {
                 GateId::CanvasWebTypecheck => "serve-web-typecheck",
                 gate => gate.as_str(),

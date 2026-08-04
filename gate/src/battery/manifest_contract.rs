@@ -26,16 +26,20 @@ pub enum ArmDisposition {
 /// One ordered canonical manifest row.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BatteryManifestArm {
-    pub(super) predecessor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) predecessor: Option<String>,
     #[serde(flatten)]
     pub(super) disposition: ArmDisposition,
 }
 
 impl BatteryManifestArm {
-    /// Exact predecessor standard-arm spelling.
+    /// Exact predecessor standard-arm spelling, absent for a native arm.
+    ///
+    /// A row omits the name when release 0.31.0 declared no step for the
+    /// compiled identity, so no reader can attribute one to it.
     #[must_use]
-    pub fn predecessor(&self) -> &str {
-        &self.predecessor
+    pub fn predecessor(&self) -> Option<&str> {
+        self.predecessor.as_deref()
     }
 
     /// Compiled declaration bound to this row.
@@ -60,7 +64,7 @@ impl BatteryManifest {
         Self::decode(CANONICAL_BATTERY_MANIFEST)
     }
 
-    /// Parse a candidate strictly against the closed 25-arm contract.
+    /// Parse a candidate strictly against the closed compiled-arm contract.
     pub fn decode(source: &str) -> Result<Self, BatteryError> {
         let manifest: Self = toml::from_str(source)
             .map_err(|error| BatteryError::new(format!("invalid battery manifest: {error}")))?;
@@ -80,7 +84,7 @@ impl BatteryManifest {
         &self.predecessor_release
     }
 
-    /// Exactly 25 rows in predecessor order.
+    /// Every compiled row in predecessor battery order.
     #[must_use]
     pub fn arms(&self) -> &[BatteryManifestArm] {
         &self.arms
@@ -117,10 +121,12 @@ fn validate_arm(
     arm: &BatteryManifestArm,
     expected: GateId,
 ) -> Result<(), BatteryError> {
-    if arm.predecessor != expected.predecessor_name() {
+    let expected_predecessor = expected
+        .predecessor_declared()
+        .then(|| expected.predecessor_name());
+    if arm.predecessor.as_deref() != expected_predecessor {
         return Err(BatteryError::new(format!(
-            "battery arm {position} must be predecessor {:?}, received {:?}",
-            expected.predecessor_name(),
+            "battery arm {position} must be predecessor {expected_predecessor:?}, received {:?}",
             arm.predecessor
         )));
     }

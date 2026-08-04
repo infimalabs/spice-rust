@@ -93,6 +93,12 @@ family = "toolchain"
 declaration = "gate::toolchain::javascript-unused::toolchain-v1"
 
 [[arms]]
+disposition = "compiled"
+gate_id = "csharp-unused-candidates"
+family = "toolchain"
+declaration = "gate::toolchain::csharp-unused-candidates::toolchain-v1"
+
+[[arms]]
 predecessor = "python-typecheck"
 disposition = "compiled"
 gate_id = "python-typecheck"

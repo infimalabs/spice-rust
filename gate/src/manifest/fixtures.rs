@@ -19,6 +19,17 @@ fn migrate(repository: &str, worktree: &str) -> GateManifest {
     .expect("fixture migrates")
 }
 
+/// Whether release 0.31.0's battery declared no standard arm for this identity.
+///
+/// A gate this workspace grew past the predecessor cannot be named by any
+/// predecessor document, so it is selected from the compiled registry root and
+/// its refusals cannot cite a step that never ran.
+fn absent_from_battery(id: GateId) -> bool {
+    PREDECESSOR_STANDARD_ARMS
+        .into_iter()
+        .any(|(candidate, arm)| candidate == id && arm == PredecessorStandardArm::AbsentFromBattery)
+}
+
 fn declaration(manifest: &GateManifest, id: GateId) -> &GateDeclaration {
     manifest
         .gates()
@@ -40,7 +51,7 @@ fn error(repository: &str, worktree: &str) -> MigrationError {
 fn current_manifest_is_exactly_the_ordered_compiled_battery() {
     let manifest = GateManifest::default();
     assert_eq!(manifest.version(), GATE_MANIFEST_VERSION);
-    assert_eq!(manifest.gates().len(), 25);
+    assert_eq!(manifest.gates().len(), 26);
     assert_eq!(
         manifest
             .gates()
@@ -151,13 +162,15 @@ fn packaged_fixture_migrates_every_id_in_exact_order() {
             declaration.id_provenance().document(),
             "/installed/0.31.0/spice.toml"
         );
+        let mut expected = vec!["policy", "pre_commit_builtins"];
+        if !absent_from_battery(declaration.id()) {
+            expected.push(declaration.id().predecessor_str());
+        }
         assert_eq!(
             declaration.id_provenance().field(),
-            [
-                "policy",
-                "pre_commit_builtins",
-                declaration.id().predecessor_str()
-            ]
+            expected.as_slice(),
+            "{}",
+            declaration.id()
         );
     }
 }
@@ -289,17 +302,20 @@ fn scalar_and_table_forms_replace_one_another_at_layer_boundaries() {
 }
 
 #[test]
-fn release_standard_arm_table_is_complete_and_internal() {
+fn release_standard_arm_table_is_complete_and_names_what_the_release_declared() {
     assert_eq!(PREDECESSOR_STANDARD_ARMS.map(|(id, _arm)| id), GateId::ALL);
-    assert!(
-        PREDECESSOR_STANDARD_ARMS
-            .into_iter()
-            .all(|(_id, arm)| { arm == PredecessorStandardArm::InternalBuiltin })
-    );
+    let grown_past: Vec<GateId> = GateId::ALL
+        .into_iter()
+        .filter(|id| absent_from_battery(*id))
+        .collect();
+    assert_eq!(grown_past, vec![GateId::CsharpUnusedCandidates]);
+    for id in GateId::ALL {
+        assert_eq!(id.predecessor_declared(), !absent_from_battery(id), "{id}");
+    }
 }
 
 #[test]
-fn every_executable_form_resolves_then_refuses_for_every_internal_arm() {
+fn every_executable_form_resolves_then_refuses_for_every_compiled_arm() {
     for id in GateId::ALL {
         let name = toml_string(id.predecessor_str());
         let table = format!("[policy.pre_commit_builtins.{name}]\n");
@@ -351,7 +367,11 @@ fn every_executable_form_resolves_then_refuses_for_every_internal_arm() {
             let message = refusal.to_string();
             assert!(message.contains("release=0.31.0"));
             assert!(message.contains("[\"python\", \"gate.py\"]"));
-            assert!(message.contains("internal PreCommitStep builtin"));
+            assert!(message.contains(if absent_from_battery(id) {
+                "declared no standard arm for that identity"
+            } else {
+                "internal PreCommitStep builtin"
+            }));
         }
     }
 }

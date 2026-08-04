@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use gate::{
-    ArmFinding, ArmObservation, ArmOutcome, Contract, EnvironmentLedgerKind, FindingDetail, GateId,
-    JavascriptUnusedStatus, LOCAL_PATH_MARKER, PACKAGED_ENV_PROFILE,
+    ArmFinding, ArmObservation, ArmOutcome, Contract, CsharpUnusedStatus, EnvironmentLedgerKind,
+    FindingDetail, GateId, JavascriptUnusedStatus, LOCAL_PATH_MARKER, PACKAGED_ENV_PROFILE,
     PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_TASTE_WORDS, ProbeFailure, RimCapture, Selector,
     SourceLocus, TOOLCHAIN_ARMS, TOOLCHAIN_REPORT_VERSION, ToolEvidence, ToolchainSource,
     acquire_toolchain, measure_toolchain,
@@ -28,11 +28,12 @@ const DRIFTED_PROGRAM: &str = "cargo";
 const REFUSING_STATUS: i32 = 41;
 
 /// The arms this build analyzes itself rather than owing an analyzer.
-const COMPILED_ARMS: [GateId; 7] = [
+const COMPILED_ARMS: [GateId; 8] = [
     GateId::Formatters,
     GateId::LocalPaths,
     GateId::Taste,
     GateId::JavascriptUnused,
+    GateId::CsharpUnusedCandidates,
     GateId::CanvasWebTypecheck,
     GateId::EnvPolicy,
     GateId::EnvNameLedger,
@@ -106,6 +107,20 @@ const DYNAMIC: &str = "both = os.environ[first] or os.getenv(second)";
 
 /// The clean JavaScript module that makes the complete-tree analysis applicable.
 const JAVASCRIPT: &str = "web/app.js";
+
+/// The clean C# unit that makes the complete-tree analysis applicable.
+const CSHARP: &str = "dotnet/App.cs";
+
+/// One C# type whose sole member is reached from inside the same unit.
+///
+/// The declaration alone is one occurrence, so a member the fixture never calls
+/// would report as a candidate. Calling it once is what makes this tree clean
+/// without exempting anything.
+const CSHARP_SOURCE: &str = concat!(
+    "public class App\n{\n",
+    "    public void Run()\n    {\n        Step();\n    }\n\n",
+    "    public void Step()\n    {\n    }\n}\n"
+);
 
 #[test]
 fn acquisition_over_a_real_tree_yields_a_report_measure_toolchain_admits() {
@@ -580,6 +595,71 @@ fn javascript_unused_reports_candidate_and_test_only_but_suppresses_the_exact_ex
     measure_toolchain(observations).expect("JavaScript findings are admitted");
 }
 
+#[test]
+fn csharp_unused_reports_private_candidates_and_separates_what_policy_retains() {
+    let repository = scanning_repository(
+        "toolchain-csharp-unused",
+        "fn main() {}\n",
+        "Every sentence here is ordinary.\n",
+    );
+    repository.write(
+        "dotnet/Surface.cs",
+        concat!(
+            "public partial class Retained\n{\n",
+            "    private void RetainedByPartial() { }\n}\n\n",
+            "public class Surface\n{\n",
+            "    [Obsolete]\n    private void AttributeRetained() { }\n\n",
+            "    private void Loose() { }\n\n",
+            "    private void Reached() { }\n\n",
+            "    public void Entry()\n    {\n        Reached();\n    }\n}\n",
+        ),
+    );
+    git_commit(&repository, "csharp declaration fixture");
+
+    let observations = acquired(
+        &repository,
+        Some(toolchain_directory().into_os_string()),
+        &[],
+    );
+    let observation = arm(&observations, GateId::CsharpUnusedCandidates);
+    assert_eq!(observation.outcome, ArmOutcome::Findings);
+    let candidate = |symbol: &str, line| ArmFinding {
+        path: Some("dotnet/Surface.cs".to_owned()),
+        line: Some(line),
+        column: None,
+        detail: FindingDetail::CsharpUnused {
+            symbol: symbol.to_owned(),
+            declaration_kind: "method".to_owned(),
+            status: CsharpUnusedStatus::CandidateUnused,
+            reason: "no_references_outside_declaration".to_owned(),
+            reference_count: 1,
+        },
+    };
+    let retained = |symbol: &str, line, reason: &str| ArmFinding {
+        path: Some("dotnet/Surface.cs".to_owned()),
+        line: Some(line),
+        column: None,
+        detail: FindingDetail::CsharpUnused {
+            symbol: symbol.to_owned(),
+            declaration_kind: "method".to_owned(),
+            status: CsharpUnusedStatus::Retained,
+            reason: reason.to_owned(),
+            reference_count: 1,
+        },
+    };
+    assert_eq!(
+        observation.findings,
+        [
+            retained("RetainedByPartial", 3, "partial_declaration"),
+            retained("AttributeRetained", 8, "attribute_retained"),
+            candidate("Loose", 11),
+        ],
+        "the C# scanner named something other than the three unreached private members"
+    );
+
+    measure_toolchain(observations).expect("C# findings are admitted");
+}
+
 /// What a module owns, and what counts as reaching it.
 ///
 /// The nested locals below are declared and never read, so an inventory that
@@ -855,6 +935,7 @@ fn scanning_repository(label: &str, source: &str, prose: &str) -> Tree {
     repository.write(SOURCE, source);
     repository.write(PROSE, prose);
     repository.write(JAVASCRIPT, "void 0;\n");
+    repository.write(CSHARP, CSHARP_SOURCE);
     git_commit(&repository, "fixture sources");
     repository
 }
