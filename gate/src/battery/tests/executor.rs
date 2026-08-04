@@ -368,6 +368,16 @@ fn move_the_repository_after_capture(repository: &Path) {
             .any(|path| path == "app/main.py"),
         "the mutation must really leave that same file unstaged as well"
     );
+    // The merge is the one mutation written straight into the Git directory
+    // rather than made through Git, so it is the one that could stop being a
+    // merge without the write ever failing. Asking Git to resolve the ref is
+    // what keeps the merge assertion from passing over a repository that is
+    // not mid-merge at all.
+    assert_eq!(
+        fixture_git(repository, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]),
+        head,
+        "the mutation must really leave a merge Git itself resolves"
+    );
 }
 
 /// Every canonical arm is invoked once and no family is acquired twice.
