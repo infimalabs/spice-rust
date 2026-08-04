@@ -64,6 +64,27 @@ const WASM_TARGET: &str = "wasm32-unknown-unknown";
 /// being reproducible, which is the whole reason the remapping exists.
 const REMAPPED_CARGO_HOME: &str = "/cargo-home";
 
+/// The host whose builds own the committed app stage.
+///
+/// Cargo folds `rustc --version --verbose`, which names the host triple, into
+/// every crate's `-Cmetadata`. The same sources therefore emit different
+/// wasm-bindgen disambiguator symbols and a differently hashed
+/// `canvas-app.html` on every other host, so byte equality against a
+/// foreign-triple rebuild is not a stricter check but an unreachable one. One
+/// environment has to own these bytes; it is the sealed Linux image, whose
+/// `rustc` reports `x86_64-unknown-linux-gnu`, because that is the environment
+/// the release battery can reproduce with networking disabled.
+const STAGING_HOST: &str = "x86_64-linux";
+
+/// This host, spelled with the two triple fields a running program can read.
+///
+/// A triple's vendor and environment fields are not observable from inside the
+/// program, so the comparison uses what is, and the documentation above names
+/// the full triple it stands for.
+fn host_spelling() -> String {
+    format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS)
+}
+
 const APP_FILES: [&str; 4] = ["app.module", "app_bg.wasm", "canvas-app.html", "style.css"];
 const RELEASE_STAGE_DIRECTORIES: [&str; 2] = ["objects", "targets"];
 const GENERATED_MODULE_REFERENCES: usize = 2;
@@ -112,25 +133,37 @@ const VERIFY_ACTIONS: [Action; 8] = [
 /// Compile the browser app with the pinned Trunk adapter and replace the
 /// committed stage with exactly those generated assets.
 ///
+/// Only the staging host may write the stage: a rebuild from anywhere else
+/// replaces bytes the release battery reproduces with bytes it cannot.
+///
 /// # Errors
 ///
-/// Returns a missing Cargo home, Trunk execution failure, or a refused
-/// generated stage.
+/// Returns a foreign staging host, a missing Cargo home, Trunk execution
+/// failure, or a refused generated stage.
 pub fn stage_app(
     environment: &ReleaseEnvironment,
     output: &mut impl Write,
 ) -> Result<(), AppBuildError> {
+    let host = host_spelling();
+    if host != STAGING_HOST {
+        return Err(AppBuildError::ForeignStagingHost(host));
+    }
     let root = workspace_root()?;
     let stage = root.join("dist/stage");
     run_trunk(&root, environment, &stage, output)
 }
 
-/// Rebuild the browser app outside the committed stage and compare every byte.
+/// Rebuild the browser app outside the committed stage and compare it back.
+///
+/// Every host rebuilds and compares the staged inventory, which is the part of
+/// the answer a rebuild anywhere can give. Only the staging host goes on to
+/// compare bytes, because only its compiler metadata can reproduce them.
 ///
 /// # Errors
 ///
-/// Returns a missing Cargo home, Trunk execution failure, or the first staged
-/// asset that differs from the rebuild.
+/// Returns a missing Cargo home, Trunk execution failure, an inventory that
+/// differs from the rebuild, or, on the staging host, the first staged asset
+/// whose bytes differ.
 pub fn check_app(
     environment: &ReleaseEnvironment,
     output: &mut impl Write,
@@ -145,8 +178,20 @@ pub fn check_app(
             source,
         })?;
     }
-    let result = run_trunk(&root, environment, &temporary, output)
-        .and_then(|()| compare_stage(&root.join("dist/stage"), &temporary));
+    let result = run_trunk(&root, environment, &temporary, output).and_then(|()| {
+        let stage = root.join("dist/stage");
+        compare_stage_inventory(&stage, &temporary)?;
+        let host = host_spelling();
+        if host == STAGING_HOST {
+            return compare_stage_bytes(&stage, &temporary);
+        }
+        writeln!(
+            output,
+            "[app] {host} is not {STAGING_HOST}; compared the staged inventory \
+             without asserting bytes no host but {STAGING_HOST} can reproduce"
+        )
+        .map_err(AppBuildError::Output)
+    });
     let cleanup = fs::remove_dir_all(&temporary).map_err(|source| AppBuildError::Io {
         path: temporary,
         source,
@@ -201,6 +246,15 @@ fn trunk_command(
     let mut command = Command::new("trunk");
     command
         .current_dir(root.join("app"))
+        // Cargo exports `CARGO` as the absolute path of the binary running
+        // this command, and Trunk builds with that binary rather than the one
+        // the environment puts on `PATH`. In the sealed image those are not
+        // the same program: `PATH` names a wrapper that supplies the vendored
+        // source replacement, so an inherited `CARGO` reaches past it to a
+        // Cargo with no offline sources and the build fails resolving crates
+        // that are sitting right there. Dropped for the same reason the
+        // wrappers below are: the app build chooses its own toolchain.
+        .env_remove("CARGO")
         .env("CARGO_BUILD_BUILD_DIR", build)
         .env("CARGO_ENCODED_RUSTFLAGS", rustflags)
         .env("CARGO_HOME", cargo_home)
@@ -270,7 +324,7 @@ fn remapped_rustflags(root: &Path, cargo_home: &OsStr) -> Result<String, AppBuil
     .join("\u{1f}"))
 }
 
-fn compare_stage(expected: &Path, observed: &Path) -> Result<(), AppBuildError> {
+fn compare_stage_inventory(expected: &Path, observed: &Path) -> Result<(), AppBuildError> {
     let expected_names = stage_names(expected)?;
     let observed_names = stage_names(observed)?;
     let expected_app_names = expected_names
@@ -301,6 +355,10 @@ fn compare_stage(expected: &Path, observed: &Path) -> Result<(), AppBuildError> 
             observed: observed_names,
         });
     }
+    Ok(())
+}
+
+fn compare_stage_bytes(expected: &Path, observed: &Path) -> Result<(), AppBuildError> {
     for name in APP_FILES {
         let expected_path = expected.join(name);
         let observed_path = observed.join(name);
@@ -361,6 +419,7 @@ pub enum AppBuildError {
     },
     NonUtf8(PathBuf),
     MissingCargoHome,
+    ForeignStagingHost(String),
     GeneratedStage(String),
     Inventory {
         expected: Vec<String>,
@@ -380,6 +439,12 @@ impl fmt::Display for AppBuildError {
             Self::NonUtf8(path) => write!(formatter, "stage path is not UTF-8: {}", path.display()),
             Self::MissingCargoHome => formatter.write_str(
                 "the app build needs CARGO_HOME or HOME to locate the crates it compiles",
+            ),
+            Self::ForeignStagingHost(host) => write!(
+                formatter,
+                "the app stage is owned by {STAGING_HOST} builds and this host is {host}: \
+                 staging here would replace bytes the sealed image reproduces with bytes \
+                 no other environment can"
             ),
             Self::GeneratedStage(reason) => {
                 write!(formatter, "generated app stage refused: {reason}")
@@ -630,6 +695,10 @@ mod tests {
         assert_eq!(
             environment,
             BTreeMap::from([
+                // Removed, not emptied: Trunk falls back to `PATH` only when
+                // `CARGO` is absent, and an empty value would name a program
+                // that does not exist.
+                ("CARGO".to_owned(), None),
                 (
                     "CARGO_BUILD_BUILD_DIR".to_owned(),
                     Some("/cargo-target/xtask-app-build".to_owned()),
@@ -711,11 +780,12 @@ mod tests {
             fs::create_dir(expected.join(name)).expect("create release stage directory");
         }
 
-        compare_stage(&expected, &observed).expect("release directories are separate ownership");
+        compare_stage_inventory(&expected, &observed)
+            .expect("release directories are separate ownership");
 
         fs::write(expected.join("unowned"), b"bytes").expect("write unowned stage entry");
         assert!(matches!(
-            compare_stage(&expected, &observed),
+            compare_stage_inventory(&expected, &observed),
             Err(AppBuildError::Inventory { .. })
         ));
         fs::remove_file(expected.join("unowned")).expect("remove unowned stage entry");
@@ -723,11 +793,75 @@ mod tests {
         fs::write(expected.join("objects"), b"not a directory")
             .expect("replace release directory with file");
         assert!(matches!(
-            compare_stage(&expected, &observed),
+            compare_stage_inventory(&expected, &observed),
             Err(AppBuildError::Inventory { .. })
         ));
 
         fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    /// The two comparisons have to answer separately, because every host runs
+    /// the first and only the staging host runs the second. A byte difference
+    /// must therefore be invisible to the inventory question and fatal to the
+    /// byte question; if the inventory check still noticed bytes, a foreign
+    /// host would fail on exactly the difference it is excused from having.
+    #[test]
+    fn a_byte_difference_is_invisible_to_the_inventory_and_fatal_to_the_bytes() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-xtask-app-stage-bytes-{}",
+            std::process::id()
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        let expected = root.join("expected");
+        let observed = root.join("observed");
+        fs::create_dir_all(&expected).expect("create expected stage");
+        fs::create_dir_all(&observed).expect("create observed stage");
+        for name in APP_FILES {
+            fs::write(expected.join(name), name).expect("write expected app file");
+            fs::write(observed.join(name), name).expect("write observed app file");
+        }
+
+        compare_stage_bytes(&expected, &observed).expect("identical stages agree byte for byte");
+
+        // One case per staged asset, so a comparison that only ever read the
+        // first entry would be caught rather than pass on the rest.
+        for name in APP_FILES {
+            fs::write(observed.join(name), "foreign-metadata").expect("rewrite observed app file");
+
+            compare_stage_inventory(&expected, &observed)
+                .expect("differing bytes must not change the inventory answer");
+            assert!(
+                matches!(
+                    compare_stage_bytes(&expected, &observed),
+                    Err(AppBuildError::Drift(drifted)) if drifted == name
+                ),
+                "{name} drifted without being named as the drifted asset",
+            );
+
+            fs::write(observed.join(name), name).expect("restore observed app file");
+        }
+
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    /// The refusal has to name both hosts, because the operator's next move
+    /// depends on which environment they are missing, not on the fact that
+    /// they are missing one.
+    #[test]
+    fn staging_from_a_foreign_host_refuses_and_names_both_environments() {
+        let refusal = AppBuildError::ForeignStagingHost("aarch64-macos".to_owned()).to_string();
+
+        assert!(
+            refusal.contains("aarch64-macos") && refusal.contains(STAGING_HOST),
+            "the refusal named neither the observed host nor the owning one: {refusal}",
+        );
+        assert_ne!(
+            host_spelling(),
+            String::new(),
+            "a host with no spelling could never be compared to the owning one",
+        );
     }
 
     #[test]
