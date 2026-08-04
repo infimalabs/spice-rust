@@ -81,13 +81,16 @@ fn assert_repository_documents(repository: &Tree, actor: &str, active_limit: u64
 
 /// A document a peer already claimed is judged as someone else's seam.
 ///
-/// The two documents are identical across both acquisitions below; only the
-/// ledger the acting actor carries differs. An acquisition that reports a
-/// constant `false` for every document produces the character-cap sentence in
-/// both, so the two halves cannot both hold unless the claim is really
-/// resolved. Both documents are claimed each time, so the untouched one also
+/// The two documents are identical across all three acquisitions below; only
+/// the ledger the acting actor carries differs. An acquisition that reports a
+/// constant `false` for every document produces the character-cap sentence
+/// every time, so the first two cannot both hold unless the claim is really
+/// resolved. Both of those claim both documents, so the untouched one also
 /// shows that a document inside its bound claims nothing regardless of who
-/// holds its ledger entry.
+/// holds its ledger entry. The third claims only that untouched document: a
+/// resolution that answered from whichever claim the ledger happened to hold
+/// rather than the one over this document would call the oversized document
+/// peer-held over an entry naming a different file.
 #[test]
 fn a_peer_held_bound_claim_redirects_the_document_diagnostic() {
     let repository = contract_repository("core-acquire-repo-docs-claimed");
@@ -98,7 +101,7 @@ fn a_peer_held_bound_claim_redirects_the_document_diagnostic() {
     assert_claimed_document(
         &repository,
         "worktree-author",
-        minted_claims(&repository, "worktree-peer"),
+        minted_claims(&repository, "worktree-peer", &["DOCTRINE.md", "GUIDE.md"]),
         true,
         concat!(
             "repo-truth docs hit peer-held bound claims; keep this change append-only or move ",
@@ -108,7 +111,14 @@ fn a_peer_held_bound_claim_redirects_the_document_diagnostic() {
     assert_claimed_document(
         &repository,
         "  worktree-author  ",
-        minted_claims(&repository, "worktree-author"),
+        minted_claims(&repository, "worktree-author", &["DOCTRINE.md", "GUIDE.md"]),
+        false,
+        "repo-truth docs exceed the character cap; tighten the doctrine:",
+    );
+    assert_claimed_document(
+        &repository,
+        "worktree-author",
+        minted_claims(&repository, "worktree-peer", &["GUIDE.md"]),
         false,
         "repo-truth docs exceed the character cap; tighten the doctrine:",
     );
@@ -157,13 +167,11 @@ fn assert_claimed_document(
     assert_eq!(
         bounded.peer_claim(),
         peer_claim,
-        "the claim over DOCTRINE.md is held by {}",
-        if peer_claim { "a peer" } else { "the actor" }
+        "DOCTRINE.md names the wrong owner for the ledger {acting:?} handed over"
     );
     assert!(
         arm.diagnostic().starts_with(header),
-        "a {} document was told the wrong thing: {}",
-        if peer_claim { "peer-held" } else { "self-held" },
+        "the over-limit document was told the wrong thing under {acting:?}: {}",
         arm.diagnostic()
     );
     assert_eq!(within.path(), "GUIDE.md");
@@ -176,6 +184,61 @@ fn assert_claimed_document(
         "a document inside its bound breached nothing to be claimed over"
     );
     assert!(!arm.diagnostic().contains("GUIDE"));
+}
+
+/// One breach the actor owns keeps the whole arm on the character cap.
+///
+/// Both documents are over their caps and only one of them is claimed, so this
+/// is the first fixture where the arm has to decide what a mixed set means. The
+/// append-only sentence is only true when every breach belongs to someone else:
+/// an actor told to keep a change append-only leaves their own oversized
+/// document exactly as it is. An arm asking whether any breach was peer-held
+/// produces that sentence here, and one over-limit document alone can never
+/// tell the two questions apart.
+#[test]
+fn a_breach_the_actor_owns_is_told_to_tighten_rather_than_to_stay_append_only() {
+    let repository = contract_repository("core-acquire-repo-docs-mixed");
+    repository.write("CHARTER.md", &"x".repeat(20_000));
+    repository.write("DOCTRINE.md", &"x".repeat(20_000));
+    git_commit(&repository, "two oversized documents, one of them claimed");
+
+    let report = acquired(
+        &repository,
+        ClaimCapture::Idle,
+        ActorCapture::Acting {
+            actor: "worktree-author".to_owned(),
+            bound_claims: minted_claims(&repository, "worktree-peer", &["CHARTER.md"]),
+        },
+    );
+    let arm = acquired_arm(&report, GateId::RepoDocs);
+    let CoreObservation::Measured {
+        evidence: CoreEvidence::RepoDocs(evidence),
+    } = arm.observation()
+    else {
+        panic!("repository-document provider emitted no measurement: {arm:?}");
+    };
+    let [charter, doctrine] = evidence.measurements() else {
+        panic!("unexpected repository-document inventory: {evidence:?}");
+    };
+    assert_eq!(charter.path(), "CHARTER.md");
+    assert!(
+        charter.peer_claim(),
+        "the breach a peer claimed is the peer's seam"
+    );
+    assert_eq!(doctrine.path(), "DOCTRINE.md");
+    assert!(
+        !doctrine.peer_claim(),
+        "the breach nobody claimed is the acting actor's own"
+    );
+    assert_eq!(arm.standing(), CoreStanding::Failed);
+    assert!(
+        arm.diagnostic()
+            .starts_with("repo-truth docs exceed the character cap; tighten the doctrine:"),
+        "a breach the actor owns was told to stay append-only: {}",
+        arm.diagnostic()
+    );
+
+    repository.remove();
 }
 
 /// The tracked declaration decides which documents the arm measures.
@@ -251,13 +314,11 @@ fn measured_documents(repository: &Tree) -> Vec<String> {
         .collect()
 }
 
-/// Genuine claims over both fixture documents, created by `actor` through the
-/// ledger itself.
+/// Genuine claims over `paths`, created by `actor` through the ledger itself.
 ///
 /// A claim assembled by the test could disagree with the ownership rule
 /// acquisition resolves against; one minted by a real transaction cannot.
-fn minted_claims(repository: &Tree, actor: &str) -> Vec<PeerClaim> {
-    let paths = ["DOCTRINE.md", "GUIDE.md"];
+fn minted_claims(repository: &Tree, actor: &str, paths: &[&str]) -> Vec<PeerClaim> {
     let state_root = repository.path(".spice");
     let sources = PredecessorSources::new(&state_root, &state_root);
     let mut state = CurrentState::load(repository.path("current-state.json"), &sources)
