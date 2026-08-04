@@ -8,9 +8,11 @@ use std::process::Command;
 use gate::{
     ArmFinding, ArmObservation, ArmOutcome, Contract, CsharpUnusedStatus, EnvironmentLedgerKind,
     FindingDetail, GateId, JavascriptUnusedStatus, LOCAL_PATH_MARKER, PACKAGED_ENV_PROFILE,
-    PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_TASTE_WORDS, ProbeFailure, RimCapture, Selector,
-    SourceLocus, TOOLCHAIN_ARMS, TOOLCHAIN_REPORT_VERSION, ToolEvidence, ToolchainSource,
-    acquire_toolchain, measure_toolchain,
+    PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_TASTE_WORDS, PredecessorComparison,
+    PredecessorComparisonError, PredecessorConfiguration, PredecessorFinding,
+    PredecessorObservation, PredecessorResult, ProbeFailure, RimCapture, Selector, SourceLocus,
+    TOOLCHAIN_ARMS, TOOLCHAIN_REPORT_VERSION, ToolEvidence, ToolchainSource, acquire_toolchain,
+    compare_predecessor, measure_toolchain,
 };
 use wire::{Digest, Domain};
 
@@ -487,6 +489,81 @@ fn the_compiled_scanners_report_exact_findings_over_a_dirty_tree() {
     );
 
     measure_toolchain(observations).expect("finding observations are admitted");
+}
+
+/// What the compiled marker scanner emits, held against the release it replaces.
+///
+/// Every other parity case builds its current side from fixture findings, so
+/// none of them observe a measurement the compiled scanners actually produced.
+/// A marker alone on its line is one place to both producers and is where the
+/// two must still agree; a doubled line is one place to the predecessor and
+/// two here, which is the granularity the comparison holds apart. Pinning both
+/// keeps a locus this scanner adds from changing what parity means unexamined.
+#[test]
+fn the_compiled_marker_scanner_compares_against_the_predecessor_it_replaces() {
+    let doubled =
+        format!("// {LOCAL_PATH_MARKER}somebody/devel and {LOCAL_PATH_MARKER}somebody/scratch\n");
+    let cases = [
+        (
+            "toolchain-marker-parity-single",
+            format!("// {LOCAL_PATH_MARKER}somebody/devel\n"),
+            1,
+            Ok(PredecessorComparison::Equivalent),
+        ),
+        (
+            "toolchain-marker-parity-doubled",
+            doubled,
+            2,
+            Err(PredecessorComparisonError::ResultMismatch(
+                GateId::LocalPaths,
+            )),
+        ),
+    ];
+
+    for (label, marked, places, expected) in cases {
+        let repository = scanning_repository(
+            label,
+            &format!("{marked}fn main() {{}}\n"),
+            "Every sentence here is ordinary.\n",
+        );
+        let observations = acquired(
+            &repository,
+            Some(toolchain_directory().into_os_string()),
+            &[SOURCE, PROSE],
+        );
+        let report = measure_toolchain(observations).expect("marker observations are admitted");
+        let current = report
+            .arms
+            .iter()
+            .find(|measurement| measurement.gate_id == GateId::LocalPaths)
+            .expect("the marker scanner is measured");
+        assert_eq!(
+            current.findings.len(),
+            places,
+            "{label} named something other than the occurrences it marks"
+        );
+        assert!(
+            current
+                .findings
+                .iter()
+                .all(|finding| finding.column.is_some()),
+            "{label} compared a column the compiled scanner never reported"
+        );
+
+        let predecessor = PredecessorObservation {
+            gate_name: "local-paths".to_owned(),
+            configuration: PredecessorConfiguration::PackagedDefaults,
+            result: PredecessorResult::Findings(vec![PredecessorFinding::LocalPath {
+                path: SOURCE.to_owned(),
+                line: 1,
+            }]),
+        };
+        assert_eq!(
+            compare_predecessor(&predecessor, current),
+            expected,
+            "{label} compared against the release differently than the comparison documents"
+        );
+    }
 }
 
 #[test]
