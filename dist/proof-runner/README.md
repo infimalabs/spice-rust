@@ -25,6 +25,9 @@ Pins live inside the executable rather than beside it, so a runner built without
 them refuses instead of running unpinned, and editing them produces a different
 executable with a different identity. The runner re-reads its own bytes before
 every execution, revalidates every pin, then emits its attestation on stderr and
-runs the battery member under `sandbox-exec` with networking denied, the
-repository read-only, the host's Cargo caches unreadable, and fresh empty Cargo
-home and target directories that it removes afterward.
+runs the battery member under `sandbox-exec` with every route off this host
+denied, the repository read-only, the host's Cargo caches unreadable, and fresh
+empty Cargo home, target, and mutation-output directories that it removes
+afterward. Loopback stays reachable because the battery's own corpus binds it,
+which is the boundary the container half gets from a network namespace holding
+nothing but a loopback interface.

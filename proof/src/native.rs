@@ -22,7 +22,7 @@ const ISOLATION_CLAIMS: &str = concat!(
     "repository=read-only:",
     "cargo-home=fresh-empty:",
     "cargo-target=fresh-empty:",
-    "network=denied:",
+    "network=loopback-only:",
     "host-dependencies=denied"
 );
 
@@ -432,7 +432,7 @@ marker=spice-proof-native-attestation-v1
 claims=repository=read-only:
 claims=${claims}cargo-home=fresh-empty:
 claims=${claims}cargo-target=fresh-empty:
-claims=${claims}network=denied:
+claims=${claims}network=loopback-only:
 claims=${claims}host-dependencies=denied
 printf '%s:runner=%s:challenge=%s:%s\n' "$marker" "$identity" "$challenge" "$claims" >&2
 printf 'challenge:%s\nexecuted:%s\n' "$challenge" "$*"
@@ -441,7 +441,7 @@ exit 0
     const FIXED_RUNNER: &str = r#"#!/bin/sh
 marker=spice-proof-native-attestation-v1
 claims=repository=read-only:cargo-home=fresh-empty:
-claims=${claims}cargo-target=fresh-empty:network=denied:
+claims=${claims}cargo-target=fresh-empty:network=loopback-only:
 claims=${claims}host-dependencies=denied
 printf '%s:runner=fixed:challenge=fixed:%s\n' "$marker" "$claims" >&2
 exit 0
@@ -450,7 +450,7 @@ exit 0
 identity=$2
 marker=spice-proof-native-attestation-v1
 claims=repository=read-only:cargo-home=fresh-empty:
-claims=${claims}cargo-target=fresh-empty:network=denied:
+claims=${claims}cargo-target=fresh-empty:network=loopback-only:
 claims=${claims}host-dependencies=denied
 printf '%s:runner=%s:challenge=stale-challenge:%s\n' "$marker" "$identity" "$claims" >&2
 exit 0
@@ -461,7 +461,7 @@ marker=spice-proof-native-attestation-v1
 wrong=00000000000000000000000000000000
 wrong=${wrong}00000000000000000000000000000000
 claims=repository=read-only:cargo-home=fresh-empty:
-claims=${claims}cargo-target=fresh-empty:network=denied:
+claims=${claims}cargo-target=fresh-empty:network=loopback-only:
 claims=${claims}host-dependencies=denied
 printf '%s:runner=%s:challenge=%s:%s\n' "$marker" "$wrong" "$challenge" "$claims" >&2
 exit 0
@@ -473,7 +473,7 @@ identity=$2
 challenge=$3
 marker=spice-proof-native-attestation-v1
 claims=repository=read-only:cargo-home=fresh-empty:
-claims=${claims}cargo-target=fresh-empty:network=denied:
+claims=${claims}cargo-target=fresh-empty:network=loopback-only:
 claims=${claims}host-dependencies=denied
 printf '%s:runner=%s:challenge=%s:%s\n' "$marker" "$identity" "$challenge" "$claims" >&2
 exit 70

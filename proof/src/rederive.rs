@@ -322,7 +322,7 @@ mod tests {
                 "claims=repository=read-only:\n",
                 "claims=${{claims}}cargo-home=fresh-empty:\n",
                 "claims=${{claims}}cargo-target=fresh-empty:\n",
-                "claims=${{claims}}network=denied:\n",
+                "claims=${{claims}}network=loopback-only:\n",
                 "claims=${{claims}}host-dependencies=denied\n",
                 "printf '%s:runner=%s:challenge=%s:%s\\n' ",
                 "\"$marker\" \"$identity\" \"$challenge\" \"$claims\" >&2\n",

@@ -20,7 +20,7 @@ const ISOLATION: &str = concat!(
     "repository=read-only:",
     "cargo-home=fresh-empty:",
     "cargo-target=fresh-empty:",
-    "network=denied:",
+    "network=loopback-only:",
     "host-dependencies=denied"
 );
 const VENDOR_RELATIVE: &str = "target/proof-native-darwin/vendor";
@@ -488,6 +488,14 @@ fn ambient_cargo_home() -> Result<PathBuf, String> {
         .ok_or_else(|| "the sealing environment names no Cargo home".to_owned())
 }
 
+/// The boundary the attestation above claims, written in the sandbox dialect.
+///
+/// Loopback is admitted because the battery's own corpus binds it: the members
+/// stand up servers on `127.0.0.1` and talk to them, so a boundary that denied
+/// loopback would not be isolating the proof, it would be deleting it. What the
+/// proof needs denied is a route off this host, which is the same boundary the
+/// container half establishes with a network namespace that has nothing but a
+/// loopback interface in it.
 fn sandbox_profile(workspace: &Path, pins: &Pins, temporary: &Temporary) -> Result<String, String> {
     let git_common = git_one_line(
         &pins.git.path,
@@ -503,6 +511,9 @@ fn sandbox_profile(workspace: &Path, pins: &Pins, temporary: &Temporary) -> Resu
             "(version 1)\n",
             "(allow default)\n",
             "(deny network*)\n",
+            "(allow network-bind (local ip \"localhost:*\"))\n",
+            "(allow network-inbound (local ip \"localhost:*\"))\n",
+            "(allow network-outbound (remote ip \"localhost:*\"))\n",
             "(deny file-write* (subpath \"{}\") (subpath \"{}\"))\n",
             "(deny file-read* (subpath \"{}\") (subpath \"{}\"))\n",
             "(allow file-write* (subpath \"{}\"))\n"
