@@ -74,15 +74,54 @@ const REMAPPED_CARGO_HOME: &str = "/cargo-home";
 /// environment has to own these bytes; it is the sealed Linux image, whose
 /// `rustc` reports `x86_64-unknown-linux-gnu`, because that is the environment
 /// the release battery can reproduce with networking disabled.
-const STAGING_HOST: &str = "x86_64-linux";
+const STAGING_HOST: &str = "x86_64-unknown-linux-gnu";
 
-/// This host, spelled with the two triple fields a running program can read.
+/// Whether this program was compiled for the tuple [`STAGING_HOST`] names.
 ///
-/// A triple's vendor and environment fields are not observable from inside the
-/// program, so the comparison uses what is, and the documentation above names
-/// the full triple it stands for.
+/// This is the only test that decides ownership, and it admits one tuple or
+/// none. A triple's vendor and environment fields are observable after all --
+/// `std::env::consts` simply stops at arch and OS, and stopping there spells a
+/// musl host and the image's gnu host identically while their `-Cmetadata`
+/// differs. Every field the triple names is asserted here, so a near miss is a
+/// refusal rather than a silent admission.
+const fn compiled_for_staging_host() -> bool {
+    cfg!(all(
+        target_arch = "x86_64",
+        target_vendor = "unknown",
+        target_os = "linux",
+        target_env = "gnu",
+    ))
+}
+
+/// This host, named for a reader rather than for the comparison above.
+///
+/// Spelled in the same four fields as [`STAGING_HOST`] so the mismatch reads as
+/// the tuple comparison it is, and the environment field, which is the one that
+/// separates the owning host from its nearest neighbour, is legible. Nothing
+/// decides on this string: a host it cannot spell exactly still refuses,
+/// because [`compiled_for_staging_host`] answered first.
 fn host_spelling() -> String {
-    format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS)
+    let vendor = if cfg!(target_vendor = "apple") {
+        "apple"
+    } else if cfg!(target_vendor = "unknown") {
+        "unknown"
+    } else {
+        "other"
+    };
+    let environment = if cfg!(target_env = "gnu") {
+        "gnu"
+    } else if cfg!(target_env = "musl") {
+        "musl"
+    } else if cfg!(target_env = "") {
+        "none"
+    } else {
+        "other"
+    };
+    format!(
+        "{}-{vendor}-{}-{environment}",
+        std::env::consts::ARCH,
+        std::env::consts::OS,
+    )
 }
 
 const APP_FILES: [&str; 4] = ["app.module", "app_bg.wasm", "canvas-app.html", "style.css"];
@@ -144,9 +183,8 @@ pub fn stage_app(
     environment: &ReleaseEnvironment,
     output: &mut impl Write,
 ) -> Result<(), AppBuildError> {
-    let host = host_spelling();
-    if host != STAGING_HOST {
-        return Err(AppBuildError::ForeignStagingHost(host));
+    if !compiled_for_staging_host() {
+        return Err(AppBuildError::ForeignStagingHost(host_spelling()));
     }
     let root = workspace_root()?;
     let stage = root.join("dist/stage");
@@ -181,10 +219,10 @@ pub fn check_app(
     let result = run_trunk(&root, environment, &temporary, output).and_then(|()| {
         let stage = root.join("dist/stage");
         compare_stage_inventory(&stage, &temporary)?;
-        let host = host_spelling();
-        if host == STAGING_HOST {
+        if compiled_for_staging_host() {
             return compare_stage_bytes(&stage, &temporary);
         }
+        let host = host_spelling();
         writeln!(
             output,
             "[app] {host} is not {STAGING_HOST}; compared the staged inventory \
@@ -442,9 +480,10 @@ impl fmt::Display for AppBuildError {
             ),
             Self::ForeignStagingHost(host) => write!(
                 formatter,
-                "the app stage is owned by {STAGING_HOST} builds and this host is {host}: \
-                 staging here would replace bytes the sealed image reproduces with bytes \
-                 no other environment can"
+                "the app stage is owned by {STAGING_HOST} builds in image {} and this host \
+                 is {host}: staging here would replace bytes the sealed image reproduces \
+                 with bytes no other environment can",
+                proof::DEFAULT_IMAGE
             ),
             Self::GeneratedStage(reason) => {
                 write!(formatter, "generated app stage refused: {reason}")
@@ -842,19 +881,43 @@ mod tests {
 
     /// The refusal has to name both hosts, because the operator's next move
     /// depends on which environment they are missing, not on the fact that
-    /// they are missing one.
+    /// they are missing one. It names the image too, because an operator on an
+    /// x86_64 Linux box is missing an image and not an architecture, and the
+    /// digest is the only thing they can act on.
     #[test]
     fn staging_from_a_foreign_host_refuses_and_names_both_environments() {
-        let refusal = AppBuildError::ForeignStagingHost("aarch64-macos".to_owned()).to_string();
+        let refusal =
+            AppBuildError::ForeignStagingHost("aarch64-apple-macos-none".to_owned()).to_string();
 
         assert!(
-            refusal.contains("aarch64-macos") && refusal.contains(STAGING_HOST),
+            refusal.contains("aarch64-apple-macos-none") && refusal.contains(STAGING_HOST),
             "the refusal named neither the observed host nor the owning one: {refusal}",
         );
-        assert_ne!(
+        assert!(
+            refusal.contains(proof::DEFAULT_IMAGE),
+            "the refusal named no image to stage from: {refusal}",
+        );
+    }
+
+    /// An x86_64 Linux host that is not the image spells its arch and OS
+    /// exactly as the image does, so ownership cannot be decided on those two
+    /// fields. Requiring all four is what separates the image's gnu tuple from
+    /// a musl one, and the spelling has to agree with the decision or the
+    /// mismatch message would name a tuple the guard did not compare.
+    #[test]
+    fn staging_ownership_is_decided_on_the_whole_tuple() {
+        assert_eq!(
+            STAGING_HOST.split('-').collect::<Vec<_>>(),
+            ["x86_64", "unknown", "linux", "gnu"],
+            "the owning host is spelled {STAGING_HOST}; every field is named here because a \
+             count would survive dropping the environment, which is the field that separates \
+             this tuple from a musl one",
+        );
+        assert_eq!(
+            compiled_for_staging_host(),
+            host_spelling() == STAGING_HOST,
+            "the guard and the spelling disagree about this host: {}",
             host_spelling(),
-            String::new(),
-            "a host with no spelling could never be compared to the owning one",
         );
     }
 
