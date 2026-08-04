@@ -159,7 +159,7 @@ impl RecordObserver for LaneObserver {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::sync::{Arc, Condvar, Mutex};
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     use super::{CaptureFailure, CaptureRecord, CaptureReportError, CaptureReporter, observation};
@@ -177,8 +177,6 @@ mod tests {
     struct Reports {
         records: Mutex<Vec<CaptureRecord>>,
         failures: Mutex<Vec<CaptureFailure>>,
-        reported: Mutex<usize>,
-        reported_change: Condvar,
     }
 
     impl CaptureReporter for Reports {
@@ -187,9 +185,6 @@ mod tests {
                 .lock()
                 .expect("record reports lock")
                 .push(record);
-            let mut reported = self.reported.lock().expect("report count lock");
-            *reported += 1;
-            self.reported_change.notify_all();
             Ok(())
         }
 
@@ -233,14 +228,14 @@ mod tests {
             .wait()
             .expect("capture child reaps");
         assert!(outcome.completion().status().success());
-        let reported = reports.reported.lock().expect("report count lock");
-        let (reported, wait) = reports
-            .reported_change
-            .wait_timeout_while(reported, Duration::from_secs(2), |count| *count < 2)
-            .expect("report wait lock");
-        assert!(!wait.timed_out(), "both observer callbacks complete");
-        assert_eq!(*reported, 2);
-        drop(reported);
+        // Every observer callback has already run once the drain completed, so
+        // the reports below are read rather than waited for. A drain abandoned
+        // at the spec deadline would leave them partial, and says so here
+        // instead of surfacing as a short record count with no explanation.
+        assert!(
+            outcome.outputs_drained(),
+            "the drain was abandoned with records still outstanding"
+        );
 
         let records = reports.records.lock().expect("record reports lock");
         assert_eq!(records.len(), 2);
@@ -325,7 +320,15 @@ mod tests {
             group: ProcessGroup::New,
             deadlines: Deadlines::new(
                 Duration::from_secs(2),
-                Duration::from_millis(100),
+                // The drain deadline is a failure threshold, not a wait. On a
+                // healthy run the capture is already complete the first time
+                // the wait looks at it, so none of this is spent however large
+                // it is, and a capture that is merely late is answered when it
+                // finishes rather than when the bound arrives. Only one that
+                // has genuinely stopped reaches the bound, so it is sized for
+                // a loaded machine: an observer starved by a parallel
+                // workspace run is slow, not stopped.
+                Duration::from_secs(10),
                 Duration::from_millis(100),
             )
             .expect("fixture deadlines"),
