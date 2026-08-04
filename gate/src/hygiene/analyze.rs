@@ -221,8 +221,8 @@ impl HygieneConfiguration {
     ///
     /// # Errors
     ///
-    /// Refuses a suppression missing its path, deciding rule, or any provenance
-    /// component, because partial provenance cannot be audited.
+    /// Refuses a suppression missing its path, shape, deciding rule, or any
+    /// provenance component, because partial provenance cannot be audited.
     pub fn with_suppressions(
         mut self,
         suppressions: impl IntoIterator<Item = SuppressedPath>,
@@ -234,7 +234,7 @@ impl HygieneConfiguration {
             .find(|item| !item.is_complete() || invalid_identity(&item.path))
         {
             return Err(HygieneAnalysisError::Configuration(format!(
-                "suppressed path {:?} requires a deciding rule and complete provenance",
+                "suppressed path {:?} requires a shape, a deciding rule, and complete provenance",
                 incomplete.path
             )));
         }

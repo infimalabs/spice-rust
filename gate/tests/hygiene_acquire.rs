@@ -146,6 +146,7 @@ fn compiled_and_tracked_exclusions_are_visible_in_the_acquired_evidence() {
         Some(
             [SuppressedPath {
                 path: ".venv/broken.py".to_owned(),
+                shape: "file".to_owned(),
                 rule: ".venv/**".to_owned(),
                 provenance: HygieneProvenance {
                     release: "current".to_owned(),
@@ -204,17 +205,27 @@ fn a_tracked_walk_skip_suppresses_its_candidate_while_retaining_where_it_came_fr
             vec![
                 SuppressedPath {
                     path: "app/_ignored.py".to_owned(),
+                    shape: "file".to_owned(),
                     rule: "app/_ignored.py".to_owned(),
                     provenance: tracked_walk_provenance(1),
                 },
                 SuppressedPath {
+                    path: "app/generated.py".to_owned(),
+                    shape: "directory".to_owned(),
+                    rule: "app/generated.py".to_owned(),
+                    provenance: tracked_walk_provenance(3),
+                },
+                SuppressedPath {
                     path: "tests/test_ignored.py".to_owned(),
+                    shape: "file".to_owned(),
                     rule: "tests/test_ignored.py".to_owned(),
                     provenance: tracked_walk_provenance(0),
                 },
             ]
             .as_slice()
-        )
+        ),
+        "the skipped non-Python file is absent and the skipped directory is \
+         present under the shape that says so"
     );
 
     let decoded: HygieneReport = serde_json::from_slice(&report.canonical_json())
@@ -229,6 +240,66 @@ fn a_tracked_walk_skip_suppresses_its_candidate_while_retaining_where_it_came_fr
     );
 
     suppressed.remove();
+    measured.remove();
+}
+
+#[test]
+fn a_directory_skip_names_the_subtree_it_closed_and_the_layer_that_closed_it() {
+    let measured = directory_skip_repository("hygiene-acquire-subtree-measured", false);
+    let closed = directory_skip_repository("hygiene-acquire-subtree", true);
+
+    let measured_report = acquired_report(&measured);
+    let measured_arm = arm(&measured_report, GateId::AssertionFreeTests);
+    assert!(
+        measured_arm
+            .findings
+            .iter()
+            .any(|finding| finding.path == "tests/support/test_hidden.py"),
+        "the subtree must hold a measured finding before a skip can be shown to close it: {:?}",
+        measured_arm.findings
+    );
+    assert_eq!(
+        suppressed_paths(measured_arm),
+        Some([compiled_target_suppression()].as_slice()),
+        "the compiled default closes the tracked target/ subtree with no tracked rule in play"
+    );
+
+    let report = acquired_report(&closed);
+    let measurement = arm(&report, GateId::AssertionFreeTests);
+    assert_eq!(measurement.outcome, HygieneOutcome::Findings);
+    assert!(
+        !measurement
+            .findings
+            .iter()
+            .any(|finding| finding.path.starts_with("tests/support/")),
+        "the directory skip must remove every candidate beneath it: {:?}",
+        measurement.findings
+    );
+    assert_eq!(
+        suppressed_paths(measurement),
+        Some(
+            [
+                compiled_target_suppression(),
+                SuppressedPath {
+                    path: "tests/support".to_owned(),
+                    shape: "directory".to_owned(),
+                    rule: "tests/support".to_owned(),
+                    provenance: tracked_walk_provenance(0),
+                },
+            ]
+            .as_slice()
+        ),
+        "a pruned directory is evidence naming itself, its rule, and its layer"
+    );
+    assert!(
+        !measurement
+            .evidence
+            .iter()
+            .any(|evidence| matches!(evidence, AnalysisEvidence::Exclusion(_))),
+        "closing a subtree must not retire the arm that still measured the rest"
+    );
+
+    closed.remove();
     measured.remove();
 }
 
@@ -331,9 +402,11 @@ fn tracked_walk_provenance(index: usize) -> HygieneProvenance {
 ///
 /// Every path exists either way, so the only difference between the two
 /// fixtures is the tracked `gate.walk.skip` list under test. Alongside the two
-/// Python candidates it holds a non-Python file and a directory whose name ends
-/// in `.py`, because neither is a hygiene candidate and neither may appear as a
-/// suppression however the walk classifies it.
+/// Python candidates it holds a non-Python file, which is no candidate and so
+/// never a suppression, and a directory whose name ends in `.py`, which is the
+/// case that makes the shape load-bearing: skipped, it is a subtree the walk
+/// never entered rather than the Python file its name reads as, and only the
+/// shape says which.
 fn suppression_repository(label: &str, skip: &[&str]) -> Tree {
     let repository = hygiene_repository(label, false);
     repository.write("tests/test_ignored.py", "def test_ignored():\n    pass\n");
@@ -356,6 +429,52 @@ fn suppression_repository(label: &str, skip: &[&str]) -> Tree {
     }
     git_commit(&repository, "hygiene suppression fixture");
     repository
+}
+
+/// A repository whose candidate lives one directory below a skippable root.
+///
+/// The candidate is never named by a rule; only the directory holding it is, so
+/// the skipped fixture can only account for the loss by reporting the subtree.
+/// Both fixtures track a file under `target/`, which the compiled walk defaults
+/// prune. That is the only way a compiled default fires on a materialized tree:
+/// the tree is a private copy of tracked content and holds nothing a build or a
+/// checkout leaves behind, and the other compiled rule names `.git/`, which git
+/// will not track. Tracking under `target/` is unusual, and that is the point:
+/// it is the one arrangement that puts the compiled layer under a real
+/// acquisition instead of under a hand-built rule list.
+fn directory_skip_repository(label: &str, skip: bool) -> Tree {
+    let repository = hygiene_repository(label, false);
+    repository.write(
+        "tests/support/test_hidden.py",
+        "def test_hidden():\n    pass\n",
+    );
+    repository.write("target/staged.py", "def staged():\n    return 1\n");
+    if skip {
+        repository.write(
+            "spice.toml",
+            &format!(
+                "{}\n[gate.walk]\nskip = [\"tests/support\"]\n",
+                workspace_document("spice.toml")
+            ),
+        );
+    }
+    git_commit(&repository, "hygiene subtree suppression fixture");
+    repository
+}
+
+/// The compiled default that closes a tracked `target/` subtree.
+fn compiled_target_suppression() -> SuppressedPath {
+    SuppressedPath {
+        path: "target".to_owned(),
+        shape: "directory".to_owned(),
+        rule: "target/".to_owned(),
+        provenance: HygieneProvenance {
+            release: "current".to_owned(),
+            layer: "compiled".to_owned(),
+            document: "<compiled-gate-battery>".to_owned(),
+            field: "gate::input::DEFAULT_SKIP".to_owned(),
+        },
+    }
 }
 
 fn configuration() -> HygieneConfiguration {

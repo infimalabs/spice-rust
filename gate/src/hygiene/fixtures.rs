@@ -733,6 +733,7 @@ mod tests {
     fn suppression(path: &str) -> SuppressedPath {
         SuppressedPath {
             path: path.to_owned(),
+            shape: "file".to_owned(),
             rule: path.to_owned(),
             provenance: HygieneProvenance {
                 release: "current".to_owned(),
