@@ -561,6 +561,26 @@ fn contract_syntax_drives_argument_registration() {
             .unwrap_or_else(|error| panic!("{argv:?} must parse: {error}"));
     }
 
+    // Adoption is a bare switch: task capture reads it with get_flag, which
+    // panics outright on an option carrying a value.
+    let stolen = parser
+        .clone()
+        .try_get_matches_from(["spice", "task", "capture", "TASK-1k4Q5gJw", "--steal"])
+        .expect("task capture accepts --steal");
+    let capture = |matches: &clap::ArgMatches| {
+        matches
+            .subcommand_matches("task")
+            .and_then(|task| task.subcommand_matches("capture"))
+            .expect("task capture matches")
+            .get_flag("steal")
+    };
+    assert!(capture(&stolen));
+    let plain = parser
+        .clone()
+        .try_get_matches_from(["spice", "task", "capture", "TASK-1k4Q5gJw"])
+        .expect("task capture still accepts a bare handle");
+    assert!(!capture(&plain));
+
     // Release one exposes no finite, test-only execution arm for watch.
     for argv in [
         &["spice", "doctor", "garbage"][..],
