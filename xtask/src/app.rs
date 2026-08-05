@@ -513,7 +513,9 @@ impl fmt::Display for AppBuildError {
             Self::UnreadableSourceIndex(reason) => write!(
                 formatter,
                 "the tracked build inputs could not be read, so what the stage was built \
-                 from cannot be stated: {reason}"
+                 from cannot be stated: {reason}; mounting a linked worktree is the usual \
+                 cause, because its repository sits outside the mount, and \
+                 {STAGE_INSTRUCTIONS} says what to mount instead"
             ),
             Self::UntrackedSourceInput(input) => write!(
                 formatter,
