@@ -38,6 +38,13 @@ Git already tracks the native-only `policy.admission`, while the predecessor
 temporarily reads the immediately preceding tracked document until its fleet is
 dry. No admission run uses the predecessor reader.
 
+That bridge is per-worktree index state, so no commit carries it. Every lane
+still driven by the predecessor arms it in its own worktree with the same two
+commands, or the tracked `policy.admission` reaches the predecessor reader
+there and claim renewal refuses the whole document as a backend error while the
+phase advance it accompanies still lands. Those lanes disarm it the way the
+final check below does, once the appliance is ambient.
+
 ## Prove the predecessor is dry
 
 Run the predecessor binary while it is still the ambient `spice` command:
