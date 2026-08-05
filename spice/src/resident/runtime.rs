@@ -186,13 +186,16 @@ pub(crate) fn up_from(current: &Path) -> Outcome<()> {
         Ok(repository) => repository,
         Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
     };
-    let startup_surface = match load_startup_surface(&repository) {
-        Ok(surface) => surface,
-        Err(error) => return configuration_refusal(&error),
-    };
     let paths = match RuntimePaths::from_repository(&repository) {
         Ok(paths) => paths,
         Err(outcome) => return outcome,
+    };
+    if let Err(error) = fs::create_dir_all(&paths.runtime) {
+        return environment_fault("resident::runtime-unavailable", &error.to_string());
+    }
+    let startup_surface = match load_startup_surface(&repository) {
+        Ok(surface) => surface,
+        Err(error) => return configuration_refusal(&error),
     };
     if let Err(error) = fs::create_dir_all(&paths.data) {
         return environment_fault("resident::data-unavailable", &error.to_string());

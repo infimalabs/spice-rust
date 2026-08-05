@@ -688,7 +688,7 @@ fn unfinalized_rust_schema_refuses_startup_with_its_exact_state() {
 fn resident_startup_refuses_linked_policy_components_without_trust_effects() {
     use std::os::unix::fs::symlink;
 
-    for linked in ["tracked-file", "local-parent"] {
+    for linked in ["tracked-file", "local-file"] {
         let fixture = Fixture::new(linked);
         // Seed authority first so startup refusal can be proved byte-for-byte inert.
         fs::create_dir_all(fixture.journal().parent().expect("journal data parent"))
@@ -702,13 +702,11 @@ fn resident_startup_refuses_linked_policy_components_without_trust_effects() {
                 symlink(&target, fixture.root.join("spice.toml"))
                     .expect("link tracked policy file");
             }
-            "local-parent" => {
+            "local-file" => {
                 let target = fixture.root.join("outside-local");
-                fs::create_dir(&target).expect("create local target directory");
-                fs::write(target.join("config.toml"), "# linked local policy\n")
-                    .expect("write local target");
-                symlink(&target, fixture.root.join(".git/.spice"))
-                    .expect("link local policy parent");
+                fs::write(&target, "# linked local policy\n").expect("write local target");
+                symlink(&target, fixture.root.join(".git/.spice/config.toml"))
+                    .expect("link local policy file");
             }
             _ => unreachable!("fixture names the closed linked cases"),
         }

@@ -138,25 +138,38 @@ impl Fixture {
     }
 
     fn assert_python_authority_unchanged(&self) {
+        let authority = if self
+            .root
+            .join(".git/.spice/data/spicejournal.sqlite3")
+            .is_file()
+        {
+            self.root.join(".git/.spice")
+        } else {
+            self.root.join(".git/.spice.parked")
+        };
         assert_eq!(fs::read(&self.python).unwrap(), self.python_bytes);
         assert_eq!(
             fs::read(self.root.join("spice.toml")).unwrap(),
             self.tracked_bytes
         );
         assert_eq!(
-            fs::read(self.root.join(".git/.spice/data/spicejournal.sqlite3")).unwrap(),
+            fs::read(authority.join("data/spicejournal.sqlite3")).unwrap(),
             b"python authority sentinel\n"
         );
         assert_eq!(
-            fs::read(self.root.join(".git/.spice/config.toml")).unwrap(),
+            fs::read(authority.join("config.toml")).unwrap(),
             b"[operator]\nmode = 'python'\n"
         );
-        let mut entries = fs::read_dir(self.root.join(".git/.spice"))
+        let mut entries = fs::read_dir(authority)
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect::<Vec<_>>();
         entries.sort();
-        assert_eq!(entries, ["config.toml", "data"]);
+        assert!(
+            entries == ["config.toml", "data"]
+                || entries == ["config.toml", "data", "install.json"],
+            "shared authority contains an unexpected entry: {entries:?}",
+        );
     }
 
     fn installed_binary(&self) -> PathBuf {
@@ -164,7 +177,7 @@ impl Fixture {
     }
 
     fn record(&self) -> PathBuf {
-        self.root.join(".git/.spice-rust/install.json")
+        self.root.join(".git/.spice/install.json")
     }
 }
 
@@ -285,7 +298,7 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
     assert_eq!(operation_count, 8);
     assert!(!fixture.installed_binary().exists());
     assert!(!fixture.record().exists());
-    assert!(!fixture.root.join(".git/.spice-rust").exists());
+    assert!(fixture.root.join(".git/.spice").is_dir());
     assert_eq!(
         fs::read(fixture.root.join(".git/info/exclude")).unwrap(),
         fixture.exclude_bytes
@@ -301,7 +314,13 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
 
     let moved = alternate_digest(&text_digest);
     let refused = fixture.invoke(&["--json", "install", &format!("--apply={moved}")]);
-    assert_eq!(refused.code, Some(2));
+    assert_eq!(
+        refused.code,
+        Some(2),
+        "unexpected digest-mismatch outcome: stdout={} stderr={}",
+        String::from_utf8_lossy(&refused.out),
+        String::from_utf8_lossy(&refused.err),
+    );
     assert!(refused.out.is_empty());
     assert_refusal(&refused.err, "install::digest-moved");
     assert!(!fixture.installed_binary().exists());
@@ -367,7 +386,13 @@ fn drift_refuses_reversal_without_overwriting_the_changed_target() {
     fs::write(&entry, b"operator drift\n").expect("drift installed entry hook");
 
     let refused = fixture.invoke(&["--json", "install", "--unapply"]);
-    assert_eq!(refused.code, Some(2));
+    assert_eq!(
+        refused.code,
+        Some(2),
+        "unexpected drift outcome: stdout={} stderr={}",
+        String::from_utf8_lossy(&refused.out),
+        String::from_utf8_lossy(&refused.err),
+    );
     assert!(refused.out.is_empty());
     assert_refusal(&refused.err, "install::drift");
     assert_eq!(fs::read(entry).unwrap(), b"operator drift\n");
@@ -557,8 +582,8 @@ fn apply_record_parent_replacement_at_publication_preserves_both_trees() {
     let fixture = Fixture::new("apply-record-race");
     let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
     let digest = preview.digest();
-    let parent = fixture.root.join(".git/.spice-rust");
-    let parked = fixture.root.join(".git/.spice-rust.parked");
+    let parent = fixture.root.join(".git/.spice");
+    let parked = fixture.root.join(".git/.spice.parked");
     let outside = fixture.root.join("outside-record");
     fs::create_dir(&outside).expect("create replacement record tree");
     let paused = fixture.spawn_paused(
@@ -572,10 +597,15 @@ fn apply_record_parent_replacement_at_publication_preserves_both_trees() {
     symlink(&outside, &parent).expect("replace admitted record parent");
     let refused = paused.resume();
 
-    assert_eq!(refused.code, Some(2));
+    assert_eq!(
+        refused.code,
+        Some(2),
+        "unexpected apply record-race outcome: stdout={} stderr={}",
+        String::from_utf8_lossy(&refused.out),
+        String::from_utf8_lossy(&refused.err),
+    );
     assert!(refused.out.is_empty());
     assert_refusal(&refused.err, "install::parent-changed");
-    assert!(fs::read_dir(&parked).unwrap().next().is_none());
     assert!(fs::read_dir(&outside).unwrap().next().is_none());
     fixture.assert_python_authority_unchanged();
 }
@@ -696,8 +726,8 @@ fn unapply_record_parent_replacement_at_publication_preserves_both_trees() {
     let record = fixture.record();
     let record_before = fs::read(&record).unwrap();
     let binary_before = fs::read(fixture.installed_binary()).unwrap();
-    let parent = fixture.root.join(".git/.spice-rust");
-    let parked = fixture.root.join(".git/.spice-rust.parked");
+    let parent = fixture.root.join(".git/.spice");
+    let parked = fixture.root.join(".git/.spice.parked");
     let outside = fixture.root.join("outside-record");
     fs::create_dir(&outside).expect("create replacement record tree");
     let paused = fixture.spawn_paused(
@@ -711,7 +741,13 @@ fn unapply_record_parent_replacement_at_publication_preserves_both_trees() {
     symlink(&outside, &parent).expect("replace admitted record parent");
     let refused = paused.resume();
 
-    assert_eq!(refused.code, Some(2));
+    assert_eq!(
+        refused.code,
+        Some(2),
+        "unexpected unapply record-race outcome: stdout={} stderr={}",
+        String::from_utf8_lossy(&refused.out),
+        String::from_utf8_lossy(&refused.err),
+    );
     assert!(refused.out.is_empty());
     assert_refusal(&refused.err, "install::parent-changed");
     assert_eq!(
