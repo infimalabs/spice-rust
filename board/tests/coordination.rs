@@ -391,6 +391,52 @@ fn allocator_and_inventory_share_the_stored_visibility_for_every_actor_route() {
 }
 
 #[test]
+fn stealing_waives_possession_alone_and_waits_on_no_lease() {
+    let actor = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e408"));
+    let dependent = {
+        let mut head = statement("BOARD-blocked");
+        head.dependencies.push(handle("BOARD-absent"));
+        head
+    };
+    let deferred = {
+        let mut head = workflow("todo");
+        head.deferral = Some(instant("2026-08-01T07:00:00.000Z"));
+        head
+    };
+    let entries = vec![
+        claimed_entry("BOARD-held", "todo"),
+        entry("BOARD-free"),
+        admitted(
+            dependent,
+            workflow("todo"),
+            Some(claim(ClaimDisposition::Active)),
+            Some(lease()),
+        )
+        .expect("claimed heads awaiting a dependency"),
+        admitted(
+            statement("BOARD-deferred"),
+            deferred,
+            Some(claim(ClaimDisposition::Active)),
+            Some(lease()),
+        )
+        .expect("claimed heads sleeping until later"),
+    ];
+    let [held, free, blocked, sleeping] = &entries[..] else {
+        panic!("four possession fixtures");
+    };
+
+    // lease() runs to 06:10 and is nowhere near spent here.
+    assert!(!board::eligible_entry(&entries, held, &actor));
+    assert!(board::stealable_entry(&entries, held, &actor));
+
+    // Possession is the only clause a steal waives.
+    assert!(board::eligible_entry(&entries, free, &actor));
+    assert!(board::stealable_entry(&entries, free, &actor));
+    assert!(!board::stealable_entry(&entries, blocked, &actor));
+    assert!(!board::stealable_entry(&entries, sleeping, &actor));
+}
+
+#[test]
 fn policy_snapshot_retains_hidden_rows_as_explicit_evidence() {
     let projects =
         board::ProjectPolicy::new(["board".to_owned()], Vec::new(), 2, 3).expect("fixture policy");

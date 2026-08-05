@@ -553,7 +553,7 @@ fn board_witness_holds(read: &JournalRead<'_>, witness: &Witness) -> Result<bool
                         && seat.disposition == "occupied"
                 })
         }),
-        Witness::Eligibility { rule } => matches!(rule.as_str(), "next" | "capture"),
+        Witness::Eligibility { rule } => matches!(rule.as_str(), "next" | "capture" | "steal"),
         Witness::Preview { .. } => true,
         Witness::Barrier { name, digest } => {
             name.as_str() == "board" && board_barrier_from_read(read)? == *digest

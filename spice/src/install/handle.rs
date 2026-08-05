@@ -20,8 +20,6 @@ static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(debug_assertions)]
 static MUTATION_RENDEZVOUS: OnceLock<Option<MutationRendezvous>> = OnceLock::new();
-#[cfg(debug_assertions)]
-const MUTATION_WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
 #[cfg(debug_assertions)]
 #[derive(Debug)]
@@ -853,72 +851,96 @@ fn mutation_pause(action: &str, display: &Path) -> Result<(), InstallError> {
     if rendezvous.action != action || rendezvous.path != display {
         return Ok(());
     }
-    fs::write(rendezvous.control.join("ready").join("arrived"), action).map_err(|source| {
-        InstallError::io("signal install mutation rendezvous", display, source)
-    })?;
-    await_release(&rendezvous.control.join("release"), display)
+    await_release(&rendezvous.control, action, display)
 }
 
 /// Block until the harness releases this pause, or the horizon is spent.
 ///
-/// The release is a file the harness writes into a release-only directory, so
-/// the wait arms there and then blocks on the notification channel. The pause
-/// signals its readiness in a sibling directory and cannot wake this receive.
-/// The predicate is evaluated once after arming, so a release landing in that
-/// window is observed rather than waited out. The horizon is the only timer
-/// left: between notifications this wait holds still rather than re-testing
-/// the release on a schedule.
+/// A release landed before the child starts remains an explicit file. Otherwise
+/// the child binds a loopback listener before announcing readiness, then blocks
+/// on one exact release token. The harness therefore cannot observe
+/// readiness until the event receiver is armed, and no filesystem notification
+/// or polling interval sits between the release and the resumed mutation.
 #[cfg(debug_assertions)]
-fn await_release(release: &Path, display: &Path) -> Result<(), InstallError> {
-    use notify::{RecursiveMode, Watcher as _};
+fn await_release(control: &Path, action: &str, display: &Path) -> Result<(), InstallError> {
+    use std::net::{Ipv4Addr, TcpListener};
     use std::sync::mpsc::{self, RecvTimeoutError};
-    use std::time::{Duration, Instant};
+    use std::thread;
+    use std::time::Duration;
 
-    let released = release.join("continue");
-    let (sender, receiver) = mpsc::channel::<notify::Result<notify::Event>>();
-    let mut watcher = notify::PollWatcher::new(
-        move |event| {
-            let _ = sender.send(event);
-        },
-        notify::Config::default().with_poll_interval(MUTATION_WATCH_INTERVAL),
-    )
-    .map_err(|error| unwatchable(display, &error.to_string()))?;
-    watcher
-        .watch(release, RecursiveMode::NonRecursive)
-        .map_err(|error| unwatchable(display, &error.to_string()))?;
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if released.exists() {
-            return Ok(());
-        }
-        match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-            Ok(Ok(_)) => {}
-            Err(RecvTimeoutError::Timeout) => {
-                return Err(InstallError::io(
-                    "wait for install mutation rendezvous",
-                    display,
-                    io::Error::new(io::ErrorKind::TimedOut, "test rendezvous timed out"),
-                ));
+    if control.join("release").join("continue").exists() {
+        return signal_ready(control, action, None, display);
+    }
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .map_err(|source| InstallError::io("bind install mutation rendezvous", display, source))?;
+    let release_port = listener
+        .local_addr()
+        .map_err(|source| InstallError::io("inspect install mutation rendezvous", display, source))?
+        .port();
+    signal_ready(control, action, Some(release_port), display)?;
+
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let result = listener.accept().and_then(|(mut stream, _)| {
+            let mut token = [0_u8; 8];
+            stream.read_exact(&mut token)?;
+            if token == *b"continue" {
+                Ok(())
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "install rendezvous received the wrong release token",
+                ))
             }
-            // A failed watcher and a closed channel both mean the release can
-            // no longer be observed. Blocking for the rest of the horizon
-            // would report a timeout for a signal that was never coming.
-            Ok(Err(error)) => return Err(unwatchable(display, &error.to_string())),
-            Err(RecvTimeoutError::Disconnected) => {
-                return Err(unwatchable(display, "notification channel closed"));
-            }
-        }
+        });
+        let _ = sender.send(result);
+    });
+
+    match receiver.recv_timeout(Duration::from_secs(10)) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(source)) => Err(InstallError::io(
+            "receive install mutation rendezvous",
+            display,
+            source,
+        )),
+        Err(RecvTimeoutError::Timeout) => Err(InstallError::io(
+            "wait for install mutation rendezvous",
+            display,
+            io::Error::new(io::ErrorKind::TimedOut, "test rendezvous timed out"),
+        )),
+        Err(RecvTimeoutError::Disconnected) => Err(InstallError::io(
+            "wait for install mutation rendezvous",
+            display,
+            io::Error::new(io::ErrorKind::BrokenPipe, "test rendezvous disconnected"),
+        )),
     }
 }
 
-/// The failure for a rendezvous whose release can no longer be observed.
 #[cfg(debug_assertions)]
-fn unwatchable(display: &Path, detail: &str) -> InstallError {
-    InstallError::io(
-        "watch install mutation rendezvous",
-        display,
-        io::Error::other(detail.to_owned()),
-    )
+fn signal_ready(
+    control: &Path,
+    action: &str,
+    release_port: Option<u16>,
+    display: &Path,
+) -> Result<(), InstallError> {
+    use std::net::{Ipv4Addr, TcpStream};
+
+    let ready_port = fs::read_to_string(control.join("ready").join("port"))
+        .map_err(|source| InstallError::io("read install readiness rendezvous", display, source))?
+        .parse::<u16>()
+        .map_err(|source| {
+            InstallError::io(
+                "decode install readiness rendezvous",
+                display,
+                io::Error::new(io::ErrorKind::InvalidData, source),
+            )
+        })?;
+    let mut ready = TcpStream::connect((Ipv4Addr::LOCALHOST, ready_port)).map_err(|source| {
+        InstallError::io("connect install readiness rendezvous", display, source)
+    })?;
+    write!(ready, "{action} {}", release_port.unwrap_or_default())
+        .map_err(|source| InstallError::io("signal install mutation rendezvous", display, source))
 }
 
 #[cfg(not(debug_assertions))]

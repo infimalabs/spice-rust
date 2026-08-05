@@ -8,6 +8,8 @@ pub mod config;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod gate;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod git_shadow;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod install;
 pub mod placeholder;
 pub mod repository;

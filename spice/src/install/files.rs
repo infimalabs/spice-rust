@@ -38,7 +38,7 @@ pub(super) fn publish_operation(
 
 pub(super) fn materialize_generated(
     operation: &Operation,
-    rust_binary: Option<&Path>,
+    spice_binary: Option<&Path>,
 ) -> Result<FileImage, InstallError> {
     let bytes = match operation.asset {
         Asset::Exclusions => exclusions(
@@ -53,7 +53,7 @@ pub(super) fn materialize_generated(
         Asset::HookEntry => steer::hook::STAGES[0].bytes().as_bytes().to_vec(),
         Asset::HookStatic => steer::hook::STAGES[1].bytes().as_bytes().to_vec(),
         Asset::Skill => SKILL.as_bytes().to_vec(),
-        Asset::Binary => read_binary(rust_binary.ok_or(InstallError::BinaryContextChanged)?)?,
+        Asset::Binary => read_binary(spice_binary.ok_or(InstallError::BinaryContextChanged)?)?,
     };
     let image = FileImage::new(operation.generated.mode, bytes);
     if image.generated() != operation.generated {

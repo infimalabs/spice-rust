@@ -16,34 +16,29 @@ static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 const MAX_COMPACT_RECORD_BYTES: u64 = 64 * 1024;
 
 #[test]
-fn installed_rust_binary_coexists_with_the_python_entrypoint() {
-    let scratch = Scratch::new("coexistence");
+fn installed_spice_is_the_one_repository_local_executable() {
+    let scratch = Scratch::new("appliance");
     let repository = Repository::discover(scratch.path()).unwrap();
-    let python = scratch.executable(
-        "bin/spice",
-        b"#!/usr/bin/env python3\nprint('python-spice')\n",
-    );
-    let python_before = fs::read(&python).unwrap();
-    let rust = Path::new(env!("CARGO_BIN_EXE_spice"));
+    let source = Path::new(env!("CARGO_BIN_EXE_spice"));
 
-    let planned = plan(&repository, Some(rust)).unwrap();
-    let receipt = apply(&repository, Some(rust), &planned.digest().unwrap()).unwrap();
-    let installed = scratch.join(".spice/rust/bin/spice-rust");
+    let planned = plan(&repository, Some(source)).unwrap();
+    let receipt = apply(&repository, Some(source), &planned.digest().unwrap()).unwrap();
+    let installed = scratch.join(".spice/bin/spice");
 
     assert_eq!(receipt.status(), InstallStatus::Complete);
-    assert_eq!(run(&python, &[]), b"python-spice\n");
     let help = run(&installed, &["--help"]);
     assert!(
         String::from_utf8(help)
             .unwrap()
             .contains("Repository-local coordination appliance")
     );
-    assert_eq!(fs::read(&python).unwrap(), python_before);
     assert_eq!(
         fs::metadata(&installed).unwrap().len(),
-        fs::metadata(rust).unwrap().len()
+        fs::metadata(source).unwrap().len()
     );
-    let receipt = fs::metadata(scratch.join(".git/.spice-rust/install.json")).unwrap();
+    let skill = fs::read_to_string(scratch.join(".agents/skills/spice/SKILL.md")).unwrap();
+    assert_eq!(skill.matches(".spice/bin/spice up").count(), 1);
+    let receipt = fs::metadata(scratch.join(".git/.spice/install.json")).unwrap();
     assert!(receipt.len() < MAX_COMPACT_RECORD_BYTES);
     assert_eq!(receipt.permissions().mode() & 0o777, 0o600);
     assert!(!scratch.join(".git/.spice/rust/install.json").exists());
@@ -53,11 +48,10 @@ fn installed_rust_binary_coexists_with_the_python_entrypoint() {
         InstallStatus::Uninstalled
     );
     assert!(!installed.exists());
-    assert_eq!(run(&python, &[]), b"python-spice\n");
 
-    let replanned = plan(&repository, Some(rust)).unwrap();
+    let replanned = plan(&repository, Some(source)).unwrap();
     assert_eq!(
-        apply(&repository, Some(rust), &replanned.digest().unwrap())
+        apply(&repository, Some(source), &replanned.digest().unwrap())
             .unwrap()
             .status(),
         InstallStatus::Complete
@@ -66,6 +60,40 @@ fn installed_rust_binary_coexists_with_the_python_entrypoint() {
         unapply(&repository).unwrap().status(),
         InstallStatus::Uninstalled
     );
+}
+
+#[test]
+fn linked_worktree_keeps_assets_local_and_the_receipt_common() {
+    let scratch = Scratch::new("linked");
+    let common = scratch.join(".git");
+    let git_dir = common.join("worktrees/linked");
+    let linked = scratch.join("linked");
+    fs::create_dir_all(&git_dir).unwrap();
+    fs::create_dir(&linked).unwrap();
+    fs::write(
+        linked.join(".git"),
+        format!("gitdir: {}\n", git_dir.display()),
+    )
+    .unwrap();
+    fs::write(git_dir.join("commondir"), "../..\n").unwrap();
+    let repository = Repository::discover(&linked).unwrap();
+    let source = Path::new(env!("CARGO_BIN_EXE_spice"));
+
+    let planned = plan(&repository, Some(source)).unwrap();
+    let installed = apply(&repository, Some(source), &planned.digest().unwrap()).unwrap();
+
+    assert_eq!(installed.status(), InstallStatus::Complete);
+    assert!(linked.join(".spice/bin/spice").is_file());
+    assert!(linked.join(".agents/skills/spice/SKILL.md").is_file());
+    assert!(common.join(".spice/install.json").is_file());
+    assert!(!scratch.join(".spice/bin/spice").exists());
+
+    assert_eq!(
+        unapply(&repository).unwrap().status(),
+        InstallStatus::Uninstalled
+    );
+    assert!(!linked.join(".spice/bin/spice").exists());
+    assert!(common.join(".spice/install.json").is_file());
 }
 
 #[test]
@@ -175,7 +203,7 @@ fn arbitrary_duplicate_reordered_and_mismatched_records_are_inert() {
 fn same_byte_installed_file_and_parent_replacement_refuse_unapply_inertly() {
     let replaced_file = applied("installed-file-generation");
     let repository = replaced_file.repository();
-    let entry = replaced_file.join(".spice/rust/hooks/entry.sh");
+    let entry = replaced_file.join(".spice/hooks/entry.sh");
     let replacement = replaced_file.join("replacement-entry");
     fs::write(&replacement, fs::read(&entry).unwrap()).unwrap();
     fs::set_permissions(&replacement, fs::Permissions::from_mode(0o755)).unwrap();
@@ -189,8 +217,8 @@ fn same_byte_installed_file_and_parent_replacement_refuse_unapply_inertly() {
 
     let replaced_parent = applied("installed-parent-generation");
     let repository = replaced_parent.repository();
-    let hooks = replaced_parent.join(".spice/rust/hooks");
-    let prior = replaced_parent.join(".spice/rust/prior-hooks");
+    let hooks = replaced_parent.join(".spice/hooks");
+    let prior = replaced_parent.join(".spice/prior-hooks");
     fs::rename(&hooks, &prior).unwrap();
     fs::create_dir(&hooks).unwrap();
     fs::hard_link(prior.join("entry.sh"), hooks.join("entry.sh")).unwrap();
@@ -237,19 +265,14 @@ fn assert_bad_record_is_inert(scratch: &Scratch) {
 }
 
 #[test]
-fn cli_preview_apply_and_unapply_are_typed_idempotent_and_python_first() {
+fn cli_preview_apply_and_unapply_are_typed_idempotent_and_exact() {
     let scratch = Scratch::new("cli");
-    let python = scratch.executable(
-        "bin/spice",
-        b"#!/usr/bin/env python3\nprint('python-spice')\n",
-    );
     let hook = scratch.executable(
         ".spice/hooks/pre-commit",
         b"#!/bin/sh\nexec spice dev pre-commit \"$@\"\n",
     );
     let git_config = scratch.join(".git/config");
     fs::write(&git_config, b"[core]\n\thooksPath = .spice/hooks\n").unwrap();
-    let python_before = image(&python);
     let hook_before = image(&hook);
     let config_before = image(&git_config);
 
@@ -263,7 +286,7 @@ fn cli_preview_apply_and_unapply_are_typed_idempotent_and_python_first() {
         panic!("invalid install digest must refuse");
     };
     assert_eq!(refusal.reason, "install::digest-refused");
-    assert!(!scratch.join(".spice/rust").exists());
+    assert!(!scratch.join(".spice/bin/spice").exists());
 
     let text_plan = invoke(scratch.path(), &["install"]);
     let json_plan = invoke(scratch.path(), &["--json", "install"]);
@@ -277,7 +300,7 @@ fn cli_preview_apply_and_unapply_are_typed_idempotent_and_python_first() {
     assert_eq!(json_plan.position, ReplyPosition::Direct {});
     assert_eq!(json_plan.body, text_plan);
     assert_eq!(text_plan.digest(), &text_plan.plan().digest().unwrap());
-    assert!(!scratch.join(".spice/rust").exists());
+    assert!(!scratch.join(".spice/bin/spice").exists());
 
     let apply_argument = format!("--apply={}", text_plan.digest());
     let text_apply = invoke(scratch.path(), &["install", &apply_argument]);
@@ -286,6 +309,7 @@ fn cli_preview_apply_and_unapply_are_typed_idempotent_and_python_first() {
     let json_apply: InstallReceipt = successful_reply(json_apply);
     assert_eq!(text_apply, json_apply);
     assert_eq!(text_apply.status(), InstallStatus::Complete);
+    assert!(scratch.join(".spice/bin/spice").is_file());
 
     let text_unapply: InstallReceipt =
         successful_body(invoke(scratch.path(), &["install", "--unapply"]));
@@ -294,10 +318,8 @@ fn cli_preview_apply_and_unapply_are_typed_idempotent_and_python_first() {
     assert_eq!(text_unapply, json_unapply);
     assert_eq!(text_unapply.status(), InstallStatus::Uninstalled);
 
-    assert_eq!(image(&python), python_before);
     assert_eq!(image(&hook), hook_before);
     assert_eq!(image(&git_config), config_before);
-    assert_eq!(run(&python, &[]), b"python-spice\n");
 }
 
 fn invoke(repository: &Path, arguments: &[&str]) -> Output {
@@ -380,7 +402,7 @@ impl Scratch {
     }
 
     fn record(&self) -> PathBuf {
-        self.join(".git/.spice-rust/install.json")
+        self.join(".git/.spice/install.json")
     }
 
     fn snapshot(&self) -> Snapshot {

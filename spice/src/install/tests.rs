@@ -54,15 +54,10 @@ fn planning_is_canonical_digest_bound_and_side_effect_free() {
 }
 
 #[test]
-fn apply_is_idempotent_preserves_python_and_unapply_is_exact() {
+fn apply_is_idempotent_and_unapply_is_exact() {
     let scratch = Scratch::new("round-trip");
     let repository = scratch.repository();
-    let python = scratch.executable(
-        "bin/spice",
-        b"#!/usr/bin/env python3\nprint('python-harness')\n",
-    );
-    let binary = scratch.binary(b"#!/bin/sh\nprintf 'rust-appliance\\n'\n");
-    let before_python = fs::read(&python).unwrap();
+    let binary = scratch.binary(b"#!/bin/sh\nprintf 'spice-appliance\\n'\n");
     let before_exclude = fs::read(scratch.exclude()).unwrap();
 
     let planned = plan(&repository, Some(&binary)).expect("plan install");
@@ -75,7 +70,6 @@ fn apply_is_idempotent_preserves_python_and_unapply_is_exact() {
     assert_eq!(first.completed(), planned.operations().len());
     assert_eq!(first, repeated);
     assert_eq!(installed_images, images(&repository, repeated.plan()));
-    assert_eq!(fs::read(&python).unwrap(), before_python);
     assert_eq!(
         fs::read_to_string(scratch.join(GIT_PRE_COMMIT_PATH)).unwrap(),
         GIT_PRE_COMMIT
@@ -97,8 +91,7 @@ fn apply_is_idempotent_preserves_python_and_unapply_is_exact() {
         mode(&scratch.join(GIT_REFERENCE_TRANSACTION_PATH)),
         EXECUTABLE_MODE
     );
-    assert_eq!(run(&python), b"python-harness\n");
-    assert_eq!(run(&scratch.join(BINARY_PATH)), b"rust-appliance\n");
+    assert_eq!(run(&scratch.join(BINARY_PATH)), b"spice-appliance\n");
     assert!(
         fs::read_to_string(scratch.exclude())
             .unwrap()
@@ -126,7 +119,6 @@ fn apply_is_idempotent_preserves_python_and_unapply_is_exact() {
     assert_eq!(removed.status(), InstallStatus::Uninstalled);
     assert_eq!(removed, repeated_remove);
     assert_eq!(fs::read(scratch.exclude()).unwrap(), before_exclude);
-    assert_eq!(fs::read(&python).unwrap(), before_python);
     for operation in planned.operations() {
         let observed = observe(&operation.destination(&repository))
             .unwrap()
@@ -319,6 +311,28 @@ fn changed_optional_binary_refuses_the_planned_digest() {
 }
 
 #[test]
+fn generated_guidance_and_install_errors_name_spice() {
+    assert_eq!(SKILL.matches(".spice/bin/spice up").count(), 1);
+    assert!(!SKILL.contains("spice-rust"));
+    assert!(!SKILL.contains("Rust"));
+
+    for error in [
+        InstallError::BinaryEmpty(PathBuf::from("fixture")),
+        InstallError::BinaryNotRegular(PathBuf::from("fixture")),
+        InstallError::BinaryContextChanged,
+        InstallError::DivergentExclusions,
+        InstallError::RecordMissing,
+        InstallError::ApplyInProgress,
+        InstallError::UnapplyInProgress,
+    ] {
+        let message = error.to_string();
+        assert!(message.contains("Spice"), "{message}");
+        assert!(!message.contains("Rust"), "{message}");
+        assert!(!message.contains("spice-rust"), "{message}");
+    }
+}
+
+#[test]
 fn apply_resumes_a_write_interrupted_before_progress_publication() {
     let scratch = Scratch::new("apply-resume");
     let repository = scratch.repository();
@@ -462,28 +476,29 @@ fn legacy_record_names_its_owning_release_and_refuses_without_mutation() {
 
 #[test]
 fn prior_current_path_record_names_its_owning_release_before_mutation() {
-    let scratch = Scratch::new("prior-current-record");
-    let repository = scratch.repository();
-    let planned = plan(&repository, None).unwrap();
-    apply(&repository, None, &planned.digest().unwrap()).unwrap();
-    let installed = images(&repository, &planned);
-    let mut record = read_record(&repository).unwrap().unwrap().record;
-    record.version = LEGACY_RECORD_VERSIONS[0].0;
-    fs::write(
-        record_path(&repository).unwrap(),
-        wire::encode(&record).unwrap(),
-    )
-    .unwrap();
+    for (version, owner) in LEGACY_RECORD_VERSIONS {
+        let scratch = Scratch::new(owner);
+        let repository = scratch.repository();
+        let planned = plan(&repository, None).unwrap();
+        apply(&repository, None, &planned.digest().unwrap()).unwrap();
+        let installed = images(&repository, &planned);
+        let mut record = read_record(&repository).unwrap().unwrap().record;
+        record.version = version;
+        fs::write(
+            record_path(&repository).unwrap(),
+            wire::encode(&record).unwrap(),
+        )
+        .unwrap();
 
-    let error = plan(&repository, None).unwrap_err();
-    assert!(matches!(
-        &error,
-        InstallError::LegacyRecord { path, owner }
-            if path == &record_path(&repository).unwrap()
-                && owner == &LEGACY_RECORD_VERSIONS[0].1
-    ));
-    assert!(error.to_string().contains(LEGACY_RECORD_VERSIONS[0].1));
-    assert_eq!(images(&repository, &planned), installed);
+        let error = plan(&repository, None).unwrap_err();
+        assert!(matches!(
+            &error,
+            InstallError::LegacyRecord { path, owner: observed }
+                if path == &record_path(&repository).unwrap() && observed == &owner
+        ));
+        assert!(error.to_string().contains(owner));
+        assert_eq!(images(&repository, &planned), installed);
+    }
 }
 
 #[test]
@@ -665,7 +680,7 @@ impl Scratch {
     }
 
     fn binary(&self, bytes: &[u8]) -> PathBuf {
-        self.executable("build/spice-rust", bytes)
+        self.executable("build/spice", bytes)
     }
 
     fn executable(&self, relative: &str, bytes: &[u8]) -> PathBuf {

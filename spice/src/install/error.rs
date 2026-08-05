@@ -91,20 +91,20 @@ impl fmt::Display for InstallError {
             ),
             Self::ExclusionsNotUtf8 => formatter.write_str("Git exclusions are not UTF-8"),
             Self::DivergentExclusions => {
-                formatter.write_str("Git exclusions carry a divergent spice-rust managed block")
+                formatter.write_str("Git exclusions carry a divergent Spice managed block")
             }
             Self::BinaryNotRegular(path) => {
                 write!(
                     formatter,
-                    "Rust binary is not a regular file: {}",
+                    "Spice executable is not a regular file: {}",
                     path.display()
                 )
             }
             Self::BinaryEmpty(path) => {
-                write!(formatter, "Rust binary is empty: {}", path.display())
+                write!(formatter, "Spice executable is empty: {}", path.display())
             }
             Self::BinaryContextChanged => {
-                formatter.write_str("Rust binary selection differs from the recorded plan")
+                formatter.write_str("Spice executable selection differs from the recorded plan")
             }
             Self::DigestMismatch { expected, observed } => write!(
                 formatter,
@@ -113,13 +113,13 @@ impl fmt::Display for InstallError {
             Self::InvalidRecord(reason) => write!(formatter, "invalid install record: {reason}"),
             Self::LegacyRecord { path, owner } => write!(
                 formatter,
-                "legacy install record at {} belongs to the retired {owner} installer; \
-                 unapply it with the release that wrote it before using the coexistence installer",
+                "install record at {} belongs to the retired release {owner}; \
+                 unapply it with that release before installing Spice",
                 path.display(),
             ),
-            Self::RecordMissing => formatter.write_str("no Rust install record exists"),
-            Self::ApplyInProgress => formatter.write_str("Rust installation is incomplete"),
-            Self::UnapplyInProgress => formatter.write_str("Rust unapply is incomplete"),
+            Self::RecordMissing => formatter.write_str("no Spice install record exists"),
+            Self::ApplyInProgress => formatter.write_str("Spice installation is incomplete"),
+            Self::UnapplyInProgress => formatter.write_str("Spice unapply is incomplete"),
             Self::Drift { path, observed } => write!(
                 formatter,
                 "installed path drifted at {path}; observed {}",

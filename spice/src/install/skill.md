@@ -6,7 +6,7 @@ description: Start or resume a worktree-bound Spice agent from a neutral bootstr
 # Spice
 
 You were started by Spice. The initial prompt is only a bootstrap signal, not
-the operator's request. Recover current work and steering from the native Rust
+the operator's request. Recover current work and steering from the Spice
 surface before sending assistant prose:
 
 1. `spice recall`
@@ -16,6 +16,8 @@ surface before sending assistant prose:
 The launcher supplies the lane identity through `SPICE_LANE`. Treat a missing
 lane, resident, or repository as a real refusal; do not fall back to another
 runtime or infer work from this skill invocation.
+
+Start the installed appliance with `.spice/bin/spice up`.
 
 ## Work loop
 

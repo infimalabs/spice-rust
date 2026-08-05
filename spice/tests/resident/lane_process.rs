@@ -266,7 +266,7 @@ fn assert_session_binding(
     let tape = tape::Tape::open_existing(
         fixture
             .root
-            .join(".git/.spice-rust/tape")
+            .join(".git/.spice/tape")
             .join(row.lane.to_string())
             .join(row.vendor.as_str()),
     )
@@ -301,7 +301,7 @@ fn seed_occupied_lane(
     let tape = tape::Tape::open(
         fixture
             .root
-            .join(".git/.spice-rust/tape")
+            .join(".git/.spice/tape")
             .join(lane.to_string())
             .join("claude"),
     )
@@ -1097,7 +1097,7 @@ fn resident_capture_is_byte_exact_and_listenable_through_terminal_residue() {
 
     let tape_root = fixture
         .root
-        .join(".git/.spice-rust/tape")
+        .join(".git/.spice/tape")
         .join(added.lane.to_string())
         .join("claude");
     let tape = tape::Tape::open_existing(&tape_root).expect("resident transcript tape opens");
@@ -1112,7 +1112,7 @@ fn resident_capture_is_byte_exact_and_listenable_through_terminal_residue() {
     );
 
     let replay = listen::retro(
-        fixture.root.join(".git/.spice-rust/tape"),
+        fixture.root.join(".git/.spice/tape"),
         listen::RetroSelector::Lane(added.lane.to_string()),
     )
     .expect("resident transcript replays");
@@ -1265,7 +1265,7 @@ fn mismatched_resume_and_moved_tape_refuse_without_advancing_the_vacant_lane() {
 
     let tape = fixture
         .root
-        .join(".git/.spice-rust/tape")
+        .join(".git/.spice/tape")
         .join(added.lane.to_string())
         .join("claude");
     fs::rename(&tape, tape.with_extension("moved")).expect("fixture tape moves");

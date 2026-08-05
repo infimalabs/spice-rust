@@ -67,7 +67,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert_eq!(missing.root(), &spice::config::Root::default());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 50);
+    assert_eq!(missing.provenance().len(), 51);
     assert!(
         missing
             .provenance()
@@ -629,6 +629,7 @@ package_roots = ["src/fixture"]
 generated_paths = ["build/fixture"]
 name_cluster_threshold = 4
 test_paths = ["tests/fixture"]
+admission = ["fixture-load", "--offline"]
 
 [policy.repo_truth]
 docs = ["DOCTRINE.md"]

@@ -1,9 +1,9 @@
-# Spice Rust
+# Spice
 
 ## Development hooks
 
-A digest-bound Rust install publishes `pre-commit`, `commit-msg`, and
-`reference-transaction` artifacts under `.spice/rust/git-hooks`. Preview and
+A digest-bound Spice install publishes `pre-commit`, `commit-msg`, and
+`reference-transaction` artifacts under `.spice/git-hooks`. Preview and
 apply the current install plan, then activate its exact hook directory once per
 checkout or linked worktree:
 
@@ -13,12 +13,18 @@ cargo run --locked -p spice -- install --apply=DIGEST_FROM_PREVIEW
 ./scripts/install-hooks.sh
 ```
 
-The activation script refuses unless all three native hooks are executable. The
-native pre-commit hook runs the canonical Rust verifier, which performs
+After installation, start the repository appliance with exactly one command:
+
+```sh
+.spice/bin/spice up
+```
+
+The activation script refuses unless all three Spice hooks are executable. The
+pre-commit hook runs the canonical verifier, which performs
 formatting, Clippy, native and browser-target builds, deterministic app
 verification, workspace tests, doctests, the machine-readable
 contract-landing check. The checked gate manifest maps each of the 25 retired
-standard policy checks to one compiled Rust arm, and workspace tests exercise
+standard policy checks to one compiled gate arm, and workspace tests exercise
 the exact mapping and production executor. Verification prints each command
 before execution and names the first command and exit status when it fails. The
 native commit-msg hook preserves the current fixed message-hygiene law and

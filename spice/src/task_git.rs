@@ -235,6 +235,52 @@ pub fn capture(repository: &Repository) -> Result<Capture, Error> {
     })
 }
 
+/// Local commits a claim would strand if its holder released it now.
+///
+/// Deliberately read-only, unlike its siblings: it neither recovers a pending
+/// operation, nor requires a clean tree, nor fetches, because deciding whether
+/// a release is safe must not itself move the lane or reach the network. The
+/// local baseline is the same evidence `prepare_claim` would refuse on later.
+/// A lane with no origin-backed baseline has nothing to strand and answers with
+/// no commits, which is the inert stance `prepare_claim` takes there too.
+pub fn stranded_commits(repository: &Repository) -> Result<Vec<String>, Error> {
+    let root = repository.worktree_root();
+    let Some(target) = resolve_target(root)? else {
+        return Ok(Vec::new());
+    };
+    let listed = required_read(
+        root,
+        &["log", "--format=%h %s", &format!("{}..HEAD", target.baseline)],
+        "list local commits",
+    )?;
+    Ok(listed.lines().map(str::to_owned).collect())
+}
+
+/// Refuse a voluntary release that would leave task commits owned by nobody.
+///
+/// `prepare_claim` already refuses to hand a lane new work while loose commits
+/// sit outside a claimed boundary. Releasing a claim is the door that creates
+/// those loose commits in the first place, so it refuses on the same evidence
+/// and names both the commits and the way out.
+pub fn prepare_free(repository: &Repository, task: &str) -> Result<(), Error> {
+    let stranded = stranded_commits(repository)?;
+    if stranded.is_empty() {
+        return Ok(());
+    }
+    Err(Error::refusal(
+        "git::free-loose-commits",
+        format!(
+            "releasing {task} would strand {count} task-owned local commit(s): {listed}",
+            count = stranded.len(),
+            listed = stranded.join("; "),
+        ),
+        format!(
+            "run `spice task done {task}` to record those commits under this \
+             task, or reset the lane to the task baseline before freeing it",
+        ),
+    ))
+}
+
 /// Safely advance a clean lane before allocator possession is minted.
 pub fn prepare_claim(
     repository: &Repository,
@@ -341,6 +387,9 @@ pub fn publish(
     };
     let local_commits = ahead_count(root, &target.baseline)?;
     let message = compose_message(meta, &agent_head);
+    // Bind the authored tree and any non-empty lane command before the merge.
+    // An empty lane declaration deliberately defers to each integrated tree.
+    let admission = Admission::resolve(repository, &agent_head)?;
     let integrated = integrate(
         root,
         &agent_head,
@@ -353,9 +402,13 @@ pub fn publish(
         &target,
         integrated,
         upstream_head,
-        &agent_head,
-        &message,
-        meta.label,
+        Publication {
+            repository,
+            agent_head: &agent_head,
+            message: &message,
+            label: meta.label,
+            admission: &admission,
+        },
     )?;
     Ok(boundary(
         agent_head,
@@ -621,15 +674,31 @@ fn merge_tree(
     ))
 }
 
+/// What stays fixed across every attempt to publish one task phase.
+#[derive(Clone, Copy)]
+struct Publication<'a> {
+    repository: &'a Repository,
+    agent_head: &'a str,
+    message: &'a str,
+    label: &'a str,
+    admission: &'a Admission,
+}
+
 fn publish_with_retry(
     root: &Path,
     target: &Target,
     mut integrated: String,
     mut upstream_head: String,
-    agent_head: &str,
-    message: &str,
-    label: &str,
+    publication: Publication<'_>,
 ) -> Result<(String, String), Error> {
+    let Publication {
+        repository,
+        agent_head,
+        message,
+        label,
+        admission,
+    } = publication;
+    admission.admit(repository, &integrated, label)?;
     let mut pushed = push(root, target, &integrated, &upstream_head)?;
     if pushed.success() {
         return Ok((integrated, upstream_head));
@@ -662,6 +731,9 @@ fn publish_with_retry(
                 label,
             )?;
             upstream_head = fresh;
+            // The race produced a tree nothing has read yet. Every other path
+            // out of this loop pushes the commit admitted above it.
+            admission.admit(repository, &integrated, label)?;
         }
         pushed = push(root, target, &integrated, &upstream_head)?;
         if pushed.success() {
@@ -776,6 +848,7 @@ fn is_push_race(output: &GitOutput) -> bool {
             && detail.contains("failed to update ref"))
 }
 
+include!("task_git/admission.rs");
 include!("task_git/transaction.rs");
 include!("task_git/command.rs");
 #[cfg(test)]

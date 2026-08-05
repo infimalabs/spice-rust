@@ -31,7 +31,7 @@ pub use claim::{Active, ClaimRefusal};
 pub use config::{Config, NextConfig};
 pub use graph::{Diagram, View};
 pub use inventory::{HiddenInventory, Inventory};
-pub use next::{Selection, eligible_entry, select};
+pub use next::{Selection, eligible_entry, select, stealable_entry};
 pub use phase::{PhaseRefusal, Transition, TransitionKind};
 pub use task::{
     BUILTIN_HIDDEN_STEMS, BUILTIN_PUBLIC_STEMS, Dependency, Entry, Family, Project, ProjectError,
