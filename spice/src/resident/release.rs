@@ -212,15 +212,6 @@ fn dispatch_up_change(
     command: &wire::AdmittedCommand,
     change: &wire::intent::UpChange,
 ) -> Outcome<CommandAnswer> {
-    if !matches!(command.actor(), Actor::Operator) {
-        return Outcome::Refusal(Refusal {
-            reason: "command::authority".to_owned(),
-            witness: Some("principal".to_owned()),
-            expected: Some("operator".to_owned()),
-            observed: Some(command.actor().to_string()),
-            remedy: "reconnect with the current operator capability".to_owned(),
-        });
-    }
     if !matches!(change.state, ResidentState::Dark) {
         return Outcome::Refusal(Refusal {
             reason: "down::target-not-dark".to_owned(),
