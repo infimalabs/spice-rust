@@ -622,11 +622,15 @@ fn git_common_dir(workspace: &Path, git: &Path) -> Result<PathBuf, String> {
 ///
 /// The one allow-list here is the pair [`denied_parent`] forces: the
 /// workspace's neighbourhood is denied for reading and writing alike, then the
-/// workspace, its repository and the run's own scratch root are read back. Only
-/// reading is given back there. What the run is allowed to write is one path and
-/// it is named by the last rule in the profile, so a scratch root that happens
-/// to sit inside the neighbourhood is still writable while the workspace and its
-/// repository stay read-only, which they already were two rules above.
+/// the parent's own metadata and the workspace, its repository and the run's
+/// scratch root are read back. Resolving one of those admitted descendants asks
+/// the kernel for metadata on its parent first; Cargo does exactly that while it
+/// translates compiler dep-info. The literal metadata allowance reveals neither
+/// the parent's entries nor any peer's metadata or bytes. What the run is allowed
+/// to write is one path and it is named by the last rule in the profile, so a
+/// scratch root that happens to sit inside the neighbourhood is still writable
+/// while the workspace and its repository stay read-only, which they already
+/// were two rules above.
 ///
 /// That pair sits above every later denial on purpose. Read downward, nothing
 /// below it is weakened -- the warm Cargo caches and the host dependency roots
@@ -648,6 +652,7 @@ fn sandbox_profile(workspace: &Path, pins: &Pins, temporary: &Temporary) -> Resu
             "(allow network-outbound (remote ip \"localhost:*\"))\n",
             "(deny file-write* (subpath \"{}\") (subpath \"{}\"))\n",
             "(deny file-read* file-write* (subpath \"{}\"))\n",
+            "(allow file-read-metadata (literal \"{}\"))\n",
             "(allow file-read* (subpath \"{}\") (subpath \"{}\") (subpath \"{}\"))\n",
             "(deny file-read* (subpath \"{}\") (subpath \"{}\"))\n",
             "{}",
@@ -655,6 +660,7 @@ fn sandbox_profile(workspace: &Path, pins: &Pins, temporary: &Temporary) -> Resu
         ),
         sandbox_string(workspace)?,
         sandbox_string(&git_common)?,
+        sandbox_string(parent)?,
         sandbox_string(parent)?,
         sandbox_string(workspace)?,
         sandbox_string(&git_common)?,
