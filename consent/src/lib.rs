@@ -66,10 +66,17 @@ impl Outcome {
                 expected: None,
                 observed: None,
                 remedy: if denied.rule == OPERATOR {
-                    "the operator refused this request; it never proceeds under this identity, so ask again only as a new request".to_owned()
+                    concat!(
+                        "the operator refused this request; ",
+                        "it never proceeds under this identity, so ask again only as a new request"
+                    )
+                    .to_owned()
                 } else {
                     format!(
-                        "the `{}` rule denies this operation; ask the operator to decide it directly, or change that rule",
+                        concat!(
+                            "the `{}` rule denies this operation; ",
+                            "ask the operator to decide it directly, or change that rule"
+                        ),
                         denied.rule
                     )
                 },
