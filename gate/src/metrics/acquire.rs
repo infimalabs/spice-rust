@@ -154,8 +154,10 @@ fn unavailable(
 ///
 /// The file class is tested here rather than left to the scanner even though the
 /// scanner tests it too: offering it every measurable path would turn each of
-/// this repository's non-Markdown files into its own `NotApplicable` row, and an
-/// arm may not mix that state with the measurements beside it.
+/// this repository's non-Markdown files into its own `NotApplicable` row. The
+/// arm would still fold to the same state, because a measurement outranks a row
+/// that had nothing to measure, but every one of those rows would be retained
+/// and reported, burying the Markdown the arm is about.
 fn markdown_metrics(
     source: &MetricSource<'_>,
 ) -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
