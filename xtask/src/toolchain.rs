@@ -1,12 +1,14 @@
-//! Which toolchain release owns the staged app bytes, and which one is running.
+//! Which toolchain owns the staged app bytes, and which one is running.
 //!
-//! The owning host is a compile-time fact about this binary, but the compiler
-//! it starts is not. Cargo folds all of `rustc --version --verbose` into every
-//! crate's `-Cmetadata`, and that report names the release beside the host
-//! triple, so two builds on the owning tuple under different releases emit
-//! different bytes. The tuple is therefore half of the identity that decides
-//! who may write the stage -- [`crate::app`] owns that half -- and this module
-//! is the other half.
+//! Cargo folds all of `rustc --version --verbose` into every crate's
+//! `-Cmetadata`, and that one report names both dimensions the staged bytes are
+//! owned on: the release, and the host triple the compiler emits for. Neither
+//! is a fact about this binary. What this xtask was compiled for is not what
+//! the compiler on `PATH` will compile, and it is the latter that emits the
+//! bytes, so both fields are read here from a single invocation -- a report
+//! cannot answer for the release and leave the host to be settled from
+//! somewhere else. This module reads them; [`crate::app`] decides on the
+//! values.
 
 use std::path::Path;
 use std::process::Command;
@@ -46,50 +48,86 @@ fn channel(document: &str) -> Option<&str> {
         .find_map(|value| value.trim().strip_prefix('"')?.strip_suffix('"'))
 }
 
-/// The release the compiler a build started here would report.
+/// What the compiler a build started here reports about itself.
+///
+/// Both fields come from one invocation because they describe one compiler:
+/// asking twice, or asking here and settling the other half elsewhere, admits
+/// a pair that no single `rustc` ever reported.
+pub(crate) struct ObservedToolchain {
+    release: String,
+    host: String,
+}
+
+impl ObservedToolchain {
+    /// The release this compiler names.
+    pub(crate) fn release(&self) -> &str {
+        &self.release
+    }
+
+    /// The host triple this compiler emits for.
+    pub(crate) fn host(&self) -> &str {
+        &self.host
+    }
+}
+
+/// What the compiler a build started here would report about itself.
 ///
 /// `--version --verbose` is asked for rather than `--version` because the
-/// release is a named field there instead of a word inside a sentence, and
-/// because that whole report is what Cargo hashes into `-Cmetadata`. It is
-/// asked from the workspace, so a rustup shim resolves the same toolchain file
-/// the build itself will resolve.
-pub(crate) fn observed_release(rustc: &Path, root: &Path) -> Result<String, AppBuildError> {
+/// release and the host are named fields there instead of words inside a
+/// sentence, and because that whole report is what Cargo hashes into
+/// `-Cmetadata`. It is asked from the workspace, so a rustup shim resolves the
+/// same toolchain file the build itself will resolve.
+///
+/// A report missing either field yields neither: the caller decides staging
+/// rights on both, and a compiler that will not say what it is is refused
+/// rather than filled in.
+pub(crate) fn observed(rustc: &Path, root: &Path) -> Result<ObservedToolchain, AppBuildError> {
     let output = Command::new(rustc)
         .args(["--version", "--verbose"])
         .current_dir(root)
         .output()
         .map_err(|error| {
-            AppBuildError::UnreadableToolchainRelease(format!(
+            AppBuildError::UnreadableToolchainReport(format!(
                 "{} did not run: {error}",
                 rustc.display()
             ))
         })?;
     if !output.status.success() {
-        return Err(AppBuildError::UnreadableToolchainRelease(format!(
+        return Err(AppBuildError::UnreadableToolchainReport(format!(
             "{} reported {}",
             rustc.display(),
             output.status
         )));
     }
     let report = String::from_utf8(output.stdout).map_err(|_| {
-        AppBuildError::UnreadableToolchainRelease(format!(
+        AppBuildError::UnreadableToolchainReport(format!(
             "{} answered with bytes that are not UTF-8",
             rustc.display()
         ))
     })?;
-    release(&report).map(str::to_owned).ok_or_else(|| {
-        AppBuildError::UnreadableToolchainRelease(format!(
-            "{} named no release: {report}",
-            rustc.display()
-        ))
+    let named = |name: &str| {
+        field(&report, name).map(str::to_owned).ok_or_else(|| {
+            AppBuildError::UnreadableToolchainReport(format!(
+                "{} named no {name}: {report}",
+                rustc.display()
+            ))
+        })
+    };
+
+    Ok(ObservedToolchain {
+        release: named("release")?,
+        host: named("host")?,
     })
 }
 
-/// The release field of one `rustc --version --verbose` report.
-fn release(report: &str) -> Option<&str> {
+/// One named field of a `rustc --version --verbose` report.
+///
+/// The colon is required rather than assumed, so a longer field name starting
+/// with a shorter one cannot answer for it.
+fn field<'a>(report: &'a str, name: &str) -> Option<&'a str> {
     report
         .lines()
-        .find_map(|line| line.strip_prefix("release:"))
+        .find_map(|line| line.strip_prefix(name)?.strip_prefix(':'))
         .map(str::trim)
 }
 
@@ -144,17 +182,28 @@ mod tests {
         assert_eq!(channel("[toolchain]\nprofile = \"minimal\"\n"), None);
     }
 
-    /// A toolchain report is read for its release and nothing beside it.
+    /// A toolchain report is read for both fields the stage is owned on.
     ///
-    /// The host line is the neighbour that matters: it is the dimension the
-    /// tuple guard already owns, it is spelled the same way, and reading it
-    /// here would make this guard answer a question it was not asked.
+    /// The host line is read here and nowhere else. It is the tuple whose
+    /// `-Cmetadata` the staged bytes carry, and it is named by the same
+    /// invocation as the release, so taking it from here is what stops the two
+    /// halves of one identity from describing two different compilers. Each
+    /// field is asked for by name, so a report carrying one and not the other
+    /// yields neither rather than the wrong one, and a name that is only the
+    /// start of a field this report does carry answers with nothing rather than
+    /// with that field's value.
     #[test]
-    fn a_toolchain_report_yields_its_release_field() {
+    fn a_toolchain_report_yields_both_fields_the_stage_is_owned_on() {
         let report = "rustc 1.97.1 (0000000 2026-01-01)\nbinary: rustc\ncommit-hash: 0000000\n\
                       release: 1.97.1\nhost: x86_64-unknown-linux-gnu\nLLVM version: 20.1.0\n";
 
-        assert_eq!(release(report), Some("1.97.1"));
-        assert_eq!(release("rustc 1.97.1\nhost: x86_64-apple-darwin\n"), None);
+        assert_eq!(field(report, "release"), Some("1.97.1"));
+        assert_eq!(field(report, "host"), Some("x86_64-unknown-linux-gnu"));
+        assert_eq!(
+            field("rustc 1.97.1\nhost: x86_64-apple-darwin\n", "release"),
+            None
+        );
+        assert_eq!(field("rustc 1.97.1\nrelease: 1.97.1\n", "host"), None);
+        assert_eq!(field(report, "commit"), None);
     }
 }
