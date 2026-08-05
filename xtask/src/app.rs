@@ -863,6 +863,67 @@ mod tests {
         fs::remove_dir_all(root).expect("remove configured toolchain fixture");
     }
 
+    /// Toolchain observation roots Cargo config discovery at the app build.
+    ///
+    /// The configured compiler sits under `app/.cargo`, where a walk starting
+    /// at the workspace root cannot see it, and it disagrees with a live
+    /// compiler on `PATH`. The observed release therefore pins both the
+    /// directory handed to [`ReleaseEnvironment::rustc`] and the fact that the
+    /// config layer is asked before `PATH`.
+    #[cfg(unix)]
+    #[test]
+    fn toolchain_observation_reads_the_app_builds_own_cargo_config() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-xtask-app-local-config-{}",
+            std::process::id()
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        let on_path = root.join("path");
+        rustc_script(
+            &on_path,
+            &format!(
+                "rustc {release}\nrelease: {release}\nhost: {STAGING_HOST}\n",
+                release = toolchain::pinned_release(),
+            ),
+        );
+        let configured = rustc_script(
+            &root.join("configured"),
+            "rustc 9.9.9\nrelease: 9.9.9\nhost: x86_64-unknown-linux-gnu\n",
+        );
+        let cargo = root.join("app/.cargo");
+        fs::create_dir_all(&cargo).expect("fixture app Cargo directory");
+        fs::write(
+            cargo.join("config.toml"),
+            format!("[build]\nrustc = \"{}\"\n", configured.display()),
+        )
+        .expect("fixture app Cargo config");
+        let environment = ReleaseEnvironment::new(
+            Some(on_path.into_os_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let observed = observed_toolchain(&root, &environment)
+            .expect("the compiler selected for the app build reports its identity");
+
+        assert_eq!(
+            (observed.release(), observed.host()),
+            ("9.9.9", "x86_64-unknown-linux-gnu"),
+            "toolchain observation did not read build.rustc from app/.cargo ahead of PATH",
+        );
+        fs::remove_dir_all(root).expect("remove app-local config fixture");
+    }
+
     /// `RUSTC` is read ahead of `CARGO_BUILD_RUSTC`, which is Cargo's own order.
     ///
     /// Measured against the installed Cargo: with both set, the compiler
@@ -1215,9 +1276,9 @@ mod tests {
     /// refusal the report parser never sees, and without it an environment that
     /// names none would reach the build with neither half decided.
     ///
-    /// There are three places a compiler can be named now, so the refusal is
-    /// held to naming all three: an operator told only about `PATH` would go
-    /// looking in the one place that was not the reason.
+    /// There are four source spellings a compiler can be named by now, so the
+    /// refusal is held to naming all four: an operator told only about `PATH`
+    /// would go looking in the one place that was not the reason.
     #[test]
     fn an_environment_naming_no_compiler_is_refused() {
         let environment = ReleaseEnvironment::new(
@@ -1235,7 +1296,7 @@ mod tests {
             "an absent compiler answered with something other than an unreadable report: {error}",
         );
         let refusal = error.to_string();
-        for named in ["RUSTC", "CARGO_BUILD_RUSTC", "PATH"] {
+        for named in ["RUSTC", "CARGO_BUILD_RUSTC", "build.rustc", "PATH"] {
             assert!(
                 refusal.contains(named),
                 "the refusal never names {named} as a place a compiler could have come from: \
