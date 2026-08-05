@@ -627,6 +627,50 @@ fn the_workspace_and_its_repository_stay_readable_inside_the_boundary() {
     }
 }
 
+/// Resolving admitted descendants may inspect the neighbourhood node itself.
+///
+/// Cargo translates every compiler dep-info file after `rustc` returns. On
+/// macOS that translation resolves source paths component by component, and a
+/// denial of metadata on the workspace's parent makes every real battery member
+/// fail after compilation with `Operation not permitted`. Giving back metadata
+/// for the literal parent is enough; listing it or inspecting any child beside
+/// the workspace stays denied.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_neighbourhood_node_is_resolvable_without_revealing_its_entries() {
+    let workspace = repository_workspace();
+    let parent = workspace.parent().expect("the workspace sits somewhere");
+    let parent = parent.to_str().expect("the workspace parent is UTF-8");
+    let profile = shipped_profile();
+    let allowance = format!(
+        "(allow file-read-metadata (literal \"{}\"))",
+        super::sandbox_string(Path::new(parent)).expect("the parent is sandbox-spellable")
+    );
+    assert_eq!(
+        profile.matches(&allowance).count(),
+        1,
+        "the profile gives the parent one literal metadata allowance:\n{profile}",
+    );
+    let without_metadata = profile.replace(&allowance, "");
+
+    assert!(
+        metadata_readable(OPEN, parent),
+        "{parent} was already unresolvable, so its allowance proves nothing",
+    );
+    assert!(
+        metadata_readable(&profile, parent),
+        "the boundary prevents admitted descendants from being resolved through {parent}",
+    );
+    assert!(
+        !metadata_readable(&without_metadata, parent),
+        "{parent} stays resolvable without its allowance, so the fixture is vacuous",
+    );
+    assert!(
+        !readable(&profile, parent),
+        "the metadata allowance reveals the neighbourhood's directory entries",
+    );
+}
+
 /// A Cargo home inside the workspace keeps its warm caches denied.
 ///
 /// The allow above reads the workspace back whole, and it is composed above
@@ -776,6 +820,12 @@ fn readable(profile: &str, directory: &str) -> bool {
 #[cfg(target_os = "macos")]
 fn contents_readable(profile: &str, file: &str) -> bool {
     sandboxed(profile, "/bin/cat", file)
+}
+
+/// Whether `sandbox-exec` permits metadata lookup on exactly one path.
+#[cfg(target_os = "macos")]
+fn metadata_readable(profile: &str, path: &str) -> bool {
+    sandboxed(profile, "/usr/bin/stat", path)
 }
 
 /// Whether `sandbox-exec` lets a file be truncated under one profile.

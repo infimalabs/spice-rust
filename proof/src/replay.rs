@@ -462,7 +462,7 @@ fn classify(kind: CheckKind, execution: Execution) -> CheckVerdict {
 /// reading applies to its own stdout.
 fn proved_a_corpus(kind: CheckKind, stdout: &[u8]) -> bool {
     match kind {
-        CheckKind::MutationCorpus => announced_mutants(stdout),
+        CheckKind::MutationCorpus => announced_mutant_count(stdout).is_some_and(|count| count > 0),
         CheckKind::Gate
         | CheckKind::DialectRefusals
         | CheckKind::WaitAndProcess
@@ -480,15 +480,14 @@ fn proved_a_corpus(kind: CheckKind, stdout: &[u8]) -> bool {
 /// two differ. A run that announced no count at all proved no corpus either,
 /// and is refused for the same reason zero is: the member would otherwise pass
 /// while proving nothing, and the receipt would still name it.
-fn announced_mutants(stdout: &[u8]) -> bool {
-    String::from_utf8_lossy(stdout).lines().any(|line| {
+fn announced_mutant_count(stdout: &[u8]) -> Option<u64> {
+    String::from_utf8_lossy(stdout).lines().find_map(|line| {
         line.strip_prefix("Found ")
             .and_then(|announced| announced.strip_suffix(" to test"))
             // Counted positionally so the tool's own pluralisation of the noun
             // after it is never a spelling this reading has to know.
             .and_then(|announced| announced.split_whitespace().next())
             .and_then(|count| count.parse::<u64>().ok())
-            .is_some_and(|count| count > 0)
     })
 }
 
@@ -521,16 +520,35 @@ fn announced_mutants(stdout: &[u8]) -> bool {
 /// target to announce. It is the member as a whole that has to have run
 /// something, so one target that ran a test answers for it.
 fn executed_a_test(stdout: &[u8]) -> bool {
-    String::from_utf8_lossy(stdout).lines().any(|line| {
-        line.strip_prefix("test result: ")
-            // The status word is `ok.` or `FAILED.`, and the counts follow it
-            // positionally, so this reading never has to know either spelling --
-            // the same reason the corpus count above is taken by position.
-            .and_then(|summary| summary.split_once(". "))
-            .and_then(|(_, counts)| counts.split_whitespace().next())
-            .and_then(|passed| passed.parse::<u64>().ok())
-            .is_some_and(|passed| passed > 0)
-    })
+    test_summaries(stdout)
+        .iter()
+        .any(|summary| summary.passed > 0)
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct TestSummary {
+    passed: u64,
+    failed: u64,
+    ignored: u64,
+    measured: u64,
+    filtered: u64,
+}
+
+fn test_summaries(stdout: &[u8]) -> Vec<TestSummary> {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .filter_map(|line| {
+            let (_, counts) = line.strip_prefix("test result: ")?.split_once(". ")?;
+            let fields = counts.split_whitespace().collect::<Vec<_>>();
+            Some(TestSummary {
+                passed: fields.first()?.parse().ok()?,
+                failed: fields.get(2)?.parse().ok()?,
+                ignored: fields.get(4)?.parse().ok()?,
+                measured: fields.get(6)?.parse().ok()?,
+                filtered: fields.get(8)?.parse().ok()?,
+            })
+        })
+        .collect()
 }
 
 fn battery_digest(checks: &[Check]) -> Digest {
@@ -579,14 +597,75 @@ fn replay_digest(
             }
             None => bytes.push(0),
         }
-        frame_bytes(&mut bytes, &check.stdout);
-        frame_bytes(&mut bytes, &check.stderr);
+        frame_check_evidence(&mut bytes, check);
     }
-    Digest::compute(Domain::ProofReplayV2, &bytes)
+    Digest::compute(Domain::ProofReplayV3, &bytes)
+}
+
+/// Bind reproducible evidence for clean runs and full diagnostics for refusals.
+///
+/// Cargo, libtest, and cargo-mutants print elapsed times, fresh output paths,
+/// and parallel compiler scheduling to their transcripts. Those bytes remain
+/// on [`CheckVerdict`] for diagnosis, but cannot identify a replay another
+/// execution can reproduce. A successful member is instead identified by the
+/// structured corpus measurement that made it non-empty. A refused member has
+/// no publishable receipt to reproduce, so its complete bounded transcript
+/// remains part of the refusal identity.
+fn frame_check_evidence(bytes: &mut Vec<u8>, check: &CheckVerdict) {
+    match check.standing {
+        CheckStanding::Clean | CheckStanding::EmptyScope => {
+            bytes.push(0);
+            match check.kind {
+                CheckKind::MutationCorpus => {
+                    bytes.push(0);
+                    match announced_mutant_count(&check.stdout) {
+                        Some(count) => {
+                            bytes.push(1);
+                            frame_u64(bytes, count);
+                        }
+                        None => bytes.push(0),
+                    }
+                }
+                CheckKind::Gate
+                | CheckKind::DialectRefusals
+                | CheckKind::WaitAndProcess
+                | CheckKind::SupplyRebuild => {
+                    bytes.push(1);
+                    let mut summaries = test_summaries(&check.stdout);
+                    summaries.sort_unstable();
+                    frame_usize(bytes, summaries.len());
+                    for summary in summaries {
+                        for count in [
+                            summary.passed,
+                            summary.failed,
+                            summary.ignored,
+                            summary.measured,
+                            summary.filtered,
+                        ] {
+                            frame_u64(bytes, count);
+                        }
+                    }
+                }
+            }
+        }
+        CheckStanding::Failed { .. }
+        | CheckStanding::TimedOut { .. }
+        | CheckStanding::Cancelled { .. }
+        | CheckStanding::OutputTruncated
+        | CheckStanding::OutputIncomplete => {
+            bytes.push(1);
+            frame_bytes(bytes, &check.stdout);
+            frame_bytes(bytes, &check.stderr);
+        }
+    }
 }
 
 fn frame_usize(bytes: &mut Vec<u8>, value: usize) {
-    bytes.extend_from_slice(&(value as u64).to_be_bytes());
+    frame_u64(bytes, value as u64);
+}
+
+fn frame_u64(bytes: &mut Vec<u8>, value: u64) {
+    bytes.extend_from_slice(&value.to_be_bytes());
 }
 
 fn frame_bytes(bytes: &mut Vec<u8>, value: &[u8]) {
@@ -722,6 +801,20 @@ mod tests {
     )
     .as_bytes();
 
+    const MUTATION_EVIDENCE_OTHER_RUNTIME: &[u8] = concat!(
+        "Found 36 mutants to test\n",
+        "ok       Unmutated baseline in 19s build + 1s test\n",
+        "36 mutants tested in 91s: 12 caught, 24 unviable\n",
+    )
+    .as_bytes();
+
+    const LARGER_MUTATION_EVIDENCE: &[u8] = concat!(
+        "Found 37 mutants to test\n",
+        "ok       Unmutated baseline in 7s build + 0s test\n",
+        "37 mutants tested in 22s: 13 caught, 24 unviable\n",
+    )
+    .as_bytes();
+
     /// The same clean exit after the scope stopped selecting code.
     const EMPTY_CORPUS_EVIDENCE: &[u8] = b"Found 0 mutants to test\n";
 
@@ -734,6 +827,13 @@ mod tests {
         "running 7 tests\n",
         "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; ",
         "0 filtered out; finished in 0.00s\n",
+    )
+    .as_bytes();
+
+    const TEST_EVIDENCE_OTHER_RUNTIME: &[u8] = concat!(
+        "running 7 tests\n",
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; ",
+        "0 filtered out; finished in 4.27s\n",
     )
     .as_bytes();
 
@@ -800,6 +900,53 @@ mod tests {
         assert_eq!(verdict.battery_digest(), battery.digest());
         assert_eq!(verdict.environment(), &environment());
         assert_eq!(verdict.target(), ReleaseTarget::X86_64UnknownLinuxMusl);
+    }
+
+    #[test]
+    fn clean_replay_identity_uses_corpus_measurements_not_incidental_transcript_bytes() {
+        let first = run_with(
+            &FakeExecutor::new(vec![
+                exited_with_stderr(true, TEST_EVIDENCE, b"Running /fresh/one/gate"),
+                exited(true, MUTATION_EVIDENCE),
+                exited(true, TEST_EVIDENCE),
+                exited(true, TEST_EVIDENCE),
+                exited(true, TEST_EVIDENCE),
+            ]),
+            &Battery::current(),
+        )
+        .expect("first clean replay");
+        let repeated = run_with(
+            &FakeExecutor::new(vec![
+                exited_with_stderr(
+                    true,
+                    TEST_EVIDENCE_OTHER_RUNTIME,
+                    b"Running /fresh/two/gate",
+                ),
+                exited(true, MUTATION_EVIDENCE_OTHER_RUNTIME),
+                exited(true, TEST_EVIDENCE_OTHER_RUNTIME),
+                exited(true, TEST_EVIDENCE_OTHER_RUNTIME),
+                exited(true, TEST_EVIDENCE_OTHER_RUNTIME),
+            ]),
+            &Battery::current(),
+        )
+        .expect("repeated clean replay");
+
+        assert_ne!(first.checks()[0].stdout(), repeated.checks()[0].stdout());
+        assert_ne!(first.checks()[0].stderr(), repeated.checks()[0].stderr());
+        assert_eq!(first.replay_digest(), repeated.replay_digest());
+
+        let larger = run_with(
+            &FakeExecutor::new(vec![
+                exited(true, TEST_EVIDENCE),
+                exited(true, LARGER_MUTATION_EVIDENCE),
+                exited(true, TEST_EVIDENCE),
+                exited(true, TEST_EVIDENCE),
+                exited(true, TEST_EVIDENCE),
+            ]),
+            &Battery::current(),
+        )
+        .expect("clean replay over a larger mutation corpus");
+        assert_ne!(first.replay_digest(), larger.replay_digest());
     }
 
     #[test]
@@ -1033,6 +1180,10 @@ mod tests {
     }
 
     fn exited(success: bool, stdout: &[u8]) -> Execution {
+        exited_with_stderr(success, stdout, &[])
+    }
+
+    fn exited_with_stderr(success: bool, stdout: &[u8], stderr: &[u8]) -> Execution {
         Execution {
             completion: ExecutionCompletion::Exited {
                 success,
@@ -1044,7 +1195,7 @@ mod tests {
                 complete: true,
             },
             stderr: Captured {
-                bytes: Vec::new(),
+                bytes: stderr.to_vec(),
                 truncated: false,
                 complete: true,
             },

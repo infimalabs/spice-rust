@@ -1071,7 +1071,7 @@ mod tests {
                 0 => receipt.target = ReleaseTarget::Aarch64AppleDarwin,
                 1 => receipt.payload = digest(Domain::DistTargetPayload, b"other payload"),
                 2 => receipt.battery = digest(Domain::ProofBattery, b"other battery"),
-                3 => receipt.replay = digest(Domain::ProofReplayV2, b"other replay"),
+                3 => receipt.replay = digest(Domain::ProofReplayV3, b"other replay"),
                 4 => {
                     receipt.environment = ProofEnvironment::native(digest(
                         Domain::ProofNativeRunner,

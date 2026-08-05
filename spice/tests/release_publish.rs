@@ -322,7 +322,7 @@ fn publish_stage(root: &Path) -> Digest {
                 ProofEnvironment::oci(&pins.proof_container).expect("proof image is pinned")
             }
         };
-        let replay = Digest::compute(Domain::ProofReplayV2, target.as_str().as_bytes());
+        let replay = Digest::compute(Domain::ProofReplayV3, target.as_str().as_bytes());
         let receipt = ProofReceipt {
             version: PROOF_RECEIPT_VERSION,
             target,
@@ -333,7 +333,7 @@ fn publish_stage(root: &Path) -> Digest {
             standing: ProofStanding::Clean,
         };
         let receipt_bytes = wire::encode(&receipt).expect("receipt encodes");
-        let receipt_digest = Digest::compute(Domain::ProofReceiptV2, &receipt_bytes);
+        let receipt_digest = Digest::compute(Domain::ProofReceiptV3, &receipt_bytes);
         write_object(&stage, "payload", &payload_digest, &payload_bytes);
         write_object(&stage, "receipt", &receipt_digest, &receipt_bytes);
         targets.push(ReleaseManifestTarget {
