@@ -2,17 +2,18 @@
 
 use super::*;
 
-/// The predecessor steps nothing here measures while metrics cannot be acquired.
+/// The metric arms this build still measures nothing for, and each one's blocker.
 ///
-/// Pinned by name because the refusal that stands in for them is what the
-/// canonical verifier's retained predecessor stage is justified by: when the
-/// metrics family gains an acquisition entrypoint, this list stops matching and
-/// that justification has to be read again rather than quietly outliving it.
-const UNMEASURED_PREDECESSOR_STEPS: [&str; 4] = [
-    "file-shape",
-    "complexity",
-    "magic-numbers",
-    "markdown-links",
+/// The distinguishing substring is pinned per arm rather than a shared phrase
+/// because all three report the same `Unavailable` state: without it the three
+/// assertions could pass while every arm named one other arm's missing input.
+/// This list is what the canonical verifier's retained predecessor stage is
+/// justified by, so an arm leaving it has to be read against that justification
+/// rather than quietly shortening it.
+const UNREACHED_METRIC_ARMS: [(GateId, &str); 3] = [
+    (GateId::FileShape, "file_shape.source_suffixes"),
+    (GateId::Complexity, "lizard 1.23.0"),
+    (GateId::MagicNumbers, "baseline blob"),
 ];
 
 #[test]
@@ -489,28 +490,7 @@ fn assert_every_family_projected_its_own_evidence(report: &BatteryReport) {
             ArmFamily::Toolchain => {
                 assert!(matches!(result.evidence(), ArmEvidence::Toolchain { .. }));
             }
-            ArmFamily::Metrics => {
-                let ArmEvidence::ExecutorFailure {
-                    gate_id,
-                    arm_family,
-                    declaration,
-                    reason,
-                } = result.evidence()
-                else {
-                    panic!("unavailable metrics acquisition must fail explicitly")
-                };
-                assert_eq!(*gate_id, result.gate_id());
-                assert_eq!(*arm_family, ArmFamily::Metrics);
-                assert_eq!(declaration, result.declaration());
-                assert!(reason.contains("metrics family acquisition is unavailable"));
-                for step in UNMEASURED_PREDECESSOR_STEPS {
-                    assert!(
-                        reason.contains(step),
-                        "the metrics refusal names every predecessor step it \
-                         leaves unmeasured, but {step} is absent from: {reason}"
-                    );
-                }
-            }
+            ArmFamily::Metrics => assert_metric_arm_acquired(result),
             ArmFamily::Hygiene => {
                 assert!(matches!(result.evidence(), ArmEvidence::Hygiene { .. }));
             }
@@ -525,6 +505,52 @@ fn assert_every_family_projected_its_own_evidence(report: &BatteryReport) {
             )
         }),
         "an analyzer read the broken file the sealed tree never held"
+    );
+}
+
+/// One metric arm carried its own acquired evidence rather than a family refusal.
+///
+/// Both halves are asserted from the same result: the three unreached arms each
+/// name their own blocker, and `markdown-links` measured. Asserting only the
+/// refusals would pass just as well if the family had gone back to refusing
+/// wholesale, which is the exact regression this arm's acquisition undoes.
+fn assert_metric_arm_acquired(result: &BatteryArmResult) {
+    let ArmEvidence::Metrics { report } = result.evidence() else {
+        panic!(
+            "the metrics family projects its own acquired evidence, but {} carried {:?}",
+            result.gate_id(),
+            result.evidence()
+        )
+    };
+    assert_eq!(report.gate_id(), result.gate_id());
+    let unreached = UNREACHED_METRIC_ARMS
+        .iter()
+        .find(|(gate_id, _)| *gate_id == result.gate_id());
+    let Some((_, blocker)) = unreached else {
+        assert_eq!(
+            result.gate_id(),
+            GateId::MarkdownLinks,
+            "every metric arm is either unreached or the one that measures"
+        );
+        assert_eq!(
+            result.state(),
+            BatteryState::Failed,
+            "markdown-links measured the sealed tree's one case-mismatched link: {}",
+            result.reason()
+        );
+        return;
+    };
+    assert_eq!(
+        result.state(),
+        BatteryState::Unavailable,
+        "{} has no reachable input yet",
+        result.gate_id()
+    );
+    assert!(
+        result.reason().contains(blocker),
+        "{} names the one input it lacks, but {blocker:?} is absent from: {}",
+        result.gate_id(),
+        result.reason()
     );
 }
 

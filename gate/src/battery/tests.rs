@@ -368,6 +368,16 @@ fn production_repository(root: &Path) -> PathBuf {
     )
     .expect("fixture test source");
     fs::write(repository.join("src/lib.rs"), "pub fn fixture() {}\n").expect("fixture Rust source");
+    // One Markdown source whose inline link differs from the tracked path only
+    // by case. The mismatch is what makes the markdown arm's result depend on
+    // the tracked-path inventory reaching the scanner: with an empty or wrongly
+    // rooted inventory there is nothing to compare against, and the same arm
+    // would report a clean measurement over the very same bytes.
+    fs::write(
+        repository.join("app/notes.md"),
+        "# Notes\n\nThe entrypoint lives in [main](Main.py).\n",
+    )
+    .expect("fixture Markdown source");
 
     fixture_git(&repository, &["init", "-q", "-b", "main"]);
     fixture_git(&repository, &["config", "core.excludesFile", "/dev/null"]);

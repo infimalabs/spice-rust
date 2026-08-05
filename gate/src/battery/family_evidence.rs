@@ -5,7 +5,10 @@ use super::{ArmFamily, BatteryError, valid_text};
 use crate::core::{CoreArmReport, CoreStanding};
 use crate::hygiene::{AnalysisEvidence, HygieneMeasurement, HygieneOutcome, HygieneProvenance};
 use crate::manifest::GateId;
-use crate::metrics::{EvidenceState as MetricState, StructuralArmEvidence};
+use crate::metrics::{
+    EvidenceState as MetricState, MetricEvidence, MetricMeasurement, MetricUnit,
+    StructuralArmEvidence,
+};
 use crate::toolchain::{ArmMeasurement, ArmOutcome};
 
 /// Exact common battery result vocabulary.
@@ -300,7 +303,7 @@ const fn hygiene_state(outcome: HygieneOutcome) -> BatteryState {
 fn metric_state(report: &StructuralArmEvidence) -> Result<BatteryState, BatteryError> {
     let mut observed = None;
     for metric in report.metrics() {
-        let state = metric_terminal(metric.state());
+        let state = metric_terminal(metric);
         observed = Some(match (observed, state) {
             (None, state) => state,
             (Some(BatteryState::Passed | BatteryState::Failed), BatteryState::Passed) => {
@@ -320,14 +323,9 @@ fn metric_state(report: &StructuralArmEvidence) -> Result<BatteryState, BatteryE
     observed.ok_or_else(|| BatteryError::new("metric arm evidence must not be empty"))
 }
 
-fn metric_terminal(state: &MetricState) -> BatteryState {
-    match state {
-        MetricState::Measured { measurement }
-            if measurement.latch().is_some_and(|latch| latch.over_limit())
-                || measurement
-                    .threshold()
-                    .is_some_and(|threshold| measurement.value() > threshold) =>
-        {
+fn metric_terminal(evidence: &MetricEvidence) -> BatteryState {
+    match evidence.state() {
+        MetricState::Measured { measurement } if over_bound(evidence.unit(), measurement) => {
             BatteryState::Failed
         }
         MetricState::Measured { .. } => BatteryState::Passed,
@@ -340,6 +338,22 @@ fn metric_terminal(state: &MetricState) -> BatteryState {
     }
 }
 
+/// Whether one completed measurement broke the bound its unit or rule sets.
+///
+/// The unit is consulted before any rule because a Markdown-link measurement is
+/// forbidden a threshold precisely so that its count can be the finding. Judging
+/// it by threshold alone would report every case mismatch in the tree as a pass,
+/// which is the one result the predecessor step it answers for never gives.
+fn over_bound(unit: MetricUnit, measurement: &MetricMeasurement) -> bool {
+    if unit.admits_only_zero() {
+        return measurement.value() > 0;
+    }
+    measurement.latch().is_some_and(|latch| latch.over_limit())
+        || measurement
+            .threshold()
+            .is_some_and(|threshold| measurement.value() > threshold)
+}
+
 fn metric_reason(report: &StructuralArmEvidence) -> Result<String, BatteryError> {
     let state = metric_state(report)?;
     if state == BatteryState::Passed {
@@ -350,7 +364,7 @@ fn metric_reason(report: &StructuralArmEvidence) -> Result<String, BatteryError>
         .iter()
         .any(|metric| matches!(metric.state(), MetricState::Measured { .. }))
     {
-        return Ok("one or more structural measurements exceeded threshold".to_owned());
+        return Ok("one or more structural measurements exceeded their declared bound".to_owned());
     }
     let first = report
         .metrics()

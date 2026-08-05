@@ -158,11 +158,13 @@ impl<'trace> BatteryCapture<'trace> {
             configuration: tracked_evidence(contract)?,
             policy: contract.rule_policy().clone(),
             state,
-            // Every elastic bound is decided by the structural family, and this
-            // build has no acquisition entrypoint for it. No bound was decided,
-            // so none is reported: the family's own arms say why they are
-            // unavailable, and inventing a decision here would answer for a
-            // measurement nothing took.
+            // An elastic bound is decided only by a structural arm that measures
+            // a bounded metric, and this build runs none. The one arm that does
+            // acquire counts Markdown-link case mismatches, which is forbidden a
+            // rule, latch, or threshold because the count is itself the finding;
+            // the three bounded arms report the input they lack instead of a
+            // measurement. No bound was decided, so none is reported: inventing
+            // a decision here would answer for a measurement nothing took.
             bounds: Vec::new(),
             tools: tool_evidence(contract)?,
         };

@@ -6,6 +6,8 @@
 //! [`MetricEvidence`] state; a missing parser, tool, file class, or policy
 //! context is therefore evidence and never an omitted row or invented zero.
 
+#[cfg(not(target_arch = "wasm32"))]
+mod acquire;
 mod declaration;
 mod evidence;
 mod parity;
@@ -13,6 +15,8 @@ mod parser;
 mod policy_binding;
 mod state_binding;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use acquire::{MetricAcquisitionError, MetricSource, acquire_metrics};
 pub use declaration::{
     ArmDeclaration, KeyShape, MetricDeclaration, MetricId, MetricUnit, ParserDeclaration, ParserId,
     ParserMode, STRUCTURAL_ARMS, STRUCTURAL_METRICS, ScopeDeclaration, ToolRequirement,
