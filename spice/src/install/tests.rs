@@ -136,6 +136,138 @@ fn apply_is_idempotent_preserves_python_and_unapply_is_exact() {
     assert!(record_path(&repository).unwrap().is_file());
 }
 
+/// A terminal receipt may describe fixed bytes from the build that removed them.
+///
+/// The recorded skill identity is changed to stand for that earlier build and
+/// the optional binary is changed on disk before this build previews. Neither
+/// historical identity may authorize the new application: the terminal record
+/// first has to prove exact restoration, then preview and apply derive a fresh
+/// plan whose digest names this build's skill and binary. Reversing that new
+/// install proves the supersession retained the old receipt's only remaining
+/// authority instead of simply ignoring it.
+#[test]
+fn an_uninstalled_prior_build_receipt_is_superseded_by_a_current_digest_bound_install() {
+    let scratch = Scratch::new("build-supersession");
+    let repository = scratch.repository();
+    let binary = scratch.binary(b"prior build binary\n");
+    let prior = plan(&repository, Some(&binary)).expect("prior build plans");
+    apply(&repository, Some(&binary), &prior.digest().unwrap()).expect("prior build applies");
+    unapply(&repository).expect("prior build restores every target");
+
+    rewrite_recorded_skill(&repository, b"prior build embedded skill\n");
+    fs::write(&binary, b"current build binary\n").expect("current binary replaces prior input");
+
+    let historical = read_record(&repository)
+        .expect("terminal historical receipt is readable")
+        .expect("terminal receipt remains")
+        .record;
+    assert_eq!(historical.status, InstallStatus::Uninstalled);
+    let historical_skill = historical
+        .plan
+        .operations
+        .iter()
+        .find(|operation| operation.asset == Asset::Skill)
+        .expect("historical plan carries its skill")
+        .generated
+        .clone();
+
+    let current = plan(&repository, Some(&binary)).expect("current build previews over terminal");
+    let current_skill = current
+        .operations()
+        .iter()
+        .find(|operation| operation.asset() == Asset::Skill)
+        .expect("current plan carries its skill")
+        .generated();
+    assert_ne!(current_skill, &historical_skill);
+    assert_eq!(
+        current_skill,
+        &GeneratedImage::new(DATA_MODE, SKILL.as_bytes())
+    );
+    let current_digest = current.digest().expect("current plan has an identity");
+    assert_ne!(current_digest, historical.plan_digest);
+
+    let installed = apply(&repository, Some(&binary), &current_digest)
+        .expect("current digest supersedes the terminal receipt");
+    assert_eq!(installed.status(), InstallStatus::Complete);
+    assert_eq!(installed.digest(), &current_digest);
+    assert_eq!(
+        fs::read(scratch.join(SKILL_PATH)).unwrap(),
+        SKILL.as_bytes()
+    );
+    assert_eq!(
+        fs::read(scratch.join(BINARY_PATH)).unwrap(),
+        b"current build binary\n"
+    );
+
+    let removed = unapply(&repository).expect("current install remains exactly reversible");
+    assert_eq!(removed.status(), InstallStatus::Uninstalled);
+    assert!(current.operations().iter().all(|operation| {
+        observe(&operation.destination(&repository))
+            .unwrap()
+            .map(|observed| observed.image)
+            == operation.previous().cloned()
+    }));
+}
+
+/// Only a terminal uninstalled receipt may carry another build's fixed bytes.
+///
+/// Each live status is produced through its real progress route before its
+/// recorded skill identity is changed. Planning must refuse at record admission
+/// and leave the partially applied, complete, or partially restored targets
+/// exactly as they were.
+#[test]
+fn every_nonterminal_receipt_remains_bound_to_current_build_assets() {
+    for status in [
+        InstallStatus::Applying,
+        InstallStatus::Complete,
+        InstallStatus::Unapplying,
+    ] {
+        let scratch = Scratch::new(&format!("current-build-{status:?}"));
+        let repository = scratch.repository();
+        let planned = plan(&repository, None).expect("current build plans");
+        let digest = planned.digest().unwrap();
+        match status {
+            InstallStatus::Applying => {
+                assert!(matches!(
+                    apply_with_interruption(&repository, None, &digest, Some(0)),
+                    Err(InstallError::Interrupted { operation: 0 })
+                ));
+            }
+            InstallStatus::Complete => {
+                apply(&repository, None, &digest).expect("current build applies");
+            }
+            InstallStatus::Unapplying => {
+                apply(&repository, None, &digest).expect("current build applies");
+                let last = planned.operations().len() - 1;
+                assert!(matches!(
+                    unapply_with_interruption(&repository, Some(last)),
+                    Err(InstallError::Interrupted { operation }) if operation == last
+                ));
+            }
+            InstallStatus::Uninstalled => unreachable!("the terminal exception is tested above"),
+        }
+        assert_eq!(
+            read_record(&repository)
+                .unwrap()
+                .expect("nonterminal record remains")
+                .record
+                .status,
+            status
+        );
+        let before = images(&repository, &planned);
+
+        rewrite_recorded_skill(&repository, b"foreign build embedded skill\n");
+
+        let error = plan(&repository, None).expect_err("foreign live receipt must refuse");
+        assert!(
+            matches!(error, InstallError::InvalidRecord(ref reason)
+                if reason == "generated skill differs from this build"),
+            "{status:?} refused for the wrong reason: {error}"
+        );
+        assert_eq!(images(&repository, &planned), before);
+    }
+}
+
 #[test]
 fn preserved_exclusions_keep_their_prior_mode() {
     let scratch = Scratch::new("preserve");
@@ -439,6 +571,33 @@ fn images(repository: &Repository, plan: &InstallPlan) -> Vec<Option<ObservedFil
         .iter()
         .map(|operation| observe(&operation.destination(repository)).unwrap())
         .collect()
+}
+
+/// Rewrite only the fixed skill identity and rebind the record's own digest.
+///
+/// The record remains canonical and digest-consistent, exactly as another build
+/// would encode it; no malformed-record refusal can satisfy the tests that call
+/// this helper.
+fn rewrite_recorded_skill(repository: &Repository, bytes: &[u8]) {
+    let mut record = read_record(repository)
+        .expect("current record reads before the simulated build boundary")
+        .expect("an install record exists")
+        .record;
+    let operation = record
+        .plan
+        .operations
+        .iter_mut()
+        .find(|operation| operation.asset == Asset::Skill)
+        .expect("the canonical plan carries its skill");
+    let historical = GeneratedImage::new(DATA_MODE, bytes);
+    assert_ne!(operation.generated, historical);
+    operation.generated = historical;
+    record.plan_digest = record.plan.digest().expect("changed plan has a digest");
+    fs::write(
+        record_path(repository).expect("record path resolves"),
+        wire::encode(&record).expect("changed record encodes canonically"),
+    )
+    .expect("changed build receipt installs");
 }
 
 fn run(path: &Path) -> Vec<u8> {
