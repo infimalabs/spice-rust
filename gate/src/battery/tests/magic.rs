@@ -1,25 +1,39 @@
 //! The magic-number arm measured against real committed bytes.
 //!
-//! Every assertion here rests on the same repository, because the three cases
-//! only mean anything beside each other: one file that was committed with
-//! literals and left alone, one that was committed with literals and given one
-//! more, and one that has no committed bytes at all. A scan handed no baseline
-//! reports the same nonzero count for all three, so a test that showed only the
-//! third — or only the first — could not tell a delta from a plain scan.
+//! Every assertion here rests on the same repository, because the cases only
+//! mean anything beside each other: one file that was committed with literals
+//! and left alone, one that was committed with literals and given one more, one
+//! that has no committed bytes at all, and one in a source class this build
+//! cannot read. A scan handed no baseline reports the same nonzero count for the
+//! first three, so a test that showed only the third — or only the first — could
+//! not tell a delta from a plain scan. The fourth is what neither of the others
+//! can see: a row where both a missing baseline and an unreadable class are true
+//! at once, which is answered by class and not by count.
 
 use super::*;
-use crate::metrics::{EvidenceState as MetricState, MetricEvidence, MetricKey};
+use crate::metrics::{EvidenceState as MetricState, MetricEvidence, MetricKey, MetricMeasurement};
 
 /// The literals the fixture's committed sources already hold.
 ///
-/// Each clears the packaged `magic.examine_threshold` of 10 on its own, so the
-/// scanner has something to find in every one of these files before any change
-/// is made to them. A file whose literals were all below that bar would report
-/// zero regressions whether or not its baseline was ever read.
+/// Each clears the packaged `magic.examine_threshold` on its own, so the scanner
+/// has something to find in every one of these files before any change is made
+/// to them. A file whose literals were all below that bar would report zero
+/// regressions whether or not its baseline was ever read — which is why the
+/// threshold is read back from the arm by `examine_threshold` rather than
+/// restated here, where it could quietly stop being true of these numbers.
 const COMMITTED_LITERALS: [u64; 3] = [4242, 7777, 9999];
 
 /// The one literal added to an already-committed source.
 const INTRODUCED_LITERAL: u64 = 31337;
+
+/// The Python sources `production_repository` commits, which this build's
+/// scanner refuses by field rather than reading with C-grammar semantics.
+///
+/// Named so a fixture can take the whole class out of history at once. Any one
+/// of them left committed reports the class refusal from its own row whichever
+/// question the arm asks first, which is enough to hide the order entirely.
+const PREDECESSOR_CLASS_SOURCES: [&str; 3] =
+    ["app/__init__.py", "app/main.py", "tests/test_main.py"];
 
 /// One Rust source that compares a value against each literal it is given.
 ///
@@ -73,12 +87,31 @@ fn magic_row<'report>(report: &'report BatteryReport, path: &str) -> &'report Me
         })
 }
 
-/// The value one row measured, or a panic naming the state it carried instead.
-fn measured(evidence: &MetricEvidence, path: &str) -> u64 {
+/// The measurement one row carries, or a panic naming the state it carried.
+fn measurement<'row>(evidence: &'row MetricEvidence, path: &str) -> &'row MetricMeasurement {
     match evidence.state() {
-        MetricState::Measured { measurement } => measurement.value(),
+        MetricState::Measured { measurement } => measurement,
         state => panic!("{path:?} was expected to measure, but carried {state:?}"),
     }
+}
+
+/// The value one row measured.
+fn measured(evidence: &MetricEvidence, path: &str) -> u64 {
+    measurement(evidence, path).value()
+}
+
+/// The `magic.examine_threshold` the arm resolved for one measured path.
+///
+/// Read back off the published row rather than written here, so a control scan
+/// examines the literals the arm examined. A threshold spelled in this file
+/// would agree with the packaged one only until the package moved: raised above
+/// the literals committed below, the arm would measure zero for want of anything
+/// to find, while a control still scanning at the old number would find all
+/// three and report a delta the arm never took.
+fn examine_threshold(evidence: &MetricEvidence, path: &str) -> u64 {
+    measurement(evidence, path)
+        .threshold()
+        .unwrap_or_else(|| panic!("{path:?} records the threshold its scan examined at"))
 }
 
 /// A committed file's existing literals are not regressions; a new one is.
@@ -115,15 +148,21 @@ fn a_committed_file_regresses_only_by_what_was_added_to_it() {
 
     let report = battery_report(&repository);
 
+    let kept_row = magic_row(&report, "src/kept.rs");
     assert_eq!(
-        measured(magic_row(&report, "src/kept.rs"), "src/kept.rs"),
+        measured(kept_row, "src/kept.rs"),
         0,
         "an unchanged file's committed literals are not regressions"
     );
     assert_eq!(
-        crate::metrics::scan_magic_regressions("src/kept.rs", &kept, None, 10)
-            .expect("the fixture source is a declared magic class")
-            .len(),
+        crate::metrics::scan_magic_regressions(
+            "src/kept.rs",
+            &kept,
+            None,
+            examine_threshold(kept_row, "src/kept.rs"),
+        )
+        .expect("the fixture source is a declared magic class")
+        .len(),
         COMMITTED_LITERALS.len(),
         "the unchanged file really does hold literals this scanner finds, so the \
          zero above is a delta against committed bytes rather than an empty scan"
@@ -190,5 +229,94 @@ fn a_path_absent_from_head_states_its_absence_instead_of_a_count() {
         measured(magic_row(&report, "src/kept.rs"), "src/kept.rs"),
         0,
         "the paths that do have a baseline still measure beside it"
+    );
+}
+
+/// A class this build cannot read is reported as that, not as a missing
+/// baseline.
+///
+/// Both obstructions are true of `src/born.py` at once: it is in a class the
+/// C-grammar scanner refuses by field, and `HEAD` does not carry it. `magic_state`
+/// answers with the class, and this is the tree that separates the two orders
+/// rather than merely exercising one. Every path in the unreadable class is
+/// newly added, so under the opposite order no row would name the class at all,
+/// and `src/kept.rs` measuring cleanly beside them would carry the whole arm to
+/// `Passed` — a tree reporting its magic surface clean while none of it was read.
+///
+/// The Python is taken out of history rather than written fresh because
+/// `production_repository` commits it. One left committed would keep naming the
+/// class from its own row under either order, and both assertions below would
+/// hold without the order ever being asked.
+#[test]
+fn an_unreadable_class_outranks_a_missing_baseline_on_the_same_row() {
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    for path in PREDECESSOR_CLASS_SOURCES {
+        fixture_git(&repository, &["rm", "-q", "--cached", path]);
+    }
+    fs::write(
+        repository.join("src/kept.rs"),
+        comparing_source(&COMMITTED_LITERALS),
+    )
+    .expect("fixture readable neighbour");
+    fixture_git(&repository, &["add", "src/kept.rs"]);
+    fixture_git(&repository, &["commit", "-q", "-m", "literals, no python"]);
+
+    // Born with a comparison-adjacent literal, so the row below is a refusal to
+    // read the class rather than a scan that found nothing in it.
+    fs::write(
+        repository.join("src/born.py"),
+        format!(
+            "def born(value):\n    return value >= {}\n",
+            INTRODUCED_LITERAL
+        ),
+    )
+    .expect("fixture uncommitted source in the unreadable class");
+    // Staged rather than merely written, because the selection is the index.
+    for path in PREDECESSOR_CLASS_SOURCES {
+        fixture_git(&repository, &["add", path]);
+    }
+    fixture_git(&repository, &["add", "src/born.py"]);
+
+    let report = battery_report(&repository);
+
+    let born = magic_row(&report, "src/born.py");
+    let MetricState::Unsupported {
+        source_field,
+        reason,
+        recovery,
+        ..
+    } = born.state()
+    else {
+        panic!("a class this build cannot read says so before anything about HEAD: {born:?}")
+    };
+    assert_eq!(
+        source_field, "policy.languages.magic",
+        "the refusal names the field that put this class in scope"
+    );
+    assert!(
+        reason.contains(".py"),
+        "the refusal names the class it cannot read: {reason}"
+    );
+    assert!(
+        recovery.contains("compile an exact native parser"),
+        "the refusal is actionable, which the absence it outranks is not: {recovery}"
+    );
+    assert!(
+        !reason.contains("baseline"),
+        "the durable obstruction is reported, not the one that expires at the \
+         next commit: {reason}"
+    );
+    assert_eq!(
+        measured(magic_row(&report, "src/kept.rs"), "src/kept.rs"),
+        0,
+        "the readable neighbour still measures, so the class refusal above is \
+         this path's own state rather than the whole arm giving up"
+    );
+    assert_eq!(
+        arm_state(&report),
+        BatteryState::Unsupported,
+        "one unreadable class in scope outranks its readable neighbour's clean \
+         measurement, because a pass would claim the whole surface was read"
     );
 }

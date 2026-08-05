@@ -19,7 +19,7 @@ pub use file::{
     FileShapeMeasurement, RepositoryDocumentMeasurement, measure_file_shape,
     measure_repository_document,
 };
-pub use magic::{MagicFinding, scan_magic_regressions};
+pub use magic::{MagicFinding, admit_magic_source, scan_magic_regressions};
 pub use markdown::{MarkdownLinkFinding, scan_markdown_link_case};
 
 /// Exact reason compiled parsing could not produce a measurement.
