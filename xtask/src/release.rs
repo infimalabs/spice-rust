@@ -140,9 +140,10 @@ impl ReleaseEnvironment {
     ///
     /// The order is written out rather than delegated because Cargo cannot be
     /// asked for it: `cargo config get` is nightly-only and this toolchain is
-    /// stable. The build directory is the one Trunk is handed as its working
-    /// directory, so the hierarchy walked is the hierarchy that decides the
-    /// build rather than one rooted wherever this process happens to be.
+    /// stable. Each caller supplies the working directory of the build whose
+    /// compiler it is settling. The app surface supplies its `app` directory;
+    /// the release pipeline supplies the workspace root used by its executor,
+    /// then freezes that answer as `RUSTC` for every child build.
     ///
     /// The config ranks are about bytes and not tidiness. The sealed image
     /// ships a Cargo config at the filesystem root deliberately, because that
@@ -173,7 +174,11 @@ impl ReleaseEnvironment {
         let Some(path) = self.path.as_deref() else {
             return Ok(None);
         };
-        Ok(find_program(path, "rustc").ok())
+        match find_program(path, "rustc") {
+            Ok(rustc) => Ok(Some(rustc)),
+            Err(TargetBuildError::MissingProgram("rustc")) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     /// The compiler a Cargo config names for a build started in `build_dir`.
@@ -223,8 +228,8 @@ pub fn stage_target(
 ) -> Result<TargetBuild, TargetBuildError> {
     let target = parse_target(spelling)?;
     let root = workspace_root()?;
-    let programs = Programs::discover(&environment)?;
-    let executor = SystemExecutor::new(&root, &environment)?;
+    let programs = Programs::discover(&root, &environment)?;
+    let executor = SystemExecutor::new(&root, &environment, &programs.rustc)?;
     match stage_with(
         &root,
         &environment.build_root(&root),
@@ -603,14 +608,23 @@ struct Programs {
 }
 
 impl Programs {
-    fn discover(environment: &ReleaseEnvironment) -> Result<Self, TargetBuildError> {
+    /// Resolve the programs one release build will execute.
+    ///
+    /// Every ordinary tool comes from the acquired `PATH`. The compiler is the
+    /// exception because Cargo has four higher-ranked doors: resolve it through
+    /// [`ReleaseEnvironment::rustc`] at the workspace-root cwd and selected
+    /// Cargo home, then let [`SystemExecutor`] freeze that answer as `RUSTC`.
+    fn discover(root: &Path, environment: &ReleaseEnvironment) -> Result<Self, TargetBuildError> {
         let path = environment
             .path
             .as_deref()
             .ok_or(TargetBuildError::MissingProgram("PATH"))?;
+        let rustc = environment
+            .rustc(root)?
+            .ok_or(TargetBuildError::MissingProgram("rustc"))?;
         Ok(Self {
             cargo: find_program(path, "cargo")?,
-            rustc: find_program(path, "rustc")?,
+            rustc,
             rustup: find_program(path, "rustup")?,
             trunk: find_program(path, "trunk")?,
             mutants: find_program(path, "cargo-mutants")?,
@@ -824,7 +838,19 @@ struct SystemExecutor {
 }
 
 impl SystemExecutor {
-    fn new(root: &Path, release: &ReleaseEnvironment) -> Result<Self, TargetBuildError> {
+    /// Seal every release command inside the environment whose pins were read.
+    ///
+    /// `rustc` is the five-rank answer [`ReleaseEnvironment::rustc`] resolved
+    /// at this workspace-root working directory. Naming it as `RUSTC` freezes
+    /// that answer at Cargo's highest rank, so app-build, embed-build, and
+    /// native-build cannot select a compiler different from either
+    /// [`observe_pins`] call. `CARGO_BUILD_RUSTC` is intentionally not copied:
+    /// the resolved `RUSTC` outranks it and already incorporates its answer.
+    fn new(
+        root: &Path,
+        release: &ReleaseEnvironment,
+        rustc: &Path,
+    ) -> Result<Self, TargetBuildError> {
         let mut entries = Vec::<(OsString, OsString)>::new();
         for (key, value) in [
             ("PATH", release.path.as_ref()),
@@ -849,6 +875,7 @@ impl SystemExecutor {
         }
         let build_root = release.build_root(root);
         entries.extend([
+            (OsString::from("RUSTC"), rustc.as_os_str().to_owned()),
             // Named rather than dropped, because one of the commands below is
             // this same binary: `app-build` re-invokes `xtask check-app`, which
             // resolves its own build root from this variable at its own rim. An

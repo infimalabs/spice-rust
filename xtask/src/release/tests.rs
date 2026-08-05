@@ -196,13 +196,28 @@ fn both_targets_use_the_fixed_commands_and_real_artifact_bytes() {
             ["app-build", "embed-build", "native-build"]
         );
         assert_eq!(build_records[0].arguments, [OsString::from("check-app")]);
+        assert_eq!(build_records[0].program, programs.xtask);
         assert_eq!(
             build_records[1].arguments,
             cargo_arguments(&fixture.root, "canvas", target)
         );
+        assert_eq!(build_records[1].program, programs.cargo);
         assert_eq!(
             build_records[2].arguments,
             cargo_arguments(&fixture.root, "spice", target)
+        );
+        assert_eq!(build_records[2].program, programs.cargo);
+        let rust_observations = build
+            .commands
+            .iter()
+            .filter(|record| record.label == "rust-version")
+            .collect::<Vec<_>>();
+        assert_eq!(rust_observations.len(), 2);
+        assert!(
+            rust_observations
+                .iter()
+                .all(|record| record.program == programs.rustc),
+            "preflight and publisher recheck must execute the same resolved compiler"
         );
         let mutants = build
             .commands
@@ -259,12 +274,20 @@ fn release_environment(cargo_target_dir: Option<&str>) -> ReleaseEnvironment {
     )
 }
 
+/// The cleared release environment freezes the compiler discovery already made.
+///
+/// `programs.rustc` is the workspace-root, selected-`CARGO_HOME`, five-rank
+/// answer. Installing it as `RUSTC` puts that answer at Cargo's highest rank
+/// for app-build, embed-build, and native-build; copying `CARGO_BUILD_RUSTC`
+/// would be a second, lower-ranked answer rather than additional authority.
 #[test]
 fn system_executor_overrides_machine_local_cargo_build_state() {
     let fixture = Fixture::new();
     let release = release_environment(None);
+    let programs = fixture.programs();
 
-    let executor = SystemExecutor::new(&fixture.root, &release).expect("release executor");
+    let executor =
+        SystemExecutor::new(&fixture.root, &release, &programs.rustc).expect("release executor");
     let entries = executor.environment.entries();
     let value = |name: &str| {
         entries
@@ -281,6 +304,11 @@ fn system_executor_overrides_machine_local_cargo_build_state() {
             .as_os_str()
     );
     assert_eq!(value("CARGO_INCREMENTAL"), "0");
+    assert_eq!(value("RUSTC"), programs.rustc.as_os_str());
+    assert!(
+        entries.iter().all(|(key, _)| key != "CARGO_BUILD_RUSTC"),
+        "the resolved RUSTC already outranks CARGO_BUILD_RUSTC"
+    );
     // Pinned to the resolved answer rather than left absent: absence would
     // let the one child that reads this variable — `xtask check-app` — pick
     // a build root of its own.
@@ -312,8 +340,12 @@ fn the_build_root_is_the_acquired_scratch_or_the_workspace_and_never_both() {
         "an acquired CARGO_TARGET_DIR must displace the workspace entirely",
     );
 
-    let executor = SystemExecutor::new(root, &release_environment(Some("/cargo-target")))
-        .expect("release executor");
+    let executor = SystemExecutor::new(
+        root,
+        &release_environment(Some("/cargo-target")),
+        Path::new("/tool/bin/rustc"),
+    )
+    .expect("release executor");
     let entries = executor.environment.entries();
     let value = |name: &str| {
         entries
@@ -678,19 +710,38 @@ impl ConfigTree {
         home.into_os_string()
     }
 
+    /// Install one executable at an absolute fixture-owned path.
+    fn executable(&self, relative: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let executable = self.root.join(relative);
+        fs::create_dir_all(executable.parent().expect("fixture executable parent"))
+            .expect("fixture executable directory");
+        fs::write(&executable, b"#!/bin/sh\n").expect("fixture executable");
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))
+            .expect("fixture executable mode");
+        executable
+    }
+
     /// A `PATH` whose walk answers, so a config that decides has beaten one.
     ///
     /// Without this every config assertion below would also pass for a
     /// resolver that simply found nothing on `PATH`, which is not the claim.
     fn path_with_rustc(&self) -> OsString {
-        use std::os::unix::fs::PermissionsExt as _;
-
         let directory = self.root.join("path");
-        fs::create_dir_all(&directory).expect("fixture path directory");
-        let rustc = directory.join("rustc");
-        fs::write(&rustc, b"#!/bin/sh\n").expect("fixture rustc");
-        fs::set_permissions(&rustc, fs::Permissions::from_mode(0o755)).expect("fixture rustc mode");
+        self.executable("path/rustc");
         directory.into_os_string()
+    }
+
+    /// A complete release-tool `PATH`, including a compiler that must lose to
+    /// the workspace-root Cargo configuration in the discovery fixture.
+    fn release_path(&self) -> (OsString, PathBuf) {
+        let directory = self.root.join("release-path");
+        for program in ["cargo", "rustc", "rustup", "trunk", "cargo-mutants", "git"] {
+            self.executable(&format!("release-path/{program}"));
+        }
+        let rustc = directory.join("rustc");
+        (directory.into_os_string(), rustc)
     }
 
     fn build_dir(&self, relative: &str) -> PathBuf {
@@ -723,6 +774,70 @@ fn resolving_environment(path: OsString, cargo_home: Option<OsString>) -> Releas
         None,
         None,
     )
+}
+
+/// Release discovery resolves the compiler from the build's exact hierarchy.
+///
+/// All three lower-ranked answers are live and distinct: the workspace-root
+/// config, the selected non-ambient Cargo home, and `PATH` each name an
+/// executable compiler. The workspace answer must win because the release
+/// executor runs Cargo from that root. Falling back to the old direct `PATH`
+/// walk selects `path_rustc`; resolving from the fixture parent instead of the
+/// build cwd skips the workspace config and selects `cargo_home_rustc`.
+/// The same discovery door is then offered a malformed config and no compiler
+/// at all, proving both typed resolver outcomes cross it unchanged.
+#[cfg(unix)]
+#[test]
+fn program_discovery_resolves_rustc_from_the_workspace_build_hierarchy() {
+    let tree = ConfigTree::new();
+    let workspace = tree.build_dir("workspace");
+    let configured_rustc = tree.executable("configured/rustc");
+    let cargo_home_rustc = tree.executable("cargo-home-rustc");
+    let (path, path_rustc) = tree.release_path();
+    let workspace_config = tree.config(
+        "workspace",
+        "config.toml",
+        &format!(
+            "[build]\nrustc = {:?}\n",
+            configured_rustc.display().to_string()
+        ),
+    );
+    let cargo_home = tree.cargo_home(
+        "config.toml",
+        &format!(
+            "[build]\nrustc = {:?}\n",
+            cargo_home_rustc.display().to_string()
+        ),
+    );
+    let environment = resolving_environment(path, Some(cargo_home));
+
+    let programs = Programs::discover(&workspace, &environment)
+        .expect("the workspace release programs resolve");
+
+    assert_eq!(programs.rustc, configured_rustc);
+    assert_ne!(programs.rustc, path_rustc);
+    assert_ne!(programs.rustc, cargo_home_rustc);
+    assert_eq!(
+        programs.cargo,
+        fs::canonicalize(tree.root.join("release-path"))
+            .expect("release path canonicalizes")
+            .join("cargo")
+    );
+
+    fs::write(&workspace_config, "[build]\nrustc = 7\n")
+        .expect("malformed workspace config installs");
+    assert!(matches!(
+        Programs::discover(&workspace, &environment),
+        Err(TargetBuildError::CargoConfig { ref path, .. }) if path == &workspace_config
+    ));
+
+    fs::remove_file(&workspace_config).expect("workspace config removes");
+    fs::remove_file(tree.root.join("cargo-home/config.toml")).expect("Cargo home config removes");
+    fs::remove_file(path_rustc).expect("PATH compiler removes");
+    assert!(matches!(
+        Programs::discover(&workspace, &environment),
+        Err(TargetBuildError::MissingProgram("rustc"))
+    ));
 }
 
 /// A Cargo config naming `build.rustc` decides ahead of the `PATH` walk.
