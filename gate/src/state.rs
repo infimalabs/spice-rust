@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use sill::{LockFile, LockName};
 use wire::{Digest, Domain};
 
-/// Current Rust-owned ledger schema.
+/// Current ledger schema.
 pub const STATE_LEDGER_VERSION: u64 = 1;
 /// Current immutable state-transition receipt schema.
 pub const STATE_RECEIPT_VERSION: u64 = 1;
@@ -30,7 +30,7 @@ pub const PREDECESSOR_STATE_RELEASE: &str = "0.31.0";
 /// Lifetime of one peer flex claim.
 pub const PEER_CLAIM_TTL_SECONDS: u64 = 6 * 60 * 60;
 
-const CURRENT_STATE_RELEASE: &str = "current-rust";
+const CURRENT_STATE_RELEASE: &str = "current";
 const CURRENT_STATE_DIRECTORY: &str = ".spice";
 const CURRENT_STATE_DATA_DIRECTORY: &str = "data";
 const CURRENT_STATE_FILE: &str = "gate-state.json";
@@ -38,7 +38,7 @@ const CURRENT_STATE_LOCK_FILE: &str = "gate-state.lock";
 const PREDECESSOR_STATE_DIRECTORY: &str = ".spice";
 const PREDECESSOR_CLAIMS_FILE: &str = "flex-slice-claims.json";
 
-/// The Rust-owned gate-state path below one canonical Git common directory.
+/// The current gate-state path below one canonical Git common directory.
 #[must_use]
 pub fn current_state_path(common_git_directory: &Path) -> PathBuf {
     common_git_directory

@@ -132,7 +132,7 @@ fn row_for<'report>(
 
 /// Seed the predecessor file-line latch at the exact location capture imports.
 ///
-/// The fixture repository has no Rust-owned ledger, so the next capture reads
+/// The fixture repository has no current ledger, so the next capture reads
 /// this as its durable state authority. Resolving the Git directory through the
 /// same repository model as production keeps the test about the latch input,
 /// rather than about a hard-coded `.git` layout that linked worktrees reject.
