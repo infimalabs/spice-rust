@@ -34,6 +34,7 @@ pub use declaration::{
 pub use evaluate::evaluate_core;
 
 use crate::GateId;
+use crate::state::BoundDecision;
 use admission::{validate_observation, validate_repo_path};
 
 /// Current core-family report schema.
@@ -570,6 +571,7 @@ impl CoreArmInput {
 pub struct CoreInputs {
     tree: Digest,
     arms: Vec<CoreArmInput>,
+    bounds: Vec<BoundDecision>,
 }
 
 impl CoreInputs {
@@ -605,7 +607,23 @@ impl CoreInputs {
                 )));
             }
         }
-        Ok(Self { tree, arms })
+        Ok(Self {
+            tree,
+            arms,
+            bounds: Vec::new(),
+        })
+    }
+
+    /// Retain the elastic bounds this acquisition decided while measuring.
+    ///
+    /// Admission above proves the arms; these decisions are what producing them
+    /// cost. They are carried rather than recomputed because a second
+    /// resolution could disagree with the first, and the arm was already
+    /// judged against the first.
+    #[must_use]
+    pub fn with_bounds(mut self, bounds: Vec<BoundDecision>) -> Self {
+        self.bounds = bounds;
+        self
     }
 
     /// Immutable tree shared by every arm.
@@ -618,6 +636,15 @@ impl CoreInputs {
     #[must_use]
     pub fn arms(&self) -> &[CoreArmInput] {
         &self.arms
+    }
+
+    /// Every elastic bound decided while acquiring these arms.
+    ///
+    /// Empty is a real answer: it means this acquisition measured no bounded
+    /// metric, not that a decision was withheld.
+    #[must_use]
+    pub fn bounds(&self) -> &[BoundDecision] {
+        &self.bounds
     }
 }
 

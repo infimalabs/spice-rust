@@ -722,8 +722,14 @@ fn a_repository_mutated_after_capture_cannot_cross_later_staging_evidence() {
         .materialize(&repository.root)
         .expect("materialize the captured index");
     let contract = Contract::load(tree.root()).expect("load the captured contract");
-    let captured = CoreSource::capture(&tree, &contract, ClaimCapture::Idle, ActorCapture::Absent)
-        .expect("capture one clean core source");
+    let captured = CoreSource::capture(
+        &tree,
+        &contract,
+        ClaimCapture::Idle,
+        ActorCapture::Absent,
+        &[],
+    )
+    .expect("capture one clean core source");
 
     repository.write("src/app.rs", "fn main() {\n    // staged\n}\n");
     git(&repository, &["add", "src/app.rs"]);
@@ -744,8 +750,14 @@ fn a_repository_mutated_after_capture_cannot_cross_later_staging_evidence() {
         "the staging arm is labelled with the digest its observation was taken under"
     );
 
-    let later = CoreSource::capture(&tree, &contract, ClaimCapture::Idle, ActorCapture::Absent)
-        .expect("capture the same tree over the mutated repository");
+    let later = CoreSource::capture(
+        &tree,
+        &contract,
+        ClaimCapture::Idle,
+        ActorCapture::Absent,
+        &[],
+    )
+    .expect("capture the same tree over the mutated repository");
     let later_inputs = acquire_core(&later, &contract).expect("acquire the later battery");
     assert_eq!(
         acquired_input(&later_inputs, GateId::Staging).observation(),
@@ -819,7 +831,13 @@ fn a_disappeared_selected_tree_refuses_capture_with_a_typed_core_input_error() {
 
     let displaced = tree.root().with_file_name("displaced-root");
     fs::rename(tree.root(), &displaced).expect("displace the selected tree root");
-    let refused = CoreSource::capture(&tree, &contract, ClaimCapture::Idle, ActorCapture::Absent);
+    let refused = CoreSource::capture(
+        &tree,
+        &contract,
+        ClaimCapture::Idle,
+        ActorCapture::Absent,
+        &[],
+    );
 
     let error = refused.expect_err("a disappeared selected tree cannot yield one identity");
     assert!(

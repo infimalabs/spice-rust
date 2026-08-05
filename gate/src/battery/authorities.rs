@@ -148,8 +148,16 @@ impl<'trace> BatteryCapture<'trace> {
         let scope = selected_scope(selector, &repository)?;
         let state = live_ledger(&repository)?;
         reconcile_claims(&state, &actor)?;
-        let executor =
-            RepositoryExecutor::capture(&repository, selector, claim, actor, rim, hygiene, trace)?;
+        let executor = RepositoryExecutor::capture(
+            &repository,
+            selector,
+            claim,
+            actor,
+            rim,
+            hygiene,
+            state.latches(),
+            trace,
+        )?;
         let contract = executor.contract();
         let authorities = BatteryAuthorities {
             source: executor.source().clone(),
@@ -157,15 +165,18 @@ impl<'trace> BatteryCapture<'trace> {
             scope,
             configuration: tracked_evidence(contract)?,
             policy: contract.rule_policy().clone(),
+            // The repository-document arm measured every selected document
+            // against a per-actor elastic limit, and those are the decisions
+            // reported here: the ones this capture already judged its arms
+            // against, decided against the same ledger published above.
+            //
+            // The structural family decides none yet. Its one acquiring arm
+            // counts Markdown-link case mismatches, which is forbidden a rule,
+            // latch, or threshold because the count is itself the finding, and
+            // its three bounded arms report the input they lack instead of a
+            // measurement.
+            bounds: executor.bounds().to_vec(),
             state,
-            // An elastic bound is decided only by a structural arm that measures
-            // a bounded metric, and this build runs none. The one arm that does
-            // acquire counts Markdown-link case mismatches, which is forbidden a
-            // rule, latch, or threshold because the count is itself the finding;
-            // the three bounded arms report the input they lack instead of a
-            // measurement. No bound was decided, so none is reported: inventing
-            // a decision here would answer for a measurement nothing took.
-            bounds: Vec::new(),
             tools: tool_evidence(contract)?,
         };
         Ok(Self {

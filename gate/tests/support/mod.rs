@@ -1,6 +1,7 @@
 use gate::{
     ActorCapture, CORE_GATE_IDS, ClaimCapture, Contract, CoreArmInput, CoreArmReport, CoreEvidence,
-    CoreObservation, CoreReport, CoreSource, GateId, Selector, acquire_core, evaluate_core,
+    CoreInputs, CoreObservation, CoreReport, CoreSource, GateId, LatchEntry, Selector,
+    acquire_core, evaluate_core,
 };
 
 use std::fs;
@@ -174,11 +175,27 @@ pub(crate) fn create_scratch_root(candidates: impl Iterator<Item = PathBuf>) -> 
 /// is labelled with the digest of the tree it was actually taken from.
 #[allow(dead_code)]
 pub(crate) fn acquired(repository: &Tree, claim: ClaimCapture, actor: ActorCapture) -> CoreReport {
+    evaluate_core(&acquired_inputs(repository, claim, actor, &[]))
+}
+
+/// One fixture repository acquired against a known durable latch inventory.
+///
+/// The inputs are returned unjudged because the elastic bounds an acquisition
+/// decided live on them: judging consumes the inputs to produce arm standings,
+/// and a caller reading the decisions from a report would be reading a
+/// projection rather than what the arms were held to.
+#[allow(dead_code)]
+pub(crate) fn acquired_inputs(
+    repository: &Tree,
+    claim: ClaimCapture,
+    actor: ActorCapture,
+    latches: &[LatchEntry],
+) -> CoreInputs {
     let tree = Selector::staged()
         .materialize(&repository.root)
         .expect("materialize the captured index");
     let contract = Contract::load(tree.root()).expect("load the captured contract");
-    let source = CoreSource::capture(&tree, &contract, claim, actor)
+    let source = CoreSource::capture(&tree, &contract, claim, actor, latches)
         .expect("capture one immutable core source");
     let inputs = acquire_core(&source, &contract).expect("acquire one complete core battery");
 
@@ -199,7 +216,7 @@ pub(crate) fn acquired(repository: &Tree, claim: ClaimCapture, actor: ActorCaptu
             arm.id()
         );
     }
-    evaluate_core(&inputs)
+    inputs
 }
 
 /// The one arm of an acquired report a test is speaking about.
