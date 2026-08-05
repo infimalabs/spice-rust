@@ -3,8 +3,8 @@ use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant as Monotonic};
 
 use bus::{Bus, CommitOutcome};
@@ -128,8 +128,13 @@ impl RunningResident {
     }
 
     fn assert_ready(&mut self, fixture: &Fixture) {
+        let watched = fixture
+            .runtime
+            .parent()
+            .expect("runtime has Git-common parent");
         match readiness::wait_until_ready(
             self.child.as_mut().expect("resident child"),
+            watched,
             READINESS_DEADLINE,
             "resident discovery",
             || fixture.canvas().is_file(),
@@ -829,30 +834,45 @@ fn instant(value: &str) -> Instant {
     value.parse().expect("canonical fixture instant")
 }
 
-/// Block until `observe` sees the effect of `trigger`.
+/// Block until `observe` sees the effect of `trigger` under `path`.
 ///
-/// `observe` runs immediately after `trigger` and before anything is slept on,
-/// so an effect that lands at once is seen at once. A trigger that already ran
-/// passes `|| {}` and relies on that first observation.
-///
-/// Nothing announces the effect. A filesystem notification would, but only when
-/// it is not dropped or coalesced, so the deadline is spent re-observing at the
-/// one bound in [`readiness::recheck::pause`] rather than waiting to be told.
+/// The native observer arms before `trigger` runs and `observe` is read once
+/// immediately afterwards, so an effect that lands during setup is still seen.
+/// After that read, only the filesystem callback can cause another observation.
+/// A trigger that already ran passes `|| {}` and relies on the post-arm read.
 ///
 /// Panics report the waiting call site rather than this shared helper.
 #[track_caller]
-fn wait_for_effect<T>(trigger: impl FnOnce(), mut observe: impl FnMut() -> Option<T>) -> T {
+fn wait_for_event<T>(
+    path: &Path,
+    trigger: impl FnOnce(),
+    mut observe: impl FnMut() -> Option<T>,
+) -> T {
+    let (sender, receiver) = mpsc::channel::<notify::Result<notify::Event>>();
+    let _observer = readiness::filesystem_event::arm(path, "effect", move |event| {
+        let _ = sender.send(event);
+    });
     trigger();
+    if let Some(observed) = observe() {
+        return observed;
+    }
     let deadline = Monotonic::now() + READINESS_DEADLINE;
     loop {
-        if let Some(observed) = observe() {
-            return observed;
-        }
         let remaining = deadline.saturating_duration_since(Monotonic::now());
-        if remaining.is_zero() {
-            panic!("effect was not observed before {READINESS_DEADLINE:?}")
+        match receiver.recv_timeout(remaining) {
+            Ok(Ok(_)) => {
+                if let Some(observed) = observe() {
+                    return observed;
+                }
+            }
+            Ok(Err(error)) => panic!("effect observer failed: {error}"),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                panic!("effect was not observed before {READINESS_DEADLINE:?}")
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                panic!("effect observer disconnected")
+            }
         }
-        readiness::recheck::pause(remaining);
     }
 }
 
@@ -871,8 +891,9 @@ fn wait_for_effect<T>(trigger: impl FnOnce(), mut observe: impl FnMut() -> Optio
 ///
 /// Panics report the waiting call site rather than this shared helper.
 #[track_caller]
-fn wait_for_vendor_stop(pid_file: &Path, stopped: &Path) -> String {
-    let observed = wait_for_effect(
+fn wait_for_vendor_stop(watch: &Path, pid_file: &Path, stopped: &Path) -> String {
+    let observed = wait_for_event(
+        watch,
         || {},
         || {
             if let Some(stop) = recorded_stop(stopped) {
