@@ -13,8 +13,11 @@ use sill::{
 };
 use wire::Outcome;
 
+#[path = "support/file_change.rs"]
+mod file_change;
 #[path = "support/process_exit.rs"]
 mod process_exit;
+use file_change::FileChangeObserver;
 use process_exit::ProcessExitObserver;
 
 const BUSY_EXIT: i32 = 70;
@@ -249,6 +252,15 @@ impl AbruptProtected {
             .parse()
             .expect("child PID parses");
 
+        // The child announces itself the instant it `exec`s, which is before its
+        // wrapper has necessarily finished recording the topology that protects
+        // it -- `spawn` returns only once that `exec` has happened, so the
+        // wrapper cannot get there first. Killing on the announcement alone
+        // would sometimes kill a wrapper mid-publication and put an unrelated
+        // failure inside a test about terminal groups, so the write itself is
+        // what this waits for.
+        await_published_topology(fixture);
+
         let exited = ProcessExitObserver::new(wrapper_pid);
         // SAFETY: SIGKILL terminates only the wrapper retained by this fixture.
         assert_eq!(
@@ -291,6 +303,55 @@ impl AbruptProtected {
                 .success()
         );
         self.reaped = true;
+    }
+
+    /// Every input the acquisition decision reads, spelled for a failure message.
+    ///
+    /// A refusal reported only as contention names none of the evidence it was
+    /// decided from, so a rare failure would arrive with nothing to read.
+    fn synchronization_evidence(&self, fixture: &Fixture) -> String {
+        let path = fixture.lock_root().join("solo.lock");
+        let record = fs::read(&path).unwrap_or_else(|error| error.to_string().into_bytes());
+        format!(
+            "owner record {:?}; protected group {}; protected child {}; wrapper {}",
+            String::from_utf8_lossy(&record),
+            signal_zero(-self.child_pid),
+            signal_zero(self.child_pid),
+            signal_zero(self.wrapper_pid as libc::pid_t),
+        )
+    }
+}
+
+/// Block until the lock record names the group and guardian protecting it.
+///
+/// The watch is registered before the first read, so a record written between
+/// the two is delivered to the wait rather than lost by it, and the loop
+/// re-reads on every write until the topology is there to be read.
+fn await_published_topology(fixture: &Fixture) {
+    let path = fixture.lock_root().join("solo.lock");
+    let written = FileChangeObserver::new(&path);
+    loop {
+        let record = fs::read(&path).expect("owner record reads");
+        let record = String::from_utf8_lossy(&record);
+        if record.contains("protected_group") && record.contains("protected_guardian") {
+            return;
+        }
+        assert!(
+            written.wait(),
+            "wrapper never recorded the topology it protects: {record}"
+        );
+    }
+}
+
+/// What signal zero says about one kernel identity, named rather than numbered.
+fn signal_zero(pid: libc::pid_t) -> String {
+    // SAFETY: signal zero only probes whether the identity remains present.
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        return format!("{pid} present");
+    }
+    match std::io::Error::last_os_error().raw_os_error() {
+        Some(libc::ESRCH) => format!("{pid} absent"),
+        other => format!("{pid} unreadable ({other:?})"),
     }
 }
 
@@ -621,6 +682,11 @@ fn unreaped_wrapper_synchronizes_first_topology_acquisition_fixture() {
     let fixture = Fixture::new("abrupt-acquire");
     let topology = fixture.topology();
     let mut protected = AbruptProtected::start(&fixture);
+    // The wrapper is already dead, so this record is the whole of what the
+    // acquisitions below get to reason from. Read against the same evidence at
+    // the moment of a failure, it separates a topology that was never published
+    // from one that was published and then stopped answering.
+    let published = protected.synchronization_evidence(&fixture);
 
     assert!(matches!(
         topology.try_acquire("solo", None).expect("live group contention is observable"),
@@ -632,7 +698,10 @@ fn unreaped_wrapper_synchronizes_first_topology_acquisition_fixture() {
         .try_acquire("solo", None)
         .expect("terminal group completion synchronizes");
     let LockAttempt::Acquired(held) = acquired else {
-        panic!("first terminal-group acquisition remained contended");
+        panic!(
+            "first terminal-group acquisition remained contended: {}\n  as published: {published}",
+            protected.synchronization_evidence(&fixture)
+        );
     };
     assert_eq!(held.shard(), 0);
     drop(held);
