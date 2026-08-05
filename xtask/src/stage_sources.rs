@@ -393,6 +393,15 @@ mod tests {
             matches!(&error, AppBuildError::UnreadableSourceIndex(reason) if reason.contains(GIT)),
             "a tree with no index answered with something other than an unread one: {error}",
         );
+        // This is the refusal a lane actually reaches: every lane is a linked
+        // worktree, so mounting one and running the documented command lands
+        // here rather than on the stale-stage refusal that names the procedure.
+        // Git's own words explain nothing about mounts, so the way out is said
+        // here too, or the reader is stranded at the one door they came through.
+        assert!(
+            error.to_string().contains(STAGE_INSTRUCTIONS),
+            "the refusal a mounted worktree reaches never named {STAGE_INSTRUCTIONS}: {error}",
+        );
         fs::remove_dir_all(root).expect("remove fixture");
     }
 
