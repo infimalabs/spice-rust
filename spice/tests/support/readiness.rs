@@ -86,15 +86,16 @@ pub(super) fn wait_until_ready(
     // Reading the child here has a second purpose: one that is already gone is
     // answered without asking the kernel to watch it, which the kernel would
     // refuse. That refusal stays reachable, because the child may end in the
-    // gap between this read and that registration, and the observer treats it
-    // as the exit it is rather than as a failure.
+    // gap between this read and that registration, which is why the observer
+    // below is the tolerant constructor: here the refusal is the exit it is
+    // rather than a failure, and this is the only caller that owns that race.
     if ended(child, what) {
         return Readiness::Exited;
     }
 
     let (sender, receiver) = mpsc::channel::<Signal>();
     wait_for_change(observer, sender.clone());
-    let exit = ProcessExitObserver::new(child.id());
+    let exit = ProcessExitObserver::or_ended(child.id());
     let exits = sender.clone();
     thread::spawn(move || {
         exit.wait();

@@ -409,6 +409,10 @@ fn the_observer_is_armed_before_the_first_state_read() {
 /// the same way whatever opened the gap, so it is asked here directly: a reaped
 /// pid can no longer be watched, and that refusal is the exit having already
 /// happened rather than a failure to observe one.
+///
+/// This names the tolerant constructor the wait uses, which is the only caller
+/// that owns the gap above. Every other caller gets the strict one, pinned by
+/// [`an_exit_observer_armed_on_a_gone_process_refuses_by_name`].
 #[test]
 fn an_exit_observer_for_a_gone_process_answers_rather_than_refusing() {
     let mut held = Held::new("gone", "read release; exit 11");
@@ -422,13 +426,38 @@ fn an_exit_observer_for_a_gone_process_answers_rather_than_refusing() {
 
     let (answered, answer) = mpsc::channel();
     thread::spawn(move || {
-        ProcessExitObserver::new(departed).wait();
+        ProcessExitObserver::or_ended(departed).wait();
         let _ = answered.send(());
     });
 
     answer
         .recv_timeout(SPENT_HORIZON)
         .expect("a gone process is answered rather than watched for an exit it already had");
+}
+
+/// The strict observer names a process already gone rather than answering.
+///
+/// The same registration refusal reaches both constructors, so nothing but the
+/// constructor chosen decides what it means. A caller that arms an observer on
+/// a process it is about to end has already lost the thing it meant to watch,
+/// and would otherwise pass having observed nothing: it would signal a pid the
+/// kernel no longer knows, wait on an `Ended` it was handed for free, and read
+/// whatever the departed process happened to leave. That is a live regression
+/// shape, not a hypothetical, which is why the refusal is spelled rather than
+/// left to each caller to check.
+#[test]
+#[should_panic(expected = "had already ended before its exit observer was armed")]
+fn an_exit_observer_armed_on_a_gone_process_refuses_by_name() {
+    let mut held = Held::new("refused", "read release; exit 12");
+    writeln!(held.input.borrow_mut()).expect("fixture child takes its release");
+    let departed = held.child.id();
+    assert_eq!(
+        held.child.wait().expect("fixture child status").code(),
+        Some(12),
+        "the child was not reaped before its pid was observed"
+    );
+
+    ProcessExitObserver::new(departed);
 }
 
 /// A state that never arrives fails by name rather than blocking forever.

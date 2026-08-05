@@ -3,8 +3,16 @@
 //! The kernel announces the exit, so nothing here polls for it. Asking to watch
 //! a process is itself a race the caller cannot win: a child that was live when
 //! its status was last read can be gone before the registration lands. Both
-//! kernels report that as `ESRCH`, which answers the question rather than
-//! failing to ask it, so it is an ending here and not an assertion.
+//! kernels report that as `ESRCH`.
+//!
+//! Whether that refusal is an answer or a defect belongs to the caller, so it
+//! is spelled in the constructor rather than decided here for everyone.
+//! [`ProcessExitObserver::or_ended`] treats it as the exit having already
+//! happened, which is what a caller racing its own child needs.
+//! [`ProcessExitObserver::new`] refuses it by name, because a caller that arms
+//! an observer on a process it is about to signal has lost the thing it meant
+//! to watch, and a silent `Ended` there would let it pass having observed
+//! nothing.
 
 use std::io;
 
@@ -17,7 +25,22 @@ pub(crate) enum ProcessExitObserver {
 }
 
 impl ProcessExitObserver {
+    /// Observe a process that must still be there, naming it when it is not.
+    #[allow(
+        dead_code,
+        reason = "each test target compiles its own copy of this module, and the batteries that only wait on a child of their own reach it through the tolerant constructor alone"
+    )]
     pub(crate) fn new(pid: u32) -> Self {
+        match Self::or_ended(pid) {
+            watching @ Self::Watching(_) => watching,
+            Self::Ended => {
+                panic!("process {pid} had already ended before its exit observer was armed")
+            }
+        }
+    }
+
+    /// Observe a process that may already have ended, which answers at once.
+    pub(crate) fn or_ended(pid: u32) -> Self {
         #[cfg(target_os = "linux")]
         let observed = linux_observer(pid);
         #[cfg(target_os = "macos")]
