@@ -1,6 +1,5 @@
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt as _;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
 
@@ -257,7 +256,8 @@ mod tests {
         );
     }
 
-    /// A file that shadows a program name cannot be launched, and says so.
+    /// A file that shadows a program name but has no executable mode cannot be
+    /// launched, and says so before an emulator can claim its bytes.
     #[test]
     fn a_resolved_file_that_cannot_be_launched_is_unprobed_rather_than_missing() {
         let fixture = ProbeFixture::new("unlaunchable");

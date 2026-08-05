@@ -1,11 +1,12 @@
 # Sealed Linux proof image
 
 `build.sh` assembles the `linux/amd64` proof environment from the immutable
-Rust base, the exact Trunk and cargo-mutants versions admitted by the release
-builder, both required Rust targets, a vendored copy of `Cargo.lock`'s registry
-sources, and the `wasm-opt` build Trunk otherwise downloads the first time it
-optimizes a release module. The resulting image can therefore run with
-networking disabled and fresh empty Cargo home and target mounts.
+Rust base, the pinned Rustfmt component, the exact Trunk and cargo-mutants
+versions admitted by the release builder, both required Rust targets, a
+vendored copy of `Cargo.lock`'s registry sources, and the `wasm-opt` build Trunk
+otherwise downloads the first time it optimizes a release module. The resulting
+image can therefore run with networking disabled and fresh empty Cargo home and
+target mounts.
 
 Build and export the image from the repository root:
 

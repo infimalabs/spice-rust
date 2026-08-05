@@ -77,7 +77,8 @@ project_max_depth = 3
 # a shell is bound to. `gate` owns the mutation seed and attempt number it
 # repeats into every bounded cargo-mutants process. Its hygiene acquisition
 # fixture passes the captured repository and interpreter-tripwire marker to an
-# isolated copy of the current test process.
+# isolated copy of the current test process, and fixes `TMPDIR` at private
+# writable scratch so that isolation remains valid on a read-only proof host.
 #
 # Git's three local-environment names are the one class of foreign name this
 # vocabulary admits. Spice does not own them, but it does write them: the
@@ -108,6 +109,7 @@ env_names = [
     "SPICE_MUTATION_SEED",
     "SPICE_NATIVE_PINS",
     "SPICE_PROOF",
+    "TMPDIR",
 ]
 
 # Which files the shape arm measures lines and bytes over.

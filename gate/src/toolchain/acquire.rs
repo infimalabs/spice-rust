@@ -34,6 +34,7 @@ use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
 use sill::{Argv, Completion, spawn};
@@ -463,6 +464,11 @@ fn probe_with(
     let Ok(bytes) = read_program(&resolved) else {
         return unprobed(ProbeFailure::Unreadable);
     };
+    let launchable =
+        fs::metadata(&resolved).is_ok_and(|metadata| metadata.permissions().mode() & 0o111 != 0);
+    if !launchable {
+        return unprobed(ProbeFailure::NotStarted);
+    }
     match version_output(&resolved, requirement.version_argv, source.root, bounds) {
         Ok(version) => ToolEvidence::Identified {
             name: requirement.name.to_owned(),
