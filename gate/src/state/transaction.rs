@@ -16,8 +16,8 @@ pub struct CurrentState {
 }
 
 impl CurrentState {
-    /// Load current Rust state, or strictly import predecessor state in memory
-    /// when the current destination does not exist.
+    /// Load current state, or strictly import predecessor state in memory when
+    /// the current destination does not exist.
     pub fn load(
         destination: impl Into<PathBuf>,
         predecessor: &PredecessorSources,
@@ -438,7 +438,7 @@ impl PendingState {
                 StateErrorKind::Persist,
                 &self.destination,
                 "current state destination has no parent directory",
-                "select the fixed Git-common Rust state path",
+                "select the fixed Git-common state path",
             )
         })?;
         fs::create_dir_all(parent).map_err(|error| {

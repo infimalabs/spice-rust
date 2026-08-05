@@ -355,7 +355,17 @@ fn malformed_current_state_never_falls_back_to_predecessor_state() {
         .expect_err("current state must own the failure");
     assert_eq!(error.kind(), StateErrorKind::UnsupportedVersion);
     assert_eq!(error.source_path(), fixture.current);
-    assert_eq!(error.release(), CURRENT_STATE_RELEASE);
+    // The rendered line, spelled out, rather than a comparison against
+    // CURRENT_STATE_RELEASE: this is the text an operator reads, and a fixture
+    // that asks the constant what to expect agrees with any rename, including
+    // back to a release named after the implementation language. Asserting the
+    // render rather than `release()` keeps one guard for one claim, since the
+    // accessor cannot differ from the field the render interpolates.
+    let rendered = error.to_string();
+    assert!(
+        rendered.starts_with("gate state release=current kind=unsupported-version source="),
+        "{rendered}"
+    );
 }
 
 #[test]
