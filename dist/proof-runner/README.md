@@ -28,8 +28,9 @@ every execution, revalidates every pin, then emits its attestation on stderr and
 runs the battery member under `sandbox-exec` with every route off this host
 denied, the repository read-only, the host's Cargo caches unreadable, the
 package-manager prefixes and framework directory a `-sys` build script probes
-for a library unreadable, every checkout beside this one unreadable, and fresh
-empty Cargo home, target, and mutation-output directories that it removes
+for a library unreadable, every checkout beside this one neither readable nor
+writable, and fresh empty Cargo home, target, and mutation-output directories
+that it removes
 afterward. Loopback stays reachable because the battery's own corpus binds it,
 which is the boundary the container half gets from a network namespace holding
 nothing but a loopback interface.
@@ -41,9 +42,15 @@ host dependencies is that the prefixes such a dependency is found under are
 unreachable, not that the host is absent.
 
 The neighbouring checkouts are the exception that proves the shape: the
-directory the workspace sits in is denied whole, and three paths are then named
-back — the workspace, the Git common directory the runner resolved, and the
-run's own scratch root. The common directory is named because a linked worktree
+directory the workspace sits in is denied for reading and writing alike, and
+three paths are then read back — the workspace, the Git common directory the
+runner resolved, and the run's own scratch root. Only reading is given back
+there. The one path the run may write is the scratch root, named by the last
+rule in the profile, so a scratch root that happens to sit in the neighbourhood
+survives the denial while the workspace and its repository stay read-only, which
+they already were. Denying reads alone would have left the sharper half open: a
+run that cannot see a peer's source can still truncate it, and the receipt would
+name neither. The common directory is read back because a linked worktree
 keeps it beside the workspace rather than inside it, so denying the
 neighbourhood would otherwise take the repository being proved. A seal whose
 workspace parent holds a pinned path instead refuses, naming that pin: the
