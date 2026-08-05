@@ -254,6 +254,8 @@ fn release_environment(cargo_target_dir: Option<&str>) -> ReleaseEnvironment {
         None,
         None,
         cargo_target_dir.map(OsString::from),
+        None,
+        None,
     )
 }
 
@@ -350,13 +352,17 @@ fn the_cargo_home_prefers_the_acquired_value_and_falls_back_to_cargos_own_rule()
         None,
         None,
         None,
+        None,
+        None,
     );
     assert_eq!(
         inherited.cargo_home(),
         Some(OsString::from("/home/release/.cargo")),
     );
 
-    let bare = ReleaseEnvironment::new(None, None, None, None, None, None, None, None, None);
+    let bare = ReleaseEnvironment::new(
+        None, None, None, None, None, None, None, None, None, None, None,
+    );
     assert_eq!(
         bare.cargo_home(),
         None,

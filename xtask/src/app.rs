@@ -70,16 +70,19 @@ fn owns_the_stage(host: &str) -> bool {
 ///
 /// Both callers that decide anything on the compiler's identity come through
 /// here, so neither can end up reading a different `rustc` than the one whose
-/// bytes are at stake. A `PATH` naming no `rustc` at all is refused here rather
-/// than treated as an unknown host: the question is what the compiler is, and
-/// there is no compiler to ask.
+/// bytes are at stake -- including when that one is named by a compiler
+/// override instead of by `PATH`, which [`ReleaseEnvironment::rustc`] settles.
+/// An environment naming no `rustc` at all is refused here rather than treated
+/// as an unknown host: the question is what the compiler is, and there is no
+/// compiler to ask.
 fn observed_toolchain(
     root: &Path,
     environment: &ReleaseEnvironment,
 ) -> Result<toolchain::ObservedToolchain, AppBuildError> {
     let rustc = environment.rustc().ok_or_else(|| {
         AppBuildError::UnreadableToolchainReport(
-            "PATH names no rustc, so the toolchain a build here would compile under is unknown"
+            "no rustc is named by RUSTC, by CARGO_BUILD_RUSTC, or on PATH, so the toolchain \
+             a build here would compile under is unknown"
                 .to_owned(),
         )
     })?;
@@ -230,6 +233,20 @@ fn prepare_app_build(build_root: &Path) -> Result<(), AppBuildError> {
     })
 }
 
+/// The Trunk invocation, and the inherited environment it edits.
+///
+/// Trunk inherits this process's environment, so every variable Cargo reads is
+/// carried into the app build whether or not this function mentions it. Three
+/// are edited, and the reason each one is edited is recorded beside it, because
+/// a variable that is simply absent from this list is indistinguishable from
+/// one somebody meant to handle: `CARGO` is removed, and `RUSTC_WRAPPER` and
+/// `RUSTC_WORKSPACE_WRAPPER` are emptied.
+///
+/// `RUSTC` and `CARGO_BUILD_RUSTC` are deliberately not among them. They name
+/// the compiler this build will run, and removing them here would make the
+/// build disagree with the report [`admit_staging_environment`] admitted it
+/// on; they are passed through and measured instead, by
+/// [`ReleaseEnvironment::rustc`], which reads them in Cargo's own order.
 fn trunk_command(
     root: &Path,
     build_root: &Path,
@@ -257,6 +274,11 @@ fn trunk_command(
         .env("CARGO_INCREMENTAL", "0")
         .env("CARGO_TARGET_DIR", target)
         .env("NO_COLOR", "true")
+        // Emptied rather than removed: an empty wrapper is how Cargo is told
+        // there is none, while removing them would let an inherited sccache or
+        // distcc stand between the build and the compiler whose report was
+        // admitted, and fold its own cache decisions into bytes that must be
+        // reproducible from the sources alone.
         .env("RUSTC_WORKSPACE_WRAPPER", "")
         .env("RUSTC_WRAPPER", "")
         .args([
@@ -600,18 +622,18 @@ mod tests {
         fs::remove_dir_all(root).expect("remove app-build fixture");
     }
 
-    /// A `PATH` whose `rustc` answers with one chosen report.
+    /// A `rustc` in `directory` that answers with one chosen report.
     ///
     /// The report is handed over verbatim, so a lane can offer the decision a
     /// release it does not pin or a host it cannot compile for -- including the
     /// owning host, which is the case a lane that is not the owning host could
     /// otherwise never reach.
     #[cfg(unix)]
-    fn rustc_reporting(root: &Path, report: &str) -> ReleaseEnvironment {
+    fn rustc_script(directory: &Path, report: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt as _;
 
-        fs::create_dir_all(root).expect("create the fixture toolchain directory");
-        let rustc = root.join("rustc");
+        fs::create_dir_all(directory).expect("create the fixture toolchain directory");
+        let rustc = directory.join("rustc");
         fs::write(
             &rustc,
             format!("#!/bin/sh\ncat <<'REPORT'\n{}\nREPORT\n", report.trim_end()),
@@ -619,6 +641,13 @@ mod tests {
         .expect("write a rustc answering with the chosen report");
         fs::set_permissions(&rustc, fs::Permissions::from_mode(0o755))
             .expect("make the fixture rustc executable");
+        rustc
+    }
+
+    /// A `PATH` whose `rustc` answers with one chosen report, and nothing else.
+    #[cfg(unix)]
+    fn rustc_reporting(root: &Path, report: &str) -> ReleaseEnvironment {
+        rustc_script(root, report);
         ReleaseEnvironment::new(
             Some(root.to_path_buf().into_os_string()),
             None,
@@ -629,7 +658,181 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         )
+    }
+
+    /// Which spelling names the compiler a build would run instead of `PATH`'s.
+    ///
+    /// Cargo reads both, and reads `RUSTC` first. Naming them here rather than
+    /// taking a string keeps a fixture from asking about a spelling that does
+    /// not exist and passing because nothing was overridden at all.
+    #[cfg(unix)]
+    enum CompilerOverride {
+        Rustc,
+        CargoBuildRustc,
+    }
+
+    /// A pinned `rustc` on `PATH`, and a foreign one named by an override.
+    ///
+    /// The `PATH` compiler reports the pinned release and the owning tuple, so
+    /// it clears both doors on its own: with the override unread, admission
+    /// passes and staging goes on to build. Every refusal reachable from here
+    /// is therefore a refusal that read the override, and the only release it
+    /// can name is the one only the override names.
+    #[cfg(unix)]
+    fn rustc_overridden_by(root: &Path, spelling: &CompilerOverride) -> ReleaseEnvironment {
+        let on_path = root.join("path");
+        rustc_script(
+            &on_path,
+            &format!(
+                "rustc {release}\nrelease: {release}\nhost: {STAGING_HOST}\n",
+                release = toolchain::pinned_release(),
+            ),
+        );
+        let foreign = rustc_script(
+            &root.join("overridden"),
+            "rustc 9.9.9\nrelease: 9.9.9\nhost: x86_64-unknown-linux-gnu\n",
+        )
+        .into_os_string();
+        let (rustc, build_rustc) = match spelling {
+            CompilerOverride::Rustc => (Some(foreign), None),
+            CompilerOverride::CargoBuildRustc => (None, Some(foreign)),
+        };
+        ReleaseEnvironment::new(
+            Some(on_path.into_os_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            rustc,
+            build_rustc,
+        )
+    }
+
+    /// Staging refuses the compiler an override names, for either spelling.
+    ///
+    /// `PATH` is not where Cargo starts looking. `RUSTC` replaces the compiler
+    /// outright and `CARGO_BUILD_RUSTC` does the same when `RUSTC` is absent,
+    /// so a `PATH` walk on its own admits the release of a compiler that will
+    /// never run and then stages bytes under one nothing pinned. Both spellings
+    /// are driven, because a guard that reads one of them leaves the other
+    /// exactly as open as it was.
+    #[cfg(unix)]
+    fn staging_refuses_the_compiler_an_override_names(label: &str, spelling: &CompilerOverride) {
+        let root = std::env::temp_dir().join(format!(
+            "spice-xtask-app-overridden-{label}-{}",
+            std::process::id()
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        let environment = rustc_overridden_by(&root, spelling);
+
+        let mut output: Vec<u8> = Vec::new();
+        let error = stage_app(&environment, &mut output)
+            .expect_err("a compiler this workspace does not pin may not write the stage");
+
+        assert!(
+            matches!(
+                &error,
+                AppBuildError::ForeignToolchainRelease(observed) if observed == "9.9.9"
+            ),
+            "staging measured the compiler on PATH rather than the one {label} names: {error}",
+        );
+        let refusal = error.to_string();
+        for expected in [toolchain::pinned_release(), "9.9.9"] {
+            assert!(
+                refusal.contains(expected),
+                "the refusal never names {expected}: {refusal}",
+            );
+        }
+        assert!(
+            output.is_empty(),
+            "staging began before the release was admitted"
+        );
+        fs::remove_dir_all(root).expect("remove overridden toolchain fixture");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staging_refuses_the_compiler_rustc_names() {
+        staging_refuses_the_compiler_an_override_names("RUSTC", &CompilerOverride::Rustc);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staging_refuses_the_compiler_cargo_build_rustc_names() {
+        staging_refuses_the_compiler_an_override_names(
+            "CARGO_BUILD_RUSTC",
+            &CompilerOverride::CargoBuildRustc,
+        );
+    }
+
+    /// `RUSTC` is read ahead of `CARGO_BUILD_RUSTC`, which is Cargo's own order.
+    ///
+    /// Measured against the installed Cargo: with both set, the compiler
+    /// `RUSTC` names is the one invoked. The two fixtures above cannot see that
+    /// order, because with only one spelling ever set both orders answer
+    /// identically -- an order is only decidable where the two answers differ.
+    /// So they differ here, and the one `CARGO_BUILD_RUSTC` names clears both
+    /// doors: asking it first would stage under a compiler that never runs.
+    #[cfg(unix)]
+    #[test]
+    fn staging_reads_rustc_ahead_of_cargo_build_rustc() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-xtask-app-override-order-{}",
+            std::process::id()
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        let pinned = format!(
+            "rustc {release}\nrelease: {release}\nhost: {STAGING_HOST}\n",
+            release = toolchain::pinned_release(),
+        );
+        let on_path = root.join("path");
+        rustc_script(&on_path, &pinned);
+        let foreign = rustc_script(
+            &root.join("rustc"),
+            "rustc 9.9.9\nrelease: 9.9.9\nhost: x86_64-unknown-linux-gnu\n",
+        );
+        let admitted = rustc_script(&root.join("build-rustc"), &pinned);
+        let environment = ReleaseEnvironment::new(
+            Some(on_path.into_os_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(foreign.into_os_string()),
+            Some(admitted.into_os_string()),
+        );
+
+        let mut output: Vec<u8> = Vec::new();
+        let error = stage_app(&environment, &mut output)
+            .expect_err("the compiler RUSTC names is the one that would run");
+
+        assert!(
+            matches!(
+                &error,
+                AppBuildError::ForeignToolchainRelease(observed) if observed == "9.9.9"
+            ),
+            "staging measured CARGO_BUILD_RUSTC while RUSTC outranks it: {error}",
+        );
+        assert!(
+            output.is_empty(),
+            "staging began before the release was admitted"
+        );
+        fs::remove_dir_all(root).expect("remove override order fixture");
     }
 
     /// Staging reads the release, and reads it through the door it ships.
@@ -916,16 +1119,21 @@ mod tests {
         fs::remove_dir_all(root).expect("remove fixture");
     }
 
-    /// A `PATH` with no `rustc` on it is refused before anything is built.
+    /// An environment naming no compiler at all is refused before anything is built.
     ///
     /// Both halves of the identity come from a compiler, so when there is no
     /// compiler to ask there is no question left to answer. This is the one
-    /// refusal the report parser never sees, and without it an empty `PATH`
-    /// would reach the build with neither half decided.
+    /// refusal the report parser never sees, and without it an environment that
+    /// names none would reach the build with neither half decided.
+    ///
+    /// There are three places a compiler can be named now, so the refusal is
+    /// held to naming all three: an operator told only about `PATH` would go
+    /// looking in the one place that was not the reason.
     #[test]
     fn an_environment_naming_no_compiler_is_refused() {
-        let environment =
-            ReleaseEnvironment::new(None, None, None, None, None, None, None, None, None);
+        let environment = ReleaseEnvironment::new(
+            None, None, None, None, None, None, None, None, None, None, None,
+        );
 
         let error = admit_staging_environment(Path::new("."), &environment)
             .expect_err("an environment with no rustc may not write the stage");
@@ -937,5 +1145,13 @@ mod tests {
             ),
             "an absent compiler answered with something other than an unreadable report: {error}",
         );
+        let refusal = error.to_string();
+        for named in ["RUSTC", "CARGO_BUILD_RUSTC", "PATH"] {
+            assert!(
+                refusal.contains(named),
+                "the refusal never names {named} as a place a compiler could have come from: \
+                 {refusal}",
+            );
+        }
     }
 }
