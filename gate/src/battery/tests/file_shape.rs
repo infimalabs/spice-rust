@@ -95,6 +95,28 @@ fn row_for<'report>(
     row
 }
 
+/// Seed the predecessor file-line latch at the exact location capture imports.
+///
+/// The fixture repository has no Rust-owned ledger, so the next capture reads
+/// this as its durable state authority. Resolving the Git directory through the
+/// same repository model as production keeps the test about the latch input,
+/// rather than about a hard-coded `.git` layout that linked worktrees reject.
+fn seed_file_line_latch(repository: &Path, path: &str) {
+    let (worktree_git, _) = crate::tree::git_directories(repository)
+        .expect("the fixture repository publishes its Git state directories");
+    let predecessor = worktree_git.join(".spice");
+    fs::create_dir_all(&predecessor).expect("predecessor state directory");
+    let ledger = serde_json::json!({
+        "version": 1,
+        "paths": [path],
+    });
+    fs::write(
+        predecessor.join("file-loc-sticky.json"),
+        wire::encode(&ledger).expect("predecessor file-line ledger JSON"),
+    )
+    .expect("seed the file-line latch");
+}
+
 /// Each selected source measures both shapes; a document measures neither here.
 ///
 /// The values are compared against the bytes on disk rather than against each
@@ -286,5 +308,99 @@ fn a_source_over_its_elastic_limit_fails_through_the_bound_on_its_own_row() {
         fitting.actor_source(),
         Some("active-actor"),
         "and that actor reached the bound as the acting one, not as a candidate"
+    );
+}
+
+/// A latched path spends its elastic headroom and is held to base.
+///
+/// Both final reports read the same staged file. The first has an empty durable
+/// ledger and admits a value between base and elastic; the second imports that
+/// path's `file_loc` latch and rejects the same value against base. Deriving the
+/// value from this actor/path pair's first real decision keeps the fixture on
+/// the production variation route instead of copying a policy limit or relying
+/// on a special-case value.
+#[test]
+fn a_latched_source_is_held_to_base_while_the_same_unlatched_source_uses_elastic() {
+    const PATH: &str = "src/latched.rs";
+
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    fs::write(repository.join(PATH), "// discover this path's headroom\n")
+        .expect("provisional source");
+    fixture_git(&repository, &["add", PATH]);
+
+    let discovery = battery_report(&repository);
+    let (_, discovered) = measured(row_for(&discovery, PATH, MetricId::FileLines), PATH);
+    assert!(
+        discovered.active_limit() > discovered.base_limit(),
+        "this actor/path pair must have elastic headroom: base {}, active {}",
+        discovered.base_limit(),
+        discovered.active_limit()
+    );
+    let fitting_lines = discovered
+        .base_limit()
+        .checked_add(1)
+        .expect("the base line limit admits one successor");
+    let source = "// held\n".repeat(
+        usize::try_from(fitting_lines).expect("the fixture line count fits the address space"),
+    );
+    fs::write(repository.join(PATH), source).expect("source between base and elastic");
+    fixture_git(&repository, &["add", PATH]);
+
+    let unlatched = battery_report(&repository);
+    let (unlatched_lines, elastic) = measured(row_for(&unlatched, PATH, MetricId::FileLines), PATH);
+    assert_eq!(unlatched_lines, fitting_lines);
+    assert_eq!(elastic.base_limit(), discovered.base_limit());
+    assert_eq!(elastic.active_limit(), discovered.active_limit());
+    assert!(
+        elastic.over_base() && !elastic.over_limit(),
+        concat!(
+            "the unlatched row fits elastic but breaches base: {} ",
+            "lines, base {}, active {}"
+        ),
+        unlatched_lines,
+        elastic.base_limit(),
+        elastic.active_limit()
+    );
+    assert_eq!(elastic.transition(), "clear");
+    assert_eq!(file_shape_arm(&unlatched).state(), BatteryState::Passed);
+    assert!(
+        unlatched.context().latches().is_empty(),
+        "the comparison report must read an empty durable latch inventory"
+    );
+
+    seed_file_line_latch(&repository, PATH);
+    let latched = battery_report(&repository);
+    let [held_entry] = latched.context().latches() else {
+        panic!(
+            "the latched report must publish exactly the seeded state entry: {:?}",
+            latched.context().latches()
+        )
+    };
+    assert_eq!(held_entry.kind(), "file-loc");
+    assert_eq!(held_entry.path(), PATH);
+    assert_eq!(held_entry.function(), None);
+
+    let (latched_lines, held) = measured(row_for(&latched, PATH, MetricId::FileLines), PATH);
+    assert_eq!(latched_lines, unlatched_lines);
+    assert_eq!(held.base_limit(), elastic.base_limit());
+    assert_eq!(held.ratchet_limit(), elastic.ratchet_limit());
+    assert_eq!(held.active_limit(), held.base_limit());
+    assert!(
+        held.over_limit() && held.over_base() && !held.ratchet_breach(),
+        concat!(
+            "the latched row fails through its own spent-headroom decision: ",
+            "{} lines, base {}, elastic {}"
+        ),
+        latched_lines,
+        held.base_limit(),
+        held.ratchet_limit()
+    );
+    assert_eq!(held.transition(), "held");
+    assert_eq!(
+        file_shape_arm(&latched).state(),
+        BatteryState::Failed,
+        "the arm follows the held row's own latch: {}",
+        file_shape_arm(&latched).reason()
     );
 }
