@@ -13,7 +13,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         musl-tools \
         pkg-config
 
-RUN rustup target add wasm32-unknown-unknown x86_64-unknown-linux-musl
+RUN rustup component add rustfmt && \
+    rustup target add wasm32-unknown-unknown x86_64-unknown-linux-musl
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
@@ -51,8 +52,10 @@ COPY cargo-config.toml /.cargo/config.toml
 COPY cargo-wrapper.sh /opt/spice/bin/cargo
 
 RUN chmod 0755 /opt/spice/bin/cargo && \
+    ln -s /usr/local/cargo/bin/rustfmt /opt/spice/bin/rustfmt && \
     git config --system safe.directory '*' && \
     /opt/spice/bin/cargo --version && \
+    /opt/spice/bin/rustfmt --version && \
     /opt/spice/tools/bin/trunk --version && \
     /opt/spice/tools/bin/cargo-mutants mutants --version && \
     /opt/spice/tools/bin/wasm-bindgen --version && \

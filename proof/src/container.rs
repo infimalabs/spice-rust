@@ -22,6 +22,7 @@ pub(crate) use error::{is_executable, validate_command};
 const WORKSPACE_MOUNT: &str = "/workspace";
 const CARGO_HOME: &str = "/cargo-home";
 const CARGO_TARGET: &str = "/cargo-target";
+const RUST_TEST_THREADS: &str = "1";
 const ATTESTATION_PREFIX: &str = "spice-proof-attestation-v2:";
 const BATTERY_KEEPALIVE_SCRIPT: &str = "while :; do sleep 3600; done";
 
@@ -131,6 +132,7 @@ refuse() {
 [ "${CARGO_HOME:-}" = /cargo-home ] || refuse cargo-home-environment
 [ "${CARGO_TARGET_DIR:-}" = /cargo-target ] || refuse cargo-target-environment
 [ "${CARGO_MUTANTS_OUTPUT:-}" = /cargo-target ] || refuse mutants-output-environment
+[ "${RUST_TEST_THREADS:-}" = 1 ] || refuse rust-test-threads-environment
 [ -d /cargo-home ] || refuse cargo-home-missing
 [ -d /cargo-target ] || refuse cargo-target-missing
 [ -d /sys/class/net ] || refuse network-state-unavailable
@@ -629,6 +631,13 @@ impl Container {
             "CARGO_PROFILE_TEST_DEBUG=0".to_owned(),
             "--env".to_owned(),
             "CARGO_INCREMENTAL=0".to_owned(),
+            // Docker Desktop translates this amd64 appliance when its host is
+            // arm64. Concurrent libtest children can then outlive a completed
+            // process wait and strand the harness. One explicit harness thread
+            // keeps every member deterministic without relaxing any battery
+            // assertion or changing which tests run.
+            "--env".to_owned(),
+            format!("RUST_TEST_THREADS={RUST_TEST_THREADS}"),
             self.image.to_string(),
             "/bin/sh".to_owned(),
             "-ceu".to_owned(),

@@ -2,6 +2,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::process::{Command, Output};
+use std::sync::{Mutex, PoisonError};
 
 use gate::{
     AnalysisEvidence, Contract, GateId, HYGIENE_ARMS, HygieneConfiguration, HygieneExclusion,
@@ -17,6 +18,10 @@ const GIT: &str = "/usr/bin/git";
 const PROCESS_FIXTURE: &str = "acquisition_process_fixture";
 const REPOSITORY_ENV: &str = "SPICE_HYGIENE_ACQUIRE_REPOSITORY"; // env-policy: allow
 const MARKER_ENV: &str = "SPICE_HYGIENE_INTERPRETER_MARKER"; // env-policy: allow
+const TEMP_DIRECTORY_ENV: &str = "TMPDIR"; // env-policy: allow
+
+/// Keep fixture Git child lifetimes disjoint under translated amd64 execution.
+static FIXTURE_GIT_BARRIER: Mutex<()> = Mutex::new(());
 
 #[test]
 fn one_captured_source_walks_the_same_jurisdiction_and_measures_every_arm() {
@@ -308,6 +313,8 @@ fn acquisition_never_invokes_python_or_python3() {
     let repository = hygiene_repository("hygiene-acquire-tripwire", false);
     let tripwire = Tree::new("hygiene-interpreter-tripwire");
     let marker = tripwire.path("invoked");
+    let scratch = tripwire.path("tmp");
+    fs::create_dir(&scratch).expect("create isolated acquisition scratch");
     for name in ["python", "python3"] {
         let executable = tripwire.path(name);
         fs::write(
@@ -325,6 +332,7 @@ fn acquisition_never_invokes_python_or_python3() {
         .env("PATH", &tripwire.root)
         .env(REPOSITORY_ENV, &repository.root)
         .env(MARKER_ENV, &marker)
+        .env(TEMP_DIRECTORY_ENV, &scratch)
         .output()
         .expect("launch isolated acquisition fixture");
     assert!(
@@ -551,6 +559,9 @@ fn git(repository: &Tree, arguments: &[&str]) -> String {
 }
 
 fn git_output(repository: &Tree, arguments: &[&str]) -> Output {
+    let _fixture_git_guard = FIXTURE_GIT_BARRIER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     Command::new(GIT)
         .args(arguments)
         .current_dir(&repository.root)

@@ -16,7 +16,7 @@ use wire::manifest::ProofImage;
 /// [`the_shell_readable_identity_names_the_compiled_image`], so the image a
 /// host loads and the image this build demands cannot drift apart silently.
 pub const DEFAULT_IMAGE: &str =
-    "sha256:c2d3f38b48a2505604e517de9b4dd5bc0e799e32eea290be4880bee2cd5f88cf";
+    "sha256:3e8a97ea5628fad302eafb4e93f81da8236c6bf164fd3459509d6db71ee57334";
 
 /// An exact lower-case SHA-256 image reference.
 #[derive(Clone, Debug, Eq, PartialEq)]

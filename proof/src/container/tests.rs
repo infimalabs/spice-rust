@@ -218,6 +218,8 @@ exit 0
                 "CARGO_PROFILE_TEST_DEBUG=0".to_owned(),
                 "--env".to_owned(),
                 "CARGO_INCREMENTAL=0".to_owned(),
+                "--env".to_owned(),
+                "RUST_TEST_THREADS=1".to_owned(),
                 format!("registry.example/proof@sha256:{}", "4".repeat(64)),
                 "/bin/sh".to_owned(),
                 "-ceu".to_owned(),
