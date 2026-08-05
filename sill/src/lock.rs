@@ -231,6 +231,7 @@ fn availability_opened(file: File) -> io::Result<Availability> {
     let result =
         unsafe { platform::flock(file.as_raw_fd(), platform::LOCK_EX | platform::LOCK_NB) };
     if result == 0 {
+        release_probe(&file)?;
         return Ok(Availability::Available);
     }
     let error = io::Error::last_os_error();
@@ -238,6 +239,24 @@ fn availability_opened(file: File) -> io::Result<Availability> {
         Ok(Availability::Held)
     } else {
         Err(error)
+    }
+}
+
+/// Give back the possession a probe took in order to answer its question.
+///
+/// Dropping `file` is not enough. Callers probe with a `try_clone` while the
+/// original descriptor stays open, and a lock lives on the open file
+/// description both share, so closing one copy releases nothing. An unlock on
+/// any copy releases it for all of them, which also closes the window against a
+/// child that already inherited the description across a `fork` with no `exec`.
+#[cfg(unix)]
+fn release_probe(file: &File) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+
+    if unsafe { platform::flock(file.as_raw_fd(), platform::LOCK_UN) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
     }
 }
 
@@ -351,63 +370,4 @@ mod platform {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
-    use super::{Acquisition, LockFile, LockName};
-    use std::fs;
-    use std::path::PathBuf;
-    use std::process;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    #[test]
-    fn possession_is_exclusive_and_release_is_automatic() {
-        let path = unique_lock_path("exclusive");
-        let lock = LockFile::new(LockName::new("exclusive").expect("valid name"), &path);
-        let first = acquired(lock.try_acquire().expect("first acquisition"));
-
-        assert!(matches!(
-            lock.try_acquire().expect("contending acquisition"),
-            Acquisition::Contended
-        ));
-
-        drop(first);
-        let second = acquired(lock.try_acquire().expect("acquisition after release"));
-        drop(second);
-        fs::remove_file(path).expect("remove test lock file");
-    }
-
-    #[test]
-    fn lock_names_are_single_safe_path_components() {
-        for name in [
-            "",
-            ".",
-            "..",
-            "../outside",
-            "with/slash",
-            "with\\backslash",
-            "nul\0byte",
-        ] {
-            assert!(LockName::new(name).is_err(), "{name:?} must be refused");
-        }
-        for name in ["worker", "a.b", "two-words", "UPPER", "9"] {
-            assert_eq!(
-                LockName::new(name).expect("normal path component").as_str(),
-                name
-            );
-        }
-    }
-
-    fn acquired(acquisition: Acquisition) -> super::Possession {
-        match acquisition {
-            Acquisition::Acquired(possession) => possession,
-            Acquisition::Contended => panic!("lock should have been acquired"),
-        }
-    }
-
-    pub(crate) fn unique_lock_path(stem: &str) -> PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time must follow Unix epoch")
-            .as_nanos();
-        std::env::temp_dir().join(format!("sill-{stem}-{}-{nonce}.lock", process::id()))
-    }
-}
+pub(crate) mod tests;
