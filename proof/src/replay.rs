@@ -43,15 +43,6 @@ impl CheckKind {
             Self::SupplyRebuild => "supply-rebuild",
         }
     }
-
-    /// Whether this member announces the corpus it selected before testing it.
-    ///
-    /// Only the mutation member can select nothing and still exit clean. Every
-    /// other member names one package and one target, and cargo refuses an
-    /// unknown name outright rather than running an empty selection.
-    const fn announces_a_corpus(self) -> bool {
-        matches!(self, Self::MutationCorpus)
-    }
 }
 
 /// One explicit command in the generated battery.
@@ -175,11 +166,13 @@ impl CheckVerdict {
 /// Exit code for a member whose scope selected nothing.
 ///
 /// The original spice gritctl exited 5 when its scope selected nothing, after
-/// pytest's 5 for "no tests collected", and this member keeps that meaning. It
-/// is a standing of its own rather than a [`CheckStanding::Failed`] code
-/// because the pinned cargo-mutants already spends 5 on `FilterDiffMismatch`,
-/// and an empty corpus has to stay distinguishable from a real failure just as
-/// much as from a clean run.
+/// pytest's 5 for "no tests collected", and every member here keeps that
+/// meaning: the mutation member selecting no code and a test member running no
+/// test are the same emptiness, so they answer with the same standing. It is a
+/// standing of its own rather than a [`CheckStanding::Failed`] code because the
+/// pinned cargo-mutants already spends 5 on `FilterDiffMismatch`, and an empty
+/// scope has to stay distinguishable from a real failure just as much as from a
+/// clean run.
 const EMPTY_SCOPE: i32 = 5;
 
 /// Why one declared battery member did or did not pass.
@@ -426,7 +419,7 @@ fn classify(kind: CheckKind, execution: Execution) -> CheckVerdict {
             CheckStanding::OutputIncomplete
         }
         ExecutionCompletion::Exited { success: true, .. }
-            if kind.announces_a_corpus() && !proved_a_corpus(&execution.stdout.bytes) =>
+            if !proved_a_corpus(kind, &execution.stdout.bytes) =>
         {
             CheckStanding::EmptyScope
         }
@@ -440,6 +433,23 @@ fn classify(kind: CheckKind, execution: Execution) -> CheckVerdict {
     }
 }
 
+/// Whether a clean member proved it had a corpus to test.
+///
+/// Every member is asked, because every runner in this battery selects nothing
+/// without complaining: a clean exit is what both of them give for an empty
+/// scope, so the exit code alone can never carry this. What differs is only the
+/// words each runner announces its selection in, so the member decides which
+/// reading applies to its own stdout.
+fn proved_a_corpus(kind: CheckKind, stdout: &[u8]) -> bool {
+    match kind {
+        CheckKind::MutationCorpus => announced_mutants(stdout),
+        CheckKind::Gate
+        | CheckKind::DialectRefusals
+        | CheckKind::WaitAndProcess
+        | CheckKind::SupplyRebuild => ran_a_test(stdout),
+    }
+}
+
 /// Whether a clean mutation run proved it had a corpus to test.
 ///
 /// The pinned cargo-mutants announces its corpus on stdout before testing
@@ -450,12 +460,40 @@ fn classify(kind: CheckKind, execution: Execution) -> CheckVerdict {
 /// two differ. A run that announced no count at all proved no corpus either,
 /// and is refused for the same reason zero is: the member would otherwise pass
 /// while proving nothing, and the receipt would still name it.
-fn proved_a_corpus(stdout: &[u8]) -> bool {
+fn announced_mutants(stdout: &[u8]) -> bool {
     String::from_utf8_lossy(stdout).lines().any(|line| {
         line.strip_prefix("Found ")
             .and_then(|announced| announced.strip_suffix(" to test"))
             // Counted positionally so the tool's own pluralisation of the noun
             // after it is never a spelling this reading has to know.
+            .and_then(|announced| announced.split_whitespace().next())
+            .and_then(|count| count.parse::<u64>().ok())
+            .is_some_and(|count| count > 0)
+    })
+}
+
+/// Whether a clean cargo test run proved it had tests to run.
+///
+/// A selection that matched nothing is not an error to libtest either, and the
+/// package and target names cargo was given cannot stand in for the reading:
+/// they refuse a name that no longer exists, but say nothing about a target
+/// whose tests were emptied or all filtered out. Measured against the installed
+/// harness, the dialect member's binary run with `--exact __no_such_test__`
+/// prints `running 0 tests`, then `test result: ok. 0 passed; 0 failed; 0
+/// ignored; 0 measured; 7 filtered out`, and exits 0 -- the same exit it gives
+/// after `running 7 tests`.
+///
+/// One target announcing zero is not that vacuity and is not refused: a member
+/// runs every target its package selects, and 22 of them announce zero in a
+/// passing workspace run, because a crate with no unit tests still has a lib
+/// target to announce. It is the member as a whole that has to have run
+/// something, so one target that ran a test answers for it.
+fn ran_a_test(stdout: &[u8]) -> bool {
+    String::from_utf8_lossy(stdout).lines().any(|line| {
+        line.strip_prefix("running ")
+            // Counted positionally for the reason above: the harness writes
+            // `running 1 test` and `running 2 tests`, and both are announcements
+            // of a corpus this reading never has to know the spelling of.
             .and_then(|announced| announced.split_whitespace().next())
             .and_then(|count| count.parse::<u64>().ok())
             .is_some_and(|count| count > 0)
@@ -654,15 +692,56 @@ mod tests {
     /// The same clean exit after the scope stopped selecting code.
     const EMPTY_CORPUS_EVIDENCE: &[u8] = b"Found 0 mutants to test\n";
 
+    /// One clean test run, in the words the installed libtest harness uses.
+    ///
+    /// Transcribed from the dialect member's own binary on this tree rather
+    /// than composed, because what the guard reads is a spelling no argument
+    /// can settle.
+    const TEST_EVIDENCE: &[u8] = concat!(
+        "running 7 tests\n",
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; ",
+        "0 filtered out; finished in 0.00s\n",
+    )
+    .as_bytes();
+
+    /// The same clean exit after the member's tests stopped being selected.
+    ///
+    /// Taken from running that member's own binary with `--exact
+    /// __no_such_test__`, which is what an emptied or renamed target leaves
+    /// behind: nothing ran, and the harness still exits 0.
+    const EMPTY_SELECTION_EVIDENCE: &[u8] = concat!(
+        "running 0 tests\n",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; ",
+        "7 filtered out; finished in 0.00s\n",
+    )
+    .as_bytes();
+
+    /// A member whose package holds more targets than it holds tests.
+    ///
+    /// The ordinary shape of a real member, transcribed from one passing
+    /// workspace run: the `app` lib target announces zero because its tests all
+    /// live in its integration targets, and `dialect`'s lib announces the
+    /// singular `1 test`. Twenty-two targets announce zero in that run, so a
+    /// reading that called any of them empty would refuse the whole battery.
+    const MIXED_TARGET_EVIDENCE: &[u8] = concat!(
+        "running 0 tests\n",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; ",
+        "0 filtered out; finished in 0.00s\n",
+        "running 1 test\n",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; ",
+        "0 filtered out; finished in 0.00s\n",
+    )
+    .as_bytes();
+
     #[test]
     fn replay_consumes_every_member_and_returns_one_typed_verdict() {
         let battery = Battery::current();
         let executor = FakeExecutor::new(vec![
-            exited(true, b"gate evidence"),
+            exited(true, TEST_EVIDENCE),
             exited(true, MUTATION_EVIDENCE),
-            exited(true, b"dialect evidence"),
-            exited(true, b"process evidence"),
-            exited(true, b"supply evidence"),
+            exited(true, TEST_EVIDENCE),
+            exited(true, TEST_EVIDENCE),
+            exited(true, TEST_EVIDENCE),
         ]);
 
         let verdict = run_with(&executor, &battery).expect("complete replay");
@@ -682,8 +761,8 @@ mod tests {
             exited(false, b"gate failed"),
             exited(true, MUTATION_EVIDENCE),
             exited(false, b"dialect failed"),
-            exited(true, b"process evidence"),
-            exited(true, b"supply evidence"),
+            exited(true, TEST_EVIDENCE),
+            exited(true, TEST_EVIDENCE),
         ]);
 
         let verdict = run_with(&executor, &battery).expect("typed refused replay");
@@ -713,11 +792,11 @@ mod tests {
     #[test]
     fn a_mutation_member_that_selected_no_corpus_refuses_the_battery() {
         let executor = FakeExecutor::new(vec![
-            exited(true, b"gate evidence"),
+            exited(true, TEST_EVIDENCE),
             exited(true, EMPTY_CORPUS_EVIDENCE),
-            exited(true, b"dialect evidence"),
-            exited(true, b"process evidence"),
-            exited(true, b"supply evidence"),
+            exited(true, TEST_EVIDENCE),
+            exited(true, TEST_EVIDENCE),
+            exited(true, TEST_EVIDENCE),
         ]);
 
         let verdict = run_with(&executor, &Battery::current()).expect("typed empty-corpus replay");
@@ -736,17 +815,67 @@ mod tests {
     #[test]
     fn a_mutation_member_that_announced_no_corpus_refuses_the_battery() {
         let executor = FakeExecutor::new(vec![
-            exited(true, b"gate evidence"),
+            exited(true, TEST_EVIDENCE),
             exited(true, b"mutation evidence"),
-            exited(true, b"dialect evidence"),
-            exited(true, b"process evidence"),
-            exited(true, b"supply evidence"),
+            exited(true, TEST_EVIDENCE),
+            exited(true, TEST_EVIDENCE),
+            exited(true, TEST_EVIDENCE),
         ]);
 
         let verdict = run_with(&executor, &Battery::current()).expect("typed silent-corpus replay");
 
         assert_eq!(verdict.checks()[1].standing(), CheckStanding::EmptyScope);
         assert_eq!(verdict.standing(), ProofStanding::Refused);
+    }
+
+    /// A test member that ran no test is the same emptiness, and exits 0 too.
+    ///
+    /// The dialect member is a whole test binary selected by package and target
+    /// name, and both names survive the tests inside them being emptied,
+    /// renamed, or filtered out. libtest then prints this and exits 0, which is
+    /// the exit a passing member gives, so the member would be sealed into a
+    /// receipt naming a refusal corpus that never ran.
+    #[test]
+    fn a_test_member_that_ran_no_tests_refuses_the_battery() {
+        let executor = FakeExecutor::new(vec![
+            exited(true, TEST_EVIDENCE),
+            exited(true, MUTATION_EVIDENCE),
+            exited(true, EMPTY_SELECTION_EVIDENCE),
+            exited(true, TEST_EVIDENCE),
+            exited(true, TEST_EVIDENCE),
+        ]);
+
+        let verdict =
+            run_with(&executor, &Battery::current()).expect("typed empty-selection replay");
+
+        assert_eq!(verdict.checks()[2].kind(), CheckKind::DialectRefusals);
+        assert_eq!(verdict.checks()[2].standing(), CheckStanding::EmptyScope);
+        assert_eq!(verdict.checks()[2].standing().code(), Some(5));
+        assert_eq!(verdict.standing(), ProofStanding::Refused);
+    }
+
+    /// One target announcing zero tests is not an empty member.
+    ///
+    /// A member runs every target its scope selects, and a package with no unit
+    /// tests in its lib still announces that target at zero. Reading the member
+    /// as empty unless every target ran something would refuse the ordinary
+    /// shape of a real run, so what is asked of the member is that something in
+    /// it ran, not that everything did.
+    #[test]
+    fn a_member_whose_other_target_ran_nothing_still_passes() {
+        let executor = FakeExecutor::new(vec![
+            exited(true, TEST_EVIDENCE),
+            exited(true, MUTATION_EVIDENCE),
+            exited(true, TEST_EVIDENCE),
+            exited(true, MIXED_TARGET_EVIDENCE),
+            exited(true, TEST_EVIDENCE),
+        ]);
+
+        let verdict = run_with(&executor, &Battery::current()).expect("typed mixed-target replay");
+
+        assert_eq!(verdict.checks()[3].kind(), CheckKind::WaitAndProcess);
+        assert_eq!(verdict.checks()[3].standing(), CheckStanding::Clean);
+        assert_eq!(verdict.standing(), ProofStanding::Clean);
     }
 
     #[test]
@@ -756,11 +885,11 @@ mod tests {
 
         let verdict = run_with(
             &FakeExecutor::new(vec![
-                exited(true, b"gate"),
+                exited(true, TEST_EVIDENCE),
                 exited(true, MUTATION_EVIDENCE),
-                exited(true, b"dialect"),
-                exited(true, b"process"),
-                exited(true, b"supply"),
+                exited(true, TEST_EVIDENCE),
+                exited(true, TEST_EVIDENCE),
+                exited(true, TEST_EVIDENCE),
             ]),
             &Battery::current(),
         )

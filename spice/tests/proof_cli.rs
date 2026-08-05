@@ -533,10 +533,13 @@ fn selected_runtime(fixture: &Fixture) -> String {
             "\"$identity\" \"$challenge\" >&2\n",
             "printf 'battery\\n' >> '{}'\n",
             "[ ! -f '{}' ] || exit 19\n",
-            // The mutation member announces its corpus, as the pinned
-            // cargo-mutants does, because a member that announces none is
-            // refused rather than sealed.
-            "case \"$member\" in *' mutants '*) printf 'Found 36 mutants to test\\n' ;; esac\n",
+            // Every member announces the scope it selected, in the words its
+            // own runner uses, because a member that announces none is refused
+            // rather than sealed.
+            "case \"$member\" in\n",
+            "  *' mutants '*) printf 'Found 36 mutants to test\\n' ;;\n",
+            "  *) printf 'running 7 tests\\n' ;;\n",
+            "esac\n",
             "exit 0\n"
         ),
         fixture.invocations.display(),
@@ -564,10 +567,13 @@ fn selected_runtime(fixture: &Fixture) -> String {
             "printf 'spice-proof-attestation-v2:%s:%s\\n' \"$dialect\" \"$challenge\" >&2\n",
             "printf 'battery\\n' >> '{}'\n",
             "[ ! -f '{}' ] || exit 19\n",
-            // The mutation member announces its corpus, as the pinned
-            // cargo-mutants does, because a member that announces none is
-            // refused rather than sealed.
-            "case \"$member\" in *' mutants '*) printf 'Found 36 mutants to test\\n' ;; esac\n",
+            // Every member announces the scope it selected, in the words its
+            // own runner uses, because a member that announces none is refused
+            // rather than sealed.
+            "case \"$member\" in\n",
+            "  *' mutants '*) printf 'Found 36 mutants to test\\n' ;;\n",
+            "  *) printf 'running 7 tests\\n' ;;\n",
+            "esac\n",
             "exit 0\n"
         ),
         fixture.invocations.display(),
