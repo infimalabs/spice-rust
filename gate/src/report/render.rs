@@ -154,9 +154,10 @@ fn render_movement(rendered: &mut String, movement: ReportMutationMovement) {
 ///
 /// Built only from the contract's own declarations: the per-file counts come
 /// from re-running each metric's declared parser, so this attribution cannot
-/// drift from what the gate measured. Every carrying file is listed, unranked
-/// and untruncated, because the file that moved a baseline is often not the
-/// file that holds the most.
+/// drift from what the gate measured. Every carrying file is listed and none
+/// is dropped, heaviest first only so the order is stable to read: the file
+/// that moved a baseline is often not the file that holds the most, so the
+/// top of this list is where to start looking rather than the answer.
 #[must_use]
 pub fn refusal_detail(root: &Path, contract: &Contract, report: &GateReport) -> String {
     let mut detail = String::from(
