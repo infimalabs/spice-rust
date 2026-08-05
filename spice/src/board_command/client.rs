@@ -398,6 +398,9 @@ fn client_free(
                 "name a task carrying a current live claim",
             )
         })?;
+        if let Err(error) = spice::task_git::prepare_free(repository, &task.to_string()) {
+            return Err(task_git_outcome(error));
+        }
         Ok((
             CommandKind::ClaimFree,
             vec![

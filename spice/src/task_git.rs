@@ -235,6 +235,52 @@ pub fn capture(repository: &Repository) -> Result<Capture, Error> {
     })
 }
 
+/// Local commits a claim would strand if its holder released it now.
+///
+/// Deliberately read-only, unlike its siblings: it neither recovers a pending
+/// operation, nor requires a clean tree, nor fetches, because deciding whether
+/// a release is safe must not itself move the lane or reach the network. The
+/// local baseline is the same evidence `prepare_claim` would refuse on later.
+/// A lane with no origin-backed baseline has nothing to strand and answers with
+/// no commits, which is the inert stance `prepare_claim` takes there too.
+pub fn stranded_commits(repository: &Repository) -> Result<Vec<String>, Error> {
+    let root = repository.worktree_root();
+    let Some(target) = resolve_target(root)? else {
+        return Ok(Vec::new());
+    };
+    let listed = required_read(
+        root,
+        &["log", "--format=%h %s", &format!("{}..HEAD", target.baseline)],
+        "list local commits",
+    )?;
+    Ok(listed.lines().map(str::to_owned).collect())
+}
+
+/// Refuse a voluntary release that would leave task commits owned by nobody.
+///
+/// `prepare_claim` already refuses to hand a lane new work while loose commits
+/// sit outside a claimed boundary. Releasing a claim is the door that creates
+/// those loose commits in the first place, so it refuses on the same evidence
+/// and names both the commits and the way out.
+pub fn prepare_free(repository: &Repository, task: &str) -> Result<(), Error> {
+    let stranded = stranded_commits(repository)?;
+    if stranded.is_empty() {
+        return Ok(());
+    }
+    Err(Error::refusal(
+        "git::free-loose-commits",
+        format!(
+            "releasing {task} would strand {count} task-owned local commit(s): {listed}",
+            count = stranded.len(),
+            listed = stranded.join("; "),
+        ),
+        format!(
+            "run `spice task done {task}` to record those commits under this \
+             task, or reset the lane to the task baseline before freeing it",
+        ),
+    ))
+}
+
 /// Safely advance a clean lane before allocator possession is minted.
 pub fn prepare_claim(
     repository: &Repository,

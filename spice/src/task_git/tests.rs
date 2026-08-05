@@ -186,6 +186,46 @@ mod tests {
     }
 
     #[test]
+    fn free_preparation_names_every_commit_a_release_would_strand() {
+        let fixture = Fixture::new("free-loose");
+        let first = fixture.agent_commit("first.txt", "first\n");
+        let second = fixture.agent_commit("second.txt", "second\n");
+
+        let refusal =
+            prepare_free(&fixture.repository(), "CLAIM-1kFixture")
+                .expect_err("release refused while commits are loose");
+
+        assert_eq!(refusal.reason(), "git::free-loose-commits");
+        for commit in [&first, &second] {
+            let short =
+                stdout(&fixture.agent, &["rev-parse", "--short", commit]);
+            assert!(
+                refusal.detail().contains(&short),
+                "{} omits {short}",
+                refusal.detail()
+            );
+        }
+        assert!(
+            refusal.remedy().contains("spice task done CLAIM-1kFixture"),
+            "{}",
+            refusal.remedy()
+        );
+        assert_eq!(
+            stdout(&fixture.agent, &["rev-parse", "HEAD"]),
+            second,
+            "refusing a release must not move the lane"
+        );
+    }
+
+    #[test]
+    fn free_preparation_permits_a_lane_carrying_no_local_commits() {
+        let fixture = Fixture::new("free-clean");
+
+        prepare_free(&fixture.repository(), "CLAIM-1kFixture")
+            .expect("release permitted with nothing to strand");
+    }
+
+    #[test]
     fn conflict_leaves_complete_recoverable_merge_state() {
         let fixture = Fixture::new("conflict");
         fs::write(fixture.agent.join("README.md"), "agent\n")
