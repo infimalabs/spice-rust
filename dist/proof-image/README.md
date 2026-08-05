@@ -81,6 +81,21 @@ from a checkout whose repository is under `$PWD`. A linked worktree's `.git`
 names a directory outside it, and the run then refuses by name instead of
 recording a listing no index ever answered for.
 
+That refusal is the normal case rather than an edge one, so plan for it before
+touching `wire/` or `app/`. Every development lane is a linked worktree sharing
+one bare repository, and its `.git` is a file reading `gitdir:` followed by a
+path outside the mount; `git ls-files` inside the container answers `fatal: not
+a git repository` for all of them. Stage from a throwaway clone of the commit
+instead — `git clone --branch <branch> <bare> /tmp/<name>` gives a real `.git`
+directory under `$PWD`, and because the clone is checked out at the same commit
+its tree is byte-identical, so the listing git answers for there is the listing
+the lane would have produced. Copy `dist/stage` and `dist/stage-sources.txt`
+back into the lane and commit them there. What not to do is bind-mount the bare
+repository at its absolute path so the `gitdir:` pointer resolves: that would
+satisfy the check while handing an emulated container write access to the object
+store every lane shares, which is a far worse trade than cloning a second
+working tree.
+
 `cargo xtask check-app` runs everywhere and splits its answer accordingly. Every
 host rebuilds the app and compares the staged inventory, which is the part a
 rebuild anywhere can settle; only this image goes on to compare bytes. A macOS
