@@ -55,21 +55,21 @@ pub fn reference_transaction(
 /// Every verification action, in the one order a run performs them.
 ///
 /// The last action still runs the predecessor's external Python policy gate,
-/// and the reason is coverage rather than habit. `gate/src/battery/manifest.toml`
-/// names all 25 of that gate's standard steps against a compiled arm, and being
-/// named is now being run for every one of them: the three metrics arms that
-/// once acquired evidence naming an input this build could not reach —
-/// `file-shape`, `complexity`, and `magic-numbers` — all measure, the first two
-/// for every class they declare and the third for every class this repository
-/// commits. The fourth, `markdown-links`, measured already.
+/// and the reason is a second reading rather than habit.
+/// `gate/src/battery/manifest.toml` names all 25 of that gate's standard steps
+/// against a compiled arm, and every one of them is measured here now. The three
+/// metrics arms that once acquired evidence naming an input this build could not
+/// reach — `file-shape`, `complexity`, and `magic-numbers` — all measure, the
+/// first two for every class they declare and the third for every class this
+/// repository commits; `markdown-links` measured already.
 ///
 /// What is left is a class gap rather than an arm gap: the magic scan still
 /// refuses `.py`, `.cs`, and `.js`, which need predecessor parent semantics, and
-/// this repository commits none of the three, so nothing here is unmeasured for
-/// want of it. The action stays for what it does once every arm measures. It
-/// runs the predecessor's own implementations over the same sources, so a
+/// this repository commits none of the three, so nothing here goes unmeasured
+/// for want of it. The action stays for what it does once every arm measures --
+/// it runs the predecessor's own implementations over the same sources, so a
 /// compiled arm that drifted lenient is still met by the one it replaced.
-/// Dropping it drops that second reading rather than the only one.
+/// Dropping it drops that second reading, not the only one.
 const VERIFY_ACTIONS: [Action; 8] = [
     Action::Command(Step::cargo(
         "cargo fmt --all -- --check",
