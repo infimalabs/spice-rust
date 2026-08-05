@@ -44,7 +44,7 @@ const SELECTED_ROUTINES: [(&str, &str, u64, u64); 3] = [
 /// A source long enough that no elastic headroom can admit it.
 ///
 /// The tracked policy this fixture copies caps `file_loc` at 1000 lines, lets a
-/// ratchet reach 1500, and varies that by 7 percent, so no seed the actor jitter
+/// ratchet reach 1500, and varies that by 5 percent, so no seed the actor jitter
 /// can produce comes near this. A length that only sometimes breached would make
 /// the verdict a property of which actor name the harness happened to use.
 const OVERLONG_LINES: usize = 4000;

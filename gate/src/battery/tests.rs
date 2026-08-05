@@ -24,9 +24,9 @@ const MARKED: &str = "src/marked.rs";
 /// The prose file carrying a discouraged word, selected as changed.
 const PROSE: &str = "docs/guide.md";
 
-mod document_latch;
 mod executor;
 mod file_shape;
+mod latch_wire;
 mod magic;
 mod manifest;
 mod minting;
