@@ -235,6 +235,7 @@ const CSHARP_SYMBOL_BINDINGS: &[PatternBinding] = &[
             " (class_declaration name: (identifier) @class)",
             " (interface_declaration name: (identifier) @interface)",
             " (struct_declaration name: (identifier) @struct)",
+            " (record_declaration name: (identifier) @record)",
             " (enum_declaration name: (identifier) @enum)",
             " (method_declaration name: (identifier) @method)",
             " (property_declaration name: (identifier) @property)",
@@ -683,6 +684,10 @@ mod tests {
     /// Fields and events are the asymmetric pair: they carry no `name` field of
     /// their own and are named by the variable declarator they wrap, so a query
     /// that only reads declaration-level names would silently drop them.
+    /// Records are the reverse asymmetry: C# writes one three ways and the
+    /// grammar gives all three the same node, so all three are written out
+    /// here. Reading the node name alone would leave two of the forms claimed
+    /// but never parsed.
     #[test]
     fn csharp_symbol_scan_retains_every_supported_declaration_kind() {
         let source = concat!(
@@ -695,6 +700,9 @@ mod tests {
             "interface IFixture { void Contract(); }\n",
             "struct Point { public int X; }\n",
             "enum Shade { Deep }\n",
+            "record Plain { }\n",
+            "record class Classy { }\n",
+            "record struct Valued { }\n",
         );
         let matches = scan_csharp_symbols(source).expect("C# symbols scan");
         let declarations: Vec<(&str, &str)> = matches
@@ -720,6 +728,9 @@ mod tests {
                 ("struct", "Point"),
                 ("field", "X"),
                 ("enum", "Shade"),
+                ("record", "Plain"),
+                ("record", "Classy"),
+                ("record", "Valued"),
             ],
             "every named declaration is retained once, in source order, with its kind",
         );
