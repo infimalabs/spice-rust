@@ -8,8 +8,12 @@ use super::*;
 /// canonical verifier's retained predecessor stage is justified by: when the
 /// metrics family gains an acquisition entrypoint, this list stops matching and
 /// that justification has to be read again rather than quietly outliving it.
-const UNMEASURED_PREDECESSOR_STEPS: [&str; 4] =
-    ["file-shape", "complexity", "magic-numbers", "markdown-links"];
+const UNMEASURED_PREDECESSOR_STEPS: [&str; 4] = [
+    "file-shape",
+    "complexity",
+    "magic-numbers",
+    "markdown-links",
+];
 
 #[test]
 fn runner_executes_all_26_once_in_order_with_complete_context() {
