@@ -337,6 +337,67 @@ mod tests {
         );
     }
 
+    /// A hook child still exiting when Git does is not a surviving descendant.
+    ///
+    /// The group is probed the instant Git exits, which is precisely when a
+    /// short-lived hook child is most likely still being torn down, so with no
+    /// grace an ordinary command faults. That is what was observed once under
+    /// full-workspace parallel load, on a path with no descendant of its own.
+    ///
+    /// The descendant here outlives Git by a tenth of the grace, so the two
+    /// outcomes are not close in either direction: it is reliably still there
+    /// when the group is first probed, which is what makes this fail without
+    /// the wait, and reliably gone well inside the bound.
+    #[test]
+    fn reference_hook_descendant_still_exiting_does_not_fault() {
+        let fixture = Fixture::new("hook-exiting");
+        let head = stdout(&fixture.agent, &["rev-parse", "HEAD"]);
+        let descendant_pid = fixture.agent.join(".git/hook-exiting-pid");
+        let hook = git_state_path(
+            &fixture.agent,
+            "hooks/reference-transaction",
+        )
+        .expect("reference hook path");
+        let script = format!(
+            concat!(
+                "#!/bin/sh\n",
+                "case \"$1\" in\n",
+                "prepared)\n",
+                // Records itself, lingers past Git's exit, then leaves on its
+                // own. Nothing signals it, so only the grace can collect it.
+                "  /bin/sh -c 'printf \"%s\\n\" \"$$\" > {pid}; ",
+                "sleep 0.05' &\n",
+                "  while [ ! -s {pid} ]; do sleep 0.01; done\n",
+                ";;\n",
+                "esac\n",
+                "exit 0\n",
+            ),
+            pid = path(&descendant_pid),
+        );
+        fs::write(&hook, script).expect("write exiting hook");
+        let mut permissions =
+            fs::metadata(&hook).expect("hook metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&hook, permissions).expect("make hook executable");
+
+        // Deliberately no wall-clock assertion. The elapsed time here is a whole
+        // Git subprocess, not the grace, so bounding it would fail on a loaded
+        // machine for reasons this test is not about -- which is the very shape
+        // of flake it exists to remove.
+        let output = run(
+            &fixture.agent,
+            &["update-ref", "refs/heads/hook-exiting", &head],
+        )
+        .expect("a hook descendant on its way out is not a survivor");
+
+        assert!(output.success(), "update-ref failed: {}", output.stderr);
+        assert_eq!(
+            stdout(&fixture.agent, &["rev-parse", "refs/heads/hook-exiting"]),
+            head,
+            "the reference the command was faulted out of never landed",
+        );
+    }
+
     #[test]
     fn reference_hook_pipe_descendant_is_bounded_and_reaped() {
         let fixture = Fixture::new("hook-descendant");
