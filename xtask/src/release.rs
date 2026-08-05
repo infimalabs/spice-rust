@@ -70,9 +70,13 @@ pub struct ReleaseEnvironment {
     sdk_root: Option<OsString>,
     developer_dir: Option<OsString>,
     cargo_target_dir: Option<OsString>,
+    rustc: Option<OsString>,
+    build_rustc: Option<OsString>,
 }
 
 impl ReleaseEnvironment {
+    /// The two compiler overrides come last because appending cannot silently
+    /// permute the arguments an existing caller already passes.
     #[must_use]
     #[allow(clippy::too_many_arguments)]
     pub const fn new(
@@ -85,6 +89,8 @@ impl ReleaseEnvironment {
         sdk_root: Option<OsString>,
         developer_dir: Option<OsString>,
         cargo_target_dir: Option<OsString>,
+        rustc: Option<OsString>,
+        build_rustc: Option<OsString>,
     ) -> Self {
         Self {
             path,
@@ -96,6 +102,8 @@ impl ReleaseEnvironment {
             sdk_root,
             developer_dir,
             cargo_target_dir,
+            rustc,
+            build_rustc,
         }
     }
 
@@ -116,11 +124,27 @@ impl ReleaseEnvironment {
 
     /// The `rustc` a build started from this environment would compile with.
     ///
-    /// Resolved by the same walk over the same `PATH` that the release
-    /// pipeline's own program discovery uses, so the compiler asked for its
-    /// release is the one a build here would run, rather than whichever one
-    /// this process happens to sit beside.
+    /// `PATH` is the last question, not the only one. Cargo runs `RUSTC` in
+    /// place of the compiler it would otherwise find, and `CARGO_BUILD_RUSTC`
+    /// is the environment spelling of the `build.rustc` key, which does the
+    /// same when `RUSTC` is absent. Measured against the installed Cargo: with
+    /// both set the `RUSTC` one runs, with either alone that one runs, and
+    /// only with neither does the `PATH` walk decide. Asking in that order is
+    /// what makes this the compiler the build runs rather than the one a bare
+    /// `PATH` would have found -- and the app stage is bytes only one compiler
+    /// release can reproduce, so a build under an unmeasured one is exactly
+    /// what must not happen.
+    ///
+    /// An override is taken as written, because that is what Cargo hands the
+    /// operating system; a name that resolves to nothing is a compiler that
+    /// cannot be read rather than an environment that has none.
+    ///
+    /// The `PATH` walk is the same one the release pipeline's own program
+    /// discovery uses, so the fallback is that rule rather than a second one.
     pub(crate) fn rustc(&self) -> Option<PathBuf> {
+        if let Some(overridden) = self.rustc.as_ref().or(self.build_rustc.as_ref()) {
+            return Some(PathBuf::from(overridden));
+        }
         find_program(self.path.as_deref()?, "rustc").ok()
     }
 
