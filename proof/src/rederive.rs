@@ -327,10 +327,13 @@ mod tests {
                 "printf '%s:runner=%s:challenge=%s:%s\\n' ",
                 "\"$marker\" \"$identity\" \"$challenge\" \"$claims\" >&2\n",
                 "printf 'ran\\n' >> '{}'\n",
-                // The mutation member announces its corpus, as the pinned
-                // cargo-mutants does, because a member that announces none is
+                // Every member announces the scope it selected, in the words its
+                // own runner uses, because a member that announces none is
                 // refused rather than replayed.
-                "case \" $* \" in *' mutants '*) printf 'Found 36 mutants to test\\n' ;; esac\n",
+                "case \" $* \" in\n",
+                "  *' mutants '*) printf 'Found 36 mutants to test\\n' ;;\n",
+                "  *) printf 'running 7 tests\\n' ;;\n",
+                "esac\n",
                 "exit 0\n"
             ),
             invocations.display()
