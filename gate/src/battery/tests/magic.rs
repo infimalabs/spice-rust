@@ -192,21 +192,3 @@ fn a_path_absent_from_head_states_its_absence_instead_of_a_count() {
         "the paths that do have a baseline still measure beside it"
     );
 }
-
-/// Run one complete battery over a repository and return its report.
-fn battery_report(repository: &Path) -> BatteryReport {
-    let mut capture = crate::BatteryCapture::capture(
-        repository,
-        &crate::Selector::staged(),
-        crate::ClaimCapture::Idle,
-        crate::ActorCapture::Acting {
-            actor: "magic-actor".to_owned(),
-            bound_claims: Vec::new(),
-        },
-        crate::RimCapture::new(repository, None, Vec::new())
-            .expect("the fixture repository root is absolute"),
-        crate::HygieneConfiguration::new(["app/main.py"], ["tests"]).expect("hygiene roots"),
-    )
-    .expect("capture the fixture battery source");
-    capture.execute().expect("complete fixture battery")
-}

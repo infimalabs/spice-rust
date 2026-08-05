@@ -170,11 +170,13 @@ impl<'trace> BatteryCapture<'trace> {
             // reported here: the ones this capture already judged its arms
             // against, decided against the same ledger published above.
             //
-            // The structural family decides none yet. Its one acquiring arm
-            // counts Markdown-link case mismatches, which is forbidden a rule,
-            // latch, or threshold because the count is itself the finding, and
-            // its three bounded arms report the input they lack instead of a
-            // measurement.
+            // The structural family's file-shape arm now decides a bound per
+            // selected path, and those are not here yet: the family is acquired
+            // on first request through a `&self` executor, which has nowhere to
+            // put them, and SUCCESS-1kKDLnsv is the restructuring that gives it
+            // one. Their absence narrows what this list reports rather than what
+            // the run enforces — each decision travels on the row it was decided
+            // for, so an over-limit path still fails through its own latch.
             bounds: executor.bounds().to_vec(),
             state,
             tools: tool_evidence(contract)?,

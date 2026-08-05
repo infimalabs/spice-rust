@@ -57,12 +57,20 @@ enum FamilyExecution {
 /// are the live repository's `HEAD`, and `HEAD` moves: a read deferred to first
 /// request would compare part of the selection against one commit and the rest
 /// against another, and the report would name neither.
+///
+/// The acting actor and the latch inventory are retained instead of consumed by
+/// the core capture, because the structural family decides elastic bounds of its
+/// own over a different set of paths. Retaining the two the caller supplied is
+/// what keeps both families deciding against one ledger reading rather than the
+/// structural one taking a second, later look at state that may have moved.
 pub struct RepositoryExecutor<'trace> {
     tree: SelectedTree,
     contract: Contract,
     source: Digest,
     core: Result<Vec<ArmEvidence>, String>,
     baselines: BaselineCapture,
+    actor: ActorCapture,
+    latches: Vec<LatchEntry>,
     bounds: Vec<BoundDecision>,
     rim: RimCapture,
     hygiene: HygieneConfiguration,
@@ -127,8 +135,8 @@ impl<'trace> RepositoryExecutor<'trace> {
         // here, and nothing below this block can reach the live repository
         // again.
         let (source, core, bounds, baselines) = {
-            let captured =
-                CoreSource::capture(&tree, &contract, claim, actor, latches).map_err(|error| {
+            let captured = CoreSource::capture(&tree, &contract, claim, actor.clone(), latches)
+                .map_err(|error| {
                     BatteryError::new(format!("cannot identify battery source: {error}"))
                 })?;
             let (core, bounds) = core_family(&captured, &contract);
@@ -144,6 +152,8 @@ impl<'trace> RepositoryExecutor<'trace> {
             source,
             core,
             baselines,
+            actor,
+            latches: latches.to_vec(),
             bounds,
             rim,
             hygiene,
@@ -247,10 +257,20 @@ impl<'trace> RepositoryExecutor<'trace> {
     /// A family-wide refusal is reserved for a source that cannot be walked or
     /// evidence that violates its declaration. An arm this build cannot measure
     /// is not one of those: it acquires as evidence naming the input it lacks,
-    /// so the three that stay unreachable cannot suppress the one that measures.
+    /// so the one that stays unreachable cannot suppress the three that measure.
+    ///
+    /// The actor and latches the capture retained are handed over here rather
+    /// than re-read, so the file-shape arm judges a path against the same
+    /// elastic limit the core family decided its own bounds under.
     fn acquire_metrics_family(&self) -> Result<Vec<ArmEvidence>, String> {
-        let source = MetricSource::capture(&self.tree, &self.contract, &self.baselines)
-            .map_err(|error| error.to_string())?;
+        let source = MetricSource::capture(
+            &self.tree,
+            &self.contract,
+            &self.baselines,
+            &self.actor,
+            &self.latches,
+        )
+        .map_err(|error| error.to_string())?;
         Ok(acquire_metrics(&source)
             .map_err(|error| error.to_string())?
             .into_iter()

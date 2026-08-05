@@ -4,24 +4,32 @@ use super::*;
 
 /// The metric arms this build still measures nothing for, and each one's blocker.
 ///
-/// The distinguishing substring is pinned per arm rather than a shared phrase
-/// because both report the same `Unavailable` state: without it the two
-/// assertions could pass while each arm named the other's missing input.
-/// This list is what the canonical verifier's retained predecessor stage is
-/// justified by, so an arm leaving it has to be read against that justification
-/// rather than quietly shortening it.
-const UNREACHED_METRIC_ARMS: [(GateId, &str); 2] = [
-    (GateId::FileShape, "policy handle nor the actor seed"),
-    (GateId::Complexity, "lizard 1.23.0"),
-];
+/// The distinguishing substring is pinned rather than a shared phrase for the
+/// reason it was pinned when two arms shared the `Unavailable` state: an arm
+/// naming another's missing input would otherwise pass here. This list is what
+/// the canonical verifier's retained predecessor stage is justified by, so an
+/// arm leaving it has to be read against that justification rather than quietly
+/// shortening it.
+const UNREACHED_METRIC_ARMS: [(GateId, &str); 1] = [(GateId::Complexity, "lizard 1.23.0")];
 
 /// What each metric arm that does reach its input reports for this fixture.
 ///
-/// Both are pinned by state *and* by a substring of the reason, because the two
-/// arms would otherwise be interchangeable to this assertion: they are the two
-/// that acquire, and an arm that started answering for the other's scope would
-/// still land on a state this list contains.
-const ACQUIRED_METRIC_ARMS: [(GateId, BatteryState, &str); 2] = [
+/// Each is pinned by state *and* by a substring of the reason, because the arms
+/// would otherwise be interchangeable to this assertion: they are the ones that
+/// acquire, and an arm that started answering for another's scope would still
+/// land on a state this list contains.
+const ACQUIRED_METRIC_ARMS: [(GateId, BatteryState, &str); 3] = [
+    // Every source file the fixture commits is inside its own elastic bound, so
+    // the file-shape arm reports the shared passing sentence and the state is
+    // what separates it from the two below. What the rows themselves carry —
+    // one path key per selected file, paired across both metrics, each with the
+    // limit it was judged against — is asserted in `super::file_shape`, since a
+    // whole-arm state cannot see whether anything was measured at all.
+    (
+        GateId::FileShape,
+        BatteryState::Passed,
+        "all declared structural measurements completed within threshold",
+    ),
     // The fixture repository commits three `.py` sources, and `.py` is in the
     // workspace policy's magic class. The scan reaches its baseline for every
     // path and measures `src/lib.rs` clean, but those three are a declared class
@@ -559,11 +567,11 @@ fn assert_every_family_projected_its_own_evidence(report: &BatteryReport) {
 
 /// One metric arm carried its own acquired evidence rather than a family refusal.
 ///
-/// Both halves are asserted from the same result: the two unreached arms each
-/// name their own blocker, and the two that reach their input each land on the
-/// state that input produces. Asserting only the refusals would pass just as
-/// well if the family had gone back to refusing wholesale, which is the exact
-/// regression this arm's acquisition undoes.
+/// Both halves are asserted from the same result: the unreached arm names its
+/// own blocker, and the three that reach their input each land on the state that
+/// input produces. Asserting only the refusals would pass just as well if the
+/// family had gone back to refusing wholesale, which is the exact regression
+/// this arm's acquisition undoes.
 ///
 /// Every arm is claimed by exactly one of the two lists, and an arm claimed by
 /// neither fails here rather than passing unexamined. The lists are what says
