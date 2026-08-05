@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     use serde_json::json;
     use wire::{Digest, Domain, Outcome, Reply, ReplyPosition};
@@ -10,7 +12,7 @@ mod tests {
 
     #[test]
     fn one_current_run_constructs_one_coherent_gate_report_and_direct_body() {
-        let report = current_gate_report();
+        let report = fixture_gate_report();
 
         assert_eq!(report.version(), GATE_REPORT_VERSION);
         assert_eq!(report.standing(), report.verdict().standing());
@@ -36,7 +38,7 @@ mod tests {
 
     #[test]
     fn gate_report_refuses_foreign_unknown_alternate_and_inconsistent_fields() {
-        let report = current_gate_report();
+        let report = fixture_gate_report();
         let encoded = report.encode().expect("encode gate report");
         let value: serde_json::Value = serde_json::from_slice(&encoded).expect("gate report JSON");
 
@@ -121,7 +123,7 @@ mod tests {
 
     #[test]
     fn every_gate_report_field_moves_its_canonical_document() {
-        let report = current_gate_report();
+        let report = fixture_gate_report();
         let encoded = report.encode().expect("encode original report");
         let assert_moved = |changed: GateReport, field: &str| {
             assert_ne!(
@@ -169,7 +171,7 @@ mod tests {
 
     #[test]
     fn gate_report_refuses_a_finding_that_disagrees_with_its_measurement() {
-        let mut report = current_gate_report();
+        let mut report = fixture_gate_report();
         let forged = report.measurements[0].value.wrapping_add(1);
         report.findings[0].movement = Movement::Unbaselined { measured: forged };
         report.tightening.as_mut().expect("clean proposal")[0].value = forged;
@@ -695,40 +697,67 @@ mod tests {
         );
     }
 
-    /// The gate report for the live workspace.
+    /// A current report over source owned exclusively by this fixture.
     ///
-    /// Every fixture that calls this reads a report of *this* tree, so any metric
-    /// that rises anywhere in the workspace reaches them as a missing tightening
-    /// proposal or an unexpected standing, several assertions away from the thing
-    /// that actually moved. The tree condition is therefore named here, once, in
-    /// front of all of them, rather than left to be reconstructed from a run the
-    /// reader has to adjudicate by hand.
-    ///
-    /// A refusal here says nothing about an earlier compiler or test step having
-    /// passed: those steps can be green on a tree these fixtures reject.
-    /// `cargo xtask verify` reaches the battery at contract landing after its
-    /// Cargo commands; only the battery reads the ratchet against the working
-    /// tree, which is what this helper adjudicates.
-    fn current_gate_report() -> GateReport {
-        let root = workspace_root();
-        let contract = Contract::load(&root).expect("load current contract");
+    /// These tests exercise report construction and decoding, not the live
+    /// workspace ratchet. Walking the workspace here lets an unrelated process
+    /// fixture move the jurisdiction between the two integrity observations and
+    /// prevents the serializer assertion from running at all.
+    fn fixture_gate_report() -> GateReport {
+        let fixture = ReportFixture::new();
+        let contract = Contract::load(&fixture.root).expect("load fixture contract");
         let report = contract
-            .adjudicate(&root)
-            .expect("complete current run")
+            .adjudicate(&fixture.root)
+            .expect("complete fixture run")
             .report();
         assert!(
             report.tightening().is_some(),
             "{}",
-            refusal_detail(&root, &contract, &report)
+            refusal_detail(&fixture.root, &contract, &report)
         );
         report
     }
 
-    fn workspace_root() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("gate is a direct workspace member")
-            .to_path_buf()
+    struct ReportFixture {
+        root: PathBuf,
+    }
+
+    impl ReportFixture {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "spice-gate-report-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir_all(root.join("src")).expect("create report fixture tree");
+            fs::write(
+                root.join("spice.toml"),
+                format!(
+                    "{}[gate.walk]\nskip = []\n",
+                    crate::NARROWEST_FILE_CLASSES
+                ),
+            )
+            .expect("write report fixture policy");
+            fs::write(
+                root.join("baseline.toml"),
+                concat!(
+                    "version = 1\n\n",
+                    "[[floor]]\nname = \"rust.long-lines\"\nvalue = 1\n\n",
+                    "[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n",
+                ),
+            )
+            .expect("write report fixture baseline");
+            fs::write(root.join("src/lib.rs"), "pub fn fixture() {}\n")
+                .expect("write report fixture source");
+            Self { root }
+        }
+    }
+
+    impl Drop for ReportFixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.root).expect("remove report fixture tree");
+        }
     }
 
     fn sample_kill_report() -> KillReport {
