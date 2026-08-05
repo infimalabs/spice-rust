@@ -330,6 +330,25 @@ fn a_metric_arm_carries_one_unread_file_beside_its_measured_neighbours() {
         "one or more structural measurements exceeded their declared bound"
     );
 
+    // A row that failed in its own right is the one asked for the words: the
+    // arm's own sentence is about a bound, and this row never reached one.
+    let collision = "key collision \"docs/a.md\": tracked paths differ only by case";
+    let unscanned = arm(vec![
+        ("docs/measured.md", mismatches(0)),
+        (
+            "docs/unscanned.md",
+            crate::metrics::EvidenceState::Failed {
+                reason: collision.to_owned(),
+                exit_code: None,
+            },
+        ),
+    ]);
+    assert_eq!(
+        unscanned.state().expect("unscanned arm state"),
+        BatteryState::Failed
+    );
+    assert_eq!(unscanned.reason().expect("unscanned arm reason"), collision);
+
     // Nothing to measure is not a gap, so a real measurement outranks it.
     let inapplicable = arm(vec![
         ("docs/measured.md", mismatches(0)),
