@@ -38,9 +38,12 @@ use crate::GateId;
 use crate::input::Contract;
 use crate::jurisdiction::Jurisdiction;
 use crate::measure::Bounds;
-use crate::metrics::measure_repository_document;
-use crate::policy::{BoundName, PolicyContext};
-use crate::state::{ActorInputs, ActorResolution, PeerClaim, owning_claim, varied_elastic_limit};
+use crate::metrics::{
+    MetricId, MetricKey, MetricStateBinding, ParserEvidence, ParserId, measure_repository_document,
+    resolve_metric_rule,
+};
+use crate::policy::PolicyContext;
+use crate::state::{ActorInputs, BoundDecision, LatchEntry, PeerClaim, owning_claim};
 use crate::tree::SelectedTree;
 
 /// The one program both Git-declared arms observe through.
@@ -110,22 +113,26 @@ impl ActorCapture {
         }
     }
 
-    /// Resolve one candidate path's jitter seed through the documented order.
+    /// Present one candidate path's provenance in the documented order.
     ///
     /// [`ActorInputs`] is the single resolver both this family and every bound
     /// rule seed through. The gate observes no published trailer and no
     /// candidate blob, so an acting actor is the only member above the path
     /// this capture can present, and its absence falls to the candidate path
     /// the order already names last.
-    fn seed(&self, path: &str) -> Result<ActorResolution, CoreInputError> {
+    ///
+    /// The provenance crosses whole rather than pre-resolved to a seed. The
+    /// bound rule resolves it itself, and resolving it here as well would let
+    /// this family and the rule that decides its limit name two different
+    /// actors for one document.
+    fn actor_inputs(&self, path: &str) -> Result<ActorInputs, CoreInputError> {
         let inputs = ActorInputs::new(path).map_err(|error| {
             CoreInputError::new(format!("actor provenance for {path:?}: {error}"))
         })?;
         Ok(match self {
             Self::Acting { actor, .. } => inputs.with_active_actor(actor),
             Self::Absent => inputs,
-        }
-        .resolve_seed())
+        })
     }
 
     /// Whether a peer holds the bound claim that governs `path`.
@@ -154,6 +161,11 @@ impl ActorCapture {
 /// takes both Git-declared observations from the repository the tree was
 /// materialized from. Every arm therefore binds to the same digest, and
 /// [`CoreInputs`] cannot be assembled from a moving tree or a moving repository.
+///
+/// The durable latches are copied in for the same reason: a bounded arm decides
+/// against the ledger this run publishes as its state authority, and reading
+/// that ledger again mid-acquisition could answer from a version the report
+/// never names.
 #[derive(Debug)]
 pub struct CoreSource<'a> {
     root: &'a Path,
@@ -162,6 +174,7 @@ pub struct CoreSource<'a> {
     claim: ClaimCapture,
     actor: ActorCapture,
     git: GitObservations,
+    latches: Vec<LatchEntry>,
 }
 
 impl<'a> CoreSource<'a> {
@@ -170,6 +183,12 @@ impl<'a> CoreSource<'a> {
     /// The repository is taken from the tree rather than accepted beside it, so
     /// no caller can name one source for the identity and another for the Git
     /// evidence.
+    ///
+    /// `latches` are the durable breaches the caller read from the ledger it
+    /// publishes as this run's state authority, handed over for the same reason
+    /// its bound claims are: the gate holds no clock and opens no transaction
+    /// here, so it decides against the reading the report already names rather
+    /// than taking a second one of its own.
     ///
     /// # Errors
     ///
@@ -180,6 +199,7 @@ impl<'a> CoreSource<'a> {
         contract: &Contract,
         claim: ClaimCapture,
         actor: ActorCapture,
+        latches: &[LatchEntry],
     ) -> Result<Self, CoreInputError> {
         // Taken before the walk because it is the only subject here that can
         // still move: the selected tree was sealed at materialization, while
@@ -197,6 +217,7 @@ impl<'a> CoreSource<'a> {
             claim,
             actor,
             git,
+            latches: latches.to_vec(),
         })
     }
 
@@ -269,6 +290,7 @@ pub fn acquire_core(
 ) -> Result<CoreInputs, CoreInputError> {
     let configuration = ConfigurationInventorySource::capture(source)?;
     let mut arms = Vec::with_capacity(core_declarations().len());
+    let mut bounds = Vec::new();
     for declaration in core_declarations() {
         let predecessor = declaration.predecessor();
         let provenance = CoreProvenance::new(
@@ -280,10 +302,10 @@ pub fn acquire_core(
             declaration.id(),
             source.digest.clone(),
             provenance,
-            observe(declaration, source, contract, &configuration)?,
+            observe(declaration, source, contract, &configuration, &mut bounds)?,
         )?);
     }
-    CoreInputs::new(arms)
+    CoreInputs::new(arms).map(|inputs| inputs.with_bounds(bounds))
 }
 
 fn observe(
@@ -291,6 +313,7 @@ fn observe(
     source: &CoreSource<'_>,
     contract: &Contract,
     configuration: &ConfigurationInventorySource,
+    bounds: &mut Vec<BoundDecision>,
 ) -> Result<CoreObservation, CoreInputError> {
     Ok(match declaration.id() {
         GateId::MergeIntegrity => source.git.merge_integrity.clone(),
@@ -298,7 +321,7 @@ fn observe(
         GateId::RepoShape => return repo_shape(source, contract),
         GateId::Staging => source.git.staging.clone(),
         GateId::ConfigKeyValidity => return config_keys(contract),
-        GateId::RepoDocs => return repo_docs(source, contract),
+        GateId::RepoDocs => return repo_docs(source, contract, bounds),
         GateId::ConfigFalseDisable => return configuration.false_disable(),
         GateId::ConfigTrackedTrust => return configuration.tracked_trust(),
         id => unreachable!("{id} is not a compiled core declaration"),
@@ -308,6 +331,7 @@ fn observe(
 fn repo_docs(
     source: &CoreSource<'_>,
     contract: &Contract,
+    bounds: &mut Vec<BoundDecision>,
 ) -> Result<CoreObservation, CoreInputError> {
     let mut measurements = Vec::new();
     for entry in source.jurisdiction.measurable() {
@@ -333,24 +357,39 @@ fn repo_docs(
                 "measure selected repository document {path:?}: {error}"
             ))
         })?;
-        measurements.push(document_measurement(
+        let (measurement, decision) = document_measurement(
             &source.actor,
             contract,
+            &source.latches,
             path,
             document.characters(),
-        )?);
+        )?;
+        measurements.push(measurement);
+        bounds.push(decision);
     }
     RepoDocsEvidence::new(measurements)
         .map(CoreEvidence::RepoDocs)
         .map(measured)
 }
 
-/// Measure one selected document against the acting actor's active cap.
+/// Decide one selected document's bound against the acting actor's headroom.
+///
+/// The decision is taken through [`MetricStateBinding`], which is the same
+/// route [`crate::state::CurrentState`] reconciles a durable latch through, so
+/// the limit this arm is judged against and the limit the ledger would latch
+/// are one computation rather than two spellings of it. That binding resolves
+/// the rule, the ratchet variation, and the `repo_doc_chars` latch key from the
+/// tracked contract, so nothing here restates a policy field.
 ///
 /// The headroom seed is the actor's, never the document's own path: a seed
 /// taken from the path hands every actor one identical cap, which is the one
 /// thing per-actor variation exists to prevent. The path remains the first hash
 /// input, so a single actor still receives a different cap per document.
+///
+/// A latched document is held to its base limit, because a breach already
+/// spent the elastic headroom the ratchet lends. The latch is read from the
+/// ledger this run published as its state authority, so the arm and the report
+/// answer to one reading.
 ///
 /// A bound claim is resolved only for a document that breached its cap, which
 /// is the same set the predecessor asks the ledger about: a document inside its
@@ -359,42 +398,47 @@ fn repo_docs(
 fn document_measurement(
     actor: &ActorCapture,
     contract: &Contract,
+    latches: &[LatchEntry],
     path: &str,
     characters: u64,
-) -> Result<DocMeasurement, CoreInputError> {
-    let bound = contract
-        .rule_policy()
-        .resolve_bound(
-            BoundName::RepoTruthDocChars,
-            &PolicyContext::new().with_path(path),
-        )
-        .map_err(|error| {
-            CoreInputError::new(format!(
-                "resolve repository-document bound for {path:?}: {error}"
-            ))
-        })?;
-    if bound.unlimited() {
-        return DocMeasurement::unlimited(path, characters);
-    }
-    let seed = actor.seed(path)?;
-    let active_limit = varied_elastic_limit(
-        bound.limit(),
-        bound.ratchet_limit(),
-        path,
-        seed.value(),
-        contract
-            .rule_policy()
-            .document()
-            .ratchet()
-            .variation_percent(),
+) -> Result<(DocMeasurement, BoundDecision), CoreInputError> {
+    let rule = resolve_metric_rule(
+        contract.rule_policy(),
+        MetricId::RepositoryDocumentCharacters,
+        &PolicyContext::new().with_path(path),
     )
     .map_err(|error| {
         CoreInputError::new(format!(
-            "resolve active repository-document bound for {path:?}: {error}"
+            "resolve repository-document bound for {path:?}: {error}"
         ))
     })?;
-    let peer_claim = characters > active_limit && actor.peer_holds(path);
-    DocMeasurement::new(path, characters, active_limit, peer_claim)
+    let key = MetricKey::path(path)
+        .map_err(|error| CoreInputError::new(format!("repository-document key: {error}")))?;
+    let binding = MetricStateBinding::new(
+        MetricId::RepositoryDocumentCharacters,
+        key,
+        characters,
+        ParserEvidence::Native {
+            parser: ParserId::Utf8DocumentCharactersV1,
+        },
+        rule,
+    )
+    .map_err(|error| CoreInputError::new(format!("bind repository-document {path:?}: {error}")))?;
+    let latched = latches.contains(binding.entry());
+    let decision = binding
+        .decide(latched, &actor.actor_inputs(path)?)
+        .map_err(|error| {
+            CoreInputError::new(format!(
+                "resolve active repository-document bound for {path:?}: {error}"
+            ))
+        })?;
+    let measurement = if decision.unlimited() {
+        DocMeasurement::unlimited(path, characters)?
+    } else {
+        let peer_claim = decision.over_limit() && actor.peer_holds(path);
+        DocMeasurement::new(path, characters, decision.active_limit(), peer_claim)?
+    };
+    Ok((measurement, decision))
 }
 
 fn plan_phase(claim: &ClaimCapture) -> CoreObservation {

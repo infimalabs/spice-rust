@@ -379,9 +379,30 @@ fn assert_captured_authorities(
         "the repository must still hold the claim the capture was meant to read"
     );
     assert_eq!(context.state(), &ledger.digest());
+    // The repository-document arm measured the one selected document this
+    // fixture holds, so the run resolved exactly one elastic bound and the
+    // report publishes it. A capture that reported none would describe a run
+    // whose own core family was held to a limit the report never names.
+    let [bound] = context.bounds() else {
+        panic!(
+            "one selected document decided one bound: {:?}",
+            context.bounds()
+        );
+    };
+    assert_eq!(bound.actor_inputs().candidate_path(), "app/notes.md");
+    assert_eq!(bound.measured(), 50);
+    assert_eq!(bound.latch_transition(), "clear");
+    assert_eq!(
+        bound
+            .actor()
+            .expect("a varied bound resolved an actor")
+            .value(),
+        "battery-actor",
+        "the published decision was seeded by someone other than the actor that ran it"
+    );
     assert!(
-        context.bounds().is_empty() && context.latches().is_empty(),
-        "no structural family ran, so no bound or latch was decided"
+        context.latches().is_empty(),
+        "the fixture ledger holds no durable breach for a run to carry"
     );
 
     let declared = reloaded
