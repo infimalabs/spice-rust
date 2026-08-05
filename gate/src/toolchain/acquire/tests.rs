@@ -118,6 +118,20 @@ mod tests {
         }
     }
 
+    /// Bounds for the fixtures whose outcome is decided by the probe's own exit.
+    ///
+    /// Every fixture here but the one that deliberately outlives its bound
+    /// asserts evidence the probe produces by finishing: a version it printed, a
+    /// status it exited with, a file that was never launchable at all. A runtime
+    /// deadline cannot improve any of those answers, only replace them with the
+    /// timeout refusal, so a loaded lane would report a stub that ran correctly
+    /// as one that hung. A runtime that cannot elapse removes that race by
+    /// construction rather than lengthening it, leaving the blocking wait on the
+    /// probe's exit as the only way these fixtures end.
+    fn probe_exit_bounds() -> Bounds {
+        probe_bounds(Duration::MAX)
+    }
+
     fn probe_bounds(runtime: Duration) -> Bounds {
         Bounds::new(
             "toolchain probe test",
@@ -144,7 +158,7 @@ mod tests {
         let planted = fixture.version_stub(&fixture.rim.join("bin").join(PROGRAM), RIM_VERSION);
         fixture.version_stub(&fixture.tree.join("bin").join(PROGRAM), TREE_VERSION);
 
-        let evidence = fixture.evidence("bin", &probe_bounds(Duration::from_secs(10)));
+        let evidence = fixture.evidence("bin", &probe_exit_bounds());
 
         let ToolEvidence::Identified {
             resolved_program,
@@ -180,7 +194,7 @@ mod tests {
         let planted = fixture.version_stub(&fixture.rim.join(PROGRAM), RIM_VERSION);
         fixture.version_stub(&fixture.tree.join(PROGRAM), TREE_VERSION);
 
-        let evidence = fixture.evidence("", &probe_bounds(Duration::from_secs(10)));
+        let evidence = fixture.evidence("", &probe_exit_bounds());
 
         let ToolEvidence::Identified {
             resolved_program,
@@ -231,7 +245,7 @@ mod tests {
     fn a_program_no_entry_holds_is_still_missing() {
         let fixture = ProbeFixture::new("absent");
 
-        let evidence = fixture.evidence("bin", &probe_bounds(Duration::from_secs(10)));
+        let evidence = fixture.evidence("bin", &probe_exit_bounds());
 
         assert_eq!(
             evidence,
@@ -250,7 +264,7 @@ mod tests {
         let planted = fixture.rim.join(PROGRAM);
         fs::write(&planted, "not a program\n").expect("plant a file that is not executable");
 
-        let evidence = fixture.evidence("", &probe_bounds(Duration::from_secs(10)));
+        let evidence = fixture.evidence("", &probe_exit_bounds());
 
         assert_eq!(
             evidence,
@@ -267,7 +281,7 @@ mod tests {
 
         let evidence = fixture.evidence_with(
             "",
-            &probe_bounds(Duration::from_secs(10)),
+            &probe_exit_bounds(),
             |_| {
                 Err(std::io::Error::new(
                     std::io::ErrorKind::PermissionDenied,
@@ -289,7 +303,7 @@ mod tests {
         let fixture = ProbeFixture::new("nonzero");
         let planted = fixture.script(&fixture.rim.join(PROGRAM), "exit 3\n");
 
-        let evidence = fixture.evidence("", &probe_bounds(Duration::from_secs(10)));
+        let evidence = fixture.evidence("", &probe_exit_bounds());
 
         assert_eq!(
             evidence,
@@ -319,7 +333,7 @@ mod tests {
         let fixture = ProbeFixture::new("signaled");
         let planted = fixture.script(&fixture.rim.join(PROGRAM), "kill -TERM $$\n");
 
-        let evidence = fixture.evidence("", &probe_bounds(Duration::from_secs(10)));
+        let evidence = fixture.evidence("", &probe_exit_bounds());
 
         assert_eq!(
             evidence,
@@ -334,7 +348,7 @@ mod tests {
         let fixture = ProbeFixture::new("no-version");
         let planted = fixture.script(&fixture.rim.join(PROGRAM), "printf '\\n'\n");
 
-        let evidence = fixture.evidence("", &probe_bounds(Duration::from_secs(10)));
+        let evidence = fixture.evidence("", &probe_exit_bounds());
 
         assert_eq!(
             evidence,
@@ -353,7 +367,7 @@ mod tests {
         let fixture = ProbeFixture::new("undecodable");
         let planted = fixture.script(&fixture.rim.join(PROGRAM), "printf 'probe-tool \\377\\n'\n");
 
-        let evidence = fixture.evidence("", &probe_bounds(Duration::from_secs(10)));
+        let evidence = fixture.evidence("", &probe_exit_bounds());
 
         assert_eq!(
             evidence,
@@ -371,7 +385,7 @@ mod tests {
             &format!("printf '%s\\r\\n' '{RIM_VERSION}'\n"),
         );
 
-        let evidence = fixture.evidence("", &probe_bounds(Duration::from_secs(10)));
+        let evidence = fixture.evidence("", &probe_exit_bounds());
 
         let ToolEvidence::Identified { version, .. } = &evidence else {
             panic!("a stub that prints its version produced {evidence:?}");
@@ -397,7 +411,7 @@ mod tests {
             &format!("printf '%s\\n\\n' '{RIM_VERSION}'\n"),
         );
 
-        let evidence = fixture.evidence("", &probe_bounds(Duration::from_secs(10)));
+        let evidence = fixture.evidence("", &probe_exit_bounds());
 
         let ToolEvidence::Identified { version, .. } = &evidence else {
             panic!("a stub that prints its version produced {evidence:?}");
