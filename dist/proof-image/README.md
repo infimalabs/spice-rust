@@ -43,11 +43,15 @@ equality is not a check the repository declines to make; it is one no host can
 pass, so the alternative to a single owning environment is not a stricter check
 but a stage nobody can reproduce.
 
-`cargo xtask stage-app` enforces both halves of what that report names. It asks
-the running `rustc` for its release first and refuses anything but the one
+`cargo xtask stage-app` enforces both halves of what that report names, and
+reads both out of one invocation of it. It refuses any release but the one
 `rust-toolchain.toml` selects, naming the pinned release and the observed one;
-then it admits only a program compiled for `x86_64-unknown-linux-gnu` and
-refuses every other host, naming the observed tuple and this image's digest.
+then it admits only a compiler reporting host `x86_64-unknown-linux-gnu` and
+refuses every other host, naming the observed tuple and this image's digest. A
+report that names either field and not the other is refused outright, because
+the tuple that matters is the one whose `-Cmetadata` the bytes carry — what the
+`xtask` binary itself was compiled for is a different question, and not the one
+the stage is identified by.
 The release is read from `rust-toolchain.toml` alone, and the two other
 places that declare it — `rust-version` in the workspace manifest and
 `RUSTUP_TOOLCHAIN` above — are held equal to it by a test rather than read, so
@@ -55,10 +59,12 @@ a bump that moves one of them and not the others fails here instead of compiling
 the stage under a release nothing pinned. What neither guard reads is the image,
 so another host reporting that exact tuple under the pinned release is admitted
 too; what they foreclose is the quiet substitution, because no macOS or musl
-host can pass, and those are the hosts a developer actually stages from. The
-tuple half is compared as four spelled fields rather than asserted by a `cfg!`
-predicate, so the musl neighbour is refused in a test on the macOS hosts that
-cannot compile for it. Stage from the repository root with the workspace
+host can pass, and those are the hosts a developer actually stages from. Both
+halves are compared as strings the compiler handed over rather than asserted by
+a `cfg!` predicate over what this binary was compiled for, so every lane can
+drive the whole decision: the musl and `gnux32` neighbours are refused in a test
+on macOS hosts that cannot compile for either, and — the case a predicate could
+never reach off the image — the owning tuple is admitted in one too. Stage from the repository root with the workspace
 writable, the image's Cargo home named explicitly, and the build root on a
 writable mount, because the app build writes nothing under the workspace:
 

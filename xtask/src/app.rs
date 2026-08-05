@@ -46,89 +46,44 @@ const REMAPPED_CARGO_HOME: &str = "/cargo-home";
 /// one. One environment has to own these bytes; it is the sealed Linux image,
 /// whose `rustc` reports `x86_64-unknown-linux-gnu`, because that is the
 /// environment the release battery can reproduce with networking disabled. The
-/// release that same report names is the other half of this identity, and
-/// [`toolchain`] owns it.
+/// release that same report names is the other half of this identity, and one
+/// invocation yields both -- [`toolchain::observed`] asks, and the string it
+/// hands back is what this constant is compared against.
 const STAGING_HOST: &str = "x86_64-unknown-linux-gnu";
 
 /// Whether a host tuple owns the app stage.
 ///
 /// This is the tuple half of what decides ownership, and it admits one tuple or
 /// none; [`toolchain::pinned_release`] is the release half, and a host passing
-/// this one still refuses under any other release. The decision reads a spelled
-/// tuple rather than a `cfg!` predicate over the same four fields, because a
-/// predicate answers only for the target its binary was compiled for: dropping
-/// a field from one fails nothing anywhere this fleet runs, since a foreign
-/// host already disagrees in every field and the owning host still agrees in
-/// every remaining one. Given a value, a test can offer this the musl
-/// neighbour no lane compiles for.
+/// this one still refuses under any other release. Both halves are read off one
+/// `rustc --version --verbose` report, so this compares the tuple the compiler
+/// says it emits for -- the tuple whose `-Cmetadata` the staged bytes actually
+/// carry -- rather than the one this xtask was compiled for. Those are not the
+/// same question, and only the first one is answered by the compiler that will
+/// run. Because it takes a value, every lane can offer it the musl and gnux32
+/// neighbours no lane compiles for, and the owning tuple as well.
 fn owns_the_stage(host: &str) -> bool {
     host == STAGING_HOST
 }
 
-/// Whether this program was compiled for the tuple [`STAGING_HOST`] names.
-fn compiled_for_staging_host() -> bool {
-    owns_the_stage(&host_spelling())
-}
-
-/// This host, spelled in every field ownership is decided on.
+/// What the `rustc` this environment would build with reports about itself.
 ///
-/// A triple's vendor, environment and ABI fields are observable after all --
-/// `std::env::consts` simply stops at arch and OS, and stopping there spells a
-/// musl host and the image's gnu host identically while their `-Cmetadata`
-/// differs. This is the sole reading of those fields, and [`owns_the_stage`]
-/// decides on what it returns, so the tuple a refusal names is the tuple that
-/// was compared. A field this cannot spell exactly becomes `other`, which no
-/// owning tuple matches, so an unrecognised host refuses rather than resembling
-/// the image.
-///
-/// The ABI is read for the same reason the environment is: `x86_64-unknown-
-/// linux-gnux32` agrees with the image in arch, vendor, OS and environment and
-/// is told apart by nothing else, so a spelling that stopped at the environment
-/// would hand it the image's tuple exactly. `proof::environment` reads the same
-/// field for the same reason. It joins the environment rather than becoming a
-/// fifth field, because that is how the triple it is compared against spells it.
-fn host_spelling() -> String {
-    let vendor = if cfg!(target_vendor = "apple") {
-        "apple"
-    } else if cfg!(target_vendor = "unknown") {
-        "unknown"
-    } else {
-        "other"
-    };
-    let environment = if cfg!(target_env = "gnu") {
-        "gnu"
-    } else if cfg!(target_env = "musl") {
-        "musl"
-    } else if cfg!(target_env = "") {
-        "none"
-    } else {
-        "other"
-    };
-    let abi = if cfg!(target_abi = "") {
-        ""
-    } else if cfg!(target_abi = "x32") {
-        "x32"
-    } else {
-        "other"
-    };
-    spell_host(
-        std::env::consts::ARCH,
-        vendor,
-        std::env::consts::OS,
-        environment,
-        abi,
-    )
-}
-
-/// One host's fields, assembled the way the owning tuple is spelled.
-///
-/// Composition is separated from the `cfg!` reading above so that this half can
-/// be handed values: no lane compiles for the ABI-bearing neighbour, but every
-/// lane can ask what this would spell for one, and whether [`owns_the_stage`]
-/// admits what came back. Drop a field here and that question answers wrongly
-/// on the host running the test rather than only on a host nobody runs.
-fn spell_host(arch: &str, vendor: &str, os: &str, environment: &str, abi: &str) -> String {
-    format!("{arch}-{vendor}-{os}-{environment}{abi}")
+/// Both callers that decide anything on the compiler's identity come through
+/// here, so neither can end up reading a different `rustc` than the one whose
+/// bytes are at stake. A `PATH` naming no `rustc` at all is refused here rather
+/// than treated as an unknown host: the question is what the compiler is, and
+/// there is no compiler to ask.
+fn observed_toolchain(
+    root: &Path,
+    environment: &ReleaseEnvironment,
+) -> Result<toolchain::ObservedToolchain, AppBuildError> {
+    let rustc = environment.rustc().ok_or_else(|| {
+        AppBuildError::UnreadableToolchainReport(
+            "PATH names no rustc, so the toolchain a build here would compile under is unknown"
+                .to_owned(),
+        )
+    })?;
+    toolchain::observed(&rustc, root)
 }
 
 const APP_FILES: [&str; 4] = ["app.module", "app_bg.wasm", "canvas-app.html", "style.css"];
@@ -145,9 +100,9 @@ const GENERATED_MODULE_REFERENCES: usize = 2;
 ///
 /// # Errors
 ///
-/// Returns an unreadable or unpinned toolchain release, a foreign staging host,
-/// a missing Cargo home, Trunk execution failure, a refused generated stage, or
-/// an unreadable build input.
+/// Returns an unreadable toolchain report, an unpinned release, a foreign
+/// staging host, a missing Cargo home, Trunk execution failure, a refused
+/// generated stage, or an unreadable build input.
 pub fn stage_app(
     environment: &ReleaseEnvironment,
     output: &mut impl Write,
@@ -161,29 +116,27 @@ pub fn stage_app(
 
 /// Whether this build may write the stage: the release first, then the tuple.
 ///
-/// Both dimensions Cargo folds into `-Cmetadata` are asked here, and the
-/// release is asked first deliberately. The tuple is a fact about this binary,
-/// settled when it was compiled, so on every host but the owning one it answers
-/// before anything else can be observed -- and a door that only the owning host
-/// can reach is a door no test anywhere else can prove is still there. Asking
-/// the environment first puts the release refusal in reach of every host, and a
-/// foreign host still refuses on the tuple immediately after.
+/// Both dimensions Cargo folds into `-Cmetadata` are asked of one report, so
+/// the release and the tuple cannot come from two different compilers. That
+/// also puts both doors in reach of every lane: each is decided on a string the
+/// compiler handed over, so a test anywhere can drive either one with a report
+/// of its choosing, rather than a door only the owning host can knock on and
+/// only the owning host can prove is still there. The release is asked first
+/// because it is the half an operator can act on without changing machines.
 fn admit_staging_environment(
     root: &Path,
     environment: &ReleaseEnvironment,
 ) -> Result<(), AppBuildError> {
-    let rustc = environment.rustc().ok_or_else(|| {
-        AppBuildError::UnreadableToolchainRelease(
-            "PATH names no rustc, so the release a build here would compile under is unknown"
-                .to_owned(),
-        )
-    })?;
-    let observed = toolchain::observed_release(&rustc, root)?;
-    if observed != toolchain::pinned_release() {
-        return Err(AppBuildError::ForeignToolchainRelease(observed));
+    let observed = observed_toolchain(root, environment)?;
+    if observed.release() != toolchain::pinned_release() {
+        return Err(AppBuildError::ForeignToolchainRelease(
+            observed.release().to_owned(),
+        ));
     }
-    if !compiled_for_staging_host() {
-        return Err(AppBuildError::ForeignStagingHost(host_spelling()));
+    if !owns_the_stage(observed.host()) {
+        return Err(AppBuildError::ForeignStagingHost(
+            observed.host().to_owned(),
+        ));
     }
     Ok(())
 }
@@ -194,20 +147,23 @@ fn admit_staging_environment(
 /// the tree, which is answered from recorded input identity and needs no
 /// rebuild, then rebuilds and compares the staged inventory. Only the staging
 /// host goes on to compare bytes, because only its compiler metadata can
-/// reproduce them.
+/// reproduce them -- and it is the same `rustc` report that says which host
+/// this is, so the tuple this names is the one that compiled the rebuild it
+/// then declines to compare.
 ///
 /// # Errors
 ///
 /// Returns build inputs the recorded stage identity no longer describes, a
-/// missing Cargo home, Trunk execution failure, an inventory that differs from
-/// the rebuild, or, on the staging host, the first staged asset whose bytes
-/// differ.
+/// toolchain report that cannot be read, a missing Cargo home, Trunk execution
+/// failure, an inventory that differs from the rebuild, or, on the staging
+/// host, the first staged asset whose bytes differ.
 pub fn check_app(
     environment: &ReleaseEnvironment,
     output: &mut impl Write,
 ) -> Result<(), AppBuildError> {
     let root = workspace_root()?;
     compare_stage_sources(&root)?;
+    let host = observed_toolchain(&root, environment)?.host().to_owned();
     let temporary = environment
         .build_root(&root)
         .join(format!("xtask-canvas-check-{}", std::process::id()));
@@ -220,10 +176,9 @@ pub fn check_app(
     let result = run_trunk(&root, environment, &temporary, output).and_then(|()| {
         let stage = root.join("dist/stage");
         compare_stage_inventory(&stage, &temporary)?;
-        if compiled_for_staging_host() {
+        if owns_the_stage(&host) {
             return compare_stage_bytes(&stage, &temporary);
         }
-        let host = host_spelling();
         writeln!(
             output,
             "[app] {host} is not {STAGING_HOST}; compared the staged inventory \
@@ -458,7 +413,7 @@ pub enum AppBuildError {
     },
     NonUtf8(PathBuf),
     MissingCargoHome,
-    UnreadableToolchainRelease(String),
+    UnreadableToolchainReport(String),
     ForeignToolchainRelease(String),
     ForeignStagingHost(String),
     GeneratedStage(String),
@@ -483,10 +438,10 @@ impl fmt::Display for AppBuildError {
             Self::MissingCargoHome => formatter.write_str(
                 "the app build needs CARGO_HOME or HOME to locate the crates it compiles",
             ),
-            Self::UnreadableToolchainRelease(reason) => write!(
+            Self::UnreadableToolchainReport(reason) => write!(
                 formatter,
-                "the toolchain release this build would compile under could not be read: \
-                 {reason}"
+                "the toolchain this build would compile under could not be read, so neither \
+                 the release nor the host it emits for is known: {reason}"
             ),
             Self::ForeignToolchainRelease(observed) => write!(
                 formatter,
@@ -631,21 +586,49 @@ mod tests {
         fs::remove_dir_all(root).expect("remove app-build fixture");
     }
 
+    /// A `PATH` whose `rustc` answers with one chosen report.
+    ///
+    /// The report is handed over verbatim, so a lane can offer the decision a
+    /// release it does not pin or a host it cannot compile for -- including the
+    /// owning host, which is the case a lane that is not the owning host could
+    /// otherwise never reach.
+    #[cfg(unix)]
+    fn rustc_reporting(root: &Path, report: &str) -> ReleaseEnvironment {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        fs::create_dir_all(root).expect("create the fixture toolchain directory");
+        let rustc = root.join("rustc");
+        fs::write(
+            &rustc,
+            format!("#!/bin/sh\ncat <<'REPORT'\n{}\nREPORT\n", report.trim_end()),
+        )
+        .expect("write a rustc answering with the chosen report");
+        fs::set_permissions(&rustc, fs::Permissions::from_mode(0o755))
+            .expect("make the fixture rustc executable");
+        ReleaseEnvironment::new(
+            Some(root.to_path_buf().into_os_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
     /// Staging reads the release, and reads it through the door it ships.
     ///
-    /// The tuple half of the identity is settled for this binary -- a test can
-    /// hand [`owns_the_stage`] any tuple, but none can make this process the
-    /// owning host -- so this arranges the half that can be reached from here:
-    /// a `PATH` whose `rustc` reports a release this workspace does not pin.
-    /// Nothing else in `stage_app` can stand in for the refusal, which is the
-    /// point -- delete the call and a foreign host answers with the tuple
-    /// instead, while the owning host goes on to build, so the wiring is what
-    /// fails here rather than only the rule.
+    /// The host this reports is the owning one, so the release is the only
+    /// thing left to refuse on and nothing else in `stage_app` can stand in for
+    /// the refusal. That is the point -- delete the call and this fixture, whose
+    /// report names the tuple that owns the stage, goes on to build and write
+    /// it under a release nothing pinned, so the wiring is what fails here
+    /// rather than only the rule.
     #[cfg(unix)]
     #[test]
     fn staging_refuses_a_toolchain_release_the_workspace_does_not_pin() {
-        use std::os::unix::fs::PermissionsExt as _;
-
         let root = std::env::temp_dir().join(format!(
             "spice-xtask-app-foreign-release-{}",
             std::process::id()
@@ -653,26 +636,9 @@ mod tests {
         if root.exists() {
             fs::remove_dir_all(&root).expect("remove stale fixture");
         }
-        fs::create_dir_all(&root).expect("create foreign toolchain fixture");
-        let rustc = root.join("rustc");
-        fs::write(
-            &rustc,
-            "#!/bin/sh\nprintf 'rustc 9.9.9\\nrelease: 9.9.9\\n\
-             host: x86_64-unknown-linux-gnu\\n'\n",
-        )
-        .expect("write a rustc reporting an unpinned release");
-        fs::set_permissions(&rustc, fs::Permissions::from_mode(0o755))
-            .expect("make the fixture rustc executable");
-        let environment = ReleaseEnvironment::new(
-            Some(root.clone().into_os_string()),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+        let environment = rustc_reporting(
+            &root,
+            "rustc 9.9.9\nrelease: 9.9.9\nhost: x86_64-unknown-linux-gnu\n",
         );
 
         let mut output: Vec<u8> = Vec::new();
@@ -789,16 +755,19 @@ mod tests {
 
     /// The refusal has to name both hosts, because the operator's next move
     /// depends on which environment they are missing, not on the fact that
-    /// they are missing one. It names the image too, because an operator on an
-    /// x86_64 Linux box is missing an image and not an architecture, and the
+    /// they are missing one. The observed one is spelled the way the compiler
+    /// spells it -- a macOS lane's `rustc` reports `aarch64-apple-darwin`, not
+    /// the tuple that lane was compiled for -- so what the refusal names is the
+    /// string that was compared. It names the image too, because an operator on
+    /// an x86_64 Linux box is missing an image and not an architecture, and the
     /// digest is the only thing they can act on.
     #[test]
     fn staging_from_a_foreign_host_refuses_and_names_both_environments() {
         let refusal =
-            AppBuildError::ForeignStagingHost("aarch64-apple-macos-none".to_owned()).to_string();
+            AppBuildError::ForeignStagingHost("aarch64-apple-darwin".to_owned()).to_string();
 
         assert!(
-            refusal.contains("aarch64-apple-macos-none") && refusal.contains(STAGING_HOST),
+            refusal.contains("aarch64-apple-darwin") && refusal.contains(STAGING_HOST),
             "the refusal named neither the observed host nor the owning one: {refusal}",
         );
         assert!(
@@ -840,45 +809,119 @@ mod tests {
         }
     }
 
-    /// The ABI is the field the fleet cannot reach: every lane compiles for an
-    /// empty one, so a spelling that dropped it would be wrong only on the host
-    /// that would then be admitted. Composition takes values, so the question is
-    /// asked here instead -- what this spells for the neighbour that carries an
-    /// ABI, and whether that spelling is admitted.
+    /// The whole ownership decision, driven with tuples no lane compiles for.
+    ///
+    /// The tuple is a string the compiler hands over, so this asks the decision
+    /// itself rather than a helper that spells this host. Every report names
+    /// the pinned release, leaving the host as the only thing left to decide
+    /// on, and the owning tuple is among them: that is the case no `cfg!`
+    /// design could put in front of a macOS lane, where ownership could be
+    /// refused but never granted, so the arm that admits a build was
+    /// unreachable everywhere it could be tested. The others are the
+    /// neighbours a comparison of less than the whole string would admit --
+    /// musl differs in the environment field alone, `gnux32` only by an
+    /// appended ABI, and the fourth stops one field short.
+    #[cfg(unix)]
     #[test]
-    fn an_abi_bearing_neighbour_is_spelled_apart_from_the_image() {
-        let neighbour = spell_host("x86_64", "unknown", "linux", "gnu", "x32");
+    fn the_ownership_decision_reads_the_host_its_compiler_reports() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-xtask-app-observed-host-{}",
+            std::process::id()
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
 
-        assert_eq!(
-            neighbour, "x86_64-unknown-linux-gnux32",
-            "the ABI left the spelling, so this host wears the image's tuple",
-        );
-        assert!(
-            !owns_the_stage(&neighbour),
-            "{neighbour} was admitted, and its -Cmetadata is not the image's",
-        );
-        assert_eq!(
-            spell_host("x86_64", "unknown", "linux", "gnu", ""),
-            STAGING_HOST,
-            "an empty ABI has to leave the owning tuple spelled exactly, or the image \
-             refuses itself",
-        );
+        for (host, owns) in [
+            ("x86_64-unknown-linux-gnu", true),
+            ("x86_64-unknown-linux-musl", false),
+            ("x86_64-unknown-linux-gnux32", false),
+            ("x86_64-unknown-linux", false),
+            ("aarch64-apple-darwin", false),
+        ] {
+            let environment = rustc_reporting(
+                &root,
+                &format!("release: {}\nhost: {host}\n", toolchain::pinned_release()),
+            );
+
+            let admitted = admit_staging_environment(&root, &environment);
+
+            if owns {
+                assert!(
+                    admitted.is_ok(),
+                    "a compiler reporting {host} under the pinned release was refused, so no \
+                     environment at all could write the stage: {:?}",
+                    admitted.err(),
+                );
+                continue;
+            }
+            let error =
+                admitted.expect_err("a host that is not the owning tuple may not write the stage");
+            assert!(
+                matches!(&error, AppBuildError::ForeignStagingHost(observed) if observed == host),
+                "{host} was refused as something other than a foreign staging host: {error}",
+            );
+        }
+
+        fs::remove_dir_all(root).expect("remove fixture");
     }
 
-    /// The decision is only as wide as the tuple it is handed. A spelling that
-    /// stopped early would offer a musl host the same four-field string the
-    /// image spells, so the count is held here rather than left to the fields
-    /// this lane happens to be compiled for -- on macOS every field disagrees
-    /// already, and a dropped one would not change the answer.
+    /// A compiler that names no host is refused, not filled in.
+    ///
+    /// The release is reported and matches, so the missing host line is all
+    /// that is left to decide on. Supplying one from anywhere else -- what this
+    /// binary was compiled for, most temptingly -- would let a compiler that
+    /// will not say what it emits for write the bytes the stage is identified
+    /// by, which is the substitution this whole decision exists to refuse.
+    #[cfg(unix)]
     #[test]
-    fn this_host_is_spelled_in_every_field_the_decision_reads() {
-        let spelling = host_spelling();
+    fn a_report_naming_no_host_refuses_rather_than_supplying_one() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-xtask-app-hostless-report-{}",
+            std::process::id()
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        let environment = rustc_reporting(
+            &root,
+            &format!("rustc {0}\nrelease: {0}\n", toolchain::pinned_release()),
+        );
 
-        assert_eq!(
-            spelling.split('-').count(),
-            STAGING_HOST.split('-').count(),
-            "this host is spelled {spelling}, in fewer fields than {STAGING_HOST}, so a host \
-             differing from the owning one only in a dropped field would spell it exactly",
+        let error = admit_staging_environment(&root, &environment)
+            .expect_err("a compiler that names no host may not write the stage");
+
+        assert!(
+            matches!(
+                &error,
+                AppBuildError::UnreadableToolchainReport(reason) if reason.contains("named no host")
+            ),
+            "a report without a host line answered with something other than a refusal naming \
+             the missing field: {error}",
+        );
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    /// A `PATH` with no `rustc` on it is refused before anything is built.
+    ///
+    /// Both halves of the identity come from a compiler, so when there is no
+    /// compiler to ask there is no question left to answer. This is the one
+    /// refusal the report parser never sees, and without it an empty `PATH`
+    /// would reach the build with neither half decided.
+    #[test]
+    fn an_environment_naming_no_compiler_is_refused() {
+        let environment =
+            ReleaseEnvironment::new(None, None, None, None, None, None, None, None, None);
+
+        let error = admit_staging_environment(Path::new("."), &environment)
+            .expect_err("an environment with no rustc may not write the stage");
+
+        assert!(
+            matches!(
+                &error,
+                AppBuildError::UnreadableToolchainReport(reason) if reason.contains("no rustc")
+            ),
+            "an absent compiler answered with something other than an unreadable report: {error}",
         );
     }
 }
