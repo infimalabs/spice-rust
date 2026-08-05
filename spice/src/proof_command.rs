@@ -500,6 +500,7 @@ fn container_disposition(error: &ContainerError) -> RuntimeDisposition {
         | ContainerError::ImageIdentityDrift { .. }
         | ContainerError::WorkspaceNotDirectory(_)
         | ContainerError::UnrepresentableWorkspace(_)
+        | ContainerError::RuntimeControlRefused { .. }
         | ContainerError::RuntimeNotAttested { .. } => RuntimeDisposition::Refusal,
     }
 }
