@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 #[path = "filesystem_event.rs"]
 pub(crate) mod filesystem_event;
 #[path = "process_exit.rs"]
-mod process_exit;
+pub(crate) mod process_exit;
 
 use process_exit::ProcessExitObserver;
 
@@ -99,6 +99,11 @@ pub(super) fn wait_until_ready(
     if ready() {
         return Readiness::Ready;
     }
+    // Reading the child here has a second purpose: one that is already gone is
+    // answered without asking the kernel to watch it, which the kernel would
+    // refuse. That refusal stays reachable, because the child may end in the
+    // gap between this read and that registration, and the observer treats it
+    // as the exit it is rather than as a failure.
     if ended(child, what) {
         return Readiness::Exited;
     }

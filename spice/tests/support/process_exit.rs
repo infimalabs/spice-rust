@@ -1,46 +1,70 @@
+//! One blocking observation of a child process ending.
+//!
+//! The kernel announces the exit, so nothing here polls for it. Asking to watch
+//! a process is itself a race the caller cannot win: a child that was live when
+//! its status was last read can be gone before the registration lands. Both
+//! kernels report that as `ESRCH`, which answers the question rather than
+//! failing to ask it, so it is an ending here and not an assertion.
+
 use std::io;
 
-pub(super) struct ProcessExitObserver {
-    descriptor: libc::c_int,
+/// A kernel subscription to one child's exit, or the exit already having happened.
+pub(crate) enum ProcessExitObserver {
+    /// The kernel will announce the exit through this descriptor.
+    Watching(libc::c_int),
+    /// The process was already gone when the subscription was attempted.
+    Ended,
 }
 
 impl ProcessExitObserver {
-    pub(super) fn new(pid: u32) -> Self {
+    pub(crate) fn new(pid: u32) -> Self {
         #[cfg(target_os = "linux")]
-        let descriptor = linux_observer(pid);
+        let observed = linux_observer(pid);
         #[cfg(target_os = "macos")]
-        let descriptor = macos_observer(pid);
-        Self { descriptor }
+        let observed = macos_observer(pid);
+        match observed {
+            Some(descriptor) => Self::Watching(descriptor),
+            None => Self::Ended,
+        }
     }
 
-    pub(super) fn wait(self) {
+    /// Block until the observed process has ended, returning at once if it has.
+    pub(crate) fn wait(self) {
+        let Self::Watching(descriptor) = &self else {
+            return;
+        };
         #[cfg(target_os = "linux")]
-        wait_linux(self.descriptor);
+        wait_linux(*descriptor);
         #[cfg(target_os = "macos")]
-        wait_macos(self.descriptor);
+        wait_macos(*descriptor);
     }
 }
 
 impl Drop for ProcessExitObserver {
     fn drop(&mut self) {
-        // SAFETY: the observer exclusively owns this descriptor.
-        unsafe {
-            libc::close(self.descriptor);
+        if let Self::Watching(descriptor) = self {
+            // SAFETY: the observer exclusively owns this descriptor.
+            unsafe {
+                libc::close(*descriptor);
+            }
         }
     }
 }
 
 #[cfg(target_os = "linux")]
-fn linux_observer(pid: u32) -> libc::c_int {
+fn linux_observer(pid: u32) -> Option<libc::c_int> {
     // SAFETY: pidfd_open observes the named process without changing it.
     let descriptor = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) as libc::c_int };
-    assert_ne!(
-        descriptor,
-        -1,
-        "pidfd observer: {}",
-        io::Error::last_os_error()
+    if descriptor != -1 {
+        return Some(descriptor);
+    }
+    let refusal = io::Error::last_os_error();
+    assert_eq!(
+        refusal.raw_os_error(),
+        Some(libc::ESRCH),
+        "pidfd observer: {refusal}"
     );
-    descriptor
+    None
 }
 
 #[cfg(target_os = "linux")]
@@ -65,7 +89,7 @@ fn wait_linux(descriptor: libc::c_int) {
 }
 
 #[cfg(target_os = "macos")]
-fn macos_observer(pid: u32) -> libc::c_int {
+fn macos_observer(pid: u32) -> Option<libc::c_int> {
     // SAFETY: kqueue creates an owned process-event descriptor.
     let descriptor = unsafe { libc::kqueue() };
     assert_ne!(
@@ -93,13 +117,20 @@ fn macos_observer(pid: u32) -> libc::c_int {
             std::ptr::null(),
         )
     };
+    if result == 0 {
+        return Some(descriptor);
+    }
+    let refusal = io::Error::last_os_error();
+    // SAFETY: registration failed, so nothing else refers to this descriptor.
+    unsafe {
+        libc::close(descriptor);
+    }
     assert_eq!(
-        result,
-        0,
-        "kqueue registration: {}",
-        io::Error::last_os_error()
+        refusal.raw_os_error(),
+        Some(libc::ESRCH),
+        "kqueue registration: {refusal}"
     );
-    descriptor
+    None
 }
 
 #[cfg(target_os = "macos")]

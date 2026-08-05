@@ -12,6 +12,10 @@
 //!
 //! Two of them can be reachable at the same instant, and which one comes back
 //! then is an order rather than an ending, so the order is pinned here as well.
+//! So is the order the wait rests on before reaching any of them: the observer
+//! is armed before the first state read. A child already gone by the time the
+//! kernel is asked to watch it is the last thing proved here, because that is
+//! an ending the kernel reports as a refusal.
 
 use std::cell::RefCell;
 use std::fs;
@@ -19,12 +23,15 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 #[path = "support/readiness.rs"]
 mod readiness;
 
 use readiness::Readiness;
+use readiness::process_exit::ProcessExitObserver;
 
 /// Wide enough that reaching it means no completion signal arrived at all.
 ///
@@ -357,6 +364,70 @@ fn a_state_reached_after_arming_arrives_on_the_filesystem_callback() {
             .is_none(),
         "the child outlived the state, so its exit is not what ended the wait"
     );
+}
+
+/// The observer is armed before the first state read, not after it.
+///
+/// The watch root does not exist when the wait is called, and the first state
+/// read is what creates it. Arming first therefore fails the way
+/// [`a_missing_watch_root_fails_observer_setup_loudly`] fails, while arming
+/// after either first-pass read would find the root already there and answer
+/// normally. The ending proves the order because it is the one ending the other
+/// order cannot produce.
+///
+/// Proving the same order by its consequence — an arrival that lands after the
+/// first read reaching the wait anyway — was measured and rejected. It needs
+/// the arrival to be invisible to a late-armed observer, and on this machine a
+/// stream armed one second after a change still woke on it twice in fifteen
+/// tries, and once in fifteen at two seconds. No pause makes that ending
+/// certain, so the order is pinned by one that does not depend on it.
+#[test]
+#[should_panic(expected = "root-creating state observer arms on")]
+fn the_observer_is_armed_before_the_first_state_read() {
+    let mut held = Held::new("armed-first", "read hold");
+    let root = held.tree.join("root");
+    let created = root.clone();
+
+    readiness::wait_until_ready(
+        &mut held.child,
+        &root,
+        IDLE_HORIZON,
+        "root-creating state",
+        move || {
+            fs::create_dir_all(&created).expect("the first state read creates the watch root");
+            true
+        },
+    );
+}
+
+/// An exit observer for a process already gone answers instead of refusing.
+///
+/// The wait reads the child before asking the kernel to watch it, so the
+/// shipped order reaches this only when the child ends inside that gap, which
+/// no fixture can schedule. What refuses is the registration, and it refuses
+/// the same way whatever opened the gap, so it is asked here directly: a reaped
+/// pid can no longer be watched, and that refusal is the exit having already
+/// happened rather than a failure to observe one.
+#[test]
+fn an_exit_observer_for_a_gone_process_answers_rather_than_refusing() {
+    let mut held = Held::new("gone", "read release; exit 11");
+    writeln!(held.input.borrow_mut()).expect("fixture child takes its release");
+    let departed = held.child.id();
+    assert_eq!(
+        held.child.wait().expect("fixture child status").code(),
+        Some(11),
+        "the child was not reaped before its pid was observed"
+    );
+
+    let (answered, answer) = mpsc::channel();
+    thread::spawn(move || {
+        ProcessExitObserver::new(departed).wait();
+        let _ = answered.send(());
+    });
+
+    answer
+        .recv_timeout(SPENT_HORIZON)
+        .expect("a gone process is answered rather than watched for an exit it already had");
 }
 
 /// A state that never arrives fails by name rather than blocking forever.
