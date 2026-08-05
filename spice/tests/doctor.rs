@@ -231,20 +231,22 @@ fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
         dialect::PROJECT_MAX_DEPTH as u64
     );
     // Doctor reports the variables Spice owns, while the tracked vocabulary also
-    // accounts the ones its fixtures merely write: the hooks fixture exports
-    // Git's three local-environment names, and the hygiene acquisition fixture
-    // fixes TMPDIR at private scratch. The gate's name ledger accounts every name
-    // the tree references. That the manifest holds these and nothing besides
-    // Doctor's rows is stated once in wire/tests/environment_vocabulary.rs. The
-    // class is spelled again here rather than derived from the list under test,
-    // so this stays an equality rather than a containment that could not see an
-    // added row; both pins read the one document, so a copy that fell out of step
-    // reds itself.
-    const UNOWNED: [&str; 4] = [
-        "GIT_DIR",        // env-policy: allow
-        "GIT_INDEX_FILE", // env-policy: allow
-        "GIT_WORK_TREE",  // env-policy: allow
-        "TMPDIR",         // env-policy: allow
+    // accounts the ones its fixtures and agent shadow use: three local Git
+    // names, three Git configuration names, and the hygiene fixture's TMPDIR.
+    // The gate's name ledger accounts every name the tree references. That the
+    // manifest holds these and nothing besides Doctor's rows is stated once in
+    // wire/tests/environment_vocabulary.rs. The class is spelled again here
+    // rather than derived from the list under test, so this stays an equality
+    // rather than a containment that could not see an added row; both pins read
+    // the one document, so a copy that fell out of step reds itself.
+    const UNOWNED: [&str; 7] = [
+        "GIT_CONFIG_COUNT",  // env-policy: allow
+        "GIT_CONFIG_SYSTEM", // env-policy: allow
+        "GIT_DIR",           // env-policy: allow
+        "GIT_EDITOR",        // env-policy: allow
+        "GIT_INDEX_FILE",    // env-policy: allow
+        "GIT_WORK_TREE",     // env-policy: allow
+        "TMPDIR",            // env-policy: allow
     ];
     let vocabulary = report.configuration.policy().env_names();
     assert_eq!(
