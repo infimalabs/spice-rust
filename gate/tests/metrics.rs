@@ -2,14 +2,16 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use gate::battery::{ArmEvidence, BatteryState};
 use gate::metrics::{
     EvidenceState, LatchBinding, MagicFinding, MetricEvidence, MetricId, MetricKey,
     MetricMeasurement, MetricParity, MetricReport, MetricStateBinding, MetricUnit, ParseError,
     ParserEvidence, ParserId, PredecessorMetricObservation, PredecessorMetricResult,
-    ResolvedMetricRule, RuleBinding, STRUCTURAL_ARMS, STRUCTURAL_METRICS, StructuralArmEvidence,
-    compare_predecessor_metric, measure_complexity, measure_file_shape,
-    measure_repository_document, resolve_magic_metric, resolve_metric_rule, scan_magic_regressions,
-    scan_markdown_link_case,
+    RUST_DOC_MARKDOWN_CITATION_ALLOWANCES, ResolvedMetricRule, RuleBinding,
+    RustDocMarkdownCitationAllowanceKind, RustDocMarkdownCitationScan, STRUCTURAL_ARMS,
+    STRUCTURAL_METRICS, StructuralArmEvidence, compare_predecessor_metric, measure_complexity,
+    measure_file_shape, measure_repository_document, resolve_magic_metric, resolve_metric_rule,
+    scan_magic_regressions, scan_markdown_link_case, scan_rust_doc_markdown_citations,
 };
 use gate::state::{ActorInputs, CurrentState, LatchKind, PredecessorSources, RenameMap};
 use gate::{
@@ -109,6 +111,19 @@ fn declarations_freeze_ids_units_parsers_scopes_and_order() {
             .exclusions()
             .contains(&"repository-truth documents")
     );
+    let markdown = STRUCTURAL_ARMS[3];
+    assert_eq!(markdown.parser().id(), ParserId::MarkdownTrackedTargetsV2);
+    assert_eq!(
+        markdown.metrics(),
+        [
+            MetricId::MarkdownLinkCaseMismatches,
+            MetricId::RustDocMarkdownTargetAbsences,
+        ]
+    );
+    let doc_targets = STRUCTURAL_METRICS[7];
+    assert_eq!(doc_targets.unit(), MetricUnit::TargetAbsences);
+    assert_eq!(doc_targets.parser(), ParserId::MarkdownTrackedTargetsV2);
+    assert_eq!(doc_targets.owner(), GateId::MarkdownLinks);
 }
 
 /// Both doors bind a measurement to the parser its own arm declares.
@@ -528,6 +543,152 @@ fn markdown_links_use_projected_inventory_and_exact_ascii_case() {
         scan_markdown_link_case("README.md", "", &collision),
         Err(ParseError::Collision { .. })
     ));
+}
+
+#[test]
+fn rust_doc_markdown_citations_use_live_inventory_and_refuse_the_unfixed_arm() {
+    let tracked = vec!["README.md".to_owned()];
+    let unfixed = scan_rust_doc_markdown_citations(
+        "proof/src/config.rs",
+        "/// Compiled defaults were documented by `CONFIG.md`.",
+        &tracked,
+    )
+    .expect("unfixed Rust doc comment scans");
+    assert_eq!(unfixed.citations(), 1);
+    assert_eq!(unfixed.findings().len(), 1);
+    assert_eq!(unfixed.findings()[0].source_path(), "proof/src/config.rs");
+    assert_eq!(unfixed.findings()[0].line(), 1);
+    assert_eq!(unfixed.findings()[0].target_path(), "CONFIG.md");
+    assert_eq!(rust_doc_citation_arm_state(&unfixed), BatteryState::Failed);
+
+    let fixed = scan_rust_doc_markdown_citations(
+        "proof/src/config.rs",
+        "/** The current contract is summarized by `README.md`. */",
+        &tracked,
+    )
+    .expect("fixed Rust doc comment scans");
+    assert_eq!(fixed.citations(), 1);
+    assert!(fixed.findings().is_empty());
+    assert_eq!(rust_doc_citation_arm_state(&fixed), BatteryState::Passed);
+
+    let live_target = "docs/LIVE-INVENTORY-PROBE.md".to_owned();
+    let text = "//! The live contract is `docs/LIVE-INVENTORY-PROBE.md`.";
+    let absent = scan_rust_doc_markdown_citations("src/lib.rs", text, &tracked)
+        .expect("an absent live target scans");
+    assert_eq!(absent.findings().len(), 1);
+    let mut expanded = tracked;
+    expanded.push(live_target);
+    let present = scan_rust_doc_markdown_citations("src/lib.rs", text, &expanded)
+        .expect("the same live target scans after inventory movement");
+    assert!(
+        present.findings().is_empty(),
+        "the parser restated a document list instead of reading the supplied tracked inventory"
+    );
+
+    let ordinary = scan_rust_doc_markdown_citations(
+        "src/lib.rs",
+        r####"
+        // `MISSING.md` is an ordinary comment, not a doc citation.
+        //// `ALSO-MISSING.md` is an ordinary four-slash comment.
+        /*** `STILL-MISSING.md` is an ordinary block comment. */
+        const NAME: &str = "TRACKED.md";
+        const MULTILINE: &str = r#"
+        /// `STRING-CONTENT.md` remains string content on its own source line.
+        "#;
+        "####,
+        &[],
+    )
+    .expect("ordinary comments and strings scan");
+    assert_eq!(ordinary.citations(), 0);
+    assert!(ordinary.findings().is_empty());
+}
+
+#[test]
+fn rust_doc_markdown_allowances_are_exact_and_each_states_its_reason() {
+    let expected = [
+        (
+            None,
+            "CLAUDE.md",
+            RustDocMarkdownCitationAllowanceKind::External,
+            "operator-owned",
+        ),
+        (
+            Some("gate/src/battery/tests/file_shape.rs"),
+            "app/notes.md",
+            RustDocMarkdownCitationAllowanceKind::Fixture,
+            "synthetic repository fixture",
+        ),
+        (
+            Some("gate/tests/core_docs.rs"),
+            "GUIDE.md",
+            RustDocMarkdownCitationAllowanceKind::Fixture,
+            "fixture repository",
+        ),
+        (
+            Some("gate/tests/input.rs"),
+            "AGENTS.md",
+            RustDocMarkdownCitationAllowanceKind::Fixture,
+            "fixture document identity",
+        ),
+    ];
+    assert_eq!(RUST_DOC_MARKDOWN_CITATION_ALLOWANCES.len(), expected.len());
+    for (allowance, (source, target, kind, reason)) in RUST_DOC_MARKDOWN_CITATION_ALLOWANCES
+        .into_iter()
+        .zip(expected)
+    {
+        assert_eq!(allowance.source_path(), source);
+        assert_eq!(allowance.target_path(), target);
+        assert_eq!(allowance.kind(), kind);
+        assert!(allowance.reason().contains(reason));
+
+        let source = source.unwrap_or("vendor/src/claude.rs");
+        let text = format!("/// The fixture or external surface names `{target}`.");
+        let admitted =
+            scan_rust_doc_markdown_citations(source, &text, &[]).expect("declared citation scans");
+        assert_eq!(admitted.citations(), 1);
+        assert!(admitted.findings().is_empty());
+    }
+
+    for (source, target) in [
+        ("src/lib.rs", "app/notes.md"),
+        ("src/lib.rs", "GUIDE.md"),
+        ("src/lib.rs", "AGENTS.md"),
+    ] {
+        let text = format!("/// An undeclared source names `{target}`.");
+        let refused = scan_rust_doc_markdown_citations(source, &text, &[])
+            .expect("source-bound fixture citation scans elsewhere");
+        assert_eq!(refused.findings().len(), 1);
+    }
+}
+
+fn rust_doc_citation_arm_state(scan: &RustDocMarkdownCitationScan) -> BatteryState {
+    let metrics = vec![
+        MetricEvidence::new(
+            MetricId::MarkdownLinkCaseMismatches,
+            MetricKey::Arm,
+            EvidenceState::NotApplicable {
+                reason: "fixture contains no tracked Markdown source".to_owned(),
+            },
+        )
+        .expect("case metric fixture evidence"),
+        MetricEvidence::new(
+            MetricId::RustDocMarkdownTargetAbsences,
+            MetricKey::path("proof/src/config.rs").expect("citation metric path"),
+            EvidenceState::measured(MetricMeasurement::new(
+                scan.findings().len() as u64,
+                ParserEvidence::Native {
+                    parser: ParserId::MarkdownTrackedTargetsV2,
+                },
+            )),
+        )
+        .expect("citation metric fixture evidence"),
+    ];
+    ArmEvidence::Metrics {
+        report: StructuralArmEvidence::new(GateId::MarkdownLinks, metrics)
+            .expect("complete Markdown arm fixture"),
+    }
+    .state()
+    .expect("Markdown arm state")
 }
 
 #[test]
@@ -1101,12 +1262,14 @@ fn measured_evidence(metric: MetricId) -> MetricEvidence {
             .unwrap(),
         )
         .with_threshold(10),
-        MetricId::MarkdownLinkCaseMismatches => MetricMeasurement::new(
-            1,
-            ParserEvidence::Native {
-                parser: ParserId::MarkdownInlineLinkCaseV1,
-            },
-        ),
+        MetricId::MarkdownLinkCaseMismatches | MetricId::RustDocMarkdownTargetAbsences => {
+            MetricMeasurement::new(
+                1,
+                ParserEvidence::Native {
+                    parser: ParserId::MarkdownTrackedTargetsV2,
+                },
+            )
+        }
     };
     MetricEvidence::new(metric, key, EvidenceState::measured(measurement)).unwrap()
 }

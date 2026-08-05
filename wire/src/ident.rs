@@ -110,9 +110,9 @@ pub enum Domain {
     /// The ordered command inventory one sealed proof replay consumes.
     ProofBattery,
     /// The complete typed result of one sealed proof replay.
-    ProofReplayV2,
+    ProofReplayV3,
     /// The detached receipt binding a replay to one target payload.
-    ProofReceiptV2,
+    ProofReceiptV3,
     /// The exact bytes of one admitted native proof runner executable.
     ProofNativeRunner,
     /// The bytes of one file inside a native proof source closure.
@@ -185,8 +185,8 @@ impl Domain {
             | Self::DistReleaseNotes
             | Self::DistReleasePlan => self.product_tag(),
             Self::ProofBattery
-            | Self::ProofReplayV2
-            | Self::ProofReceiptV2
+            | Self::ProofReplayV3
+            | Self::ProofReceiptV3
             | Self::ProofNativeRunner
             | Self::ProofNativeClosureFile
             | Self::ProofNativeClosure
@@ -239,8 +239,8 @@ impl Domain {
     const fn verification_input_tag(self) -> &'static str {
         match self {
             Self::ProofBattery => "spice.proof.battery.v1",
-            Self::ProofReplayV2 => "spice.proof.replay.v2",
-            Self::ProofReceiptV2 => "spice.proof.receipt.v2",
+            Self::ProofReplayV3 => "spice.proof.replay.v3",
+            Self::ProofReceiptV3 => "spice.proof.receipt.v3",
             Self::ProofNativeRunner => "spice.proof.native-runner.v1",
             Self::ProofNativeClosureFile => "spice.proof.native-closure-file.v1",
             Self::ProofNativeClosure => "spice.proof.native-closure.v1",

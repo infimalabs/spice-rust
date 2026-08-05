@@ -179,7 +179,7 @@ fn input_fixture() -> ReleaseNotesInput {
                     proof: ReleaseNotesProof {
                         target,
                         payload,
-                        receipt: digest(Domain::ProofReceiptV2, &format!("proof-{index}")),
+                        receipt: digest(Domain::ProofReceiptV3, &format!("proof-{index}")),
                     },
                     gate: ReleaseNotesGate {
                         target,

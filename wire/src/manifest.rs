@@ -45,7 +45,7 @@ pub struct JournalBackupManifest {
 }
 
 /// The sole current detached proof receipt schema.
-pub const PROOF_RECEIPT_VERSION: u16 = 2;
+pub const PROOF_RECEIPT_VERSION: u16 = 3;
 /// The sole current target payload schema.
 pub const TARGET_PAYLOAD_VERSION: u16 = 1;
 /// The sole current multi-target release manifest schema.

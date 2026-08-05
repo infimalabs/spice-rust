@@ -9,6 +9,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 /// Names tried before a scratch root is declared unobtainable.
 const CREATE_ATTEMPTS: usize = 128;
@@ -17,6 +18,11 @@ const CREATE_ATTEMPTS: usize = 128;
 pub(crate) const GIT: &str = "/usr/bin/git";
 
 static NEXT_TREE: AtomicU32 = AtomicU32::new(0);
+
+/// Docker Desktop's amd64 translation cannot reap concurrent fixture Git
+/// children reliably. Each integration binary owns this support module, so one
+/// barrier keeps every Git child lifetime in that binary disjoint.
+static FIXTURE_GIT_BARRIER: Mutex<()> = Mutex::new(());
 
 /// A source tree the fixture creates, owns, and can prove it removed.
 pub(crate) struct Tree {
@@ -119,6 +125,9 @@ pub(crate) fn git(repository: &Tree, arguments: &[&str]) -> String {
 /// Run one fixture Git command and return its complete completion.
 #[allow(dead_code)]
 pub(crate) fn git_output(repository: &Tree, arguments: &[&str]) -> Output {
+    let _fixture_git_guard = FIXTURE_GIT_BARRIER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     Command::new(GIT)
         .args(arguments)
         .current_dir(&repository.root)

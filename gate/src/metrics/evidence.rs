@@ -11,7 +11,7 @@ use super::declaration::{
 use crate::manifest::{GateId, PREDECESSOR_GATE_RELEASE};
 
 /// The sole report schema for compiled structural metrics.
-pub const STRUCTURAL_METRIC_REPORT_VERSION: u64 = 1;
+pub const STRUCTURAL_METRIC_REPORT_VERSION: u64 = 2;
 
 /// Canonical path/function key.
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -754,7 +754,9 @@ fn validate_measurement(
         | MetricId::RoutineLength
         | MetricId::RepositoryDocumentCharacters => validate_bounded(declaration, measurement),
         MetricId::MagicNumberRegressions => validate_magic(declaration, measurement),
-        MetricId::MarkdownLinkCaseMismatches => validate_links(declaration, measurement),
+        MetricId::MarkdownLinkCaseMismatches | MetricId::RustDocMarkdownTargetAbsences => {
+            validate_zero_tolerance(declaration, measurement)
+        }
     }
 }
 
@@ -819,7 +821,7 @@ fn validate_magic(
     Ok(())
 }
 
-fn validate_links(
+fn validate_zero_tolerance(
     declaration: MetricDeclaration,
     measurement: &MetricMeasurement,
 ) -> Result<(), EvidenceError> {
@@ -827,7 +829,7 @@ fn validate_links(
     {
         return invalid_state(
             declaration.id(),
-            "Markdown-link measurement carries unrelated rule, latch, or threshold evidence",
+            "zero-tolerance measurement carries unrelated rule, latch, or threshold evidence",
         );
     }
     Ok(())

@@ -180,7 +180,9 @@ const fn bound_name(metric: MetricId) -> Option<BoundName> {
         MetricId::RoutineCcn => Some(BoundName::RoutineCcn),
         MetricId::RoutineLength => Some(BoundName::RoutineLength),
         MetricId::RepositoryDocumentCharacters => Some(BoundName::RepoTruthDocChars),
-        MetricId::MagicNumberRegressions | MetricId::MarkdownLinkCaseMismatches => None,
+        MetricId::MagicNumberRegressions
+        | MetricId::MarkdownLinkCaseMismatches
+        | MetricId::RustDocMarkdownTargetAbsences => None,
     }
 }
 

@@ -296,7 +296,7 @@ mod tests {
         assert_eq!(evidence.target, ReleaseTarget::Aarch64AppleDarwin);
         assert_eq!(
             evidence.receipt,
-            Digest::compute(Domain::ProofReceiptV2, &receipt_bytes)
+            Digest::compute(Domain::ProofReceiptV3, &receipt_bytes)
         );
         assert_eq!(
             fs::read_to_string(invocations)
@@ -350,7 +350,7 @@ mod tests {
         assert_eq!(first_bytes, second_bytes);
         assert_eq!(
             first.receipt,
-            Digest::compute(Domain::ProofReceiptV2, &first_bytes)
+            Digest::compute(Domain::ProofReceiptV3, &first_bytes)
         );
         assert_eq!(
             fs::read(fixture.layout().payload_path()).expect("payload remains readable"),

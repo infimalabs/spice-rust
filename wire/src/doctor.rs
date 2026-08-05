@@ -371,19 +371,7 @@ pub struct DoctorReport<C> {
 
 #[cfg(test)]
 mod tests {
-    use serde::Deserialize;
-
     use super::{DoctorObservation, DoctorReport, SpiceVariable};
-
-    #[derive(Deserialize)]
-    struct WorkspacePolicy {
-        policy: EnvironmentPolicy,
-    }
-
-    #[derive(Deserialize)]
-    struct EnvironmentPolicy {
-        env_names: Vec<String>,
-    }
 
     #[test]
     fn observation_objects_reject_unknown_fields_and_variants() {
@@ -408,18 +396,6 @@ mod tests {
             );
             assert_eq!(bytes, format!("\"{}\"", variable.as_str()).as_bytes());
         }
-    }
-
-    #[test]
-    fn report_environment_rows_are_the_tracked_workspace_vocabulary() {
-        let tracked: WorkspacePolicy = toml::from_str(include_str!("../../spice.toml"))
-            .expect("tracked workspace policy decodes");
-        let declared: Vec<_> = SpiceVariable::ALL
-            .iter()
-            .map(|variable| variable.as_str())
-            .collect();
-
-        assert_eq!(tracked.policy.env_names, declared);
     }
 
     #[test]

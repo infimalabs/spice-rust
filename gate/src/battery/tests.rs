@@ -3,6 +3,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 use wire::{Digest, Domain};
 
@@ -18,15 +19,20 @@ use crate::toolchain::{ArmFinding, ArmOutcome, FindingDetail, LOCAL_PATH_MARKER}
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
+/// Docker Desktop's amd64 translation cannot reap concurrent fixture Git
+/// children reliably. The fixture is testing repository evidence, not process
+/// parallelism, so keep those child lifetimes disjoint on every host.
+static FIXTURE_GIT_BARRIER: Mutex<()> = Mutex::new(());
+
 /// The Rust file carrying a local path marker, selected as changed.
 const MARKED: &str = "src/marked.rs";
 
 /// The prose file carrying a discouraged word, selected as changed.
 const PROSE: &str = "docs/guide.md";
 
-mod document_latch;
 mod executor;
 mod file_shape;
+mod latch_wire;
 mod magic;
 mod manifest;
 mod minting;
@@ -443,6 +449,9 @@ fn discouraged_word() -> (String, String) {
 /// repository can prove the mutation with the same program the Git-declared
 /// arms run, instead of asserting against its own idea of what Git did.
 fn fixture_git(repository: &Path, arguments: &[&str]) -> String {
+    let _fixture_git_guard = FIXTURE_GIT_BARRIER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     let output = Command::new("/usr/bin/git")
         .args(arguments)
         .current_dir(repository)

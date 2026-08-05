@@ -1,11 +1,12 @@
 # Sealed Linux proof image
 
 `build.sh` assembles the `linux/amd64` proof environment from the immutable
-Rust base, the exact Trunk and cargo-mutants versions admitted by the release
-builder, both required Rust targets, a vendored copy of `Cargo.lock`'s registry
-sources, and the `wasm-opt` build Trunk otherwise downloads the first time it
-optimizes a release module. The resulting image can therefore run with
-networking disabled and fresh empty Cargo home and target mounts.
+Rust base, the pinned Rustfmt component, the exact Trunk and cargo-mutants
+versions admitted by the release builder, both required Rust targets, a
+vendored copy of `Cargo.lock`'s registry sources, and the `wasm-opt` build Trunk
+otherwise downloads the first time it optimizes a release module. The resulting
+image can therefore run with networking disabled and fresh empty Cargo home and
+target mounts.
 
 Build and export the image from the repository root:
 
@@ -80,6 +81,29 @@ The run records what it compiled by asking `git` inside that mount, so stage
 from a checkout whose repository is under `$PWD`. A linked worktree's `.git`
 names a directory outside it, and the run then refuses by name instead of
 recording a listing no index ever answered for.
+
+That refusal is the normal case rather than an edge one, so plan for it before
+touching `wire/` or `app/`. Every development lane is a linked worktree sharing
+one bare repository, and its `.git` is a file reading `gitdir:` followed by a
+path outside the mount; `git ls-files` inside the container answers `fatal: not
+a git repository` for all of them. Stage from a throwaway clone of the commit
+instead — `git clone --branch <branch> <bare> /tmp/<name>` gives a real `.git`
+directory under `$PWD`, and because the clone is checked out at the same commit
+its tree is byte-identical, so the listing git answers for there is the listing
+the lane would have produced. Copy `dist/stage` and `dist/stage-sources.txt`
+back into the lane and commit them there.
+
+Commit the change that drifted the stage *before* cloning, because a clone can
+only see what was committed. Stage from a clone while the lane still holds the
+drift uncommitted and the run will faithfully record the tree without it; you
+then copy back a listing that describes sources the lane does not have, and
+`check-app` refuses again naming the same file. That is a loud failure rather
+than a quiet one, but it costs a second round trip to read as anything other
+than the restage having silently failed. What not to do is bind-mount the bare
+repository at its absolute path so the `gitdir:` pointer resolves: that would
+satisfy the check while handing an emulated container write access to the object
+store every lane shares, which is a far worse trade than cloning a second
+working tree.
 
 `cargo xtask check-app` runs everywhere and splits its answer accordingly. Every
 host rebuilds the app and compares the staged inventory, which is the part a

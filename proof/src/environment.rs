@@ -7,7 +7,9 @@ use std::path::Path;
 use wire::manifest::{ProofEnvironment, ReleaseTarget};
 
 use crate::config::Config;
-use crate::container::{Container, ContainerError, Limits, OciRuntime};
+use crate::container::{
+    Container, ContainerBattery, ContainerError, Execution, Limits, OciRuntime,
+};
 use crate::native::{NativeError, NativeRunner};
 use crate::payload::AdmittedPayload;
 
@@ -94,19 +96,19 @@ impl SealedEnvironment {
         }
     }
 
-    pub(crate) fn execute(
-        &self,
-        program: &str,
-        arguments: &[String],
-    ) -> Result<crate::container::Execution, String> {
+    pub(crate) fn battery(&self) -> Result<BatteryEnvironment<'_>, String> {
         match &self.kind {
             EnvironmentKind::Oci(container) => container
-                .execute(program, arguments)
+                .battery()
+                .map(BatteryEnvironmentKind::Oci)
                 .map_err(|source| source.to_string()),
-            EnvironmentKind::Native(runner) => runner
-                .execute(program, arguments)
-                .map_err(|source| source.to_string()),
+            EnvironmentKind::Native(runner) => Ok(BatteryEnvironmentKind::Native(runner)),
         }
+        .map(|kind| BatteryEnvironment {
+            target: self.target,
+            identity: self.identity(),
+            kind,
+        })
     }
 
     #[cfg(test)]
@@ -122,6 +124,48 @@ impl SealedEnvironment {
         Self {
             target: ReleaseTarget::Aarch64AppleDarwin,
             kind: EnvironmentKind::Native(runner),
+        }
+    }
+}
+
+/// The exact execution scope shared by one complete proof battery.
+pub(crate) struct BatteryEnvironment<'a> {
+    target: ReleaseTarget,
+    identity: ProofEnvironment,
+    kind: BatteryEnvironmentKind<'a>,
+}
+
+enum BatteryEnvironmentKind<'a> {
+    Oci(ContainerBattery<'a>),
+    Native(&'a NativeRunner),
+}
+
+impl BatteryEnvironment<'_> {
+    pub(crate) const fn target(&self) -> ReleaseTarget {
+        self.target
+    }
+
+    pub(crate) fn identity(&self) -> ProofEnvironment {
+        self.identity.clone()
+    }
+
+    pub(crate) fn execute(&self, program: &str, arguments: &[String]) -> Result<Execution, String> {
+        match &self.kind {
+            BatteryEnvironmentKind::Oci(battery) => battery
+                .execute(program, arguments)
+                .map_err(|source| source.to_string()),
+            BatteryEnvironmentKind::Native(runner) => runner
+                .execute(program, arguments)
+                .map_err(|source| source.to_string()),
+        }
+    }
+
+    pub(crate) fn close(self) -> Result<(), String> {
+        match self.kind {
+            BatteryEnvironmentKind::Oci(battery) => {
+                battery.close().map_err(|source| source.to_string())
+            }
+            BatteryEnvironmentKind::Native(_) => Ok(()),
         }
     }
 }

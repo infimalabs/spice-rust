@@ -106,7 +106,7 @@ fn receipt(target: ReleaseTarget, marker: &str) -> ProofReceipt {
         target,
         payload: Digest::compute(Domain::DistTargetPayload, marker.as_bytes()),
         battery: Digest::compute(Domain::ProofBattery, marker.as_bytes()),
-        replay: Digest::compute(Domain::ProofReplayV2, marker.as_bytes()),
+        replay: Digest::compute(Domain::ProofReplayV3, marker.as_bytes()),
         environment: ProofEnvironment::oci(format!(
             "registry.example/proof@sha256:{}",
             "4".repeat(64)
@@ -230,7 +230,7 @@ fn release_manifests_round_trip_and_refuse_unknown_fields_at_every_level() {
             .into_iter()
             .map(|receipt| {
                 let receipt_digest = Digest::compute(
-                    Domain::ProofReceiptV2,
+                    Domain::ProofReceiptV3,
                     &wire::encode(&receipt).expect("receipt encodes"),
                 );
                 ReleaseManifestTarget {

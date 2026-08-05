@@ -4,6 +4,7 @@ use std::fs;
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::{PermissionsExt as _, symlink};
 use std::process::Command;
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use gate::{
@@ -17,10 +18,15 @@ mod support;
 use support::Tree;
 
 const GIT: &str = "/usr/bin/git";
+/// Keep fixture Git child lifetimes disjoint under translated amd64 execution.
+static FIXTURE_GIT_BARRIER: Mutex<()> = Mutex::new(());
 const MUTATING_COUNTER: &str = "/bin/chmod u+w \"$1\"; \
      printf 'changed by parser\\n' >> \"$1\"; printf '1\\n'";
 
 fn git(tree: &Tree, arguments: &[&str]) -> String {
+    let _fixture_git_guard = FIXTURE_GIT_BARRIER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     let output = Command::new(GIT)
         .args(arguments)
         .current_dir(&tree.root)

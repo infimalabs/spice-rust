@@ -2,8 +2,12 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 use super::{Selector, TreeError};
+
+/// Keep fixture Git child lifetimes disjoint under translated amd64 execution.
+static FIXTURE_GIT_BARRIER: Mutex<()> = Mutex::new(());
 
 struct Repository {
     root: PathBuf,
@@ -33,6 +37,9 @@ impl Repository {
     }
 
     fn git(&self, arguments: &[&str]) -> String {
+        let _fixture_git_guard = FIXTURE_GIT_BARRIER
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let output = Command::new("/usr/bin/git")
             .args(arguments)
             .current_dir(&self.root)

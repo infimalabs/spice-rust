@@ -25,7 +25,8 @@ pub use acquire::{MetricAcquisitionError, MetricSource, acquire_metrics};
 pub use baseline::{BaselineCapture, MagicBaselines};
 pub use declaration::{
     ArmDeclaration, KeyShape, MetricDeclaration, MetricId, MetricUnit, ParserDeclaration, ParserId,
-    STRUCTURAL_ARMS, STRUCTURAL_METRICS, ScopeDeclaration,
+    RUST_DOC_MARKDOWN_CITATION_ALLOWANCES, RustDocMarkdownCitationAllowance,
+    RustDocMarkdownCitationAllowanceKind, STRUCTURAL_ARMS, STRUCTURAL_METRICS, ScopeDeclaration,
 };
 pub use evidence::{
     EvidenceError, EvidenceState, FunctionKey, LatchBinding, MetricEvidence, MetricKey,
@@ -37,7 +38,10 @@ pub use parity::{
     compare_predecessor_metric,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use parser::{ComplexityRoutine, measure_complexity};
+pub use parser::{
+    ComplexityRoutine, RustDocMarkdownCitationFinding, RustDocMarkdownCitationScan,
+    measure_complexity, scan_rust_doc_markdown_citations,
+};
 pub use parser::{
     FileShapeMeasurement, MagicFinding, MarkdownLinkFinding, ParseError,
     RepositoryDocumentMeasurement, admit_magic_source, measure_file_shape,

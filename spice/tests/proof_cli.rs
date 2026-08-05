@@ -41,7 +41,7 @@ fn both_forms_and_leaves_return_the_same_direct_evidence_without_daemon_state() 
         "seal publishes canonical receipt bytes"
     );
     assert_eq!(
-        Digest::compute(Domain::ProofReceiptV2, &receipt_bytes),
+        Digest::compute(Domain::ProofReceiptV3, &receipt_bytes),
         sealed_json.receipt
     );
     assert_eq!(receipt.target, fixture.target);

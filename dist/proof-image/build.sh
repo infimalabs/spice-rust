@@ -30,7 +30,7 @@ if [ "$identity" != "$expected" ]; then # env-policy: allow
 fi
 
 docker run --rm --network=none --platform linux/amd64 "$identity" \
-    sh -ceu 'test "$(uname -m)" = x86_64; test "$(rustc --version)" = "rustc 1.97.1 (8bab26f4f 2026-07-14)"; test "$(trunk --version)" = "trunk 0.21.14"; test "$(cargo-mutants mutants --version)" = "cargo-mutants 27.1.0"; test "$(wasm-opt --version)" = "wasm-opt version 123 (version_123)"' # env-policy: allow
+    sh -ceu 'test "$(uname -m)" = x86_64; test "$(rustc --version)" = "rustc 1.97.1 (8bab26f4f 2026-07-14)"; test "$(rustfmt --version)" = "rustfmt 1.9.0-stable (8bab26f4f6 2026-07-14)"; test "$(trunk --version)" = "trunk 0.21.14"; test "$(cargo-mutants mutants --version)" = "cargo-mutants 27.1.0"; test "$(wasm-opt --version)" = "wasm-opt version 123 (version_123)"' # env-policy: allow
 
 docker save --output "$archive" "$identity" # env-policy: allow
 checksum=$(shasum -a 256 "$archive" | awk '{print $1}') # env-policy: allow

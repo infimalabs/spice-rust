@@ -1,8 +1,6 @@
 //! The sealed OCI process contract used by proof replay.
 
-use std::error::Error;
 use std::ffi::OsString;
-use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -16,10 +14,30 @@ use wire::manifest::ProofImage;
 
 use crate::challenge::Challenge;
 
+mod error;
+
+pub use error::ContainerError;
+pub(crate) use error::{is_executable, validate_command};
+
 const WORKSPACE_MOUNT: &str = "/workspace";
 const CARGO_HOME: &str = "/cargo-home";
 const CARGO_TARGET: &str = "/cargo-target";
+const RUST_TEST_THREADS: &str = "1";
 const ATTESTATION_PREFIX: &str = "spice-proof-attestation-v2:";
+const BATTERY_KEEPALIVE_SCRIPT: &str = "while :; do sleep 3600; done";
+
+/// The one attestation exchange used by boundary preflight and every member.
+macro_rules! attest_and_exec {
+    () => {
+        r#"
+dialect=$1
+challenge=$2
+shift 2
+printf 'spice-proof-attestation-v2:%s:%s\n' "$dialect" "$challenge" >&2
+exec "$@"
+"#
+    };
+}
 
 /// The rule deciding whether a network namespace can carry traffic off
 /// loopback, as one shell function over a `/sys/class/net` directory.
@@ -85,9 +103,26 @@ mount_violation() {
     };
 }
 
+/// The rule proving the runtime-created compilation scratch starts empty.
+macro_rules! cache_rule {
+    () => {
+        r#"
+cache_violation() {
+    for cache in "$@"; do
+        for entry in "$cache"/* "$cache"/.[!.]* "$cache"/..?*; do
+            [ ! -e "$entry" ] && [ ! -L "$entry" ] \
+                || { echo cache-not-empty; return; }
+        done
+    done
+}
+"#
+    };
+}
+
 const PREFLIGHT_SCRIPT: &str = concat!(
     network_rule!(),
     mount_rule!(),
+    cache_rule!(),
     r#"
 refuse() {
     printf 'spice-proof-preflight-refused:%s\n' "$1" >&2
@@ -97,6 +132,7 @@ refuse() {
 [ "${CARGO_HOME:-}" = /cargo-home ] || refuse cargo-home-environment
 [ "${CARGO_TARGET_DIR:-}" = /cargo-target ] || refuse cargo-target-environment
 [ "${CARGO_MUTANTS_OUTPUT:-}" = /cargo-target ] || refuse mutants-output-environment
+[ "${RUST_TEST_THREADS:-}" = 1 ] || refuse rust-test-threads-environment
 [ -d /cargo-home ] || refuse cargo-home-missing
 [ -d /cargo-target ] || refuse cargo-target-missing
 [ -d /sys/class/net ] || refuse network-state-unavailable
@@ -104,20 +140,14 @@ refuse() {
 violation=$(mount_violation /proc/self/mountinfo)
 [ -z "$violation" ] || refuse "$violation"
 
-for cache in /cargo-home /cargo-target; do
-    for entry in "$cache"/* "$cache"/.[!.]* "$cache"/..?*; do
-        [ ! -e "$entry" ] || refuse cache-not-empty
-    done
-done
+violation=$(cache_violation /cargo-home /cargo-target)
+[ -z "$violation" ] || refuse "$violation"
 network_isolated /sys/class/net || refuse network-reaches-past-loopback
-
-dialect=$1
-challenge=$2
-shift 2
-printf 'spice-proof-attestation-v2:%s:%s\n' "$dialect" "$challenge" >&2
-exec "$@"
-"#
+"#,
+    attest_and_exec!()
 );
+
+const MEMBER_SCRIPT: &str = attest_and_exec!();
 
 /// One observed OCI runtime interface.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -465,9 +495,9 @@ pub struct Container {
 impl Container {
     /// Admit one sealed OCI environment.
     ///
-    /// Every invocation gets a new tmpfs at Cargo's home and target paths,
-    /// disables networking, mounts the source read-only, and clears the host
-    /// environment before the runtime starts.
+    /// Every battery gets new tmpfs at Cargo's home and target paths, disables
+    /// networking, mounts the source read-only, and clears the host environment
+    /// before the runtime starts. All members enter that one battery scope.
     ///
     /// # Errors
     ///
@@ -518,22 +548,41 @@ impl Container {
         &self.image
     }
 
-    fn spec(
+    fn runtime_spec(
         &self,
-        program: &str,
-        arguments: &[String],
-        attestation: &Attestation,
+        runtime_arguments: Vec<String>,
+        label: impl Into<String>,
     ) -> Result<Spec, ContainerError> {
-        validate_command(program, arguments)?;
+        self.limits
+            .process_spec(
+                Argv::new(
+                    self.runtime.binary.as_os_str().to_owned(),
+                    runtime_arguments.into_iter().map(OsString::from),
+                )
+                .map_err(ContainerError::Spec)?,
+                self.workspace.clone(),
+                label,
+            )
+            .map_err(ContainerError::Spec)
+    }
+
+    /// Start the sole owner of the battery's two anonymous scratch mounts.
+    ///
+    /// Members enter this container with `exec` below. Consequently the
+    /// runtime, rather than a host path or persistent volume, creates the
+    /// scratch once and destroys it with this exact container.
+    fn battery_spec(&self, name: &str) -> Result<Spec, ContainerError> {
         let mount = format!(
             "type=bind,source={},destination={WORKSPACE_MOUNT},readonly",
             self.workspace.display()
         );
-        let mut runtime_arguments = vec![
+        let runtime_arguments = vec![
             "run".to_owned(),
+            "--detach".to_owned(),
+            "--name".to_owned(),
+            name.to_owned(),
             "--platform".to_owned(),
             RUN_PLATFORM.to_owned(),
-            "--rm".to_owned(),
             "--network=none".to_owned(),
             "--read-only".to_owned(),
             "--cap-drop=ALL".to_owned(),
@@ -543,10 +592,9 @@ impl Container {
             // Spelled with `--tmpfs` rather than `--mount type=tmpfs` because
             // only this flag takes the execute permission below: both admitted
             // runtimes accept arbitrary mount options here, while `--mount`
-            // accepts only a size and a mode and rejects anything else. The
-            // size default is unchanged by the switch, half of memory either
-            // way, and both mounts stay `nosuid,nodev` and stay tmpfs, which is
-            // what the preflight reads them for.
+            // accepts only a size and a mode and rejects anything else. Both
+            // mounts stay `nosuid,nodev` and stay tmpfs, which is what the
+            // preflight reads them for.
             "--tmpfs".to_owned(),
             format!("{CARGO_HOME}:rw,noexec,mode=0700"),
             // The one mount that may execute, because it is the one members
@@ -554,8 +602,12 @@ impl Container {
             // and then runs what it compiled, build scripts first and test
             // binaries after. Granted here alone rather than to both, so the
             // Cargo home stays a directory nothing can be run out of.
+            // Four GiB is explicit rather than the runtime's host-dependent
+            // half-memory default: the complete debug graph reaches beyond a
+            // two-GiB Docker VM default, while the measured 3.9-GiB boundary
+            // completes the whole mutation member.
             "--tmpfs".to_owned(),
-            format!("{CARGO_TARGET}:rw,exec,mode=0700"),
+            format!("{CARGO_TARGET}:rw,exec,mode=0700,size=4g"),
             "--workdir".to_owned(),
             WORKSPACE_MOUNT.to_owned(),
             "--env".to_owned(),
@@ -571,40 +623,66 @@ impl Container {
             format!("CARGO_MUTANTS_OUTPUT={CARGO_TARGET}"),
             "--env".to_owned(),
             "CARGO_NET_OFFLINE=true".to_owned(),
+            // Debug symbols and incremental object graphs do not change test
+            // semantics or evidence, but together exceed the bounded tmpfs
+            // before Gate links. Keep the shared compilation scratch finite
+            // and deterministic across developer VM memory settings.
+            "--env".to_owned(),
+            "CARGO_PROFILE_TEST_DEBUG=0".to_owned(),
+            "--env".to_owned(),
+            "CARGO_INCREMENTAL=0".to_owned(),
+            // Docker Desktop translates this amd64 appliance when its host is
+            // arm64. Concurrent libtest children can then outlive a completed
+            // process wait and strand the harness. One explicit harness thread
+            // keeps every member deterministic without relaxing any battery
+            // assertion or changing which tests run.
+            "--env".to_owned(),
+            format!("RUST_TEST_THREADS={RUST_TEST_THREADS}"),
             self.image.to_string(),
             "/bin/sh".to_owned(),
             "-ceu".to_owned(),
-            PREFLIGHT_SCRIPT.to_owned(),
+            BATTERY_KEEPALIVE_SCRIPT.to_owned(),
+        ];
+        self.runtime_spec(runtime_arguments, "sealed proof battery scratch owner")
+    }
+
+    fn exec_spec(
+        &self,
+        name: &str,
+        script: &str,
+        program: &str,
+        arguments: &[String],
+        attestation: &Attestation,
+        label: impl Into<String>,
+    ) -> Result<Spec, ContainerError> {
+        validate_command(program, arguments)?;
+        let mut runtime_arguments = vec![
+            "exec".to_owned(),
+            name.to_owned(),
+            "/bin/sh".to_owned(),
+            "-ceu".to_owned(),
+            script.to_owned(),
             "spice-proof-attestation".to_owned(),
             self.runtime.kind.as_str().to_owned(),
             attestation.challenge.as_str().to_owned(),
             program.to_owned(),
         ];
         runtime_arguments.extend(arguments.iter().cloned());
-
-        self.limits
-            .process_spec(
-                Argv::new(
-                    self.runtime.binary.as_os_str().to_owned(),
-                    runtime_arguments.into_iter().map(OsString::from),
-                )
-                .map_err(ContainerError::Spec)?,
-                self.workspace.clone(),
-                format!("sealed proof battery member {program:?}"),
-            )
-            .map_err(ContainerError::Spec)
+        self.runtime_spec(runtime_arguments, label)
     }
 
-    pub(crate) fn execute(
-        &self,
-        program: &str,
-        arguments: &[String],
-    ) -> Result<Execution, ContainerError> {
-        let attestation = Attestation::fresh()?;
+    fn removal_spec(&self, name: &str) -> Result<Spec, ContainerError> {
+        self.runtime_spec(
+            vec!["rm".to_owned(), "--force".to_owned(), name.to_owned()],
+            "sealed proof battery scratch cleanup",
+        )
+    }
+
+    fn run(&self, spec: Spec) -> Result<Execution, ContainerError> {
         let running = {
             #[cfg(test)]
             let _spawn_guard = crate::test_support::process_spawn_guard();
-            sill::spawn(self.spec(program, arguments, &attestation)?)
+            sill::spawn(spec)
         }
         .map_err(ContainerError::SpawnRuntime)?;
         let outcome = running.wait().map_err(ContainerError::Wait)?;
@@ -624,16 +702,105 @@ impl Container {
             .stdout()
             .map(Captured::from)
             .ok_or(ContainerError::MissingCapture("stdout"))?;
-        let mut stderr = outcome
+        let stderr = outcome
             .stderr()
             .map(Captured::from)
             .ok_or(ContainerError::MissingCapture("stderr"))?;
-        self.verify_attestation(&mut stderr, &attestation)?;
         Ok(Execution {
             completion,
             stdout,
             stderr,
         })
+    }
+
+    fn run_attested(
+        &self,
+        spec: Spec,
+        attestation: &Attestation,
+    ) -> Result<Execution, ContainerError> {
+        let mut execution = self.run(spec)?;
+        self.verify_attestation(&mut execution.stderr, attestation)?;
+        Ok(execution)
+    }
+
+    fn require_control(
+        operation: &'static str,
+        execution: &Execution,
+    ) -> Result<(), ContainerError> {
+        if matches!(
+            execution.completion,
+            ExecutionCompletion::Exited { success: true, .. }
+        ) && !execution.stdout.truncated
+            && !execution.stderr.truncated
+            && execution.stdout.complete
+            && execution.stderr.complete
+            && execution.stderr.bytes.is_empty()
+        {
+            return Ok(());
+        }
+        Err(Self::control_refusal(operation, execution))
+    }
+
+    fn control_refusal(operation: &'static str, execution: &Execution) -> ContainerError {
+        ContainerError::RuntimeControlRefused {
+            operation,
+            observed: format!(
+                "completion={:?}, stdout={:?}, stderr={:?}",
+                execution.completion,
+                String::from_utf8_lossy(&execution.stdout.bytes),
+                String::from_utf8_lossy(&execution.stderr.bytes)
+            ),
+        }
+    }
+
+    pub(crate) fn battery(&self) -> Result<ContainerBattery<'_>, ContainerError> {
+        let scratch = Challenge::fresh().map_err(ContainerError::CreateAttestationChallenge)?;
+        let name = format!("spice-proof-{}", scratch.as_str());
+        let started = self.run(self.battery_spec(&name)?)?;
+        if !matches!(
+            started.completion,
+            ExecutionCompletion::Exited { success: true, .. }
+        ) {
+            return Err(Self::control_refusal("start battery scratch", &started));
+        }
+        let mut battery = ContainerBattery {
+            container: self,
+            identifier: Some(name),
+        };
+        Self::require_control("start battery scratch", &started)?;
+        let observed = std::str::from_utf8(&started.stdout.bytes)
+            .ok()
+            .and_then(|stdout| {
+                stdout
+                    .strip_suffix("\r\n")
+                    .or_else(|| stdout.strip_suffix('\n'))
+            })
+            .and_then(|identifier| identifier.parse::<Challenge>().ok());
+        let Some(identifier) = observed else {
+            return Err(ContainerError::RuntimeControlRefused {
+                operation: "identify battery scratch",
+                observed: format!(
+                    "stdout={:?}",
+                    String::from_utf8_lossy(&started.stdout.bytes)
+                ),
+            });
+        };
+        battery.identifier = Some(identifier.to_string());
+
+        let attestation = Attestation::fresh()?;
+        let preflight = battery.container.run_attested(
+            battery.container.exec_spec(
+                battery.identifier(),
+                PREFLIGHT_SCRIPT,
+                "/bin/true",
+                &[],
+                &attestation,
+                "sealed proof battery boundary preflight",
+            )?,
+            &attestation,
+        )?;
+        Self::require_control("preflight battery scratch", &preflight)?;
+        Ok(battery)
     }
 
     fn verify_attestation(
@@ -650,6 +817,66 @@ impl Container {
         }
         stderr.bytes.drain(..expected.len());
         Ok(())
+    }
+}
+
+/// The one battery-scoped owner of both anonymous compilation scratch mounts.
+#[derive(Debug)]
+pub(crate) struct ContainerBattery<'a> {
+    container: &'a Container,
+    identifier: Option<String>,
+}
+
+impl ContainerBattery<'_> {
+    fn identifier(&self) -> &str {
+        self.identifier
+            .as_deref()
+            .expect("an open battery always identifies its scratch owner")
+    }
+
+    pub(crate) fn execute(
+        &self,
+        program: &str,
+        arguments: &[String],
+    ) -> Result<Execution, ContainerError> {
+        let attestation = Attestation::fresh()?;
+        self.container.run_attested(
+            self.container.exec_spec(
+                self.identifier(),
+                MEMBER_SCRIPT,
+                program,
+                arguments,
+                &attestation,
+                format!("sealed proof battery member {program:?}"),
+            )?,
+            &attestation,
+        )
+    }
+
+    fn remove(&mut self) -> Result<(), ContainerError> {
+        let Some(identifier) = self.identifier.take() else {
+            return Ok(());
+        };
+        let removal = self
+            .container
+            .removal_spec(&identifier)
+            .and_then(|spec| self.container.run(spec))
+            .and_then(|removed| Container::require_control("remove battery scratch", &removed));
+        if let Err(error) = removal {
+            self.identifier = Some(identifier);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn close(mut self) -> Result<(), ContainerError> {
+        self.remove()
+    }
+}
+
+impl Drop for ContainerBattery<'_> {
+    fn drop(&mut self) {
+        let _ = self.remove();
     }
 }
 
@@ -684,742 +911,4 @@ impl From<&sill::CapturedOutput> for Captured {
     }
 }
 
-/// Why a sealed environment was not established or executed.
-#[derive(Debug)]
-pub enum ContainerError {
-    RuntimeNotAbsolute(PathBuf),
-    InspectRuntime { path: PathBuf, source: io::Error },
-    RuntimeNotRegular(PathBuf),
-    RuntimeNotExecutable(PathBuf),
-    RuntimeProbeSpec(SpecError),
-    SpawnRuntimeProbe(io::Error),
-    WaitRuntimeProbe(WaitError),
-    RuntimeDialectNotAttested { observed: String },
-    ImageNotDigestPinned(String),
-    ImageNotResolved { image: String, observed: String },
-    ImageIdentityDrift { expected: String, observed: String },
-    InspectWorkspace { path: PathBuf, source: io::Error },
-    WorkspaceNotDirectory(PathBuf),
-    UnrepresentableWorkspace(PathBuf),
-    ZeroOutputLimit,
-    EmptyProgram,
-    NulInCommand,
-    CreateAttestationChallenge(io::Error),
-    Spec(SpecError),
-    SpawnRuntime(io::Error),
-    Wait(WaitError),
-    MissingCapture(&'static str),
-    RuntimeNotAttested { expected: String, observed: String },
-}
-
-impl fmt::Display for ContainerError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::RuntimeNotAbsolute(path) => {
-                write!(
-                    formatter,
-                    "proof runtime path must be absolute: {}",
-                    path.display()
-                )
-            }
-            Self::InspectRuntime { path, source } => {
-                write!(
-                    formatter,
-                    "cannot inspect proof runtime {}: {source}",
-                    path.display()
-                )
-            }
-            Self::RuntimeNotRegular(path) => {
-                write!(
-                    formatter,
-                    "proof runtime is not a regular file: {}",
-                    path.display()
-                )
-            }
-            Self::RuntimeNotExecutable(path) => {
-                write!(
-                    formatter,
-                    "proof runtime is not executable: {}",
-                    path.display()
-                )
-            }
-            Self::RuntimeProbeSpec(source) => {
-                write!(
-                    formatter,
-                    "invalid sealed OCI runtime identity probe: {source}"
-                )
-            }
-            Self::SpawnRuntimeProbe(source) => {
-                write!(
-                    formatter,
-                    "cannot start sealed OCI runtime identity probe: {source}"
-                )
-            }
-            Self::WaitRuntimeProbe(source) => {
-                write!(
-                    formatter,
-                    "sealed OCI runtime identity probe failed: {source}"
-                )
-            }
-            Self::RuntimeDialectNotAttested { observed } => write!(
-                formatter,
-                "proof runtime did not attest a Docker or Podman interface: {observed}"
-            ),
-            Self::ImageNotDigestPinned(image) => write!(
-                formatter,
-                "proof image must be an exact sha256 digest reference, not a tag: {image:?}"
-            ),
-            Self::ImageNotResolved { image, observed } => write!(
-                formatter,
-                "proof runtime does not hold proof image {image}, so load it with \
-                 dist/proof-image/load.sh before sealing: {observed}"
-            ),
-            Self::ImageIdentityDrift { expected, observed } => write!(
-                formatter,
-                "proof runtime resolved a different appliance: expected {expected:?}, \
-                 observed {observed:?}"
-            ),
-            Self::InspectWorkspace { path, source } => write!(
-                formatter,
-                "cannot inspect proof workspace {}: {source}",
-                path.display()
-            ),
-            Self::WorkspaceNotDirectory(path) => {
-                write!(
-                    formatter,
-                    "proof workspace is not a directory: {}",
-                    path.display()
-                )
-            }
-            Self::UnrepresentableWorkspace(path) => write!(
-                formatter,
-                "proof workspace cannot be represented in an OCI mount: {}",
-                path.display()
-            ),
-            Self::ZeroOutputLimit => {
-                formatter.write_str("proof output capture limit must be nonzero")
-            }
-            Self::EmptyProgram => formatter.write_str("proof battery program must not be empty"),
-            Self::NulInCommand => formatter.write_str("proof battery command must not contain NUL"),
-            Self::CreateAttestationChallenge(source) => {
-                write!(
-                    formatter,
-                    "cannot create sealed runtime challenge: {source}"
-                )
-            }
-            Self::Spec(source) => write!(formatter, "invalid sealed process contract: {source}"),
-            Self::SpawnRuntime(source) => {
-                write!(formatter, "cannot start sealed runtime: {source}")
-            }
-            Self::Wait(source) => write!(formatter, "sealed runtime wait failed: {source}"),
-            Self::MissingCapture(stream) => {
-                write!(formatter, "sealed runtime returned no {stream} capture")
-            }
-            Self::RuntimeNotAttested { expected, observed } => write!(
-                formatter,
-                "sealed runtime did not prove its OCI isolation contract: expected {expected:?}, \
-                 observed {observed:?}"
-            ),
-        }
-    }
-}
-
-impl Error for ContainerError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::InspectRuntime { source, .. }
-            | Self::InspectWorkspace { source, .. }
-            | Self::CreateAttestationChallenge(source)
-            | Self::SpawnRuntimeProbe(source)
-            | Self::SpawnRuntime(source) => Some(source),
-            Self::RuntimeProbeSpec(source) | Self::Spec(source) => Some(source),
-            Self::WaitRuntimeProbe(source) | Self::Wait(source) => Some(source),
-            Self::RuntimeNotAbsolute(_)
-            | Self::RuntimeNotRegular(_)
-            | Self::RuntimeNotExecutable(_)
-            | Self::RuntimeDialectNotAttested { .. }
-            | Self::ImageNotDigestPinned(_)
-            | Self::ImageNotResolved { .. }
-            | Self::ImageIdentityDrift { .. }
-            | Self::WorkspaceNotDirectory(_)
-            | Self::UnrepresentableWorkspace(_)
-            | Self::ZeroOutputLimit
-            | Self::EmptyProgram
-            | Self::NulInCommand
-            | Self::MissingCapture(_)
-            | Self::RuntimeNotAttested { .. } => None,
-        }
-    }
-}
-
-pub(crate) fn validate_command(program: &str, arguments: &[String]) -> Result<(), ContainerError> {
-    if program.is_empty() {
-        return Err(ContainerError::EmptyProgram);
-    }
-    if program.contains('\0') || arguments.iter().any(|argument| argument.contains('\0')) {
-        return Err(ContainerError::NulInCommand);
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-pub(crate) fn is_executable(metadata: &fs::Metadata) -> bool {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    metadata.permissions().mode() & 0o111 != 0
-}
-
-#[cfg(not(unix))]
-pub(crate) fn is_executable(_metadata: &fs::Metadata) -> bool {
-    false
-}
-
-#[cfg(test)]
-mod tests {
-    use std::fs;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::Duration;
-
-    use sill::{Deadlines, StdinPolicy, StreamPolicy};
-
-    use super::{Attestation, Container, ContainerError, Limits, OciRuntime, RuntimeKind};
-
-    const SILENT_RUNTIME: &str = r#"#!/bin/sh
-if [ "$1" = image ]; then
-    printf '%s amd64 linux\n' "$5"
-    exit 0
-fi
-if [ "$1" = --version ]; then
-    printf 'Docker version 1.0.0, build fixture\n'
-    exit 0
-fi
-exit 0
-"#;
-    const FIXED_MARKER_RUNTIME: &str = r#"#!/bin/sh
-if [ "$1" = image ]; then
-    printf '%s amd64 linux\n' "$5"
-    exit 0
-fi
-if [ "$1" = --version ]; then
-    printf 'Docker version 1.0.0, build fixture\n'
-    exit 0
-fi
-printf 'spice-proof-attestation-v2:docker:fixed-challenge\n' >&2
-exit 0
-"#;
-    const PODMAN_RUNTIME: &str = r#"#!/bin/sh
-if [ "$1" = image ]; then
-    printf '%s amd64 linux\n' "$5"
-    exit 0
-fi
-if [ "$1" = --version ]; then
-    printf 'podman version 1.0.0\n'
-    exit 0
-fi
-exit 0
-"#;
-
-    /// A runtime that resolves the sealed digest to some other stored image.
-    const SUBSTITUTING_RUNTIME: &str = r#"#!/bin/sh
-if [ "$1" = image ]; then
-    printf 'sha256:0000000000000000000000000000000000000000000000000000000000000000 amd64 linux\n'
-    exit 0
-fi
-if [ "$1" = --version ]; then
-    printf 'Docker version 1.0.0, build fixture\n'
-    exit 0
-fi
-exit 0
-"#;
-
-    /// A runtime holding the sealed digest built for the wrong machine.
-    const FOREIGN_PLATFORM_RUNTIME: &str = r#"#!/bin/sh
-if [ "$1" = image ]; then
-    printf '%s arm64 linux\n' "$5"
-    exit 0
-fi
-if [ "$1" = --version ]; then
-    printf 'Docker version 1.0.0, build fixture\n'
-    exit 0
-fi
-exit 0
-"#;
-
-    /// A runtime whose store has never seen the sealed appliance.
-    const EMPTY_STORE_RUNTIME: &str = r#"#!/bin/sh
-if [ "$1" = image ]; then
-    printf 'Error: no such image\n' >&2
-    exit 1
-fi
-if [ "$1" = --version ]; then
-    printf 'Docker version 1.0.0, build fixture\n'
-    exit 0
-fi
-exit 0
-"#;
-
-    #[test]
-    fn every_spec_disables_network_and_mounts_fresh_empty_caches() {
-        let fixture = Fixture::new();
-        let container = fixture.container();
-        let attestation = Attestation::fixture("fixture-challenge");
-        let spec = container
-            .spec(
-                "cargo",
-                &["test".to_owned(), "--locked".to_owned()],
-                &attestation,
-            )
-            .expect("sealed command");
-        let arguments = spec
-            .argv
-            .arguments()
-            .iter()
-            .map(|argument| argument.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            arguments,
-            [
-                "run".to_owned(),
-                // Named here rather than inferred, so a host whose own
-                // architecture differs cannot have a runtime warning written
-                // across the attestation stream.
-                "--platform".to_owned(),
-                "linux/amd64".to_owned(),
-                "--rm".to_owned(),
-                "--network=none".to_owned(),
-                "--read-only".to_owned(),
-                "--cap-drop=ALL".to_owned(),
-                "--security-opt=no-new-privileges".to_owned(),
-                "--mount".to_owned(),
-                format!(
-                    "type=bind,source={},destination=/workspace,readonly",
-                    fixture
-                        .workspace
-                        .canonicalize()
-                        .expect("canonical workspace")
-                        .display()
-                ),
-                "--tmpfs".to_owned(),
-                "/cargo-home:rw,noexec,mode=0700".to_owned(),
-                "--tmpfs".to_owned(),
-                "/cargo-target:rw,exec,mode=0700".to_owned(),
-                "--workdir".to_owned(),
-                "/workspace".to_owned(),
-                "--env".to_owned(),
-                "CARGO_HOME=/cargo-home".to_owned(),
-                "--env".to_owned(),
-                "CARGO_TARGET_DIR=/cargo-target".to_owned(),
-                "--env".to_owned(),
-                "CARGO_MUTANTS_OUTPUT=/cargo-target".to_owned(),
-                "--env".to_owned(),
-                "CARGO_NET_OFFLINE=true".to_owned(),
-                format!("registry.example/proof@sha256:{}", "4".repeat(64)),
-                "/bin/sh".to_owned(),
-                "-ceu".to_owned(),
-                super::PREFLIGHT_SCRIPT.to_owned(),
-                "spice-proof-attestation".to_owned(),
-                "docker".to_owned(),
-                "fixture-challenge".to_owned(),
-                "cargo".to_owned(),
-                "test".to_owned(),
-                "--locked".to_owned(),
-            ]
-        );
-        assert!(spec.environment.entries().is_empty());
-        assert_eq!(spec.output.stdin(), StdinPolicy::Null);
-        assert!(matches!(
-            spec.output.stdout(),
-            StreamPolicy::Capture { limit: 4096 }
-        ));
-    }
-
-    #[test]
-    fn an_unpinned_image_refuses_instead_of_falling_back_to_a_tag() {
-        let fixture = Fixture::new();
-        let error = Container::new(
-            OciRuntime::attest(&fixture.runtime, limits()).expect("fixture runtime"),
-            "registry.example/proof:latest",
-            &fixture.workspace,
-            limits(),
-        )
-        .expect_err("tagged images are not sealed");
-
-        assert!(matches!(error, ContainerError::ImageNotDigestPinned(_)));
-    }
-
-    #[test]
-    fn a_runtime_that_cannot_produce_the_sealed_image_refuses_before_any_work() {
-        let sealed = format!("registry.example/proof@sha256:{}", "4".repeat(64));
-        for (script, expected) in [
-            (SUBSTITUTING_RUNTIME, "resolved a different appliance"),
-            (FOREIGN_PLATFORM_RUNTIME, "arm64"),
-            (EMPTY_STORE_RUNTIME, "does not hold proof image"),
-        ] {
-            let fixture = Fixture::with_runtime(script);
-            let error = Container::new(
-                OciRuntime::attest(&fixture.runtime, limits()).expect("fixture runtime"),
-                sealed.clone(),
-                &fixture.workspace,
-                limits(),
-            )
-            .expect_err("a runtime that cannot produce the sealed image is not sealed");
-
-            assert!(
-                error.to_string().contains(expected),
-                "the refusal did not name {expected}: {error}",
-            );
-        }
-    }
-
-    #[test]
-    fn an_executable_that_ignores_the_oci_contract_cannot_produce_a_replay_verdict() {
-        let fixture = Fixture::new();
-        let environment = crate::environment::SealedEnvironment::fixture_oci(fixture.container());
-        let error = crate::replay::replay(&environment)
-            .expect_err("an unattested runtime cannot produce any verdict");
-
-        assert_eq!(error.check(), crate::replay::CheckKind::Gate);
-        assert!(
-            error
-                .evidence()
-                .contains("did not prove its OCI isolation contract"),
-            "the refusal did not name the missing attestation: {error:?}",
-        );
-    }
-
-    #[test]
-    fn a_replayed_public_marker_cannot_produce_a_replay_verdict() {
-        let fixture = Fixture::with_runtime(FIXED_MARKER_RUNTIME);
-        let environment = crate::environment::SealedEnvironment::fixture_oci(fixture.container());
-        let error = crate::replay::replay(&environment)
-            .expect_err("a fixed marker cannot answer a fresh challenge");
-
-        assert_eq!(error.check(), crate::replay::CheckKind::Gate);
-        assert!(
-            error
-                .evidence()
-                .contains("did not prove its OCI isolation contract"),
-            "the refusal did not name the stale attestation: {error:?}",
-        );
-    }
-
-    #[test]
-    fn runtime_dialect_is_observed_from_the_executable() {
-        let docker = Fixture::new();
-        let podman = Fixture::with_runtime(PODMAN_RUNTIME);
-
-        assert_eq!(
-            OciRuntime::attest(&docker.runtime, limits())
-                .expect("observed Docker")
-                .kind,
-            RuntimeKind::Docker
-        );
-        assert_eq!(
-            OciRuntime::attest(&podman.runtime, limits())
-                .expect("observed Podman")
-                .kind,
-            RuntimeKind::Podman
-        );
-    }
-
-    #[test]
-    fn attestation_is_required_once_and_removed_from_command_evidence() {
-        let fixture = Fixture::new();
-        let container = fixture.container();
-        let attestation = Attestation::fixture("fresh-challenge");
-        let mut stderr = super::Captured {
-            bytes: b"spice-proof-attestation-v2:docker:fresh-challenge\ncompiler evidence".to_vec(),
-            truncated: false,
-            complete: true,
-        };
-
-        container
-            .verify_attestation(&mut stderr, &attestation)
-            .expect("the declared dialect attests");
-
-        assert_eq!(stderr.bytes, b"compiler evidence");
-    }
-
-    #[test]
-    fn attestation_must_name_the_declared_runtime_dialect() {
-        let fixture = Fixture::new();
-        let container = fixture.container();
-        let attestation = Attestation::fixture("fresh-challenge");
-        let mut stderr = super::Captured {
-            bytes: b"spice-proof-attestation-v2:podman:fresh-challenge\n".to_vec(),
-            truncated: false,
-            complete: true,
-        };
-
-        let error = container
-            .verify_attestation(&mut stderr, &attestation)
-            .expect_err("a Podman attestation cannot answer for Docker");
-
-        assert!(matches!(error, ContainerError::RuntimeNotAttested { .. }));
-    }
-
-    #[test]
-    fn attestation_must_answer_the_current_execution_challenge() {
-        let fixture = Fixture::new();
-        let container = fixture.container();
-        let attestation = Attestation::fixture("fresh-challenge");
-        let mut stderr = super::Captured {
-            bytes: b"spice-proof-attestation-v2:docker:stale-challenge\n".to_vec(),
-            truncated: false,
-            complete: true,
-        };
-
-        let error = container
-            .verify_attestation(&mut stderr, &attestation)
-            .expect_err("a marker from another execution cannot be replayed");
-
-        assert!(matches!(error, ContainerError::RuntimeNotAttested { .. }));
-    }
-
-    #[test]
-    fn the_embedded_preflight_is_valid_posix_shell() {
-        let _spawn_guard = crate::test_support::process_spawn_guard();
-        let status = std::process::Command::new("/bin/sh")
-            .args(["-n", "-c", super::PREFLIGHT_SCRIPT])
-            .status()
-            .expect("host POSIX shell runs the syntax check");
-
-        assert!(
-            status.success(),
-            "the sealed preflight must parse before use"
-        );
-    }
-
-    /// A `/sys/class/net` directory holding the named interfaces and their
-    /// flags, alongside the `bonding_masters` control file the kernel puts
-    /// there, which is a file rather than an interface directory.
-    fn network_directory(interfaces: &[(&str, u32)]) -> std::path::PathBuf {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "spice-proof-net-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&root).expect("fixture network directory");
-        fs::write(root.join("bonding_masters"), "\n").expect("fixture control file");
-        for (name, flags) in interfaces {
-            let interface = root.join(name);
-            fs::create_dir_all(&interface).expect("fixture interface");
-            fs::write(interface.join("flags"), format!("{flags:#x}\n")).expect("fixture flags");
-        }
-        root
-    }
-
-    /// Whether the shipped rule calls that directory isolated.
-    ///
-    /// Captures the shell's streams rather than inheriting them, because a
-    /// directory the rule cannot classify makes it report the unreadable file.
-    fn network_isolated(directory: &std::path::Path) -> bool {
-        let _spawn_guard = crate::test_support::process_spawn_guard();
-        std::process::Command::new("/bin/sh")
-            .args([
-                std::ffi::OsStr::new("-c"),
-                std::ffi::OsStr::new(concat!(network_rule!(), "\nnetwork_isolated \"$1\"\n")),
-                std::ffi::OsStr::new("sh"),
-                directory.as_os_str(),
-            ])
-            .output()
-            .expect("host POSIX shell runs the network rule")
-            .status
-            .success()
-    }
-
-    /// The mountinfo line the boundary produces for one destination.
-    fn mountinfo_line(destination: &str, options: &str, filesystem: &str) -> String {
-        format!("153 144 0:77 / {destination} {options},relatime - {filesystem} {filesystem} rw")
-    }
-
-    /// Which bound the shipped rule reports unmet, empty when all are met.
-    fn mount_violation(lines: &[String]) -> String {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let _spawn_guard = crate::test_support::process_spawn_guard();
-        let path = std::env::temp_dir().join(format!(
-            "spice-proof-mountinfo-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::write(&path, lines.join("\n") + "\n").expect("fixture mountinfo");
-        let output = std::process::Command::new("/bin/sh")
-            .args([
-                std::ffi::OsStr::new("-c"),
-                std::ffi::OsStr::new(concat!(mount_rule!(), "\nmount_violation \"$1\"\n")),
-                std::ffi::OsStr::new("sh"),
-                path.as_os_str(),
-            ])
-            .output()
-            .expect("host POSIX shell runs the mount rule");
-        String::from_utf8(output.stdout)
-            .expect("refusal names are ASCII")
-            .trim()
-            .to_owned()
-    }
-
-    /// The mounts this boundary actually grants, as the runtime reports them.
-    fn granted_mounts() -> Vec<String> {
-        vec![
-            mountinfo_line("/workspace", "ro,relatime", "ext4"),
-            mountinfo_line("/cargo-home", "rw,nosuid,nodev,noexec", "tmpfs"),
-            mountinfo_line("/cargo-target", "rw,nosuid,nodev", "tmpfs"),
-        ]
-    }
-
-    #[test]
-    fn the_mounts_this_boundary_grants_meet_every_bound_it_asserts() {
-        assert_eq!(
-            mount_violation(&granted_mounts()),
-            "",
-            "the executable target mount must still satisfy the preflight it passes today"
-        );
-    }
-
-    #[test]
-    fn each_unmet_mount_bound_is_refused_by_its_own_name() {
-        let writable_workspace = vec![
-            mountinfo_line("/workspace", "rw,relatime", "ext4"),
-            mountinfo_line("/cargo-home", "rw,nosuid,nodev,noexec", "tmpfs"),
-            mountinfo_line("/cargo-target", "rw,nosuid,nodev", "tmpfs"),
-        ];
-        let disk_backed_home = vec![
-            mountinfo_line("/workspace", "ro,relatime", "ext4"),
-            mountinfo_line("/cargo-home", "rw,nosuid,nodev,noexec", "ext4"),
-            mountinfo_line("/cargo-target", "rw,nosuid,nodev", "tmpfs"),
-        ];
-        let absent_target = vec![
-            mountinfo_line("/workspace", "ro,relatime", "ext4"),
-            mountinfo_line("/cargo-home", "rw,nosuid,nodev,noexec", "tmpfs"),
-        ];
-
-        assert_eq!(
-            mount_violation(&writable_workspace),
-            "workspace-not-read-only"
-        );
-        assert_eq!(mount_violation(&disk_backed_home), "cargo-home-not-tmpfs");
-        assert_eq!(mount_violation(&absent_target), "cargo-target-not-tmpfs");
-    }
-
-    #[test]
-    fn a_fresh_namespace_of_down_tunnel_stubs_is_isolated() {
-        let directory = network_directory(&[
-            ("lo", 0x9),
-            ("erspan0", 0x1002),
-            ("gre0", 0x80),
-            ("gretap0", 0x1002),
-            ("ip6tnl0", 0x80),
-            ("sit0", 0x80),
-            ("tunl0", 0x80),
-        ]);
-
-        assert!(
-            network_isolated(&directory),
-            "a --network=none namespace carries no traffic through interfaces that are all down"
-        );
-    }
-
-    #[test]
-    fn an_interface_that_can_carry_traffic_is_refused_whatever_it_is_named() {
-        let named_lo = network_directory(&[("lo", 0x1003)]);
-        let named_eth0 = network_directory(&[("lo", 0x9), ("eth0", 0x1003)]);
-
-        assert!(
-            !network_isolated(&named_lo),
-            "an up adapter without IFF_LOOPBACK reaches the network under any name"
-        );
-        assert!(
-            !network_isolated(&named_eth0),
-            "an up adapter beside real loopback reaches the network"
-        );
-    }
-
-    #[test]
-    fn an_interface_whose_flags_cannot_be_read_is_refused_rather_than_skipped() {
-        let directory = network_directory(&[("lo", 0x9)]);
-        fs::create_dir_all(directory.join("eth0")).expect("fixture interface without flags");
-
-        assert!(
-            !network_isolated(&directory),
-            "an interface this rule cannot classify is not an interface it may pass over"
-        );
-    }
-
-    struct Fixture {
-        root: std::path::PathBuf,
-        runtime: std::path::PathBuf,
-        workspace: std::path::PathBuf,
-    }
-
-    impl Fixture {
-        fn new() -> Self {
-            Self::with_runtime(SILENT_RUNTIME)
-        }
-
-        fn with_runtime(script: &str) -> Self {
-            static NEXT: AtomicU64 = AtomicU64::new(0);
-            let root = std::env::temp_dir().join(format!(
-                "spice-proof-container-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            let workspace = root.join("workspace");
-            let runtime = root.join("docker");
-            fs::create_dir_all(&workspace).expect("fixture workspace");
-            {
-                let _write_guard = crate::test_support::executable_write_guard();
-                fs::write(&runtime, script).expect("fixture runtime");
-                make_executable(&runtime);
-            }
-            Self {
-                root,
-                runtime,
-                workspace,
-            }
-        }
-
-        fn container(&self) -> Container {
-            let limits = limits();
-            Container::new(
-                OciRuntime::attest(&self.runtime, limits).expect("fixture runtime"),
-                format!("registry.example/proof@sha256:{}", "4".repeat(64)),
-                &self.workspace,
-                limits,
-            )
-            .expect("sealed fixture")
-        }
-    }
-
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.root).expect("remove fixture");
-        }
-    }
-
-    fn limits() -> Limits {
-        Limits::new(
-            Deadlines::new(
-                Duration::from_secs(30),
-                Duration::from_secs(1),
-                Duration::from_secs(1),
-            )
-            .expect("deadlines"),
-            Duration::from_secs(1),
-            4096,
-        )
-        .expect("limits")
-    }
-
-    #[cfg(unix)]
-    fn make_executable(path: &std::path::Path) {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755))
-            .expect("make runtime executable");
-    }
-
-    #[cfg(not(unix))]
-    fn make_executable(_path: &std::path::Path) {}
-}
+include!("container/tests.rs");
