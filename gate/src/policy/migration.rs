@@ -12,11 +12,32 @@ use super::{
     ScopeSelector, encode_id_component,
 };
 
+#[cfg(test)]
+mod tests;
+
 const RULE_SETTING_KEYS: [&str; 5] = ["multiplier", "min", "max", "unlimited", "flex"];
 const DEFAULT_MAGIC_THRESHOLD: u64 = 10;
 const DEFAULT_MARKDOWN_BASE: u64 = 10_000;
 const DEFAULT_MARKDOWN_MAX: u64 = 30_000;
 const DEFAULT_REPO_TRUTH_DOCS: &[&str] = &["AGENTS.md"];
+
+/// Source location every packaged default is refused at.
+///
+/// A location rather than a path: these bytes ship with the release and no
+/// repository has a file at this name, which is the point. The refusal renders
+/// as `{source}:{field}`, so an operator reads a sentence that cannot be
+/// mistaken for one naming something they can edit.
+const PACKAGED_POLICY_SOURCE: &str = "gate packaged policy defaults";
+
+/// Field a repository's own document inventory is refused under.
+const DECLARED_REPO_TRUTH_FIELD: &str = "policy.repo_truth.docs";
+
+/// Field the packaged document inventory is refused under.
+///
+/// The constant's own name rather than a policy field path, because there is no
+/// field: an operator reading this refusal is being sent to this release's
+/// source, not to anything their repository can spell.
+const PACKAGED_REPO_TRUTH_FIELD: &str = "DEFAULT_REPO_TRUTH_DOCS";
 
 /// Translate one predecessor policy document into the sole compiled current
 /// representation.
@@ -78,32 +99,54 @@ pub fn migrate_predecessor_policy(
 /// would have rejected, and so the refusal names the declaring field rather
 /// than the compiled document it would have become.
 ///
+/// The two halves are refused separately because they have different authors. A
+/// declared path is a repository's spelling and names the field that spelled it;
+/// a packaged path is this release's own, and no repository can edit it or
+/// repair it, so attributing one to a tracked field would send an operator to a
+/// file whose bytes are not at fault. Nothing tracked reaches the packaged
+/// branch, which is exactly why it must not borrow the tracked source.
+///
+/// The packaged inventory is a parameter rather than a constant read here, so
+/// the branch that attributes it can be refused on demand. Reading
+/// [`DEFAULT_REPO_TRUTH_DOCS`] directly would leave this branch's attribution
+/// unprovable until the day a bad default shipped, which is the one day it has
+/// to already be right — and a test that reached the packaged normalization by
+/// some other door would prove the spelling without proving that this branch
+/// goes through it.
+///
 /// # Errors
 ///
-/// Returns the declared path that is not a repository-relative spelling.
+/// Returns the declared or packaged path that is not a repository-relative
+/// spelling.
 fn repo_truth_inventory(
     declared: Option<&[String]>,
+    packaged: &[&str],
     source: &str,
 ) -> Result<Vec<String>, MigrationError> {
-    declared
-        .map_or_else(
-            || {
-                DEFAULT_REPO_TRUTH_DOCS
-                    .iter()
-                    .map(|path| (*path).to_owned())
-                    .collect()
-            },
-            <[String]>::to_vec,
-        )
-        .into_iter()
+    match declared {
+        Some(declared) => normalize_inventory(
+            declared.iter().map(String::as_str),
+            source,
+            DECLARED_REPO_TRUTH_FIELD,
+        ),
+        None => normalize_inventory(
+            packaged.iter().copied(),
+            PACKAGED_POLICY_SOURCE,
+            PACKAGED_REPO_TRUTH_FIELD,
+        ),
+    }
+}
+
+/// Normalize every path in one inventory, attributing a refusal to its author.
+fn normalize_inventory<'path>(
+    paths: impl Iterator<Item = &'path str>,
+    source: &str,
+    field: &str,
+) -> Result<Vec<String>, MigrationError> {
+    paths
         .map(|path| {
-            normalize_path(&path).map_err(|reason| {
-                MigrationError::new(
-                    source,
-                    "policy.repo_truth.docs",
-                    format!("{path:?}: {reason}"),
-                )
-            })
+            normalize_path(path)
+                .map_err(|reason| MigrationError::new(source, field, format!("{path:?}: {reason}")))
         })
         .collect()
 }
@@ -116,9 +159,9 @@ fn parse_repo_truth_docs(
     reject_unknown(table, &["docs"], "policy.repo_truth", source)?;
     let declared = table
         .and_then(|table| table.get("docs"))
-        .map(|value| string_list(value, "policy.repo_truth.docs", source, true))
+        .map(|value| string_list(value, DECLARED_REPO_TRUTH_FIELD, source, true))
         .transpose()?;
-    repo_truth_inventory(declared.as_deref(), source)
+    repo_truth_inventory(declared.as_deref(), DEFAULT_REPO_TRUTH_DOCS, source)
 }
 
 /// Resolve the three file classes the structural arms select their scopes from.
