@@ -3,3 +3,7 @@
 /artifacts/
 /test-results/
 /mutants.out/
+# Generated release payloads are content-addressed and reconstructed by
+# `cargo xtask stage-target`; they are not task-source work.
+/dist/stage/objects/
+/dist/stage/targets/

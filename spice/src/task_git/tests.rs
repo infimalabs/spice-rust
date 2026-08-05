@@ -186,6 +186,45 @@ mod tests {
     }
 
     #[test]
+    fn claim_ignores_release_payloads_but_refuses_other_untracked_files()
+    {
+        let fixture = Fixture::new("release-output");
+        fs::write(
+            fixture.agent.join(".gitignore"),
+            include_str!("../../../.gitignore"),
+        )
+        .expect("write repository ignore policy");
+        git(&fixture.agent, &["add", ".gitignore"]);
+        git(&fixture.agent, &["commit", "-m", "add ignore policy"]);
+        git(&fixture.agent, &["push", "origin", "main"]);
+        let object = fixture.agent.join("dist/stage/objects/1f/2e");
+        let target = fixture
+            .agent
+            .join("dist/stage/targets/aarch64-apple-darwin/payload.json");
+        fs::create_dir_all(object.parent().expect("object parent"))
+            .expect("create staged object directory");
+        fs::create_dir_all(target.parent().expect("target parent"))
+            .expect("create staged target directory");
+        fs::write(&object, "object\n").expect("write staged object");
+        fs::write(&target, "payload\n").expect("write staged target");
+
+        prepare_claim(&fixture.repository())
+            .expect("release payloads do not block task next");
+
+        fs::write(fixture.agent.join("LATER.md"), "unrelated\n")
+            .expect("write unrelated untracked file");
+        let error = prepare_claim(&fixture.repository())
+            .expect_err("unrelated untracked work blocks task next");
+
+        assert_eq!(error.reason(), "git::worktree-dirty");
+        assert!(error.detail().contains("?? LATER.md"), "{error}");
+        assert!(
+            !error.detail().contains("dist/stage"),
+            "ignored release payload leaked into refusal: {error}"
+        );
+    }
+
+    #[test]
     fn conflict_leaves_complete_recoverable_merge_state() {
         let fixture = Fixture::new("conflict");
         fs::write(fixture.agent.join("README.md"), "agent\n")
