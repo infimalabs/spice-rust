@@ -79,6 +79,13 @@ tar -C "$CUTOVER_COMMON" -cpf "$CUTOVER_EVIDENCE/predecessor-state.tar" .spice
 shasum -a 256 "$CUTOVER_EVIDENCE/predecessor-state.tar" > "$CUTOVER_EVIDENCE/predecessor-state.tar.sha256"
 shasum -a 256 -c "$CUTOVER_EVIDENCE/predecessor-state.tar.sha256"
 mv "$CUTOVER_OLD_BIN" "$CUTOVER_OLD_BIN.pre-spice-0.31.0"
+if test -e "$CUTOVER_COMMON/.spice-rust"; then
+  tar -C "$CUTOVER_COMMON" -cpf "$CUTOVER_EVIDENCE/retired-release-one-state.tar" .spice-rust
+  shasum -a 256 "$CUTOVER_EVIDENCE/retired-release-one-state.tar" > "$CUTOVER_EVIDENCE/retired-release-one-state.tar.sha256"
+  shasum -a 256 -c "$CUTOVER_EVIDENCE/retired-release-one-state.tar.sha256"
+  mv "$CUTOVER_COMMON/.spice-rust" "$CUTOVER_EVIDENCE/retired-release-one-state"
+fi
+test ! -e "$CUTOVER_COMMON/.spice-rust"
 test ! -e "$CUTOVER_COMMON/.spice/data/spicejournal.sqlite3"
 ```
 
@@ -128,9 +135,11 @@ durable shutdown sequence completes:
 Rollback is permitted only while
 `$CUTOVER_COMMON/.spice/data/spicejournal.sqlite3` is still absent and `up` has
 never been invoked. In that state, move the saved 0.31.0 entrypoint back to
-`$CUTOVER_OLD_BIN` and verify the archived checksum again. If `up` was invoked
-or the current journal exists, do not restore predecessor authority or its
-entrypoint; diagnose and continue forward with the installed appliance.
+`$CUTOVER_OLD_BIN`, move `retired-release-one-state` back to
+`$CUTOVER_COMMON/.spice-rust` when that archived tree exists, and verify both
+archived checksums again. If `up` was invoked or the current journal exists,
+do not restore predecessor authority or its entrypoint; diagnose and continue
+forward with the installed appliance.
 
 The process-level rehearsal is:
 
@@ -142,4 +151,6 @@ cargo test --locked -p spice --test resident \
 It uses a normal worktree plus a real linked worktree, applies the staged
 binary, proves the journal absent before startup, launches fresh Claude and
 Codex fixtures, claims exactly two newly created handles, proves lane-scoped
-steering, and drains and shuts down with an empty executable search path.
+steering, starts the resident with only `git` and `sleep` available, and uses
+an empty executable search path for native client commands, drain, and
+shutdown. Python and Taskwarrior are absent from both paths.
