@@ -2,15 +2,10 @@
 
 ## Development hooks
 
-During coexistence, Git remains configured to the Python-owned `.spice/hooks`
-directory or the legacy tracked `.githooks` wrappers. A digest-bound Rust
-install publishes inactive `pre-commit`, `commit-msg`, and
-`reference-transaction` artifacts under `.spice/rust/git-hooks` without
-changing either Python hook set or `core.hooksPath`.
-
-At an explicitly authorized hook cutover, preview and apply the current Rust
-install plan, then activate its exact hook directory once per checkout or
-linked worktree:
+A digest-bound Rust install publishes `pre-commit`, `commit-msg`, and
+`reference-transaction` artifacts under `.spice/rust/git-hooks`. Preview and
+apply the current install plan, then activate its exact hook directory once per
+checkout or linked worktree:
 
 ```sh
 cargo run --locked -p spice -- install
@@ -22,13 +17,14 @@ The activation script refuses unless all three native hooks are executable. The
 native pre-commit hook runs the canonical Rust verifier, which performs
 formatting, Clippy, native and browser-target builds, deterministic app
 verification, workspace tests, doctests, the machine-readable
-contract-landing check, and the still-installed Python policy gate during
-coexistence. It prints each command before execution and names the first
-command and exit status when verification fails. The native commit-msg hook
-preserves the current fixed message-hygiene law and additionally requires every
-committed `Spice-Origin` line to use the exact v1 grammar. The native
-reference-transaction hook refuses a current-branch update that would abandon
-commits already merged into its upstream.
+contract-landing check. The checked gate manifest maps each of the 25 retired
+standard policy checks to one compiled Rust arm, and workspace tests exercise
+the exact mapping and production executor. Verification prints each command
+before execution and names the first command and exit status when it fails. The
+native commit-msg hook preserves the current fixed message-hygiene law and
+additionally requires every committed `Spice-Origin` line to use the exact v1
+grammar. The native reference-transaction hook refuses a current-branch update
+that would abandon commits already merged into its upstream.
 
 ## Workspace verification
 

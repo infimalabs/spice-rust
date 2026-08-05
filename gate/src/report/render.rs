@@ -146,11 +146,10 @@ fn render_movement(rendered: &mut String, movement: ReportMutationMovement) {
 /// this would fail with a bare standing that names no metric and no path. One
 /// copy is what stops the two explanations from drifting apart.
 ///
-/// A refusal here says nothing about the commit gate having passed: `spice dev
-/// pre-commit` exits clean on a tree these assertions reject, so a green commit
-/// is not evidence the baselines hold. `cargo xtask verify` runs the cargo
-/// battery first and the commit gate last; only the battery reads the ratchet
-/// against the working tree.
+/// A refusal here says nothing about an earlier compiler or test step having
+/// passed: those steps can be green on a tree these assertions reject.
+/// `cargo xtask verify` reaches this battery at contract landing after its
+/// Cargo commands; only the battery reads the ratchet against the working tree.
 ///
 /// Built only from the contract's own declarations: the per-file counts come
 /// from re-running each metric's declared parser, so this attribution cannot
@@ -162,9 +161,8 @@ fn render_movement(rendered: &mut String, movement: ReportMutationMovement) {
 pub fn refusal_detail(root: &Path, contract: &Contract, report: &GateReport) -> String {
     let mut detail = String::from(
         "the live workspace is refused, so this run carries neither a clean \
-         standing nor a tightening proposal. a green `spice dev pre-commit` does \
-         not contradict this: it passes the same tree, and this battery is what \
-         reads the ratchet.",
+         standing nor a tightening proposal. a passing compiler or test step \
+         does not contradict this: this battery is what reads the ratchet.",
     );
     for finding in report
         .findings()

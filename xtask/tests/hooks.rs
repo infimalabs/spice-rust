@@ -104,7 +104,13 @@ fn tracked_python_hook(hook: &str) -> Vec<u8> {
 
 fn exercise_pre_commit(scratch: &Scratch, cargo_log: &Path) {
     let pre_commit = scratch.join(format!("{NATIVE_HOOKS}/pre-commit"));
-    let pre_commit_output = invoke(&pre_commit, scratch.path(), &[]);
+    let pre_commit_output = Command::new(&pre_commit)
+        .current_dir(scratch.path())
+        .env("GIT_DIR", scratch.join(".git")) // env-policy: allow
+        .env("GIT_WORK_TREE", scratch.path()) // env-policy: allow
+        .env("GIT_INDEX_FILE", scratch.join(".git/index")) // env-policy: allow
+        .output()
+        .expect("run pre-commit with Git's local environment exported");
     assert_success(&pre_commit_output, "pre-commit");
     assert_eq!(fs::read_to_string(cargo_log).unwrap(), "verify\n");
 }
@@ -245,6 +251,12 @@ fn install_cargo_alias(scratch: &Scratch, log: &Path) {
             concat!(
                 "#!/bin/sh\n",
                 "set -eu\n",
+                "if [ -n \"",
+                "${{GIT_DIR-}}${{GIT_WORK_TREE-}}", // env-policy: allow
+                "${{GIT_INDEX_FILE-}}\" ]; then\n", // env-policy: allow
+                "    printf 'pre-commit leaked local Git environment\\n' >&2\n",
+                "    exit 65\n",
+                "fi\n",
                 "printf '%s\\n' \"$*\" >> '{}'\n",
                 "if [ \"$#\" -eq 1 ] && [ \"$1\" = verify ]; then\n",
                 "    exit 0\n",
