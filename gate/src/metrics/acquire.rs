@@ -610,12 +610,14 @@ fn whole_file_complexity(
 /// The function position of a row that speaks for a file rather than a routine.
 const WHOLE_FILE_ROUTINE: &str = "<file>";
 
-/// The rows a tree with no parsable complexity source still owes its arm.
+/// The rows a tree with no named routine in a supported source still owes its arm.
 fn not_applicable_complexity() -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
     let mut metrics = Vec::new();
     for metric in [MetricId::RoutineCcn, MetricId::RoutineLength] {
         let state = EvidenceState::NotApplicable {
-            reason: "the selected tree admits no declared complexity source class".to_owned(),
+            reason:
+                "the selected tree contains no named routine in a supported complexity source class"
+                    .to_owned(),
         };
         metrics.push(
             MetricEvidence::new(metric, MetricKey::Arm, state)

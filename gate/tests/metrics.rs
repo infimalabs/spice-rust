@@ -270,6 +270,42 @@ class Runner:
         return None
 ";
 
+/// The same three decision forms in each remaining vendored grammar.
+const COMPLEXITY_JAVASCRIPT: &str = "\
+class Runner {
+    run(items) {
+        for (const item of items) {
+            if (item && item.ready) {
+                return item;
+            }
+        }
+    }
+}
+";
+
+const COMPLEXITY_CSHARP: &str = "\
+class Runner {
+    int Run(int[] items) {
+        foreach (var item in items) {
+            if (item > 0 && item < items.Length) {
+                return item;
+            }
+        }
+        return 0;
+    }
+}
+";
+
+const COMPLEXITY_LUA: &str = "\
+function run(items)
+    for _, item in ipairs(items) do
+        if item and item.ready then
+            return item
+        end
+    end
+end
+";
+
 #[test]
 fn complexity_measures_each_routine_rather_than_reporting_one_shape_for_all() {
     let rust = measure_complexity("src/app.rs", COMPLEXITY_RUST).expect("Rust source measures");
@@ -301,13 +337,55 @@ fn complexity_measures_each_routine_rather_than_reporting_one_shape_for_all() {
         "a second vendored grammar measures by the same rules"
     );
 
-    let unsupported = measure_complexity("src/app.txt", "")
-        .expect_err("a class with no vendored grammar is named rather than measured as empty");
+    for (path, source, expected) in [
+        ("src/app.js", COMPLEXITY_JAVASCRIPT, ("Runner::run", 4, 7)),
+        ("src/App.cs", COMPLEXITY_CSHARP, ("Runner::Run", 4, 8)),
+        ("src/app.lua", COMPLEXITY_LUA, ("run", 4, 7)),
+    ] {
+        let routines = measure_complexity(path, source).expect("the vendored grammar measures");
+        assert_eq!(
+            routines
+                .iter()
+                .map(|routine| (routine.function(), routine.ccn(), routine.length()))
+                .collect::<Vec<_>>(),
+            [expected],
+            "{path} measures a real routine through its vendored grammar"
+        );
+    }
+
+    let unsupported = measure_complexity("src/app.c", "").expect_err(
+        "a selected class with no vendored grammar is named rather than measured empty",
+    );
     assert!(matches!(
         unsupported,
-        ParseError::Unsupported { ref source_field, .. }
-            if source_field == "policy.languages.complexity"
+        ParseError::Unsupported {
+            ref source_field,
+            ref reason,
+            ..
+        } if source_field == "policy.languages.complexity" && reason.contains(".c")
     ));
+
+    let malformed = measure_complexity("src/broken.rs", "fn broken( { if true {}")
+        .expect_err("an error-containing parse tree is refused rather than partially measured");
+    assert!(matches!(
+        malformed,
+        ParseError::Malformed { ref input, .. } if input.contains("src/broken.rs")
+    ));
+
+    let trait_impls = measure_complexity(
+        "src/traits.rs",
+        "struct Worker;\n\
+         impl First for Worker { fn run(&self) {} }\n\
+         impl Second for Worker { fn run(&self) {} }\n",
+    )
+    .expect("two trait impl methods on one type keep distinct qualified identities");
+    assert_eq!(
+        trait_impls
+            .iter()
+            .map(|routine| routine.function())
+            .collect::<Vec<_>>(),
+        ["<Worker as First>::run", "<Worker as Second>::run"]
+    );
 
     let collision = measure_complexity(
         "src/dup.rs",

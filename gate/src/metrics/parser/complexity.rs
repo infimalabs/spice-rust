@@ -195,6 +195,12 @@ pub fn measure_complexity(path: &str, source: &str) -> Result<Vec<ComplexityRout
             "grammar produced no tree",
         )
     })?;
+    if tree.root_node().has_error() {
+        return Err(ParseError::malformed(
+            format!("complexity source {path:?}"),
+            "grammar produced an error node",
+        ));
+    }
     let mut routines = Vec::new();
     let mut scope = Vec::new();
     visit(
@@ -267,7 +273,7 @@ fn visit(
             current = Some(routines.len() - 1);
         }
     } else if grammar.scopes.contains(&node.kind()) {
-        if let Some(name) = declared_name(node, source) {
+        if let Some(name) = declared_scope_name(node, source) {
             scope.push(name);
             named = true;
         }
@@ -309,7 +315,30 @@ fn is_decision(node: Node<'_>, grammar: &ComplexityGrammar) -> bool {
 fn declared_name(node: Node<'_>, source: &str) -> Option<String> {
     ["name", "type"]
         .into_iter()
-        .find_map(|field| node.child_by_field_name(field))
+        .find_map(|field| declared_field(node, source, field))
+}
+
+/// The qualifier contributed by one named scope.
+///
+/// Rust trait impls need both sides of the impl in their qualifier. Using only
+/// the implementor would collapse ordinary `impl First for Worker` and
+/// `impl Second for Worker` methods onto the same path/function key. The
+/// conventional `<Type as Trait>` spelling keeps those identities distinct;
+/// every other supported scope is named by its ordinary `name` or `type` field.
+fn declared_scope_name(node: Node<'_>, source: &str) -> Option<String> {
+    let name = declared_name(node, source)?;
+    if node.kind() != "impl_item" {
+        return Some(name);
+    }
+    let Some(trait_name) = declared_field(node, source, "trait") else {
+        return Some(name);
+    };
+    Some(format!("<{name} as {trait_name}>"))
+}
+
+/// Non-empty, single-line source text carried by one declared field.
+fn declared_field(node: Node<'_>, source: &str, field: &str) -> Option<String> {
+    node.child_by_field_name(field)
         .and_then(|child| child.utf8_text(source.as_bytes()).ok())
         .map(str::trim)
         .filter(|name| !name.is_empty() && !name.contains(['\r', '\n']))

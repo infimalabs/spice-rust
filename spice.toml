@@ -117,11 +117,11 @@ source_suffixes = [
 # Which files each language arm reads.
 #
 # These are two selections rather than one because they are genuinely different
-# sets. `complexity` counts routines, so it admits every language whose routines
-# the parser can find, including the three scripting suffixes magic omits.
-# `magic` compares literals against a baseline through a C-family grammar, and a
-# language that grammar cannot parse exactly would have every literal in it read
-# as a regression.
+# sets. `complexity` preserves the predecessor's routine-language selection; the
+# native arm measures suffixes with a vendored grammar and names every other
+# selected suffix as unsupported. `magic` compares literals against a baseline
+# through a C-family grammar, and a language that grammar cannot parse exactly
+# would have every literal in it read as a regression.
 [policy.languages]
 complexity = [
     ".c", ".cc", ".cpp", ".cs", ".go", ".h", ".hpp", ".java", ".js", ".kt",
