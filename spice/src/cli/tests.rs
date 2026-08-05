@@ -166,7 +166,6 @@ fn every_contract_has_an_executable_landing_disposition() {
 enum LocalRelationship {
     Replacement,
     Addition,
-    Divergence,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -180,24 +179,18 @@ struct LocalSuccession {
 
 const LOCAL_SUCCESSION: &[LocalSuccession] = &[
     LocalSuccession {
-        python: Some("init"),
+        python: None,
         rust: &["install"],
         invocation: "install [--apply=<digest>]",
-        relationship: LocalRelationship::Divergence,
-        rationale: concat!(
-            "Rust installs only its namespaced local assets; resident startup and ",
-            "ambient authority remain separate",
-        ),
+        relationship: LocalRelationship::Addition,
+        rationale: "Spice publishes its one repository-local appliance and generated assets",
     },
     LocalSuccession {
-        python: Some("deinit"),
+        python: None,
         rust: &["install"],
         invocation: "install --unapply",
-        relationship: LocalRelationship::Divergence,
-        rationale: concat!(
-            "Rust reverses only the exact namespaced install receipt and does not ",
-            "withdraw Python authority",
-        ),
+        relationship: LocalRelationship::Addition,
+        rationale: "Spice reverses only the exact repository-local install receipt",
     },
     LocalSuccession {
         python: Some("lock status"),
@@ -241,10 +234,7 @@ fn daemonless_local_succession_is_closed_and_explicit() {
         .iter()
         .filter_map(|row| row.python)
         .collect::<BTreeSet<_>>();
-    assert_eq!(
-        python,
-        BTreeSet::from(["deinit", "init", "lock run", "lock status"]),
-    );
+    assert_eq!(python, BTreeSet::from(["lock run", "lock status"]),);
 
     let rust = LOCAL_SUCCESSION
         .iter()
@@ -265,11 +255,7 @@ fn daemonless_local_succession_is_closed_and_explicit() {
             .iter()
             .map(|row| row.relationship)
             .collect::<BTreeSet<_>>(),
-        BTreeSet::from([
-            LocalRelationship::Replacement,
-            LocalRelationship::Addition,
-            LocalRelationship::Divergence,
-        ]),
+        BTreeSet::from([LocalRelationship::Replacement, LocalRelationship::Addition,]),
     );
 
     for row in LOCAL_SUCCESSION {
