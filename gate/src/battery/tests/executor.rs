@@ -2,6 +2,15 @@
 
 use super::*;
 
+/// The predecessor steps nothing here measures while metrics cannot be acquired.
+///
+/// Pinned by name because the refusal that stands in for them is what the
+/// canonical verifier's retained predecessor stage is justified by: when the
+/// metrics family gains an acquisition entrypoint, this list stops matching and
+/// that justification has to be read again rather than quietly outliving it.
+const UNMEASURED_PREDECESSOR_STEPS: [&str; 4] =
+    ["file-shape", "complexity", "magic-numbers", "markdown-links"];
+
 #[test]
 fn runner_executes_all_26_once_in_order_with_complete_context() {
     let fixture = Fixture::new();
@@ -490,6 +499,13 @@ fn assert_every_family_projected_its_own_evidence(report: &BatteryReport) {
                 assert_eq!(*arm_family, ArmFamily::Metrics);
                 assert_eq!(declaration, result.declaration());
                 assert!(reason.contains("metrics family acquisition is unavailable"));
+                for step in UNMEASURED_PREDECESSOR_STEPS {
+                    assert!(
+                        reason.contains(step),
+                        "the metrics refusal names every predecessor step it \
+                         leaves unmeasured, but {step} is absent from: {reason}"
+                    );
+                }
             }
             ArmFamily::Hygiene => {
                 assert!(matches!(result.evidence(), ArmEvidence::Hygiene { .. }));
