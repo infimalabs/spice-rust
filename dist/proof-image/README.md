@@ -64,9 +64,10 @@ halves are compared as strings the compiler handed over rather than asserted by
 a `cfg!` predicate over what this binary was compiled for, so every lane can
 drive the whole decision: the musl and `gnux32` neighbours are refused in a test
 on macOS hosts that cannot compile for either, and — the case a predicate could
-never reach off the image — the owning tuple is admitted in one too. Stage from the repository root with the workspace
-writable, the image's Cargo home named explicitly, and the build root on a
-writable mount, because the app build writes nothing under the workspace:
+never reach off the image — the owning tuple is admitted in one too. Stage from
+the repository root with the workspace writable, the image's Cargo home named
+explicitly, and the build root on a writable mount, because the app build writes
+nothing under the workspace:
 
 ```sh
 docker run --rm --platform linux/amd64 --network none \
