@@ -77,6 +77,10 @@ fn shipped_profile() -> String {
     .expect("the sealed profile composes for a workspace check-out")
 }
 
+/// How many neighbourhoods this process has built, so no two share a name.
+#[cfg(target_os = "macos")]
+static NEIGHBOURHOODS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// A workspace, a checkout beside it and a scratch root, built somewhere
 /// else entirely.
 ///
@@ -100,10 +104,6 @@ fn shipped_profile() -> String {
 /// fixture built that way cannot tell that the older denial naming the
 /// common directory is still doing anything -- measured, dropping that name
 /// from it left every test here green.
-/// How many neighbourhoods this process has built, so no two share a name.
-#[cfg(target_os = "macos")]
-static NEIGHBOURHOODS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 #[cfg(target_os = "macos")]
 struct Neighbourhood {
     root: PathBuf,
@@ -641,10 +641,19 @@ fn the_workspace_and_its_repository_stay_readable_inside_the_boundary() {
 ///
 /// So the order is measured rather than argued. The same bytes with the allow
 /// cut out and reinserted below the denials go in front of `sandbox-exec` as
-/// well, which is what makes the refusal attributable to position: the
-/// neighbourhood denial matches this path too, and would refuse it either
-/// way, so a fixture that only asked the shipped bytes would pass for a
-/// profile whose ordering had stopped mattering.
+/// well, and the crate is readable there. What that catches is an allow
+/// narrowed away from the workspace Cargo home: such a profile would refuse
+/// this path in both orders, and every other reading here would still pass,
+/// because the workspace source below establishes only that the allow reaches
+/// a file at the workspace root, which a narrower allow reaches too. Without
+/// the moved profile a refusal caused by position and a refusal caused by the
+/// allow never arriving are the same observation.
+///
+/// The neighbourhood denial is not a second thing holding this path away.
+/// Measured with the warm cache denial pointed at a path this fixture does
+/// not use and every other rule left alone, the crate was readable: that
+/// denial is composed above the allow handing the workspace back, so for
+/// anything inside the workspace the allow is the later match and wins.
 ///
 /// The open profile establishes the crate is readable at all, and a workspace
 /// source measured beside it establishes the allow is still reaching the
