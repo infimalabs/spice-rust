@@ -210,7 +210,9 @@ fn staged_installed_spice_rehearses_clean_break_without_predecessor_tools() {
         "the clean-break fixture inherited a current authority"
     );
 
-    let mut resident = RunningResident::spawn_with(&fixture, &installed_binary);
+    let (resident_path, resident_tools) = native_resident_path(&fixture);
+    let mut resident =
+        RunningResident::spawn_with_path(&fixture, &installed_binary, &resident_path);
     resident.assert_ready(&fixture);
     let created = add_cutover_tasks(&fixture, &installed_binary);
     let claude = add_lane_with(&fixture, &installed_binary, None, Dialect::Claude);
@@ -221,7 +223,14 @@ fn staged_installed_spice_rehearses_clean_break_without_predecessor_tools() {
         Dialect::Codex,
     );
     let lanes = [(Dialect::Claude, claude), (Dialect::Codex, codex)];
-    assert_launches_with_executable(&fixture, &rig, &lanes, false, &installed_binary);
+    assert_launches_with_executable(
+        &fixture,
+        &rig,
+        &lanes,
+        false,
+        &installed_binary,
+        Some(&resident_path),
+    );
 
     let empty_path = fixture.cleanup.join("empty-path");
     fs::create_dir(&empty_path).expect("empty PATH directory");
@@ -239,13 +248,57 @@ fn staged_installed_spice_rehearses_clean_break_without_predecessor_tools() {
     );
     eprintln!(
         "cutover-evidence plan={plan_digest} binary={binary_digest} journal={} tasks=[{},{}] \
-         lanes=[{claude},{codex}] directives=[{},{}] vendor_logs=2 path_entries=0 shutdown=clean",
+         lanes=[{claude},{codex}] directives=[{},{}] vendor_logs=2 \
+         resident_path=[git:{},sleep:{}] client_path_entries=0 shutdown=clean",
         fixture.journal().display(),
         created[0],
         created[1],
         directive_keys[0],
         directive_keys[1],
+        resident_tools[0].display(),
+        resident_tools[1].display(),
     );
+}
+
+fn native_resident_path(fixture: &Fixture) -> (PathBuf, [PathBuf; 2]) {
+    let path = fixture.cleanup.join("native-path");
+    fs::create_dir(&path).expect("native resident PATH creates");
+    let tools = [ambient_executable("git"), ambient_executable("sleep")];
+    for (name, source) in ["git", "sleep"].into_iter().zip(&tools) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(source, path.join(name)).expect("native resident tool links");
+        #[cfg(not(unix))]
+        fs::copy(source, path.join(name)).expect("native resident tool copies");
+    }
+    let mut entries = fs::read_dir(&path)
+        .expect("native resident PATH reads")
+        .map(|entry| {
+            entry
+                .expect("native resident PATH entry reads")
+                .file_name()
+                .into_string()
+                .expect("native resident tool name is UTF-8")
+        })
+        .collect::<Vec<_>>();
+    entries.sort();
+    assert_eq!(entries, ["git", "sleep"]);
+    assert!(
+        entries
+            .iter()
+            .all(|name| !name.starts_with("python") && name != "task")
+    );
+    (path, tools)
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the process fixture resolves the two ambient native tools at its binary rim"
+)]
+fn ambient_executable(name: &str) -> PathBuf {
+    std::env::split_paths(&std::env::var_os("PATH").expect("fixture PATH exists"))
+        .map(|directory| directory.join(name))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| panic!("fixture requires native executable {name:?}"))
 }
 
 fn prepare_cutover_repository(fixture: &Fixture, rig: &Rig) {
@@ -263,6 +316,7 @@ fn prepare_cutover_repository(fixture: &Fixture, rig: &Rig) {
             "fixture-codex\n",
             "launch-captures/\n",
             "launch-index\n",
+            "native-path/\n",
         ),
     )
     .expect("cutover fixture ignore policy writes");
@@ -936,6 +990,7 @@ fn assert_launches(
         lanes,
         resumed,
         Path::new(env!("CARGO_BIN_EXE_spice")),
+        None,
     );
 }
 
@@ -945,6 +1000,7 @@ fn assert_launches_with_executable(
     lanes: &[(Dialect, wire::CanonicalUuid); 2],
     resumed: bool,
     executable: &Path,
+    expected_path: Option<&Path>,
 ) {
     let head = durable_head(fixture);
     for (dialect, lane) in lanes {
@@ -967,7 +1023,7 @@ fn assert_launches_with_executable(
                 .expect("selected vendor launch was captured"),
         );
         assert_eq!(capture.cwd, row.worktree);
-        assert_environment(&capture.environment, *dialect, *lane);
+        assert_environment(&capture.environment, *dialect, *lane, expected_path);
         assert_eq!(
             capture.argv,
             expected_argv(rig, *dialect, *lane, &row.worktree, resumed, executable)
@@ -1068,6 +1124,7 @@ fn assert_environment(
     captured: &BTreeMap<String, String>,
     dialect: Dialect,
     lane: wire::CanonicalUuid,
+    expected_path: Option<&Path>,
 ) {
     let mut observed = captured.clone();
     for shell_owned in ["PWD", "SHLVL", "_"] {
@@ -1106,6 +1163,9 @@ fn assert_environment(
                 .map(|value| (name.to_owned(), value))
         })
         .collect::<BTreeMap<_, _>>();
+    if let Some(path) = expected_path {
+        expected.insert("PATH".to_owned(), path.display().to_string());
+    }
     expected.insert(spice::agent_launch::SPICE_LANE.to_owned(), lane.to_string());
     if dialect == Dialect::Claude {
         expected.insert(

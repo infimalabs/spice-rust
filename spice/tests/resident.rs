@@ -108,8 +108,20 @@ impl RunningResident {
     }
 
     fn spawn_with(fixture: &Fixture, executable: &Path) -> Self {
-        let child = Command::new(executable)
-            .args(["--json", "up"])
+        Self::spawn_with_environment(fixture, executable, None)
+    }
+
+    fn spawn_with_path(fixture: &Fixture, executable: &Path, path: &Path) -> Self {
+        Self::spawn_with_environment(fixture, executable, Some(path))
+    }
+
+    fn spawn_with_environment(fixture: &Fixture, executable: &Path, path: Option<&Path>) -> Self {
+        let mut command = Command::new(executable);
+        command.args(["--json", "up"]);
+        if let Some(path) = path {
+            command.env("PATH", path);
+        }
+        let child = command
             .current_dir(&fixture.root)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
