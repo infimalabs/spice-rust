@@ -100,6 +100,10 @@ fn shipped_profile() -> String {
 /// fixture built that way cannot tell that the older denial naming the
 /// common directory is still doing anything -- measured, dropping that name
 /// from it left every test here green.
+/// How many neighbourhoods this process has built, so no two share a name.
+#[cfg(target_os = "macos")]
+static NEIGHBOURHOODS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 #[cfg(target_os = "macos")]
 struct Neighbourhood {
     root: PathBuf,
@@ -120,8 +124,16 @@ impl Neighbourhood {
             .expect("the clock is past the epoch")
             .as_nanos();
         // The names carry the process and a nanosecond both, because every
-        // lane runs this and one of them is not enough on its own.
-        let stem = format!("{}-{nonce}", std::process::id());
+        // lane runs this and one of them is not enough on its own. The clock
+        // is not enough either: it answers in microseconds on this machine, so
+        // two of these built at once shared a name and the second `git init`
+        // refused an origin the first had already made. The counter separates
+        // them within a process the way the process id separates lanes.
+        let stem = format!(
+            "{}-{nonce}-{}",
+            std::process::id(),
+            NEIGHBOURHOODS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
         let temporary_dir = std::env::temp_dir();
         let root = temporary_dir.join(format!("spice-proof-neighbourhood-{stem}"));
         let origin = temporary_dir.join(format!("spice-proof-origin-{stem}"));
@@ -265,6 +277,28 @@ fn without_the_write_denial(profile: &str, parent: &Path) -> String {
         "the profile denies the neighbourhood once, and this saw another spelling:\n{profile}",
     );
     profile.replace(&denial, &reads_only)
+}
+
+/// The shipped bytes with the read allow moved below every later denial.
+///
+/// Cut and reinserted rather than composed a second way, so what comes back
+/// is the shipped profile in a different order and nothing else: every rule
+/// is the same bytes and only the allow has moved. It lands immediately above
+/// the write allow, which is the last rule the profile carries, so one cut
+/// puts it below the warm Cargo caches and the host dependency roots at once.
+#[cfg(target_os = "macos")]
+fn with_the_allow_below_the_denials(profile: &str) -> String {
+    let allow = profile
+        .lines()
+        .find(|line| line.starts_with("(allow file-read*"))
+        .expect("the profile names its readable paths in one allow")
+        .to_owned();
+    let mut moved = without_the_allow(profile);
+    let last = moved
+        .rfind("(allow file-write*")
+        .expect("the profile ends by handing back the run's own scratch root");
+    moved.insert_str(last, &format!("{allow}\n"));
+    moved
 }
 
 /// A profile that denies nothing, so a path unreadable under it was already
@@ -591,6 +625,71 @@ fn the_workspace_and_its_repository_stay_readable_inside_the_boundary() {
             "the boundary allows {file} to be listed but not read",
         );
     }
+}
+
+/// A Cargo home inside the workspace keeps its warm caches denied.
+///
+/// The allow above reads the workspace back whole, and it is composed above
+/// the warm Cargo cache denial and the host dependency roots so that nothing
+/// below it is weakened. The case that claim is for is a workspace which
+/// happens to contain one of the paths those denials name, and it is a
+/// reachable one: [`denied_parent`] exempts a pin below the workspace from
+/// the refusal on purpose, so a Cargo home there composes rather than being
+/// turned away. In exactly that layout the allow matches the warm registry
+/// too, and the composition order is the only thing leaving the denial as the
+/// last rule that matches it.
+///
+/// So the order is measured rather than argued. The same bytes with the allow
+/// cut out and reinserted below the denials go in front of `sandbox-exec` as
+/// well, which is what makes the refusal attributable to position: the
+/// neighbourhood denial matches this path too, and would refuse it either
+/// way, so a fixture that only asked the shipped bytes would pass for a
+/// profile whose ordering had stopped mattering.
+///
+/// The open profile establishes the crate is readable at all, and a workspace
+/// source measured beside it establishes the allow is still reaching the
+/// workspace -- without that, a profile that had simply lost its allow would
+/// deny the warm cache for the wrong reason and pass.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_cargo_home_inside_the_workspace_keeps_its_warm_caches_denied() {
+    let neighbourhood = Neighbourhood::new();
+    let cargo_home = neighbourhood.workspace.join(".cargo");
+    std::fs::create_dir_all(cargo_home.join("registry/cache"))
+        .expect("the fixture warm registry is creatable");
+    let warm = cargo_home.join("registry/cache/warm.crate");
+    std::fs::write(&warm, "a dependency this build was never handed\n")
+        .expect("the fixture warm registry holds a crate");
+    let source = neighbourhood.workspace.join("main.rs");
+    std::fs::write(&source, "fn main() {}\n").expect("the fixture workspace holds a source");
+
+    let mut pins = fixture_pins();
+    pins.cargo_home = cargo_home;
+    let profile = super::sandbox_profile(&neighbourhood.workspace, &pins, &neighbourhood.temporary)
+        .expect("a Cargo home below the workspace is admitted rather than refused");
+    let below = with_the_allow_below_the_denials(&profile);
+
+    let warm = warm.to_str().expect("a fixture path is UTF-8");
+    let source = source.to_str().expect("a fixture path is UTF-8");
+    assert!(
+        contents_readable(OPEN, warm),
+        "{warm} was already unreadable with nothing denied, so its refusal proves nothing",
+    );
+    assert!(
+        contents_readable(&profile, source),
+        "the allow is not reaching {source} at all, so nothing about what sits below it \
+         is being measured here",
+    );
+    assert!(
+        !contents_readable(&profile, warm),
+        "the allow reads the workspace back over the denial naming its warm caches, and \
+         the sealed build would link what the host had already fetched:\n{profile}",
+    );
+    assert!(
+        contents_readable(&below, warm),
+        "the warm cache stays denied with the allow moved below the denials, so the order \
+         the profile is composed in is not what holds it away:\n{below}",
+    );
 }
 
 /// A pin the denial would swallow refuses the run and says which one.
