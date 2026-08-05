@@ -1,6 +1,6 @@
 use super::capture::{CaptureWorker, FailureContext, start_capture};
 use super::launch::spawn_inner_refusing_descriptor_setup;
-use super::{Completion, WaitStep, spawn, spawn_observed};
+use super::{Completion, WaitError, WaitStep, platform, resolve_signal, spawn, spawn_observed};
 use crate::lock::{Acquisition, LockFile, LockName, tests::unique_lock_path};
 use crate::observe::{
     Observation, ObservationFailure, ObserveError, ObservedRecord, OutputStream, RecordBoundary,
@@ -692,6 +692,94 @@ fn leader_exit_does_not_complete_while_a_group_member_remains_live() {
         "residual group member remained live"
     );
     fs::remove_file(pid_file).expect("remove residual pid fixture");
+}
+
+/// A group that refuses a signal because it is tearing itself down is
+/// answering for its own end, and a group that refuses one while a member is
+/// still live is refusing on permission. The two are one errno apart and the
+/// difference lives only in the moment between the refusal and the reading, so
+/// the refusal is handed over already collected and each case is asserted here
+/// against real groups rather than raced for.
+#[test]
+fn a_group_refusing_its_own_teardown_is_forgiven_and_a_live_one_is_not() {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    fn refused(code: i32) -> Option<io::Error> {
+        Some(io::Error::from_raw_os_error(code))
+    }
+
+    let mut reaped = Command::new("/usr/bin/true");
+    reaped.process_group(0);
+    let mut reaped = reaped.spawn().expect("reaped group fixture launches");
+    let gone = reaped.id();
+    assert!(reaped.wait().expect("reaped group fixture reaps").success());
+
+    let mut running = Command::new("/usr/bin/tail");
+    running
+        .args(["-f", "/dev/null"])
+        .process_group(0)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut running = running.spawn().expect("live group fixture launches");
+    let held = running.id();
+
+    // Nothing refused is nothing to answer for, and no group is enumerated.
+    assert!(resolve_signal(None, held, ProcessGroup::New, "owner").is_ok());
+
+    // ESRCH is the child that finished first, whatever it was aimed at. The
+    // live group proves the answer is the errno's and not the group's.
+    for group in [ProcessGroup::New, ProcessGroup::Inherit] {
+        assert!(resolve_signal(refused(platform::ESRCH), held, group, "owner").is_ok());
+    }
+
+    // A group with nothing left to signal is the teardown this forgives, and
+    // is the answer that used to fail the caller that asked for it.
+    assert!(resolve_signal(refused(platform::EPERM), gone, ProcessGroup::New, "owner").is_ok());
+
+    // A group still holding a live member refused on permission, which stays a
+    // fault, named as one, carrying the errno the kernel gave.
+    let fault = resolve_signal(refused(platform::EPERM), held, ProcessGroup::New, "owner")
+        .expect_err("a live group refuses on permission");
+    match fault {
+        WaitError::Io {
+            owner,
+            operation,
+            source,
+        } => {
+            assert_eq!(owner, "owner");
+            assert_eq!(operation, "signalling child process group");
+            assert_eq!(source.raw_os_error(), Some(platform::EPERM));
+        }
+        WaitError::ReapDeadlineExceeded { .. } => panic!("a refused signal is not a reap deadline"),
+    }
+
+    // One process cannot be partway through becoming absent, so a refusal
+    // about one is never softened by what the group of that pid looks like.
+    assert!(
+        resolve_signal(
+            refused(platform::EPERM),
+            gone,
+            ProcessGroup::Inherit,
+            "owner"
+        )
+        .is_err()
+    );
+
+    // Nothing else is forgiven, however finished the group is.
+    for code in [libc::EACCES, libc::EINVAL, libc::EIO] {
+        assert!(
+            resolve_signal(refused(code), gone, ProcessGroup::New, "owner").is_err(),
+            "errno {code} was forgiven"
+        );
+    }
+
+    // SAFETY: this kills the group the fixture above created and nothing else.
+    assert_eq!(
+        unsafe { libc::kill(-(held as libc::pid_t), libc::SIGKILL) },
+        0
+    );
+    assert!(!running.wait().expect("live group fixture reaps").success());
 }
 
 #[test]

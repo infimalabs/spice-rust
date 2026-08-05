@@ -2,6 +2,7 @@ use std::os::raw::{c_int, c_short};
 
 pub const SIGKILL: c_int = 9;
 pub const SIGTERM: c_int = 15;
+pub const EPERM: c_int = 1;
 pub const ESRCH: c_int = 3;
 pub const P_PID: c_int = 1;
 pub const WEXITED: c_int = 0x4;
