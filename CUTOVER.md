@@ -17,14 +17,23 @@ CUTOVER_EVIDENCE="$CUTOVER_COMMON/cutover-$CUTOVER_STAMP"
 mkdir -p "$CUTOVER_EVIDENCE"
 cd "$CUTOVER_REPO"
 test -z "$(git status --porcelain)"
-CUTOVER_POLICY_COMMIT=$(git log -1 --format=%H -- spice.toml)
-git show HEAD:spice.toml |
-  grep -F '"cargo", "metadata", "--no-deps", "--offline", "--format-version", "1"'
-git show "$CUTOVER_POLICY_COMMIT^:spice.toml" |
-  grep -F '"cargo", "metadata", "--no-deps", "--offline", "--format-version", "1"' && exit 1
-git update-index --skip-worktree spice.toml
-git show "$CUTOVER_POLICY_COMMIT^:spice.toml" > spice.toml
-git diff --quiet -- spice.toml
+git diff --exit-code -- spice.toml
+spice config show > "$CUTOVER_EVIDENCE/predecessor-config.json"
+python3 - "$CUTOVER_EVIDENCE/predecessor-config.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    config = json.load(source)
+admission = config["effective"]["policy"]["admission"]
+expected = ["cargo", "metadata", "--no-deps", "--offline", "--format-version", "1"]
+assert admission == expected, (admission, expected)
+print(json.dumps(admission))
+PY
+CUTOVER_OLD_HOOKS=$(git config --worktree --get core.hooksPath)
+test -n "$CUTOVER_OLD_HOOKS"
+printf '%s\n' "$CUTOVER_OLD_HOOKS" |
+  tee "$CUTOVER_EVIDENCE/predecessor-hooks-path.txt"
 cargo build --locked -p spice
 target/debug/spice install
 target/debug/spice install --apply=DIGEST_PRINTED_BY_PREVIEW
@@ -33,18 +42,13 @@ shasum -a 256 target/debug/spice .spice/bin/spice | tee "$CUTOVER_EVIDENCE/new-b
 ```
 
 The two hashes must match. Do not run `.spice/bin/spice up` yet: that is the
-forward-only boundary. The skipped `spice.toml` is a one-time parser bridge:
-Git already tracks the native-only `policy.admission`, while the predecessor
-temporarily reads the immediately preceding tracked document until its fleet is
-dry. No admission run uses the predecessor reader.
-
-That bridge is per-worktree index state, so no commit carries it. Every lane
-still driven by the predecessor arms it in its own worktree with the same two
-commands, or the tracked `policy.admission` reaches the predecessor reader
-there and claim renewal refuses the whole document as a backend error while the
-phase advance it accompanies still lands. Those lanes disarm it the way "Back
-up and disable the predecessor" does below, once the appliance is ambient. The
-arming repeated under "Rollback boundary" is the rollback path, not that step.
+forward-only boundary. The predecessor configuration capture proves the ambient
+Python reader accepts the exact tracked `policy.admission` command before any
+native install or authority mutation. No index bit or alternate working-tree
+document hides the reviewed policy. The hook activation follows installation
+because its three executable inputs are installer-owned assets, but it waits
+until predecessor state is disabled below. It configures only this reviewed
+worktree, which is the one the appliance and operator use.
 
 ## Prove the predecessor is dry
 
@@ -107,20 +111,20 @@ if test -e "$CUTOVER_COMMON/.spice-rust"; then
 fi
 test ! -e "$CUTOVER_COMMON/.spice-rust"
 test ! -e "$CUTOVER_COMMON/.spice/data/spicejournal.sqlite3"
-git update-index --no-skip-worktree spice.toml
-git restore --source=HEAD --worktree -- spice.toml
 git diff --exit-code -- spice.toml
 target/debug/spice --json config policy.admission |
   tee "$CUTOVER_EVIDENCE/native-admission-policy.json"
-cargo metadata --no-deps --offline --format-version 1 >
-  "$CUTOVER_EVIDENCE/native-admission-metadata.json"
+cargo metadata --no-deps --offline --format-version 1 \
+  > "$CUTOVER_EVIDENCE/native-admission-metadata.json"
+./scripts/install-hooks.sh
+test "$(git config --worktree --get core.hooksPath)" = .spice/git-hooks
 ```
 
 The archive, its checksum, lane identities, process identities, old executable
-identity, staged binary identity, and native admission evidence are the rollback
-record. The journal assertion proves the current authority is absent. The clean
-diff proves the bridge is gone and the worktree again carries exactly the
-native policy committed at `HEAD`.
+identity, staged binary identity, predecessor configuration and hook path, and
+native admission evidence are the rollback record. The journal assertion proves
+the current authority is absent. The clean diff proves the worktree still
+carries exactly the policy committed at `HEAD`.
 
 ## Start the singular appliance
 
@@ -165,20 +169,30 @@ Rollback is permitted only while
 `$CUTOVER_COMMON/.spice/data/spicejournal.sqlite3` is still absent and `up` has
 never been invoked. In that state, move the saved 0.31.0 entrypoint back to
 `$CUTOVER_OLD_BIN`, move `retired-release-one-state` back to
-`$CUTOVER_COMMON/.spice-rust` when that archived tree exists, verify both
-archived checksums again, then re-arm the parser bridge before invoking the
-predecessor:
+`$CUTOVER_COMMON/.spice-rust` when that archived tree exists, verify the saved
+entrypoint and archive checksums again, and leave the tracked policy unchanged.
+Verify the restored predecessor against that policy and restore its recorded
+Git hook path before returning it to service:
 
 ```sh
 cd "$CUTOVER_REPO"
-git update-index --skip-worktree spice.toml
-git show "$CUTOVER_POLICY_COMMIT^:spice.toml" > spice.toml
-git diff --quiet -- spice.toml
+mv "$CUTOVER_OLD_BIN.pre-spice-0.31.0" "$CUTOVER_OLD_BIN"
+shasum -a 256 -c "$CUTOVER_EVIDENCE/predecessor-binary.sha256"
+shasum -a 256 -c "$CUTOVER_EVIDENCE/predecessor-state.tar.sha256"
+if test -e "$CUTOVER_EVIDENCE/retired-release-one-state"; then
+  mv "$CUTOVER_EVIDENCE/retired-release-one-state" "$CUTOVER_COMMON/.spice-rust"
+  shasum -a 256 -c "$CUTOVER_EVIDENCE/retired-release-one-state.tar.sha256"
+fi
+git diff --exit-code -- spice.toml
+spice config show > /dev/null
+git config --worktree core.hooksPath "$(cat "$CUTOVER_EVIDENCE/predecessor-hooks-path.txt")"
+test "$(git config --worktree --get core.hooksPath)" = \
+  "$(cat "$CUTOVER_EVIDENCE/predecessor-hooks-path.txt")"
 ```
 
 If `up` was invoked or the current journal exists, do not restore predecessor
-authority, its entrypoint, or the parser bridge; diagnose and continue forward
-with the installed appliance.
+authority or its entrypoint; diagnose and continue forward with the installed
+appliance.
 
 The process-level rehearsal is:
 
