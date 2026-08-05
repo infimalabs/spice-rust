@@ -838,30 +838,60 @@ fn reap_process(pid: u32, process: &ProcessState) -> io::Result<ExitStatus> {
 
 #[cfg(unix)]
 fn signal_pid(pid: u32, group: ProcessGroup, signal: i32, owner: &str) -> Result<(), WaitError> {
-    let pid = i32::try_from(pid).map_err(|source| WaitError::Io {
+    let signed = i32::try_from(pid).map_err(|source| WaitError::Io {
         owner: owner.to_owned(),
         operation: "converting child pid",
         source: io::Error::new(io::ErrorKind::InvalidData, source),
     })?;
     let target = match group {
-        ProcessGroup::Inherit => pid,
-        ProcessGroup::New => -pid,
+        ProcessGroup::Inherit => signed,
+        ProcessGroup::New => -signed,
     };
-    let result = unsafe { platform::kill(target, signal) };
-    if result == 0 {
+    // SAFETY: the target names this child or the group it was given, and the
+    // signal is one of the two constants this module sends.
+    let refused = unsafe { platform::kill(target, signal) } != 0;
+    resolve_signal(refused.then(io::Error::last_os_error), pid, group, owner)
+}
+
+/// Answer a refused signal against the group it was aimed at.
+///
+/// ESRCH is the child that finished first, and every caller here already
+/// tolerates one. A whole process group can say the same thing with EPERM: the
+/// kernel walks the group, finds members, and refuses because not one of them
+/// could be signalled -- which is what a group whose members are all exiting or
+/// already reaped looks like from outside it. Reading that as a fault made a
+/// child's ordinary teardown fail the caller that asked for it.
+///
+/// A real permission failure leaves a live member behind, so the group is asked
+/// rather than assumed, and only a group with nothing left to signal is
+/// forgiven. Nothing softens a refusal about a single process: one process
+/// cannot be partway through becoming absent, so EPERM about one is about
+/// permission. The refusal arrives already collected because the errno it
+/// carries survives only until the next call, and the group must be probed
+/// after it rather than before.
+#[cfg(unix)]
+fn resolve_signal(
+    refusal: Option<io::Error>,
+    pid: u32,
+    group: ProcessGroup,
+    owner: &str,
+) -> Result<(), WaitError> {
+    let Some(source) = refusal else {
+        return Ok(());
+    };
+    let forgiven = match source.raw_os_error() {
+        Some(platform::ESRCH) => true,
+        Some(platform::EPERM) => group == ProcessGroup::New && process_group_terminal(pid),
+        _ => false,
+    };
+    if forgiven {
         return Ok(());
     }
-
-    let source = io::Error::last_os_error();
-    if source.raw_os_error() == Some(platform::ESRCH) {
-        Ok(())
-    } else {
-        Err(WaitError::Io {
-            owner: owner.to_owned(),
-            operation: "signalling child process group",
-            source,
-        })
-    }
+    Err(WaitError::Io {
+        owner: owner.to_owned(),
+        operation: "signalling child process group",
+        source,
+    })
 }
 
 #[cfg(unix)]

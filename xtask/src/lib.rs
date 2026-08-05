@@ -63,9 +63,10 @@ pub fn reference_transaction(
 /// fourth metrics arm `markdown-links` among them.
 ///
 /// All three read this repository's own sources rather than passing over it:
-/// `.rs` is in the predecessor's complexity and magic suffix sets, and every
-/// tracked file has a shape. Dropping this action drops live coverage, so it
-/// stays until those three arms can be measured.
+/// `.rs` is in the predecessor's complexity, magic, and file-shape suffix sets,
+/// and its Markdown stays file-shape bounded even now that the Markdown-link
+/// arm measures. Dropping this action drops live coverage, so it stays until
+/// those three arms can be measured.
 const VERIFY_ACTIONS: [Action; 8] = [
     Action::Command(Step::cargo(
         "cargo fmt --all -- --check",
