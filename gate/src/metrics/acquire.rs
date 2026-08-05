@@ -117,9 +117,11 @@ pub fn acquire_metrics(
 const fn unreached_input(gate_id: GateId) -> &'static str {
     match gate_id {
         GateId::FileShape => concat!(
-            "no per-path elastic bound is reported: the tracked policy document now ",
-            "selects this scope through file_shape.source_suffixes, but the battery ",
-            "input contract still reports no bound for a measured path to be held to"
+            "no per-path elastic bound reaches acquisition: the tracked policy document ",
+            "selects this scope through file_shape.source_suffixes and the contract ",
+            "resolves a bound for a measured path, but the captured source retains only a ",
+            "root and a tracked inventory, so neither that policy handle nor the actor ",
+            "seed its headroom varies with is in hand"
         ),
         GateId::Complexity => concat!(
             "no bounded lizard 1.23.0 invocation is available: this build resolves no ",

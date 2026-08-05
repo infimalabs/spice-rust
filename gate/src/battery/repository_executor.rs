@@ -13,6 +13,7 @@ use crate::core::{ActorCapture, ClaimCapture, CoreSource, acquire_core, evaluate
 use crate::hygiene::{HygieneConfiguration, HygieneSource, acquire_hygiene};
 use crate::input::Contract;
 use crate::metrics::{BaselineCapture, MetricSource, acquire_metrics};
+use crate::state::{BoundDecision, LatchEntry};
 use crate::toolchain::{RimCapture, ToolchainSource, acquire_toolchain, measure_toolchain};
 use crate::tree::{SelectedTree, Selector};
 
@@ -62,6 +63,7 @@ pub struct RepositoryExecutor<'trace> {
     source: Digest,
     core: Result<Vec<ArmEvidence>, String>,
     baselines: BaselineCapture,
+    bounds: Vec<BoundDecision>,
     rim: RimCapture,
     hygiene: HygieneConfiguration,
     context: Option<BatteryContext>,
@@ -78,6 +80,12 @@ impl<'trace> RepositoryExecutor<'trace> {
     /// set the caller never saw, and an executor that defaulted to none would
     /// scan nothing and call every tree clean.
     ///
+    /// `latches` is the durable breach inventory the core family decides its
+    /// elastic bounds against: a latched path is held to its base limit rather
+    /// than the varied one. The ledger it comes from is read by the caller,
+    /// which publishes that same ledger as the run's state authority, so the
+    /// bounds this capture decides and the state its report names are one read.
+    ///
     /// Every arm and family invocation is emitted to `trace` when one is given,
     /// which observes execution without gaining any authority over it.
     ///
@@ -92,6 +100,10 @@ impl<'trace> RepositoryExecutor<'trace> {
     /// evidence every core position projects.
     ///
     /// [`BatteryCapture`]: super::BatteryCapture
+    // Every argument is an observation of the live repository that no selected
+    // tree can supply, so there is nothing here to group into a narrower type
+    // that would not just be this list under one name.
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn capture(
         repository: impl Into<PathBuf>,
         selector: &Selector,
@@ -99,6 +111,7 @@ impl<'trace> RepositoryExecutor<'trace> {
         actor: ActorCapture,
         rim: RimCapture,
         hygiene: HygieneConfiguration,
+        latches: &[LatchEntry],
         trace: Option<&'trace mut dyn FnMut(RepositoryExecutionEvent)>,
     ) -> Result<Self, BatteryError> {
         let repository: PathBuf = repository.into();
@@ -109,20 +122,21 @@ impl<'trace> RepositoryExecutor<'trace> {
             BatteryError::new(format!("cannot load captured battery contract: {error}"))
         })?;
         // One capture, taken once: the digest every arm is labelled with, the
-        // whole core family, and the committed baselines the magic-number delta
-        // is measured against are all read here, and nothing below this block
-        // can reach the live repository again.
-        let (source, core, baselines) = {
+        // whole core family and the bounds it decided, and the committed
+        // baselines the magic-number delta is measured against are all read
+        // here, and nothing below this block can reach the live repository
+        // again.
+        let (source, core, bounds, baselines) = {
             let captured =
-                CoreSource::capture(&tree, &contract, claim, actor).map_err(|error| {
+                CoreSource::capture(&tree, &contract, claim, actor, latches).map_err(|error| {
                     BatteryError::new(format!("cannot identify battery source: {error}"))
                 })?;
-            let core = core_family(&captured, &contract);
+            let (core, bounds) = core_family(&captured, &contract);
             let baselines = BaselineCapture::capture(
                 &repository,
                 contract.rule_policy().document().file_classes().magic(),
             );
-            (captured.digest().clone(), core, baselines)
+            (captured.digest().clone(), core, bounds, baselines)
         };
         Ok(Self {
             tree,
@@ -130,6 +144,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             source,
             core,
             baselines,
+            bounds,
             rim,
             hygiene,
             context: None,
@@ -153,6 +168,15 @@ impl<'trace> RepositoryExecutor<'trace> {
     /// The tracked contract this capture loaded from the selected tree.
     pub(super) const fn contract(&self) -> &Contract {
         &self.contract
+    }
+
+    /// Every elastic bound the capture's core acquisition decided.
+    ///
+    /// These are the decisions the arms were already judged against, not a
+    /// second resolution taken for the report. A core family that refused to
+    /// acquire decided none, and reports none.
+    pub(super) fn bounds(&self) -> &[BoundDecision] {
+        &self.bounds
     }
 
     fn bind_inputs(&mut self, inputs: &BatteryInputs<'_>) -> Result<(), BatteryError> {
@@ -300,14 +324,27 @@ impl BatteryExecutor for RepositoryExecutor<'_> {
 /// held the two Git observations. A refusal is carried as the family's result
 /// instead of failing the capture: an incomplete family is evidence the battery
 /// projects, not a reason no battery can run.
-fn core_family(source: &CoreSource<'_>, contract: &Contract) -> Result<Vec<ArmEvidence>, String> {
-    let inputs = acquire_core(source, contract).map_err(|error| error.to_string())?;
-    Ok(evaluate_core(&inputs)
+///
+/// The bounds the acquisition decided are returned beside the arms because this
+/// is the only moment they exist: judging consumes the inputs, and re-resolving
+/// them from the report afterwards would be a second decision nothing was
+/// judged against.
+fn core_family(
+    source: &CoreSource<'_>,
+    contract: &Contract,
+) -> (Result<Vec<ArmEvidence>, String>, Vec<BoundDecision>) {
+    let inputs = match acquire_core(source, contract) {
+        Ok(inputs) => inputs,
+        Err(error) => return (Err(error.to_string()), Vec::new()),
+    };
+    let bounds = inputs.bounds().to_vec();
+    let arms = evaluate_core(&inputs)
         .arms()
         .iter()
         .cloned()
         .map(|report| ArmEvidence::Core { report })
-        .collect())
+        .collect();
+    (Ok(arms), bounds)
 }
 
 const fn family_index(family: ArmFamily) -> usize {

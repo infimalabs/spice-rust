@@ -103,6 +103,30 @@ impl MetricStateBinding {
         .map_err(StateBindingError::Bound)
     }
 
+    /// Decide this bound directly against one known latch state.
+    ///
+    /// [`Self::observation`] hands the same rule to
+    /// [`crate::state::CurrentState`], which reads `latched` from the ledger it
+    /// is about to rewrite and returns the decision inside a transaction. An
+    /// acquisition that only measures needs the decision without the rewrite,
+    /// so it reads the latch itself and decides here. Both routes call the one
+    /// [`BoundRule`] compiled above, so neither can compute a limit the other
+    /// would not.
+    ///
+    /// # Errors
+    ///
+    /// Returns the bound's own refusal, which for a rule requiring an actor is
+    /// provenance that names none.
+    pub fn decide(
+        &self,
+        latched: bool,
+        actor_inputs: &ActorInputs,
+    ) -> Result<BoundDecision, StateBindingError> {
+        self.bound
+            .decide(self.value, latched, actor_inputs, self.variation_percent)
+            .map_err(StateBindingError::Bound)
+    }
+
     /// Convert a reconciled current-state decision into complete metric evidence.
     pub fn evidence(&self, decision: &StateDecision) -> Result<MetricEvidence, StateBindingError> {
         if decision.entry() != &self.entry {

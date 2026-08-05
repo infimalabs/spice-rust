@@ -91,7 +91,13 @@ impl Fixture {
         command
     }
 
-    fn spawn_paused(&self, arguments: &[&str], action: &str, path: PathBuf) -> Paused {
+    fn spawn_paused(
+        &self,
+        arguments: &[&str],
+        action: &str,
+        path: PathBuf,
+        release: Release,
+    ) -> Paused {
         let relative = path
             .strip_prefix(&self.root)
             .expect("paused install path belongs to the fixture");
@@ -103,6 +109,10 @@ impl Fixture {
             PAUSE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&control).expect("create install race rendezvous");
+        if matches!(release, Release::Landed) {
+            fs::write(control.join("continue"), b"continue")
+                .expect("land install release before the wait arms");
+        }
         let child = self
             .command(arguments)
             .env(spice::install::TEST_PAUSE_CONTROL, &control)
@@ -165,6 +175,19 @@ struct Spoken {
     code: Option<i32>,
     out: Vec<u8>,
     err: Vec<u8>,
+}
+
+/// Whether the release a paused install waits for is already in place.
+///
+/// The disposition is stated at the spawn rather than inferred from the ending,
+/// because it decides what the wait can possibly observe: a release landed
+/// before the watcher is armed produces no notification the wait could receive.
+enum Release {
+    /// Nothing has written `continue` yet, so the wait arms on an absent
+    /// release and the harness decides the ending.
+    Withheld,
+    /// `continue` is in place before the install is spawned.
+    Landed,
 }
 
 struct Paused {
@@ -418,6 +441,7 @@ fn apply_destination_replacement_at_publication_preserves_both_images() {
         &["--json", "install", &format!("--apply={digest}")],
         "publish",
         destination.clone(),
+        Release::Withheld,
     );
 
     fs::rename(&destination, &parked).expect("park planned exclusion destination");
@@ -449,6 +473,7 @@ fn apply_pause_no_harness_releases_faults_when_its_bound_expires() {
         &["--json", "install", &format!("--apply={digest}")],
         "publish",
         destination.clone(),
+        Release::Withheld,
     );
 
     let expired = paused.abandon();
@@ -476,6 +501,48 @@ fn apply_pause_no_harness_releases_faults_when_its_bound_expires() {
     fixture.assert_python_authority_unchanged();
 }
 
+/// A release already in place when the wait arms is observed, not waited out.
+///
+/// `continue` is written before the install is spawned, so by the time the wait
+/// arms its watcher the file it waits for is already there -- and nothing
+/// touches that directory again, so no notification about this release can ever
+/// arrive. The only thing left that can end this wait is the release test it
+/// makes before its first receive.
+///
+/// A green run here is a run that reached that wait: `ready`, which the harness
+/// waits for before collecting, is written immediately before the wait is
+/// entered, so it cannot be reported by an install that never paused at all.
+///
+/// The fixture adds no horizon cost by the same construction that makes it a
+/// guard: the release is already there, so the wait ends on its first test
+/// rather than on its bound. Move that test below the receive and this install
+/// spends the whole ten seconds and faults instead of applying.
+#[test]
+fn apply_pause_released_before_the_wait_arms_is_observed_without_a_notification() {
+    let fixture = Fixture::new("apply-prelanded-pause");
+    let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
+    let operation_count = preview.plan().operations().len();
+    let digest = preview.digest();
+    let destination = fixture.root.join(".git/info/exclude");
+    let paused = fixture.spawn_paused(
+        &["--json", "install", &format!("--apply={digest}")],
+        "publish",
+        destination.clone(),
+        Release::Landed,
+    );
+
+    let applied: InstallReceipt = reply_body(paused.collect());
+
+    assert_eq!(applied.status(), InstallStatus::Complete);
+    assert_eq!(applied.completed(), operation_count);
+    assert_eq!(
+        fs::read(fixture.installed_binary()).unwrap(),
+        fs::read(env!("CARGO_BIN_EXE_spice")).unwrap()
+    );
+    assert!(fixture.record().is_file());
+    fixture.assert_python_authority_unchanged();
+}
+
 #[test]
 fn apply_record_parent_replacement_at_publication_preserves_both_trees() {
     let fixture = Fixture::new("apply-record-race");
@@ -489,6 +556,7 @@ fn apply_record_parent_replacement_at_publication_preserves_both_trees() {
         &["--json", "install", &format!("--apply={digest}")],
         "publish",
         fixture.record(),
+        Release::Withheld,
     );
 
     fs::rename(&parent, &parked).expect("park admitted record parent");
@@ -522,6 +590,7 @@ fn unapply_destination_replacement_at_removal_preserves_both_images() {
         &["--json", "install", "--unapply"],
         "remove",
         destination.clone(),
+        Release::Withheld,
     );
 
     fs::rename(&destination, &parked).expect("park installed binary");
@@ -555,6 +624,7 @@ fn unapply_destination_replacement_at_restore_preserves_both_images() {
         &["--json", "install", "--unapply"],
         "publish",
         destination.clone(),
+        Release::Withheld,
     );
 
     fs::rename(&destination, &parked).expect("park installed exclusions");
@@ -586,6 +656,7 @@ fn unapply_directory_replacement_at_cleanup_preserves_both_trees() {
         &["--json", "install", "--unapply"],
         "cleanup",
         destination.clone(),
+        Release::Withheld,
     );
 
     fs::rename(&destination, &parked).expect("park introduced binary directory");
@@ -624,6 +695,7 @@ fn unapply_record_parent_replacement_at_publication_preserves_both_trees() {
         &["--json", "install", "--unapply"],
         "publish",
         record.clone(),
+        Release::Withheld,
     );
 
     fs::rename(&parent, &parked).expect("park admitted record parent");

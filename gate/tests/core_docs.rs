@@ -5,13 +5,17 @@
 //! actors instead of by calling the measurement engine directly.
 
 use gate::{
-    ActorCapture, ActorInputs, ClaimCapture, ClaimStatus, CoreEvidence, CoreObservation,
-    CoreStanding, CurrentState, GateId, PeerClaim, PredecessorSources, RenameMap, RepoDocLimit,
+    ActorCapture, ActorInputs, ActorSource, ClaimCapture, ClaimStatus, CoreEvidence,
+    CoreObservation, CoreStanding, CurrentState, GateId, LatchEntry, LatchKind, LatchTransition,
+    PeerClaim, PredecessorSources, RenameMap, RepoDocLimit, StateKey, evaluate_core,
 };
 
 mod support;
 
-use support::{Tree, acquired, acquired_arm, contract_repository, git_commit, workspace_document};
+use support::{
+    Tree, acquired, acquired_arm, acquired_inputs, contract_repository, git_commit,
+    workspace_document,
+};
 
 /// One document, two actors, two caps.
 ///
@@ -350,4 +354,147 @@ fn minted_claims(repository: &Tree, actor: &str, paths: &[&str]) -> Vec<PeerClai
         .after()
         .claims()
         .to_vec()
+}
+
+/// The acquisition reports the elastic bound every document was judged against.
+///
+/// The arm's own evidence carries a cap and nothing else, so a run that
+/// published only that could not say which rule chose the number, which actor
+/// varied it, or how much headroom the ratchet lent. The decision retained here
+/// is the one the arm was judged against, resolved through the same
+/// `MetricStateBinding` a durable latch reconciles through, so the report and
+/// the ledger cannot describe one document two ways.
+///
+/// The two documents are deliberately unlike. They sit at different depths, so
+/// the migration's per-depth Markdown rules select a different rule for each,
+/// and only one of them breaches anything: the root document is capped and over
+/// its cap, while the nested one is lifted to unlimited and inside it. A
+/// decision vector built from one occurrence, or from the first resolution
+/// reused for the rest, cannot carry both.
+#[test]
+fn every_measured_document_carries_the_bound_decision_it_was_judged_against() {
+    let repository = contract_repository("core-acquire-repo-docs-decided");
+    repository.write("DOCTRINE.md", &"x".repeat(20_000));
+    repository.write(
+        "docs/reference/generated/REFERENCE.md",
+        "unlimited doctrine",
+    );
+    git_commit(&repository, "one bounded document beside one unlimited one");
+
+    let inputs = acquired_inputs(
+        &repository,
+        ClaimCapture::Idle,
+        ActorCapture::Acting {
+            actor: "worktree-author".to_owned(),
+            bound_claims: Vec::new(),
+        },
+        &[],
+    );
+    let [bounded, unlimited] = inputs.bounds() else {
+        panic!(
+            "two measured documents decided neither bound, or only one: {:?}",
+            inputs.bounds()
+        );
+    };
+
+    assert_eq!(bounded.metric(), "repository-document.characters");
+    assert_eq!(
+        bounded.rule(),
+        "legacy-rule:spice.toml:policy.markdown_depth_budget.generated%5b.md%5d%5b0%5d",
+        "the root document was decided by a rule other than the depth-0 one that selected it"
+    );
+    assert_eq!(bounded.actor_inputs().candidate_path(), "DOCTRINE.md");
+    assert_eq!(bounded.measured(), 20_000);
+    assert_eq!(bounded.base_limit(), 10_000);
+    assert_eq!(bounded.configured_elastic_limit(), 15_000);
+    assert_eq!(bounded.variation_percent(), 5);
+    assert_eq!(
+        bounded.elastic_limit(),
+        14_850,
+        "the ratchet headroom this actor was lent is the predecessor's jitter, not the whole flex"
+    );
+    assert_eq!(bounded.active_limit(), 14_850);
+    assert!(!bounded.unlimited());
+    assert!(bounded.over_limit() && bounded.over_base() && bounded.elastic_breach());
+    assert_eq!(bounded.latch_transition(), LatchTransition::Latched);
+    let actor = bounded.actor().expect("a varied bound resolved an actor");
+    assert_eq!(actor.source(), ActorSource::ActiveActor);
+    assert_eq!(
+        actor.value(),
+        "worktree-author",
+        "the headroom was seeded from the document rather than the actor acting on it"
+    );
+
+    assert_eq!(
+        unlimited.actor_inputs().candidate_path(),
+        "docs/reference/generated/REFERENCE.md"
+    );
+    assert!(
+        unlimited.unlimited(),
+        "the named rule lifting this document's bound never reached its decision"
+    );
+    assert_eq!(
+        unlimited.rule(),
+        "legacy-rule:spice.toml:policy.markdown_depth_budget.generated%5b.md%5d%5b3%5d",
+        "the nested document was decided by a rule other than the depth-3 one that selected it"
+    );
+    assert!(!unlimited.over_limit() && !unlimited.elastic_breach());
+    assert_eq!(unlimited.latch_transition(), LatchTransition::Clear);
+
+    repository.remove();
+}
+
+/// A document the ledger already latched is held to its base limit.
+///
+/// The elastic limit is headroom the ratchet lends until it is spent, and a
+/// prior breach spent it. The document measured here is the one the test above
+/// measures unlatched, under the same tree, actor, and policy; only the durable
+/// inventory the caller read differs. A build that never carries the ledger into
+/// the decision hands out the lent cap here too, and cannot hold a latched
+/// document to anything.
+#[test]
+fn a_latched_document_is_decided_and_judged_against_its_base_limit() {
+    let repository = contract_repository("core-acquire-repo-docs-latched");
+    repository.write("DOCTRINE.md", &"x".repeat(20_000));
+    git_commit(&repository, "one document a prior run already latched");
+
+    let latched = LatchEntry::new(
+        LatchKind::RepoDocChars,
+        StateKey::path("DOCTRINE.md").expect("a canonical document key"),
+    )
+    .expect("a path-keyed document latch");
+    let inputs = acquired_inputs(
+        &repository,
+        ClaimCapture::Idle,
+        ActorCapture::Acting {
+            actor: "worktree-author".to_owned(),
+            bound_claims: Vec::new(),
+        },
+        std::slice::from_ref(&latched),
+    );
+    let [decision] = inputs.bounds() else {
+        panic!(
+            "one measured document decided one bound: {:?}",
+            inputs.bounds()
+        );
+    };
+    assert_eq!(
+        decision.active_limit(),
+        10_000,
+        "a latched document kept the elastic headroom a prior breach already spent"
+    );
+    assert_eq!(decision.elastic_limit(), 14_850);
+    assert_eq!(decision.latch_transition(), LatchTransition::Held);
+
+    let report = evaluate_core(&inputs);
+    let arm = acquired_arm(&report, GateId::RepoDocs);
+    assert_eq!(arm.standing(), CoreStanding::Failed);
+    assert!(
+        arm.diagnostic()
+            .contains("DOCTRINE.md: 20000 characters (cap 10000)"),
+        "the arm was judged against a cap the decision did not hold it to: {}",
+        arm.diagnostic()
+    );
+
+    repository.remove();
 }

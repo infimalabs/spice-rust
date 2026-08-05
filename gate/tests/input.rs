@@ -2,13 +2,15 @@ use std::path::{Path, PathBuf};
 
 use gate::{
     BASELINE_PATH, BaselineError, BoundName, Contract, ContractError, LONG_LINE_LIMIT,
-    PINNED_CARGO_MUTANTS, POLICY_PATH, PolicyError, RuleSettings, Standing,
+    PINNED_CARGO_MUTANTS, POLICY_PATH, PolicyContext, PolicyError, RuleSettings, Standing,
 };
 use serde::Deserialize;
 
 const TRACKED_POLICY: &str = include_str!("../../spice.toml");
 const TRACKED_BASELINE: &str = include_str!("../../baseline.toml");
 const TRACKED_LONG_LINE_FLOOR: u64 = 70;
+const TRACKED_FILE_LOC_LIMIT: u64 = 1_000;
+const TRACKED_FILE_LOC_RATCHET: u64 = 1_500;
 
 #[test]
 fn tracked_inputs_load_one_operational_current_contract() {
@@ -125,6 +127,53 @@ fn tracked_inputs_load_one_operational_current_contract() {
                 .baseline()
                 .floor("rust.long-lines")
                 .expect("long-line floor is loaded")
+    );
+}
+
+/// The file-shape arm's blocker is its acquisition, not the inputs it is offered.
+///
+/// `metrics::acquire` reports that arm unavailable in a sentence naming what the
+/// captured source failed to retain, and it may say that only while all three of
+/// its claims about the inputs hold: this scope is selected by
+/// `file_shape.source_suffixes`, the tracked contract resolves a bound for a path
+/// the arm would measure, and the actor seed the sentence also names really moves
+/// that bound. Each is measured here rather than restated, because the sentence
+/// previously blamed the contract and only a call against the tracked document
+/// could tell that apart from the truth. A zero variation would demote the seed
+/// from a missing input to decoration; a refused bound would mean the sentence
+/// blames the wrong side again.
+#[test]
+fn tracked_contract_offers_the_file_shape_bound_acquisition_never_receives() {
+    let contract = Contract::load(&workspace_root()).expect("tracked current gate inputs load");
+    let policy = contract.rule_policy();
+    assert!(
+        policy
+            .document()
+            .file_classes()
+            .file_shape()
+            .iter()
+            .any(|suffix| suffix == ".rs"),
+        "the measured path the sentence speaks of is outside the class it names"
+    );
+
+    let measured = PolicyContext::new().with_path("gate/src/metrics/acquire.rs");
+    let bound = policy
+        .resolve_bound(BoundName::FileLoc, &measured)
+        .expect("the tracked contract resolves a file-shape bound for a measured path");
+    assert_eq!(bound.limit(), TRACKED_FILE_LOC_LIMIT);
+    assert_eq!(bound.ratchet_limit(), TRACKED_FILE_LOC_RATCHET);
+    assert!(!bound.unlimited());
+
+    let unpathed = policy
+        .resolve_bound(BoundName::FileLoc, &PolicyContext::new())
+        .expect("no declared file_loc rule leaves the global bound owed to any context");
+    assert_eq!(
+        unpathed, bound,
+        "a bound this contract yields without even a path cannot be what acquisition lacks"
+    );
+    assert!(
+        policy.document().ratchet().variation_percent() > 0,
+        "a zero variation would leave the actor seed no headroom to vary"
     );
 }
 
