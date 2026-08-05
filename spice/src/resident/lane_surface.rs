@@ -24,7 +24,7 @@ mod propose;
 mod reply;
 mod session;
 
-use launch::{OccupantLaunchRequest, occupant_launch};
+pub(super) use launch::{OccupantLaunchRequest, occupant_launch};
 use propose::{commit_restored, propose_drain, propose_seat, propose_wake};
 use reply::{
     answer, authority_refusal, command_result, committed_lane_reply, fact_lane, lane_refusal,

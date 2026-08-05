@@ -66,6 +66,29 @@ pub(super) fn configure_fake_vendor(fixture: &Fixture) {
     );
 }
 
+fn configure_successor_worktree(fixture: &Fixture) -> PathBuf {
+    let common = fixture
+        .runtime
+        .parent()
+        .expect("runtime has common Git parent");
+    let successor = fixture.cleanup.join("successor-worktree");
+    let git = common.join("worktrees/lane-import-successor");
+    fs::create_dir_all(&successor).expect("successor worktree directory");
+    fs::create_dir_all(&git).expect("successor Git directory");
+    fs::write(
+        successor.join(".git"),
+        format!("gitdir: {}\n", git.display()),
+    )
+    .expect("successor Git pointer");
+    fs::write(git.join("commondir"), "../..\n").expect("successor common pointer");
+    fs::copy(
+        fixture.root.join("spice.toml"),
+        successor.join("spice.toml"),
+    )
+    .expect("successor vendor configuration copies");
+    successor
+}
+
 fn initialize_task_git_fixture(fixture: &Fixture) {
     fixture_git(fixture, &["init", "-b", "main"]);
     fixture_git(fixture, &["config", "user.name", "Resident Task Fixture"]);
@@ -601,6 +624,115 @@ fn lane_lifecycle_and_recall_cross_the_resident_in_both_forms() {
     let (added, capability) = seat_and_recall(&fixture);
     resident = drain_and_restart(&fixture, resident, added.lane, capability);
     wake_and_finish(&fixture, resident, added.lane);
+}
+
+#[test]
+fn predecessor_import_launches_the_successor_through_the_shared_occupant_path() {
+    let fixture = Fixture::linked("lane-import-launch");
+    configure_fake_vendor(&fixture);
+    let successor = configure_successor_worktree(&fixture);
+    let successor = fs::canonicalize(successor).expect("successor worktree canonicalizes");
+    let mut resident = RunningResident::spawn(&fixture);
+    resident.assert_ready(&fixture);
+
+    let added = reply_body::<wire::intent::LaneChangeAnswer>(&invoke_args(
+        &fixture,
+        &["lane", "add", "--life", "Drive", "--vendor", "claude"],
+        true,
+        None,
+    ));
+    let drained = reply_body::<wire::intent::LaneChangeAnswer>(&invoke_args(
+        &fixture,
+        &["lane", "drain", &added.lane.to_string()],
+        true,
+        None,
+    ));
+    assert_eq!(
+        (drained.from.as_str(), drained.to.as_str()),
+        ("occupied", "vacant")
+    );
+
+    let imported = reply_body::<wire::intent::LaneChangeAnswer>(&invoke_args(
+        &fixture,
+        &[
+            "lane",
+            "import",
+            &added.lane.to_string(),
+            &successor.display().to_string(),
+        ],
+        true,
+        None,
+    ));
+    assert_eq!(
+        (imported.from.as_str(), imported.to.as_str()),
+        (
+            fs::canonicalize(&fixture.root)
+                .expect("predecessor worktree canonicalizes")
+                .display()
+                .to_string()
+                .as_str(),
+            successor.display().to_string().as_str(),
+        )
+    );
+    let lanes =
+        reply_body::<wire::intent::LaneAnswer>(&invoke_args(&fixture, &["lane"], true, None));
+    let row = &lanes.lanes[0];
+    assert_eq!(row.worktree, successor.display().to_string());
+    assert_eq!(row.disposition, "occupied");
+    assert_eq!(row.lineage.len(), 2);
+    assert_eq!(row.occupant, row.lineage.last().copied());
+    let session = row
+        .session
+        .as_ref()
+        .expect("imported session authority exists");
+    assert_eq!(
+        (
+            session.lane,
+            session.occupant,
+            session.worktree.as_str(),
+            session.identity.as_str(),
+            session.epoch,
+        ),
+        (
+            row.lane,
+            row.occupant.expect("imported lane is occupied"),
+            row.worktree.as_str(),
+            SESSION_ID,
+            lanes.epoch,
+        )
+    );
+    assert_latest_launch_resumed(&fixture);
+    let journal = journal::Journal::open(fixture.journal()).expect("import journal opens");
+    let kinds = journal
+        .fact_snapshot()
+        .expect("import facts read")
+        .facts()
+        .iter()
+        .map(|fact| fact.fact.kind())
+        .collect::<Vec<_>>();
+    for kind in [
+        FactKind::LaneImported,
+        FactKind::LaneSessionDeclared,
+        FactKind::LaneStarted,
+    ] {
+        assert!(kinds.contains(&kind), "import recorded no {kind:?}");
+    }
+    drop(journal);
+
+    let final_drain = invoke_args(
+        &fixture,
+        &["lane", "drain", &added.lane.to_string()],
+        true,
+        None,
+    );
+    assert!(
+        final_drain.status.success(),
+        "final drain failed: {:?}",
+        final_drain.stderr
+    );
+    let down = invoke(&fixture, "down");
+    assert!(down.status.success(), "down failed: {:?}", down.stderr);
+    assert!(resident.wait().status.success(), "resident failed");
 }
 
 #[test]

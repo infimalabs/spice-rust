@@ -8,22 +8,22 @@ use sill::{
 
 use super::*;
 
-pub(super) struct OccupantLaunch {
-    pub(super) spec: Spec,
-    pub(super) observation: Observation,
-    pub(super) session: mpsc::Receiver<Result<wire::LaneSession, SessionProofError>>,
+pub(in crate::resident) struct OccupantLaunch {
+    pub(in crate::resident) spec: Spec,
+    pub(in crate::resident) observation: Observation,
+    pub(in crate::resident) session: mpsc::Receiver<Result<wire::LaneSession, SessionProofError>>,
 }
 
-pub(super) struct OccupantLaunchRequest<'a> {
-    pub(super) worktree: &'a str,
-    pub(super) vendor: &'a wire::Name,
-    pub(super) epoch: CanonicalUuid,
-    pub(super) lane: CanonicalUuid,
-    pub(super) occupant: CanonicalUuid,
-    pub(super) resume: vendor::Resume,
+pub(in crate::resident) struct OccupantLaunchRequest<'a> {
+    pub(in crate::resident) worktree: &'a str,
+    pub(in crate::resident) vendor: &'a wire::Name,
+    pub(in crate::resident) epoch: CanonicalUuid,
+    pub(in crate::resident) lane: CanonicalUuid,
+    pub(in crate::resident) occupant: CanonicalUuid,
+    pub(in crate::resident) resume: vendor::Resume,
 }
 
-pub(super) fn occupant_launch(
+pub(in crate::resident) fn occupant_launch(
     paths: &RuntimePaths,
     request: OccupantLaunchRequest<'_>,
     reporter: Arc<dyn CaptureReporter>,

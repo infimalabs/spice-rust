@@ -1,17 +1,13 @@
 //! Predecessor lane import and atomic authority transfer.
 
-use std::ffi::OsString;
 use std::path::Path;
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::Arc;
 use std::time::Duration;
 
 use bus::Bus;
 use journal::{FactCause, JournalGuard, JournalWrite, PendingFact};
 use lane::capture::CaptureReporter;
 use lane::occupant::{OccupantWait, Seats};
-use sill::{
-    Cancellation, Deadlines, Environment, Observation, RestartDisposition, Spec, WaitPolicy,
-};
 use spice::repository::Repository;
 use wire::intent::{CommandAnswer, LaneChangeAnswer, LaneState};
 use wire::{
@@ -19,8 +15,7 @@ use wire::{
 };
 
 use super::lane_surface::{
-    DeclarationReporter, DeclarationState, SessionProofError, await_session, resume_session,
-    session_fact,
+    OccupantLaunchRequest, await_session, occupant_launch, resume_session, session_fact,
 };
 use super::shutdown::{current_residency, guard_residency};
 use super::{
@@ -29,11 +24,6 @@ use super::{
 
 const OCCUPIED: &str = "occupied";
 const VACANT: &str = "vacant";
-const CAPTURE_LIMIT: usize = 1024 * 1024;
-const OUTPUT_DRAIN: Duration = Duration::from_secs(2);
-const REAP: Duration = Duration::from_secs(2);
-const TERMINATION_GRACE: Duration = Duration::from_secs(1);
-const RECORD_QUEUE: usize = 64;
 
 pub(super) struct Runtime {
     capture: Arc<dyn CaptureReporter>,
@@ -445,169 +435,6 @@ fn append_claim_carry(
     Ok(fact)
 }
 
-struct OccupantLaunch {
-    spec: Spec,
-    observation: Observation,
-    session: mpsc::Receiver<Result<wire::LaneSession, SessionProofError>>,
-}
-
-struct OccupantLaunchRequest<'a> {
-    worktree: &'a str,
-    vendor: &'a wire::Name,
-    epoch: CanonicalUuid,
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
-    resume: vendor::Resume,
-}
-
-fn occupant_launch(
-    paths: &RuntimePaths,
-    request: OccupantLaunchRequest<'_>,
-    reporter: Arc<dyn CaptureReporter>,
-) -> CommandResult<OccupantLaunch> {
-    let repository = launch_repository(paths, request.worktree)?;
-    let resolved = spice::config::load_repository(&repository, &[])
-        .map_err(|error| configuration_refusal(&error))?;
-    let plan = launch_plan(&repository, &resolved, &request)?;
-    let record = plan
-        .record()
-        .map_err(|error| store_fault("lane::launch-invalid", &error.to_string()))?;
-    let process = launch_process(
-        &repository,
-        &resolved,
-        plan.environment().clone(),
-        request.lane,
-    )?;
-    let spec = record.spec(&process);
-    let stream = record.stream();
-    let expected = record.resume().session_id().map(str::to_owned);
-    let tape = tape::Tape::open(
-        paths
-            .tape
-            .join(request.lane.to_string())
-            .join(request.vendor.as_str()),
-    )
-    .map_err(|error| store_fault("lane::capture-tape-unavailable", &error.to_string()))?;
-    let (reply, session) = mpsc::sync_channel(4);
-    let reporter = declaration_reporter(reporter, &repository, &request, stream, expected, reply);
-    let observation = lane::capture::observation(
-        request.lane,
-        request.occupant,
-        record,
-        tape,
-        CAPTURE_LIMIT,
-        RECORD_QUEUE,
-        reporter,
-    )
-    .map_err(|error| store_fault("lane::capture-invalid", &error.to_string()))?;
-    Ok(OccupantLaunch {
-        spec,
-        observation,
-        session,
-    })
-}
-
-fn launch_repository(paths: &RuntimePaths, worktree: &str) -> CommandResult<Repository> {
-    let repository = Repository::discover(worktree)
-        .map_err(|error| store_fault("lane::worktree-unresolved", &error.to_string()))?;
-    if repository.common_dir() != paths.common || repository.worktree_root() != Path::new(worktree)
-    {
-        return Err(store_fault(
-            "lane::worktree-moved",
-            "durable lane worktree is not one current repository worktree root",
-        ));
-    }
-    Ok(repository)
-}
-
-fn launch_plan(
-    repository: &Repository,
-    resolved: &spice::config::Resolved,
-    request: &OccupantLaunchRequest<'_>,
-) -> CommandResult<spice::agent_launch::Plan> {
-    let executable = std::env::current_exe()
-        .map_err(|error| store_fault("lane::executable-unresolved", &error.to_string()))?
-        .display()
-        .to_string();
-    let environment = launch_environment()?;
-    spice::agent_launch::compose(
-        resolved.root(),
-        spice::agent_launch::Inputs {
-            worktree: repository.worktree_root().to_path_buf(),
-            vendor: request.vendor.clone(),
-            prompt: "[$spice](.agents/skills/spice/SKILL.md)".into(),
-            executable,
-            environment,
-            lane: request.lane,
-            resume: request.resume.clone(),
-        },
-    )
-    .map_err(|error| match error {
-        spice::agent_launch::ComposeError::UnsupportedVendor(other) => lane_refusal_unit(
-            "lane::vendor-unsupported",
-            Some("claude or codex".into()),
-            Some(other),
-            "select a vendor with a landed Rust launch dialect",
-        ),
-        other => store_fault("lane::launch-invalid", &other.to_string()),
-    })
-}
-
-fn launch_environment() -> CommandResult<Environment> {
-    let values = ["HOME", "PATH", "SHELL", "TMPDIR", "USER"]
-        .into_iter()
-        .filter_map(|key| crate::bootstrap_environment(key).map(|value| (key.into(), value)))
-        .collect::<Vec<(OsString, OsString)>>();
-    Environment::new(values)
-        .map_err(|error| store_fault("lane::environment-invalid", &error.to_string()))
-}
-
-fn launch_process(
-    repository: &Repository,
-    resolved: &spice::config::Resolved,
-    environment: Environment,
-    lane: CanonicalUuid,
-) -> CommandResult<vendor::Process> {
-    let deadlines = Deadlines::new(resolved.root().lane().lease().get(), OUTPUT_DRAIN, REAP)
-        .map_err(|error| store_fault("lane::deadlines-invalid", &error.to_string()))?;
-    let wait = WaitPolicy::new(
-        format!("lane {lane}"),
-        Cancellation::Never,
-        RestartDisposition::CallerDecides,
-    )
-    .map_err(|error| store_fault("lane::wait-invalid", &error.to_string()))?;
-    vendor::Process::new(
-        repository.worktree_root(),
-        environment,
-        deadlines,
-        wait,
-        CAPTURE_LIMIT,
-        TERMINATION_GRACE,
-    )
-    .map_err(|error| store_fault("lane::process-invalid", &error.to_string()))
-}
-
-fn declaration_reporter(
-    inner: Arc<dyn CaptureReporter>,
-    repository: &Repository,
-    request: &OccupantLaunchRequest<'_>,
-    stream: vendor::RecordStream,
-    expected: Option<String>,
-    reply: mpsc::SyncSender<Result<wire::LaneSession, SessionProofError>>,
-) -> Arc<dyn CaptureReporter> {
-    Arc::new(DeclarationReporter {
-        inner,
-        lane: request.lane,
-        occupant: request.occupant,
-        worktree: repository.worktree_root().display().to_string(),
-        vendor: request.vendor.clone(),
-        epoch: request.epoch,
-        stream,
-        expected,
-        state: Mutex::new(DeclarationState { reply, seen: None }),
-    })
-}
-
 fn stop_lane(seats: &mut Seats, lane: CanonicalUuid) {
     let Some(occupant) = seats.vacate(lane) else {
         return;
@@ -686,15 +513,6 @@ fn committed_reply(
         }),
         body: CommandAnswer::LaneChange(answer),
     })
-}
-
-fn configuration_refusal(error: &spice::config::LoadError) -> Outcome<()> {
-    lane_refusal_unit(
-        "lane::configuration-refused",
-        Some("admitted repository configuration".into()),
-        Some(error.diagnostic()),
-        "correct the named configuration inputs",
-    )
 }
 
 fn lane_refusal_unit(
