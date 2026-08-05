@@ -781,15 +781,18 @@ fn session_proof_refuses_a_second_declaration_from_one_occupant() {
         .expect("the one initialization record is admitted");
     proof
         .reporter
-        .record(declared("successor-session"))
+        .record(declared("intruder-session"))
         .expect_err("a second declaration must be refused");
     let refusal = session_refusal(proof.session);
+    // The two identities differ so the observed one names which declaration
+    // the refusal witnesses. Declaring both under one identity passes whether
+    // the admitted or the refused record is reported.
     assert_eq!(
         session_evidence(&refusal),
         (
             "lane::session-duplicate",
             Some("one declaration per occupant"),
-            Some("successor-session"),
+            Some("intruder-session"),
         )
     );
 }

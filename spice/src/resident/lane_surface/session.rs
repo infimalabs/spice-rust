@@ -130,7 +130,12 @@ impl CaptureReporter for DeclarationReporter {
             .state
             .lock()
             .map_err(|_| CaptureReportError::new("session proof lock is poisoned"))?;
-        if let Some(identity) = state.seen.clone() {
+        // The offending declaration is the one named, as in every other arm
+        // here and in the second declaration `await_session` refuses: an
+        // operator told to emit the record once needs the one that was too
+        // many, not the one already admitted.
+        if state.seen.is_some() {
+            let identity = declaration.session.as_str().to_owned();
             return Err(self.reject(&mut state, SessionProofError::Duplicate { identity }));
         }
         if record.lane != self.lane {
