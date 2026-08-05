@@ -53,7 +53,7 @@ const GIT_COMMIT_MESSAGE_PATH: &str = ".spice/rust/git-hooks/commit-msg";
 const GIT_REFERENCE_TRANSACTION_PATH: &str = ".spice/rust/git-hooks/reference-transaction";
 const ENTRY_PATH: &str = ".spice/rust/hooks/entry.sh";
 const STATIC_PATH: &str = ".spice/rust/hooks/static/stage.sh";
-const SKILL_PATH: &str = ".agents/skills/spice-rust/SKILL.md";
+const SKILL_PATH: &str = ".agents/skills/spice/SKILL.md";
 const BINARY_PATH: &str = ".spice/rust/bin/spice-rust";
 
 const EXCLUDE_BEGIN: &str = "# BEGIN spice-rust coexistence";
@@ -61,7 +61,7 @@ const EXCLUDE_END: &str = "# END spice-rust coexistence";
 const EXCLUDE_BLOCK: &str = concat!(
     "# BEGIN spice-rust coexistence\n",
     "/.spice/rust/\n",
-    "/.agents/skills/spice-rust/\n",
+    "/.agents/skills/spice/\n",
     "# END spice-rust coexistence\n",
 );
 const SKILL: &str = include_str!("install/skill.md");

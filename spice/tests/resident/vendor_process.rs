@@ -91,6 +91,125 @@ fn composed_vendor_launches_cross_the_resident_and_sill_boundary_without_drift()
 }
 
 #[test]
+fn installed_neutral_skill_bootstraps_both_lanes_through_native_surface() {
+    let fixture = Fixture::linked("installed-native-bootstrap");
+    let rig = configure(&fixture);
+    let repository = spice::repository::Repository::discover(&fixture.root)
+        .expect("linked repository discovers");
+    let source_binary = Path::new(env!("CARGO_BIN_EXE_spice"));
+    let plan = spice::install::plan(&repository, Some(source_binary)).expect("install plans");
+    let digest = plan.digest().expect("install plan digests");
+    let receipt =
+        spice::install::apply(&repository, Some(source_binary), &digest).expect("install applies");
+    assert_eq!(receipt.status(), spice::install::InstallStatus::Complete);
+
+    let installed_binary = fixture.root.join(
+        plan.operations()
+            .iter()
+            .find(|operation| operation.asset() == spice::install::Asset::Binary)
+            .expect("binary operation exists")
+            .path(),
+    );
+    let installed_skill = fixture.root.join(
+        plan.operations()
+            .iter()
+            .find(|operation| operation.asset() == spice::install::Asset::Skill)
+            .expect("skill operation exists")
+            .path(),
+    );
+    assert!(installed_binary.is_file(), "installed binary is visible");
+    assert_eq!(
+        installed_skill.strip_prefix(&fixture.root).unwrap(),
+        Path::new(".agents/skills/spice/SKILL.md")
+    );
+    let skill = fs::read_to_string(&installed_skill).expect("installed skill reads");
+    for command in [
+        "spice recall",
+        "spice board",
+        "spice inbox",
+        "spice ack",
+        "spice run --",
+        "spice task next",
+        "spice task done",
+    ] {
+        assert!(
+            skill.contains(command),
+            "installed skill omitted {command:?}"
+        );
+    }
+    for unavailable in ["spice agent", "spice task status"] {
+        assert!(
+            !skill.contains(unavailable),
+            "installed skill named unavailable command {unavailable:?}"
+        );
+    }
+
+    let mut resident = RunningResident::spawn_with(&fixture, &installed_binary);
+    resident.assert_ready(&fixture);
+    let claude = add_lane_with(&fixture, &installed_binary, None, Dialect::Claude);
+    let codex = add_lane_with(
+        &fixture,
+        &installed_binary,
+        Some(&rig.codex_worktree),
+        Dialect::Codex,
+    );
+    let lanes = [(Dialect::Claude, claude), (Dialect::Codex, codex)];
+    assert_launches_with_executable(&fixture, &rig, &lanes, false, &installed_binary);
+
+    let empty_path = fixture.cleanup.join("empty-path");
+    fs::create_dir(&empty_path).expect("empty PATH directory");
+    let native_probe = fixture.cleanup.join("native-probe");
+    fs::write(&native_probe, "#!/bin/sh\nexit 0\n").expect("native probe writes");
+    #[cfg(unix)]
+    fs::set_permissions(&native_probe, fs::Permissions::from_mode(0o700))
+        .expect("native probe becomes executable");
+    for (_, lane) in lanes {
+        for command in ["recall", "board", "inbox"] {
+            let output = lane_command(
+                &fixture,
+                &installed_binary,
+                lane,
+                &empty_path,
+                &[command],
+                true,
+            );
+            assert!(
+                output.status.success(),
+                "installed {command} failed: stdout={:?} stderr={:?}",
+                output.stdout,
+                output.stderr
+            );
+        }
+        let output = lane_command(
+            &fixture,
+            &installed_binary,
+            lane,
+            &empty_path,
+            &[
+                "run",
+                "--",
+                native_probe.to_str().expect("native probe path is UTF-8"),
+            ],
+            false,
+        );
+        assert!(
+            output.status.success(),
+            "installed run failed: stdout={:?} stderr={:?}",
+            output.stdout,
+            output.stderr
+        );
+    }
+
+    for (_, lane) in lanes {
+        drain_with(&fixture, &installed_binary, lane);
+    }
+    assert_processes_stopped(&rig.capture_index, 1);
+    let down = operator_with(&fixture, &installed_binary, &["down"], true);
+    assert!(down.status.success(), "down failed: {:?}", down.stderr);
+    assert!(resident.wait().status.success(), "resident failed");
+}
+
+#[test]
 fn cross_vendor_options_refuse_with_exact_paths_before_any_process_capture() {
     for (dialect, path) in [
         (Dialect::Claude, "vendor.claude.fast_mode"),
@@ -334,18 +453,43 @@ fn write_vendor(binary: &Path, captures: &Path, index: &Path, dialect: Dialect) 
 }
 
 fn add_lane(fixture: &Fixture, worktree: Option<&Path>, dialect: Dialect) -> wire::CanonicalUuid {
+    add_lane_with(
+        fixture,
+        Path::new(env!("CARGO_BIN_EXE_spice")),
+        worktree,
+        dialect,
+    )
+}
+
+fn add_lane_with(
+    fixture: &Fixture,
+    executable: &Path,
+    worktree: Option<&Path>,
+    dialect: Dialect,
+) -> wire::CanonicalUuid {
     let worktree = worktree.map(|path| path.display().to_string());
     let mut arguments = vec!["lane", "add"];
     if let Some(worktree) = worktree.as_deref() {
         arguments.push(worktree);
     }
     arguments.extend(["--vendor", dialect.name()]);
-    let answer = reply_body::<wire::intent::LaneChangeAnswer>(&operator(fixture, &arguments, true));
+    let answer = reply_body::<wire::intent::LaneChangeAnswer>(&operator_with(
+        fixture, executable, &arguments, true,
+    ));
     answer.lane
 }
 
 fn drain(fixture: &Fixture, lane: wire::CanonicalUuid) {
-    let output = operator(fixture, &["lane", "drain", &lane.to_string()], true);
+    drain_with(fixture, Path::new(env!("CARGO_BIN_EXE_spice")), lane);
+}
+
+fn drain_with(fixture: &Fixture, executable: &Path, lane: wire::CanonicalUuid) {
+    let output = operator_with(
+        fixture,
+        executable,
+        &["lane", "drain", &lane.to_string()],
+        true,
+    );
     assert!(output.status.success(), "drain failed: {:?}", output.stderr);
 }
 
@@ -355,7 +499,16 @@ fn wake(fixture: &Fixture, lane: wire::CanonicalUuid) {
 }
 
 fn operator(fixture: &Fixture, arguments: &[&str], json: bool) -> Output {
-    let mut process = Command::new(env!("CARGO_BIN_EXE_spice"));
+    operator_with(
+        fixture,
+        Path::new(env!("CARGO_BIN_EXE_spice")),
+        arguments,
+        json,
+    )
+}
+
+fn operator_with(fixture: &Fixture, executable: &Path, arguments: &[&str], json: bool) -> Output {
+    let mut process = Command::new(executable);
     process.env_remove(spice::agent_launch::SPICE_LANE);
     if json {
         process.arg("--json");
@@ -365,6 +518,28 @@ fn operator(fixture: &Fixture, arguments: &[&str], json: bool) -> Output {
         .current_dir(&fixture.root)
         .output()
         .expect("operator command launches")
+}
+
+fn lane_command(
+    fixture: &Fixture,
+    executable: &Path,
+    lane: wire::CanonicalUuid,
+    path: &Path,
+    arguments: &[&str],
+    json: bool,
+) -> Output {
+    let mut process = Command::new(executable);
+    process
+        .env(spice::agent_launch::SPICE_LANE, lane.to_string())
+        .env("PATH", path);
+    if json {
+        process.arg("--json");
+    }
+    process
+        .args(arguments)
+        .current_dir(&fixture.root)
+        .output()
+        .expect("lane command launches")
 }
 
 #[track_caller]
@@ -387,6 +562,22 @@ fn assert_launches(
     rig: &Rig,
     lanes: &[(Dialect, wire::CanonicalUuid); 2],
     resumed: bool,
+) {
+    assert_launches_with_executable(
+        fixture,
+        rig,
+        lanes,
+        resumed,
+        Path::new(env!("CARGO_BIN_EXE_spice")),
+    );
+}
+
+fn assert_launches_with_executable(
+    fixture: &Fixture,
+    rig: &Rig,
+    lanes: &[(Dialect, wire::CanonicalUuid); 2],
+    resumed: bool,
+    executable: &Path,
 ) {
     let head = durable_head(fixture);
     for (dialect, lane) in lanes {
@@ -412,7 +603,7 @@ fn assert_launches(
         assert_environment(&capture.environment, *dialect, *lane);
         assert_eq!(
             capture.argv,
-            expected_argv(rig, *dialect, *lane, &row.worktree, resumed)
+            expected_argv(rig, *dialect, *lane, &row.worktree, resumed, executable)
         );
     }
 }
@@ -539,19 +730,25 @@ fn expected_argv(
     lane: wire::CanonicalUuid,
     worktree: &str,
     resumed: bool,
+    executable: &Path,
 ) -> Vec<String> {
     match dialect {
-        Dialect::Claude => expected_claude_argv(rig, lane, resumed),
-        Dialect::Codex => expected_codex_argv(rig, worktree, resumed),
+        Dialect::Claude => expected_claude_argv(rig, lane, resumed, executable),
+        Dialect::Codex => expected_codex_argv(rig, worktree, resumed, executable),
     }
 }
 
-fn expected_claude_argv(rig: &Rig, lane: wire::CanonicalUuid, resumed: bool) -> Vec<String> {
-    let executable = env!("CARGO_BIN_EXE_spice");
-    let hook = format!("{} inbox", shell_word(executable));
+fn expected_claude_argv(
+    rig: &Rig,
+    lane: wire::CanonicalUuid,
+    resumed: bool,
+    executable: &Path,
+) -> Vec<String> {
+    let executable = executable.display().to_string();
+    let hook = format!("{} inbox", shell_word(&executable));
     let mcp = format!(
         r#"{{"mcpServers":{{"spice":{{"command":{},"args":["mcp"]}}}}}}"#,
-        json_string(executable),
+        json_string(&executable),
     );
     let settings = format!(
         concat!(
@@ -598,9 +795,9 @@ fn expected_claude_argv(rig: &Rig, lane: wire::CanonicalUuid, resumed: bool) -> 
     argv
 }
 
-fn expected_codex_argv(rig: &Rig, worktree: &str, resumed: bool) -> Vec<String> {
-    let executable = env!("CARGO_BIN_EXE_spice");
-    let hook = format!("{} inbox", shell_word(executable));
+fn expected_codex_argv(rig: &Rig, worktree: &str, resumed: bool, executable: &Path) -> Vec<String> {
+    let executable = executable.display().to_string();
+    let hook = format!("{} inbox", shell_word(&executable));
     let hook_override = format!(
         concat!(
             r#"hooks.PostToolUse=[{{matcher="^(Bash|apply_patch|Edit|Write|mcp__.*)$","#,
@@ -622,7 +819,7 @@ fn expected_codex_argv(rig: &Rig, worktree: &str, resumed: bool) -> Vec<String> 
         "--config".to_owned(),
         "model_reasoning_effort=\"max\"".to_owned(),
         "--config".to_owned(),
-        format!("mcp_servers.spice.command={}", json_string(executable)),
+        format!("mcp_servers.spice.command={}", json_string(&executable)),
         "--config".to_owned(),
         "mcp_servers.spice.args=[\"mcp\"]".to_owned(),
         "--config".to_owned(),
