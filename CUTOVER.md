@@ -21,9 +21,9 @@ git diff --exit-code -- spice.toml
 CUTOVER_PINNED=$(git worktree list --porcelain |
 awk '/^worktree / { sub(/^worktree /, ""); print }' |
 while IFS= read -r CUTOVER_WORKTREE; do
-  test -e "$CUTOVER_WORKTREE/spice.toml" || continue
-  printf '%s %s\n' \
-    "$(git -C "$CUTOVER_WORKTREE" ls-files -v spice.toml)" "$CUTOVER_WORKTREE"
+  CUTOVER_ENTRY=$(git -C "$CUTOVER_WORKTREE" ls-files -v spice.toml)
+  test -n "$CUTOVER_ENTRY" || continue
+  printf '%s %s\n' "$CUTOVER_ENTRY" "$CUTOVER_WORKTREE"
 done | grep -v '^H ' || true)
 printf '%s' "$CUTOVER_PINNED" | tee "$CUTOVER_EVIDENCE/pinned-configuration.txt"
 test -z "$CUTOVER_PINNED"
