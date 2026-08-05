@@ -80,16 +80,17 @@ project_max_depth = 3
 # isolated copy of the current test process, and fixes `TMPDIR` at private
 # writable scratch so that isolation remains valid on a read-only proof host.
 #
-# Git's three local-environment names are the one class of foreign name this
-# vocabulary admits. Spice does not own them, but it does write them: the
-# installed pre-commit hook unsets Git's local environment before it execs
-# verify, and the hooks fixture exports exactly these three to prove the child
-# sees none of them. The ledger accounts what the tree references rather than
-# what it invented, so they are counted here. Their access waiver is a separate
-# arm and does not account them; a waived name is still a name, and one written
-# without being counted here is one nobody can find again. Doctor reports only
-# the names Spice owns, so these three are the difference wire pins between this
-# manifest and SpiceVariable.
+# Four foreign environment names are admitted here. The installed pre-commit
+# hook unsets Git's three local-environment names before it execs verify, and
+# the hooks fixture exports exactly those three to prove the child sees none of
+# them. The hygiene acquisition fixture fixes the fourth, `TMPDIR`, at its own
+# writable scratch. Spice does not own these names, but its fixtures write them.
+# The ledger accounts what the tree references rather than what it invented, so
+# they are counted here. Their access waiver is a separate arm and does not
+# account them; a waived name is still a name, and one written without being
+# counted here is one nobody can find again. Doctor reports only the names Spice
+# owns, so these four are the difference wire pins between this manifest and
+# SpiceVariable.
 env_names = [
     "CLAUDE_CODE_SESSION_ID",
     "CODEX_THREAD_ID",
