@@ -523,9 +523,9 @@ fn planning_binds_internal_symlinked_install_parents_and_refuses_escape() {
         .iter()
         .find(|operation| operation.asset() == Asset::Skill)
         .unwrap();
-    assert_eq!(skill.destination, "outside/skills/spice-rust/SKILL.md");
+    assert_eq!(skill.destination, "outside/skills/spice/SKILL.md");
     apply(&repository, None, &planned.digest().unwrap()).unwrap();
-    assert!(outside.join("skills/spice-rust/SKILL.md").is_file());
+    assert!(outside.join("skills/spice/SKILL.md").is_file());
     unapply(&repository).unwrap();
 
     let escaped = Scratch::new("symlink-escape");

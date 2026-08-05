@@ -103,7 +103,11 @@ struct RunningResident {
 
 impl RunningResident {
     fn spawn(fixture: &Fixture) -> Self {
-        let child = Command::new(env!("CARGO_BIN_EXE_spice"))
+        Self::spawn_with(fixture, Path::new(env!("CARGO_BIN_EXE_spice")))
+    }
+
+    fn spawn_with(fixture: &Fixture, executable: &Path) -> Self {
+        let child = Command::new(executable)
             .args(["--json", "up"])
             .current_dir(&fixture.root)
             .stdout(Stdio::piped())
