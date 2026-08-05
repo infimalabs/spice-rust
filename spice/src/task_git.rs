@@ -341,8 +341,8 @@ pub fn publish(
     };
     let local_commits = ahead_count(root, &target.baseline)?;
     let message = compose_message(meta, &agent_head);
-    // Read before the merge, so the declared command and the authored tree are
-    // both the lane's own rather than whatever the baseline brings in.
+    // Bind the authored tree and any non-empty lane command before the merge.
+    // An empty lane declaration deliberately defers to each integrated tree.
     let admission = Admission::resolve(repository, &agent_head)?;
     let integrated = integrate(
         root,
@@ -357,6 +357,7 @@ pub fn publish(
         integrated,
         upstream_head,
         Publication {
+            repository,
             agent_head: &agent_head,
             message: &message,
             label: meta.label,
@@ -630,6 +631,7 @@ fn merge_tree(
 /// What stays fixed across every attempt to publish one task phase.
 #[derive(Clone, Copy)]
 struct Publication<'a> {
+    repository: &'a Repository,
     agent_head: &'a str,
     message: &'a str,
     label: &'a str,
@@ -644,12 +646,13 @@ fn publish_with_retry(
     publication: Publication<'_>,
 ) -> Result<(String, String), Error> {
     let Publication {
+        repository,
         agent_head,
         message,
         label,
         admission,
     } = publication;
-    admission.admit(root, &integrated, label)?;
+    admission.admit(repository, &integrated, label)?;
     let mut pushed = push(root, target, &integrated, &upstream_head)?;
     if pushed.success() {
         return Ok((integrated, upstream_head));
@@ -684,7 +687,7 @@ fn publish_with_retry(
             upstream_head = fresh;
             // The race produced a tree nothing has read yet. Every other path
             // out of this loop pushes the commit admitted above it.
-            admission.admit(root, &integrated, label)?;
+            admission.admit(repository, &integrated, label)?;
         }
         pushed = push(root, target, &integrated, &upstream_head)?;
         if pushed.success() {

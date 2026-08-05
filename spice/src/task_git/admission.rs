@@ -25,17 +25,16 @@ const ADMISSION_OWNER: &str = "task-git-admission";
 /// whatever the next lane runs. This holds the declared command between the
 /// synthesized tree and the push.
 struct Admission {
-    argv: Vec<String>,
+    lane_argv: Vec<String>,
     authored_tree: String,
 }
 
 impl Admission {
-    /// Bind the repository's declared command to the tree the lane authored.
+    /// Bind the lane's declared command and the tree it authored.
     ///
-    /// Both halves are read before any merge happens. The command comes from
-    /// the lane's own checkout rather than the integrated tree, so a baseline
-    /// that arrives carrying a weaker command cannot relax the check that
-    /// admits it.
+    /// A non-empty command comes from the lane's own checkout, so a baseline
+    /// carrying a weaker command cannot relax it. An empty command is retained
+    /// as the explicit signal to resolve policy from each integrated tree.
     fn resolve(
         repository: &Repository,
         agent_head: &str,
@@ -43,9 +42,9 @@ impl Admission {
         let resolved = crate::config::load_repository(repository, &[])
             .map_err(|error| {
                 Error::fault("git::admission-unreadable", error.to_string())
-            })?;
+        })?;
         Ok(Self {
-            argv: resolved.root().policy().admission().to_vec(),
+            lane_argv: resolved.root().policy().admission().to_vec(),
             authored_tree: tree_of(
                 repository.worktree_root(),
                 agent_head,
@@ -56,13 +55,11 @@ impl Admission {
     /// Refuse one integrated commit whose tree the declared command rejects.
     fn admit(
         &self,
-        root: &Path,
+        repository: &Repository,
         integrated: &str,
         label: &str,
     ) -> Result<(), Error> {
-        if self.argv.is_empty() {
-            return Ok(());
-        }
+        let root = repository.worktree_root();
         // Bytes identical to the lane's own tree are the ones it already
         // worked, so a completion that merged nothing new is not charged for
         // the command. Every synthesized and every raced tree differs here,
@@ -70,28 +67,53 @@ impl Admission {
         if tree_of(root, integrated)? == self.authored_tree {
             return Ok(());
         }
-        let output = run_admission(root, &self.argv)?;
+        let argv = self.selected_command(repository)?;
+        if argv.is_empty() {
+            return Ok(());
+        }
+        let command = render_command(&argv);
+        let output = run_admission(root, &argv)?;
         if output.success() {
             return Ok(());
         }
         Err(Error::refusal(
             "git::admission-failed",
-            output.detail(&self.command()),
+            output.detail(&command),
             format!(
                 concat!(
                     "the integrated tree is checked out at HEAD and is not ",
                     "published; repair what `{command}` refused, commit, and ",
                     "retry task completion for {label}",
                 ),
-                command = self.command(),
+                command = command,
                 label = label,
             ),
         ))
     }
 
-    fn command(&self) -> String {
-        self.argv.join(" ")
+    /// Select one command without letting an arriving baseline weaken the lane.
+    ///
+    /// A non-empty lane declaration remains fixed for the entire publication,
+    /// including every race retry. An empty lane declaration defers to the
+    /// currently materialized integrated tree, so a baseline that introduces
+    /// admission cannot arrive together with an unreadable tree unchecked.
+    fn selected_command(
+        &self,
+        repository: &Repository,
+    ) -> Result<Vec<String>, Error> {
+        if !self.lane_argv.is_empty() {
+            return Ok(self.lane_argv.clone());
+        }
+        let resolved = crate::config::load_repository(repository, &[])
+            .map_err(|error| {
+                Error::fault("git::admission-unreadable", error.to_string())
+            })?;
+        Ok(resolved.root().policy().admission().to_vec())
     }
+}
+
+fn render_command(argv: &[String]) -> String {
+    argv.join(" ")
 }
 
 /// One completed admission command.

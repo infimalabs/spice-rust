@@ -718,26 +718,37 @@ mod tests {
         .to_owned()
     }
 
-    /// A repository whose baseline already carries the manifest and the
-    /// command that admits it, so both sides of every merge below inherit it.
-    fn manifest_fixture(name: &str) -> Fixture {
+    /// A repository whose baseline already carries a readable manifest.
+    fn manifest_fixture_with_admission(
+        name: &str,
+        admission: bool,
+    ) -> Fixture {
         let fixture = Fixture::new(name);
         fs::create_dir(fixture.agent.join("src"))
             .expect("create fixture package source");
         fs::write(fixture.agent.join("src/lib.rs"), "")
             .expect("write fixture package source");
-        fs::write(fixture.agent.join("spice.toml"), admission_document())
-            .expect("write fixture admission policy");
         fs::write(fixture.agent.join("Cargo.toml"), MANIFEST_BASE)
             .expect("write fixture manifest");
-        git(
-            &fixture.agent,
-            &["add", "src/lib.rs", "spice.toml", "Cargo.toml"],
-        );
+        let mut tracked = vec!["add", "src/lib.rs", "Cargo.toml"];
+        if admission {
+            fs::write(
+                fixture.agent.join("spice.toml"),
+                admission_document(),
+            )
+            .expect("write fixture admission policy");
+            tracked.push("spice.toml");
+        }
+        git(&fixture.agent, &tracked);
         git(&fixture.agent, &["commit", "-m", "manifest base"]);
         git(&fixture.agent, &["push", "origin", "main"]);
         git(&fixture.peer, &["pull", "--ff-only", "origin", "main"]);
         fixture
+    }
+
+    /// A manifest and admission command inherited by both sides of a merge.
+    fn manifest_fixture(name: &str) -> Fixture {
+        manifest_fixture_with_admission(name, true)
     }
 
     fn remote_head(fixture: &Fixture) -> String {
@@ -807,6 +818,60 @@ mod tests {
         );
     }
 
+    /// A command introduced by the integrated baseline governs that tree.
+    #[test]
+    fn an_ungated_baseline_can_introduce_the_command_that_refuses_it() {
+        let fixture = manifest_fixture_with_admission(
+            "baseline-introduces-admission",
+            false,
+        );
+        let agent = fixture.agent_commit("NOTES.md", "lane work\n");
+        fs::write(fixture.peer.join("spice.toml"), admission_document())
+            .expect("write baseline admission policy");
+        fs::write(fixture.peer.join("Cargo.toml"), MANIFEST_DUPLICATED)
+            .expect("write unreadable baseline manifest");
+        git(&fixture.peer, &["add", "spice.toml", "Cargo.toml"]);
+        git(
+            &fixture.peer,
+            &["commit", "-m", "introduce admission with broken manifest"],
+        );
+        git(&fixture.peer, &["push", "origin", "main"]);
+        let upstream = stdout(&fixture.peer, &["rev-parse", "HEAD"]);
+
+        let error = publish(&fixture.repository(), metadata())
+            .expect_err("the baseline-introduced command refuses its tree");
+
+        assert_eq!(error.reason(), "git::admission-failed");
+        assert!(error.detail().contains("duplicate key"));
+        assert_eq!(remote_head(&fixture), upstream);
+        assert_eq!(parents(&fixture.agent, "HEAD"), vec![upstream, agent]);
+    }
+
+    /// Removing policy from the arriving baseline cannot weaken the lane.
+    #[test]
+    fn an_ungated_baseline_cannot_remove_the_lanes_admission() {
+        let fixture = manifest_fixture("baseline-removes-admission");
+        fixture.agent_commit("NOTES.md", "lane work\n");
+        fs::remove_file(fixture.peer.join("spice.toml"))
+            .expect("remove baseline admission policy");
+        fs::write(fixture.peer.join("Cargo.toml"), MANIFEST_DUPLICATED)
+            .expect("write unreadable baseline manifest");
+        git(&fixture.peer, &["add", "--all"]);
+        git(
+            &fixture.peer,
+            &["commit", "-m", "remove admission with broken manifest"],
+        );
+        git(&fixture.peer, &["push", "origin", "main"]);
+        let upstream = stdout(&fixture.peer, &["rev-parse", "HEAD"]);
+
+        let error = publish(&fixture.repository(), metadata())
+            .expect_err("the lane command survives baseline removal");
+
+        assert_eq!(error.reason(), "git::admission-failed");
+        assert!(error.detail().contains("duplicate key"));
+        assert_eq!(remote_head(&fixture), upstream);
+    }
+
     /// A conflict is still the conflict path, not an admission refusal.
     #[test]
     fn a_real_conflict_keeps_its_recoverable_merge_path_under_admission() {
@@ -855,16 +920,20 @@ mod tests {
     /// A tree built by losing the publication race is read like any other.
     ///
     /// The lane authored the tree its first push carries, so nothing runs over
-    /// it. The baseline that beats it to the remote brings a manifest that does
-    /// not load, and the tree that would replace it is synthesized inside the
-    /// retry. Admitting only what the first attempt held would publish this.
+    /// it. The baseline that beats it to the remote introduces both the command
+    /// and a manifest that does not load. The replacement tree is synthesized
+    /// inside the retry, so both policy selection and admission must repeat.
     #[test]
     fn a_tree_built_by_losing_the_publication_race_is_refused() {
-        let fixture = manifest_fixture("race-admission");
+        let fixture =
+            manifest_fixture_with_admission("race-admission", false);
         fixture.agent_commit("NOTES.md", "lane work\n");
         let broken = fixture.agent.join(".git/broken-manifest");
         fs::write(&broken, MANIFEST_DUPLICATED)
             .expect("write raced manifest");
+        let policy = fixture.agent.join(".git/raced-policy");
+        fs::write(&policy, admission_document())
+            .expect("write raced admission policy");
         let counter = fixture.agent.join(".git/race-count");
         let hook = fixture.agent.join(".git/hooks/pre-push");
         let script = format!(
@@ -874,13 +943,15 @@ mod tests {
                 ": > {counter}\n",
                 "git -C {peer} pull --ff-only origin main\n",
                 "cp {broken} {peer}/Cargo.toml\n",
-                "git -C {peer} add Cargo.toml\n",
+                "cp {policy} {peer}/spice.toml\n",
+                "git -C {peer} add Cargo.toml spice.toml\n",
                 "git -C {peer} commit -m \"peer manifest\"\n",
                 "git -C {peer} push origin main\n",
             ),
             counter = path(&counter),
             peer = path(&fixture.peer),
             broken = path(&broken),
+            policy = path(&policy),
         );
         fs::write(&hook, script).expect("write racing pre-push hook");
         let mut permissions =
