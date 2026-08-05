@@ -260,6 +260,114 @@ fn metric_arms_cannot_assemble_mixed_terminal_evidence() {
     );
 }
 
+/// One Markdown row per source, so one file's own state may sit beside
+/// measurements.
+///
+/// Acquisition promises exactly that: a source that cannot be read is reported
+/// as that file's evidence rather than scored zero. The fold used to refuse the
+/// pairing outright, so a single unreadable Markdown file made the whole battery
+/// fail to assemble instead of reporting the arm. The sibling test above never
+/// reaches the fold — it trips on mismatched keys first — so nothing else builds
+/// this mixture.
+///
+/// The non-ASCII path is deliberately not the trigger. `tracked_case_map`
+/// applies `require_ascii_path` to the whole shared inventory, so one non-ASCII
+/// tracked path turns every row `Unsupported` alike, and such a uniform arm
+/// folded cleanly even before this change.
+#[test]
+fn a_metric_arm_carries_one_unread_file_beside_its_measured_neighbours() {
+    let unread = "selected Markdown source could not be read: No such file or directory";
+    let arm = |states: Vec<(&str, crate::metrics::EvidenceState)>| {
+        let metrics = states
+            .into_iter()
+            .map(|(path, state)| {
+                crate::metrics::MetricEvidence::new(
+                    crate::metrics::MetricId::MarkdownLinkCaseMismatches,
+                    crate::metrics::MetricKey::path(path).expect("markdown metric key"),
+                    state,
+                )
+                .expect("markdown metric evidence")
+            })
+            .collect();
+        let report = crate::metrics::StructuralArmEvidence::new(GateId::MarkdownLinks, metrics)
+            .expect("markdown arm evidence");
+        ArmEvidence::Metrics { report }
+    };
+    let mismatches = |count: u64| {
+        crate::metrics::EvidenceState::measured(crate::metrics::MetricMeasurement::new(
+            count,
+            crate::metrics::ParserEvidence::Native {
+                parser: crate::metrics::ParserId::MarkdownInlineLinkCaseV1,
+            },
+        ))
+    };
+    let unavailable = || crate::metrics::EvidenceState::Unavailable {
+        reason: unread.to_owned(),
+    };
+
+    // An unread file outranks its clean neighbour, and speaks for the arm.
+    let mixed = arm(vec![
+        ("docs/measured.md", mismatches(0)),
+        ("docs/unread.md", unavailable()),
+    ]);
+    assert_eq!(
+        mixed.state().expect("mixed arm state"),
+        BatteryState::Unavailable
+    );
+    assert_eq!(mixed.reason().expect("mixed arm reason"), unread);
+
+    // A proven violation outranks the unread file, because it is proven anyway.
+    let violated = arm(vec![
+        ("docs/measured.md", mismatches(3)),
+        ("docs/unread.md", unavailable()),
+    ]);
+    assert_eq!(
+        violated.state().expect("violated arm state"),
+        BatteryState::Failed
+    );
+    assert_eq!(
+        violated.reason().expect("violated arm reason"),
+        "one or more structural measurements exceeded their declared bound"
+    );
+
+    // Nothing to measure is not a gap, so a real measurement outranks it.
+    let inapplicable = arm(vec![
+        ("docs/measured.md", mismatches(0)),
+        (
+            "docs/none.md",
+            crate::metrics::EvidenceState::NotApplicable {
+                reason: "the selected tree admits no Markdown source".to_owned(),
+            },
+        ),
+    ]);
+    assert_eq!(
+        inapplicable.state().expect("inapplicable arm state"),
+        BatteryState::Passed
+    );
+    assert_eq!(
+        inapplicable.reason().expect("inapplicable arm reason"),
+        "all declared structural measurements completed within threshold"
+    );
+
+    // Two different missing things still have no single honest reason, in
+    // either order, so the refusal cannot depend on which row arrives first.
+    let unmeasured = || crate::metrics::EvidenceState::Unmeasured {
+        reason: "no parser was admitted".to_owned(),
+    };
+    for rows in [
+        vec![("docs/a.md", unavailable()), ("docs/b.md", unmeasured())],
+        vec![("docs/a.md", unmeasured()), ("docs/b.md", unavailable())],
+    ] {
+        assert_eq!(
+            arm(rows)
+                .state()
+                .expect_err("two different missing things cannot fold")
+                .to_string(),
+            "metric arm mixes incompatible terminal evidence states"
+        );
+    }
+}
+
 #[test]
 fn execution_boundary_contains_no_shell_or_alternate_runtime() {
     let runner = concat!(

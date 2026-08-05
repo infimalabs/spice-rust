@@ -300,27 +300,58 @@ const fn hygiene_state(outcome: HygieneOutcome) -> BatteryState {
     }
 }
 
+/// Fold one arm's per-metric states into the single state the battery reports.
+///
+/// An arm carries one row per measured path, so one file's own state sits
+/// beside its neighbours' measurements: a Markdown source that cannot be read
+/// is that file's evidence and not the whole arm's. The fold therefore settles
+/// by precedence rather than by agreement.
+///
+/// A proven violation outranks an unread file, because the violation is proven
+/// whatever else went unread. An unread file in turn outranks a clean
+/// measurement, because part of the arm was never established and `Passed`
+/// would claim that it was — the same reason acquisition refuses to score an
+/// unreadable source as zero.
+///
+/// A clean measurement in turn outranks `NotApplicable`, which is not a gap at
+/// all: it says there was nothing here to measure, so it may only speak for the
+/// arm when it speaks for every row. Letting it outrank a measurement would let
+/// one inapplicable path report the arm as skipped, and mint skip provenance
+/// over neighbours that really were measured.
+///
+/// Two *different* unestablished states are still refused. They name different
+/// missing things, and one arm reports one reason, so there is no honest way to
+/// carry both. Every row is inspected before the state is chosen, so that
+/// refusal does not depend on the order the rows happen to arrive in.
 fn metric_state(report: &StructuralArmEvidence) -> Result<BatteryState, BatteryError> {
-    let mut observed = None;
+    let mut measured = false;
+    let mut failed = false;
+    let mut inapplicable = false;
+    let mut unestablished: Option<BatteryState> = None;
     for metric in report.metrics() {
-        let state = metric_terminal(metric);
-        observed = Some(match (observed, state) {
-            (None, state) => state,
-            (Some(BatteryState::Passed | BatteryState::Failed), BatteryState::Passed) => {
-                observed.expect("measured state exists")
-            }
-            (Some(BatteryState::Passed | BatteryState::Failed), BatteryState::Failed) => {
-                BatteryState::Failed
-            }
-            (Some(previous), current) if previous == current => previous,
-            _ => {
-                return Err(BatteryError::new(
-                    "metric arm mixes incompatible terminal evidence states",
-                ));
-            }
-        });
+        match metric_terminal(metric) {
+            BatteryState::Failed => failed = true,
+            BatteryState::Passed => measured = true,
+            BatteryState::NotApplicable => inapplicable = true,
+            state => match unestablished {
+                Some(previous) if previous != state => {
+                    return Err(BatteryError::new(
+                        "metric arm mixes incompatible terminal evidence states",
+                    ));
+                }
+                _ => unestablished = Some(state),
+            },
+        }
     }
-    observed.ok_or_else(|| BatteryError::new("metric arm evidence must not be empty"))
+    match (failed, unestablished, measured, inapplicable) {
+        (true, ..) => Ok(BatteryState::Failed),
+        (false, Some(state), ..) => Ok(state),
+        (false, None, true, _) => Ok(BatteryState::Passed),
+        (false, None, false, true) => Ok(BatteryState::NotApplicable),
+        (false, None, false, false) => {
+            Err(BatteryError::new("metric arm evidence must not be empty"))
+        }
+    }
 }
 
 fn metric_terminal(evidence: &MetricEvidence) -> BatteryState {
@@ -354,30 +385,46 @@ fn over_bound(unit: MetricUnit, measurement: &MetricMeasurement) -> bool {
             .is_some_and(|threshold| measurement.value() > threshold)
 }
 
+/// The reason for whichever state the fold above settled on.
+///
+/// The row that carries that state is the one asked for the words, rather than
+/// the arm's first row. Since an arm may hold a measurement beside a file that
+/// was never read, the first row is often a measurement, which knows nothing
+/// about why the arm did not complete.
 fn metric_reason(report: &StructuralArmEvidence) -> Result<String, BatteryError> {
     let state = metric_state(report)?;
     if state == BatteryState::Passed {
         return Ok("all declared structural measurements completed within threshold".to_owned());
     }
-    if report
+    if state == BatteryState::Failed {
+        // A row that failed in its own right says why; a measurement that broke
+        // its bound does not, so the arm speaks for it.
+        return Ok(report
+            .metrics()
+            .iter()
+            .find_map(|metric| match metric.state() {
+                MetricState::Failed { reason, .. } => Some(reason.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                "one or more structural measurements exceeded their declared bound".to_owned()
+            }));
+    }
+    let carrier = report
         .metrics()
         .iter()
-        .any(|metric| matches!(metric.state(), MetricState::Measured { .. }))
-    {
-        return Ok("one or more structural measurements exceeded their declared bound".to_owned());
-    }
-    let first = report
-        .metrics()
-        .first()
+        .find(|metric| metric_terminal(metric) == state)
         .ok_or_else(|| BatteryError::new("metric arm evidence must not be empty"))?;
-    Ok(match first.state() {
+    Ok(match carrier.state() {
         MetricState::Unavailable { reason }
         | MetricState::Unmeasured { reason }
         | MetricState::Timeout { reason, .. }
         | MetricState::Failed { reason, .. }
         | MetricState::NotApplicable { reason }
         | MetricState::Unsupported { reason, .. } => reason.clone(),
-        MetricState::Measured { .. } => unreachable!("measured metric reason handled above"),
+        MetricState::Measured { .. } => {
+            unreachable!("measured rows settle on passed or failed, both handled above")
+        }
     })
 }
 
