@@ -17,6 +17,58 @@ fn tracked_inputs_load_one_operational_current_contract() {
     let root = workspace_root();
     let contract = Contract::load(&root).expect("tracked current gate inputs load");
 
+    the_measured_policy_is_current(&contract);
+    assert_eq!(contract.kill().tool().identity(), PINNED_CARGO_MUTANTS);
+    assert!(contract.kill().tool().cargo_program().is_absolute());
+    assert!(contract.kill().tool().mutants_program().is_absolute());
+    assert_eq!(contract.kill().battery().attempts(), 3);
+    assert_eq!(contract.kill().battery().seed(), 41);
+    assert_eq!(contract.kill().battery().targets().len(), 4);
+    assert_eq!(
+        contract.kill().bounds().deadlines().runtime().as_secs(),
+        300
+    );
+    assert_eq!(contract.kill().bounds().grace().as_secs(), 1);
+    assert_eq!(contract.kill().bounds().capture(), 512 * 1024);
+    assert_eq!(contract.kill().floor().numerator(), 0);
+    assert_eq!(contract.kill().floor().denominator(), 1);
+    the_kill_declaration_is_current(&contract.gate_set().render());
+    // Written out rather than rendered from the constants, so a bound that moves
+    // has to be restated here deliberately. The runtime figure in particular is
+    // measured rather than chosen: see RUNTIME_DEADLINE in gate/src/input.rs for
+    // the cold canvas-build samples it clears and by how much.
+    assert_eq!(
+        contract.bounds().render(),
+        "bounds 1\nowner gate current tools\nruntime-ms 120000\noutput-drain-ms 1000\n\
+         reap-ms 1000\ncancellation never\nrestart never\ngrace-ms 250\ncapture 65536\n"
+    );
+
+    let run = contract
+        .adjudicate(&root)
+        .expect("an operational contract reaches a complete verdict");
+    // This adjudicates the live workspace, so it refuses whenever any tracked
+    // metric rises past its floor -- a condition about the tree, not about the
+    // inputs this test is named for. Say which metric and which files, in the
+    // same words the report fixtures use, rather than only Refused against
+    // Clean.
+    assert_eq!(
+        run.receipt().standing(),
+        Standing::Clean,
+        "{}",
+        gate::report::refusal_detail(&root, &contract, &run.report())
+    );
+    assert_eq!(run.measurements().len(), 1);
+    assert!(
+        run.measurements()[0].value()
+            <= contract
+                .baseline()
+                .floor("rust.long-lines")
+                .expect("long-line floor is loaded")
+    );
+}
+
+/// The one parser metric, its floors, and the loci the camp shares with it.
+fn the_measured_policy_is_current(contract: &Contract) {
     assert_eq!(contract.policy().ignore().render(), ".git/\ntarget/\n");
     assert_eq!(contract.policy().metrics().len(), 1);
     let metric = &contract.policy().metrics()[0];
@@ -51,21 +103,13 @@ fn tracked_inputs_load_one_operational_current_contract() {
     assert_eq!(contract.camp().bounds().len(), 1);
     assert_eq!(contract.camp().bounds()[0].limit(), LONG_LINE_LIMIT as u64);
     assert_eq!(contract.camp().bounds()[0].loci().len(), 4);
-    assert_eq!(contract.kill().tool().identity(), PINNED_CARGO_MUTANTS);
-    assert!(contract.kill().tool().cargo_program().is_absolute());
-    assert!(contract.kill().tool().mutants_program().is_absolute());
-    assert_eq!(contract.kill().battery().attempts(), 3);
-    assert_eq!(contract.kill().battery().seed(), 41);
-    assert_eq!(contract.kill().battery().targets().len(), 4);
-    assert_eq!(
-        contract.kill().bounds().deadlines().runtime().as_secs(),
-        300
-    );
-    assert_eq!(contract.kill().bounds().grace().as_secs(), 1);
-    assert_eq!(contract.kill().bounds().capture(), 512 * 1024);
-    assert_eq!(contract.kill().floor().numerator(), 0);
-    assert_eq!(contract.kill().floor().denominator(), 1);
-    let declaration = contract.gate_set().render();
+}
+
+/// Every environment name and target the rendered kill declaration carries.
+///
+/// Written out one line at a time rather than compared whole, so a name that
+/// disappears is reported as the name it was rather than as a differing blob.
+fn the_kill_declaration_is_current(declaration: &str) {
     assert!(declaration.contains("kill identity cargo-mutants 27.1.0\n"));
     assert!(declaration.contains("kill environment clear\n"));
     assert!(declaration.contains("kill environment AR /usr/bin/ar\n"));
@@ -99,34 +143,6 @@ fn tracked_inputs_load_one_operational_current_contract() {
             "kill target gate/src/kill.rs",
             "kill target gate/src/verdict.rs",
         ]
-    );
-    assert_eq!(
-        contract.bounds().render(),
-        "bounds 1\nowner gate current tools\nruntime-ms 30000\noutput-drain-ms 1000\n\
-         reap-ms 1000\ncancellation never\nrestart never\ngrace-ms 250\ncapture 65536\n"
-    );
-
-    let run = contract
-        .adjudicate(&root)
-        .expect("an operational contract reaches a complete verdict");
-    // This adjudicates the live workspace, so it refuses whenever any tracked
-    // metric rises past its floor -- a condition about the tree, not about the
-    // inputs this test is named for. Say which metric and which files, in the
-    // same words the report fixtures use, rather than only Refused against
-    // Clean.
-    assert_eq!(
-        run.receipt().standing(),
-        Standing::Clean,
-        "{}",
-        gate::report::refusal_detail(&root, &contract, &run.report())
-    );
-    assert_eq!(run.measurements().len(), 1);
-    assert!(
-        run.measurements()[0].value()
-            <= contract
-                .baseline()
-                .floor("rust.long-lines")
-                .expect("long-line floor is loaded")
     );
 }
 

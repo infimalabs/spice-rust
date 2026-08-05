@@ -40,6 +40,23 @@ pub const BASELINE_VERSION: u64 = 1;
 /// Byte length above which one Rust source line contributes debt.
 pub const LONG_LINE_LIMIT: usize = 100;
 
+/// Wall-clock ceiling every process a gate run launches answers to.
+///
+/// One value governs the version probes, `cargo fmt --check`, every metric
+/// parser run, and the canvas analyses alike, so it has to clear the slowest
+/// workload it covers rather than the typical one. That workload is the
+/// `canvas-web-typecheck` arm's `trunk build --release` against a cold
+/// `target/xtask-app`. Five cold samples on a machine sharing eleven lanes, at
+/// load averages of 18.8 to 24.2, ran 15.0, 17.2, 19.3, 19.8 and 24.9 seconds;
+/// the same build warm ran 2.6 to 2.9, and the `cargo check` beside it ran 8.9
+/// to 12.0 cold. The distribution is therefore bimodal, and a 30-second ceiling
+/// spent 83% of itself on the worst cold sample — which is how a cold cache came
+/// to refuse an otherwise clean battery as a timeout, on a tree nothing was
+/// wrong with. This is five times that worst sample, so what decides an arm is
+/// the arm, and the clock is left to catch only a process that has stopped
+/// making progress at all.
+const RUNTIME_DEADLINE: Duration = Duration::from_secs(120);
+
 const AWK: &str = "/usr/bin/awk";
 const AWK_PROBE: &str = "BEGIN { print \"spice-gate-awk-v1\" }";
 const AWK_PROBE_OUTPUT: &str = "spice-gate-awk-v1";
@@ -343,7 +360,7 @@ impl Contract {
 
 fn current_bounds() -> Result<Bounds, SpecError> {
     let deadlines = Deadlines::new(
-        Duration::from_secs(30),
+        RUNTIME_DEADLINE,
         Duration::from_secs(1),
         Duration::from_secs(1),
     )?;
