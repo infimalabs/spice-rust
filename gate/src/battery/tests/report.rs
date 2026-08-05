@@ -260,6 +260,42 @@ fn metric_arms_cannot_assemble_mixed_terminal_evidence() {
     );
 }
 
+fn markdown_arm(states: Vec<(&str, crate::metrics::EvidenceState)>) -> ArmEvidence {
+    let mut metrics = states
+        .into_iter()
+        .map(|(path, state)| {
+            crate::metrics::MetricEvidence::new(
+                crate::metrics::MetricId::MarkdownLinkCaseMismatches,
+                crate::metrics::MetricKey::path(path).expect("markdown metric key"),
+                state,
+            )
+            .expect("markdown metric evidence")
+        })
+        .collect::<Vec<_>>();
+    metrics.push(
+        crate::metrics::MetricEvidence::new(
+            crate::metrics::MetricId::RustDocMarkdownTargetAbsences,
+            crate::metrics::MetricKey::Arm,
+            crate::metrics::EvidenceState::NotApplicable {
+                reason: "fixture carries no Rust doc-comment citation".to_owned(),
+            },
+        )
+        .expect("Rust doc citation metric evidence"),
+    );
+    let report = crate::metrics::StructuralArmEvidence::new(GateId::MarkdownLinks, metrics)
+        .expect("markdown arm evidence");
+    ArmEvidence::Metrics { report }
+}
+
+fn markdown_mismatches(count: u64) -> crate::metrics::EvidenceState {
+    crate::metrics::EvidenceState::measured(crate::metrics::MetricMeasurement::new(
+        count,
+        crate::metrics::ParserEvidence::Native {
+            parser: crate::metrics::ParserId::MarkdownTrackedTargetsV2,
+        },
+    ))
+}
+
 /// One Markdown row per source, so one file's own state may sit beside
 /// measurements.
 ///
@@ -277,47 +313,13 @@ fn metric_arms_cannot_assemble_mixed_terminal_evidence() {
 #[test]
 fn a_metric_arm_carries_one_unread_file_beside_its_measured_neighbours() {
     let unread = "selected Markdown source could not be read: No such file or directory";
-    let arm = |states: Vec<(&str, crate::metrics::EvidenceState)>| {
-        let mut metrics = states
-            .into_iter()
-            .map(|(path, state)| {
-                crate::metrics::MetricEvidence::new(
-                    crate::metrics::MetricId::MarkdownLinkCaseMismatches,
-                    crate::metrics::MetricKey::path(path).expect("markdown metric key"),
-                    state,
-                )
-                .expect("markdown metric evidence")
-            })
-            .collect::<Vec<_>>();
-        metrics.push(
-            crate::metrics::MetricEvidence::new(
-                crate::metrics::MetricId::RustDocMarkdownTargetAbsences,
-                crate::metrics::MetricKey::Arm,
-                crate::metrics::EvidenceState::NotApplicable {
-                    reason: "fixture carries no Rust doc-comment citation".to_owned(),
-                },
-            )
-            .expect("Rust doc citation metric evidence"),
-        );
-        let report = crate::metrics::StructuralArmEvidence::new(GateId::MarkdownLinks, metrics)
-            .expect("markdown arm evidence");
-        ArmEvidence::Metrics { report }
-    };
-    let mismatches = |count: u64| {
-        crate::metrics::EvidenceState::measured(crate::metrics::MetricMeasurement::new(
-            count,
-            crate::metrics::ParserEvidence::Native {
-                parser: crate::metrics::ParserId::MarkdownTrackedTargetsV2,
-            },
-        ))
-    };
     let unavailable = || crate::metrics::EvidenceState::Unavailable {
         reason: unread.to_owned(),
     };
 
     // An unread file outranks its clean neighbour, and speaks for the arm.
-    let mixed = arm(vec![
-        ("docs/measured.md", mismatches(0)),
+    let mixed = markdown_arm(vec![
+        ("docs/measured.md", markdown_mismatches(0)),
         ("docs/unread.md", unavailable()),
     ]);
     assert_eq!(
@@ -327,8 +329,8 @@ fn a_metric_arm_carries_one_unread_file_beside_its_measured_neighbours() {
     assert_eq!(mixed.reason().expect("mixed arm reason"), unread);
 
     // A proven violation outranks the unread file, because it is proven anyway.
-    let violated = arm(vec![
-        ("docs/measured.md", mismatches(3)),
+    let violated = markdown_arm(vec![
+        ("docs/measured.md", markdown_mismatches(3)),
         ("docs/unread.md", unavailable()),
     ]);
     assert_eq!(
@@ -343,8 +345,8 @@ fn a_metric_arm_carries_one_unread_file_beside_its_measured_neighbours() {
     // A row that failed in its own right is the one asked for the words: the
     // arm's own sentence is about a bound, and this row never reached one.
     let collision = "key collision \"docs/a.md\": tracked paths differ only by case";
-    let unscanned = arm(vec![
-        ("docs/measured.md", mismatches(0)),
+    let unscanned = markdown_arm(vec![
+        ("docs/measured.md", markdown_mismatches(0)),
         (
             "docs/unscanned.md",
             crate::metrics::EvidenceState::Failed {
@@ -360,8 +362,8 @@ fn a_metric_arm_carries_one_unread_file_beside_its_measured_neighbours() {
     assert_eq!(unscanned.reason().expect("unscanned arm reason"), collision);
 
     // Nothing to measure is not a gap, so a real measurement outranks it.
-    let inapplicable = arm(vec![
-        ("docs/measured.md", mismatches(0)),
+    let inapplicable = markdown_arm(vec![
+        ("docs/measured.md", markdown_mismatches(0)),
         (
             "docs/none.md",
             crate::metrics::EvidenceState::NotApplicable {
@@ -388,7 +390,7 @@ fn a_metric_arm_carries_one_unread_file_beside_its_measured_neighbours() {
         vec![("docs/a.md", unmeasured()), ("docs/b.md", unavailable())],
     ] {
         assert_eq!(
-            arm(rows)
+            markdown_arm(rows)
                 .state()
                 .expect_err("two different missing things cannot fold")
                 .to_string(),

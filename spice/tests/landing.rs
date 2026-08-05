@@ -63,6 +63,7 @@ const CASES: &[Case] = &[
         &["lock", "run", "readiness", "--", "/bin/echo", "locked"],
     ),
     case("restore verify", &["restore", "verify", "missing"]),
+    case("dev pre-commit", &["dev", "pre-commit"]),
     case("gate", &["gate"]),
     case("gate camp", &["gate", "camp"]),
     case("gate kill", &["gate", "kill"]),

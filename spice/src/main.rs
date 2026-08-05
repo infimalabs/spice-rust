@@ -152,9 +152,17 @@ fn main() {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn dispatch_native_queries(contract: &cli::Contract, leaf: &clap::ArgMatches, form: Form) {
+    dispatch_native_gate_queries(contract, leaf, form);
+    dispatch_native_policy_queries(contract, leaf, form);
+    dispatch_native_repository_queries(contract, leaf, form);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn dispatch_native_gate_queries(contract: &cli::Contract, leaf: &clap::ArgMatches, form: Form) {
     match contract.path {
         ["doctor"] => deliver(&doctor_outcome(), form),
         ["demo"] => deliver(&demo_command::run(leaf), form),
+        ["dev", "pre-commit"] => deliver(&gate_command::pre_commit(), form),
         ["gate"] => deliver(&gate_command::run(leaf), form),
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
@@ -167,6 +175,13 @@ fn dispatch_native_queries(contract: &cli::Contract, leaf: &clap::ArgMatches, fo
         ["config", "migrate-tasks"] => {
             deliver_task_migration(&task_migration_command::run(leaf), form)
         }
+        _ => {}
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn dispatch_native_policy_queries(contract: &cli::Contract, leaf: &clap::ArgMatches, form: Form) {
+    match contract.path {
         ["consent"] => deliver(&consent_command::read(contract), form),
         ["consent", "allow"] => deliver(
             &consent_command::decide(leaf, contract, wire::Answer::Granted),
@@ -184,14 +199,25 @@ fn dispatch_native_queries(contract: &cli::Contract, leaf: &clap::ArgMatches, fo
                 deliver_with_code(&outcome, form, code)
             }
         },
-        ["backup"] => deliver(&journal_command::backup(leaf), form),
         ["task", "artifact", "add"]
         | ["task", "artifact", "list"]
         | ["task", "artifact", "show"]
         | ["task", "artifact", "prune"] => {
             deliver(&task_artifact_command::run(leaf, contract), form)
         }
+        ["backup"] => deliver(&journal_command::backup(leaf), form),
         ["restore"] => deliver(&restore_command::restore(leaf), form),
+        _ => {}
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn dispatch_native_repository_queries(
+    contract: &cli::Contract,
+    leaf: &clap::ArgMatches,
+    form: Form,
+) {
+    match contract.path {
         ["journal"] => deliver(&journal_command::report(contract), form),
         ["journal", "replay"] => deliver(&journal_command::replay(leaf, contract), form),
         ["journal", "reindex"] => deliver(&journal_command::reindex(), form),

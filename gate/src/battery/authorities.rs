@@ -12,7 +12,7 @@ use wire::{Digest, Domain};
 
 use super::repository_executor::RepositoryExecutor;
 use super::{
-    BatteryError, BatteryInputs, BatteryReport, BatteryScope, BatteryToolEvidence,
+    BatteryError, BatteryInputs, BatteryReceipt, BatteryReport, BatteryScope, BatteryToolEvidence,
     ConfigurationEvidence, RepositoryExecutionEvent, run_battery,
 };
 use crate::core::{ActorCapture, ClaimCapture};
@@ -190,6 +190,21 @@ impl<'trace> BatteryCapture<'trace> {
     pub fn execute(&mut self) -> Result<BatteryReport, BatteryError> {
         let inputs = self.authorities.inputs()?;
         run_battery(&inputs, &mut self.executor)
+    }
+
+    /// Run once and bind the complete vector to the captured baseline.
+    ///
+    /// The baseline comes from the same selected contract the executor owns;
+    /// callers cannot mint a receipt against a second contract or reconstruct
+    /// the floor identity beside the run.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same completeness refusal as [`Self::execute`].
+    pub fn execute_receipt(&mut self) -> Result<BatteryReceipt, BatteryError> {
+        let baseline = self.executor.contract().baseline().digest();
+        self.execute()
+            .map(|report| BatteryReceipt::mint(report, &baseline))
     }
 
     /// Identity of the selected bytes this capture owns.

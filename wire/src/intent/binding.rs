@@ -204,6 +204,28 @@ impl AnswerShape {
     /// refuse unknown fields, so a body spelled for the wrong command is a
     /// decode failure rather than a silently truncated value.
     pub fn decode(self, bytes: &[u8]) -> Result<CommandAnswer, serde_json::Error> {
+        match self {
+            Self::Board
+            | Self::Text
+            | Self::Task
+            | Self::Claim
+            | Self::Doc
+            | Self::Directive
+            | Self::Inbox
+            | Self::Consent
+            | Self::ConsentQueue => self.decode_primary(bytes),
+            Self::ConsentPolicy
+            | Self::Trust
+            | Self::Lane
+            | Self::LaneChange
+            | Self::State
+            | Self::Recall
+            | Self::Taste
+            | Self::Recognition => self.decode_secondary(bytes),
+        }
+    }
+
+    fn decode_primary(self, bytes: &[u8]) -> Result<CommandAnswer, serde_json::Error> {
         Ok(match self {
             Self::Board => CommandAnswer::Board(Box::new(crate::decode(bytes)?)),
             Self::Text => CommandAnswer::Text(crate::decode(bytes)?),
@@ -214,6 +236,12 @@ impl AnswerShape {
             Self::Inbox => CommandAnswer::Inbox(crate::decode(bytes)?),
             Self::Consent => CommandAnswer::Consent(crate::decode(bytes)?),
             Self::ConsentQueue => CommandAnswer::ConsentQueue(crate::decode(bytes)?),
+            _ => unreachable!("answer-shape decode partition is closed"),
+        })
+    }
+
+    fn decode_secondary(self, bytes: &[u8]) -> Result<CommandAnswer, serde_json::Error> {
+        Ok(match self {
             Self::ConsentPolicy => CommandAnswer::ConsentPolicy(crate::decode(bytes)?),
             Self::Trust => CommandAnswer::Trust(crate::decode(bytes)?),
             Self::Lane => CommandAnswer::Lane(Box::new(crate::decode(bytes)?)),
@@ -222,6 +250,7 @@ impl AnswerShape {
             Self::Recall => CommandAnswer::Recall(Box::new(crate::decode(bytes)?)),
             Self::Taste => CommandAnswer::Taste(crate::decode(bytes)?),
             Self::Recognition => CommandAnswer::Recognition(crate::decode(bytes)?),
+            _ => unreachable!("answer-shape decode partition is closed"),
         })
     }
 }
@@ -252,6 +281,54 @@ impl CommandKind {
     /// compile, which is the same law the witness registry carries.
     #[must_use]
     pub const fn binding(self) -> Binding {
+        match self {
+            Self::BoardRead
+            | Self::BoardGraph
+            | Self::BoardHandout
+            | Self::DocLedger
+            | Self::TaskAdd
+            | Self::TaskOopsAdd
+            | Self::TaskEdit
+            | Self::TaskNote
+            | Self::TaskDefer
+            | Self::TaskWake
+            | Self::TaskDepends
+            | Self::TaskPhase
+            | Self::TaskDone
+            | Self::TaskReview
+            | Self::TaskAssign
+            | Self::ClaimWin
+            | Self::ClaimCarry
+            | Self::ClaimRenew
+            | Self::ClaimFree
+            | Self::ClaimLapse
+            | Self::DocApply => self.board_binding(),
+            Self::SteerSend
+            | Self::SteerInbox
+            | Self::SteerResend
+            | Self::SteerDispose
+            | Self::SteerCancel
+            | Self::ConsentRead
+            | Self::ConsentPolicy
+            | Self::ConsentDecide
+            | Self::TrustPend
+            | Self::TrustGrant
+            | Self::TrustRevoke
+            | Self::LaneRead
+            | Self::LaneSeat
+            | Self::LaneState
+            | Self::LaneRecall
+            | Self::TasteRecord
+            | Self::CanaryRecognize
+            | Self::VendorRecognize
+            | Self::CommitRecognize
+            | Self::ProofRecognize
+            | Self::ReleasePublish
+            | Self::UpChange => self.runtime_binding(),
+        }
+    }
+
+    const fn board_binding(self) -> Binding {
         use AnswerShape as A;
         use BodyShape as B;
 
@@ -276,6 +353,15 @@ impl CommandKind {
             Self::ClaimRenew => Binding::of(B::ClaimRenew, A::Claim),
             Self::ClaimFree | Self::ClaimLapse => Binding::of(B::TaskRef, A::Claim),
             Self::DocApply => Binding::of(B::DocApply, A::Doc),
+            _ => panic!("command binding partition is closed"),
+        }
+    }
+
+    const fn runtime_binding(self) -> Binding {
+        use AnswerShape as A;
+        use BodyShape as B;
+
+        match self {
             Self::SteerSend => Binding::of(B::SteerSend, A::Directive),
             Self::SteerInbox => Binding::of(B::SteerInbox, A::Inbox),
             Self::SteerResend | Self::SteerCancel => Binding::of(B::DirectiveRef, A::Directive),
@@ -297,6 +383,7 @@ impl CommandKind {
             | Self::ProofRecognize => Binding::of(B::Recognize, A::Recognition),
             Self::ReleasePublish => Binding::of(B::ReleasePublish, A::Recognition),
             Self::UpChange => Binding::of(B::UpChange, A::State),
+            _ => panic!("command binding partition is closed"),
         }
     }
 }
@@ -385,6 +472,46 @@ impl Intent {
     #[must_use]
     pub const fn shape(&self) -> BodyShape {
         match self {
+            Self::BoardRead(_)
+            | Self::BoardGraph(_)
+            | Self::BoardHandout(_)
+            | Self::DocLedger(_)
+            | Self::TaskAdd(_)
+            | Self::TaskOopsAdd(_)
+            | Self::TaskEdit(_)
+            | Self::TaskNote(_)
+            | Self::TaskDefer(_)
+            | Self::TaskRef(_)
+            | Self::TaskDepends(_)
+            | Self::TaskPhase(_)
+            | Self::TaskDone(_)
+            | Self::TaskReview(_)
+            | Self::TaskAssign(_)
+            | Self::ClaimWin(_)
+            | Self::ClaimCarry(_)
+            | Self::ClaimRenew(_)
+            | Self::DocApply(_) => self.board_shape(),
+            Self::SteerSend(_)
+            | Self::SteerInbox(_)
+            | Self::DirectiveRef(_)
+            | Self::SteerDispose(_)
+            | Self::ConsentDecide(_)
+            | Self::ConsentRead(_)
+            | Self::ConsentPolicy(_)
+            | Self::TrustRef(_)
+            | Self::LaneRead(_)
+            | Self::LaneSeat(_)
+            | Self::LaneState(_)
+            | Self::LaneRecall(_)
+            | Self::TasteRecord(_)
+            | Self::Recognize(_)
+            | Self::ReleasePublish(_)
+            | Self::UpChange(_) => self.runtime_shape(),
+        }
+    }
+
+    const fn board_shape(&self) -> BodyShape {
+        match self {
             Self::BoardRead(_) => BodyShape::BoardRead,
             Self::BoardGraph(_) => BodyShape::BoardGraph,
             Self::BoardHandout(_) => BodyShape::BoardHandout,
@@ -404,6 +531,12 @@ impl Intent {
             Self::ClaimCarry(_) => BodyShape::ClaimCarry,
             Self::ClaimRenew(_) => BodyShape::ClaimRenew,
             Self::DocApply(_) => BodyShape::DocApply,
+            _ => panic!("intent shape partition is closed"),
+        }
+    }
+
+    const fn runtime_shape(&self) -> BodyShape {
+        match self {
             Self::SteerSend(_) => BodyShape::SteerSend,
             Self::SteerInbox(_) => BodyShape::SteerInbox,
             Self::DirectiveRef(_) => BodyShape::DirectiveRef,
@@ -420,6 +553,7 @@ impl Intent {
             Self::Recognize(_) => BodyShape::Recognize,
             Self::ReleasePublish(_) => BodyShape::ReleasePublish,
             Self::UpChange(_) => BodyShape::UpChange,
+            _ => panic!("intent shape partition is closed"),
         }
     }
 }
@@ -466,6 +600,26 @@ impl BodyShape {
     }
 
     fn decode_board_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
+        if matches!(
+            self,
+            Self::BoardRead
+                | Self::BoardGraph
+                | Self::BoardHandout
+                | Self::DocLedger
+                | Self::TaskAdd
+                | Self::TaskOopsAdd
+                | Self::TaskEdit
+                | Self::TaskNote
+                | Self::TaskDefer
+                | Self::TaskRef
+        ) {
+            self.decode_board_query_body(bytes)
+        } else {
+            self.decode_board_transition_body(bytes)
+        }
+    }
+
+    fn decode_board_query_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
         Ok(match self {
             Self::BoardRead => Intent::BoardRead(crate::decode(bytes)?),
             Self::BoardGraph => Intent::BoardGraph(crate::decode(bytes)?),
@@ -477,6 +631,12 @@ impl BodyShape {
             Self::TaskNote => Intent::TaskNote(crate::decode(bytes)?),
             Self::TaskDefer => Intent::TaskDefer(crate::decode(bytes)?),
             Self::TaskRef => Intent::TaskRef(crate::decode(bytes)?),
+            _ => unreachable!("board body partition is closed"),
+        })
+    }
+
+    fn decode_board_transition_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
+        Ok(match self {
             Self::TaskDepends => Intent::TaskDepends(crate::decode(bytes)?),
             Self::TaskPhase => Intent::TaskPhase(crate::decode(bytes)?),
             Self::TaskDone => Intent::TaskDone(crate::decode(bytes)?),
@@ -491,6 +651,24 @@ impl BodyShape {
     }
 
     fn decode_runtime_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
+        if matches!(
+            self,
+            Self::SteerSend
+                | Self::SteerInbox
+                | Self::DirectiveRef
+                | Self::SteerDispose
+                | Self::ConsentDecide
+                | Self::ConsentRead
+                | Self::ConsentPolicy
+                | Self::TrustRef
+        ) {
+            self.decode_coordination_body(bytes)
+        } else {
+            self.decode_runtime_control_body(bytes)
+        }
+    }
+
+    fn decode_coordination_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
         Ok(match self {
             Self::SteerSend => Intent::SteerSend(crate::decode(bytes)?),
             Self::SteerInbox => Intent::SteerInbox(crate::decode(bytes)?),
@@ -500,6 +678,12 @@ impl BodyShape {
             Self::ConsentRead => Intent::ConsentRead(crate::decode(bytes)?),
             Self::ConsentPolicy => Intent::ConsentPolicy(crate::decode(bytes)?),
             Self::TrustRef => Intent::TrustRef(crate::decode(bytes)?),
+            _ => unreachable!("runtime body partition is closed"),
+        })
+    }
+
+    fn decode_runtime_control_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
+        Ok(match self {
             Self::LaneRead => Intent::LaneRead(crate::decode(bytes)?),
             Self::LaneSeat => Intent::LaneSeat(crate::decode(bytes)?),
             Self::LaneState => Intent::LaneState(crate::decode(bytes)?),

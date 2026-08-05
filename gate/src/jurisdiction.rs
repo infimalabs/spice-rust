@@ -515,9 +515,25 @@ impl Snapshot {
     }
 }
 
-#[cfg(target_os = "linux")]
 impl SnapshotChangeSeal {
     fn capture(root: &Path, seals: &[Seal]) -> Result<Self, WalkError> {
+        #[cfg(target_os = "linux")]
+        return Self::capture_linux(root, seals);
+        #[cfg(not(target_os = "linux"))]
+        Self::capture_portable(root, seals)
+    }
+
+    fn changed(&self, root: &Path) -> Result<Option<String>, WalkError> {
+        #[cfg(target_os = "linux")]
+        return self.changed_linux(root);
+        #[cfg(not(target_os = "linux"))]
+        self.changed_portable(root)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl SnapshotChangeSeal {
+    fn capture_linux(root: &Path, seals: &[Seal]) -> Result<Self, WalkError> {
         let inotify = inotify::Inotify::init()
             .map_err(|source| WalkError::io("creating a snapshot change seal", root, source))?;
         let mask = inotify::WatchMask::ATTRIB
@@ -547,7 +563,7 @@ impl SnapshotChangeSeal {
         })
     }
 
-    fn changed(&self, root: &Path) -> Result<Option<String>, WalkError> {
+    fn changed_linux(&self, root: &Path) -> Result<Option<String>, WalkError> {
         let mut inotify = self.inotify.borrow_mut();
         let mut buffer = [0_u8; 16 * 1024];
         loop {
@@ -601,11 +617,11 @@ impl SnapshotChangeSeal {
 
 #[cfg(not(target_os = "linux"))]
 impl SnapshotChangeSeal {
-    fn capture(_root: &Path, _seals: &[Seal]) -> Result<Self, WalkError> {
+    fn capture_portable(_root: &Path, _seals: &[Seal]) -> Result<Self, WalkError> {
         Ok(Self)
     }
 
-    fn changed(&self, _root: &Path) -> Result<Option<String>, WalkError> {
+    fn changed_portable(&self, _root: &Path) -> Result<Option<String>, WalkError> {
         Ok(None)
     }
 }
@@ -679,25 +695,26 @@ fn seal(path: &Path, relative: &str, shape: Shape) -> Result<Seal, WalkError> {
     })
 }
 
-#[cfg(target_family = "unix")]
 fn fingerprint(metadata: &fs::Metadata) -> Fingerprint {
-    Fingerprint {
-        device: metadata.dev(),
-        inode: metadata.ino(),
-        mode: metadata.mode(),
-        links: metadata.nlink(),
-        length: metadata.len(),
-        modified: (metadata.mtime(), metadata.mtime_nsec()),
-        changed: (metadata.ctime(), metadata.ctime_nsec()),
+    #[cfg(target_family = "unix")]
+    {
+        Fingerprint {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            mode: metadata.mode(),
+            links: metadata.nlink(),
+            length: metadata.len(),
+            modified: (metadata.mtime(), metadata.mtime_nsec()),
+            changed: (metadata.ctime(), metadata.ctime_nsec()),
+        }
     }
-}
-
-#[cfg(not(target_family = "unix"))]
-fn fingerprint(metadata: &fs::Metadata) -> Fingerprint {
-    Fingerprint {
-        length: metadata.len(),
-        readonly: metadata.permissions().readonly(),
-        modified: metadata.modified().ok(),
+    #[cfg(not(target_family = "unix"))]
+    {
+        Fingerprint {
+            length: metadata.len(),
+            readonly: metadata.permissions().readonly(),
+            modified: metadata.modified().ok(),
+        }
     }
 }
 

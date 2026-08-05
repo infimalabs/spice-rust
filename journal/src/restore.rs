@@ -179,24 +179,26 @@ struct BundleAuthority {
 }
 
 impl BundleAuthority {
-    #[cfg(unix)]
     fn open(root: &Path) -> Result<Self, BackupVerifyError> {
-        let flags = OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY | OFlags::NOFOLLOW;
-        let directory = rustix::fs::open(root, flags, Mode::empty())
-            .map(File::from)
-            .map_err(|source| confined_error(root, source.into()))?;
-        Ok(Self {
-            root: root.to_path_buf(),
-            directory,
-        })
-    }
-
-    #[cfg(not(unix))]
-    fn open(root: &Path) -> Result<Self, BackupVerifyError> {
-        Err(BackupVerifyError::Invalid {
-            subject: root.to_path_buf(),
-            detail: "directory-authority restore verification requires a Unix target".to_owned(),
-        })
+        #[cfg(unix)]
+        {
+            let flags = OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY | OFlags::NOFOLLOW;
+            let directory = rustix::fs::open(root, flags, Mode::empty())
+                .map(File::from)
+                .map_err(|source| confined_error(root, source.into()))?;
+            Ok(Self {
+                root: root.to_path_buf(),
+                directory,
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            Err(BackupVerifyError::Invalid {
+                subject: root.to_path_buf(),
+                detail: "directory-authority restore verification requires a Unix target"
+                    .to_owned(),
+            })
+        }
     }
 
     #[cfg(unix)]
@@ -209,40 +211,42 @@ impl BundleAuthority {
             })
     }
 
-    #[cfg(unix)]
     fn open_regular(&self, relative: &Path) -> Result<File, BackupVerifyError> {
-        let name = relative
-            .file_name()
-            .ok_or_else(|| BackupVerifyError::Invalid {
-                subject: self.root.join(relative),
-                detail: "backup member path has no file name".to_owned(),
-            })?;
-        let mut directory = self.root_directory()?;
-        let mut traversed = PathBuf::new();
-        if let Some(parent) = relative.parent() {
-            for component in parent.components() {
-                let Component::Normal(component) = component else {
-                    return Err(BackupVerifyError::Invalid {
-                        subject: self.root.join(relative),
-                        detail: "backup member path left its captured directory authority"
-                            .to_owned(),
-                    });
-                };
-                traversed.push(component);
-                directory = open_directory_at(&directory, component)
-                    .map_err(|source| confined_error(&self.root.join(&traversed), source))?;
+        #[cfg(unix)]
+        {
+            let name = relative
+                .file_name()
+                .ok_or_else(|| BackupVerifyError::Invalid {
+                    subject: self.root.join(relative),
+                    detail: "backup member path has no file name".to_owned(),
+                })?;
+            let mut directory = self.root_directory()?;
+            let mut traversed = PathBuf::new();
+            if let Some(parent) = relative.parent() {
+                for component in parent.components() {
+                    let Component::Normal(component) = component else {
+                        return Err(BackupVerifyError::Invalid {
+                            subject: self.root.join(relative),
+                            detail: "backup member path left its captured directory authority"
+                                .to_owned(),
+                        });
+                    };
+                    traversed.push(component);
+                    directory = open_directory_at(&directory, component)
+                        .map_err(|source| confined_error(&self.root.join(&traversed), source))?;
+                }
             }
+            open_file_at(&directory, name)
+                .map_err(|source| confined_error(&self.root.join(relative), source))
         }
-        open_file_at(&directory, name)
-            .map_err(|source| confined_error(&self.root.join(relative), source))
-    }
-
-    #[cfg(not(unix))]
-    fn open_regular(&self, relative: &Path) -> Result<File, BackupVerifyError> {
-        Err(BackupVerifyError::Invalid {
-            subject: self.root.join(relative),
-            detail: "directory-authority restore verification requires a Unix target".to_owned(),
-        })
+        #[cfg(not(unix))]
+        {
+            Err(BackupVerifyError::Invalid {
+                subject: self.root.join(relative),
+                detail: "directory-authority restore verification requires a Unix target"
+                    .to_owned(),
+            })
+        }
     }
 }
 
@@ -581,17 +585,19 @@ fn confined_error(path: &Path, source: io::Error) -> BackupVerifyError {
     }
 }
 
-#[cfg(unix)]
 fn is_unconfined(error: &io::Error) -> bool {
-    error.raw_os_error().is_some_and(|code| {
-        code == rustix::io::Errno::LOOP.raw_os_error()
-            || code == rustix::io::Errno::NOTDIR.raw_os_error()
-    })
-}
-
-#[cfg(not(unix))]
-fn is_unconfined(_error: &io::Error) -> bool {
-    false
+    #[cfg(unix)]
+    {
+        error.raw_os_error().is_some_and(|code| {
+            code == rustix::io::Errno::LOOP.raw_os_error()
+                || code == rustix::io::Errno::NOTDIR.raw_os_error()
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = error;
+        false
+    }
 }
 
 fn require_regular(path: &Path, metadata: &Metadata) -> Result<(), BackupVerifyError> {
@@ -612,19 +618,22 @@ fn changed_during_capture(path: &Path) -> Result<CapturedFile, BackupVerifyError
     })
 }
 
-#[cfg(unix)]
-fn posix_mode(_path: &Path, metadata: &Metadata) -> Result<u32, BackupVerifyError> {
-    use std::os::unix::fs::MetadataExt;
+fn posix_mode(path: &Path, metadata: &Metadata) -> Result<u32, BackupVerifyError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
 
-    Ok(metadata.mode() & 0o7777)
-}
-
-#[cfg(not(unix))]
-fn posix_mode(path: &Path, _metadata: &Metadata) -> Result<u32, BackupVerifyError> {
-    Err(BackupVerifyError::Invalid {
-        subject: path.to_path_buf(),
-        detail: "backup member POSIX mode is unavailable on this platform".to_owned(),
-    })
+        let _ = path;
+        Ok(metadata.mode() & 0o7777)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        Err(BackupVerifyError::Invalid {
+            subject: path.to_path_buf(),
+            detail: "backup member POSIX mode is unavailable on this platform".to_owned(),
+        })
+    }
 }
 
 fn admitted_member_path(text: &str) -> Result<PathBuf, BackupVerifyError> {
@@ -650,25 +659,26 @@ fn admitted_member_path(text: &str) -> Result<PathBuf, BackupVerifyError> {
     }
 }
 
-#[cfg(unix)]
 fn bundle_inventory(bundle: &BundleAuthority) -> Result<Vec<String>, BackupVerifyError> {
-    let mut inventory = Vec::new();
-    walk(
-        bundle,
-        bundle.root_directory()?,
-        Path::new(""),
-        &mut inventory,
-    )?;
-    inventory.sort();
-    Ok(inventory)
-}
-
-#[cfg(not(unix))]
-fn bundle_inventory(bundle: &BundleAuthority) -> Result<Vec<String>, BackupVerifyError> {
-    Err(BackupVerifyError::Invalid {
-        subject: bundle.root.clone(),
-        detail: "directory-authority restore verification requires a Unix target".to_owned(),
-    })
+    #[cfg(unix)]
+    {
+        let mut inventory = Vec::new();
+        walk(
+            bundle,
+            bundle.root_directory()?,
+            Path::new(""),
+            &mut inventory,
+        )?;
+        inventory.sort();
+        Ok(inventory)
+    }
+    #[cfg(not(unix))]
+    {
+        Err(BackupVerifyError::Invalid {
+            subject: bundle.root.clone(),
+            detail: "directory-authority restore verification requires a Unix target".to_owned(),
+        })
+    }
 }
 
 #[cfg(unix)]

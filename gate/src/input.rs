@@ -136,6 +136,8 @@ pub struct Contract {
     policy: Policy,
     rule_policy: RulePolicy,
     #[cfg(not(target_arch = "wasm32"))]
+    environment_names: Vec<String>,
+    #[cfg(not(target_arch = "wasm32"))]
     tracked_configuration: toml::Value,
     #[cfg(not(target_arch = "wasm32"))]
     shape: ShapePolicy,
@@ -225,6 +227,8 @@ impl Contract {
             policy,
             rule_policy,
             #[cfg(not(target_arch = "wasm32"))]
+            environment_names: tracked.policy.env_names,
+            #[cfg(not(target_arch = "wasm32"))]
             tracked_configuration,
             #[cfg(not(target_arch = "wasm32"))]
             shape,
@@ -260,6 +264,12 @@ impl Contract {
     #[must_use]
     pub const fn rule_policy(&self) -> &RulePolicy {
         &self.rule_policy
+    }
+
+    /// Exact environment-name vocabulary captured from tracked policy.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn environment_names(&self) -> &[String] {
+        &self.environment_names
     }
 
     /// Admitted tracked intent for the repository-shape provider.
@@ -369,6 +379,8 @@ struct TrackedPolicy {
 #[serde(default)]
 struct TrackedPolicyTable {
     repo_truth: RepoTruthPolicy,
+    #[cfg(not(target_arch = "wasm32"))]
+    env_names: Vec<String>,
     #[cfg(not(target_arch = "wasm32"))]
     package_roots: Vec<String>,
     #[cfg(not(target_arch = "wasm32"))]
