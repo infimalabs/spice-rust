@@ -950,5 +950,8 @@ mod lane_process;
 #[path = "resident/lane_continuity.rs"]
 mod lane_continuity;
 
+#[path = "resident/steering_authority.rs"]
+mod steering_authority;
+
 #[path = "resident/vendor_process.rs"]
 mod vendor_process;
