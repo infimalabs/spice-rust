@@ -54,25 +54,14 @@ pub fn reference_transaction(
 
 /// Every verification action, in the one order a run performs them.
 ///
-/// The last action still runs the predecessor's external Python policy gate,
-/// and the reason is a second reading rather than habit.
-/// `gate/src/battery/manifest.toml` names all 25 of that gate's standard steps
-/// against a compiled arm, and every one of them is measured here now. The three
-/// metrics arms that once acquired evidence naming an input this build could not
-/// reach — `file-shape`, `complexity`, and `magic-numbers` — all measure every
-/// class this repository commits; `markdown-links` measured already. File shape
-/// additionally measures every class it declares, while complexity and magic
-/// name a selected class without a vendored grammar as unsupported.
-///
-/// What is left is a class gap rather than an arm gap: complexity reports every
-/// declared suffix outside its five vendored grammars as unsupported, and the
-/// magic scan likewise refuses `.py`, `.cs`, and `.js`, which need predecessor
-/// parent semantics. This repository commits none of those selected classes, so
-/// nothing here goes unmeasured for want of them. The action stays for what it
-/// does once every arm measures -- it runs the predecessor's own implementations
-/// over the same sources, so a compiled arm that drifted lenient is still met by
-/// the one it replaced. Dropping it drops that second reading, not the only one.
-const VERIFY_ACTIONS: [Action; 8] = [
+/// `gate/src/battery/manifest.toml` names all 25 retired standard policy checks
+/// and binds each to one compiled Rust arm; its one additional C# arm is marked
+/// native by carrying no retired-step name. The workspace tests exercise that
+/// exact manifest and the production executor for all four families, including
+/// the structural family that once lacked acquisition. Contract landing is
+/// therefore terminal: no alternate runtime or executable discovered from
+/// `PATH` repeats policy after the Rust-owned checks finish.
+const VERIFY_ACTIONS: [Action; 7] = [
     Action::Command(Step::cargo(
         "cargo fmt --all -- --check",
         &["fmt", "--all", "--", "--check"],
@@ -106,35 +95,17 @@ const VERIFY_ACTIONS: [Action; 8] = [
         &["test", "--locked", "--workspace", "--doc"],
     )),
     Action::Landing,
-    Action::Command(Step::new(
-        "spice",
-        "spice dev pre-commit",
-        &["dev", "pre-commit"],
-    )),
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Step {
-    program: &'static str,
     label: &'static str,
     arguments: &'static [&'static str],
 }
 
 impl Step {
-    const fn new(
-        program: &'static str,
-        label: &'static str,
-        arguments: &'static [&'static str],
-    ) -> Self {
-        Self {
-            program,
-            label,
-            arguments,
-        }
-    }
-
     const fn cargo(label: &'static str, arguments: &'static [&'static str]) -> Self {
-        Self::new("cargo", label, arguments)
+        Self { label, arguments }
     }
 }
 
@@ -168,7 +139,7 @@ struct SystemRunner;
 
 impl Runner for SystemRunner {
     fn run(&mut self, step: Step) -> io::Result<Status> {
-        let status = Command::new(step.program).args(step.arguments).status()?;
+        let status = Command::new("cargo").args(step.arguments).status()?;
         Ok(Status {
             success: status.success(),
             code: status.code(),
@@ -336,7 +307,7 @@ mod tests {
 
     #[test]
     fn verifier_steps_match_the_complete_command_guard() {
-        const GUARDED_ACTIONS: [Action; 8] = [
+        const GUARDED_ACTIONS: [Action; 7] = [
             Action::Command(Step::cargo(
                 "cargo fmt --all -- --check",
                 &["fmt", "--all", "--", "--check"],
@@ -376,11 +347,6 @@ mod tests {
                 &["test", "--locked", "--workspace", "--doc"],
             )),
             Action::Landing,
-            Action::Command(Step::new(
-                "spice",
-                "spice dev pre-commit",
-                &["dev", "pre-commit"],
-            )),
         ];
 
         assert_eq!(VERIFY_ACTIONS.as_slice(), GUARDED_ACTIONS.as_slice());
@@ -454,7 +420,7 @@ mod tests {
     }
 
     #[test]
-    fn landing_refusal_stops_before_the_python_policy_step() {
+    fn landing_refusal_is_terminal() {
         let mut runner = runner(successful_commands());
         runner.landing = Some(Ok(landing::fixture_report(false)));
         let mut output = Vec::new();
@@ -466,7 +432,7 @@ mod tests {
     }
 
     #[test]
-    fn landing_acquisition_failure_stops_before_the_python_policy_step() {
+    fn landing_acquisition_failure_is_terminal() {
         let mut runner = runner(successful_commands());
         runner.landing = Some(Err(landing::fixture_error()));
         let mut output = Vec::new();
@@ -478,22 +444,15 @@ mod tests {
     }
 
     #[test]
-    fn installed_python_policy_is_last_and_its_failure_propagates() {
-        let mut outcomes = successful_commands();
-        *outcomes.last_mut().expect("policy outcome exists") = Outcome::Exit(7);
-        let mut runner = runner(outcomes);
-        let mut output = Vec::new();
-
-        let error = verify_with(&mut runner, &mut output).expect_err("policy fails");
-
-        assert!(matches!(error, VerifyError::Exit { code: Some(7), .. }));
-        assert_eq!(runner.calls, labels());
-        let Action::Command(policy) = VERIFY_ACTIONS[7] else {
-            panic!("policy must be an external command");
-        };
+    fn compiled_contract_landing_is_the_verifier_terminus() {
+        assert_eq!(VERIFY_ACTIONS.last(), Some(&Action::Landing));
         assert_eq!(
-            (policy.program, policy.arguments),
-            ("spice", &["dev", "pre-commit"][..])
+            VERIFY_ACTIONS
+                .iter()
+                .filter(|action| matches!(action, Action::Command(_)))
+                .count(),
+            6,
+            "only the six declared Cargo commands precede compiled landing"
         );
     }
 

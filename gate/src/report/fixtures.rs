@@ -704,11 +704,11 @@ mod tests {
     /// front of all of them, rather than left to be reconstructed from a run the
     /// reader has to adjudicate by hand.
     ///
-    /// A refusal here says nothing about the commit gate having passed: `spice
-    /// dev pre-commit` exits clean on a tree these fixtures reject, so a green
-    /// commit is not evidence the baselines hold. `cargo xtask verify` runs the
-    /// cargo battery first and the commit gate last; only the battery reads the
-    /// ratchet against the working tree, which is what this helper adjudicates.
+    /// A refusal here says nothing about an earlier compiler or test step having
+    /// passed: those steps can be green on a tree these fixtures reject.
+    /// `cargo xtask verify` reaches the battery at contract landing after its
+    /// Cargo commands; only the battery reads the ratchet against the working
+    /// tree, which is what this helper adjudicates.
     fn current_gate_report() -> GateReport {
         let root = workspace_root();
         let contract = Contract::load(&root).expect("load current contract");

@@ -3,5 +3,9 @@
 set -eu
 
 root=$(git rev-parse --show-toplevel)
+git_local_environment=$(git rev-parse --local-env-vars)
+for variable in $git_local_environment; do
+    unset "$variable"
+done
 cd "$root" # env-policy: allow
 exec cargo xtask verify
