@@ -222,10 +222,13 @@ fn parser_deadlines() -> Deadlines {
 
 fn kill_deadlines() -> Deadlines {
     // All fixture processes except the explicitly nonterminating parser are
-    // deterministic and immediate. Give scheduler contention the same outer
-    // runtime budget as production; cargo-mutants' own typed timeout artifact
-    // exercises mutant-timeout mapping without forcing every preflight through
-    // an artificially tiny wall-clock deadline.
+    // deterministic and immediate, so this outer budget exists only to keep
+    // scheduler contention from deciding a preflight. cargo-mutants' own typed
+    // timeout artifact is what exercises mutant-timeout mapping, so nothing here
+    // needs an artificially tiny wall-clock deadline either. It deliberately
+    // does not track the gate's own runtime deadline, which is sized for a cold
+    // `trunk build --release` none of these fixtures run, and which here would
+    // only make a genuinely hung fixture take four times as long to report.
     Deadlines::new(
         Duration::from_secs(30),
         Duration::from_secs(2),
