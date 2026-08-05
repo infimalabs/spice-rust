@@ -247,22 +247,25 @@ fn prepare_app_build(build_root: &Path) -> Result<(), AppBuildError> {
 /// The Trunk invocation, and the inherited environment it edits.
 ///
 /// Trunk inherits this process's environment, so every variable Cargo reads is
-/// carried into the app build whether or not this function mentions it. Nine
-/// entries are named here and the assertion below pins all nine. Three of them
+/// carried into the app build whether or not this function mentions it. Eight
+/// entries are named here and the assertion below pins all eight. Two of them
 /// are edits to what was inherited rather than values supplied fresh, and the
-/// reason for each is recorded beside it, because a variable that is simply
-/// absent from this list is indistinguishable from one somebody meant to
-/// handle: `CARGO` is removed, and `RUSTC_WRAPPER` and `RUSTC_WORKSPACE_WRAPPER`
-/// are emptied.
+/// reason is recorded beside them, because a variable that is simply absent
+/// from this list is indistinguishable from one somebody meant to handle:
+/// `RUSTC_WRAPPER` and `RUSTC_WORKSPACE_WRAPPER` are emptied.
 ///
-/// `RUSTC` and `CARGO_BUILD_RUSTC` are deliberately not among them. They name
-/// the compiler this build will run, and removing them here would make the
-/// build disagree with the report [`admit_staging_environment`] admitted it
-/// on; they are passed through and measured instead, by
-/// [`ReleaseEnvironment::rustc`], which reads them in Cargo's own order. The
-/// working directory set below is the same one that resolver walks for a
-/// `build.rustc` a config file names, so the compiler admitted and the compiler
-/// Cargo picks are settled from one hierarchy rather than two.
+/// `CARGO`, `RUSTC`, and `CARGO_BUILD_RUSTC` are deliberately not among them.
+/// The sealed image's source replacement sits at `/.cargo/config.toml`, so the
+/// Cargo that launched xtask and the one on `PATH` read the same offline source
+/// authority; Trunk may retain the exact parent Cargo instead of exchanging it
+/// for an ambient executable. The other two name the compiler this build will
+/// run, and removing them here would make the build disagree with the report
+/// [`admit_staging_environment`] admitted it on; they are passed through and
+/// measured instead, by [`ReleaseEnvironment::rustc`], which reads them in
+/// Cargo's own order. The working directory set below is the same one that
+/// resolver walks for a `build.rustc` a config file names, so the compiler
+/// admitted and the compiler Cargo picks are settled from one hierarchy rather
+/// than two.
 fn trunk_command(
     root: &Path,
     build_root: &Path,
@@ -275,15 +278,6 @@ fn trunk_command(
     let mut command = Command::new("trunk");
     command
         .current_dir(root.join("app"))
-        // Cargo exports `CARGO` as the absolute path of the binary running
-        // this command, and Trunk builds with that binary rather than the one
-        // the environment puts on `PATH`. In the sealed image those are not
-        // the same program: `PATH` names a wrapper that supplies the vendored
-        // source replacement, so an inherited `CARGO` reaches past it to a
-        // Cargo with no offline sources and the build fails resolving crates
-        // that are sitting right there. Dropped for the same reason the
-        // wrappers below are: the app build chooses its own toolchain.
-        .env_remove("CARGO")
         .env("CARGO_BUILD_BUILD_DIR", build)
         .env("CARGO_ENCODED_RUSTFLAGS", rustflags)
         .env("CARGO_HOME", cargo_home)
@@ -574,10 +568,6 @@ mod tests {
         assert_eq!(
             environment,
             BTreeMap::from([
-                // Removed, not emptied: Trunk falls back to `PATH` only when
-                // `CARGO` is absent, and an empty value would name a program
-                // that does not exist.
-                ("CARGO".to_owned(), None),
                 (
                     "CARGO_BUILD_BUILD_DIR".to_owned(),
                     Some("/cargo-target/xtask-app-build".to_owned()),
