@@ -4,6 +4,7 @@
 //! notification endpoint as a liveness token. The guardian blocks on that token
 //! and begins watching group absence only after the wrapper completes or dies.
 
+use crate::protected::{GROUP_SLOT_BLANK, GROUP_SLOT_BYTES, GROUP_SLOT_PREFIX, group_slot};
 use std::fs::File;
 use std::io::{self, Read};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
@@ -15,6 +16,12 @@ const GUARDIAN_NOTICE_FD: RawFd = 4;
 const DUPLICATE_MINIMUM_FD: RawFd = 10;
 const POLL_NANOSECONDS: libc::c_long = 10_000_000;
 const READY_BYTE: u8 = 1;
+/// How much of a record the guardian reads to find the slot reserved in it.
+///
+/// A record is one line of JSON whose longest field is a working directory, so
+/// this spans every one the platform can produce with room left over, and it is
+/// a stack array because the guardian is past the fork and allocates nothing.
+const RECORD_SCAN_BYTES: usize = 8192;
 
 #[derive(Debug)]
 pub(super) struct PendingGuardian {
@@ -244,6 +251,7 @@ fn guardian_main(lock: RawFd, notice: RawFd, descriptor_setup: bool) -> ! {
         if pid <= 0 {
             libc::_exit(125);
         }
+        publish_group(u32::from_ne_bytes(bytes));
         wait_for_wrapper_close();
         libc::close(GUARDIAN_NOTICE_FD);
         while !raw_group_absent(pid) {
@@ -276,6 +284,67 @@ unsafe fn send_ready() -> bool {
             return false;
         }
     }
+}
+
+/// Fill in the group slot the wrapper reserved before this guardian was forked.
+///
+/// This is the whole reason the guardian publishes rather than the wrapper. The
+/// group does not exist until the child does, `spawn` returns only after that
+/// child has `exec`ed, and a wrapper killed anywhere in between would leave the
+/// lock held by a guardian no reader could name. This process cannot be killed
+/// in that window: it is already running, already holds the descriptor, and
+/// learns the group from the child itself.
+///
+/// One positioned write does it, and lands where it belongs even against a
+/// wrapper rewriting the whole record at the same moment: the slot's offset is
+/// fixed for every record that owner writes, and the only other bytes anyone
+/// would put in it are the same digits this writes.
+///
+/// A record carrying no slot is left untouched. It says the owner reserved
+/// none, which is not this process's to invent. A write that lands only partly
+/// is left where it fell, for the same reason it is safe to attempt at all: a
+/// slot names a group only if every byte of one arrived, so the worst a torn
+/// write leaves is the unbounded refusal that was already there.
+unsafe fn publish_group(group: u32) {
+    let mut record = [0_u8; RECORD_SCAN_BYTES];
+    // SAFETY: the scan destination remains valid for the duration of the call.
+    let read = unsafe {
+        libc::pread(
+            GUARDIAN_LOCK_FD,
+            record.as_mut_ptr().cast(),
+            record.len(),
+            0,
+        )
+    };
+    let Ok(read) = usize::try_from(read) else {
+        return;
+    };
+    let Some(offset) = blank_slot_offset(&record[..read.min(RECORD_SCAN_BYTES)]) else {
+        return;
+    };
+    let slot = group_slot(group);
+    // SAFETY: the slot source remains valid for the duration of the call, and
+    // the offset is one this process just read a reserved slot from.
+    unsafe {
+        libc::pwrite(GUARDIAN_LOCK_FD, slot.as_ptr().cast(), slot.len(), offset);
+    }
+}
+
+/// Where this record's reserved slot begins, if it carries one still blank.
+///
+/// A slot already carrying something is not written over. The only writer that
+/// could have filled it is the owner, publishing the same group from the other
+/// side, so there is nothing here to add and nothing to correct.
+fn blank_slot_offset(record: &[u8]) -> Option<libc::off_t> {
+    let start = record
+        .windows(GROUP_SLOT_PREFIX.len())
+        .position(|window| window == GROUP_SLOT_PREFIX)?
+        + GROUP_SLOT_PREFIX.len();
+    let slot = record.get(start..start.checked_add(GROUP_SLOT_BYTES)?)?;
+    if !slot.iter().all(|byte| *byte == GROUP_SLOT_BLANK) {
+        return None;
+    }
+    libc::off_t::try_from(start).ok()
 }
 
 unsafe fn wait_for_wrapper_close() {

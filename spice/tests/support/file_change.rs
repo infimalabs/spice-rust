@@ -64,7 +64,8 @@ fn linux_observer(path: &Path) -> FileChangeObserver {
         "inotify observer: {}",
         io::Error::last_os_error()
     );
-    let watched = CString::new(path.as_os_str().as_bytes()).expect("watched path has no interior nul");
+    let watched =
+        CString::new(path.as_os_str().as_bytes()).expect("watched path has no interior nul");
     // SAFETY: the path stays valid for the duration of this call.
     let watch = unsafe { libc::inotify_add_watch(descriptor, watched.as_ptr(), libc::IN_MODIFY) };
     assert_ne!(
@@ -109,7 +110,8 @@ fn macos_observer(path: &Path) -> FileChangeObserver {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
 
-    let watched = CString::new(path.as_os_str().as_bytes()).expect("watched path has no interior nul");
+    let watched =
+        CString::new(path.as_os_str().as_bytes()).expect("watched path has no interior nul");
     // SAFETY: the path stays valid for the duration of this call.
     let watched = unsafe { libc::open(watched.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
     assert_ne!(
