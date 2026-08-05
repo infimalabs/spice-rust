@@ -269,6 +269,52 @@ fn a_state_that_already_holds_outranks_a_child_that_has_already_exited() {
     );
 }
 
+/// A child that has already exited is answered before its observer is armed.
+///
+/// The child is reaped before the wait starts and the state never holds, so the
+/// second pre-arm guard is the only valid ending. Arming an observer instead
+/// asks the platform to observe a pid that is no longer live (and may already
+/// have been reused), while falling through to the horizon would wait on
+/// signals that can never arrive.
+#[test]
+fn a_child_that_already_exited_is_answered_before_its_observer_is_armed() {
+    let mut held = Held::new("already-exited", "read release; exit 7");
+    writeln!(held.input.borrow_mut()).expect("fixture child takes its release");
+    assert_eq!(
+        held.child.wait().expect("fixture child status").code(),
+        Some(7),
+        "the child had not already exited when the wait began"
+    );
+    let asked = AtomicU64::new(0);
+
+    let started = Instant::now();
+    let waited = readiness::wait_until_ready(
+        &mut held.child,
+        &held.watched,
+        IDLE_HORIZON,
+        "already-exited child",
+        || {
+            asked.fetch_add(1, Ordering::Relaxed);
+            false
+        },
+    );
+    let elapsed = started.elapsed();
+
+    assert!(
+        matches!(waited, Readiness::Exited),
+        "the child had already exited"
+    );
+    assert_eq!(
+        asked.load(Ordering::Relaxed),
+        1,
+        "the never-held state was evaluated past the pre-arm exit guard"
+    );
+    assert!(
+        elapsed < IDLE_HORIZON / 2,
+        "an already-exited child spent the readiness horizon: {elapsed:?}"
+    );
+}
+
 /// A state reached after arming is delivered by the watcher.
 ///
 /// This is the ending every converted battery actually takes, and the only one
