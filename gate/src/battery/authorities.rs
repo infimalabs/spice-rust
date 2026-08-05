@@ -165,11 +165,12 @@ impl<'trace> BatteryCapture<'trace> {
             scope,
             configuration: tracked_evidence(contract)?,
             policy: contract.rule_policy().clone(),
-            // The repository-document and structural file-shape arms measured
-            // every selected path against a per-actor elastic limit. These are
-            // the exact decisions those capture-time acquisitions judged their
-            // rows against, all decided from the same ledger published above;
-            // nothing is re-resolved merely to describe the run.
+            // The repository-document, structural file-shape, and structural
+            // routine-complexity arms measured every selected path or routine
+            // against a per-actor elastic limit. These are the exact decisions
+            // those capture-time acquisitions judged their rows against, all
+            // decided from the same ledger published above; nothing is
+            // re-resolved merely to describe the run.
             bounds: executor.bounds().to_vec(),
             state,
             tools: tool_evidence(contract)?,

@@ -50,9 +50,10 @@ enum FamilyExecution {
 /// is captured: an acquisition deferred to first request would read an index, a
 /// `MERGE_HEAD`, or a worktree that moved after the capture the report names.
 /// Metrics are acquired immediately after that observation because their
-/// file-shape rows decide per-path bounds which must be present in the immutable
-/// run context before any arm executes. Each complete result or refusal is
-/// retained and handed over unchanged when its first arm is requested.
+/// file-shape and routine-complexity rows decide elastic bounds which must be
+/// present in the immutable run context before any arm executes. Each complete
+/// result or refusal is retained and handed over unchanged when its first arm
+/// is requested.
 ///
 /// The committed magic-number baselines are read in that same moment and for
 /// the same reason, even though the arm that reads them is not a core arm. They
@@ -312,7 +313,7 @@ impl BatteryExecutor for RepositoryExecutor<'_> {
     }
 }
 
-/// Acquire the complete structural family and retain its decided file bounds.
+/// Acquire the complete structural family and retain every bound it decided.
 ///
 /// This happens before [`BatteryInputs`] freezes the run context. The evidence
 /// is still projected only when the canonical metrics positions execute, but
