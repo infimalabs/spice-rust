@@ -57,15 +57,15 @@ pub fn reference_transaction(
 /// The last action still runs the predecessor's external Python policy gate,
 /// and the reason is coverage rather than habit. `gate/src/battery/manifest.toml`
 /// names all 25 of that gate's standard steps against a compiled arm, but being
-/// named is not being run: the four metrics arms — `file-shape`, `complexity`,
-/// `magic-numbers`, and `markdown-links` — belong to the one family this build
-/// has no acquisition entrypoint for, so they are refused instead of measured.
-/// The other 21 steps belong to families that do acquire.
+/// named is not being run: three metrics arms — `file-shape`, `complexity`, and
+/// `magic-numbers` — acquire as evidence naming an input this build cannot reach
+/// rather than as a measurement. The other 22 steps are measured here, the
+/// fourth metrics arm `markdown-links` among them.
 ///
-/// Three of those four read this repository's own sources rather than passing
-/// over it: `.rs` is in the predecessor's complexity and magic suffix sets, and
-/// its Markdown is tracked. Dropping this action drops live coverage, so it
-/// stays until the metrics family can be acquired.
+/// All three read this repository's own sources rather than passing over it:
+/// `.rs` is in the predecessor's complexity and magic suffix sets, and every
+/// tracked file has a shape. Dropping this action drops live coverage, so it
+/// stays until those three arms can be measured.
 const VERIFY_ACTIONS: [Action; 8] = [
     Action::Command(Step::cargo(
         "cargo fmt --all -- --check",

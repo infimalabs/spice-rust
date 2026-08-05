@@ -56,6 +56,26 @@ pub enum MetricUnit {
 }
 
 impl MetricUnit {
+    /// Whether a measured value is itself the finding, so only zero admits.
+    ///
+    /// A magnitude is bounded by a policy rule and fails by exceeding it. A
+    /// violation count has no rule to exceed — the count *is* the violation — so
+    /// its bound cannot be configured and is fixed at zero here. Regressions are
+    /// deliberately excluded: that count is compared against a policy-set
+    /// allowance, so it does have a threshold and is judged by that instead.
+    #[must_use]
+    pub const fn admits_only_zero(self) -> bool {
+        match self {
+            Self::CaseMismatches => true,
+            Self::SourceLines
+            | Self::Bytes
+            | Self::CyclomaticComplexity
+            | Self::RoutineLines
+            | Self::UnicodeScalarValues
+            | Self::Regressions => false,
+        }
+    }
+
     /// Stable unit spelling retained in reports.
     #[must_use]
     pub const fn as_str(self) -> &'static str {

@@ -5,14 +5,14 @@ use std::path::{Path, PathBuf};
 use wire::Digest;
 
 use super::{
-    ArmDisposition, ArmEvidence, ArmExecution, ArmFamily, BatteryContext, BatteryError,
-    BatteryExecutor, BatteryInputs, BatteryManifest, BatteryManifestArm, CompiledArm,
-    inline_evidence,
+    ArmEvidence, ArmExecution, ArmFamily, BatteryContext, BatteryError, BatteryExecutor,
+    BatteryInputs, CompiledArm, inline_evidence,
 };
 use crate::GateId;
 use crate::core::{ActorCapture, ClaimCapture, CoreSource, acquire_core, evaluate_core};
 use crate::hygiene::{HygieneConfiguration, HygieneSource, acquire_hygiene};
 use crate::input::Contract;
+use crate::metrics::{MetricSource, acquire_metrics};
 use crate::toolchain::{RimCapture, ToolchainSource, acquire_toolchain, measure_toolchain};
 use crate::tree::{SelectedTree, Selector};
 
@@ -185,7 +185,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             // took, so the first core arm cannot start a second observation.
             ArmFamily::Core => self.core.clone(),
             ArmFamily::Toolchain => self.acquire_toolchain_family(),
-            ArmFamily::Metrics => Err(metrics_unavailable()),
+            ArmFamily::Metrics => self.acquire_metrics_family(),
             ArmFamily::Hygiene => self.acquire_hygiene_family(),
         };
         match result {
@@ -202,6 +202,22 @@ impl<'trace> RepositoryExecutor<'trace> {
             .arms
             .into_iter()
             .map(|report| ArmEvidence::Toolchain { report })
+            .collect())
+    }
+
+    /// Acquire all four structural arms, each carrying its own typed state.
+    ///
+    /// A family-wide refusal is reserved for a source that cannot be walked or
+    /// evidence that violates its declaration. An arm this build cannot measure
+    /// is not one of those: it acquires as evidence naming the input it lacks,
+    /// so the three that stay unreachable cannot suppress the one that measures.
+    fn acquire_metrics_family(&self) -> Result<Vec<ArmEvidence>, String> {
+        let source =
+            MetricSource::capture(&self.tree, &self.contract).map_err(|error| error.to_string())?;
+        Ok(acquire_metrics(&source)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|report| ArmEvidence::Metrics { report })
             .collect())
     }
 
@@ -279,36 +295,6 @@ fn core_family(source: &CoreSource<'_>, contract: &Contract) -> Result<Vec<ArmEv
         .cloned()
         .map(|report| ArmEvidence::Core { report })
         .collect())
-}
-
-/// Why no metrics arm runs here, and which predecessor steps that leaves open.
-///
-/// The manifest gives every row one `compiled` disposition, which reads as
-/// covered, so a refusal naming only the absent entrypoint would leave whoever
-/// is deciding whether the predecessor gate can be retired to work the cost out
-/// by hand. The step names are read back out of the canonical manifest rather
-/// than restated here, so a row that changes family carries this list with it.
-fn metrics_unavailable() -> String {
-    let manifest = BatteryManifest::canonical()
-        .expect("the canonical manifest decodes before any arm is executed");
-    let unanswered: Vec<&str> = manifest
-        .arms()
-        .iter()
-        .filter(|arm| declared_family(arm) == ArmFamily::Metrics)
-        .filter_map(BatteryManifestArm::predecessor)
-        .collect();
-    format!(
-        "metrics family acquisition is unavailable: this build has no complete \
-         selected-scope structural acquisition entrypoint, so the predecessor steps \
-         it answers for ({}) are measured by nothing here",
-        unanswered.join(", ")
-    )
-}
-
-/// The family one manifest row's single compiled disposition declares.
-fn declared_family(arm: &BatteryManifestArm) -> ArmFamily {
-    let ArmDisposition::Compiled { family, .. } = arm.disposition();
-    *family
 }
 
 const fn family_index(family: ArmFamily) -> usize {
