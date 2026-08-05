@@ -106,18 +106,19 @@ fn lane_lifecycle_is_admitted_for_the_operator_alone() {
 /// reason: each handler reads an `AdmittedCommand`, which only `Command::admit`
 /// can construct, and that refuses every non-operator actor first. The handlers
 /// therefore carry no authority check of their own, and these rows are what
-/// stands between a lane capability and ruling on consent, moving trust, or
-/// reading the lane table. `UpChange` belongs to the same set and is deliberately
-/// absent here: `lane_cannot_submit_an_operator_command` already refuses a lane
-/// that command through `admit` itself, which pins the row more strongly than
-/// reading it.
+/// stands between a lane capability and authoring direction, ruling on consent,
+/// moving trust, or reading the lane table. `UpChange` belongs to the same set
+/// and is deliberately absent here: `lane_cannot_submit_an_operator_command`
+/// already refuses a lane that command through `admit` itself, which pins the
+/// row more strongly than reading it.
 ///
-/// Recall is the contrast that explains the shape: its law admits any connected
-/// actor, so its handler is entitled to discriminate between them and keeps the
-/// match this test would otherwise make redundant.
+/// Recall and resend are the contrasts that explain the shape: their laws admit
+/// any connected actor, so their handlers are entitled to discriminate between
+/// them and keep the matches this test would otherwise make redundant.
 #[test]
 fn operator_only_moves_are_admitted_for_the_operator_alone() {
     for kind in [
+        CommandKind::SteerSend,
         CommandKind::ConsentDecide,
         CommandKind::TrustGrant,
         CommandKind::TrustRevoke,
@@ -133,6 +134,11 @@ fn operator_only_moves_are_admitted_for_the_operator_alone() {
         CommandKind::LaneRecall.law().authority,
         Authority::Connected,
         "lane recall admits a lane, which is why its handler still tells actors apart",
+    );
+    assert_eq!(
+        CommandKind::SteerResend.law().authority,
+        Authority::Connected,
+        "steering resend admits a lane, which is why its handler still tells actors apart",
     );
 }
 

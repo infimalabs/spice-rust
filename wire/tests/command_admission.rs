@@ -34,24 +34,6 @@ fn dark(epoch: CanonicalUuid) -> Command<serde_json::Value> {
     }
 }
 
-fn steer(epoch: CanonicalUuid) -> Command<serde_json::Value> {
-    Command {
-        v: WireVersion::CURRENT,
-        id: uuid(2),
-        epoch,
-        kind: CommandKind::SteerSend,
-        expected: vec![Witness::Residency {
-            lane: uuid(4),
-            occupant: uuid(5),
-            epoch,
-        }],
-        body: serde_json::json!({
-            "lane": uuid(4),
-            "message": "hold this lane"
-        }),
-    }
-}
-
 #[test]
 fn current_operator_command_admits_one_kind_selected_body() {
     let command = dark(uuid(1))
@@ -98,19 +80,6 @@ fn lane_cannot_submit_an_operator_command() {
     let rejection = dark(uuid(1))
         .admit(&accepted(Actor::Lane(uuid(4))))
         .expect_err("lane authority refuses");
-
-    assert!(matches!(
-        rejection,
-        CommandRejection::Refusal(wire::Refusal { ref reason, .. })
-            if reason == "command::authority"
-    ));
-}
-
-#[test]
-fn lane_cannot_submit_operator_direction() {
-    let rejection = steer(uuid(1))
-        .admit(&accepted(Actor::Lane(uuid(4))))
-        .expect_err("lane authority cannot author direction");
 
     assert!(matches!(
         rejection,

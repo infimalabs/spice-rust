@@ -215,14 +215,6 @@ pub(super) fn send(
     command: &wire::AdmittedCommand,
     send: &wire::intent::SteerSend,
 ) -> Outcome<CommandAnswer> {
-    if !matches!(command.actor(), Actor::Operator) {
-        return refusal(
-            "steer::operator-required",
-            Some("operator".to_owned()),
-            Some(command.actor().to_string()),
-            "submit steering through the current operator discovery",
-        );
-    }
     if send.message.trim().is_empty() {
         return refusal(
             "steer::message-empty",
