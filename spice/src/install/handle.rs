@@ -851,34 +851,35 @@ fn mutation_pause(action: &str, display: &Path) -> Result<(), InstallError> {
     if rendezvous.action != action || rendezvous.path != display {
         return Ok(());
     }
-    fs::write(rendezvous.control.join("ready"), action).map_err(|source| {
+    fs::write(rendezvous.control.join("ready").join("arrived"), action).map_err(|source| {
         InstallError::io("signal install mutation rendezvous", display, source)
     })?;
-    await_release(&rendezvous.control, display)
+    await_release(&rendezvous.control.join("release"), display)
 }
 
 /// Block until the harness releases this pause, or the horizon is spent.
 ///
-/// The release is a file the harness writes into the control directory, so the
-/// wait arms on that directory and then blocks on the notification channel.
+/// The release is a file the harness writes into a release-only directory, so
+/// the wait arms there and then blocks on the notification channel. The pause
+/// signals its readiness in a sibling directory and cannot wake this receive.
 /// The predicate is evaluated once after arming, so a release landing in that
 /// window is observed rather than waited out. The horizon is the only timer
 /// left: between notifications this wait holds still rather than re-testing
 /// the release on a schedule.
 #[cfg(debug_assertions)]
-fn await_release(control: &Path, display: &Path) -> Result<(), InstallError> {
+fn await_release(release: &Path, display: &Path) -> Result<(), InstallError> {
     use notify::{RecursiveMode, Watcher as _};
     use std::sync::mpsc::{self, RecvTimeoutError};
     use std::time::{Duration, Instant};
 
-    let released = control.join("continue");
+    let released = release.join("continue");
     let (sender, receiver) = mpsc::channel::<notify::Result<notify::Event>>();
     let mut watcher = notify::recommended_watcher(move |event| {
         let _ = sender.send(event);
     })
     .map_err(|error| unwatchable(display, &error.to_string()))?;
     watcher
-        .watch(control, RecursiveMode::NonRecursive)
+        .watch(release, RecursiveMode::NonRecursive)
         .map_err(|error| unwatchable(display, &error.to_string()))?;
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
