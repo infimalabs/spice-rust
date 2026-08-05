@@ -1,27 +1,35 @@
 //! Running the compiled battery: one capture, one pass, every arm once.
 
 use super::*;
+use crate::metrics::{EvidenceState, MetricId, MetricKey, StructuralArmEvidence};
 
 /// The metric arms this build still measures nothing for, and each one's blocker.
 ///
-/// The distinguishing substring is pinned per arm rather than a shared phrase
-/// because both report the same `Unavailable` state: without it the two
-/// assertions could pass while each arm named the other's missing input.
-/// This list is what the canonical verifier's retained predecessor stage is
-/// justified by, so an arm leaving it has to be read against that justification
-/// rather than quietly shortening it.
-const UNREACHED_METRIC_ARMS: [(GateId, &str); 2] = [
-    (GateId::FileShape, "policy handle nor the actor seed"),
-    (GateId::Complexity, "lizard 1.23.0"),
-];
+/// The blocker is pinned as a substring rather than left to the shared
+/// `Unavailable` state, so an arm that started reporting the wrong missing input
+/// fails here instead of passing on the state alone. This list is what the
+/// canonical verifier's retained predecessor stage is justified by, so an arm
+/// leaving it has to be read against that justification rather than quietly
+/// shortening it.
+const UNREACHED_METRIC_ARMS: [(GateId, &str); 1] =
+    [(GateId::FileShape, "policy handle nor the actor seed")];
 
 /// What each metric arm that does reach its input reports for this fixture.
 ///
-/// Both are pinned by state *and* by a substring of the reason, because the two
-/// arms would otherwise be interchangeable to this assertion: they are the two
-/// that acquire, and an arm that started answering for the other's scope would
-/// still land on a state this list contains.
-const ACQUIRED_METRIC_ARMS: [(GateId, BatteryState, &str); 2] = [
+/// Each is pinned by state *and* by a substring of the reason. The three states
+/// happen to differ here, but that is a property of this fixture rather than of
+/// the arms: an arm that started answering for another's scope would land on a
+/// state this list already contains, and only the reason would still say so.
+const ACQUIRED_METRIC_ARMS: [(GateId, BatteryState, &str); 3] = [
+    // The fixture's three routines are each inside every declared complexity
+    // bound, so the arm measures and passes. A pass is also what an arm that
+    // measured *nothing* would report, so the rows themselves are checked
+    // below rather than inferred from this state.
+    (
+        GateId::Complexity,
+        BatteryState::Passed,
+        "completed within threshold",
+    ),
     // The fixture repository commits three `.py` sources, and `.py` is in the
     // workspace policy's magic class. The scan reaches its baseline for every
     // path and measures `src/lib.rs` clean, but those three are a declared class
@@ -610,6 +618,60 @@ fn assert_metric_arm_acquired(result: &BatteryArmResult) {
         "{} names the evidence its state rests on, but {evidence:?} is absent from: {}",
         result.gate_id(),
         result.reason()
+    );
+    if result.gate_id() == GateId::Complexity {
+        assert_complexity_measured_the_fixture_routine(report);
+    }
+}
+
+/// The complexity arm's pass rests on rows it measured, not on an empty scope.
+///
+/// A pass is what this arm reports when every routine is inside its bound, and
+/// it is equally what the arm would report having found no routine at all: an
+/// empty scope folds to `NotApplicable`, which no measurement outranks. So the
+/// rows are read directly rather than inferred from the state.
+///
+/// The whole set is pinned, not a sample. The fixture commits one `.rs` and two
+/// `.py` sources, so this is also what says both vendored grammars are reached
+/// through the arm rather than only the one this workspace is written in: a
+/// build that measured Rust alone would still pass, and would fail here. The
+/// lengths differ across the two classes for the same reason -- a parser
+/// answering one constant per routine cannot produce both `1` and `2`.
+fn assert_complexity_measured_the_fixture_routine(report: &StructuralArmEvidence) {
+    let measured: Vec<_> = report
+        .metrics()
+        .iter()
+        .filter_map(|evidence| match evidence.state() {
+            EvidenceState::Measured { measurement } => Some((
+                evidence.metric(),
+                evidence.key().clone(),
+                measurement.value(),
+            )),
+            _ => None,
+        })
+        .collect();
+    let key = |path: &str, function: &str| {
+        MetricKey::function(path, function).expect("a fixture routine keys")
+    };
+    assert_eq!(
+        measured,
+        [
+            (MetricId::RoutineCcn, key("app/main.py", "entry"), 1),
+            (MetricId::RoutineCcn, key("src/lib.rs", "fixture"), 1),
+            (
+                MetricId::RoutineCcn,
+                key("tests/test_main.py", "test_entry"),
+                1
+            ),
+            (MetricId::RoutineLength, key("app/main.py", "entry"), 2),
+            (MetricId::RoutineLength, key("src/lib.rs", "fixture"), 1),
+            (
+                MetricId::RoutineLength,
+                key("tests/test_main.py", "test_entry"),
+                2
+            ),
+        ],
+        "the complexity arm passed on rows it measured from the fixture's own sources"
     );
 }
 

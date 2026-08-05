@@ -125,7 +125,7 @@ impl ActorCapture {
     /// bound rule resolves it itself, and resolving it here as well would let
     /// this family and the rule that decides its limit name two different
     /// actors for one document.
-    fn actor_inputs(&self, path: &str) -> Result<ActorInputs, CoreInputError> {
+    pub(crate) fn actor_inputs(&self, path: &str) -> Result<ActorInputs, CoreInputError> {
         let inputs = ActorInputs::new(path).map_err(|error| {
             CoreInputError::new(format!("actor provenance for {path:?}: {error}"))
         })?;

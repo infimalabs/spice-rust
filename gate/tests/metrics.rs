@@ -1,14 +1,15 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use gate::metrics::{
     EvidenceState, LatchBinding, MagicFinding, MetricEvidence, MetricId, MetricKey,
     MetricMeasurement, MetricParity, MetricReport, MetricStateBinding, MetricUnit, ParseError,
-    ParserEvidence, ParserId, ParserMode, PredecessorMetricObservation, PredecessorMetricResult,
+    ParserEvidence, ParserId, PredecessorMetricObservation, PredecessorMetricResult,
     ResolvedMetricRule, RuleBinding, STRUCTURAL_ARMS, STRUCTURAL_METRICS, StructuralArmEvidence,
-    compare_predecessor_metric, measure_file_shape, measure_repository_document, parse_lizard_csv,
-    resolve_magic_metric, resolve_metric_rule, scan_magic_regressions, scan_markdown_link_case,
+    compare_predecessor_metric, measure_complexity, measure_file_shape,
+    measure_repository_document, resolve_magic_metric, resolve_metric_rule, scan_magic_regressions,
+    scan_markdown_link_case,
 };
 use gate::state::{ActorInputs, CurrentState, LatchKind, PredecessorSources, RenameMap};
 use gate::{
@@ -90,15 +91,18 @@ fn declarations_freeze_ids_units_parsers_scopes_and_order() {
         "repo-doc owns document-character enforcement"
     );
     let complexity = STRUCTURAL_ARMS[1];
-    assert_eq!(complexity.parser().mode(), ParserMode::External);
-    let lizard = complexity
-        .parser()
-        .tool()
-        .expect("complexity declares lizard");
-    assert_eq!(lizard.program(), "lizard");
-    assert_eq!(lizard.version_arguments(), ["--version"]);
-    assert_eq!(lizard.exact_version(), "1.23.0");
-    assert_eq!(lizard.analysis_arguments(), ["--csv"]);
+    assert_eq!(
+        complexity.parser().id(),
+        ParserId::TreeSitterComplexityV1,
+        "complexity is measured by the vendored grammars, not an external tool"
+    );
+    assert!(
+        complexity
+            .scope()
+            .exclusions()
+            .contains(&"source classes with no vendored grammar"),
+        "a selected class this build cannot parse is excluded by name"
+    );
     assert!(
         STRUCTURAL_ARMS[0]
             .scope()
@@ -107,8 +111,14 @@ fn declarations_freeze_ids_units_parsers_scopes_and_order() {
     );
 }
 
+/// Both doors bind a measurement to the parser its own arm declares.
+///
+/// The two metrics are crossed rather than each tested against a made-up parser
+/// identity, because a wrong identity that names no arm at all would be refused
+/// by anything that checks the field is populated. Naming the *other* arm's real
+/// parser is what makes the check specific to this metric's declaration.
 #[test]
-fn measured_parser_evidence_binds_mode_tool_version_and_executable_identity() {
+fn measured_parser_evidence_binds_the_parser_its_arm_declares() {
     let policy = migrate_predecessor_policy("fixtures/metrics.toml", &loadable(SCOPED_POLICY))
         .expect("predecessor policy migrates once");
     let complexity_rule = resolve_metric_rule(
@@ -118,39 +128,16 @@ fn measured_parser_evidence_binds_mode_tool_version_and_executable_identity() {
     )
     .expect("complexity rule resolves");
     let complexity_key = MetricKey::function("src/app.rs", "run").unwrap();
-
-    for parser in [
+    assert_parser_refused_by_both(
+        MetricId::RoutineCcn,
+        complexity_key.clone(),
+        5,
+        "routine_ccn",
         ParserEvidence::Native {
-            parser: ParserId::LizardCsvV1,
+            parser: ParserId::Utf8FileShapeV1,
         },
-        ParserEvidence::External {
-            parser: ParserId::LizardCsvV1,
-            tool: "python-lizard".to_owned(),
-            version: "1.23.0".to_owned(),
-            executable_digest: "sha256:fixture".to_owned(),
-        },
-        ParserEvidence::External {
-            parser: ParserId::LizardCsvV1,
-            tool: "lizard".to_owned(),
-            version: "1.24.0".to_owned(),
-            executable_digest: "sha256:fixture".to_owned(),
-        },
-        ParserEvidence::External {
-            parser: ParserId::LizardCsvV1,
-            tool: "lizard".to_owned(),
-            version: "1.23.0".to_owned(),
-            executable_digest: String::new(),
-        },
-    ] {
-        assert_parser_refused_by_both(
-            MetricId::RoutineCcn,
-            complexity_key.clone(),
-            5,
-            "routine_ccn",
-            parser,
-            &complexity_rule,
-        );
-    }
+        &complexity_rule,
+    );
 
     let file_rule = resolve_metric_rule(
         &policy,
@@ -163,20 +150,14 @@ fn measured_parser_evidence_binds_mode_tool_version_and_executable_identity() {
         MetricKey::path("src/app.rs").unwrap(),
         12,
         "file_loc",
-        ParserEvidence::External {
-            parser: ParserId::Utf8FileShapeV1,
-            tool: "lizard".to_owned(),
-            version: "1.23.0".to_owned(),
-            executable_digest: "sha256:fixture".to_owned(),
+        ParserEvidence::Native {
+            parser: ParserId::TreeSitterComplexityV1,
         },
         &file_rule,
     );
 
-    let pinned = ParserEvidence::External {
-        parser: ParserId::LizardCsvV1,
-        tool: "lizard".to_owned(),
-        version: "1.23.0".to_owned(),
-        executable_digest: "sha256:fixture".to_owned(),
+    let declared = ParserEvidence::Native {
+        parser: ParserId::TreeSitterComplexityV1,
     };
     MetricEvidence::new(
         MetricId::RoutineCcn,
@@ -185,18 +166,18 @@ fn measured_parser_evidence_binds_mode_tool_version_and_executable_identity() {
             MetricId::RoutineCcn,
             5,
             "routine_ccn",
-            pinned.clone(),
+            declared.clone(),
         )),
     )
-    .expect("the exact declared lizard evidence is measured");
+    .expect("the declared complexity parser is measured");
     MetricStateBinding::new(
         MetricId::RoutineCcn,
         complexity_key,
         5,
-        pinned,
+        declared,
         complexity_rule,
     )
-    .expect("the exact declared lizard evidence enters state binding");
+    .expect("the declared complexity parser enters state binding");
 }
 
 #[test]
@@ -257,40 +238,83 @@ fn native_file_and_document_parsers_preserve_predecessor_counts() {
     ));
 }
 
+/// Two Rust routines that differ in every measured quantity.
+///
+/// Both are named `new`, which is what makes the qualified identity load-bearing
+/// rather than decorative: measured by bare name they would collide, and this
+/// pair is ordinary Rust rather than a contrivance built to trip the parser.
+const COMPLEXITY_RUST: &str = "\
+impl Alpha {
+    fn new(flag: bool) -> Self {
+        if flag && flag {
+            return Self;
+        }
+        Self
+    }
+}
+
+impl Beta {
+    fn new() -> Self {
+        Self
+    }
+}
+";
+
+/// One Python routine, proving the table answers for more than the host grammar.
+const COMPLEXITY_PYTHON: &str = "\
+class Runner:
+    def run(self, items):
+        for item in items:
+            if item:
+                return item
+        return None
+";
+
 #[test]
-fn lizard_csv_is_strict_per_function_and_never_drops_bad_rows() {
-    let stdout = concat!(
-        "15,5,123,2,17,\"run@1-17@/repo/src/app.rs\",",
-        "\"/repo/src/app.rs\",\"run,worker\",signature,1,17\n"
-    );
-    let records = parse_lizard_csv(
-        Path::new("/repo"),
-        &["src/app.rs".to_owned()],
-        stdout.as_bytes(),
-    )
-    .expect("pinned lizard row parses");
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].path(), "src/app.rs");
-    assert_eq!(records[0].function(), "run,worker");
+fn complexity_measures_each_routine_rather_than_reporting_one_shape_for_all() {
+    let rust = measure_complexity("src/app.rs", COMPLEXITY_RUST).expect("Rust source measures");
+    let measured = rust
+        .iter()
+        .map(|routine| (routine.function(), routine.ccn(), routine.length()))
+        .collect::<Vec<_>>();
+    // The pair is asserted whole so a parser that answered with one constant --
+    // every routine complexity 1, or every routine the same length -- cannot
+    // satisfy it. Both quantities differ across these two routines, and both
+    // names differ only in the scope that qualifies them.
     assert_eq!(
-        (records[0].ccn(), records[0].length(), records[0].nloc()),
-        (5, 17, 15)
+        measured,
+        [("Alpha::new", 3, 6), ("Beta::new", 1, 3)],
+        "each routine carries its own decisions and its own span"
+    );
+    for routine in &rust {
+        assert_eq!(routine.path(), "src/app.rs");
+    }
+
+    let python =
+        measure_complexity("src/app.py", COMPLEXITY_PYTHON).expect("Python source measures");
+    assert_eq!(
+        python
+            .iter()
+            .map(|routine| (routine.function(), routine.ccn(), routine.length()))
+            .collect::<Vec<_>>(),
+        [("Runner::run", 3, 5)],
+        "a second vendored grammar measures by the same rules"
     );
 
-    let short = b"15,5,123,2,17,location,src/app.rs\n";
+    let unsupported = measure_complexity("src/app.txt", "")
+        .expect_err("a class with no vendored grammar is named rather than measured as empty");
     assert!(matches!(
-        parse_lizard_csv(Path::new("/repo"), &["src/app.rs".to_owned()], short),
-        Err(ParseError::Malformed { reason, .. }) if reason.contains("expected 11 fields")
+        unsupported,
+        ParseError::Unsupported { ref source_field, .. }
+            if source_field == "policy.languages.complexity"
     ));
-    let duplicate = format!("{stdout}{stdout}");
-    assert!(matches!(
-        parse_lizard_csv(
-            Path::new("/repo"),
-            &["src/app.rs".to_owned()],
-            duplicate.as_bytes()
-        ),
-        Err(ParseError::Collision { .. })
-    ));
+
+    let collision = measure_complexity(
+        "src/dup.rs",
+        "impl Alpha {\n    fn new() {}\n    fn new() {}\n}\n",
+    )
+    .expect_err("two routines that qualify to one identity are refused");
+    assert!(matches!(collision, ParseError::Collision { .. }));
 }
 
 #[test]
@@ -545,11 +569,8 @@ fn state_binding_preserves_function_keys_and_unlimited_document_rules() {
         MetricId::RoutineCcn,
         MetricKey::function("src/app.rs", "run").unwrap(),
         5,
-        ParserEvidence::External {
-            parser: ParserId::LizardCsvV1,
-            tool: "lizard".to_owned(),
-            version: "1.23.0".to_owned(),
-            executable_digest: "sha256:fixture".to_owned(),
+        ParserEvidence::Native {
+            parser: ParserId::TreeSitterComplexityV1,
         },
         function_rule,
     )
@@ -704,7 +725,7 @@ fn state_binding_refuses_a_decision_from_another_variation_policy() {
 fn evidence_vocabulary_is_total_and_release_owned() {
     let states = [
         EvidenceState::Unavailable {
-            reason: "lizard executable absent".to_owned(),
+            reason: "selected complexity source could not be read".to_owned(),
         },
         EvidenceState::predecessor_unsupported(
             "policy.languages.magic",
@@ -716,10 +737,10 @@ fn evidence_vocabulary_is_total_and_release_owned() {
         },
         EvidenceState::Timeout {
             milliseconds: 30_000,
-            reason: "bounded lizard process exceeded runtime".to_owned(),
+            reason: "bounded structural scan exceeded runtime".to_owned(),
         },
         EvidenceState::Failed {
-            reason: "lizard exited without complete CSV".to_owned(),
+            reason: "structural acquisition ended without complete evidence".to_owned(),
             exit_code: Some(2),
         },
         EvidenceState::NotApplicable {
@@ -871,21 +892,11 @@ fn not_applicable_arm(gate: GateId) -> StructuralArmEvidence {
 fn bounded_measurement(metric: MetricId, value: u64, field: &str) -> MetricMeasurement {
     let parser = match metric {
         MetricId::FileLines | MetricId::FileBytes => ParserId::Utf8FileShapeV1,
-        MetricId::RoutineCcn | MetricId::RoutineLength => ParserId::LizardCsvV1,
+        MetricId::RoutineCcn | MetricId::RoutineLength => ParserId::TreeSitterComplexityV1,
         MetricId::RepositoryDocumentCharacters => ParserId::Utf8DocumentCharactersV1,
         _ => unreachable!("fixture helper only builds bounded measurements"),
     };
-    let parser = if parser == ParserId::LizardCsvV1 {
-        ParserEvidence::External {
-            parser,
-            tool: "lizard".to_owned(),
-            version: "1.23.0".to_owned(),
-            executable_digest: "sha256:fixture".to_owned(),
-        }
-    } else {
-        ParserEvidence::Native { parser }
-    };
-    bounded_measurement_with_parser(metric, value, field, parser)
+    bounded_measurement_with_parser(metric, value, field, ParserEvidence::Native { parser })
 }
 
 fn bounded_measurement_with_parser(

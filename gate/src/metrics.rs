@@ -23,7 +23,7 @@ pub use acquire::{MetricAcquisitionError, MetricSource, acquire_metrics};
 pub use baseline::{BaselineCapture, MagicBaselines};
 pub use declaration::{
     ArmDeclaration, KeyShape, MetricDeclaration, MetricId, MetricUnit, ParserDeclaration, ParserId,
-    ParserMode, STRUCTURAL_ARMS, STRUCTURAL_METRICS, ScopeDeclaration, ToolRequirement,
+    STRUCTURAL_ARMS, STRUCTURAL_METRICS, ScopeDeclaration,
 };
 pub use evidence::{
     EvidenceError, EvidenceState, FunctionKey, LatchBinding, MetricEvidence, MetricKey,
@@ -34,10 +34,12 @@ pub use parity::{
     MetricParity, ParityError, PredecessorMetricObservation, PredecessorMetricResult,
     compare_predecessor_metric,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use parser::{ComplexityRoutine, measure_complexity};
 pub use parser::{
-    ComplexityRecord, FileShapeMeasurement, MagicFinding, MarkdownLinkFinding, ParseError,
+    FileShapeMeasurement, MagicFinding, MarkdownLinkFinding, ParseError,
     RepositoryDocumentMeasurement, measure_file_shape, measure_repository_document,
-    parse_lizard_csv, scan_magic_regressions, scan_markdown_link_case,
+    scan_magic_regressions, scan_markdown_link_case,
 };
 pub use policy_binding::{
     PolicyBindingError, ResolvedMagicMetric, ResolvedMetricRule, resolve_magic_metric,

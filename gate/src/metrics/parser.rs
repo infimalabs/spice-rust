@@ -1,3 +1,8 @@
+// The vendored grammars this arm parses with are host-only dependencies, so the
+// arm that reads them compiles only where they exist. The declaration naming the
+// parser stays unconditional: what the arm measures is part of the contract on
+// every target, and only the reading of it is host-bound.
+#[cfg(not(target_arch = "wasm32"))]
 mod complexity;
 mod file;
 mod magic;
@@ -8,7 +13,8 @@ use std::fmt;
 
 use super::EvidenceState;
 
-pub use complexity::{ComplexityRecord, parse_lizard_csv};
+#[cfg(not(target_arch = "wasm32"))]
+pub use complexity::{ComplexityRoutine, measure_complexity};
 pub use file::{
     FileShapeMeasurement, RepositoryDocumentMeasurement, measure_file_shape,
     measure_repository_document,

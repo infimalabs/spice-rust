@@ -143,6 +143,29 @@ impl MetricStateBinding {
         .map_err(StateBindingError::Evidence)
     }
 
+    /// Convert one directly decided bound into complete metric evidence.
+    ///
+    /// [`Self::evidence`] is the same conversion for the reconciling route,
+    /// which owns a [`StateDecision`] because it rewrote the ledger. An arm that
+    /// only measures holds the [`BoundDecision`] [`Self::decide`] handed back
+    /// and has no state decision to present, so it converts from that instead.
+    /// Both arrive at [`Self::measurement`], so neither can report a limit the
+    /// other would not.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a decision that disagrees with this binding's metric, value, or
+    /// resolved rule, and refuses evidence its own declaration rejects.
+    pub fn measured(&self, decision: &BoundDecision) -> Result<MetricEvidence, StateBindingError> {
+        let measurement = self.measurement(decision)?;
+        MetricEvidence::new(
+            self.metric,
+            self.key.clone(),
+            EvidenceState::measured(measurement),
+        )
+        .map_err(StateBindingError::Evidence)
+    }
+
     fn measurement(
         &self,
         decision: &BoundDecision,
