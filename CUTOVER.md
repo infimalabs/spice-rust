@@ -17,8 +17,7 @@ CUTOVER_EVIDENCE="$CUTOVER_COMMON/cutover-$CUTOVER_STAMP"
 mkdir -p "$CUTOVER_EVIDENCE"
 cd "$CUTOVER_REPO"
 test -z "$(git status --porcelain)"
-git show HEAD:spice.toml |
-  grep -F '"cargo", "metadata", "--no-deps", "--offline", "--format-version", "1"'
+git diff --exit-code -- spice.toml
 CUTOVER_PINNED=$(git worktree list --porcelain |
 awk '/^worktree / { sub(/^worktree /, ""); print }' |
 while IFS= read -r CUTOVER_WORKTREE; do
@@ -28,6 +27,22 @@ while IFS= read -r CUTOVER_WORKTREE; do
 done | grep -v '^H ' || true)
 printf '%s' "$CUTOVER_PINNED" | tee "$CUTOVER_EVIDENCE/pinned-configuration.txt"
 test -z "$CUTOVER_PINNED"
+spice config show > "$CUTOVER_EVIDENCE/predecessor-config.json"
+python3 - "$CUTOVER_EVIDENCE/predecessor-config.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    config = json.load(source)
+admission = config["effective"]["policy"]["admission"]
+expected = ["cargo", "metadata", "--no-deps", "--offline", "--format-version", "1"]
+assert admission == expected, (admission, expected)
+print(json.dumps(admission))
+PY
+CUTOVER_OLD_HOOKS=$(git config --worktree --get core.hooksPath)
+test -n "$CUTOVER_OLD_HOOKS"
+printf '%s\n' "$CUTOVER_OLD_HOOKS" |
+  tee "$CUTOVER_EVIDENCE/predecessor-hooks-path.txt"
 cargo build --locked -p spice
 target/debug/spice install
 target/debug/spice install --apply=DIGEST_PRINTED_BY_PREVIEW
@@ -36,21 +51,26 @@ shasum -a 256 target/debug/spice .spice/bin/spice | tee "$CUTOVER_EVIDENCE/new-b
 ```
 
 The two hashes must match. Do not run `.spice/bin/spice up` yet: that is the
-forward-only boundary.
+forward-only boundary. The predecessor configuration capture proves the ambient
+Python reader accepts the exact tracked `policy.admission` command before any
+native install or authority mutation. No index bit or alternate working-tree
+document hides the reviewed policy. The hook activation follows installation
+because its three executable inputs are installer-owned assets, but it waits
+until predecessor state is disabled below. It configures only this reviewed
+worktree, which is the one the appliance and operator use.
 
 One tracked `spice.toml` serves both runtimes, so no lane needs an index-level
-parser bridge. The predecessor admits `policy.admission` into its typed
-registry without evaluating it, exactly as it already admits `policy.taste`, so
-its reader accepts the same document the appliance reads natively. An earlier
-revision of this runbook instead had every predecessor-driven lane pin the
-preceding document with `git update-index --skip-worktree`. That pin now only
-hides staleness, and it hides it from the usual instruments: `skip-worktree`
-makes `git status` and `git diff` both report the file clean, and makes
-checkout and merge decline to update it, so a lane left pinned carries stale
-configuration indefinitely, invisibly, and across the cutover. The worktree
-sweep above is therefore spelled with `git ls-files -v`, which is the only one
-of the three that can still see the pin, and it stops the cutover while any
-worktree holds one.
+parser bridge: the predecessor admits `policy.admission` into its typed
+registry without evaluating it, exactly as it already admits `policy.taste`. An
+earlier revision of this runbook instead had every predecessor-driven lane pin
+the preceding document with `git update-index --skip-worktree`. That pin now
+only hides staleness, and it hides it from the instruments above:
+`skip-worktree` makes `git status` and `git diff` both report the file clean,
+and makes checkout and merge decline to update it, so a lane left pinned
+carries stale configuration indefinitely, invisibly, and across the cutover.
+The worktree sweep is therefore spelled with `git ls-files -v`, the only one of
+the three that can still see a pin, and it stops the cutover while any worktree
+holds one.
 
 ## Prove the predecessor is dry
 
@@ -116,15 +136,17 @@ test ! -e "$CUTOVER_COMMON/.spice/data/spicejournal.sqlite3"
 git diff --exit-code -- spice.toml
 target/debug/spice --json config policy.admission |
   tee "$CUTOVER_EVIDENCE/native-admission-policy.json"
-cargo metadata --no-deps --offline --format-version 1 >
-  "$CUTOVER_EVIDENCE/native-admission-metadata.json"
+cargo metadata --no-deps --offline --format-version 1 \
+  > "$CUTOVER_EVIDENCE/native-admission-metadata.json"
+./scripts/install-hooks.sh
+test "$(git config --worktree --get core.hooksPath)" = .spice/git-hooks
 ```
 
 The archive, its checksum, lane identities, process identities, old executable
-identity, staged binary identity, and native admission evidence are the rollback
-record. The journal assertion proves the current authority is absent. The clean
-diff proves the worktree still carries exactly the native policy committed at
-`HEAD`.
+identity, staged binary identity, predecessor configuration and hook path, and
+native admission evidence are the rollback record. The journal assertion proves
+the current authority is absent. The clean diff proves the worktree still
+carries exactly the policy committed at `HEAD`.
 
 ## Start the singular appliance
 
@@ -169,10 +191,26 @@ Rollback is permitted only while
 `$CUTOVER_COMMON/.spice/data/spicejournal.sqlite3` is still absent and `up` has
 never been invoked. In that state, move the saved 0.31.0 entrypoint back to
 `$CUTOVER_OLD_BIN`, move `retired-release-one-state` back to
-`$CUTOVER_COMMON/.spice-rust` when that archived tree exists, and verify both
-archived checksums again. Nothing about the repository configuration is
-restored: the predecessor reads the tracked `spice.toml` as committed, so a
-rolled-back fleet runs on the same document the appliance would have.
+`$CUTOVER_COMMON/.spice-rust` when that archived tree exists, verify the saved
+entrypoint and archive checksums again, and leave the tracked policy unchanged.
+Verify the restored predecessor against that policy and restore its recorded
+Git hook path before returning it to service:
+
+```sh
+cd "$CUTOVER_REPO"
+mv "$CUTOVER_OLD_BIN.pre-spice-0.31.0" "$CUTOVER_OLD_BIN"
+shasum -a 256 -c "$CUTOVER_EVIDENCE/predecessor-binary.sha256"
+shasum -a 256 -c "$CUTOVER_EVIDENCE/predecessor-state.tar.sha256"
+if test -e "$CUTOVER_EVIDENCE/retired-release-one-state"; then
+  mv "$CUTOVER_EVIDENCE/retired-release-one-state" "$CUTOVER_COMMON/.spice-rust"
+  shasum -a 256 -c "$CUTOVER_EVIDENCE/retired-release-one-state.tar.sha256"
+fi
+git diff --exit-code -- spice.toml
+spice config show > /dev/null
+git config --worktree core.hooksPath "$(cat "$CUTOVER_EVIDENCE/predecessor-hooks-path.txt")"
+test "$(git config --worktree --get core.hooksPath)" = \
+  "$(cat "$CUTOVER_EVIDENCE/predecessor-hooks-path.txt")"
+```
 
 If `up` was invoked or the current journal exists, do not restore predecessor
 authority or its entrypoint; diagnose and continue forward with the installed
