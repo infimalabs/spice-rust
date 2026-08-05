@@ -246,7 +246,6 @@ fn missing_evidence_and_a_stale_apply_key_refuse_without_publication() {
         panic!("stale apply did not refuse")
     };
     assert_eq!(refusal.reason, "release::plan-moved");
-    assert!(!refusal.reason.contains("not-landed"));
 
     fs::remove_file(fixture.receipt_path(1)).expect("remove one detached receipt");
 
@@ -258,7 +257,6 @@ fn missing_evidence_and_a_stale_apply_key_refuse_without_publication() {
         panic!("missing evidence did not refuse")
     };
     assert_eq!(refusal.reason, "release::manifest-refused");
-    assert!(!refusal.reason.contains("not-landed"));
     assert_eq!(kind_count(&facts(&fixture), FactKind::ReleasePublished), 0);
     resident.stop(&fixture);
 }
