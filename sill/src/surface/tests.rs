@@ -354,7 +354,6 @@ fn a_reader_inside_the_owner_rewrite_never_finds_an_unheld_lock() {
         true,
     )
     .expect("the record being replaced is written");
-    let spanned = file.metadata().expect("the seeded record measures").len();
     let seeded = read_owner(&file).expect("the seeded record reads");
     assert_eq!(
         guardian_state(seeded.as_ref()),
@@ -383,9 +382,62 @@ fn a_reader_inside_the_owner_rewrite_never_finds_an_unheld_lock() {
         "a reader inside the rewrite found the lock released"
     );
     assert!(
-        file.metadata().expect("the replacement measures").len() >= spanned,
-        "the replacement still covers every byte its predecessor spanned"
+        read_owner(&file)
+            .expect("the replacement is one whole owner record")
+            .is_some(),
+        "the replacement was answered as a released lock"
     );
+}
+
+/// Bytes that are neither a whole owner record nor empty are not a release.
+///
+/// The direct reading pins the distinction at the parser boundary. The public
+/// acquisition then proves the distinction reaches the caller that acts on it:
+/// collapsing the parse error back into `None` makes this call acquire the lock
+/// and turns the fixture red.
+#[test]
+fn a_torn_owner_record_refuses_acquisition_instead_of_spelling_release() {
+    let scratch = Scratch::new("torn-owner");
+    let root = scratch.path().join("locks");
+    fs::create_dir_all(&root).expect("lock root creates");
+    let path = root.join("single.lock");
+    let released = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)
+        .expect("released owner file creates");
+    assert!(
+        read_owner(&released)
+            .expect("an empty owner file reads")
+            .is_none(),
+        "an empty file no longer spells release"
+    );
+    fs::write(&path, br#"{"pid":7,"cwd":"/torn""#).expect("torn owner record writes");
+
+    let torn = read_owner(&released).expect_err("a torn owner record must not spell release");
+    assert_eq!(torn.kind(), std::io::ErrorKind::InvalidData);
+
+    let error = topology(&root)
+        .try_acquire("single", None)
+        .expect_err("a torn owner record must stop acquisition");
+    match error {
+        LockSurfaceError::Acquire {
+            path: refused,
+            source,
+        } => {
+            assert_eq!(refused, path);
+            assert_eq!(source.kind(), std::io::ErrorKind::InvalidData);
+            assert!(
+                source
+                    .to_string()
+                    .contains("neither empty nor a whole record"),
+                "the refusal did not name the third record state: {source}"
+            );
+        }
+        other => panic!("a torn owner record reached the wrong refusal: {other}"),
+    }
 }
 
 #[test]
