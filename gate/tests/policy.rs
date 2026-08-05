@@ -422,10 +422,7 @@ fn missing_candidate_context_refuses_instead_of_falling_back() {
     );
 }
 
-#[test]
-fn resolver_order_is_priority_then_specificity_then_earlier_source() {
-    let policy = current_policy(
-        r#"
+const RESOLVER_ORDER_POLICY: &str = r#"
         regex_dialect = "rust-regex-1"
         magic_examine_threshold = 10
         [file_classes]
@@ -514,8 +511,11 @@ fn resolver_order_is_priority_then_specificity_then_earlier_source() {
         kind = "current"
         [rules.bounds.routine_length]
         multiplier = 2.0
-        "#,
-    );
+        "#;
+
+#[test]
+fn resolver_order_is_priority_then_specificity_then_earlier_source() {
+    let policy = current_policy(RESOLVER_ORDER_POLICY);
 
     let priority = policy
         .resolve_bound(

@@ -158,6 +158,7 @@ impl std::error::Error for RimDirectoryError {}
 #[derive(Debug)]
 pub struct ToolchainSource<'a> {
     root: &'a Path,
+    repository: &'a Path,
     rim: RimCapture,
 }
 
@@ -167,6 +168,7 @@ impl<'a> ToolchainSource<'a> {
     pub fn capture(tree: &'a SelectedTree, rim: RimCapture) -> Self {
         Self {
             root: tree.root(),
+            repository: tree.repository(),
             rim,
         }
     }
@@ -175,6 +177,12 @@ impl<'a> ToolchainSource<'a> {
     #[must_use]
     pub const fn root(&self) -> &Path {
         self.root
+    }
+
+    /// Repository that owns stable writable build outputs for this selection.
+    #[must_use]
+    pub const fn repository(&self) -> &Path {
+        self.repository
     }
 
     /// The rim this acquisition resolves and scans on behalf of.
@@ -199,7 +207,14 @@ impl<'a> ToolchainSource<'a> {
 pub fn acquire_toolchain(source: &ToolchainSource<'_>, contract: &Contract) -> Vec<ArmObservation> {
     TOOLCHAIN_ARMS
         .into_iter()
-        .map(|declaration| observe(declaration, source, contract.bounds()))
+        .map(|declaration| {
+            observe(
+                declaration,
+                source,
+                contract.bounds(),
+                contract.environment_names(),
+            )
+        })
         .collect()
 }
 
@@ -207,7 +222,11 @@ fn observe(
     declaration: ToolchainDeclaration,
     source: &ToolchainSource<'_>,
     bounds: &Bounds,
+    environment_names: &[String],
 ) -> ArmObservation {
+    if let Some(analysis) = analyze::before_tools(declaration, source.root()) {
+        return observation(declaration, analysis, Vec::new());
+    }
     let tools: Vec<ToolEvidence> = declaration
         .tools
         .iter()
@@ -218,14 +237,36 @@ fn observe(
         reason,
         findings,
         exit_code,
-    } = examine(declaration, source, bounds, &tools);
+    } = examine(declaration, source, bounds, environment_names, &tools);
+    let tools = if matches!(outcome, ArmOutcome::NotApplicable | ArmOutcome::Excluded) {
+        Vec::new()
+    } else {
+        tools
+    };
+    observation(
+        declaration,
+        Analysis {
+            outcome,
+            reason,
+            findings,
+            exit_code,
+        },
+        tools,
+    )
+}
+
+fn observation(
+    declaration: ToolchainDeclaration,
+    analysis: Analysis,
+    tools: Vec<ToolEvidence>,
+) -> ArmObservation {
     ArmObservation {
         gate_id: declaration.id,
-        outcome,
-        reason,
+        outcome: analysis.outcome,
+        reason: analysis.reason,
         tools,
-        findings,
-        exit_code,
+        findings: analysis.findings,
+        exit_code: analysis.exit_code,
     }
 }
 
@@ -240,6 +281,7 @@ fn examine(
     declaration: ToolchainDeclaration,
     source: &ToolchainSource<'_>,
     bounds: &Bounds,
+    environment_names: &[String],
     tools: &[ToolEvidence],
 ) -> Analysis {
     if let Some(refusal) = refusal(declaration, tools) {
@@ -256,6 +298,7 @@ fn examine(
             GateId::CanvasWebTypecheck => analyze::canvas_web_typecheck(
                 declaration,
                 source.root,
+                source.repository,
                 bounds,
                 &resolved_programs(declaration, tools),
             ),
@@ -264,7 +307,9 @@ fn examine(
             GateId::JavascriptUnused => analyze::javascript_unused(declaration, source.root),
             GateId::CsharpUnusedCandidates => analyze::csharp_unused(declaration, source.root),
             GateId::EnvPolicy => analyze::env_policy(declaration, source.root, source.changes()),
-            GateId::EnvNameLedger => analyze::env_name_ledger(declaration, source.root),
+            GateId::EnvNameLedger => {
+                analyze::env_name_ledger(declaration, source.root, environment_names)
+            }
             id => Analysis::terminal(
                 ArmOutcome::ParseFailure,
                 format!(

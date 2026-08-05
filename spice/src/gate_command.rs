@@ -7,30 +7,28 @@
 use std::path::Path;
 
 use gate::{
-    CampReport, GateReport, KillReport, ReportMutationMovement, Selector, Standing, Verdict,
+    BatteryReceipt, BatteryReport, CampReport, KillReport, ReportMutationMovement, Selector,
 };
+#[cfg(test)]
+use gate::{GateReport, Standing};
 use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
 use spice::repository::Repository;
 
 /// Run the ordinary gate against the captured index or one selected commit.
-pub(crate) fn run(matches: &clap::ArgMatches) -> Outcome<GateReport> {
+pub(crate) fn run(matches: &clap::ArgMatches) -> Outcome<BatteryReport> {
     let selector = matches
         .get_one::<String>("at")
         .map_or_else(Selector::staged, |revision| {
             Selector::revision(revision.clone())
         });
-    let selected = match SelectedContract::capture(selector) {
-        Ok(selected) => selected,
-        Err(failure) => return failure.outcome(),
-    };
-    let result = selected
-        .contract
-        .adjudicate(selected.root())
-        .map(|current| current.report());
-    run_report(result)
+    match spice::gate::run(selector) {
+        Ok(report) => direct(report),
+        Err(error) => battery_failure(error),
+    }
 }
 
+#[cfg(test)]
 fn run_report(result: Result<GateReport, gate::RunError>) -> Outcome<GateReport> {
     let report = match result {
         Ok(report) => report,
@@ -46,6 +44,24 @@ fn run_report(result: Result<GateReport, gate::RunError>) -> Outcome<GateReport>
         });
     }
     direct(report)
+}
+
+/// Run the release-scoped native pre-commit battery without command recursion.
+pub(crate) fn pre_commit() -> Outcome<BatteryReport> {
+    match spice::gate::run(Selector::staged()) {
+        Ok(report) if report.admits() => direct(report),
+        Ok(report) => Outcome::Refusal(Refusal {
+            reason: "gate::battery-regressed".to_owned(),
+            witness: Some(report.gate_set().to_string()),
+            expected: Some("every canonical Rust battery result to admit publication".to_owned()),
+            observed: report
+                .encode()
+                .ok()
+                .and_then(|bytes| String::from_utf8(bytes).ok()),
+            remedy: "repair the typed failing results; never launch a predecessor gate".to_owned(),
+        }),
+        Err(error) => battery_failure(error),
+    }
 }
 
 /// Audit the compiled shared bound without changing a tracked floor.
@@ -101,15 +117,29 @@ fn kill_report(report: KillReport) -> Outcome<KillReport> {
 }
 
 /// Freshly adjudicate the captured index and return its complete receipt.
-pub(crate) fn receipt() -> Outcome<Verdict> {
-    let selected = match SelectedContract::capture(Selector::staged()) {
-        Ok(selected) => selected,
-        Err(failure) => return failure.outcome(),
-    };
-    match selected.contract.adjudicate(selected.root()) {
-        Ok(current) => direct(current.receipt().clone()),
-        Err(error) => Failure::run("gate::receipt-refused", error).outcome(),
+pub(crate) fn receipt() -> Outcome<BatteryReceipt> {
+    match spice::gate::receipt(Selector::staged()) {
+        Ok(receipt) => direct(receipt),
+        Err(error) => battery_failure(error),
     }
+}
+
+fn battery_failure<B>(error: spice::gate::RunError) -> Outcome<B> {
+    if error.is_fault() {
+        return Outcome::Fault(Fault {
+            class: FaultClass::Environment,
+            reason: error.reason().to_owned(),
+            detail: error.detail().to_owned(),
+        });
+    }
+    Outcome::Refusal(Refusal {
+        reason: error.reason().to_owned(),
+        witness: None,
+        expected: Some("one complete canonical Rust battery capture".to_owned()),
+        observed: Some(error.detail().to_owned()),
+        remedy: "repair the named capture input; the Rust battery is the sole execution path"
+            .to_owned(),
+    })
 }
 
 fn direct<B>(body: B) -> Outcome<B> {

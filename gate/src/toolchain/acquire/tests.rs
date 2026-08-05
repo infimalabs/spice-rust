@@ -80,6 +80,7 @@ mod tests {
         ) -> ToolEvidence {
             let source = ToolchainSource {
                 root: &self.tree,
+                repository: &self.root,
                 rim: RimCapture::new(
                     self.rim.clone(),
                     Some(OsString::from(search_path)),

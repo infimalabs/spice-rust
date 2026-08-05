@@ -149,6 +149,45 @@ mod tests {
     }
 
     #[test]
+    fn canvas_routes_generated_bytes_outside_the_selected_tree() {
+        let fixture = CanvasFixture::new("external-output", true);
+        let cargo = fixture.script(
+            "cargo",
+            concat!(
+                "[ -d \"$CARGO_TARGET_DIR\" ] || exit 41\n",
+                "[ -d \"$CARGO_BUILD_BUILD_DIR\" ] || exit 43\n",
+                "printf cargo > \"$CARGO_TARGET_DIR/proof\"\n",
+                "printf build > \"$CARGO_BUILD_BUILD_DIR/proof\"\n",
+                "exit 0",
+            ),
+        );
+        let trunk = fixture.script(
+            "trunk",
+            concat!(
+                "[ -d \"$TRUNK_BUILD_DIST\" ] || exit 42\n",
+                "printf trunk > \"$TRUNK_BUILD_DIST/proof\"\n",
+                "exit 0",
+            ),
+        );
+
+        let analysis = fixture.analyze(&cargo, &trunk, &canvas_exit_bounds());
+
+        assert_eq!(analysis.outcome, ArmOutcome::Passed, "{}", analysis.reason);
+        assert!(!fixture.root.join("target").exists());
+        assert!(!fixture.root.join("app/dist").exists());
+        assert!(fixture.output.join("target/xtask-app/proof").is_file());
+        assert!(
+            fixture
+                .output
+                .join("target/xtask-app-build/proof")
+                .is_file()
+        );
+        let mut workspace_name = fixture.root.file_name().unwrap().to_os_string();
+        workspace_name.push(".spice-canvas-analysis");
+        assert!(!fixture.root.with_file_name(workspace_name).exists());
+    }
+
+    #[test]
     fn canvas_applicability_refuses_before_either_analysis_runs() {
         let fixture = CanvasFixture::new("not-applicable", false);
         let cargo = fixture.script("cargo", "exit 99");
@@ -434,6 +473,7 @@ mod tests {
                 env_name_ledger_with(
                     declaration(GateId::EnvNameLedger).expect("env-name-ledger declaration"),
                     &fixture.root,
+                    &[],
                     refused_source,
                 ),
             ),
@@ -488,6 +528,7 @@ mod tests {
 
     struct CanvasFixture {
         root: PathBuf,
+        output: PathBuf,
         log: PathBuf,
     }
 
@@ -501,6 +542,11 @@ mod tests {
             if root.exists() {
                 fs::remove_dir_all(&root).expect("remove stale canvas fixture");
             }
+            let output = root.with_extension("output");
+            if output.exists() {
+                fs::remove_dir_all(&output).expect("remove stale canvas output fixture");
+            }
+            fs::create_dir(&output).expect("create canvas output fixture");
             fs::create_dir_all(root.join("app/src")).expect("create canvas fixture tree");
             fs::write(root.join("app/src/lib.rs"), "pub fn canvas() {}\n")
                 .expect("write canvas source");
@@ -511,7 +557,7 @@ mod tests {
                     .expect("write canvas entrypoint");
             }
             let log = root.join("calls.log");
-            Self { root, log }
+            Self { root, output, log }
         }
 
         fn script(&self, name: &str, body: &str) -> PathBuf {
@@ -538,6 +584,7 @@ mod tests {
             canvas_web_typecheck(
                 declaration(GateId::CanvasWebTypecheck).expect("canvas arm is declared"),
                 &self.root,
+                &self.output,
                 bounds,
                 &programs,
             )
@@ -559,6 +606,7 @@ mod tests {
     impl Drop for CanvasFixture {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.root).expect("remove canvas fixture");
+            fs::remove_dir_all(&self.output).expect("remove canvas output fixture");
         }
     }
 

@@ -500,9 +500,59 @@ impl CommandKind {
 
     /// The wire spelling of this command.
     ///
-    /// This match is exhaustive, so a new variant must state its spelling.
+    /// The outer partition is exhaustive, so a new variant must state which
+    /// closed registry section owns its spelling. The section matches remain
+    /// short enough to review as bounded tables.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::BoardRead
+            | Self::BoardGraph
+            | Self::BoardHandout
+            | Self::DocLedger
+            | Self::TaskAdd
+            | Self::TaskOopsAdd
+            | Self::TaskEdit
+            | Self::TaskNote
+            | Self::TaskDefer
+            | Self::TaskWake
+            | Self::TaskDepends
+            | Self::TaskPhase
+            | Self::TaskDone
+            | Self::TaskReview
+            | Self::TaskAssign => self.board_spelling(),
+            Self::ClaimWin
+            | Self::ClaimCarry
+            | Self::ClaimRenew
+            | Self::ClaimFree
+            | Self::ClaimLapse
+            | Self::DocApply
+            | Self::SteerSend
+            | Self::SteerInbox
+            | Self::SteerResend
+            | Self::SteerDispose
+            | Self::SteerCancel
+            | Self::ConsentRead
+            | Self::ConsentPolicy
+            | Self::ConsentDecide => self.coordination_spelling(),
+            Self::TrustPend
+            | Self::TrustGrant
+            | Self::TrustRevoke
+            | Self::LaneRead
+            | Self::LaneSeat
+            | Self::LaneState
+            | Self::LaneRecall
+            | Self::TasteRecord
+            | Self::CanaryRecognize
+            | Self::VendorRecognize
+            | Self::CommitRecognize
+            | Self::ProofRecognize
+            | Self::ReleasePublish
+            | Self::UpChange => self.runtime_spelling(),
+        }
+    }
+
+    const fn board_spelling(self) -> &'static str {
         match self {
             Self::BoardRead => "board::read",
             Self::BoardGraph => "board::graph",
@@ -519,6 +569,12 @@ impl CommandKind {
             Self::TaskDone => "task::done",
             Self::TaskReview => "task::review",
             Self::TaskAssign => "task::assign",
+            _ => panic!("command spelling partition is closed"),
+        }
+    }
+
+    const fn coordination_spelling(self) -> &'static str {
+        match self {
             Self::ClaimWin => "claim::win",
             Self::ClaimCarry => "claim::carry",
             Self::ClaimRenew => "claim::renew",
@@ -533,6 +589,12 @@ impl CommandKind {
             Self::ConsentRead => "consent::read",
             Self::ConsentPolicy => "consent::policy",
             Self::ConsentDecide => "consent::decide",
+            _ => panic!("command spelling partition is closed"),
+        }
+    }
+
+    const fn runtime_spelling(self) -> &'static str {
+        match self {
             Self::TrustPend => "trust::pend",
             Self::TrustGrant => "trust::grant",
             Self::TrustRevoke => "trust::revoke",
@@ -547,6 +609,7 @@ impl CommandKind {
             Self::ProofRecognize => "proof::recognize",
             Self::ReleasePublish => "release::publish",
             Self::UpChange => "up::change",
+            _ => panic!("command spelling partition is closed"),
         }
     }
 

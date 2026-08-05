@@ -56,11 +56,57 @@ fn a_non_canonical_uuid_is_refused_by_the_decoder_too() {
 /// Where each class sits in the sweep below.
 ///
 /// The sweep is a hand-written array, and on its own an array goes stale in
-/// silence: add a variant, forget the line, and every domain test keeps passing
-/// while covering one class less. This match is the half the compiler checks. A
-/// new variant fails to compile here first, and the arm it forces names the
-/// index the sweep then has to fill.
+/// silence. The outer match is exhaustive, so a new variant must first select
+/// one bounded section; the section tables then pin its exact index.
 const fn position(domain: Domain) -> usize {
+    match domain {
+        Domain::BoardDocument
+        | Domain::BoardTaskIdentity
+        | Domain::BoardBarrier
+        | Domain::ConfigLocal
+        | Domain::ConfigPlan
+        | Domain::JournalBackupManifest
+        | Domain::JournalBackupMember
+        | Domain::JournalRestorePlan
+        | Domain::DistTargetPayload
+        | Domain::DistArtifact
+        | Domain::InstallArtifact
+        | Domain::InstallPlan
+        | Domain::DistPins
+        | Domain::DistInventory
+        | Domain::DistSourceCommit => early_position(domain),
+        Domain::DistReleaseManifest
+        | Domain::DistReleaseNotes
+        | Domain::DistReleasePlan
+        | Domain::ProofBattery
+        | Domain::ProofReplayV2
+        | Domain::ProofReceiptV2
+        | Domain::ProofNativeRunner
+        | Domain::ProofNativeClosureFile
+        | Domain::ProofNativeClosure
+        | Domain::GateFile
+        | Domain::GateTree
+        | Domain::GateSet
+        | Domain::GatePolicy
+        | Domain::GateBounds
+        | Domain::GateBaseline => middle_position(domain),
+        Domain::GateTool
+        | Domain::GateInventory
+        | Domain::GateMeasurement
+        | Domain::GateReceipt
+        | Domain::GateStateLedger
+        | Domain::GateStateReceipt
+        | Domain::ConfigExecutableSurface
+        | Domain::TaskArtifactPayload
+        | Domain::TaskArtifactStore
+        | Domain::GateBatteryManifest
+        | Domain::GateBatteryReport
+        | Domain::GateBatteryReceipt
+        | Domain::GateConfiguration => late_position(domain),
+    }
+}
+
+const fn early_position(domain: Domain) -> usize {
     match domain {
         Domain::BoardDocument => 0,
         Domain::BoardTaskIdentity => 1,
@@ -77,6 +123,12 @@ const fn position(domain: Domain) -> usize {
         Domain::DistPins => 12,
         Domain::DistInventory => 13,
         Domain::DistSourceCommit => 14,
+        _ => panic!("domain position partition is closed"),
+    }
+}
+
+const fn middle_position(domain: Domain) -> usize {
+    match domain {
         Domain::DistReleaseManifest => 15,
         Domain::DistReleaseNotes => 16,
         Domain::DistReleasePlan => 17,
@@ -92,6 +144,12 @@ const fn position(domain: Domain) -> usize {
         Domain::GatePolicy => 27,
         Domain::GateBounds => 28,
         Domain::GateBaseline => 29,
+        _ => panic!("domain position partition is closed"),
+    }
+}
+
+const fn late_position(domain: Domain) -> usize {
+    match domain {
         Domain::GateTool => 30,
         Domain::GateInventory => 31,
         Domain::GateMeasurement => 32,
@@ -105,6 +163,7 @@ const fn position(domain: Domain) -> usize {
         Domain::GateBatteryReport => 40,
         Domain::GateBatteryReceipt => 41,
         Domain::GateConfiguration => 42,
+        _ => panic!("domain position partition is closed"),
     }
 }
 

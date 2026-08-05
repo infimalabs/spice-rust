@@ -18,7 +18,10 @@ use wire::{Digest, Domain};
 
 mod support;
 
-use support::{Tree, contract_repository, git_commit};
+use support::{
+    Tree, contract_repository, fixture_column, git_commit, inapplicable_without_tools,
+    set_environment_names,
+};
 
 /// The version every stub reports when it is asked to be wrong.
 const DRIFTED_VERSION: &str = "cargo 0.0.0 (0000000000 1970-01-01)";
@@ -213,6 +216,9 @@ fn a_program_absent_from_the_captured_search_path_is_unavailable_with_missing_ev
             );
             continue;
         }
+        if inapplicable_without_tools(declaration, observation) {
+            continue;
+        }
         assert_eq!(
             observation.outcome,
             ArmOutcome::ToolUnavailable,
@@ -267,6 +273,9 @@ fn a_declared_program_that_refuses_its_probe_is_unavailable_and_not_missing() {
 
     for (declaration, observation) in TOOLCHAIN_ARMS.into_iter().zip(&observations) {
         if declaration.tools().is_empty() {
+            continue;
+        }
+        if inapplicable_without_tools(declaration, observation) {
             continue;
         }
         assert_eq!(
@@ -333,6 +342,9 @@ fn a_program_that_leaves_its_exact_version_contract_is_unsupported_version() {
     );
 
     for (declaration, observation) in TOOLCHAIN_ARMS.into_iter().zip(&observations) {
+        if inapplicable_without_tools(declaration, observation) {
+            continue;
+        }
         let drifted = declaration
             .tools()
             .iter()
@@ -1100,6 +1112,7 @@ fn acquired(
                     ArmOutcome::Unsupported
                         | ArmOutcome::ToolUnavailable
                         | ArmOutcome::UnsupportedVersion
+                        | ArmOutcome::NotApplicable
                 ),
                 "{} has no compiled analysis and answered {:?} anyway",
                 declaration.id().as_str(),
@@ -1116,9 +1129,11 @@ fn acquired(
             "{} reported no cause",
             declaration.id().as_str()
         );
+        let expected_tools =
+            usize::from(!observation.outcome.is_skip()) * declaration.tools().len();
         assert_eq!(
             observation.tools.len(),
-            declaration.tools().len(),
+            expected_tools,
             "{} dropped or invented an evidence row",
             declaration.id().as_str()
         );
@@ -1145,6 +1160,7 @@ fn acquired(
 /// captured tree has to be a package Cargo will actually open.
 fn scanning_repository(label: &str, source: &str, prose: &str) -> Tree {
     let repository = contract_repository(label);
+    set_environment_names(&repository, &[]);
     repository.write(
         "Cargo.toml",
         "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
@@ -1163,6 +1179,7 @@ fn scanning_repository(label: &str, source: &str, prose: &str) -> Tree {
 /// files, so each environment arm has exactly one thing to say about it.
 fn environment_repository(label: &str) -> Tree {
     let repository = contract_repository(label);
+    set_environment_names(&repository, &[WAIVED_NAME, SHARED_NAME]);
     repository.write(
         "Cargo.toml",
         "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
@@ -1238,6 +1255,8 @@ fn the_environment_policy_arm_reports_only_the_unwaived_access() {
 #[test]
 fn the_environment_ledger_arm_accounts_an_unaccounted_name_at_every_locus() {
     let repository = environment_repository("toolchain-env-ledger");
+    set_environment_names(&repository, &[WAIVED_NAME]);
+    git_commit(&repository, "remove the shared environment declaration");
     let observations = acquired(
         &repository,
         Some(toolchain_directory().into_os_string()),
@@ -1311,14 +1330,6 @@ fn the_environment_ledger_arm_accounts_an_unaccounted_name_at_every_locus() {
     );
 
     measure_toolchain(observations).expect("environment observations are admitted");
-}
-
-/// The one-based character column one needle occupies in one fixture line.
-fn fixture_column(line: &str, needle: &str) -> u32 {
-    let start = line
-        .find(needle)
-        .expect("the fixture line names the needle");
-    u32::try_from(line[..start].chars().count() + 1).expect("a fixture column fits")
 }
 
 /// The stable finding name the profile gives a dynamic Python access.

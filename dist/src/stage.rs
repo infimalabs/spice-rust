@@ -287,17 +287,21 @@ fn validate_relative(path: &Path) -> Result<(), PublishError> {
     }
 }
 
-#[cfg(unix)]
 fn set_mode(path: &Path, mode: u32) -> Result<(), PublishError> {
-    use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
 
-    fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(|source| PublishError::Io {
-        path: path.to_path_buf(),
-        source,
-    })
-}
-
-#[cfg(not(unix))]
-fn set_mode(_path: &Path, _mode: u32) -> Result<(), PublishError> {
-    Ok(())
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(|source| {
+            PublishError::Io {
+                path: path.to_path_buf(),
+                source,
+            }
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, mode);
+        Ok(())
+    }
 }

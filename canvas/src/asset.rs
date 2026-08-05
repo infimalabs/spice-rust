@@ -172,21 +172,23 @@ impl Discovery {
     }
 }
 
-#[cfg(unix)]
 fn set_owner_only(path: &Path) -> Result<(), PublishError> {
-    use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
 
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|source| {
-        PublishError::Io {
-            path: path.to_path_buf(),
-            source,
-        }
-    })
-}
-
-#[cfg(not(unix))]
-fn set_owner_only(_path: &Path) -> Result<(), PublishError> {
-    Ok(())
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|source| {
+            PublishError::Io {
+                path: path.to_path_buf(),
+                source,
+            }
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
 }
 
 /// Discovery encoding or atomic publication failed.

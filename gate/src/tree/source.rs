@@ -169,39 +169,46 @@ impl IndexSnapshot {
     }
 }
 
-#[cfg(target_os = "linux")]
 #[derive(Debug)]
 struct IndexChangeSeal {
+    #[cfg(target_os = "linux")]
     inotify: RefCell<inotify::Inotify>,
+    #[cfg(target_os = "linux")]
     directory_watch: inotify::WatchDescriptor,
 }
 
-#[cfg(target_os = "linux")]
 impl IndexChangeSeal {
     fn start(repo: &gix::Repository) -> Result<Self, TreeError> {
-        let index = repo.index_path();
-        let directory = index.parent().ok_or_else(|| TreeError::IndexUnreadable {
-            path: index.clone(),
-            evidence: "the index has no parent directory".to_owned(),
-        })?;
-        let inotify = inotify::Inotify::init()
-            .map_err(|source| TreeError::io("creating an index change seal", &index, source))?;
-        let mask = inotify::WatchMask::ATTRIB
-            | inotify::WatchMask::CLOSE_WRITE
-            | inotify::WatchMask::CREATE
-            | inotify::WatchMask::DELETE
-            | inotify::WatchMask::DELETE_SELF
-            | inotify::WatchMask::MODIFY
-            | inotify::WatchMask::MOVE
-            | inotify::WatchMask::MOVE_SELF;
-        let directory_watch = inotify
-            .watches()
-            .add(directory, mask)
-            .map_err(|source| TreeError::io("watching the index directory", directory, source))?;
-        Ok(Self {
-            inotify: RefCell::new(inotify),
-            directory_watch,
-        })
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = repo;
+            Ok(Self {})
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let index = repo.index_path();
+            let directory = index.parent().ok_or_else(|| TreeError::IndexUnreadable {
+                path: index.clone(),
+                evidence: "the index has no parent directory".to_owned(),
+            })?;
+            let inotify = inotify::Inotify::init()
+                .map_err(|source| TreeError::io("creating an index change seal", &index, source))?;
+            let mask = inotify::WatchMask::ATTRIB
+                | inotify::WatchMask::CLOSE_WRITE
+                | inotify::WatchMask::CREATE
+                | inotify::WatchMask::DELETE
+                | inotify::WatchMask::DELETE_SELF
+                | inotify::WatchMask::MODIFY
+                | inotify::WatchMask::MOVE
+                | inotify::WatchMask::MOVE_SELF;
+            let directory_watch = inotify.watches().add(directory, mask).map_err(|source| {
+                TreeError::io("watching the index directory", directory, source)
+            })?;
+            Ok(Self {
+                inotify: RefCell::new(inotify),
+                directory_watch,
+            })
+        }
     }
 
     fn watch_files<'a>(
@@ -209,59 +216,75 @@ impl IndexChangeSeal {
         paths: impl Iterator<Item = &'a Path>,
         repo: &gix::Repository,
     ) -> Result<(), TreeError> {
-        let mask = inotify::WatchMask::ATTRIB
-            | inotify::WatchMask::CLOSE_WRITE
-            | inotify::WatchMask::DELETE_SELF
-            | inotify::WatchMask::MODIFY
-            | inotify::WatchMask::MOVE_SELF;
-        for path in paths {
-            self.inotify
-                .borrow()
-                .watches()
-                .add(path, mask)
-                .map_err(|source| {
-                    if source.kind() == io::ErrorKind::NotFound {
-                        TreeError::IndexChanged {
-                            path: repo.index_path(),
-                        }
-                    } else {
-                        TreeError::io("watching an index source", path, source)
-                    }
-                })?;
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (paths, repo);
+            Ok(())
         }
-        Ok(())
+        #[cfg(target_os = "linux")]
+        {
+            let mask = inotify::WatchMask::ATTRIB
+                | inotify::WatchMask::CLOSE_WRITE
+                | inotify::WatchMask::DELETE_SELF
+                | inotify::WatchMask::MODIFY
+                | inotify::WatchMask::MOVE_SELF;
+            for path in paths {
+                self.inotify
+                    .borrow()
+                    .watches()
+                    .add(path, mask)
+                    .map_err(|source| {
+                        if source.kind() == io::ErrorKind::NotFound {
+                            TreeError::IndexChanged {
+                                path: repo.index_path(),
+                            }
+                        } else {
+                            TreeError::io("watching an index source", path, source)
+                        }
+                    })?;
+            }
+            Ok(())
+        }
     }
 
     fn changed(&self, repo: &gix::Repository) -> Result<bool, TreeError> {
-        let mut inotify = self.inotify.borrow_mut();
-        let mut buffer = [0_u8; 16 * 1024];
-        loop {
-            match inotify.read_events(&mut buffer) {
-                Ok(events) => {
-                    for event in events {
-                        if event.mask.intersects(
-                            inotify::EventMask::Q_OVERFLOW
-                                | inotify::EventMask::IGNORED
-                                | inotify::EventMask::UNMOUNT,
-                        ) {
-                            return Ok(true);
-                        }
-                        if event.wd != self.directory_watch {
-                            return Ok(true);
-                        }
-                        if event.name.is_none_or(is_index_source_name) {
-                            return Ok(true);
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = repo;
+            Ok(false)
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let mut inotify = self.inotify.borrow_mut();
+            let mut buffer = [0_u8; 16 * 1024];
+            loop {
+                match inotify.read_events(&mut buffer) {
+                    Ok(events) => {
+                        for event in events {
+                            if event.mask.intersects(
+                                inotify::EventMask::Q_OVERFLOW
+                                    | inotify::EventMask::IGNORED
+                                    | inotify::EventMask::UNMOUNT,
+                            ) {
+                                return Ok(true);
+                            }
+                            if event.wd != self.directory_watch {
+                                return Ok(true);
+                            }
+                            if event.name.is_none_or(is_index_source_name) {
+                                return Ok(true);
+                            }
                         }
                     }
-                }
-                Err(source) if source.kind() == io::ErrorKind::WouldBlock => return Ok(false),
-                Err(source) if source.kind() == io::ErrorKind::Interrupted => continue,
-                Err(source) => {
-                    return Err(TreeError::io(
-                        "reading the index change seal",
-                        &repo.index_path(),
-                        source,
-                    ));
+                    Err(source) if source.kind() == io::ErrorKind::WouldBlock => return Ok(false),
+                    Err(source) if source.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(source) => {
+                        return Err(TreeError::io(
+                            "reading the index change seal",
+                            &repo.index_path(),
+                            source,
+                        ));
+                    }
                 }
             }
         }
@@ -275,29 +298,6 @@ fn is_index_source_name(name: &OsStr) -> bool {
             .as_bytes()
             .strip_prefix(b"sharedindex.")
             .is_some_and(|suffix| !suffix.is_empty())
-}
-
-#[cfg(not(target_os = "linux"))]
-#[derive(Debug)]
-struct IndexChangeSeal;
-
-#[cfg(not(target_os = "linux"))]
-impl IndexChangeSeal {
-    fn start(_repo: &gix::Repository) -> Result<Self, TreeError> {
-        Ok(Self)
-    }
-
-    fn watch_files<'a>(
-        &self,
-        _paths: impl Iterator<Item = &'a Path>,
-        _repo: &gix::Repository,
-    ) -> Result<(), TreeError> {
-        Ok(())
-    }
-
-    fn changed(&self, _repo: &gix::Repository) -> Result<bool, TreeError> {
-        Ok(false)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -677,15 +677,25 @@ struct FileIdentity {
     changed: (i64, i64),
 }
 
-#[cfg(target_family = "unix")]
 fn file_identity(metadata: &fs::Metadata) -> FileIdentity {
-    FileIdentity {
-        device: metadata.dev(),
-        inode: metadata.ino(),
-        mode: metadata.mode(),
-        length: metadata.len(),
-        modified: (metadata.mtime(), metadata.mtime_nsec()),
-        changed: (metadata.ctime(), metadata.ctime_nsec()),
+    #[cfg(target_family = "unix")]
+    {
+        FileIdentity {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            mode: metadata.mode(),
+            length: metadata.len(),
+            modified: (metadata.mtime(), metadata.mtime_nsec()),
+            changed: (metadata.ctime(), metadata.ctime_nsec()),
+        }
+    }
+    #[cfg(not(target_family = "unix"))]
+    {
+        FileIdentity {
+            length: metadata.len(),
+            readonly: metadata.permissions().readonly(),
+            modified: metadata.modified().ok(),
+        }
     }
 }
 
@@ -695,13 +705,4 @@ struct FileIdentity {
     length: u64,
     readonly: bool,
     modified: Option<SystemTime>,
-}
-
-#[cfg(not(target_family = "unix"))]
-fn file_identity(metadata: &fs::Metadata) -> FileIdentity {
-    FileIdentity {
-        length: metadata.len(),
-        readonly: metadata.permissions().readonly(),
-        modified: metadata.modified().ok(),
-    }
 }

@@ -1,7 +1,7 @@
 use gate::{
-    ActorCapture, CORE_GATE_IDS, ClaimCapture, Contract, CoreArmInput, CoreArmReport, CoreEvidence,
-    CoreInputs, CoreObservation, CoreReport, CoreSource, GateId, LatchEntry, Selector,
-    acquire_core, evaluate_core,
+    ActorCapture, ArmObservation, ArmOutcome, CORE_GATE_IDS, ClaimCapture, Contract, CoreArmInput,
+    CoreArmReport, CoreEvidence, CoreInputs, CoreObservation, CoreReport, CoreSource, GateId,
+    LatchEntry, Selector, ToolchainDeclaration, acquire_core, evaluate_core,
 };
 
 use std::fs;
@@ -154,6 +154,48 @@ pub(crate) fn contract_repository(label: &str) -> Tree {
     repository.write("src/app.rs", "fn main() {}\n");
     git_commit(&repository, "fixture contract");
     repository
+}
+
+#[allow(dead_code)]
+pub(crate) fn set_environment_names(repository: &Tree, names: &[&str]) {
+    let path = repository.root.join("spice.toml");
+    let mut document: toml::Value =
+        toml::from_str(&fs::read_to_string(&path).expect("read fixture environment policy"))
+            .expect("parse fixture environment policy");
+    document["policy"]["env_names"] = toml::Value::Array(
+        names
+            .iter()
+            .map(|name| toml::Value::String((*name).to_owned()))
+            .collect(),
+    );
+    repository.write(
+        "spice.toml",
+        &toml::to_string(&document).expect("encode fixture environment policy"),
+    );
+}
+
+#[allow(dead_code)]
+pub(crate) fn inapplicable_without_tools(
+    declaration: ToolchainDeclaration,
+    observation: &ArmObservation,
+) -> bool {
+    if observation.outcome != ArmOutcome::NotApplicable {
+        return false;
+    }
+    assert!(
+        observation.tools.is_empty(),
+        "{} probed tools before its applicability predicate",
+        declaration.id().as_str()
+    );
+    true
+}
+
+#[allow(dead_code)]
+pub(crate) fn fixture_column(line: &str, needle: &str) -> u32 {
+    let start = line
+        .find(needle)
+        .expect("the fixture line names the needle");
+    u32::try_from(line[..start].chars().count() + 1).expect("a fixture column fits")
 }
 
 /// The first candidate this call creates, never one it merely finds.

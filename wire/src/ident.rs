@@ -164,6 +164,54 @@ impl Domain {
     #[must_use]
     pub const fn tag(self) -> &'static str {
         match self {
+            Self::BoardDocument
+            | Self::BoardTaskIdentity
+            | Self::BoardBarrier
+            | Self::ConfigLocal
+            | Self::ConfigPlan
+            | Self::JournalBackupManifest
+            | Self::JournalBackupMember
+            | Self::TaskArtifactPayload
+            | Self::TaskArtifactStore
+            | Self::JournalRestorePlan
+            | Self::DistTargetPayload
+            | Self::DistArtifact
+            | Self::InstallArtifact
+            | Self::InstallPlan
+            | Self::DistPins
+            | Self::DistInventory
+            | Self::DistSourceCommit
+            | Self::DistReleaseManifest
+            | Self::DistReleaseNotes
+            | Self::DistReleasePlan => self.product_tag(),
+            Self::ProofBattery
+            | Self::ProofReplayV2
+            | Self::ProofReceiptV2
+            | Self::ProofNativeRunner
+            | Self::ProofNativeClosureFile
+            | Self::ProofNativeClosure
+            | Self::GateFile
+            | Self::GateTree
+            | Self::GateSet
+            | Self::GatePolicy
+            | Self::GateConfiguration
+            | Self::GateBounds
+            | Self::GateBaseline
+            | Self::GateTool
+            | Self::GateInventory => self.verification_input_tag(),
+            Self::GateMeasurement
+            | Self::GateReceipt
+            | Self::GateBatteryManifest
+            | Self::GateBatteryReport
+            | Self::GateBatteryReceipt
+            | Self::GateStateLedger
+            | Self::GateStateReceipt
+            | Self::ConfigExecutableSurface => self.verification_output_tag(),
+        }
+    }
+
+    const fn product_tag(self) -> &'static str {
+        match self {
             Self::BoardDocument => "spice.board.document.v1",
             Self::BoardTaskIdentity => "spice.board.task-identity.v1",
             Self::BoardBarrier => "spice.board.barrier.v1",
@@ -184,6 +232,12 @@ impl Domain {
             Self::DistReleaseManifest => "spice.dist.release-manifest.v1",
             Self::DistReleaseNotes => "spice.dist.release-notes.v1",
             Self::DistReleasePlan => "spice.dist.release-plan.v1",
+            _ => panic!("digest-domain tag partition is closed"),
+        }
+    }
+
+    const fn verification_input_tag(self) -> &'static str {
+        match self {
             Self::ProofBattery => "spice.proof.battery.v1",
             Self::ProofReplayV2 => "spice.proof.replay.v2",
             Self::ProofReceiptV2 => "spice.proof.receipt.v2",
@@ -199,6 +253,12 @@ impl Domain {
             Self::GateBaseline => "spice.gate.baseline.v1",
             Self::GateTool => "spice.gate.tool.v1",
             Self::GateInventory => "spice.gate.inventory.v1",
+            _ => panic!("digest-domain tag partition is closed"),
+        }
+    }
+
+    const fn verification_output_tag(self) -> &'static str {
+        match self {
             Self::GateMeasurement => "spice.gate.measurement.v1",
             Self::GateReceipt => "spice.gate.receipt.v1",
             Self::GateBatteryManifest => "spice.gate.battery-manifest.v1",
@@ -207,6 +267,7 @@ impl Domain {
             Self::GateStateLedger => "spice.gate.state-ledger.v1",
             Self::GateStateReceipt => "spice.gate.state-receipt.v1",
             Self::ConfigExecutableSurface => "spice.config.executable-surface.v1",
+            _ => panic!("digest-domain tag partition is closed"),
         }
     }
 }
