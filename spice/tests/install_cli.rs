@@ -1,21 +1,20 @@
 #![cfg(unix)]
 
 use std::fs;
+use std::io::{self, Read, Write};
+use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use spice::install::{InstallPreview, InstallReceipt, InstallStatus};
 use wire::Outcome;
-
-#[path = "support/readiness.rs"]
-mod readiness;
-
-use readiness::Readiness;
 
 /// How long a paused install is given to reach its mutation rendezvous.
 ///
@@ -106,6 +105,17 @@ impl Fixture {
         fs::create_dir(&control).expect("create install race rendezvous");
         fs::create_dir(control.join("ready")).expect("create install readiness rendezvous");
         fs::create_dir(control.join("release")).expect("create install release rendezvous");
+        let ready =
+            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind install readiness rendezvous");
+        fs::write(
+            control.join("ready").join("port"),
+            ready
+                .local_addr()
+                .expect("inspect install readiness rendezvous")
+                .port()
+                .to_string(),
+        )
+        .expect("publish install readiness rendezvous");
         if matches!(release, Release::Landed) {
             fs::write(control.join("release").join("continue"), b"continue")
                 .expect("land install release before the wait arms");
@@ -122,8 +132,10 @@ impl Fixture {
         let mut paused = Paused {
             child: Some(child),
             control,
+            ready: Some(ready),
+            release_port: None,
         };
-        paused.wait_until_ready();
+        paused.wait_until_ready(action);
         paused
     }
 
@@ -185,12 +197,11 @@ struct Spoken {
 /// Whether the release a paused install waits for is already in place.
 ///
 /// The disposition is stated at the spawn rather than inferred from the ending,
-/// because it decides what the wait can possibly observe: a release landed
-/// before its directory is watched produces no notification the wait can
-/// receive.
+/// because it decides whether the child observes a prelanded marker or binds an
+/// event receiver before announcing readiness.
 enum Release {
-    /// Nothing has written `release/continue` yet, so the wait arms on an
-    /// absent release and the harness decides the ending.
+    /// No release is present, so the child binds and the harness decides the
+    /// ending by sending one release token.
     Withheld,
     /// `release/continue` is in place before the install is spawned.
     Landed,
@@ -199,37 +210,48 @@ enum Release {
 struct Paused {
     child: Option<Child>,
     control: PathBuf,
+    ready: Option<TcpListener>,
+    release_port: Option<u16>,
 }
 
 impl Paused {
-    fn wait_until_ready(&mut self) {
-        let ready = self.control.join("ready");
-        let rendezvous = ready.join("arrived");
-        let waited = readiness::wait_until_ready(
-            self.child.as_mut().expect("paused child is present"),
-            &ready,
-            RENDEZVOUS,
-            "install mutation rendezvous",
-            || rendezvous.is_file(),
-        );
-        if matches!(waited, Readiness::Exited) {
-            let output = self
-                .child
-                .take()
-                .expect("paused child is present")
-                .wait_with_output()
-                .expect("collect early install exit");
-            panic!(
-                "install exited before rendezvous: status={:?}, stdout={}, stderr={}",
-                output.status.code(),
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
-            );
+    fn wait_until_ready(&mut self, expected_action: &str) {
+        let listener = self.ready.take().expect("readiness listener is present");
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let result = listener.accept().and_then(|(mut stream, _)| {
+                let mut message = String::new();
+                stream.read_to_string(&mut message)?;
+                let Some((action, port)) = message.split_once(' ') else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "install readiness message has no release port",
+                    ));
+                };
+                let port = port
+                    .parse::<u16>()
+                    .map_err(|source| io::Error::new(io::ErrorKind::InvalidData, source))?;
+                Ok((action.to_owned(), port))
+            });
+            let _ = sender.send(result);
+        });
+        match receiver.recv_timeout(RENDEZVOUS) {
+            Ok(Ok((action, _))) if action != expected_action => {
+                panic!("install readiness action moved: expected {expected_action}, got {action}")
+            }
+            Ok(Ok((_action, 0))) => self.release_port = None,
+            Ok(Ok((_action, port))) => self.release_port = Some(port),
+            Ok(Err(error)) => panic!("install readiness rendezvous failed: {error}"),
+            Err(error) => panic!("install readiness rendezvous did not arrive: {error}"),
         }
     }
 
     fn resume(self) -> Spoken {
-        fs::write(self.control.join("release").join("continue"), b"continue")
+        let port = self
+            .release_port
+            .expect("withheld install rendezvous publishes a release port");
+        TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+            .and_then(|mut stream| stream.write_all(b"continue"))
             .expect("release install mutation rendezvous");
         self.collect()
     }
@@ -411,8 +433,8 @@ fn apply_destination_replacement_at_publication_preserves_both_images() {
 /// Nothing writes `release/continue` here, so the only ending reachable is the
 /// horizon the wait carries. That makes the fixture cost the whole ten seconds
 /// by construction, and that cost is the point: it is what distinguishes a
-/// bound that still terminates the wait from one merely written down beside a
-/// wait that now blocks on a filesystem notification.
+/// bound that still terminates the event receiver from one merely written down
+/// beside an unbounded receive.
 #[test]
 fn apply_pause_no_harness_releases_faults_when_its_bound_expires() {
     let fixture = Fixture::new("apply-abandoned-pause");
@@ -451,25 +473,23 @@ fn apply_pause_no_harness_releases_faults_when_its_bound_expires() {
     fixture.assert_state_unchanged();
 }
 
-/// A release already in place when the wait arms is observed, not waited out.
+/// A release already in place is observed before the receiver is armed.
 ///
-/// `release/continue` is written before the install is spawned, so by the time
-/// the wait arms its watcher the file it waits for is already there. The install
-/// then writes `ready/arrived` in a sibling directory; the release directory
-/// remains untouched, so no notification about this release can arrive. The
-/// only thing left that can end this wait is the release test it makes before
-/// its first receive.
+/// `release/continue` is written before the install is spawned. The child sees
+/// that authoritative marker, connects to the harness's readiness receiver,
+/// and never binds a release receiver. The only thing that can produce this
+/// ending is the release test before receiver setup.
 ///
-/// A green run here is a run that reached that wait: `ready/arrived`, which the
-/// harness waits for before collecting, is written immediately before the wait
-/// is entered, so it cannot be reported by an install that never paused at all.
+/// A green run here is a run that reached that wait: the readiness message the
+/// harness accepts before collecting is sent only by an install that reached
+/// the configured pause.
 ///
 /// The fixture adds no horizon cost by the same construction that makes it a
 /// guard: the release is already there, so the wait ends on its first test
-/// rather than on its bound. Move that test below the receive and this install
-/// spends the whole ten seconds and faults instead of applying.
+/// rather than on its bound. Remove that test and this install cannot announce
+/// readiness because no harness can release a receiver that was never needed.
 #[test]
-fn apply_pause_released_before_the_wait_arms_is_observed_without_a_notification() {
+fn apply_pause_released_before_receiver_setup_is_observed() {
     let fixture = Fixture::new("apply-prelanded-pause");
     let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
     let operation_count = preview.plan().operations().len();
