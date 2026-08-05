@@ -410,26 +410,6 @@ mod tests {
         }
     }
 
-    /// Tracked names Doctor accounts for but does not own.
-    ///
-    /// The workspace ledger accounts every environment name the tree references,
-    /// and the installed pre-commit hook unsets Git's local environment before it
-    /// execs verify, which the hooks fixture proves by exporting exactly these
-    /// three. Spice does not own them, so they are named here rather than added
-    /// to [`SpiceVariable`], whose rows are the variables Doctor reports.
-    const FOREIGN_TRACKED_NAMES: &[&str] = &[
-        "GIT_DIR",        // env-policy: allow
-        "GIT_INDEX_FILE", // env-policy: allow
-        "GIT_WORK_TREE",  // env-policy: allow
-    ];
-
-    /// The tracked manifest is Doctor's rows plus the names it does not own.
-    ///
-    /// Stated as two total directions rather than one containment. Removing the
-    /// foreign names has to leave Doctor's vocabulary exactly, in report order,
-    /// so a manifest that dropped a row or reordered one still fails; and every
-    /// foreign name has to be accounted, so removing one from the manifest fails
-    /// here rather than only in the ledger that blocks the commit.
     #[test]
     fn report_environment_rows_are_the_tracked_workspace_vocabulary() {
         let tracked: WorkspacePolicy = toml::from_str(include_str!("../../spice.toml"))
@@ -439,25 +419,7 @@ mod tests {
             .map(|variable| variable.as_str())
             .collect();
 
-        let owned: Vec<_> = tracked
-            .policy
-            .env_names
-            .iter()
-            .map(String::as_str)
-            .filter(|name| !FOREIGN_TRACKED_NAMES.contains(name))
-            .collect();
-        assert_eq!(owned, declared);
-
-        for name in FOREIGN_TRACKED_NAMES {
-            assert!(
-                tracked
-                    .policy
-                    .env_names
-                    .iter()
-                    .any(|tracked| tracked == name),
-                "the tracked vocabulary accounts {name}, which the tree references",
-            );
-        }
+        assert_eq!(tracked.policy.env_names, declared);
     }
 
     #[test]
