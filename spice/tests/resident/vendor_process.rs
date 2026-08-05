@@ -761,7 +761,7 @@ fn malformed_codex_session_refuses_and_reaps_before_lane_publication() {
     assert_eq!(refusal.reason, "lane::session-missing");
     // The refusal returns to the operator without waiting for the vendor's TERM
     // trap, so the stop is observed rather than read at the return.
-    let stop = wait_for_vendor_stop(&vendor_pid, &stopped);
+    let stop = wait_for_vendor_stop(&fixture.cleanup, &vendor_pid, &stopped);
     assert_eq!(stop, "stopped");
     assert!(durable_head(&fixture).lanes.is_empty());
 

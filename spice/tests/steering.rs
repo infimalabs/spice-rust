@@ -7,16 +7,16 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
-use std::time::{Duration, Instant as Monotonic};
+use std::time::Duration;
 
 use bus::{Bus, CommitOutcome};
 use journal::{FactCause, JournalWrite};
 use wire::{Actor, FactKind, Instant, Outcome, Producer};
 
-/// This battery waits for a state to arrive, so it shares the one bound on how
-/// long a wait goes without reading it.
-#[path = "support/recheck.rs"]
-mod recheck;
+#[path = "support/readiness.rs"]
+mod readiness;
+
+use readiness::Readiness;
 
 const REFUSAL_EXIT: i32 = 2;
 const READINESS_DEADLINE: Duration = Duration::from_secs(10);
@@ -106,19 +106,19 @@ impl RunningResident {
     }
 
     fn assert_ready(&mut self, fixture: &Fixture) {
-        let deadline = Monotonic::now() + READINESS_DEADLINE;
-        // Nothing announces the publication, so the loop re-reads the canvas:
-        // a notification that would announce it can be dropped or coalesced,
-        // and waiting only for one spends the whole deadline on a publication
-        // that already happened.
-        while !fixture.canvas().is_file() {
-            self.assert_running();
-            let remaining = deadline.saturating_duration_since(Monotonic::now());
-            if remaining.is_zero() {
-                self.assert_running();
-                panic!("resident readiness failed: {READINESS_DEADLINE:?} spent");
-            }
-            recheck::pause(remaining);
+        let watched = fixture
+            .runtime
+            .parent()
+            .expect("runtime has Git-common parent");
+        match readiness::wait_until_ready(
+            self.child.as_mut().expect("resident child"),
+            watched,
+            READINESS_DEADLINE,
+            "resident discovery",
+            || fixture.canvas().is_file(),
+        ) {
+            Readiness::Ready => {}
+            Readiness::Exited => self.assert_running(),
         }
     }
 
