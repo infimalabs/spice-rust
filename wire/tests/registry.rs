@@ -102,6 +102,40 @@ fn lane_lifecycle_is_admitted_for_the_operator_alone() {
     }
 }
 
+/// The rest of the operator-only moves, held to the same standard for the same
+/// reason: each handler reads an `AdmittedCommand`, which only `Command::admit`
+/// can construct, and that refuses every non-operator actor first. The handlers
+/// therefore carry no authority check of their own, and these rows are what
+/// stands between a lane capability and ruling on consent, moving trust, or
+/// reading the lane table. `UpChange` belongs to the same set and is deliberately
+/// absent here: `lane_cannot_submit_an_operator_command` already refuses a lane
+/// that command through `admit` itself, which pins the row more strongly than
+/// reading it.
+///
+/// Recall is the contrast that explains the shape: its law admits any connected
+/// actor, so its handler is entitled to discriminate between them and keeps the
+/// match this test would otherwise make redundant.
+#[test]
+fn operator_only_moves_are_admitted_for_the_operator_alone() {
+    for kind in [
+        CommandKind::ConsentDecide,
+        CommandKind::TrustGrant,
+        CommandKind::TrustRevoke,
+        CommandKind::LaneRead,
+    ] {
+        assert_eq!(
+            kind.law().authority,
+            Authority::Operator,
+            "{kind} is the resident's single enforcement point for its authority",
+        );
+    }
+    assert_eq!(
+        CommandKind::LaneRecall.law().authority,
+        Authority::Connected,
+        "lane recall admits a lane, which is why its handler still tells actors apart",
+    );
+}
+
 #[test]
 fn every_spelling_is_distinct_and_round_trips() {
     let mut seen = BTreeSet::new();

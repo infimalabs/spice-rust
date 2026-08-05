@@ -6,7 +6,7 @@ use journal::{FactCause, GuardError, JournalGuard, JournalHead, JournalWrite};
 use spice::repository::Repository;
 use wire::intent::{CommandAnswer, ConsentAnswer, ConsentDecide, TrustAnswer, TrustRef};
 use wire::{
-    Actor, CanonicalUuid, Command, CommandKind, Outcome, Producer, Refusal, Reply, ReplyPosition,
+    CanonicalUuid, Command, CommandKind, Outcome, Producer, Refusal, Reply, ReplyPosition,
     SeqRange, TrustHead, TrustState, Witness,
 };
 
@@ -148,7 +148,6 @@ fn admit_decision(
     command: &wire::AdmittedCommand,
     decide: &ConsentDecide,
 ) -> SurfaceResult<(consent::Queue, Vec<Witness>)> {
-    require_operator(command)?;
     if !matches!(decide.answer, wire::Answer::Granted | wire::Answer::Denied) {
         return Err(Outcome::Refusal(Refusal {
             reason: "consent::ruling-invalid".to_owned(),
@@ -245,7 +244,6 @@ fn admit_trust(
     command: &wire::AdmittedCommand,
     reference: &TrustRef,
 ) -> SurfaceResult<TrustAdmission> {
-    require_operator(command)?;
     let (from, to) = trust_transition(command.kind());
     let surface = crate::trust_command::Surface::load(repository)
         .map_err(|error| crate::trust_command::load_failure(&error))?;
@@ -418,19 +416,6 @@ fn committed_answer(
         }),
         Err(outcome) => typed_outcome(outcome),
     }
-}
-
-fn require_operator(command: &wire::AdmittedCommand) -> SurfaceResult<()> {
-    if matches!(command.actor(), Actor::Operator) {
-        return Ok(());
-    }
-    Err(Outcome::Refusal(Refusal {
-        reason: "command::authority".to_owned(),
-        witness: Some("principal".to_owned()),
-        expected: Some("operator".to_owned()),
-        observed: Some(command.actor().to_string()),
-        remedy: "reconnect with the current operator capability".to_owned(),
-    }))
 }
 
 fn trust_transition(kind: CommandKind) -> (TrustState, TrustState) {
