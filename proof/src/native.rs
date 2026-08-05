@@ -586,12 +586,12 @@ exit 70
                 .execute("cargo", &["test".to_owned()])
                 .expect_err("invalid attestation cannot create Execution");
             // Named for the same reason the timed-out fixture below is: this
-            // one assertion answers for five scripts, so a bare pattern would
-            // not even say which script produced the ending it rejected.
+            // one assertion answers for five scripts, so its message carries
+            // the script beside the ending it rejected.
             assert!(
                 matches!(error, NativeError::RunnerNotAttested { .. }),
-                "a runner whose marker is absent, fixed, stale, wrong, or failed \
-                 refused for another reason: {error:?}"
+                "runner script {script:?}, whose marker is absent, fixed, stale, wrong, \
+                 or failed, refused for another reason: {error:?}"
             );
         }
     }
