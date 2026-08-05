@@ -55,9 +55,9 @@ pub(super) fn wait_until_ready(
     ready: impl Fn() -> bool,
 ) -> Readiness {
     // The state winning over the child is deliberate: one that already holds
-    // was reached, whatever the child did afterwards. Answering a child that
-    // is already gone before arming also keeps the exit observer, which names
-    // a live process, from being armed against one that is not.
+    // was reached, whatever the child did afterwards. Answering a reaped child
+    // here also keeps the exit observer, which requires a live pid, from being
+    // armed against a pid that is gone or has already been reused.
     if ready() {
         return Readiness::Ready;
     }
