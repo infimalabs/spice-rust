@@ -446,7 +446,7 @@ fn proved_a_corpus(kind: CheckKind, stdout: &[u8]) -> bool {
         CheckKind::Gate
         | CheckKind::DialectRefusals
         | CheckKind::WaitAndProcess
-        | CheckKind::SupplyRebuild => ran_a_test(stdout),
+        | CheckKind::SupplyRebuild => executed_a_test(stdout),
     }
 }
 
@@ -472,7 +472,7 @@ fn announced_mutants(stdout: &[u8]) -> bool {
     })
 }
 
-/// Whether a clean cargo test run proved it had tests to run.
+/// Whether a clean cargo test run proved it executed a test, not merely announced one.
 ///
 /// A selection that matched nothing is not an error to libtest either, and the
 /// package and target names cargo was given cannot stand in for the reading:
@@ -483,20 +483,33 @@ fn announced_mutants(stdout: &[u8]) -> bool {
 /// ignored; 0 measured; 7 filtered out`, and exits 0 -- the same exit it gives
 /// after `running 7 tests`.
 ///
-/// One target announcing zero is not that vacuity and is not refused: a member
+/// The announcement is not that proof, because it counts the ignored alongside
+/// the executed. Measured on the same harness, `cargo test --locked -p sill
+/// --lib macos_guardian_exact_descriptor_fixture` prints `running 1 test`, then
+/// `test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 39 filtered
+/// out`, and exits 0: one test announced and none run. A target whose tests are
+/// all `#[ignore]`d is the emptiness this refuses, so the summary is read
+/// instead, where the executed and the skipped are finally separate numbers.
+///
+/// Only the passed count is read, because a member that had a failure did not
+/// exit 0 and was classified before reaching here, so on this path the passed
+/// count is the whole of what ran.
+///
+/// One target executing nothing is not that vacuity and is not refused: a member
 /// runs every target its package selects, and 22 of them announce zero in a
 /// passing workspace run, because a crate with no unit tests still has a lib
 /// target to announce. It is the member as a whole that has to have run
 /// something, so one target that ran a test answers for it.
-fn ran_a_test(stdout: &[u8]) -> bool {
+fn executed_a_test(stdout: &[u8]) -> bool {
     String::from_utf8_lossy(stdout).lines().any(|line| {
-        line.strip_prefix("running ")
-            // Counted positionally for the reason above: the harness writes
-            // `running 1 test` and `running 2 tests`, and both are announcements
-            // of a corpus this reading never has to know the spelling of.
-            .and_then(|announced| announced.split_whitespace().next())
-            .and_then(|count| count.parse::<u64>().ok())
-            .is_some_and(|count| count > 0)
+        line.strip_prefix("test result: ")
+            // The status word is `ok.` or `FAILED.`, and the counts follow it
+            // positionally, so this reading never has to know either spelling --
+            // the same reason the corpus count above is taken by position.
+            .and_then(|summary| summary.split_once(". "))
+            .and_then(|(_, counts)| counts.split_whitespace().next())
+            .and_then(|passed| passed.parse::<u64>().ok())
+            .is_some_and(|passed| passed > 0)
     })
 }
 
@@ -716,6 +729,21 @@ mod tests {
     )
     .as_bytes();
 
+    /// The same clean exit after the member's tests were all `#[ignore]`d.
+    ///
+    /// Transcribed from `cargo test --locked -p sill --lib
+    /// macos_guardian_exact_descriptor_fixture` on this tree. The announcement
+    /// counts the ignored test, so the target claims a corpus of one while
+    /// running none of it; only the summary tells the two apart.
+    const ALL_IGNORED_EVIDENCE: &[u8] = concat!(
+        "running 1 test\n",
+        "test spawn::guardian::tests::macos_guardian_exact_descriptor_fixture ",
+        "... ignored, subprocess fixture isolates RLIMIT_NOFILE mutation\n",
+        "test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; ",
+        "39 filtered out; finished in 0.00s\n",
+    )
+    .as_bytes();
+
     /// A member whose package holds more targets than it holds tests.
     ///
     /// The ordinary shape of a real member, transcribed from one passing
@@ -851,6 +879,32 @@ mod tests {
         assert_eq!(verdict.checks()[2].kind(), CheckKind::DialectRefusals);
         assert_eq!(verdict.checks()[2].standing(), CheckStanding::EmptyScope);
         assert_eq!(verdict.checks()[2].standing().code(), Some(5));
+        assert_eq!(verdict.standing(), ProofStanding::Refused);
+    }
+
+    /// A member that announced a test and ran none is the same emptiness.
+    ///
+    /// The wait-and-process member is the one that already carries an
+    /// `#[ignore]`d test, so `#[ignore]` reaching the rest of its target is a
+    /// live shape rather than a hypothetical one. libtest counts the skipped
+    /// test in its announcement and exits 0, so a member read by what it
+    /// announced would be sealed into a receipt naming process supervision that
+    /// no test exercised.
+    #[test]
+    fn a_test_member_whose_tests_were_all_ignored_refuses_the_battery() {
+        let executor = FakeExecutor::new(vec![
+            exited(true, TEST_EVIDENCE),
+            exited(true, MUTATION_EVIDENCE),
+            exited(true, TEST_EVIDENCE),
+            exited(true, ALL_IGNORED_EVIDENCE),
+            exited(true, TEST_EVIDENCE),
+        ]);
+
+        let verdict = run_with(&executor, &Battery::current()).expect("typed all-ignored replay");
+
+        assert_eq!(verdict.checks()[3].kind(), CheckKind::WaitAndProcess);
+        assert_eq!(verdict.checks()[3].standing(), CheckStanding::EmptyScope);
+        assert_eq!(verdict.checks()[3].standing().code(), Some(5));
         assert_eq!(verdict.standing(), ProofStanding::Refused);
     }
 
