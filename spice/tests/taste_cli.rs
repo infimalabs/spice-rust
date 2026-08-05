@@ -4,7 +4,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use bus::{Bus, CommitOutcome};
 use journal::{FactCause, JournalWrite};
@@ -18,7 +17,6 @@ mod readiness;
 
 use readiness::Readiness;
 
-const READY: Duration = Duration::from_secs(10);
 const REFUSAL_EXIT: i32 = 2;
 const ADD_TITLE: &str = concat!(
     "Propose tracked taste addition: Repeated alternate execution branches hide the current ",
@@ -105,7 +103,7 @@ impl Resident {
         match readiness::wait_until_ready(
             resident.child.as_mut().expect("resident child"),
             &fixture.root.join(".git"),
-            READY,
+            readiness::ARRIVAL_HORIZON,
             "resident discovery",
             || fixture.canvas.is_file(),
         ) {

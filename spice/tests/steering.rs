@@ -7,7 +7,6 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
-use std::time::Duration;
 
 use bus::{Bus, CommitOutcome};
 use journal::{FactCause, JournalWrite};
@@ -19,7 +18,6 @@ mod readiness;
 use readiness::Readiness;
 
 const REFUSAL_EXIT: i32 = 2;
-const READINESS_DEADLINE: Duration = Duration::from_secs(10);
 const SESSION_ID: &str = "018f7777-7777-7444-8888-999999999999";
 const SESSION_RECORD: &str =
     r#"{"type":"system","subtype":"init","session_id":"018f7777-7777-7444-8888-999999999999"}"#;
@@ -113,7 +111,7 @@ impl RunningResident {
         match readiness::wait_until_ready(
             self.child.as_mut().expect("resident child"),
             watched,
-            READINESS_DEADLINE,
+            readiness::ARRIVAL_HORIZON,
             "resident discovery",
             || fixture.canvas().is_file(),
         ) {

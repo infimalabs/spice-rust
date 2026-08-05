@@ -31,7 +31,6 @@ mod readiness;
 use readiness::Readiness;
 
 const REFUSAL_EXIT: i32 = 2;
-const READY: Duration = Duration::from_secs(10);
 /// The client bound this battery needs for one durable publication.
 ///
 /// Applying a plan publishes objects, signs receipts, and commits the journal
@@ -114,7 +113,7 @@ impl Resident {
         match readiness::wait_until_ready(
             resident.child.as_mut().expect("resident child"),
             &fixture.root.join(".git"),
-            READY,
+            readiness::ARRIVAL_HORIZON,
             "resident discovery",
             || fixture.canvas.is_file(),
         ) {

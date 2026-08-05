@@ -2,7 +2,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use artifact::{AddRequest, ArtifactAnswer, ArtifactContent, Retention, Store};
 use serde::de::DeserializeOwned;
@@ -13,9 +12,6 @@ use wire::{JournalBackup, JournalRestore, Outcome, TaskHandle};
 mod readiness;
 
 use readiness::Readiness;
-
-/// How long a battery waits for a freshly spawned resident to publish.
-const READY: Duration = Duration::from_secs(10);
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -93,7 +89,7 @@ impl Resident {
         match readiness::wait_until_ready(
             resident.0.as_mut().expect("resident child"),
             &fixture.root.join(".git"),
-            READY,
+            readiness::ARRIVAL_HORIZON,
             "resident discovery",
             || canvas.is_file(),
         ) {

@@ -2,7 +2,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use rusqlite::{Connection, params};
 use serde::de::DeserializeOwned;
@@ -18,9 +17,6 @@ use wire::{
 mod readiness;
 
 use readiness::Readiness;
-
-/// How long a battery waits for a freshly spawned resident to publish.
-const READY: Duration = Duration::from_secs(10);
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -112,7 +108,7 @@ impl RunningResident {
         match readiness::wait_until_ready(
             resident.child.as_mut().expect("resident child"),
             &fixture.root.join(".git"),
-            READY,
+            readiness::ARRIVAL_HORIZON,
             "resident discovery",
             || canvas.is_file(),
         ) {

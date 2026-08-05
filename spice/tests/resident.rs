@@ -21,7 +21,10 @@ use wire::{
 
 const FAULT_EXIT: i32 = 1;
 const REFUSAL_EXIT: i32 = 2;
-const READINESS_DEADLINE: Duration = Duration::from_secs(10);
+/// The longest a client command may take, and the longest a fixture socket
+/// waits while one is in flight. This is not the bound on waiting for a state
+/// to arrive: that one is sized from what announcing an arrival costs and
+/// lives with the wait itself, in [`readiness::ARRIVAL_HORIZON`].
 const CLIENT_DEADLINE_BOUND: Duration = Duration::from_secs(10);
 const LANE_DEADLINE_BOUND: Duration = Duration::from_secs(20);
 const ADVERSARIAL_PEER_LIFE: Duration = Duration::from_secs(7);
@@ -135,7 +138,7 @@ impl RunningResident {
         match readiness::wait_until_ready(
             self.child.as_mut().expect("resident child"),
             watched,
-            READINESS_DEADLINE,
+            readiness::ARRIVAL_HORIZON,
             "resident discovery",
             || fixture.canvas().is_file(),
         ) {
@@ -375,10 +378,10 @@ fn run_deadline_drip(
 ) {
     let (stream, _) = listener.accept().expect("drip resident accepts");
     stream
-        .set_read_timeout(Some(READINESS_DEADLINE))
+        .set_read_timeout(Some(CLIENT_DEADLINE_BOUND))
         .expect("drip resident read timeout");
     stream
-        .set_write_timeout(Some(READINESS_DEADLINE))
+        .set_write_timeout(Some(CLIENT_DEADLINE_BOUND))
         .expect("drip resident write timeout");
     let stream = DripStream { stream, stop };
     let Ok(mut socket) = tungstenite::accept(stream) else {
@@ -446,10 +449,10 @@ fn hold_adversarial_peer_until(stop: &AtomicBool, deadline: Monotonic) {
 fn accept_fake(listener: TcpListener) -> WebSocket<TcpStream> {
     let (stream, _) = listener.accept().expect("fake resident accepts");
     stream
-        .set_read_timeout(Some(READINESS_DEADLINE))
+        .set_read_timeout(Some(CLIENT_DEADLINE_BOUND))
         .expect("fake resident read timeout");
     stream
-        .set_write_timeout(Some(READINESS_DEADLINE))
+        .set_write_timeout(Some(CLIENT_DEADLINE_BOUND))
         .expect("fake resident write timeout");
     tungstenite::accept(stream).expect("fake WebSocket accepts")
 }
@@ -573,10 +576,10 @@ fn open_socket(discovery: &canvas::Discovery) -> WebSocket<TcpStream> {
     let address: SocketAddr = authority.parse().expect("fixture endpoint address");
     let stream = TcpStream::connect(address).expect("fixture socket connects");
     stream
-        .set_read_timeout(Some(READINESS_DEADLINE))
+        .set_read_timeout(Some(CLIENT_DEADLINE_BOUND))
         .expect("fixture read timeout");
     stream
-        .set_write_timeout(Some(READINESS_DEADLINE))
+        .set_write_timeout(Some(CLIENT_DEADLINE_BOUND))
         .expect("fixture write timeout");
     let mut request = format!("ws://{authority}/socket")
         .into_client_request()
@@ -856,7 +859,7 @@ fn wait_for_event<T>(
     if let Some(observed) = observe() {
         return observed;
     }
-    let deadline = Monotonic::now() + READINESS_DEADLINE;
+    let deadline = Monotonic::now() + readiness::ARRIVAL_HORIZON;
     loop {
         let remaining = deadline.saturating_duration_since(Monotonic::now());
         match receiver.recv_timeout(remaining) {
@@ -867,7 +870,10 @@ fn wait_for_event<T>(
             }
             Ok(Err(error)) => panic!("effect observer failed: {error}"),
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                panic!("effect was not observed before {READINESS_DEADLINE:?}")
+                panic!(
+                    "effect was not observed before {:?}",
+                    readiness::ARRIVAL_HORIZON
+                )
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 panic!("effect observer disconnected")

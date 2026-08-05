@@ -374,7 +374,7 @@ fn command_client_process_renders_one_success_across_reconnects() {
     assert!(text.status.success(), "text down failed: {:?}", text.stderr);
     assert_eq!(text.stdout, b"null\n");
     assert!(text.stderr.is_empty());
-    assert!(text_elapsed < READINESS_DEADLINE);
+    assert!(text_elapsed < CLIENT_DEADLINE_BOUND);
 
     let (json, json_elapsed) = fake_down(&fixture, FakeBehavior::Success, true);
     assert!(json.status.success(), "JSON down failed: {:?}", json.stderr);
@@ -382,7 +382,7 @@ fn command_client_process_renders_one_success_across_reconnects() {
         panic!("JSON down must carry the same successful outcome");
     };
     assert!(matches!(reply.position, ReplyPosition::Committed(_)));
-    assert!(json_elapsed < READINESS_DEADLINE);
+    assert!(json_elapsed < CLIENT_DEADLINE_BOUND);
 }
 
 #[test]
@@ -454,7 +454,7 @@ fn command_client_process_fences_replay_loss_and_capability_echo() {
         fault.reason.as_str(),
         "canvas::send-failed" | "canvas::receive-failed" | "canvas::closed-without-answer"
     ));
-    assert!(elapsed < READINESS_DEADLINE);
+    assert!(elapsed < CLIENT_DEADLINE_BOUND);
 
     let (echo, _) = fake_down(&fixture, FakeBehavior::EchoCapability, true);
     assert_eq!(echo.status.code(), Some(FAULT_EXIT));
