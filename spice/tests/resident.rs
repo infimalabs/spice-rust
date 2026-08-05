@@ -974,6 +974,9 @@ use readiness::Readiness;
 #[path = "resident/cases.rs"]
 mod cases;
 
+#[path = "resident/event_wait.rs"]
+mod event_wait;
+
 #[path = "resident/lane_process.rs"]
 mod lane_process;
 
