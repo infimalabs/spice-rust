@@ -104,13 +104,10 @@ impl RunningResident {
     }
 
     fn assert_ready(&mut self, fixture: &Fixture) {
-        let watched = fixture
-            .runtime
-            .parent()
-            .expect("runtime has Git-common parent");
+        fs::create_dir_all(&fixture.runtime).expect("runtime directory");
         match readiness::wait_until_ready(
             self.child.as_mut().expect("resident child"),
-            watched,
+            &fixture.runtime,
             readiness::ARRIVAL_HORIZON,
             "resident discovery",
             || fixture.canvas().is_file(),
