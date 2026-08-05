@@ -91,6 +91,234 @@ fn composed_vendor_launches_cross_the_resident_and_sill_boundary_without_drift()
 }
 
 #[test]
+fn resident_agent_process_receives_both_git_shadow_scopes() {
+    let fixture = Fixture::new("vendor-git-shadow");
+    let capture_dir = fixture.root.join("launch-captures");
+    fs::create_dir_all(&capture_dir).expect("capture directory");
+    let capture_index = fixture.root.join("launch-index");
+    let binary = fixture.root.join("fixture-claude");
+    write_vendor(&binary, &capture_dir, &capture_index, Dialect::Claude);
+    let document = format!(
+        concat!(
+            "[lane]\nlease = \"30s\"\n\n",
+            "[vendor.claude]\n",
+            "binary = {:?}\nmodel = {:?}\neffort = \"xhigh\"\n",
+            "auto_compact_window_tokens = 424242\n",
+        ),
+        binary.display().to_string(),
+        CLAUDE_MODEL,
+    );
+    fs::write(fixture.root.join("spice.toml"), document).expect("vendor configuration");
+    fs::write(
+        fixture.root.join(".gitignore"),
+        "fixture-claude\nlaunch-captures\nlaunch-index\n",
+    )
+    .expect("fixture ignore policy");
+    fixture_git(&fixture.root, &["init", "-b", "main-d"]);
+    fixture_git(&fixture.root, &["config", "user.name", "Spice Tests"]);
+    fixture_git(
+        &fixture.root,
+        &["config", "user.email", "spice@example.test"],
+    );
+    fixture_git(&fixture.root, &["add", ".gitignore", "spice.toml"]);
+    fixture_git(&fixture.root, &["commit", "-m", "fixture baseline"]);
+    fixture_git(&fixture.root, &["branch", "integration"]);
+    fixture_git(
+        &fixture.root,
+        &["commit", "--allow-empty", "-m", "lane head"],
+    );
+    fixture_git(&fixture.root, &["config", "branch.main-d.remote", "origin"]);
+    fixture_git(
+        &fixture.root,
+        &["config", "branch.main-d.merge", "refs/heads/integration"],
+    );
+    let native_config = fixture.root.join(".git/config");
+    let native_before = fs::read(&native_config).expect("native config reads");
+    let mut resident = RunningResident::spawn(&fixture);
+    resident.assert_ready(&fixture);
+
+    let lane = add_lane(&fixture, None, Dialect::Claude);
+    let capture = CapturedLaunch::read(
+        captures(&capture_index, Dialect::Claude)
+            .last()
+            .expect("agent launch captured"),
+    );
+
+    assert_eq!(capture.environment["GIT_CONFIG_COUNT"], "2");
+    assert_eq!(
+        capture.environment["GIT_CONFIG_KEY_0"],
+        "branch.main-d.merge"
+    );
+    assert_eq!(
+        capture.environment["GIT_CONFIG_VALUE_0"],
+        "refs/heads/integration"
+    );
+    assert_eq!(
+        capture.environment["GIT_CONFIG_KEY_1"],
+        "branch.main-d.remote"
+    );
+    assert_eq!(capture.environment["GIT_CONFIG_VALUE_1"], ".");
+    assert_eq!(
+        Path::new(&capture.environment["GIT_CONFIG_SYSTEM"]),
+        fs::canonicalize(fixture.root.join(".git/agent.gitconfig"))
+            .expect("agent Git shadow canonicalizes")
+    );
+    assert_eq!(
+        fixture_git_stdout_with_environment(
+            &fixture.root,
+            &["rev-parse", "--symbolic-full-name", "@{upstream}"],
+            &capture.environment,
+        ),
+        "refs/heads/main-d"
+    );
+    assert_eq!(
+        fixture_git_stdout_with_environment(
+            &fixture.root,
+            &["config", "--get", "branch.main-d.merge"],
+            &capture.environment,
+        ),
+        "refs/heads/integration"
+    );
+    assert_eq!(
+        fixture_git_stdout_with_environment(
+            &fixture.root,
+            &["status", "--short", "--branch"],
+            &capture.environment,
+        ),
+        "## main-d...main-d"
+    );
+    assert_eq!(
+        fs::read(&native_config).expect("native config rereads"),
+        native_before,
+        "agent shadow mutated repository configuration"
+    );
+
+    drain(&fixture, lane);
+    let down = operator(&fixture, &["down"], true);
+    assert!(down.status.success(), "down failed: {:?}", down.stderr);
+    assert!(resident.wait().status.success(), "resident failed");
+}
+
+#[test]
+fn installed_neutral_skill_bootstraps_both_lanes_through_native_surface() {
+    let fixture = Fixture::linked("installed-native-bootstrap");
+    let rig = configure(&fixture);
+    let repository = spice::repository::Repository::discover(&fixture.root)
+        .expect("linked repository discovers");
+    let source_binary = Path::new(env!("CARGO_BIN_EXE_spice"));
+    let plan = spice::install::plan(&repository, Some(source_binary)).expect("install plans");
+    let digest = plan.digest().expect("install plan digests");
+    let receipt =
+        spice::install::apply(&repository, Some(source_binary), &digest).expect("install applies");
+    assert_eq!(receipt.status(), spice::install::InstallStatus::Complete);
+
+    let installed_binary = fixture.root.join(
+        plan.operations()
+            .iter()
+            .find(|operation| operation.asset() == spice::install::Asset::Binary)
+            .expect("binary operation exists")
+            .path(),
+    );
+    let installed_skill = fixture.root.join(
+        plan.operations()
+            .iter()
+            .find(|operation| operation.asset() == spice::install::Asset::Skill)
+            .expect("skill operation exists")
+            .path(),
+    );
+    assert!(installed_binary.is_file(), "installed binary is visible");
+    assert_eq!(
+        installed_skill.strip_prefix(&fixture.root).unwrap(),
+        Path::new(".agents/skills/spice/SKILL.md")
+    );
+    let skill = fs::read_to_string(&installed_skill).expect("installed skill reads");
+    for command in [
+        "spice recall",
+        "spice board",
+        "spice inbox",
+        "spice ack",
+        "spice run --",
+        "spice task next",
+        "spice task done",
+    ] {
+        assert!(
+            skill.contains(command),
+            "installed skill omitted {command:?}"
+        );
+    }
+    for unavailable in ["spice agent", "spice task status"] {
+        assert!(
+            !skill.contains(unavailable),
+            "installed skill named unavailable command {unavailable:?}"
+        );
+    }
+
+    let mut resident = RunningResident::spawn_with(&fixture, &installed_binary);
+    resident.assert_ready(&fixture);
+    let claude = add_lane_with(&fixture, &installed_binary, None, Dialect::Claude);
+    let codex = add_lane_with(
+        &fixture,
+        &installed_binary,
+        Some(&rig.codex_worktree),
+        Dialect::Codex,
+    );
+    let lanes = [(Dialect::Claude, claude), (Dialect::Codex, codex)];
+    assert_launches_with_executable(&fixture, &rig, &lanes, false, &installed_binary);
+
+    let empty_path = fixture.cleanup.join("empty-path");
+    fs::create_dir(&empty_path).expect("empty PATH directory");
+    let native_probe = fixture.cleanup.join("native-probe");
+    fs::write(&native_probe, "#!/bin/sh\nexit 0\n").expect("native probe writes");
+    #[cfg(unix)]
+    fs::set_permissions(&native_probe, fs::Permissions::from_mode(0o700))
+        .expect("native probe becomes executable");
+    for (_, lane) in lanes {
+        for command in ["recall", "board", "inbox"] {
+            let output = lane_command(
+                &fixture,
+                &installed_binary,
+                lane,
+                &empty_path,
+                &[command],
+                true,
+            );
+            assert!(
+                output.status.success(),
+                "installed {command} failed: stdout={:?} stderr={:?}",
+                output.stdout,
+                output.stderr
+            );
+        }
+        let output = lane_command(
+            &fixture,
+            &installed_binary,
+            lane,
+            &empty_path,
+            &[
+                "run",
+                "--",
+                native_probe.to_str().expect("native probe path is UTF-8"),
+            ],
+            false,
+        );
+        assert!(
+            output.status.success(),
+            "installed run failed: stdout={:?} stderr={:?}",
+            output.stdout,
+            output.stderr
+        );
+    }
+
+    for (_, lane) in lanes {
+        drain_with(&fixture, &installed_binary, lane);
+    }
+    assert_processes_stopped(&rig.capture_index, 1);
+    let down = operator_with(&fixture, &installed_binary, &["down"], true);
+    assert!(down.status.success(), "down failed: {:?}", down.stderr);
+    assert!(resident.wait().status.success(), "resident failed");
+}
+
+#[test]
 fn cross_vendor_options_refuse_with_exact_paths_before_any_process_capture() {
     for (dialect, path) in [
         (Dialect::Claude, "vendor.claude.fast_mode"),
@@ -334,18 +562,43 @@ fn write_vendor(binary: &Path, captures: &Path, index: &Path, dialect: Dialect) 
 }
 
 fn add_lane(fixture: &Fixture, worktree: Option<&Path>, dialect: Dialect) -> wire::CanonicalUuid {
+    add_lane_with(
+        fixture,
+        Path::new(env!("CARGO_BIN_EXE_spice")),
+        worktree,
+        dialect,
+    )
+}
+
+fn add_lane_with(
+    fixture: &Fixture,
+    executable: &Path,
+    worktree: Option<&Path>,
+    dialect: Dialect,
+) -> wire::CanonicalUuid {
     let worktree = worktree.map(|path| path.display().to_string());
     let mut arguments = vec!["lane", "add"];
     if let Some(worktree) = worktree.as_deref() {
         arguments.push(worktree);
     }
     arguments.extend(["--vendor", dialect.name()]);
-    let answer = reply_body::<wire::intent::LaneChangeAnswer>(&operator(fixture, &arguments, true));
+    let answer = reply_body::<wire::intent::LaneChangeAnswer>(&operator_with(
+        fixture, executable, &arguments, true,
+    ));
     answer.lane
 }
 
 fn drain(fixture: &Fixture, lane: wire::CanonicalUuid) {
-    let output = operator(fixture, &["lane", "drain", &lane.to_string()], true);
+    drain_with(fixture, Path::new(env!("CARGO_BIN_EXE_spice")), lane);
+}
+
+fn drain_with(fixture: &Fixture, executable: &Path, lane: wire::CanonicalUuid) {
+    let output = operator_with(
+        fixture,
+        executable,
+        &["lane", "drain", &lane.to_string()],
+        true,
+    );
     assert!(output.status.success(), "drain failed: {:?}", output.stderr);
 }
 
@@ -355,7 +608,16 @@ fn wake(fixture: &Fixture, lane: wire::CanonicalUuid) {
 }
 
 fn operator(fixture: &Fixture, arguments: &[&str], json: bool) -> Output {
-    let mut process = Command::new(env!("CARGO_BIN_EXE_spice"));
+    operator_with(
+        fixture,
+        Path::new(env!("CARGO_BIN_EXE_spice")),
+        arguments,
+        json,
+    )
+}
+
+fn operator_with(fixture: &Fixture, executable: &Path, arguments: &[&str], json: bool) -> Output {
+    let mut process = Command::new(executable);
     process.env_remove(spice::agent_launch::SPICE_LANE);
     if json {
         process.arg("--json");
@@ -365,6 +627,28 @@ fn operator(fixture: &Fixture, arguments: &[&str], json: bool) -> Output {
         .current_dir(&fixture.root)
         .output()
         .expect("operator command launches")
+}
+
+fn lane_command(
+    fixture: &Fixture,
+    executable: &Path,
+    lane: wire::CanonicalUuid,
+    path: &Path,
+    arguments: &[&str],
+    json: bool,
+) -> Output {
+    let mut process = Command::new(executable);
+    process
+        .env(spice::agent_launch::SPICE_LANE, lane.to_string())
+        .env("PATH", path);
+    if json {
+        process.arg("--json");
+    }
+    process
+        .args(arguments)
+        .current_dir(&fixture.root)
+        .output()
+        .expect("lane command launches")
 }
 
 #[track_caller]
@@ -387,6 +671,22 @@ fn assert_launches(
     rig: &Rig,
     lanes: &[(Dialect, wire::CanonicalUuid); 2],
     resumed: bool,
+) {
+    assert_launches_with_executable(
+        fixture,
+        rig,
+        lanes,
+        resumed,
+        Path::new(env!("CARGO_BIN_EXE_spice")),
+    );
+}
+
+fn assert_launches_with_executable(
+    fixture: &Fixture,
+    rig: &Rig,
+    lanes: &[(Dialect, wire::CanonicalUuid); 2],
+    resumed: bool,
+    executable: &Path,
 ) {
     let head = durable_head(fixture);
     for (dialect, lane) in lanes {
@@ -412,7 +712,7 @@ fn assert_launches(
         assert_environment(&capture.environment, *dialect, *lane);
         assert_eq!(
             capture.argv,
-            expected_argv(rig, *dialect, *lane, &row.worktree, resumed)
+            expected_argv(rig, *dialect, *lane, &row.worktree, resumed, executable)
         );
     }
 }
@@ -539,19 +839,25 @@ fn expected_argv(
     lane: wire::CanonicalUuid,
     worktree: &str,
     resumed: bool,
+    executable: &Path,
 ) -> Vec<String> {
     match dialect {
-        Dialect::Claude => expected_claude_argv(rig, lane, resumed),
-        Dialect::Codex => expected_codex_argv(rig, worktree, resumed),
+        Dialect::Claude => expected_claude_argv(rig, lane, resumed, executable),
+        Dialect::Codex => expected_codex_argv(rig, worktree, resumed, executable),
     }
 }
 
-fn expected_claude_argv(rig: &Rig, lane: wire::CanonicalUuid, resumed: bool) -> Vec<String> {
-    let executable = env!("CARGO_BIN_EXE_spice");
-    let hook = format!("{} inbox", shell_word(executable));
+fn expected_claude_argv(
+    rig: &Rig,
+    lane: wire::CanonicalUuid,
+    resumed: bool,
+    executable: &Path,
+) -> Vec<String> {
+    let executable = executable.display().to_string();
+    let hook = format!("{} inbox", shell_word(&executable));
     let mcp = format!(
         r#"{{"mcpServers":{{"spice":{{"command":{},"args":["mcp"]}}}}}}"#,
-        json_string(executable),
+        json_string(&executable),
     );
     let settings = format!(
         concat!(
@@ -598,9 +904,9 @@ fn expected_claude_argv(rig: &Rig, lane: wire::CanonicalUuid, resumed: bool) -> 
     argv
 }
 
-fn expected_codex_argv(rig: &Rig, worktree: &str, resumed: bool) -> Vec<String> {
-    let executable = env!("CARGO_BIN_EXE_spice");
-    let hook = format!("{} inbox", shell_word(executable));
+fn expected_codex_argv(rig: &Rig, worktree: &str, resumed: bool, executable: &Path) -> Vec<String> {
+    let executable = executable.display().to_string();
+    let hook = format!("{} inbox", shell_word(&executable));
     let hook_override = format!(
         concat!(
             r#"hooks.PostToolUse=[{{matcher="^(Bash|apply_patch|Edit|Write|mcp__.*)$","#,
@@ -622,7 +928,7 @@ fn expected_codex_argv(rig: &Rig, worktree: &str, resumed: bool) -> Vec<String> 
         "--config".to_owned(),
         "model_reasoning_effort=\"max\"".to_owned(),
         "--config".to_owned(),
-        format!("mcp_servers.spice.command={}", json_string(executable)),
+        format!("mcp_servers.spice.command={}", json_string(&executable)),
         "--config".to_owned(),
         "mcp_servers.spice.args=[\"mcp\"]".to_owned(),
         "--config".to_owned(),
@@ -675,4 +981,53 @@ fn json_string(value: &str) -> String {
 
 fn shell_word(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn fixture_git(root: &Path, arguments: &[&str]) {
+    let output = native_git_command(root, arguments)
+        .output()
+        .expect("fixture Git launches");
+    assert!(
+        output.status.success(),
+        "git {arguments:?}: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+fn fixture_git_stdout_with_environment(
+    root: &Path,
+    arguments: &[&str],
+    environment: &BTreeMap<String, String>,
+) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(arguments)
+        .env_clear()
+        .envs(environment)
+        .output()
+        .expect("shadowed fixture Git launches");
+    assert!(
+        output.status.success(),
+        "shadowed git {arguments:?}: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    String::from_utf8(output.stdout)
+        .expect("shadowed Git output is UTF-8")
+        .trim()
+        .to_owned()
+}
+
+fn native_git_command(root: &Path, arguments: &[&str]) -> Command {
+    let mut command = Command::new("git");
+    command.arg("-C").arg(root).args(arguments);
+    command
+        .env_remove("GIT_CONFIG_SYSTEM")
+        .env_remove("GIT_CONFIG_COUNT");
+    for index in 0..8 {
+        command
+            .env_remove(format!("GIT_CONFIG_KEY_{index}"))
+            .env_remove(format!("GIT_CONFIG_VALUE_{index}"));
+    }
+    command
 }

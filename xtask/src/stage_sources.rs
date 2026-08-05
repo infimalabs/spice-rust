@@ -257,6 +257,72 @@ mod tests {
         root
     }
 
+    /// Rebuild the selected source tree as a repository when the test runner
+    /// deliberately materializes tracked files without their Git metadata.
+    ///
+    /// Gate does exactly that for its immutable mutation baseline. Walking the
+    /// declared inputs is sound in that private tree because every file Gate
+    /// admitted came from the selected index; unlike the caller's worktree it
+    /// cannot contain an ignored editor stray. Copying into another temporary
+    /// tree also leaves Gate's sealed snapshot untouched.
+    fn repository_from_selected_tree(source: &Path) -> PathBuf {
+        fn copy_selected(source: &Path, destination: &Path) {
+            let metadata = fs::symlink_metadata(source)
+                .unwrap_or_else(|error| panic!("inspect {}: {error}", source.display()));
+            if metadata.is_dir() {
+                fs::create_dir_all(destination).unwrap_or_else(|error| {
+                    panic!(
+                        "create selected directory {}: {error}",
+                        destination.display()
+                    )
+                });
+                let mut entries = fs::read_dir(source)
+                    .unwrap_or_else(|error| panic!("read {}: {error}", source.display()))
+                    .map(|entry| entry.expect("read selected directory entry"))
+                    .collect::<Vec<_>>();
+                entries.sort_by_key(std::fs::DirEntry::file_name);
+                for entry in entries {
+                    copy_selected(&entry.path(), &destination.join(entry.file_name()));
+                }
+            } else {
+                let parent = destination
+                    .parent()
+                    .expect("a selected file has a destination directory");
+                fs::create_dir_all(parent).unwrap_or_else(|error| {
+                    panic!("create selected parent {}: {error}", parent.display())
+                });
+                fs::copy(source, destination).unwrap_or_else(|error| {
+                    panic!(
+                        "copy selected file {} to {}: {error}",
+                        source.display(),
+                        destination.display()
+                    )
+                });
+            }
+        }
+
+        let root = std::env::temp_dir().join(format!(
+            "spice-xtask-stage-sources-selected-{}",
+            std::process::id()
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale selected-tree fixture");
+        }
+        fs::create_dir_all(&root).expect("create the selected-tree fixture");
+        git(&root, &["init", "-q"]);
+        for input in STAGE_SOURCE_INPUTS {
+            copy_selected(&source.join(input), &root.join(input));
+        }
+        copy_selected(
+            &source.join(STAGE_SOURCE_LISTING),
+            &root.join(STAGE_SOURCE_LISTING),
+        );
+        let mut add = vec!["add", "-f", "--"];
+        add.extend(STAGE_SOURCE_INPUTS);
+        git(&root, &add);
+        root
+    }
+
     /// One git command against the fixture, refusing rather than reporting.
     ///
     /// The caller passes `-f` when adding so the fixture carries what it
@@ -476,8 +542,20 @@ mod tests {
     /// without the rebuild that follows it.
     #[test]
     fn the_recorded_stage_identity_describes_the_committed_sources() {
-        if let Err(error) = compare_stage_sources(&repository_root()) {
+        let source = repository_root();
+        let repository = Command::new(GIT)
+            .args(["rev-parse", "--is-inside-work-tree"])
+            .current_dir(&source)
+            .output()
+            .is_ok_and(|output| output.status.success());
+        let selected = (!repository).then(|| repository_from_selected_tree(&source));
+        let root = selected.as_deref().unwrap_or(&source);
+
+        if let Err(error) = compare_stage_sources(root) {
             panic!("{error}");
+        }
+        if let Some(root) = selected {
+            fs::remove_dir_all(root).expect("remove selected-tree fixture");
         }
     }
 

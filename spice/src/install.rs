@@ -1,6 +1,5 @@
-//! Digest-bound, repository-local Rust coexistence installation.
+//! Digest-bound, repository-local Spice installation.
 //!
-//! It keeps the ambient `spice` entrypoint and records every namespaced asset.
 //! Plans are side-effect free; apply re-plans and reverses only exact images.
 
 use std::collections::BTreeSet;
@@ -33,36 +32,36 @@ use record::read_record;
 #[cfg(test)]
 use record::record_path;
 
-const PLAN_VERSION: u16 = 3;
-const RECORD_VERSION: u16 = 3;
+const PLAN_VERSION: u16 = 4;
+const RECORD_VERSION: u16 = 4;
 const LEGACY_RECORDS: [(&str, &str); 2] = [
     (".spice/install", "SURFACE-1kJQkpFs"),
     (".spice/rust/install.json", "SURFACE-1kJRGpf2"),
 ];
-const LEGACY_RECORD_VERSIONS: [(u16, &str); 1] = [(2, "SURFACE-1kJRGpf2")];
+const LEGACY_RECORD_VERSIONS: [(u16, &str); 2] = [(2, "SURFACE-1kJRGpf2"), (3, "HOOKS-1kJQnmG8")];
 const RECORD_NAME: &str = "install.json";
-const RECORD_PATH: &str = ".spice-rust/install.json";
+const RECORD_PATH: &str = ".spice/install.json";
 const RECORD_MODE: u32 = 0o600;
 const DIRECTORY_MODE: u32 = 0o700;
 const DATA_MODE: u32 = 0o644;
 const EXECUTABLE_MODE: u32 = 0o755;
 
 const EXCLUDE_PATH: &str = "info/exclude";
-const GIT_PRE_COMMIT_PATH: &str = ".spice/rust/git-hooks/pre-commit";
-const GIT_COMMIT_MESSAGE_PATH: &str = ".spice/rust/git-hooks/commit-msg";
-const GIT_REFERENCE_TRANSACTION_PATH: &str = ".spice/rust/git-hooks/reference-transaction";
-const ENTRY_PATH: &str = ".spice/rust/hooks/entry.sh";
-const STATIC_PATH: &str = ".spice/rust/hooks/static/stage.sh";
-const SKILL_PATH: &str = ".agents/skills/spice-rust/SKILL.md";
-const BINARY_PATH: &str = ".spice/rust/bin/spice-rust";
+const GIT_PRE_COMMIT_PATH: &str = ".spice/git-hooks/pre-commit";
+const GIT_COMMIT_MESSAGE_PATH: &str = ".spice/git-hooks/commit-msg";
+const GIT_REFERENCE_TRANSACTION_PATH: &str = ".spice/git-hooks/reference-transaction";
+const ENTRY_PATH: &str = ".spice/hooks/entry.sh";
+const STATIC_PATH: &str = ".spice/hooks/static/stage.sh";
+const SKILL_PATH: &str = ".agents/skills/spice/SKILL.md";
+const BINARY_PATH: &str = ".spice/bin/spice";
 
-const EXCLUDE_BEGIN: &str = "# BEGIN spice-rust coexistence";
-const EXCLUDE_END: &str = "# END spice-rust coexistence";
+const EXCLUDE_BEGIN: &str = "# BEGIN Spice managed assets";
+const EXCLUDE_END: &str = "# END Spice managed assets";
 const EXCLUDE_BLOCK: &str = concat!(
-    "# BEGIN spice-rust coexistence\n",
-    "/.spice/rust/\n",
-    "/.agents/skills/spice-rust/\n",
-    "# END spice-rust coexistence\n",
+    "# BEGIN Spice managed assets\n",
+    "/.spice/\n",
+    "/.agents/skills/spice/\n",
+    "# END Spice managed assets\n",
 );
 const SKILL: &str = include_str!("install/skill.md");
 const GIT_PRE_COMMIT: &str = include_str!("install/git-hooks/pre-commit");
@@ -90,7 +89,7 @@ pub fn configure_test_mutation_rendezvous(
     handle::configure_mutation_rendezvous(control, action, path);
 }
 
-/// One Rust-owned asset in canonical installation order.
+/// One Spice-owned asset in canonical installation order.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Asset {
@@ -535,31 +534,31 @@ impl InstallReceipt {
     }
 }
 
-/// Inspect one repository and derive the exact coexistence installation plan.
+/// Inspect one repository and derive the exact Spice installation plan.
 pub fn plan(
     repository: &Repository,
-    rust_binary: Option<&Path>,
+    spice_binary: Option<&Path>,
 ) -> Result<InstallPlan, InstallError> {
     if let Some(loaded) = read_record(repository)? {
         let record = loaded.record;
         if record.status == InstallStatus::Uninstalled {
             verify_progress(repository, &record)?;
-            return build_plan(repository, rust_binary);
+            return build_plan(repository, spice_binary);
         }
-        verify_binary_context(&record.plan, rust_binary)?;
+        verify_binary_context(&record.plan, spice_binary)?;
         verify_progress(repository, &record)?;
         return Ok(record.plan);
     }
-    build_plan(repository, rust_binary)
+    build_plan(repository, spice_binary)
 }
 
 /// Apply only the exact current plan named by `expected`.
 pub fn apply(
     repository: &Repository,
-    rust_binary: Option<&Path>,
+    spice_binary: Option<&Path>,
     expected: &Digest,
 ) -> Result<InstallReceipt, InstallError> {
-    apply_with_interruption(repository, rust_binary, expected, None)
+    apply_with_interruption(repository, spice_binary, expected, None)
 }
 
 /// Reverse the complete current install without touching drifted targets.
@@ -569,7 +568,7 @@ pub fn unapply(repository: &Repository) -> Result<InstallReceipt, InstallError> 
 
 fn build_plan(
     repository: &Repository,
-    rust_binary: Option<&Path>,
+    spice_binary: Option<&Path>,
 ) -> Result<InstallPlan, InstallError> {
     let mut virtual_directories = BTreeSet::new();
     let mut operations = Vec::new();
@@ -634,7 +633,7 @@ fn build_plan(
         )?);
     }
 
-    if let Some(binary) = rust_binary {
+    if let Some(binary) = spice_binary {
         let bytes = read_binary(binary)?;
         let (bound, previous) = destination_state(repository, Location::Worktree, BINARY_PATH)?;
         operations.push(operation(
@@ -719,12 +718,12 @@ fn exclusions(previous: Option<&[u8]>) -> Result<Vec<u8>, InstallError> {
 
 fn read_binary(path: &Path) -> Result<Vec<u8>, InstallError> {
     let metadata = fs::symlink_metadata(path)
-        .map_err(|source| InstallError::io("inspect Rust binary", path, source))?;
+        .map_err(|source| InstallError::io("inspect Spice executable", path, source))?;
     if !metadata.file_type().is_file() {
         return Err(InstallError::BinaryNotRegular(path.to_path_buf()));
     }
     let bytes =
-        fs::read(path).map_err(|source| InstallError::io("read Rust binary", path, source))?;
+        fs::read(path).map_err(|source| InstallError::io("read Spice executable", path, source))?;
     if bytes.is_empty() {
         return Err(InstallError::BinaryEmpty(path.to_path_buf()));
     }
@@ -733,13 +732,13 @@ fn read_binary(path: &Path) -> Result<Vec<u8>, InstallError> {
 
 fn verify_binary_context(
     plan: &InstallPlan,
-    rust_binary: Option<&Path>,
+    spice_binary: Option<&Path>,
 ) -> Result<(), InstallError> {
     let planned = plan
         .operations
         .iter()
         .find(|operation| operation.asset == Asset::Binary);
-    match (planned, rust_binary) {
+    match (planned, spice_binary) {
         (None, None) => Ok(()),
         (Some(operation), Some(path)) => {
             let bytes = read_binary(path)?;
@@ -894,7 +893,7 @@ fn validate_generated_content(
             if operation.generated.digest == Digest::compute(Domain::InstallArtifact, &[]) =>
         {
             return Err(InstallError::InvalidRecord(
-                "explicit Rust binary is empty".to_owned(),
+                "explicit Spice executable is empty".to_owned(),
             ));
         }
         _ => {}

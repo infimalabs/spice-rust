@@ -1,4 +1,4 @@
-//! Native rim for the digest-bound coexistence installer.
+//! Native rim for the digest-bound Spice installer.
 
 use std::path::PathBuf;
 
@@ -140,20 +140,21 @@ fn failure<B>(error: InstallError) -> Outcome<B> {
         | InstallError::Drift { .. } => Outcome::Refusal(Refusal {
             reason: refusal_reason.to_owned(),
             witness: Some("install-plan".to_owned()),
-            expected: Some("the exact current coexistence install state".to_owned()),
+            expected: Some("the exact current Spice install state".to_owned()),
             observed: Some(detail),
             remedy: refusal_remedy.to_owned(),
         }),
         InstallError::State(
             StateError::Linked { .. }
             | StateError::NotDirectory { .. }
-            | StateError::NotRegularFile { .. },
+            | StateError::NotRegularFile { .. }
+            | StateError::RetiredState { .. },
         ) => Outcome::Refusal(Refusal {
             reason: refusal_reason.to_owned(),
             witness: Some("install-state".to_owned()),
-            expected: Some("unlinked Rust-owned repository state".to_owned()),
+            expected: Some("unlinked Spice repository state".to_owned()),
             observed: Some(detail),
-            remedy: "repair the named Rust state component before retrying".to_owned(),
+            remedy: "repair the named Spice state component before retrying".to_owned(),
         }),
         InstallError::Repository(_)
         | InstallError::State(StateError::Filesystem { .. })

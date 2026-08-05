@@ -89,7 +89,7 @@ impl Resident {
             .spawn()
             .expect("start resident");
         let mut resident = Self(Some(child));
-        let canvas = fixture.root.join(".git/.spice-rust/canvas");
+        let canvas = fixture.root.join(".git/.spice/canvas");
         match readiness::wait_until_ready(
             resident.0.as_mut().expect("resident child"),
             &fixture.root.join(".git"),
@@ -243,7 +243,7 @@ fn restore_refuses_an_internally_valid_artifact_for_an_unknown_task_inertly() {
     let fixture = Fixture::new();
     let resident = Resident::start(&fixture);
     resident.stop(&fixture);
-    let runtime = fixture.root.join(".git/.spice-rust");
+    let runtime = fixture.root.join(".git/.spice");
     let authority = runtime.join("data/spicejournal.sqlite3");
     let store = Store::new(
         runtime.join("artifacts/tasks"),

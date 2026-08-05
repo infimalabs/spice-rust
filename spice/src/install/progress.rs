@@ -3,12 +3,12 @@ use super::*;
 
 pub(super) fn apply_with_interruption(
     repository: &Repository,
-    rust_binary: Option<&Path>,
+    spice_binary: Option<&Path>,
     expected: &Digest,
     interrupt_after_write: Option<usize>,
 ) -> Result<InstallReceipt, InstallError> {
     let (mut record, mut record_generation, fresh) =
-        prepare_apply(repository, rust_binary, expected)?;
+        prepare_apply(repository, spice_binary, expected)?;
     if record.status == InstallStatus::Complete {
         return Ok(record.receipt());
     }
@@ -17,7 +17,7 @@ pub(super) fn apply_with_interruption(
         .plan
         .operations
         .iter()
-        .map(|operation| materialize_generated(operation, rust_binary))
+        .map(|operation| materialize_generated(operation, spice_binary))
         .collect::<Result<Vec<_>, _>>()?;
     if fresh {
         record.plan.validate_pristine(repository)?;
@@ -58,13 +58,13 @@ pub(super) fn apply_with_interruption(
 
 fn prepare_apply(
     repository: &Repository,
-    rust_binary: Option<&Path>,
+    spice_binary: Option<&Path>,
     expected: &Digest,
 ) -> Result<(InstallRecord, Option<Generation>, bool), InstallError> {
     match read_record(repository)? {
-        Some(loaded) => prepare_loaded(repository, rust_binary, expected, loaded),
+        Some(loaded) => prepare_loaded(repository, spice_binary, expected, loaded),
         None => {
-            let plan = build_plan(repository, rust_binary)?;
+            let plan = build_plan(repository, spice_binary)?;
             admit_digest(&plan, expected)?;
             Ok((InstallRecord::new(plan)?, None, true))
         }
@@ -73,18 +73,18 @@ fn prepare_apply(
 
 fn prepare_loaded(
     repository: &Repository,
-    rust_binary: Option<&Path>,
+    spice_binary: Option<&Path>,
     expected: &Digest,
     loaded: LoadedRecord,
 ) -> Result<(InstallRecord, Option<Generation>, bool), InstallError> {
     let record = loaded.record;
     if record.status == InstallStatus::Uninstalled {
         verify_progress(repository, &record)?;
-        let plan = build_plan(repository, rust_binary)?;
+        let plan = build_plan(repository, spice_binary)?;
         admit_digest(&plan, expected)?;
         return Ok((InstallRecord::new(plan)?, Some(loaded.generation), true));
     }
-    verify_binary_context(&record.plan, rust_binary)?;
+    verify_binary_context(&record.plan, spice_binary)?;
     if &record.plan_digest != expected {
         return Err(InstallError::DigestMismatch {
             expected: expected.clone(),

@@ -610,12 +610,13 @@ fn state_failure(error: StateError) -> Failure {
         }
         StateError::Linked { .. }
         | StateError::NotDirectory { .. }
-        | StateError::NotRegularFile { .. } => Failure::refusal(
+        | StateError::NotRegularFile { .. }
+        | StateError::RetiredState { .. } => Failure::refusal(
             "repository::state-path-refused",
-            "real fixed components beneath the canonical Git-common .spice-rust directory",
+            "real fixed components beneath the canonical Git-common .spice directory",
             error.to_string(),
             format!(
-                "remove or repair the linked or malformed Rust state component at {}",
+                "follow the named archive/remove action or repair the malformed state component at {}",
                 error.path().display()
             ),
         ),

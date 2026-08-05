@@ -43,7 +43,7 @@ impl Fixture {
             std::process::id(),
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
-        let runtime = root.join(".git/.spice-rust");
+        let runtime = root.join(".git/.spice");
         fs::create_dir_all(root.join(".git")).expect("fixture git directory");
         Self {
             cleanup: root.clone(),
@@ -68,7 +68,7 @@ impl Fixture {
         fs::write(git.join("commondir"), "../..\n").expect("linked common pointer");
         Self {
             root,
-            runtime: common.join(".spice-rust"),
+            runtime: common.join(".spice"),
             cleanup,
         }
     }
@@ -103,7 +103,11 @@ struct RunningResident {
 
 impl RunningResident {
     fn spawn(fixture: &Fixture) -> Self {
-        let child = Command::new(env!("CARGO_BIN_EXE_spice"))
+        Self::spawn_with(fixture, Path::new(env!("CARGO_BIN_EXE_spice")))
+    }
+
+    fn spawn_with(fixture: &Fixture, executable: &Path) -> Self {
+        let child = Command::new(executable)
             .args(["--json", "up"])
             .current_dir(&fixture.root)
             .stdout(Stdio::piped())
@@ -127,7 +131,19 @@ impl RunningResident {
             || fixture.canvas().is_file(),
         ) {
             Readiness::Ready => {}
-            Readiness::Exited => panic!("foreground resident exited before readiness"),
+            Readiness::Exited => {
+                let output = self
+                    .child
+                    .take()
+                    .expect("resident child")
+                    .wait_with_output()
+                    .expect("collect early resident exit");
+                panic!(
+                    "foreground resident exited before readiness: stdout={} stderr={}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr),
+                );
+            }
         }
     }
 

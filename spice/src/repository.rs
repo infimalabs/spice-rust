@@ -6,8 +6,11 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// Repository-common directory owned exclusively by the Rust construction.
-pub const STATE_DIRECTORY: &str = ".spice-rust";
+/// Sole repository-common directory owned by the current Spice runtime.
+pub const STATE_DIRECTORY: &str = ".spice";
+
+const RETIRED_STATE_DIRECTORY: &str = ".spice-rust";
+const RETIRED_STATE_RELEASE: &str = "release-one";
 
 /// One repository resolved to its worktree and shared Git directory.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -175,12 +178,14 @@ impl Repository {
         &self.common
     }
 
-    /// Admit every fixed component of the Rust-owned state namespace.
+    /// Admit every fixed component of the current state namespace.
     ///
     /// An absent namespace is valid and remains absent. Existing directory
-    /// parents and regular-file leaves are inspected without following links,
-    /// so the returned paths cannot alias Python-owned Git-common state.
+    /// parents and regular-file leaves are inspected without following links.
+    /// Any release-one `.spice-rust` entry refuses before these current paths
+    /// are returned; operators archive or remove that retired tree manually.
     pub fn admit_state(&self) -> Result<StatePaths, StateError> {
+        refuse_retired_state(&self.common)?;
         let paths = StatePaths::new(self.common.join(STATE_DIRECTORY));
         for path in [
             paths.runtime(),
@@ -203,6 +208,18 @@ impl Repository {
             admit(path, StateShape::RegularFile)?;
         }
         Ok(paths)
+    }
+}
+
+fn refuse_retired_state(common: &Path) -> Result<(), StateError> {
+    let path = common.join(RETIRED_STATE_DIRECTORY);
+    match fs::symlink_metadata(&path) {
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(StateError::filesystem(&path, source)),
+        Ok(_) => Err(StateError::RetiredState {
+            path,
+            release: RETIRED_STATE_RELEASE,
+        }),
     }
 }
 
@@ -245,6 +262,11 @@ pub enum StateError {
     NotRegularFile { path: PathBuf },
     /// A component could not be inspected without following it.
     Filesystem { path: PathBuf, source: io::Error },
+    /// A retired state root remains and must be handled by the operator.
+    RetiredState {
+        path: PathBuf,
+        release: &'static str,
+    },
 }
 
 impl StateError {
@@ -262,7 +284,17 @@ impl StateError {
             Self::Linked { path }
             | Self::NotDirectory { path }
             | Self::NotRegularFile { path }
-            | Self::Filesystem { path, .. } => path,
+            | Self::Filesystem { path, .. }
+            | Self::RetiredState { path, .. } => path,
+        }
+    }
+
+    /// Release owning a refused predecessor spelling, when applicable.
+    #[must_use]
+    pub const fn release(&self) -> Option<&'static str> {
+        match self {
+            Self::RetiredState { release, .. } => Some(release),
+            _ => None,
         }
     }
 }
@@ -292,6 +324,11 @@ impl fmt::Display for StateError {
                 "Rust state component could not be inspected at {}: {source}",
                 path.display()
             ),
+            Self::RetiredState { path, release } => write!(
+                formatter,
+                "retired state root belongs to release={release} at {}; archive or remove it after preserving evidence before starting current Spice",
+                path.display()
+            ),
         }
     }
 }
@@ -300,7 +337,10 @@ impl Error for StateError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Filesystem { source, .. } => Some(source),
-            Self::Linked { .. } | Self::NotDirectory { .. } | Self::NotRegularFile { .. } => None,
+            Self::Linked { .. }
+            | Self::NotDirectory { .. }
+            | Self::NotRegularFile { .. }
+            | Self::RetiredState { .. } => None,
         }
     }
 }
@@ -537,23 +577,22 @@ mod tests {
 
         assert_eq!(repository.worktree_root(), worktree);
         assert_eq!(repository.common_dir(), common);
-        let state = repository.admit_state().expect("admit absent Rust state");
-        assert_eq!(state.runtime(), common.join(".spice-rust"));
-        assert_eq!(state.data(), common.join(".spice-rust/data"));
+        let state = repository
+            .admit_state()
+            .expect("admit absent current state");
+        assert_eq!(state.runtime(), common.join(".spice"));
+        assert_eq!(state.data(), common.join(".spice/data"));
         assert_eq!(
             state.journal(),
-            common.join(".spice-rust/data/spicejournal.sqlite3")
+            common.join(".spice/data/spicejournal.sqlite3")
         );
-        assert_eq!(
-            state.folds(),
-            common.join(".spice-rust/data/spicefolds.sqlite3")
-        );
-        assert_eq!(state.locks(), common.join(".spice-rust/locks"));
-        assert_eq!(state.proof(), common.join(".spice-rust/proof"));
-        assert_eq!(state.resident(), common.join(".spice-rust/resident"));
-        assert_eq!(state.canvas(), common.join(".spice-rust/canvas"));
-        assert_eq!(state.degraded(), common.join(".spice-rust/degraded"));
-        assert_eq!(state.tape(), common.join(".spice-rust/tape"));
+        assert_eq!(state.folds(), common.join(".spice/data/spicefolds.sqlite3"));
+        assert_eq!(state.locks(), common.join(".spice/locks"));
+        assert_eq!(state.proof(), common.join(".spice/proof"));
+        assert_eq!(state.resident(), common.join(".spice/resident"));
+        assert_eq!(state.canvas(), common.join(".spice/canvas"));
+        assert_eq!(state.degraded(), common.join(".spice/degraded"));
+        assert_eq!(state.tape(), common.join(".spice/tape"));
         assert_eq!(
             proof::Layout::new(
                 repository.worktree_root(),
@@ -592,12 +631,14 @@ mod tests {
             repository.common_dir(),
             fs::canonicalize(&common).expect("canonical common directory")
         );
-        let state = repository.admit_state().expect("admit linked Rust state");
+        let state = repository
+            .admit_state()
+            .expect("admit linked current state");
         assert_eq!(
             state.runtime(),
             fs::canonicalize(&common)
                 .expect("canonical shared state root")
-                .join(".spice-rust")
+                .join(".spice")
         );
         assert_eq!(
             proof::Layout::new(
@@ -632,6 +673,37 @@ mod tests {
                 .common_dir(),
             fs::canonicalize(&common).expect("canonical absolute common directory")
         );
+    }
+
+    #[test]
+    fn retired_release_one_state_refuses_before_current_state_is_touched() {
+        let scratch = Scratch::new();
+        let root = case(&scratch, "retired release-one state");
+        let common = root.join(".git");
+        fs::create_dir(&common).expect("create common Git directory");
+        let current = common.join(STATE_DIRECTORY);
+        let retired = common.join(RETIRED_STATE_DIRECTORY);
+        fs::create_dir_all(retired.join("proof/run/target"))
+            .expect("create release-one proof tree");
+        fs::write(
+            retired.join("proof/run/target/receipt.json"),
+            b"release-one proof bytes\n",
+        )
+        .expect("plant release-one proof");
+        let repository = Repository::discover(&root).expect("discover repository");
+
+        let error = repository
+            .admit_state()
+            .expect_err("retired release-one state must refuse");
+
+        assert_eq!(error.release(), Some(RETIRED_STATE_RELEASE));
+        assert_eq!(error.path(), retired);
+        assert!(error.to_string().contains("archive or remove"));
+        assert_eq!(
+            fs::read(retired.join("proof/run/target/receipt.json")).unwrap(),
+            b"release-one proof bytes\n"
+        );
+        assert!(!current.exists());
     }
 
     #[cfg(unix)]

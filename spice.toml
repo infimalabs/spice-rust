@@ -1,10 +1,26 @@
-# Tracked repository policy for the Rust port.
+# Tracked repository policy for Spice.
 #
-# This file carries intent only. It deliberately contains none of the
-# predecessor's Python runtime configuration -- no wrapper argv, no pytest or
-# release commands, no suite-seam paths, no interpreter-specific env allowlist.
-# Those describe how a Python checkout runs itself; this repository builds a
-# Rust workspace, and `cargo xtask verify` already owns its verification.
+# Cutoff inventory for every executable value in spice-z's tracked
+# `spice.toml`:
+#
+# - `wrappers.spice-dev.pre-commit.argv`: `gate::pre-commit`, exposed as
+#   `spice dev pre-commit` and by the native pre-commit hook.
+# - `wrappers.spice-dev.pytest.argv`: refused. It launches a Python-only test
+#   runner; `xtask::verify` owns the native workspace tests without a wrapper.
+# - `policy.pre_commit[0].run`: refused. The named script checks spice-z's
+#   documentation set; native documentation policy is part of
+#   `gate::pre-commit`.
+# - `policy.suite_seam.run`: refused. Its Python import-reach seam and
+#   `policy.suite_seam.paths` have no native subject; `xtask::verify` runs the
+#   complete native suite.
+# - `commands.release`: `dist::{release_notes,publish}` owns the native release
+#   command surface, with proof artifacts supplied by `proof::seal`.
+#
+# No executable value above is retained in this document. Until the installed
+# spice-z hook and config reader are stopped, declarations here remain comments:
+# that reader reparses this file before every tool call, and a new executable
+# key would require predecessor trust. After cutoff, executable declarations
+# enter only through Spice's typed registry and native gate.
 
 [tasks]
 # Public scheduler stems beyond the packaged `task` and `serve` defaults.
@@ -89,12 +105,15 @@ project_max_depth = 3
 # they are counted here. Their access waiver is a separate arm and does not
 # account them; a waived name is still a name, and one written without being
 # counted here is one nobody can find again. Doctor reports only the names Spice
-# owns, so these four are the difference wire pins between this manifest and
+# owns, so these seven are the difference wire pins between this manifest and
 # SpiceVariable.
 env_names = [
     "CLAUDE_CODE_SESSION_ID",
     "CODEX_THREAD_ID",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_SYSTEM",
     "GIT_DIR",
+    "GIT_EDITOR",
     "GIT_INDEX_FILE",
     "GIT_WORK_TREE",
     "SPICE_AGENT_VENDOR",

@@ -42,41 +42,6 @@ fn fixture_pins() -> Pins {
     }
 }
 
-/// The scratch root layout, spelled without creating any of it.
-fn fixture_temporary() -> Temporary {
-    let root = PathBuf::from("/private/tmp/spice-proof-native-profile-fixture");
-    Temporary {
-        cargo_home: root.join("cargo-home"),
-        cargo_target: root.join("cargo-target"),
-        home: root.join("home"),
-        mutants: root.join("mutants"),
-        temporary: root.join("tmp"),
-        root,
-    }
-}
-
-/// The checkout this test binary was compiled from.
-///
-/// The repository root, not the crate directory: the sealed run is handed
-/// the workspace, and the neighbourhood the profile denies is the one the
-/// root sits in. On this repository that is a directory of peer worktrees.
-fn repository_workspace() -> &'static Path {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("the proof crate sits inside the repository it is proving")
-}
-
-/// The bytes a sealed run of this checkout would be sandboxed with.
-#[cfg(target_os = "macos")]
-fn shipped_profile() -> String {
-    super::sandbox_profile(
-        repository_workspace(),
-        &fixture_pins(),
-        &fixture_temporary(),
-    )
-    .expect("the sealed profile composes for a workspace check-out")
-}
-
 /// How many neighbourhoods this process has built, so no two share a name.
 #[cfg(target_os = "macos")]
 static NEIGHBOURHOODS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -119,6 +84,16 @@ impl Neighbourhood {
     const PEER_SOURCE: &'static str = "source a sealed run was never told about\n";
 
     fn new() -> Self {
+        Self::with_repository_inside_neighbourhood(false)
+    }
+
+    /// Build the alternate linked-worktree topology whose repository is also
+    /// below the denied neighbourhood, making the read allow load-bearing.
+    fn with_read_denied_repository() -> Self {
+        Self::with_repository_inside_neighbourhood(true)
+    }
+
+    fn with_repository_inside_neighbourhood(repository_inside: bool) -> Self {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("the clock is past the epoch")
@@ -136,7 +111,11 @@ impl Neighbourhood {
         );
         let temporary_dir = std::env::temp_dir();
         let root = temporary_dir.join(format!("spice-proof-neighbourhood-{stem}"));
-        let origin = temporary_dir.join(format!("spice-proof-origin-{stem}"));
+        let origin = if repository_inside {
+            root.join("origin")
+        } else {
+            temporary_dir.join(format!("spice-proof-origin-{stem}"))
+        };
         let peer = root.join("peer");
         std::fs::create_dir_all(peer.join("src")).expect("the fixture peer is creatable");
         std::fs::create_dir_all(root.join("scratch")).expect("the fixture scratch is creatable");
@@ -157,9 +136,20 @@ impl Neighbourhood {
         // puts that answer outside the neighbourhood. The identity is passed
         // per-command because a fixture that borrowed the developer's would
         // fail on a machine that has not configured one.
+        let initialize = std::process::Command::new("/usr/bin/git")
+            .args(["init", "--quiet", "--initial-branch", "fixture"])
+            .current_dir(&origin)
+            .status()
+            .expect("macOS carries the Git this runner is pinned against");
+        assert!(initialize.success(), "the fixture repository initializes");
+        std::fs::write(
+            origin.join("Cargo.toml"),
+            "[workspace]\nresolver = \"3\"\nmembers = []\n",
+        )
+        .expect("the fixture repository carries readable tracked source");
         for arguments in [
-            ["init", "--quiet", "--initial-branch", "fixture"].as_slice(),
-            &["commit", "--quiet", "--allow-empty", "-m", "fixture"],
+            ["add", "Cargo.toml"].as_slice(),
+            &["commit", "--quiet", "-m", "fixture"],
             &[
                 "worktree",
                 "add",
@@ -201,14 +191,21 @@ impl Neighbourhood {
         &self.root
     }
 
+    /// The checkout-shaped neighbour the sealed workspace must not observe.
+    fn peer(&self) -> &Path {
+        self.peer_source
+            .parent()
+            .and_then(Path::parent)
+            .expect("the fixture peer source sits below its checkout")
+    }
+
     /// Where this fixture's workspace keeps its repository.
     ///
     /// Asked of the same function the profile asks rather than assumed from
     /// the layout, so a fixture that stopped producing a linked worktree
     /// stops claiming to measure one.
     fn repository(&self) -> PathBuf {
-        let common = super::git_common_dir(&self.workspace, Path::new("/usr/bin/git"))
-            .expect("the fixture workspace has a repository");
+        let common = self.common_repository();
         assert!(
             !common.starts_with(&self.root),
             "the fixture repository is inside the neighbourhood, so the older \
@@ -216,6 +213,11 @@ impl Neighbourhood {
             common.display(),
         );
         common
+    }
+
+    fn common_repository(&self) -> PathBuf {
+        super::git_common_dir(&self.workspace, Path::new("/usr/bin/git"))
+            .expect("the fixture workspace has a repository")
     }
 
     fn profile(&self) -> String {
@@ -405,7 +407,8 @@ fn a_host_dependency_root_is_unreachable_inside_the_boundary() {
 fn the_shipped_profile_denies_the_host_dependency_roots() {
     use super::host_dependency_denials;
 
-    let profile = shipped_profile();
+    let neighbourhood = Neighbourhood::new();
+    let profile = neighbourhood.profile();
     let Some(denied) = profile.find(&host_dependency_denials()) else {
         panic!("the profile this runner ships denies no host dependency root:\n{profile}");
     };
@@ -428,36 +431,22 @@ fn the_shipped_profile_denies_the_host_dependency_roots() {
 /// bytes are both measured, because listing a directory only asks the
 /// boundary about metadata and source is read.
 ///
-/// The neighbour is discovered rather than named, so this asks the machine
-/// it runs on which checkout sits beside the workspace instead of asserting
-/// a lane's own layout.
+/// The neighbour is fixture-owned rather than borrowed from a developer's
+/// lane layout, so the same boundary is measurable from a Git-less selected
+/// source snapshot as well as from a worktree.
 #[cfg(target_os = "macos")]
 #[test]
 fn a_checkout_beside_the_workspace_is_unreachable_inside_the_boundary() {
-    let workspace = repository_workspace();
-    let profile = shipped_profile();
-    let parent = workspace.parent().expect("the workspace sits somewhere");
-    let repository = super::git_common_dir(workspace, Path::new("/usr/bin/git"))
-        .expect("this check-out has a repository");
-
-    let mut neighbours = std::fs::read_dir(parent)
-        .expect("the directory holding the workspace is readable")
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path != workspace && path != &repository && path.join(".git").exists())
-        .collect::<Vec<_>>();
-    neighbours.sort();
-    let Some((neighbour, file)) = neighbours
-        .iter()
-        .find_map(|path| first_file_under(path).map(|file| (path, file)))
-    else {
-        panic!(
-            "no checkout sits beside {}, so nothing here could fail",
-            parent.display()
-        );
-    };
-    let neighbour = neighbour.to_str().expect("a discovered path is UTF-8");
-    let file = file.to_str().expect("a discovered path is UTF-8");
+    let neighbourhood = Neighbourhood::new();
+    let profile = neighbourhood.profile();
+    let neighbour = neighbourhood
+        .peer()
+        .to_str()
+        .expect("a fixture path is UTF-8");
+    let file = neighbourhood
+        .peer_source
+        .to_str()
+        .expect("a fixture path is UTF-8");
 
     assert!(
         readable(OPEN, neighbour),
@@ -547,11 +536,9 @@ fn a_checkout_beside_the_workspace_cannot_be_written_inside_the_boundary() {
 /// failing, and the name carries this process because the common directory
 /// is shared by every lane of this repository.
 ///
-/// It is measured twice over. On this check-out both paths sit inside the
-/// denied neighbourhood, so the shipped bytes are what a real seal uses but
-/// two rules could be refusing. The fixture neighbourhood puts the
-/// repository outside itself, where the denial naming it is the only rule
-/// that reaches it, so what holds there is attributable.
+/// The fixture puts the repository outside the denied neighbourhood, where
+/// the rule naming it is the only rule that can refuse it. That makes the
+/// observed denial attributable without borrowing the caller's Git layout.
 #[cfg(target_os = "macos")]
 #[test]
 fn the_workspace_and_its_repository_stay_unwritable_inside_the_boundary() {
@@ -571,13 +558,6 @@ fn the_workspace_and_its_repository_stay_unwritable_inside_the_boundary() {
             "the boundary let the sealed run write {spelled}, which it is handed read-only",
         );
     };
-
-    let workspace = repository_workspace();
-    let shipped = shipped_profile();
-    let repository = super::git_common_dir(workspace, Path::new("/usr/bin/git"))
-        .expect("this check-out has a repository");
-    check_and_clean(&shipped, workspace);
-    check_and_clean(&shipped, &repository);
 
     let neighbourhood = Neighbourhood::new();
     let profile = neighbourhood.profile();
@@ -599,11 +579,15 @@ fn the_workspace_and_its_repository_stay_unwritable_inside_the_boundary() {
 #[cfg(target_os = "macos")]
 #[test]
 fn the_workspace_and_its_repository_stay_readable_inside_the_boundary() {
-    let workspace = repository_workspace();
-    let profile = shipped_profile();
+    let neighbourhood = Neighbourhood::with_read_denied_repository();
+    let workspace = &neighbourhood.workspace;
+    let profile = neighbourhood.profile();
     let cut = without_the_allow(&profile);
-    let repository = super::git_common_dir(workspace, Path::new("/usr/bin/git"))
-        .expect("this check-out has a repository");
+    let repository = neighbourhood.common_repository();
+    assert!(
+        repository.starts_with(neighbourhood.parent()),
+        "the fixture repository must sit below the denied neighbourhood"
+    );
 
     let manifest = workspace.join("Cargo.toml");
     let head = repository.join("HEAD");
@@ -638,10 +622,11 @@ fn the_workspace_and_its_repository_stay_readable_inside_the_boundary() {
 #[cfg(target_os = "macos")]
 #[test]
 fn the_neighbourhood_node_is_resolvable_without_revealing_its_entries() {
-    let workspace = repository_workspace();
+    let neighbourhood = Neighbourhood::new();
+    let workspace = &neighbourhood.workspace;
     let parent = workspace.parent().expect("the workspace sits somewhere");
     let parent = parent.to_str().expect("the workspace parent is UTF-8");
-    let profile = shipped_profile();
+    let profile = neighbourhood.profile();
     let allowance = format!(
         "(allow file-read-metadata (literal \"{}\"))",
         super::sandbox_string(Path::new(parent)).expect("the parent is sandbox-spellable")

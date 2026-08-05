@@ -107,7 +107,7 @@ fn launch_plan(
         .map_err(|error| store_fault("lane::executable-unresolved", &error.to_string()))?
         .display()
         .to_string();
-    let environment = launch_environment()?;
+    let environment = launch_environment(repository)?;
     spice::agent_launch::compose(
         resolved.root(),
         spice::agent_launch::Inputs {
@@ -133,13 +133,15 @@ fn launch_plan(
 }
 
 /// Carry only the ambient variables a supervised occupant is admitted to see.
-fn launch_environment() -> CommandResult<Environment> {
+fn launch_environment(repository: &Repository) -> CommandResult<Environment> {
     let values = ["HOME", "PATH", "SHELL", "TMPDIR", "USER"]
         .into_iter()
         .filter_map(|key| crate::bootstrap_environment(key).map(|value| (key.into(), value)))
         .collect::<Vec<(OsString, OsString)>>();
-    Environment::new(values)
-        .map_err(|error| store_fault("lane::environment-invalid", &error.to_string()))
+    let environment = Environment::new(values)
+        .map_err(|error| store_fault("lane::environment-invalid", &error.to_string()))?;
+    spice::git_shadow::environment(repository, environment)
+        .map_err(|error| store_fault("lane::git-shadow-unavailable", &error.to_string()))
 }
 
 /// Bind the lease, wait policy, and capture bounds this lane launches under.

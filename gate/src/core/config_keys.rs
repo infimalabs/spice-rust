@@ -47,6 +47,7 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("policy.env_names", TRACKED),
     ConfigKeyDeclaration::new("policy.commit_message.allowed_trailers", TRACKED),
     ConfigKeyDeclaration::new("policy.commit_message.blocked_trailers", TRACKED),
+    ConfigKeyDeclaration::new("policy.admission", TRACKED),
     ConfigKeyDeclaration::new("taste.<name>.words", TRACKED),
     ConfigKeyDeclaration::new("taste.<name>.message", TRACKED),
     ConfigKeyDeclaration::new("consent.posture", TRACKED),

@@ -41,7 +41,7 @@ function waitForDiscovery(child, canvas, timeout = 10_000) {
   return new Promise((resolveDiscovery, rejectDiscovery) => {
     let settled = false;
     let lastError;
-    const watcher = watch(dirname(dirname(canvas)), { recursive: true }, (_event, name) => {
+    const watcher = watch(dirname(canvas), (_event, name) => {
       if (name?.endsWith("canvas")) readPublishedDiscovery();
     });
     const deadline = setTimeout(() => {
@@ -84,6 +84,8 @@ function waitForDiscovery(child, canvas, timeout = 10_000) {
 }
 
 async function startResident(fixture) {
+  const canvas = join(fixture, ".git/.spice/canvas");
+  await mkdir(dirname(canvas), { recursive: true });
   const child = spawn(binary, ["--json", "up"], {
     cwd: fixture,
     stdio: ["ignore", "pipe", "pipe"],
@@ -93,7 +95,6 @@ async function startResident(fixture) {
   child.on("exit", (code) => {
     if (code && code !== 0) process.stderr.write(`resident exited ${code}: ${stderr}\n`);
   });
-  const canvas = join(fixture, ".git/.spice-rust/canvas");
   try {
     const discovery = await waitForDiscovery(child, canvas);
     return { child, discovery };
