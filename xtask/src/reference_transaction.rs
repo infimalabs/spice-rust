@@ -10,6 +10,9 @@ use std::process::{Command, Output};
 const PREPARED: &str = "prepared";
 const PROTECTED_COMMIT_LIMIT: usize = 5;
 const ASCII_ZERO: u8 = 0x30;
+const REMOTE_PREFIX: &str = "refs/remotes/";
+const LOCAL_PREFIX: &str = "refs/heads/";
+const ORIGIN_HEAD: &str = "refs/remotes/origin/HEAD";
 
 pub fn apply(
     repository: &Path,
@@ -23,11 +26,7 @@ pub fn apply(
     let Some(current_ref) = git_read(repository, &["symbolic-ref", "--quiet", "HEAD"])? else {
         return Ok(());
     };
-    let Some(upstream) = git_read(
-        repository,
-        &["rev-parse", "--verify", "--quiet", "@{upstream}^{commit}"],
-    )?
-    else {
+    let Some(upstream) = publication_baseline(repository)? else {
         return Ok(());
     };
 
@@ -49,6 +48,54 @@ pub fn apply(
         }
     }
     Ok(())
+}
+
+/// Resolve the commit standing for history this lane has published.
+///
+/// `@{upstream}` cannot answer this question inside a spice agent. The agent runs
+/// under the git shadow environment, which points `branch.<lane>.merge` at
+/// `refs/heads/<lane>` in *system* scope precisely so the lane's upstream resolves
+/// to itself and `git status` stops moving whenever origin advances. Asking for
+/// `@{upstream}` there compares the branch against itself: every merge base is the
+/// branch tip, so every commit an update removes looks upstream-merged and the
+/// guard refuses the ordinary local rewinds it exists to allow.
+///
+/// The shadow documents the readable path, and this mirrors it: the lane's
+/// integration branch is `git config --get branch.<lane>.merge`, whose
+/// command-scope pair the shadow appends last and which therefore reports the true
+/// merge, with `origin/HEAD` as the backstop named for lanes that configure no
+/// tracking. `branch.<lane>.remote` is never consulted; the shadow poisons it to
+/// `.` and it cannot be trusted. A lane with no origin remote, no resolvable
+/// integration branch, or an integration branch never published has no upstream
+/// history for this guard to protect, and leaves it inert.
+fn publication_baseline(repository: &Path) -> Result<Option<String>, ReferenceTransactionError> {
+    if !git(repository, &["remote", "get-url", "origin"])?
+        .status
+        .success()
+    {
+        return Ok(None);
+    }
+    let Some(reference) = integration_reference(repository)? else {
+        return Ok(None);
+    };
+    commit_oid(repository, &reference)
+}
+
+/// The remote-tracking reference the lane's integration branch publishes to.
+fn integration_reference(repository: &Path) -> Result<Option<String>, ReferenceTransactionError> {
+    if let Some(branch) = git_read(repository, &["symbolic-ref", "--quiet", "--short", "HEAD"])?
+        && let Some(merge) = git_read(
+            repository,
+            &["config", "--get", &format!("branch.{branch}.merge")],
+        )?
+        && let Some(name) = merge.strip_prefix(LOCAL_PREFIX)
+    {
+        return Ok(Some(format!("{REMOTE_PREFIX}origin/{name}")));
+    }
+    let Some(head) = git_read(repository, &["symbolic-ref", ORIGIN_HEAD])? else {
+        return Ok(None);
+    };
+    Ok(head.starts_with(REMOTE_PREFIX).then_some(head))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
