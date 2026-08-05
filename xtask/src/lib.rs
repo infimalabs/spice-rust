@@ -59,17 +59,19 @@ pub fn reference_transaction(
 /// `gate/src/battery/manifest.toml` names all 25 of that gate's standard steps
 /// against a compiled arm, and every one of them is measured here now. The three
 /// metrics arms that once acquired evidence naming an input this build could not
-/// reach — `file-shape`, `complexity`, and `magic-numbers` — all measure, the
-/// first two for every class they declare and the third for every class this
-/// repository commits; `markdown-links` measured already.
+/// reach — `file-shape`, `complexity`, and `magic-numbers` — all measure every
+/// class this repository commits; `markdown-links` measured already. File shape
+/// additionally measures every class it declares, while complexity and magic
+/// name a selected class without a vendored grammar as unsupported.
 ///
-/// What is left is a class gap rather than an arm gap: the magic scan still
-/// refuses `.py`, `.cs`, and `.js`, which need predecessor parent semantics, and
-/// this repository commits none of the three, so nothing here goes unmeasured
-/// for want of it. The action stays for what it does once every arm measures --
-/// it runs the predecessor's own implementations over the same sources, so a
-/// compiled arm that drifted lenient is still met by the one it replaced.
-/// Dropping it drops that second reading, not the only one.
+/// What is left is a class gap rather than an arm gap: complexity reports every
+/// declared suffix outside its five vendored grammars as unsupported, and the
+/// magic scan likewise refuses `.py`, `.cs`, and `.js`, which need predecessor
+/// parent semantics. This repository commits none of those selected classes, so
+/// nothing here goes unmeasured for want of them. The action stays for what it
+/// does once every arm measures -- it runs the predecessor's own implementations
+/// over the same sources, so a compiled arm that drifted lenient is still met by
+/// the one it replaced. Dropping it drops that second reading, not the only one.
 const VERIFY_ACTIONS: [Action; 8] = [
     Action::Command(Step::cargo(
         "cargo fmt --all -- --check",
