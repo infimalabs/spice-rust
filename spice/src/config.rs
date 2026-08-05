@@ -275,6 +275,7 @@ pub struct WorkspacePolicy {
     name_cluster_threshold: Option<usize>,
     test_paths: Vec<String>,
     package: gate::PackagePolicy,
+    admission: Vec<String>,
 }
 
 impl WorkspacePolicy {
@@ -342,6 +343,20 @@ impl WorkspacePolicy {
     #[must_use]
     pub const fn package(&self) -> &gate::PackagePolicy {
         &self.package
+    }
+
+    /// Command that admits one integrated tree before it is published.
+    ///
+    /// Task completion merges the lane onto a baseline it never saw, so the
+    /// tree it publishes is an artifact no lane authored and no verifier ran.
+    /// This is the cheap load that tree must survive: it answers whether the
+    /// repository can be read at all, not whether it passes. A repository
+    /// declaring nothing here publishes synthesized trees unadmitted, which is
+    /// how a clean textual merge of two valid manifests reached a baseline as a
+    /// duplicate table.
+    #[must_use]
+    pub fn admission(&self) -> &[String] {
+        &self.admission
     }
 }
 
@@ -774,6 +789,13 @@ registry! {
     fixed "policy.package.boundary_underscore_pattern" {
         kind: String,
         builtin: Some(Builtin::Absent),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "policy.admission" {
+        kind: StringList,
+        builtin: Some(Builtin::Strings(&[])),
         layers: TRACKED,
         class: Policy,
         flag: None,
