@@ -847,7 +847,8 @@ fn instant(value: &str) -> Instant {
 /// The notification is the fast path but not the only one: a filesystem event
 /// can be dropped or coalesced, so waiting solely for one would spend the whole
 /// deadline on an effect that had already landed. The block is capped at
-/// [`readiness::RECHECK`] and `observe` runs on each quiet interval too.
+/// [`readiness::recheck::capped_recv`] and `observe` runs on each quiet interval
+/// too.
 ///
 /// Panics report the waiting call site rather than this shared helper.
 #[track_caller]
@@ -879,7 +880,7 @@ fn wait_for_event<T>(
         if remaining.is_zero() {
             panic!("event was not observed before {READINESS_DEADLINE:?}")
         }
-        match receiver.recv_timeout(remaining.min(readiness::RECHECK)) {
+        match readiness::recheck::capped_recv(&receiver, remaining) {
             Ok(Ok(_)) => {
                 if let Some(observed) = observe() {
                     return observed;

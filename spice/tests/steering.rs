@@ -14,15 +14,13 @@ use journal::{FactCause, JournalWrite};
 use notify::{RecursiveMode, Watcher};
 use wire::{Actor, FactKind, Instant, Outcome, Producer};
 
+/// This battery waits on a watcher, so it shares the one bound on that block.
+#[path = "support/recheck.rs"]
+mod recheck;
+
 const REFUSAL_EXIT: i32 = 2;
 const WATCH_SCAN_INTERVAL: Duration = Duration::from_millis(100);
 const READINESS_DEADLINE: Duration = Duration::from_secs(10);
-/// How long readiness will sit on a silent watcher before reading the canvas.
-///
-/// The notification stays the fast path; this is a floor beneath it. A dropped
-/// or coalesced filesystem event would otherwise hold this wait for the whole
-/// deadline over a canvas that had already been published.
-const RECHECK: Duration = Duration::from_millis(50);
 const SESSION_ID: &str = "018f7777-7777-7444-8888-999999999999";
 const SESSION_RECORD: &str =
     r#"{"type":"system","subtype":"init","session_id":"018f7777-7777-7444-8888-999999999999"}"#;
@@ -134,7 +132,7 @@ impl RunningResident {
                 self.assert_running();
                 panic!("resident readiness failed: {READINESS_DEADLINE:?} spent");
             }
-            match receiver.recv_timeout(remaining.min(RECHECK)) {
+            match recheck::capped_recv(&receiver, remaining) {
                 Ok(Ok(_)) => {}
                 Ok(Err(error)) => panic!("readiness notification failed: {error}"),
                 // A quiet interval is not an answer, so the loop re-reads the
