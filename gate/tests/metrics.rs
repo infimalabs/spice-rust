@@ -402,6 +402,29 @@ fn complexity_measures_each_routine_rather_than_reporting_one_shape_for_all() {
         ["<Worker as First>::run", "<Worker as Second>::run"]
     );
 
+    let configured = measure_complexity(
+        "src/configured.rs",
+        "#[cfg(unix)]\n\
+         impl Worker { fn selected() { if true {} } }\n\
+         #[cfg(not(unix))]\n\
+         impl Worker { fn selected() {} }\n",
+    )
+    .expect("only the compiled target's Rust declaration exists");
+    assert_eq!(configured.len(), 1);
+    assert_eq!(configured[0].function(), "Worker::selected");
+    assert_eq!(configured[0].ccn(), if cfg!(unix) { 2 } else { 1 });
+
+    let unknown_configuration = measure_complexity(
+        "src/uncertain.rs",
+        "#[cfg(feature = \"first\")] fn selected() {}\n\
+         #[cfg(feature = \"second\")] fn selected() {}\n",
+    )
+    .expect_err("unknown source features cannot silently select one routine");
+    assert!(matches!(
+        unknown_configuration,
+        ParseError::Collision { .. }
+    ));
+
     let collision = measure_complexity(
         "src/dup.rs",
         "impl Alpha {\n    fn new() {}\n    fn new() {}\n}\n",

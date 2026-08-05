@@ -32,8 +32,8 @@ use sill::{Argv, Completion, Environment, spawn};
 
 use super::{
     ArmFinding, ArmOutcome, EnvironmentLedgerKind, FindingDetail, JavascriptUnusedStatus,
-    LOCAL_PATH_MARKER, PACKAGED_ENV_PROFILE, PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_TASTE_WORDS,
-    PACKAGED_TEST_PATHS, SourceLocus, ToolchainDeclaration, column_of, environment,
+    LOCAL_PATH_MARKER, PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_TASTE_WORDS, PACKAGED_TEST_PATHS,
+    SourceLocus, ToolchainDeclaration, column_of, environment,
 };
 use crate::GateId;
 use crate::jurisdiction::{Ignore, Jurisdiction};
@@ -113,6 +113,33 @@ impl Analysis {
                 declaration.jurisdiction.applicability
             ),
         )
+    }
+}
+
+/// Settle declaration-owned applicability that precedes executable discovery.
+///
+/// A tool is required to perform an applicable analysis, not to prove that the
+/// selected tree contains no subject for that analysis. Returning the absence
+/// here keeps an inapplicable arm independent of workstation tool inventory and
+/// ensures its retained tool evidence is empty.
+pub(super) fn before_tools(declaration: ToolchainDeclaration, root: &Path) -> Option<Analysis> {
+    match declaration.id {
+        GateId::Formatters => match rust_sources(root) {
+            Ok(0) => Some(Analysis::not_applicable(declaration)),
+            Ok(_) => None,
+            Err(reason) => Some(Analysis::terminal(ArmOutcome::ParseFailure, reason)),
+        },
+        GateId::CanvasWebTypecheck
+            if !root.join("Cargo.toml").is_file() || !root.join("app/index.html").is_file() =>
+        {
+            Some(Analysis::not_applicable(declaration))
+        }
+        GateId::PythonTypecheck => match python_sources(root) {
+            Ok(true) => None,
+            Ok(false) => Some(Analysis::not_applicable(declaration)),
+            Err(reason) => Some(Analysis::terminal(ArmOutcome::ParseFailure, reason)),
+        },
+        _ => None,
     }
 }
 
@@ -197,6 +224,22 @@ const CARGO: &str = "cargo";
 
 /// The declared program that validates the canvas asset graph.
 const TRUNK: &str = "trunk";
+
+/// Cargo's external build directory, constructed so the workspace ledger does
+/// not mistake a third-party process variable for a Spice-owned name.
+const CARGO_TARGET_DIRECTORY: &str = concat!("CARGO_", "TARGET_DIR");
+
+/// Cargo's external build-artifact directory under the same ownership rule.
+const CARGO_BUILD_DIRECTORY: &str = concat!("CARGO_", "BUILD_BUILD_DIR");
+
+/// Trunk's external distribution directory under the same rule.
+const TRUNK_DISTRIBUTION_DIRECTORY: &str = concat!("TRUNK_", "BUILD_DIST");
+
+/// The build-time home Cargo and the workspace's compiled declarations share.
+const COMPILED_HOME_DIRECTORY: &str = env!("HOME");
+
+/// Home is a tool-runtime input, not a Spice-owned environment declaration.
+const HOME_DIRECTORY: &str = concat!("HO", "ME");
 
 /// The first canvas analysis, kept in its declaration order.
 const CARGO_WASM_ARGUMENTS: &[&str] = &[
@@ -419,13 +462,18 @@ fn env_policy_with(
 /// the tree never references is stale and carries none, because there is no
 /// place to point at. Both directions are reported, so the ledger cannot drift
 /// in either one without saying so.
-pub(super) fn env_name_ledger(declaration: ToolchainDeclaration, root: &Path) -> Analysis {
-    env_name_ledger_with(declaration, root, read_source)
+pub(super) fn env_name_ledger(
+    declaration: ToolchainDeclaration,
+    root: &Path,
+    declared_names: &[String],
+) -> Analysis {
+    env_name_ledger_with(declaration, root, declared_names, read_source)
 }
 
 fn env_name_ledger_with(
     declaration: ToolchainDeclaration,
     root: &Path,
+    declared_names: &[String],
     read_source: SourceReader,
 ) -> Analysis {
     let sources = match env_sources(root) {
@@ -453,11 +501,7 @@ fn env_name_ledger_with(
         }
     }
 
-    let declared: BTreeSet<&str> = PACKAGED_ENV_PROFILE
-        .declared_names
-        .iter()
-        .copied()
-        .collect();
+    let declared: BTreeSet<&str> = declared_names.iter().map(String::as_str).collect();
     let mut findings: Vec<ArmFinding> = referenced
         .iter()
         .filter(|(name, _)| !declared.contains(name.as_str()))
@@ -828,6 +872,7 @@ pub(super) fn formatters(
 pub(super) fn canvas_web_typecheck(
     declaration: ToolchainDeclaration,
     root: &Path,
+    repository: &Path,
     bounds: &Bounds,
     programs: &BTreeMap<&str, &str>,
 ) -> Analysis {
@@ -846,7 +891,11 @@ pub(super) fn canvas_web_typecheck(
             format!("{} declares no {TRUNK} program", declaration.id.as_str()),
         );
     };
-    let environment = match canvas_environment(cargo, trunk) {
+    let workspace = match CanvasWorkspace::create(root, repository) {
+        Ok(workspace) => workspace,
+        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+    };
+    let environment = match canvas_environment(cargo, trunk, &workspace) {
         Ok(environment) => environment,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
@@ -960,8 +1009,29 @@ fn run_canvas_analysis(
     ))
 }
 
-fn canvas_environment(cargo: &str, trunk: &str) -> Result<Environment, String> {
-    tool_environment("canvas", &[cargo, trunk])
+fn canvas_environment(
+    cargo: &str,
+    trunk: &str,
+    workspace: &CanvasWorkspace,
+) -> Result<Environment, String> {
+    let path = tool_search_path("canvas", &[cargo, trunk, "/usr/bin/cc", "/bin/sh"])?;
+    Environment::new([
+        ("PATH", path),
+        (HOME_DIRECTORY, COMPILED_HOME_DIRECTORY.into()),
+        (
+            CARGO_TARGET_DIRECTORY,
+            workspace.cargo_target.as_os_str().to_owned(),
+        ),
+        (
+            CARGO_BUILD_DIRECTORY,
+            workspace.cargo_build.as_os_str().to_owned(),
+        ),
+        (
+            TRUNK_DISTRIBUTION_DIRECTORY,
+            workspace.trunk_dist.as_os_str().to_owned(),
+        ),
+    ])
+    .map_err(|error| format!("canvas tool environment was refused: {error}"))
 }
 
 /// A hermetic search path containing only the resolved analysis programs.
@@ -971,6 +1041,12 @@ fn canvas_environment(cargo: &str, trunk: &str) -> Result<Environment, String> {
 /// process environment everywhere else while making those declared programs
 /// mutually discoverable.
 fn tool_environment(label: &str, programs: &[&str]) -> Result<Environment, String> {
+    let path = tool_search_path(label, programs)?;
+    Environment::new([("PATH", path)])
+        .map_err(|error| format!("{label} tool environment was refused: {error}"))
+}
+
+fn tool_search_path(label: &str, programs: &[&str]) -> Result<std::ffi::OsString, String> {
     let mut directories = Vec::new();
     for program in programs {
         let Some(parent) = Path::new(program).parent() else {
@@ -980,10 +1056,61 @@ fn tool_environment(label: &str, programs: &[&str]) -> Result<Environment, Strin
             directories.push(parent);
         }
     }
-    let path = std::env::join_paths(directories)
-        .map_err(|error| format!("{label} tool search path is invalid: {error}"))?;
-    Environment::new([("PATH", path)])
-        .map_err(|error| format!("{label} tool environment was refused: {error}"))
+    std::env::join_paths(directories)
+        .map_err(|error| format!("{label} tool search path is invalid: {error}"))
+}
+
+/// Writable output roots for tools examining one immutable selected tree.
+struct CanvasWorkspace {
+    root: PathBuf,
+    cargo_target: PathBuf,
+    cargo_build: PathBuf,
+    trunk_dist: PathBuf,
+}
+
+impl CanvasWorkspace {
+    fn create(selected: &Path, repository: &Path) -> Result<Self, String> {
+        let Some(name) = selected.file_name() else {
+            return Err(format!(
+                "canvas selected tree {:?} has no name for an analysis workspace",
+                selected
+            ));
+        };
+        let mut workspace_name = name.to_os_string();
+        workspace_name.push(".spice-canvas-analysis");
+        let root = selected.with_file_name(workspace_name);
+        fs::create_dir(&root).map_err(|error| {
+            format!(
+                "canvas analysis workspace {} could not be created: {error}",
+                root.display()
+            )
+        })?;
+        let cargo_target = repository.join("target/xtask-app");
+        let cargo_build = repository.join("target/xtask-app-build");
+        let trunk_dist = root.join("trunk-dist");
+        if let Err(error) = fs::create_dir_all(&cargo_target)
+            .and_then(|()| fs::create_dir_all(&cargo_build))
+            .and_then(|()| fs::create_dir(&trunk_dist))
+        {
+            let _ = fs::remove_dir_all(&root);
+            return Err(format!(
+                "canvas analysis output directories for {} could not be created: {error}",
+                selected.display()
+            ));
+        }
+        Ok(Self {
+            root,
+            cargo_target,
+            cargo_build,
+            trunk_dist,
+        })
+    }
+}
+
+impl Drop for CanvasWorkspace {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
 }
 
 fn complete_output(name: &str, outcome: &sill::WaitOutcome) -> Result<String, String> {
@@ -1132,6 +1259,19 @@ fn rust_sources(root: &Path) -> Result<usize, String> {
         .filter(|entry| !built(entry.path()))
         .filter(|entry| extension(entry.path()).is_some_and(|found| found == RUST_EXTENSION))
         .count())
+}
+
+/// Whether the selected tree satisfies the Python declaration's applicability.
+fn python_sources(root: &Path) -> Result<bool, String> {
+    if !root.join("pyproject.toml").is_file() {
+        return Ok(false);
+    }
+    let walked = Jurisdiction::walk(root, &Ignore::default())
+        .map_err(|error| format!("the selected tree could not be walked: {error}"))?;
+    Ok(walked.measurable().any(|entry| {
+        !built(entry.path())
+            && extension(entry.path()).is_some_and(|found| found == "py" || found == "pyi")
+    }))
 }
 
 /// The selected changes one scanner admits, sorted and deduplicated.

@@ -1,0 +1,124 @@
+#![cfg(unix)]
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use gate::{ArmFamily, GateId, RepositoryExecutionEvent, Selector};
+
+#[test]
+fn shared_rim_invokes_each_compiled_arm_and_family_once_in_order() {
+    let repository = Repository::new();
+    let original = std::env::current_dir().expect("capture original directory");
+    std::env::set_current_dir(repository.path()).expect("enter fixture repository");
+    let mut events = Vec::new();
+    let result = spice::gate::run_traced(Selector::staged(), &mut |event| events.push(event));
+    std::env::set_current_dir(&original).expect("restore original directory");
+    let report = result.expect("shared command rim completes one battery");
+
+    let arms = events
+        .iter()
+        .filter_map(|event| match event {
+            RepositoryExecutionEvent::ArmInvoked {
+                position,
+                gate_id,
+                family,
+            } => Some((*position, *gate_id, *family)),
+            RepositoryExecutionEvent::FamilyInvoked { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(arms.len(), GateId::ALL.len());
+    assert_eq!(
+        arms.iter()
+            .map(|(_, gate_id, _)| *gate_id)
+            .collect::<Vec<_>>(),
+        GateId::ALL
+    );
+    assert_eq!(
+        arms.iter()
+            .map(|(position, _, _)| *position)
+            .collect::<Vec<_>>(),
+        (0..GateId::ALL.len()).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter_map(|event| match event {
+                RepositoryExecutionEvent::FamilyInvoked { family } => Some(*family),
+                RepositoryExecutionEvent::ArmInvoked { .. } => None,
+            })
+            .collect::<Vec<_>>(),
+        [
+            ArmFamily::Core,
+            ArmFamily::Toolchain,
+            ArmFamily::Metrics,
+            ArmFamily::Hygiene,
+        ]
+    );
+    assert_eq!(report.results().len(), GateId::ALL.len());
+}
+
+struct Repository(PathBuf);
+
+impl Repository {
+    fn new() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "spice-gate-trace-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).expect("create trace fixture");
+        git(&root, &["init", "-q"]);
+        git(&root, &["config", "user.email", "trace@example.invalid"]);
+        git(&root, &["config", "user.name", "Trace Fixture"]);
+        fs::create_dir_all(root.join("src")).expect("create source directory");
+        fs::write(
+            root.join("spice.toml"),
+            format!("{}[gate.walk]\nskip = []\n", gate::NARROWEST_FILE_CLASSES),
+        )
+        .expect("write policy");
+        fs::write(
+            root.join("baseline.toml"),
+            concat!(
+                "version = 1\n\n",
+                "[[floor]]\nname = \"rust.long-lines\"\nvalue = 0\n\n",
+                "[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n",
+            ),
+        )
+        .expect("write baseline");
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"trace-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )
+        .expect("write Cargo manifest");
+        fs::write(root.join("src/lib.rs"), "pub fn fixture() {}\n").expect("write source");
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "-qm", "fixture"]);
+        Self(root)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Repository {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.0).expect("remove trace fixture");
+    }
+}
+
+fn git(root: &Path, arguments: &[&str]) {
+    let output = Command::new("/usr/bin/git")
+        .args(arguments)
+        .current_dir(root)
+        .output()
+        .expect("fixture Git launches");
+    assert!(
+        output.status.success(),
+        "git {arguments:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

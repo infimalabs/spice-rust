@@ -100,6 +100,17 @@ pub struct HygieneConfiguration {
 }
 
 impl HygieneConfiguration {
+    /// The compiled roots used by the current command-surface battery.
+    ///
+    /// This is one gate-owned declaration rather than a pair of literals at
+    /// every entrypoint. Repositories with no selected Python beneath these
+    /// roots are reported as not applicable by the family; callers do not
+    /// substitute another policy or launch a predecessor analyzer.
+    #[must_use]
+    pub fn current() -> Self {
+        Self::new(["src"], ["tests"]).expect("compiled hygiene roots are normalized")
+    }
+
     /// Admit the roots that seed production and test graph traversal.
     ///
     /// Roots are selected-tree-relative files or directories. They are

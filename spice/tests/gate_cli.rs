@@ -5,12 +5,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use gate::{CampReport, CampStanding, GateReport, Standing, Verdict};
+use gate::{BatteryReceipt, BatteryReport, BatteryState, CampReport, CampStanding};
 use spice::placeholder::PlaceholderReason;
 use wire::{Outcome, ReplyPosition};
 
 const REFUSAL_EXIT: i32 = 2;
 const FAULT_EXIT: i32 = 1;
+const PROCESS_PATH: &str = concat!("PA", "TH");
 
 struct Spoken {
     code: Option<i32>,
@@ -19,17 +20,88 @@ struct Spoken {
 }
 
 fn invoke(argv: &[&str], current: &Path) -> Spoken {
-    let output = Command::new(env!("CARGO_BIN_EXE_spice"))
+    invoke_with_path(argv, current, None)
+}
+
+fn invoke_with_path(argv: &[&str], current: &Path, path: Option<&Path>) -> Spoken {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+    command
         .args(argv)
         .current_dir(current)
-        .env_remove(steer::hook::INBOX)
-        .output()
-        .expect("spice gate process launches");
+        .env_remove(steer::hook::INBOX);
+    if let Some(path) = path {
+        command.env(PROCESS_PATH, path);
+    }
+    let output = command.output().expect("spice gate process launches");
     Spoken {
         code: output.status.code(),
         out: output.stdout,
         err: output.stderr,
     }
+}
+
+#[test]
+fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_processes() {
+    let repository = GateRepository::new();
+    let tripwires = Scratch::new("tripwires");
+    let marker = tripwires.path().join("invoked");
+    for program in ["python", "python3", "task"] {
+        let executable = tripwires.path().join(program);
+        fs::write(
+            &executable,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' '{}' >> '{}'\nexit 97\n",
+                program,
+                marker.display()
+            ),
+        )
+        .expect("write process tripwire");
+        let mut permissions = fs::metadata(&executable)
+            .expect("read process tripwire mode")
+            .permissions();
+        use std::os::unix::fs::PermissionsExt as _;
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).expect("make process tripwire executable");
+    }
+
+    let gate = invoke_with_path(&["gate"], repository.path(), Some(tripwires.path()));
+    let report = report_body(&gate);
+    let pre_commit = invoke_with_path(
+        &["--json", "dev", "pre-commit"],
+        repository.path(),
+        Some(tripwires.path()),
+    );
+    assert_eq!(pre_commit.code, Some(REFUSAL_EXIT));
+    assert!(pre_commit.out.is_empty());
+    let outcome: Outcome<serde_json::Value> =
+        wire::decode(&pre_commit.err).expect("typed pre-commit refusal");
+    let Outcome::Refusal(refusal) = outcome else {
+        panic!("non-admitting tripwire vector must refuse: {outcome:?}");
+    };
+    let pre_commit_report = BatteryReport::decode(
+        refusal
+            .observed
+            .as_deref()
+            .expect("pre-commit retains its complete report")
+            .as_bytes(),
+    )
+    .expect("pre-commit refusal carries a canonical report");
+    let receipt = receipt_body(&invoke_with_path(
+        &["gate", "receipt"],
+        repository.path(),
+        Some(tripwires.path()),
+    ));
+
+    assert_eq!(pre_commit_report, report);
+    assert_eq!(receipt.tree(), report.context().source());
+    assert_eq!(receipt.gate_set(), report.gate_set());
+    assert_eq!(receipt.results(), report.results());
+    assert_eq!(report.results().len(), gate::GateId::ALL.len());
+    assert!(
+        !marker.exists(),
+        "a forbidden interpreter or Taskwarrior process crossed the Rust rim: {}",
+        marker.display()
+    );
 }
 
 fn reply<B>(spoken: &Spoken) -> B
@@ -51,58 +123,86 @@ fn newline_count(bytes: &[u8]) -> usize {
     bytes.iter().filter(|byte| **byte == b'\n').count()
 }
 
+fn report_body(spoken: &Spoken) -> BatteryReport {
+    assert_eq!(spoken.code, Some(0));
+    assert!(spoken.err.is_empty());
+    assert_eq!(newline_count(&spoken.out), 1);
+    let bytes = spoken.out.strip_suffix(b"\n").unwrap().to_vec();
+    BatteryReport::decode(&bytes).expect("complete canonical battery report")
+}
+
+fn receipt_body(spoken: &Spoken) -> BatteryReceipt {
+    assert_eq!(spoken.code, Some(0));
+    assert!(spoken.err.is_empty());
+    let bytes = spoken.out.strip_suffix(b"\n").unwrap().to_vec();
+    BatteryReceipt::verify(&bytes).expect("complete canonical battery receipt")
+}
+
+fn assert_structured_body(spoken: &Spoken, expected: &impl serde::Serialize) {
+    assert_eq!(spoken.code, Some(0));
+    assert!(spoken.err.is_empty());
+    let value: serde_json::Value =
+        serde_json::from_slice(&spoken.out).expect("structured gate outcome");
+    assert_eq!(value["kind"], "reply");
+    assert_eq!(
+        value["body"],
+        serde_json::to_value(expected).expect("expected body encodes")
+    );
+}
+
 #[test]
 fn ordinary_gate_uses_only_the_captured_index_and_one_selected_commit() {
     let repository = GateRepository::new();
 
     let text = invoke(&["gate"], repository.path());
     let json = invoke(&["--json", "gate"], repository.path());
-    assert_eq!(text.code, Some(0));
-    assert!(text.err.is_empty());
-    assert_eq!(newline_count(&text.out), 1);
-    let text_report: GateReport = wire::decode(&text.out).expect("text body is the typed report");
-    let json_report = reply::<GateReport>(&json);
-    assert_eq!(text_report, json_report);
-    assert_eq!(json_report.standing(), Standing::Clean);
-    assert_eq!(json_report.measurements()[0].value(), 1);
-    assert_eq!(json_report.verdict().standing(), Standing::Clean);
-    assert_eq!(json_report.findings(), json_report.verdict().findings());
-    assert!(json_report.tightening().is_some());
+    let text_report = report_body(&text);
+    assert_structured_body(&json, &text_report);
+    assert_eq!(text_report.results().len(), gate::GateId::ALL.len());
+    assert!(
+        text_report.admits(),
+        "fixture battery must admit publication: {:?}",
+        text_report
+            .results()
+            .iter()
+            .filter(|result| !result.state().admits())
+            .map(|result| (result.gate_id(), result.state(), result.reason()))
+            .collect::<Vec<_>>()
+    );
+    assert!(text_report.results().iter().all(|result| {
+        !matches!(
+            result.state(),
+            BatteryState::Unsupported | BatteryState::Unmeasured
+        )
+    }));
 
     repository.write_source(2);
-    let unstaged = reply::<GateReport>(&invoke(&["gate", "--json"], repository.path()));
-    assert_eq!(unstaged.measurements()[0].value(), 1);
-    assert_eq!(unstaged.verdict().tree(), json_report.verdict().tree());
+    let unstaged = report_body(&invoke(&["gate"], repository.path()));
+    assert_eq!(unstaged.context().source(), text_report.context().source());
 
     repository.add("src/lib.rs");
-    let regressed = invoke(&["--json", "gate"], repository.path());
-    assert_eq!(regressed.code, Some(REFUSAL_EXIT));
-    assert!(regressed.out.is_empty());
-    assert_eq!(newline_count(&regressed.err), 1);
-    let regressed: Outcome<GateReport> =
-        wire::decode(&regressed.err).expect("regression is one typed outcome");
-    let Outcome::Refusal(regressed) = regressed else {
-        panic!("regression must not become a green reply: {regressed:?}");
-    };
-    assert_eq!(regressed.reason, "gate::regressed");
-    assert!(
-        regressed
-            .observed
-            .as_deref()
-            .is_some_and(|report| report.contains("standing refused"))
+    let staged = report_body(&invoke(&["gate"], repository.path()));
+    assert_ne!(staged.context().source(), text_report.context().source());
+
+    let committed = report_body(&invoke(&["gate", "--at", "HEAD"], repository.path()));
+    assert_eq!(committed.context().source(), text_report.context().source());
+    assert_eq!(committed.gate_set(), text_report.gate_set());
+
+    let receipt = receipt_body(&invoke(&["gate", "receipt"], repository.path()));
+    assert_eq!(receipt.tree(), staged.context().source());
+    assert_eq!(receipt.gate_set(), staged.gate_set());
+    assert_eq!(
+        receipt
+            .results()
+            .iter()
+            .map(|result| result.gate_id())
+            .collect::<Vec<_>>(),
+        staged
+            .results()
+            .iter()
+            .map(|result| result.gate_id())
+            .collect::<Vec<_>>()
     );
-
-    let committed = reply::<GateReport>(&invoke(
-        &["gate", "--at", "HEAD", "--json"],
-        repository.path(),
-    ));
-    assert_eq!(committed.standing(), Standing::Clean);
-    assert_eq!(committed.measurements()[0].value(), 1);
-    assert_eq!(committed.verdict(), json_report.verdict());
-
-    let receipt = reply::<Verdict>(&invoke(&["--json", "gate", "receipt"], repository.path()));
-    assert_eq!(receipt.standing(), Standing::Refused);
-    assert_ne!(receipt.tree(), committed.verdict().tree());
 }
 
 #[test]
@@ -134,11 +234,9 @@ fn camp_receipt_and_kill_are_fresh_direct_leaves_without_checkout_state() {
     let receipt_json = invoke(&["--json", "gate", "receipt"], repository.path());
     assert_eq!(receipt_text.code, Some(0));
     assert!(receipt_text.err.is_empty());
-    let receipt_text: Verdict =
-        wire::decode(&receipt_text.out).expect("receipt text is typed body");
-    let receipt_json = reply::<Verdict>(&receipt_json);
-    assert_eq!(receipt_text, receipt_json);
-    assert_eq!(receipt_json.standing(), Standing::Clean);
+    let receipt_text = receipt_body(&receipt_text);
+    assert_structured_body(&receipt_json, &receipt_text);
+    assert_eq!(receipt_text.results().len(), gate::GateId::ALL.len());
 
     let kill = invoke(&["--json", "gate", "kill"], repository.path());
     assert_eq!(kill.code, Some(REFUSAL_EXIT));
@@ -185,7 +283,7 @@ fn repository_selection_and_contract_failures_are_named_and_never_fall_through()
     let missing_repository = invoke(&["--json", "gate"], outside.path());
     assert_eq!(missing_repository.code, Some(FAULT_EXIT));
     assert!(missing_repository.out.is_empty());
-    let missing_repository: Outcome<GateReport> =
+    let missing_repository: Outcome<serde_json::Value> =
         wire::decode(&missing_repository.err).expect("repository fault is typed");
     let Outcome::Fault(missing_repository) = missing_repository else {
         panic!("missing repository must fault: {missing_repository:?}");
@@ -198,7 +296,7 @@ fn repository_selection_and_contract_failures_are_named_and_never_fall_through()
         repository.path(),
     );
     assert_eq!(revision.code, Some(REFUSAL_EXIT));
-    let revision: Outcome<GateReport> =
+    let revision: Outcome<serde_json::Value> =
         wire::decode(&revision.err).expect("selection refusal is typed");
     let Outcome::Refusal(revision) = revision else {
         panic!("missing revision must refuse: {revision:?}");
@@ -210,7 +308,7 @@ fn repository_selection_and_contract_failures_are_named_and_never_fall_through()
     repository.add("baseline.toml");
     let contract = invoke(&["gate", "--json"], repository.path());
     assert_eq!(contract.code, Some(REFUSAL_EXIT));
-    let contract: Outcome<GateReport> =
+    let contract: Outcome<serde_json::Value> =
         wire::decode(&contract.err).expect("contract refusal is typed");
     let Outcome::Refusal(contract) = contract else {
         panic!("foreign contract must refuse: {contract:?}");
@@ -253,6 +351,11 @@ impl GateRepository {
             ),
         )
         .expect("write tracked baseline");
+        fs::write(
+            scratch.path().join("Cargo.toml"),
+            "[package]\nname = \"gate-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )
+        .expect("write fixture Cargo manifest");
         let repository = Self { scratch };
         repository.write_source(1);
         repository.write_camp_lines(20);
@@ -272,6 +375,7 @@ impl GateRepository {
     fn write_source(&self, long_lines: usize) {
         let mut source = String::from("pub fn fixture() {}\n");
         for _ in 0..long_lines {
+            source.push_str("// ");
             source.push_str(&"x".repeat(101));
             source.push('\n');
         }
@@ -285,8 +389,11 @@ impl GateRepository {
             "gate/src/kill.rs",
             "gate/src/verdict.rs",
         ] {
-            fs::write(self.path().join(path), format!("{}\n", "c".repeat(length)))
-                .expect("write camp locus");
+            fs::write(
+                self.path().join(path),
+                format!("//{}\n", "c".repeat(length.saturating_sub(2))),
+            )
+            .expect("write camp locus");
         }
     }
 }

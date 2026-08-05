@@ -64,6 +64,8 @@ struct ComplexityGrammar {
     infix: &'static [&'static str],
     /// Operator spellings that add one decision because they short-circuit.
     short_circuit: &'static [&'static str],
+    /// Whether target `cfg` attributes select which declarations exist.
+    rust_cfg: bool,
 }
 
 /// Every alternative of a multi-way branch is counted, including the default
@@ -88,6 +90,7 @@ const GRAMMARS: &[ComplexityGrammar] = &[
         ],
         infix: &["binary_expression"],
         short_circuit: &["&&", "||"],
+        rust_cfg: true,
     },
     ComplexityGrammar {
         suffixes: &[".py"],
@@ -107,6 +110,7 @@ const GRAMMARS: &[ComplexityGrammar] = &[
         ],
         infix: &[],
         short_circuit: &[],
+        rust_cfg: false,
     },
     ComplexityGrammar {
         suffixes: &[".js", ".mjs"],
@@ -126,6 +130,7 @@ const GRAMMARS: &[ComplexityGrammar] = &[
         ],
         infix: &["binary_expression"],
         short_circuit: &["&&", "||", "??"],
+        rust_cfg: false,
     },
     ComplexityGrammar {
         suffixes: &[".cs"],
@@ -150,6 +155,7 @@ const GRAMMARS: &[ComplexityGrammar] = &[
         ],
         infix: &["binary_expression"],
         short_circuit: &["&&", "||", "??"],
+        rust_cfg: false,
     },
     ComplexityGrammar {
         suffixes: &[".lua"],
@@ -165,6 +171,7 @@ const GRAMMARS: &[ComplexityGrammar] = &[
         ],
         infix: &["binary_expression"],
         short_circuit: &["and", "or"],
+        rust_cfg: false,
     },
 ];
 
@@ -175,8 +182,11 @@ const GRAMMARS: &[ComplexityGrammar] = &[
 /// Refuses a source class with no vendored grammar as
 /// [`ParseError::Unsupported`], so a language the policy selects and this build
 /// cannot parse is named rather than measured as having no routines at all.
-/// Refuses source the grammar cannot parse, and refuses two routines that
-/// qualify to one identity, since the arm keys its measurements on that pair.
+/// Refuses source the grammar cannot parse, and refuses two active routines
+/// that qualify to one identity, since the arm keys its measurements on that
+/// pair. Rust declarations under a target predicate proven false for this
+/// compiled analyzer do not exist in its execution path and are not measured;
+/// predicates the analyzer cannot settle remain visible and can still collide.
 pub fn measure_complexity(path: &str, source: &str) -> Result<Vec<ComplexityRoutine>, ParseError> {
     let path = canonical_path(path)?;
     let grammar = grammar_for(&path)?;
@@ -282,12 +292,228 @@ fn visit(
     {
         routines[index].ccn += 1;
     }
+    let mut predicate = Predicate::True;
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        visit(child, source, grammar, path, scope, current, routines);
+        if grammar.rust_cfg && child.kind() == "attribute_item" {
+            if let Some(observed) = cfg_attribute(child, source) {
+                predicate = predicate.and(observed);
+            }
+            continue;
+        }
+        if predicate != Predicate::False {
+            visit(child, source, grammar, path, scope, current, routines);
+        }
+        predicate = Predicate::True;
     }
     if named {
         scope.pop();
+    }
+}
+
+/// Three-valued result for one Rust configuration predicate.
+///
+/// Unknown is deliberately retained rather than guessed: only a predicate the
+/// compiled target can prove false is allowed to remove a declaration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Predicate {
+    True,
+    False,
+    Unknown,
+}
+
+impl Predicate {
+    const fn and(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::False, _) | (_, Self::False) => Self::False,
+            (Self::True, Self::True) => Self::True,
+            _ => Self::Unknown,
+        }
+    }
+
+    const fn or(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::True, _) | (_, Self::True) => Self::True,
+            (Self::False, Self::False) => Self::False,
+            _ => Self::Unknown,
+        }
+    }
+
+    const fn not(self) -> Self {
+        match self {
+            Self::True => Self::False,
+            Self::False => Self::True,
+            Self::Unknown => Self::Unknown,
+        }
+    }
+
+    const fn known(value: bool) -> Self {
+        if value { Self::True } else { Self::False }
+    }
+}
+
+/// Target truth carried by one `#[cfg(...)]` attribute.
+fn cfg_attribute(node: Node<'_>, source: &str) -> Option<Predicate> {
+    let text = node.utf8_text(source.as_bytes()).ok()?.trim();
+    let attribute = text.strip_prefix("#[")?.strip_suffix(']')?.trim();
+    let body = attribute
+        .strip_prefix("cfg")?
+        .trim_start()
+        .strip_prefix('(')?
+        .strip_suffix(')')?;
+    let mut parser = CfgParser::new(body);
+    let result = parser.expression()?;
+    parser.finish().then_some(result)
+}
+
+/// Minimal parser for Rust's documented `cfg` predicate grammar.
+struct CfgParser<'a> {
+    text: &'a str,
+    offset: usize,
+}
+
+impl<'a> CfgParser<'a> {
+    const fn new(text: &'a str) -> Self {
+        Self { text, offset: 0 }
+    }
+
+    fn expression(&mut self) -> Option<Predicate> {
+        let name = self.identifier()?;
+        if self.take('=') {
+            return self.string().map(|value| target_value(name, value));
+        }
+        if !self.take('(') {
+            return Some(target_flag(name));
+        }
+        let values = self.arguments()?;
+        match name {
+            "all" => Some(values.into_iter().fold(Predicate::True, Predicate::and)),
+            "any" => Some(values.into_iter().fold(Predicate::False, Predicate::or)),
+            "not" if values.len() == 1 => Some(values[0].not()),
+            _ => Some(Predicate::Unknown),
+        }
+    }
+
+    fn arguments(&mut self) -> Option<Vec<Predicate>> {
+        let mut values = Vec::new();
+        if self.take(')') {
+            return Some(values);
+        }
+        loop {
+            values.push(self.expression()?);
+            if self.take(')') {
+                return Some(values);
+            }
+            if !self.take(',') {
+                return None;
+            }
+        }
+    }
+
+    fn identifier(&mut self) -> Option<&'a str> {
+        self.space();
+        let start = self.offset;
+        while self
+            .text
+            .as_bytes()
+            .get(self.offset)
+            .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        {
+            self.offset += 1;
+        }
+        (self.offset > start).then_some(&self.text[start..self.offset])
+    }
+
+    fn string(&mut self) -> Option<&'a str> {
+        self.space();
+        let rest = self.text.get(self.offset..)?;
+        let body = rest.strip_prefix('"')?;
+        let end = body.find('"')?;
+        self.offset += end + 2;
+        Some(&body[..end])
+    }
+
+    fn take(&mut self, expected: char) -> bool {
+        self.space();
+        if self
+            .text
+            .get(self.offset..)
+            .is_some_and(|rest| rest.starts_with(expected))
+        {
+            self.offset += expected.len_utf8();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn finish(&mut self) -> bool {
+        self.space();
+        self.offset == self.text.len()
+    }
+
+    fn space(&mut self) {
+        while self
+            .text
+            .as_bytes()
+            .get(self.offset)
+            .is_some_and(u8::is_ascii_whitespace)
+        {
+            self.offset += 1;
+        }
+    }
+}
+
+/// Bare target predicates this compiled analyzer can settle.
+fn target_flag(name: &str) -> Predicate {
+    match name {
+        "unix" => Predicate::known(cfg!(unix)),
+        "windows" => Predicate::known(cfg!(windows)),
+        "debug_assertions" => Predicate::known(cfg!(debug_assertions)),
+        // Test and feature selection belong to the analyzed source, not to the
+        // build that happens to host this parser, so neither is guessed.
+        "test" => Predicate::Unknown,
+        _ => Predicate::Unknown,
+    }
+}
+
+/// Key/value target predicates this compiled analyzer can settle.
+fn target_value(name: &str, value: &str) -> Predicate {
+    match name {
+        "target_arch" => Predicate::known(value == std::env::consts::ARCH),
+        "target_os" => Predicate::known(value == std::env::consts::OS),
+        "target_family" => Predicate::known(value == std::env::consts::FAMILY),
+        "target_endian" => Predicate::known(
+            value
+                == if cfg!(target_endian = "little") {
+                    "little"
+                } else {
+                    "big"
+                },
+        ),
+        "target_pointer_width" => Predicate::known(value == usize::BITS.to_string()),
+        "target_vendor" => target_vendor(value),
+        "target_env" => target_environment(value),
+        _ => Predicate::Unknown,
+    }
+}
+
+fn target_vendor(value: &str) -> Predicate {
+    match value {
+        "apple" => Predicate::known(cfg!(target_vendor = "apple")),
+        "pc" => Predicate::known(cfg!(target_vendor = "pc")),
+        "unknown" => Predicate::known(cfg!(target_vendor = "unknown")),
+        _ => Predicate::Unknown,
+    }
+}
+
+fn target_environment(value: &str) -> Predicate {
+    match value {
+        "" => Predicate::known(cfg!(target_env = "")),
+        "gnu" => Predicate::known(cfg!(target_env = "gnu")),
+        "musl" => Predicate::known(cfg!(target_env = "musl")),
+        "msvc" => Predicate::known(cfg!(target_env = "msvc")),
+        _ => Predicate::Unknown,
     }
 }
 
