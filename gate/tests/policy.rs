@@ -3,6 +3,17 @@ use gate::{
     ScopeAxis, migrate_predecessor_policy,
 };
 
+/// One predecessor document that can load: a fixture body carrying the
+/// file-class selections migration requires of every document.
+///
+/// The refusal fixtures below need this as much as the passing ones do. A
+/// document that omits file classes is refused for that, so a fixture testing
+/// some other malformed field would never reach the field it names, and would
+/// pass while proving nothing about it.
+fn loadable(body: &str) -> String {
+    format!("{}{body}", gate::NARROWEST_FILE_CLASSES)
+}
+
 const OVERLAPPING: &str = r#"
 [policy.limits]
 file_loc = 10
@@ -55,6 +66,11 @@ unlimited = true
 const EVERY_SCOPE: &str = r#"
 regex_dialect = "rust-regex-1"
 magic_examine_threshold = 10
+
+[file_classes]
+file_shape = [".rs"]
+complexity = [".rs"]
+magic = [".rs"]
 
 [limits]
 file_loc = 10
@@ -131,7 +147,7 @@ multiplier = 2.0
 
 #[test]
 fn migration_assigns_stable_ids_and_preserves_selection_and_bound_order() {
-    let policy = migrate_predecessor_policy("fixtures/policy.toml", OVERLAPPING)
+    let policy = migrate_predecessor_policy("fixtures/policy.toml", &loadable(OVERLAPPING))
         .expect("legacy policy migrates");
 
     assert_eq!(policy.document().rules().len(), 3);
@@ -230,7 +246,8 @@ fn migration_assigns_stable_ids_and_preserves_selection_and_bound_order() {
 fn generated_markdown_rules_retain_regex_one_letter_depth_and_priority() {
     let policy = migrate_predecessor_policy(
         "tracked/spice.toml",
-        r#"
+        &loadable(
+            r#"
         [policy.limits]
         repo_truth_doc_chars = 1000
 
@@ -242,6 +259,7 @@ fn generated_markdown_rules_retain_regex_one_letter_depth_and_priority() {
         base_chars = 7000
         max_bounded_chars = 15000
         "#,
+        ),
     )
     .expect("generated policy migrates");
 
@@ -288,13 +306,15 @@ fn generated_markdown_rules_retain_regex_one_letter_depth_and_priority() {
 fn repository_document_selection_unifies_explicit_paths_and_generated_depth_rules() {
     let policy = migrate_predecessor_policy(
         "tracked/spice.toml",
-        r#"
+        &loadable(
+            r#"
         [policy.repo_truth]
         docs = ["NOTICE.txt", "./NOTICE.txt"]
 
         [policy.markdown_depth_budget]
         extensions = [".md"]
         "#,
+        ),
     )
     .expect("repository-document policy migrates");
 
@@ -408,6 +428,10 @@ fn resolver_order_is_priority_then_specificity_then_earlier_source() {
         r#"
         regex_dialect = "rust-regex-1"
         magic_examine_threshold = 10
+        [file_classes]
+        file_shape = [".rs"]
+        complexity = [".rs"]
+        magic = [".rs"]
         [limits]
         file_loc = 10
         file_bytes = 100
@@ -544,7 +568,8 @@ fn resolver_order_is_priority_then_specificity_then_earlier_source() {
 fn predecessor_path_matching_keeps_glob_crossing_and_root_double_star() {
     let policy = migrate_predecessor_policy(
         "path-policy.toml",
-        r#"
+        &loadable(
+            r#"
         [policy.markdown_depth_budget]
         extensions = []
 
@@ -563,6 +588,7 @@ fn predecessor_path_matching_keeps_glob_crossing_and_root_double_star() {
         [policy.rules.routine_ccn]
         multiplier = 2.0
         "#,
+        ),
     )
     .expect("path policy migrates");
 
@@ -656,8 +682,68 @@ fn migration_diagnostics_name_the_exact_source_field() {
         ),
     ];
     for (text, field, reason) in cases {
-        let error = migrate_predecessor_policy("fixture.toml", text)
+        let error = migrate_predecessor_policy("fixture.toml", &loadable(text))
             .expect_err("malformed predecessor input must refuse");
+        assert_migration_error(&error, field, reason);
+    }
+}
+
+/// No file class is defaulted, and each unusable selection names itself.
+///
+/// These three are the only fields migration requires outright, which is what
+/// makes their absence a refusal rather than an empty accessor: a document
+/// that silently selected nothing would gate a repository against no files at
+/// all and report the result as clean. Every case leaves the other two
+/// selections well-formed, so the field a refusal names is the field that case
+/// actually broke rather than the first one the parser happened to reach.
+#[test]
+fn absent_or_unusable_file_classes_refuse_instead_of_selecting_nothing() {
+    const SHAPE: &str = "[policy.file_shape]\nsource_suffixes = [\".rs\"]\n";
+    const LANGUAGES: &str = "[policy.languages]\ncomplexity = [\".rs\"]\nmagic = [\".rs\"]\n";
+    for (text, field, reason) in [
+        (
+            LANGUAGES.to_owned(),
+            "policy.file_shape.source_suffixes",
+            "no file-class selection is packaged to fall back on",
+        ),
+        (
+            format!("{SHAPE}[policy.languages]\nmagic = [\".rs\"]\n"),
+            "policy.languages.complexity",
+            "must be declared",
+        ),
+        (
+            format!("{SHAPE}[policy.languages]\ncomplexity = [\".rs\"]\n"),
+            "policy.languages.magic",
+            "must be declared",
+        ),
+        (
+            format!("{SHAPE}suffixes = [\".rs\"]\n{LANGUAGES}"),
+            "policy.file_shape.suffixes",
+            "unknown field; expected one of: source_suffixes",
+        ),
+        (
+            format!("{SHAPE}{LANGUAGES}magic_numbers = [\".rs\"]\n"),
+            "policy.languages.magic_numbers",
+            "unknown field; expected one of: complexity, magic",
+        ),
+        (
+            format!("[policy.file_shape]\nsource_suffixes = [\"rs\"]\n{LANGUAGES}"),
+            "policy.file_shape.source_suffixes[1]",
+            "\"rs\": must be a file suffix beginning with a period",
+        ),
+        (
+            format!("{SHAPE}[policy.languages]\ncomplexity = [\".rs\", \".\"]\nmagic = []\n"),
+            "policy.languages.complexity[2]",
+            "\".\": must be a file suffix beginning with a period",
+        ),
+        (
+            format!("{SHAPE}[policy.languages]\ncomplexity = [\".rs\"]\nmagic = []\n"),
+            "policy.languages.magic",
+            "must be a non-empty list",
+        ),
+    ] {
+        let error = migrate_predecessor_policy("fixture.toml", &text)
+            .expect_err("an unusable file-class selection must refuse");
         assert_migration_error(&error, field, reason);
     }
 }
@@ -674,7 +760,7 @@ fn disabled_markdown_generation_still_validates_the_stem_dialect() {
             "stem_pattern = \"[\"\n"
         ),
     ] {
-        let error = migrate_predecessor_policy("disabled.toml", text)
+        let error = migrate_predecessor_policy("disabled.toml", &loadable(text))
             .expect_err("disabled unsupported stem pattern must refuse");
         assert_eq!(error.field(), "policy.markdown_depth_budget.stem_pattern");
         assert!(error.reason().contains("unsupported by rust-regex-1"));
@@ -687,10 +773,10 @@ fn disabled_markdown_generation_still_validates_the_stem_dialect() {
 
     let policy = migrate_predecessor_policy(
         "disabled.toml",
-        concat!(
+        &loadable(concat!(
             "[policy.markdown_depth_budget]\nextensions = []\n",
             "stem_pattern = \"[A-Z_]+\"\n"
-        ),
+        )),
     )
     .expect("disabled supported stem pattern migrates");
     assert!(policy.document().rules().is_empty());
@@ -700,7 +786,8 @@ fn disabled_markdown_generation_still_validates_the_stem_dialect() {
 fn normalized_duplicate_selectors_and_anonymous_current_rules_are_refused() {
     let duplicate = migrate_predecessor_policy(
         "duplicate.toml",
-        r#"
+        &loadable(
+            r#"
         [policy.markdown_depth_budget]
         extensions = []
 
@@ -712,6 +799,7 @@ fn normalized_duplicate_selectors_and_anonymous_current_rules_are_refused() {
         scopes = { paths = ["src/legacy"] }
         multiplier = 2.0
         "#,
+        ),
     )
     .expect_err("normalized duplicate selector must refuse");
     assert_eq!(duplicate.source(), "duplicate.toml");
@@ -730,6 +818,53 @@ fn normalized_duplicate_selectors_and_anonymous_current_rules_are_refused() {
     let document = toml::from_str(&malformed_phase).expect("current policy decodes");
     let error = RulePolicy::compile(document).expect_err("unsupported phase must refuse");
     assert_eq!(error.field(), "rule[phase-rule].scopes.phases");
+}
+
+/// The current dialect is held to the file-class law the predecessor one is.
+///
+/// Migration refuses an empty or period-less selection while reading the
+/// predecessor spelling, but that is only the door a predecessor document
+/// arrives through. A current [`PolicyDocument`] is deserialized directly, so
+/// without this the same unusable selection would compile — and the whole point
+/// of requiring the field is that no door admits a document selecting nothing.
+/// The refusals name the current field rather than the predecessor one, because
+/// that is the field the author of this document actually wrote.
+#[test]
+fn compiling_a_current_document_refuses_the_same_unusable_file_classes() {
+    for (broken, field, reason) in [
+        (
+            "file_shape = [\".rs\"]",
+            "file_classes.file_shape",
+            "must select at least one suffix",
+        ),
+        (
+            "complexity = [\".rs\"]",
+            "file_classes.complexity",
+            "must select at least one suffix",
+        ),
+        (
+            "magic = [\".rs\"]",
+            "file_classes.magic",
+            "must select at least one suffix",
+        ),
+    ] {
+        let text = EVERY_SCOPE.replacen(broken, &broken.replace("[\".rs\"]", "[]"), 1);
+        let document = toml::from_str(&text).expect("an empty file class still decodes");
+        let error = RulePolicy::compile(document).expect_err("an empty file class must refuse");
+        assert_eq!(error.field(), field, "{error}");
+        assert!(error.reason().contains(reason), "{error}");
+    }
+
+    let text = EVERY_SCOPE.replacen("magic = [\".rs\"]", "magic = [\"rs\"]", 1);
+    let document = toml::from_str(&text).expect("a period-less suffix still decodes");
+    let error = RulePolicy::compile(document).expect_err("a period-less suffix must refuse");
+    assert_eq!(error.field(), "file_classes.magic", "{error}");
+    assert!(
+        error
+            .reason()
+            .contains("\"rs\": must be a file suffix beginning with a period"),
+        "{error}"
+    );
 }
 
 fn current_policy(text: &str) -> RulePolicy {

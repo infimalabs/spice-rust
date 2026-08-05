@@ -96,6 +96,43 @@ env_names = [
     "SPICE_PROOF",
 ]
 
+# Which files the shape arm measures lines and bytes over.
+#
+# Nothing packages a fallback for this. An arm offered no paths reports a clean
+# family over nothing, which reads exactly like a repository that passed, so the
+# selection is declared here or the document refuses to load. The inventory is
+# the one the predecessor gate measures this same repository with today; a
+# shorter list would not tighten the gate, it would silently stop measuring
+# whatever it dropped.
+[policy.file_shape]
+source_suffixes = [
+    ".astro", ".bash", ".c", ".cc", ".cjs", ".cpp", ".cs", ".css", ".cts",
+    ".go", ".h", ".hpp", ".html", ".java", ".js", ".json", ".jsx", ".kt",
+    ".less", ".lua", ".m", ".md", ".mjs", ".mm", ".mts", ".php", ".py",
+    ".pyi", ".rb", ".rs", ".rst", ".sass", ".scala", ".scss", ".sh", ".sql",
+    ".svelte", ".swift", ".toml", ".ts", ".tsx", ".txt", ".vue", ".xml",
+    ".yaml", ".yml", ".zsh",
+]
+
+# Which files each language arm reads.
+#
+# These are two selections rather than one because they are genuinely different
+# sets. `complexity` counts routines, so it admits every language whose routines
+# the parser can find, including the three scripting suffixes magic omits.
+# `magic` compares literals against a baseline through a C-family grammar, and a
+# language that grammar cannot parse exactly would have every literal in it read
+# as a regression.
+[policy.languages]
+complexity = [
+    ".c", ".cc", ".cpp", ".cs", ".go", ".h", ".hpp", ".java", ".js", ".kt",
+    ".lua", ".m", ".mm", ".php", ".py", ".rb", ".rs", ".scala", ".swift",
+    ".ts",
+]
+magic = [
+    ".c", ".cc", ".cpp", ".cs", ".go", ".h", ".hpp", ".java", ".js", ".kt",
+    ".m", ".mm", ".py", ".rs", ".scala", ".swift", ".ts",
+]
+
 [taste.polling]
 words = ["delay*", "poll*", "sleep*", "slept"]
 message = "Respond to the real event, signal, or completion notification through a blocking call, watcher, or callback, or restructure the flow so nothing remains to await."

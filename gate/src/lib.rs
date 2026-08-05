@@ -113,12 +113,13 @@ pub use message::{
 };
 pub use names::{RETIRED_NAMES, RetiredMatch, RetiredName, retired_matches};
 pub use policy::{
-    BoundLimits, BoundName, CompileError as PolicyCompileError, GlobalRatchet, MagicRule,
-    MigrationError as PolicyMigrationError, OneLetterBehavior, PackagePolicy, Policy as RulePolicy,
-    PolicyContext, PolicyDocument, RegexDialect, RepoTruthPolicy,
-    ResolveError as PolicyResolveError, ResolvedBound, ResolvedMagic, RuleDeclaration, RuleId,
-    RuleSettings, RuleSource, RuleSourceKind, ScopeAxis, ScopeSelector, SelectionProvenance,
-    SelectorSpecificity, migrate_predecessor_policy,
+    BoundLimits, BoundName, CompileError as PolicyCompileError, FileClasses, FileShapePolicy,
+    GlobalRatchet, LanguagesPolicy, MagicRule, MigrationError as PolicyMigrationError,
+    NARROWEST_FILE_CLASSES, OneLetterBehavior, PackagePolicy, Policy as RulePolicy, PolicyContext,
+    PolicyDocument, RegexDialect, RepoTruthPolicy, ResolveError as PolicyResolveError,
+    ResolvedBound, ResolvedMagic, RuleDeclaration, RuleId, RuleSettings, RuleSource,
+    RuleSourceKind, ScopeAxis, ScopeSelector, SelectionProvenance, SelectorSpecificity,
+    migrate_predecessor_policy,
 };
 pub use ratchet::{Finding, Movement, Ratchet, RatchetError};
 pub use report::{

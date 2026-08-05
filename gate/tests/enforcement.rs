@@ -442,10 +442,16 @@ fn a_published_receipt_survives_a_round_trip_and_an_interrupted_successor() {
     let baseline_path = tree.path("baseline.toml");
     let baseline = "version = 1\n\n[[floor]]\nname = \"rust.long-lines\"\nvalue = 1\n\n\
                     [[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n";
-    tree.write("spice.toml", "");
+    tree.write("spice.toml", gate::NARROWEST_FILE_CLASSES);
     tree.write("baseline.toml", baseline);
-    let contract = Contract::from_tracked(&tree.root, &policy_path, "", &baseline_path, baseline)
-        .expect("load current contract");
+    let contract = Contract::from_tracked(
+        &tree.root,
+        &policy_path,
+        gate::NARROWEST_FILE_CLASSES,
+        &baseline_path,
+        baseline,
+    )
+    .expect("load current contract");
     let run = contract
         .adjudicate(&tree.root)
         .expect("adjudicate current contract");

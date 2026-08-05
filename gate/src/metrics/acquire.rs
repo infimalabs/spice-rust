@@ -104,9 +104,9 @@ pub fn acquire_metrics(
 const fn unreached_input(gate_id: GateId) -> &'static str {
     match gate_id {
         GateId::FileShape => concat!(
-            "no file-class vocabulary selects this scope: the tracked policy document ",
-            "carries no file_shape.source_suffixes, and every measured path would also ",
-            "need one elastic bound the battery input contract does not yet report"
+            "no per-path elastic bound is reported: the tracked policy document now ",
+            "selects this scope through file_shape.source_suffixes, but the battery ",
+            "input contract still reports no bound for a measured path to be held to"
         ),
         GateId::Complexity => concat!(
             "no bounded lizard 1.23.0 invocation is available: this build resolves no ",

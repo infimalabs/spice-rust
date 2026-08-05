@@ -22,6 +22,13 @@ test_paths = ["tests/fixture"]
 [policy.repo_truth]
 docs = ["DOCTRINE.md"]
 
+[policy.file_shape]
+source_suffixes = [".rs", ".py"]
+
+[policy.languages]
+complexity = [".rs", ".py"]
+magic = [".rs"]
+
 [policy.package]
 boundary_underscore_pattern = "^[a-z][a-z0-9_]*$"
 
@@ -367,6 +374,9 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "policy.commit_message.allowed_trailers",
     "policy.commit_message.blocked_trailers",
     "policy.repo_truth.docs",
+    "policy.file_shape.source_suffixes",
+    "policy.languages.complexity",
+    "policy.languages.magic",
     "policy.package_roots",
     "policy.generated_paths",
     "policy.name_cluster_threshold",

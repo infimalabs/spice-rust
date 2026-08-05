@@ -695,6 +695,33 @@ fn validate_document(document: &PolicyDocument) -> Result<(), CompileError> {
             "must be a positive integer",
         ));
     }
+    for (field, suffixes) in [
+        (
+            "file_classes.file_shape",
+            document.file_classes.file_shape(),
+        ),
+        (
+            "file_classes.complexity",
+            document.file_classes.complexity(),
+        ),
+        ("file_classes.magic", document.file_classes.magic()),
+    ] {
+        if suffixes.is_empty() {
+            return Err(CompileError::document(
+                field,
+                "must select at least one suffix; an arm offered no paths reports \
+                 a clean measurement over nothing",
+            ));
+        }
+        for suffix in suffixes {
+            if !suffix.starts_with('.') || suffix.len() == 1 {
+                return Err(CompileError::document(
+                    field,
+                    format!("{suffix:?}: must be a file suffix beginning with a period"),
+                ));
+            }
+        }
+    }
 
     let mut ids = BTreeSet::new();
     let mut orders = BTreeSet::new();

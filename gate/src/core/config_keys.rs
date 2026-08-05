@@ -101,13 +101,19 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
 /// that makes the whole document refuse to load; `spice` proves that agreement
 /// against this list rather than against a second copy of it.
 ///
-/// The subtables `migrate_predecessor_policy` reads are deliberately absent.
+/// Most subtables `migrate_predecessor_policy` reads are deliberately absent.
 /// That migration exists to translate a predecessor document into this release,
-/// so its spellings are inputs to a one-time translation rather than settings a
-/// current repository declares, and admitting them here would promise a door
-/// the workspace schema keeps shut.
+/// so its spellings are ordinarily inputs to a one-time translation rather than
+/// settings a current repository declares, and admitting one here would promise
+/// a door the workspace schema keeps shut. The listed exceptions are the fields
+/// that migration *requires*: a repository cannot load at all without saying
+/// which files its structural arms measure, which makes those spellings
+/// settings this release expects to read rather than relics it merely accepts.
 pub const COEXISTING_TRACKED_KEYS: &[&str] = &[
     "policy.repo_truth.docs",
+    "policy.file_shape.source_suffixes",
+    "policy.languages.complexity",
+    "policy.languages.magic",
     "policy.package_roots",
     "policy.generated_paths",
     "policy.name_cluster_threshold",

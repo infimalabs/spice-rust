@@ -267,6 +267,8 @@ pub struct WorkspacePolicy {
     env_names: Vec<String>,
     commit_message: gate::CommitMessagePolicy,
     repo_truth: gate::RepoTruthPolicy,
+    file_shape: gate::FileShapePolicy,
+    languages: gate::LanguagesPolicy,
     package_roots: Vec<String>,
     generated_paths: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -295,6 +297,21 @@ impl WorkspacePolicy {
     #[must_use]
     pub const fn commit_message(&self) -> &gate::CommitMessagePolicy {
         &self.commit_message
+    }
+
+    /// Files the workspace measures shape over.
+    ///
+    /// Gate requires this from the same tracked document, so admitting it here
+    /// is what lets the document carrying it load at all.
+    #[must_use]
+    pub const fn file_shape(&self) -> &gate::FileShapePolicy {
+        &self.file_shape
+    }
+
+    /// Files the workspace offers each language arm.
+    #[must_use]
+    pub const fn languages(&self) -> &gate::LanguagesPolicy {
+        &self.languages
     }
 
     /// Roots the repository declares its packages under.
@@ -699,6 +716,27 @@ registry! {
         flag: None,
     }
     fixed "policy.repo_truth.docs" {
+        kind: StringList,
+        builtin: Some(Builtin::Absent),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "policy.file_shape.source_suffixes" {
+        kind: StringList,
+        builtin: Some(Builtin::Absent),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "policy.languages.complexity" {
+        kind: StringList,
+        builtin: Some(Builtin::Absent),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "policy.languages.magic" {
         kind: StringList,
         builtin: Some(Builtin::Absent),
         layers: TRACKED,

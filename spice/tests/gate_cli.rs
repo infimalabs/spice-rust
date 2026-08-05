@@ -236,7 +236,7 @@ impl GateRepository {
         fs::create_dir_all(scratch.path().join("gate/src")).expect("create camp loci");
         fs::write(
             scratch.path().join("spice.toml"),
-            "[gate.walk]\nskip = []\n",
+            format!("{}[gate.walk]\nskip = []\n", gate::NARROWEST_FILE_CLASSES),
         )
         .expect("write tracked policy");
         fs::write(
