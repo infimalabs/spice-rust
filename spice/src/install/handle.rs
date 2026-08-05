@@ -250,61 +250,7 @@ impl AdmittedPath {
                 self.verify_named_parent()?;
                 self.require_generation(expected)?;
                 before_mutation()?;
-                match expected {
-                    Some(expected) => changed_on_name_race(
-                        exchange(
-                            self.parent(),
-                            &temporary,
-                            self.parent(),
-                            &self.file_name,
-                            &self.display,
-                        ),
-                        &self.display,
-                    )
-                    .and_then(|()| {
-                        let admitted = self.verify_named_parent().and_then(|()| {
-                            self.require_named_generation(&self.file_name, staged_generation)?;
-                            self.require_named_generation(&temporary, expected)
-                        });
-                        if let Err(error) = admitted {
-                            exchange(
-                                self.parent(),
-                                &temporary,
-                                self.parent(),
-                                &self.file_name,
-                                &self.display,
-                            )?;
-                            return Err(error);
-                        }
-                        Ok(())
-                    })?,
-                    None => changed_on_name_race(
-                        rename_noreplace(
-                            self.parent(),
-                            &temporary,
-                            self.parent(),
-                            &self.file_name,
-                            &self.display,
-                        ),
-                        &self.display,
-                    )
-                    .and_then(|()| {
-                        let admitted = self.verify_named_parent().and_then(|()| {
-                            self.require_named_generation(&self.file_name, staged_generation)
-                        });
-                        if let Err(error) = admitted {
-                            rename_noreplace(
-                                self.parent(),
-                                &self.file_name,
-                                self.parent(),
-                                &temporary,
-                                &self.display,
-                            )?;
-                            return Err(error);
-                        }
-                        Ok(())
-                    })?,
-                }
+                self.admit_staged_name(&temporary, expected, staged_generation)?;
                 if expected.is_some() {
                     remove_name(self.parent(), &temporary, AtFlags::empty(), &self.display)?;
                 }
@@ -324,6 +270,79 @@ impl AdmittedPath {
         }
         #[cfg(not(unix))]
         unreachable!("construction refuses non-Unix filesystems")
+    }
+
+    /// Put the staged name in the destination's place, or leave neither moved.
+    ///
+    /// Both arms verify the parent and the names after moving, and both undo
+    /// their own move when that verification refuses, so a caller observes
+    /// either the admitted destination or exactly the state it started from.
+    /// They differ only in whether a destination is expected to be there: an
+    /// expected one is exchanged, leaving its prior image under the temporary
+    /// name for the caller to remove, while an unexpected one must not be
+    /// replaced at all.
+    #[cfg(unix)]
+    fn admit_staged_name(
+        &self,
+        temporary: &OsString,
+        expected: Option<Generation>,
+        staged_generation: Generation,
+    ) -> Result<(), InstallError> {
+        match expected {
+            Some(expected) => changed_on_name_race(
+                exchange(
+                    self.parent(),
+                    temporary,
+                    self.parent(),
+                    &self.file_name,
+                    &self.display,
+                ),
+                &self.display,
+            )
+            .and_then(|()| {
+                let admitted = self.verify_named_parent().and_then(|()| {
+                    self.require_named_generation(&self.file_name, staged_generation)?;
+                    self.require_named_generation(temporary, expected)
+                });
+                if let Err(error) = admitted {
+                    exchange(
+                        self.parent(),
+                        temporary,
+                        self.parent(),
+                        &self.file_name,
+                        &self.display,
+                    )?;
+                    return Err(error);
+                }
+                Ok(())
+            }),
+            None => changed_on_name_race(
+                rename_noreplace(
+                    self.parent(),
+                    temporary,
+                    self.parent(),
+                    &self.file_name,
+                    &self.display,
+                ),
+                &self.display,
+            )
+            .and_then(|()| {
+                let admitted = self.verify_named_parent().and_then(|()| {
+                    self.require_named_generation(&self.file_name, staged_generation)
+                });
+                if let Err(error) = admitted {
+                    rename_noreplace(
+                        self.parent(),
+                        &self.file_name,
+                        self.parent(),
+                        temporary,
+                        &self.display,
+                    )?;
+                    return Err(error);
+                }
+                Ok(())
+            }),
+        }
     }
 
     pub(super) fn remove(&self, expected: Generation) -> Result<(), InstallError> {
@@ -835,18 +854,65 @@ fn mutation_pause(action: &str, display: &Path) -> Result<(), InstallError> {
     fs::write(rendezvous.control.join("ready"), action).map_err(|source| {
         InstallError::io("signal install mutation rendezvous", display, source)
     })?;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while !rendezvous.control.join("continue").exists() {
-        if std::time::Instant::now() >= deadline {
-            return Err(InstallError::io(
-                "wait for install mutation rendezvous",
-                display,
-                io::Error::new(io::ErrorKind::TimedOut, "test rendezvous timed out"),
-            ));
+    await_release(&rendezvous.control, display)
+}
+
+/// Block until the harness releases this pause, or the horizon is spent.
+///
+/// The release is a file the harness writes into the control directory, so the
+/// wait arms on that directory and then blocks on the notification channel.
+/// The predicate is evaluated once after arming, so a release landing in that
+/// window is observed rather than waited out. The horizon is the only timer
+/// left: between notifications this wait holds still rather than re-testing
+/// the release on a schedule.
+#[cfg(debug_assertions)]
+fn await_release(control: &Path, display: &Path) -> Result<(), InstallError> {
+    use notify::{RecursiveMode, Watcher as _};
+    use std::sync::mpsc::{self, RecvTimeoutError};
+    use std::time::{Duration, Instant};
+
+    let released = control.join("continue");
+    let (sender, receiver) = mpsc::channel::<notify::Result<notify::Event>>();
+    let mut watcher = notify::recommended_watcher(move |event| {
+        let _ = sender.send(event);
+    })
+    .map_err(|error| unwatchable(display, &error.to_string()))?;
+    watcher
+        .watch(control, RecursiveMode::NonRecursive)
+        .map_err(|error| unwatchable(display, &error.to_string()))?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if released.exists() {
+            return Ok(());
         }
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(Ok(_)) => {}
+            Err(RecvTimeoutError::Timeout) => {
+                return Err(InstallError::io(
+                    "wait for install mutation rendezvous",
+                    display,
+                    io::Error::new(io::ErrorKind::TimedOut, "test rendezvous timed out"),
+                ));
+            }
+            // A failed watcher and a closed channel both mean the release can
+            // no longer be observed. Blocking for the rest of the horizon
+            // would report a timeout for a signal that was never coming.
+            Ok(Err(error)) => return Err(unwatchable(display, &error.to_string())),
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(unwatchable(display, "notification channel closed"));
+            }
+        }
     }
-    Ok(())
+}
+
+/// The failure for a rendezvous whose release can no longer be observed.
+#[cfg(debug_assertions)]
+fn unwatchable(display: &Path, detail: &str) -> InstallError {
+    InstallError::io(
+        "watch install mutation rendezvous",
+        display,
+        io::Error::other(detail.to_owned()),
+    )
 }
 
 #[cfg(not(debug_assertions))]

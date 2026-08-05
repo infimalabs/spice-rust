@@ -199,9 +199,22 @@ impl Paused {
         }
     }
 
-    fn resume(mut self) -> Spoken {
+    fn resume(self) -> Spoken {
         fs::write(self.control.join("continue"), b"continue")
             .expect("release install mutation rendezvous");
+        self.collect()
+    }
+
+    /// Collect a paused install that is never released.
+    ///
+    /// The only difference from `resume` is the release that does not happen,
+    /// so what is collected here is whatever ending the install reaches on its
+    /// own -- which is the horizon bounding its wait.
+    fn abandon(self) -> Spoken {
+        self.collect()
+    }
+
+    fn collect(mut self) -> Spoken {
         let output = self
             .child
             .take()
@@ -416,6 +429,50 @@ fn apply_destination_replacement_at_publication_preserves_both_images() {
     assert_refusal(&refused.err, "install::parent-changed");
     assert_eq!(fs::read(&destination).unwrap(), racer);
     assert_eq!(fs::read(&parked).unwrap(), fixture.exclude_bytes);
+    fixture.assert_python_authority_unchanged();
+}
+
+/// A paused install whose harness never releases it ends on its own bound.
+///
+/// Nothing writes `continue` here, so the only ending reachable is the horizon
+/// the wait carries. That makes the fixture cost the whole ten seconds by
+/// construction, and that cost is the point: it is what distinguishes a bound
+/// that still terminates the wait from one merely written down beside a wait
+/// that now blocks on a filesystem notification.
+#[test]
+fn apply_pause_no_harness_releases_faults_when_its_bound_expires() {
+    let fixture = Fixture::new("apply-abandoned-pause");
+    let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
+    let digest = preview.digest();
+    let destination = fixture.root.join(".git/info/exclude");
+    let paused = fixture.spawn_paused(
+        &["--json", "install", &format!("--apply={digest}")],
+        "publish",
+        destination.clone(),
+    );
+
+    let expired = paused.abandon();
+
+    assert_eq!(expired.code, Some(1));
+    assert!(expired.out.is_empty());
+    let outcome: Outcome<()> = wire::decode(&expired.err).expect("typed rendezvous fault decodes");
+    let Outcome::Fault(fault) = outcome else {
+        panic!("an unreleased install must fault: {outcome:?}");
+    };
+    assert_eq!(fault.class, wire::FaultClass::Environment);
+    assert_eq!(fault.reason, "install::environment-failed");
+    assert_eq!(
+        fault.detail,
+        format!(
+            "failed to wait for install mutation rendezvous at {}: \
+             test rendezvous timed out",
+            fs::canonicalize(&fixture.root)
+                .expect("canonicalize install fixture")
+                .join(".git/info/exclude")
+                .display()
+        ),
+    );
+    assert_eq!(fs::read(&destination).unwrap(), fixture.exclude_bytes);
     fixture.assert_python_authority_unchanged();
 }
 
