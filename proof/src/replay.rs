@@ -10,7 +10,7 @@ use wire::manifest::{
 use wire::{Digest, Domain};
 
 use crate::container::{Execution, ExecutionCompletion};
-use crate::environment::SealedEnvironment;
+use crate::environment::{BatteryEnvironment, SealedEnvironment};
 
 /// The complete generated proof battery, in execution order.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -346,11 +346,31 @@ impl ReplayVerdict {
 ///
 /// # Errors
 ///
-/// Returns the exact member whose container process could not be established
-/// or observed. Ordinary nonzero exits and timeouts remain inside the one
-/// typed [`ReplayVerdict`].
+/// Returns the exact member whose process or adjacent battery boundary could
+/// not be established or observed. Ordinary nonzero exits and timeouts remain
+/// inside the one typed [`ReplayVerdict`].
 pub fn replay(environment: &SealedEnvironment) -> Result<ReplayVerdict, ReplayError> {
-    run_with(environment, &Battery::current())
+    let battery = Battery::current();
+    let executor = environment.battery().map_err(|source| ReplayError {
+        check: CheckKind::Gate,
+        source,
+    })?;
+    let replay = run_with(&executor, &battery);
+    let cleanup = executor.close();
+    match (replay, cleanup) {
+        (Ok(verdict), Ok(())) => Ok(verdict),
+        (Ok(_), Err(source)) => Err(ReplayError {
+            check: CheckKind::SupplyRebuild,
+            source,
+        }),
+        (Err(error), Ok(())) => Err(error),
+        (Err(mut error), Err(cleanup)) => {
+            error
+                .source
+                .push_str(&format!("; battery scratch cleanup also failed: {cleanup}"));
+            Err(error)
+        }
+    }
 }
 
 trait Executor {
@@ -359,7 +379,7 @@ trait Executor {
     fn execute(&self, check: &Check) -> Result<Execution, String>;
 }
 
-impl Executor for SealedEnvironment {
+impl Executor for BatteryEnvironment<'_> {
     fn target(&self) -> ReleaseTarget {
         self.target()
     }
