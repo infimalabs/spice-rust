@@ -268,7 +268,7 @@ fn replace_policy(path: &Path, bytes: &str) {
 
 fn publish_local_policy(root: &Path, bytes: &str) {
     let parent = root.join(".git/.spice");
-    fs::create_dir(&parent).expect("publish local policy parent");
+    fs::create_dir_all(&parent).expect("publish local policy parent");
     fs::write(parent.join("config.toml"), bytes).expect("publish local policy");
 }
 
