@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use gate::{BatteryReceipt, BatteryReport, BatteryState, CampReport, CampStanding};
 use spice::placeholder::PlaceholderReason;
-use wire::{Outcome, ReplyPosition};
+use wire::{Digest, Domain, Outcome, ReplyPosition};
 
 const REFUSAL_EXIT: i32 = 2;
 const FAULT_EXIT: i32 = 1;
@@ -45,7 +45,7 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
     let repository = GateRepository::new();
     let tripwires = Scratch::new("tripwires");
     let marker = tripwires.path().join("invoked");
-    for program in ["python", "python3", "task"] {
+    for program in ["python", "python3", "taskwarrior", "task"] {
         let executable = tripwires.path().join(program);
         fs::write(
             &executable,
@@ -94,9 +94,25 @@ fn every_gate_leaf_uses_one_rust_vector_without_interpreter_or_taskwarrior_proce
 
     assert_eq!(pre_commit_report, report);
     assert_eq!(receipt.tree(), report.context().source());
+    assert_eq!(
+        receipt.manifest(),
+        &Digest::compute(
+            Domain::GateBatteryManifest,
+            gate::CANONICAL_BATTERY_MANIFEST.as_bytes(),
+        )
+    );
     assert_eq!(receipt.gate_set(), report.gate_set());
     assert_eq!(receipt.results(), report.results());
-    assert_eq!(report.results().len(), gate::GateId::ALL.len());
+    assert_eq!(gate::GateId::ALL.len(), 26);
+    assert_eq!(report.results().len(), 26);
+    assert_eq!(
+        report
+            .results()
+            .iter()
+            .map(|result| result.gate_id())
+            .collect::<Vec<_>>(),
+        gate::GateId::ALL
+    );
     assert!(
         !marker.exists(),
         "a forbidden interpreter or Taskwarrior process crossed the Rust rim: {}",
