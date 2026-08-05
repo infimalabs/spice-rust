@@ -6,20 +6,19 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Barrier, mpsc};
+use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant as Monotonic};
 
 use bus::{Bus, CommitOutcome};
 use journal::{FactCause, JournalWrite};
-use notify::{RecursiveMode, Watcher};
 use wire::{Actor, FactKind, Instant, Outcome, Producer};
 
-/// This battery waits on a watcher, so it shares the one bound on that block.
+/// This battery waits for a state to arrive, so it shares the one bound on how
+/// long a wait goes without reading it.
 #[path = "support/recheck.rs"]
 mod recheck;
 
 const REFUSAL_EXIT: i32 = 2;
-const WATCH_SCAN_INTERVAL: Duration = Duration::from_millis(100);
 const READINESS_DEADLINE: Duration = Duration::from_secs(10);
 const SESSION_ID: &str = "018f7777-7777-7444-8888-999999999999";
 const SESSION_RECORD: &str =
@@ -107,24 +106,11 @@ impl RunningResident {
     }
 
     fn assert_ready(&mut self, fixture: &Fixture) {
-        let (sender, receiver) = mpsc::channel::<notify::Result<notify::Event>>();
-        let mut watcher = notify::PollWatcher::new(
-            move |event| {
-                let _ = sender.send(event);
-            },
-            notify::Config::default().with_poll_interval(WATCH_SCAN_INTERVAL),
-        )
-        .expect("readiness watcher starts");
-        watcher
-            .watch(
-                fixture
-                    .runtime
-                    .parent()
-                    .expect("runtime has Git-common parent"),
-                RecursiveMode::Recursive,
-            )
-            .expect("readiness watcher arms before publication");
         let deadline = Monotonic::now() + READINESS_DEADLINE;
+        // Nothing announces the publication, so the loop re-reads the canvas:
+        // a notification that would announce it can be dropped or coalesced,
+        // and waiting only for one spends the whole deadline on a publication
+        // that already happened.
         while !fixture.canvas().is_file() {
             self.assert_running();
             let remaining = deadline.saturating_duration_since(Monotonic::now());
@@ -132,19 +118,7 @@ impl RunningResident {
                 self.assert_running();
                 panic!("resident readiness failed: {READINESS_DEADLINE:?} spent");
             }
-            match recheck::capped_recv(&receiver, remaining) {
-                Ok(Ok(_)) => {}
-                Ok(Err(error)) => panic!("readiness notification failed: {error}"),
-                // A quiet interval is not an answer, so the loop re-reads the
-                // canvas instead: the notification that would announce it can
-                // be dropped or coalesced, and waiting only for one spends the
-                // whole deadline on a publication that already happened.
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(error) => {
-                    self.assert_running();
-                    panic!("resident readiness failed: {error}");
-                }
-            }
+            recheck::pause(remaining);
         }
     }
 

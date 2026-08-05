@@ -111,7 +111,6 @@ impl RunningResident {
         let canvas = fixture.root.join(".git/.spice/canvas");
         match readiness::wait_until_ready(
             resident.child.as_mut().expect("resident child"),
-            &fixture.root.join(".git"),
             READY,
             "resident discovery",
             || canvas.is_file(),
