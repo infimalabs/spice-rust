@@ -124,18 +124,25 @@ fn supervise_git(
             };
             if status.is_some() {
                 output_drain_started = Some(Instant::now());
-                match process.group_present() {
-                    Ok(true) => {
+                // A descendant merely on its way out is not a survivor. The
+                // group is observed the instant Git exits, which is exactly when
+                // a short-lived hook child is most likely still being torn down,
+                // so it is given a bound to empty before the command faults --
+                // the same shape the termination path uses before it escalates.
+                match process.settle(DESCENDANT_EXIT_GRACE) {
+                    Ok(false) => {
                         let error = Error::fault(
                             "git::descendant-survived",
                             format!(
-                                "git {} exited while its process group still had live descendants",
+                                "git {} exited and its process group still had live \
+                                 descendants {} milliseconds later",
                                 args.join(" "),
+                                DESCENDANT_EXIT_GRACE.as_millis(),
                             ),
                         );
                         return fail_supervision(process, workers, error);
                     }
-                    Ok(false) => {}
+                    Ok(true) => {}
                     Err(error) => {
                         return fail_supervision(process, workers, error);
                     }
