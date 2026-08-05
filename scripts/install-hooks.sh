@@ -5,7 +5,7 @@ set -eu
 root=$(git rev-parse --show-toplevel)
 cd "$root" # env-policy: allow
 
-hooks=.spice/rust/git-hooks
+hooks=.spice/git-hooks
 for hook in pre-commit commit-msg reference-transaction; do
     if [ ! -x "$hooks/$hook" ]; then # env-policy: allow
         printf 'hook installation failed: %s/%s is not executable\n' "$hooks" "$hook" >&2 # env-policy: allow
@@ -27,4 +27,4 @@ if [ "$configured" != "$hooks" ]; then # env-policy: allow
     exit 1
 fi
 
-printf 'activated Rust hooks from %s/%s\n' "$root" "$hooks" # env-policy: allow
+printf 'activated Spice hooks from %s/%s\n' "$root" "$hooks" # env-policy: allow

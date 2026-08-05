@@ -1,7 +1,7 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::os::unix::fs::{PermissionsExt, symlink};
+use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -29,8 +29,6 @@ static PAUSE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
     root: PathBuf,
-    python: PathBuf,
-    python_bytes: Vec<u8>,
     tracked_bytes: Vec<u8>,
     exclude_bytes: Vec<u8>,
 }
@@ -45,31 +43,23 @@ impl Fixture {
         ));
         fs::create_dir_all(root.join(".git/info")).expect("create repository metadata");
         fs::create_dir_all(root.join(".git/.spice/data"))
-            .expect("create Python authority sentinel directory");
-        fs::create_dir_all(root.join("bin")).expect("create predecessor bin directory");
-        let exclude_bytes = b"# python-owned exclusions\n/cache/\n".to_vec();
+            .expect("create Spice state sentinel directory");
+        let exclude_bytes = b"# operator exclusions\n/cache/\n".to_vec();
         fs::write(root.join(".git/info/exclude"), &exclude_bytes).expect("write exclusions");
         fs::write(
-            root.join(".git/.spice/data/spicejournal.sqlite3"),
-            b"python authority sentinel\n",
+            root.join(".git/.spice/data/journal.sqlite3"),
+            b"Spice state sentinel\n",
         )
-        .expect("write Python authority sentinel");
+        .expect("write Spice state sentinel");
         fs::write(
             root.join(".git/.spice/config.toml"),
-            b"[operator]\nmode = 'python'\n",
+            b"[operator]\nmode = 'native'\n",
         )
-        .expect("write Python local configuration sentinel");
-        let tracked_bytes = b"[tasks]\nmax_parallel = 7\n\n[policy]\nowner = \"python\"\n".to_vec();
+        .expect("write Spice local configuration sentinel");
+        let tracked_bytes = b"[tasks]\nmax_parallel = 7\n\n[policy]\nowner = \"spice\"\n".to_vec();
         fs::write(root.join("spice.toml"), &tracked_bytes).expect("write tracked intent");
-        let python = root.join("bin/spice");
-        let python_bytes = b"#!/bin/sh\nprintf 'python-spice\\n'\n".to_vec();
-        fs::write(&python, &python_bytes).expect("write predecessor entrypoint");
-        fs::set_permissions(&python, fs::Permissions::from_mode(0o755))
-            .expect("make predecessor entrypoint executable");
         Self {
             root,
-            python,
-            python_bytes,
             tracked_bytes,
             exclude_bytes,
         }
@@ -137,28 +127,23 @@ impl Fixture {
         paused
     }
 
-    fn assert_python_authority_unchanged(&self) {
-        let authority = if self
-            .root
-            .join(".git/.spice/data/spicejournal.sqlite3")
-            .is_file()
-        {
+    fn assert_state_unchanged(&self) {
+        let authority = if self.root.join(".git/.spice/data/journal.sqlite3").is_file() {
             self.root.join(".git/.spice")
         } else {
             self.root.join(".git/.spice.parked")
         };
-        assert_eq!(fs::read(&self.python).unwrap(), self.python_bytes);
         assert_eq!(
             fs::read(self.root.join("spice.toml")).unwrap(),
             self.tracked_bytes
         );
         assert_eq!(
-            fs::read(authority.join("data/spicejournal.sqlite3")).unwrap(),
-            b"python authority sentinel\n"
+            fs::read(authority.join("data/journal.sqlite3")).unwrap(),
+            b"Spice state sentinel\n"
         );
         assert_eq!(
             fs::read(authority.join("config.toml")).unwrap(),
-            b"[operator]\nmode = 'python'\n"
+            b"[operator]\nmode = 'native'\n"
         );
         let mut entries = fs::read_dir(authority)
             .unwrap()
@@ -173,7 +158,7 @@ impl Fixture {
     }
 
     fn installed_binary(&self) -> PathBuf {
-        self.root.join(".spice/rust/bin/spice-rust")
+        self.root.join(".spice/bin/spice")
     }
 
     fn record(&self) -> PathBuf {
@@ -303,7 +288,7 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
         fs::read(fixture.root.join(".git/info/exclude")).unwrap(),
         fixture.exclude_bytes
     );
-    fixture.assert_python_authority_unchanged();
+    fixture.assert_state_unchanged();
 
     let malformed = fixture.invoke(&["--json", "install", "--apply=not-a-digest"]);
     assert_eq!(malformed.code, Some(2));
@@ -329,7 +314,7 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
         fs::read(fixture.root.join(".git/info/exclude")).unwrap(),
         fixture.exclude_bytes
     );
-    fixture.assert_python_authority_unchanged();
+    fixture.assert_state_unchanged();
 
     let applied: InstallReceipt =
         reply_body(fixture.invoke(&["--json", "install", &format!("--apply={text_digest}")]));
@@ -340,7 +325,7 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
         fs::read(env!("CARGO_BIN_EXE_spice")).unwrap()
     );
     assert!(fixture.record().is_file());
-    fixture.assert_python_authority_unchanged();
+    fixture.assert_state_unchanged();
 }
 
 #[test]
@@ -362,13 +347,7 @@ fn unapply_restores_exact_prior_images_and_keeps_the_namespaced_receipt() {
         fs::read(fixture.root.join(".git/info/exclude")).unwrap(),
         fixture.exclude_bytes
     );
-    fixture.assert_python_authority_unchanged();
-
-    let python = Command::new(&fixture.python)
-        .output()
-        .expect("run Python entrypoint");
-    assert!(python.status.success());
-    assert_eq!(python.stdout, b"python-spice\n");
+    fixture.assert_state_unchanged();
 }
 
 #[test]
@@ -382,7 +361,7 @@ fn drift_refuses_reversal_without_overwriting_the_changed_target() {
             .code,
         Some(0)
     );
-    let entry = fixture.root.join(".spice/rust/hooks/entry.sh");
+    let entry = fixture.root.join(".spice/hooks/entry.sh");
     fs::write(&entry, b"operator drift\n").expect("drift installed entry hook");
 
     let refused = fixture.invoke(&["--json", "install", "--unapply"]);
@@ -397,69 +376,7 @@ fn drift_refuses_reversal_without_overwriting_the_changed_target() {
     assert_refusal(&refused.err, "install::drift");
     assert_eq!(fs::read(entry).unwrap(), b"operator drift\n");
     assert!(fixture.record().is_file());
-    fixture.assert_python_authority_unchanged();
-}
-
-#[test]
-#[ignore = "workstation acceptance: requires the installed Python entrypoint"]
-fn ambient_python_default_coexists_with_the_explicit_installed_rust_binary() {
-    let python = PathBuf::from(std::path::MAIN_SEPARATOR.to_string())
-        .join("Users")
-        .join("c")
-        .join(".local/bin/spice");
-    assert!(
-        python.is_file(),
-        "{} is the Python entrypoint",
-        python.display()
-    );
-    let python_link = fs::read_link(&python).expect("ambient Python entrypoint is a symlink");
-    let python_bytes = fs::read(&python).expect("snapshot ambient Python entrypoint");
-    let fixture = Fixture::new("ambient-coexistence");
-
-    let before = Command::new(&python)
-        .arg("--help")
-        .current_dir(&fixture.root)
-        .output()
-        .expect("ambient Python entrypoint launches before Rust installation");
-    assert!(before.status.success());
-    assert!(before.stderr.is_empty());
-
-    let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
-    let applied: InstallReceipt = reply_body(fixture.invoke(&[
-        "--json",
-        "install",
-        &format!("--apply={}", preview.digest()),
-    ]));
-    assert_eq!(applied.status(), InstallStatus::Complete);
-
-    let rust = fixture.installed_binary();
-    let explicit = Command::new(&rust)
-        .arg("--help")
-        .current_dir(&fixture.root)
-        .output()
-        .expect("explicit installed Rust binary launches");
-    assert!(explicit.status.success());
-    assert!(explicit.stderr.is_empty());
-    assert_ne!(
-        fs::canonicalize(&python).unwrap(),
-        fs::canonicalize(&rust).unwrap()
-    );
-
-    let after = Command::new(&python)
-        .arg("--help")
-        .current_dir(&fixture.root)
-        .output()
-        .expect("ambient Python entrypoint launches after Rust installation");
-    assert!(after.status.success());
-    assert!(after.stderr.is_empty());
-    assert_eq!(fs::read_link(&python).unwrap(), python_link);
-    assert_eq!(fs::read(&python).unwrap(), python_bytes);
-    fixture.assert_python_authority_unchanged();
-
-    let unapplied: InstallReceipt = reply_body(fixture.invoke(&["--json", "install", "--unapply"]));
-    assert_eq!(unapplied.status(), InstallStatus::Uninstalled);
-    assert_eq!(fs::read_link(&python).unwrap(), python_link);
-    assert_eq!(fs::read(&python).unwrap(), python_bytes);
+    fixture.assert_state_unchanged();
 }
 
 #[test]
@@ -486,7 +403,7 @@ fn apply_destination_replacement_at_publication_preserves_both_images() {
     assert_refusal(&refused.err, "install::parent-changed");
     assert_eq!(fs::read(&destination).unwrap(), racer);
     assert_eq!(fs::read(&parked).unwrap(), fixture.exclude_bytes);
-    fixture.assert_python_authority_unchanged();
+    fixture.assert_state_unchanged();
 }
 
 /// A paused install whose harness never releases it ends on its own bound.
@@ -531,7 +448,7 @@ fn apply_pause_no_harness_releases_faults_when_its_bound_expires() {
         ),
     );
     assert_eq!(fs::read(&destination).unwrap(), fixture.exclude_bytes);
-    fixture.assert_python_authority_unchanged();
+    fixture.assert_state_unchanged();
 }
 
 /// A release already in place when the wait arms is observed, not waited out.
@@ -574,7 +491,7 @@ fn apply_pause_released_before_the_wait_arms_is_observed_without_a_notification(
         fs::read(env!("CARGO_BIN_EXE_spice")).unwrap()
     );
     assert!(fixture.record().is_file());
-    fixture.assert_python_authority_unchanged();
+    fixture.assert_state_unchanged();
 }
 
 #[test]
@@ -607,7 +524,7 @@ fn apply_record_parent_replacement_at_publication_preserves_both_trees() {
     assert!(refused.out.is_empty());
     assert_refusal(&refused.err, "install::parent-changed");
     assert!(fs::read_dir(&outside).unwrap().next().is_none());
-    fixture.assert_python_authority_unchanged();
+    fixture.assert_state_unchanged();
 }
 
 #[test]
@@ -641,7 +558,7 @@ fn unapply_destination_replacement_at_removal_preserves_both_images() {
     assert_refusal(&refused.err, "install::parent-changed");
     assert_eq!(fs::read(&destination).unwrap(), racer);
     assert_eq!(fs::read(&parked).unwrap(), installed);
-    fixture.assert_python_authority_unchanged();
+    fixture.assert_state_unchanged();
 }
 
 #[test]
@@ -675,7 +592,7 @@ fn unapply_destination_replacement_at_restore_preserves_both_images() {
     assert_refusal(&refused.err, "install::parent-changed");
     assert_eq!(fs::read(&destination).unwrap(), racer);
     assert_eq!(fs::read(&parked).unwrap(), installed);
-    fixture.assert_python_authority_unchanged();
+    fixture.assert_state_unchanged();
 }
 
 #[test]
@@ -689,8 +606,8 @@ fn unapply_directory_replacement_at_cleanup_preserves_both_trees() {
             .code,
         Some(0)
     );
-    let destination = fixture.root.join(".spice/rust/bin");
-    let parked = fixture.root.join(".spice/rust/bin.parked");
+    let destination = fixture.root.join(".spice/bin");
+    let parked = fixture.root.join(".spice/bin.parked");
     let paused = fixture.spawn_paused(
         &["--json", "install", "--unapply"],
         "cleanup",
@@ -709,7 +626,7 @@ fn unapply_directory_replacement_at_cleanup_preserves_both_trees() {
     assert_refusal(&refused.err, "install::parent-changed");
     assert!(fs::read_dir(&parked).unwrap().next().is_none());
     assert_eq!(fs::read(destination.join("racer")).unwrap(), b"outside");
-    fixture.assert_python_authority_unchanged();
+    fixture.assert_state_unchanged();
 }
 
 #[test]
@@ -756,7 +673,7 @@ fn unapply_record_parent_replacement_at_publication_preserves_both_trees() {
     );
     assert!(fs::read_dir(&outside).unwrap().next().is_none());
     assert_eq!(fs::read(fixture.installed_binary()).unwrap(), binary_before);
-    fixture.assert_python_authority_unchanged();
+    fixture.assert_state_unchanged();
 }
 
 fn successful_document(spoken: Spoken) -> Value {

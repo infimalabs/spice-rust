@@ -12,7 +12,7 @@ use spice::repository::Repository;
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 const ACTIVE_HOOKS: [&str; 3] = ["pre-commit", "commit-msg", "reference-transaction"];
-const NATIVE_HOOKS: &str = ".spice/rust/git-hooks";
+const INSTALLED_HOOKS: &str = ".spice/git-hooks";
 const GIT_DIRECTORY: &str = concat!("GIT_", "DIR");
 const GIT_WORKING_TREE: &str = concat!("GIT_", "WORK_TREE");
 const GIT_INDEX: &str = concat!("GIT_", "INDEX_FILE");
@@ -21,31 +21,31 @@ const VALID_ORIGIN: &str =
 type FileImage = (Vec<u8>, u32);
 
 #[test]
-fn install_exercises_native_hooks_before_an_explicit_byte_preserving_cutover() {
+fn install_exercises_spice_hooks_before_explicit_activation() {
     let scratch = Scratch::new();
     let (base, protected, local) = repository_history(&scratch);
-    let coexistence = install_native_hooks(&scratch);
+    let installation = install_spice_hooks(&scratch);
     let cargo_log = scratch.join("cargo.log");
     install_cargo_alias(&scratch, &cargo_log);
 
     exercise_pre_commit(&scratch, &cargo_log);
     exercise_commit_message(&scratch);
-    assert_coexistence_unchanged(&scratch, &coexistence);
+    assert_prior_hooks_unchanged(&scratch, &installation);
     exercise_reference_guard(&scratch, &base, &protected, &local);
     assert_eq!(
-        ACTIVE_HOOKS.map(|hook| image(&coexistence.active.join(hook))),
-        coexistence.active_hooks
+        ACTIVE_HOOKS.map(|hook| image(&installation.operator.join(hook))),
+        installation.operator_hooks
     );
     assert_eq!(
-        ACTIVE_HOOKS.map(|hook| image(&coexistence.legacy.join(hook))),
-        coexistence.legacy_hooks
+        ACTIVE_HOOKS.map(|hook| image(&installation.tracked.join(hook))),
+        installation.tracked_hooks
     );
 }
 
-fn install_native_hooks(scratch: &Scratch) -> CoexistenceEvidence {
-    let active = scratch.join(".spice/hooks");
-    let legacy = scratch.join(".githooks");
-    fs::create_dir_all(&active).expect("create active Python hooks");
+fn install_spice_hooks(scratch: &Scratch) -> PriorHookEvidence {
+    let operator = scratch.join(".spice/hooks");
+    let tracked = scratch.join(".githooks");
+    fs::create_dir_all(&operator).expect("create operator hook directory");
     for hook in ACTIVE_HOOKS {
         scratch.executable(
             &format!(".spice/hooks/{hook}"),
@@ -57,36 +57,36 @@ fn install_native_hooks(scratch: &Scratch) -> CoexistenceEvidence {
         scratch,
         &["config", "--local", "core.hooksPath", ".githooks"],
     );
-    let active_before = ACTIVE_HOOKS.map(|hook| image(&active.join(hook)));
-    let legacy_before = ACTIVE_HOOKS.map(|hook| image(&legacy.join(hook)));
+    let operator_before = ACTIVE_HOOKS.map(|hook| image(&operator.join(hook)));
+    let tracked_before = ACTIVE_HOOKS.map(|hook| image(&tracked.join(hook)));
     let config_before = image(&scratch.join(".git/config"));
     let repository = Repository::discover(scratch.path()).expect("discover temporary repository");
-    let planned = plan(&repository, None).expect("plan native hooks");
+    let planned = plan(&repository, None).expect("plan Spice hooks");
     let receipt = apply(&repository, None, &planned.digest().expect("digest plan"))
-        .expect("install native hooks");
+        .expect("install Spice hooks");
     assert_eq!(receipt.status(), InstallStatus::Complete);
 
-    let pre_commit = scratch.join(format!("{NATIVE_HOOKS}/pre-commit"));
-    let commit_message = scratch.join(format!("{NATIVE_HOOKS}/commit-msg"));
-    let reference_transaction = scratch.join(format!("{NATIVE_HOOKS}/reference-transaction"));
+    let pre_commit = scratch.join(format!("{INSTALLED_HOOKS}/pre-commit"));
+    let commit_message = scratch.join(format!("{INSTALLED_HOOKS}/commit-msg"));
+    let reference_transaction = scratch.join(format!("{INSTALLED_HOOKS}/reference-transaction"));
     assert_eq!(mode(&pre_commit), 0o755);
     assert_eq!(mode(&commit_message), 0o755);
     assert_eq!(mode(&reference_transaction), 0o755);
     assert_eq!(configured_hooks(scratch), ".githooks");
     assert_eq!(
-        ACTIVE_HOOKS.map(|hook| image(&active.join(hook))),
-        active_before
+        ACTIVE_HOOKS.map(|hook| image(&operator.join(hook))),
+        operator_before
     );
     assert_eq!(
-        ACTIVE_HOOKS.map(|hook| image(&legacy.join(hook))),
-        legacy_before
+        ACTIVE_HOOKS.map(|hook| image(&tracked.join(hook))),
+        tracked_before
     );
     assert_eq!(image(&scratch.join(".git/config")), config_before);
-    CoexistenceEvidence {
-        active,
-        active_hooks: active_before,
-        legacy,
-        legacy_hooks: legacy_before,
+    PriorHookEvidence {
+        operator,
+        operator_hooks: operator_before,
+        tracked,
+        tracked_hooks: tracked_before,
         config: config_before,
     }
 }
@@ -110,7 +110,7 @@ fn tracked_current_hook(hook: &str) -> Vec<u8> {
 }
 
 fn exercise_pre_commit(scratch: &Scratch, cargo_log: &Path) {
-    let pre_commit = scratch.join(format!("{NATIVE_HOOKS}/pre-commit"));
+    let pre_commit = scratch.join(format!("{INSTALLED_HOOKS}/pre-commit"));
     let pre_commit_output = Command::new(&pre_commit)
         .current_dir(scratch.path())
         .env(GIT_DIRECTORY, scratch.join(".git"))
@@ -123,7 +123,7 @@ fn exercise_pre_commit(scratch: &Scratch, cargo_log: &Path) {
 }
 
 fn exercise_commit_message(scratch: &Scratch) {
-    let commit_message = scratch.join(format!("{NATIVE_HOOKS}/commit-msg"));
+    let commit_message = scratch.join(format!("{INSTALLED_HOOKS}/commit-msg"));
     let message = scratch.join("COMMIT_EDITMSG");
     fs::write(
         &message,
@@ -178,15 +178,15 @@ fn exercise_commit_message(scratch: &Scratch) {
     assert!(diagnostic.contains("blocked trailers: co-authored-by"));
 }
 
-fn assert_coexistence_unchanged(scratch: &Scratch, evidence: &CoexistenceEvidence) {
+fn assert_prior_hooks_unchanged(scratch: &Scratch, evidence: &PriorHookEvidence) {
     assert_eq!(configured_hooks(scratch), ".githooks");
     assert_eq!(
-        ACTIVE_HOOKS.map(|hook| image(&evidence.active.join(hook))),
-        evidence.active_hooks
+        ACTIVE_HOOKS.map(|hook| image(&evidence.operator.join(hook))),
+        evidence.operator_hooks
     );
     assert_eq!(
-        ACTIVE_HOOKS.map(|hook| image(&evidence.legacy.join(hook))),
-        evidence.legacy_hooks
+        ACTIVE_HOOKS.map(|hook| image(&evidence.tracked.join(hook))),
+        evidence.tracked_hooks
     );
     assert_eq!(image(&scratch.join(".git/config")), evidence.config);
 }
@@ -212,11 +212,11 @@ fn exercise_reference_guard(scratch: &Scratch, base: &str, protected: &str, loca
         .output()
         .expect("run explicit hook cutover");
     assert_success(&activated, "hook cutover");
-    assert_eq!(configured_hooks(scratch), NATIVE_HOOKS);
+    assert_eq!(configured_hooks(scratch), INSTALLED_HOOKS);
     assert!(
         String::from_utf8(activated.stdout)
             .unwrap()
-            .contains("activated Rust hooks")
+            .contains("activated Spice hooks")
     );
 
     let refused = update_ref(scratch, base, protected);
@@ -239,11 +239,11 @@ fn exercise_reference_guard(scratch: &Scratch, base: &str, protected: &str, loca
     assert_eq!(rev_parse(scratch, "refs/heads/main"), protected);
 }
 
-struct CoexistenceEvidence {
-    active: PathBuf,
-    active_hooks: [FileImage; 3],
-    legacy: PathBuf,
-    legacy_hooks: [FileImage; 3],
+struct PriorHookEvidence {
+    operator: PathBuf,
+    operator_hooks: [FileImage; 3],
+    tracked: PathBuf,
+    tracked_hooks: [FileImage; 3],
     config: FileImage,
 }
 
