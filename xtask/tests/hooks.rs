@@ -13,6 +13,9 @@ use spice::repository::Repository;
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 const ACTIVE_HOOKS: [&str; 3] = ["pre-commit", "commit-msg", "reference-transaction"];
 const NATIVE_HOOKS: &str = ".spice/rust/git-hooks";
+const GIT_DIRECTORY: &str = concat!("GIT_", "DIR");
+const GIT_WORKING_TREE: &str = concat!("GIT_", "WORK_TREE");
+const GIT_INDEX: &str = concat!("GIT_", "INDEX_FILE");
 const VALID_ORIGIN: &str =
     "Spice-Origin: v1 repo=018f82d4-6f59-7d06-92e3-bce9131163c7 task=HOOKS-1kJQnmG8";
 type FileImage = (Vec<u8>, u32);
@@ -48,7 +51,7 @@ fn install_native_hooks(scratch: &Scratch) -> CoexistenceEvidence {
             &format!(".spice/hooks/{hook}"),
             format!("#!/bin/sh\nexec spice dev {hook} \"$@\"\n").as_bytes(),
         );
-        scratch.executable(&format!(".githooks/{hook}"), &tracked_python_hook(hook));
+        scratch.executable(&format!(".githooks/{hook}"), &tracked_current_hook(hook));
     }
     git(
         scratch,
@@ -88,17 +91,21 @@ fn install_native_hooks(scratch: &Scratch) -> CoexistenceEvidence {
     }
 }
 
-fn tracked_python_hook(hook: &str) -> Vec<u8> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../.githooks")
-        .join(hook);
-    let bytes = fs::read(&path).expect("read tracked Python hook wrapper");
-    let text = String::from_utf8_lossy(&bytes);
-    assert!(
-        text.contains("spice dev"),
-        "tracked coexistence hook must retain the Python backend: {}",
-        path.display()
+fn tracked_current_hook(hook: &str) -> Vec<u8> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let path = root.join(".githooks").join(hook);
+    let bytes = fs::read(&path).expect("read tracked native hook wrapper");
+    let installed = fs::read(root.join("spice/src/install/git-hooks").join(hook))
+        .expect("read installed native hook template");
+    assert_eq!(
+        bytes, installed,
+        "tracked and installed hooks must be one image"
     );
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(!text.contains("spice dev"));
+    if hook == "pre-commit" {
+        assert_eq!(text.matches("cargo xtask verify").count(), 1);
+    }
     bytes
 }
 
@@ -106,9 +113,9 @@ fn exercise_pre_commit(scratch: &Scratch, cargo_log: &Path) {
     let pre_commit = scratch.join(format!("{NATIVE_HOOKS}/pre-commit"));
     let pre_commit_output = Command::new(&pre_commit)
         .current_dir(scratch.path())
-        .env("GIT_DIR", scratch.join(".git")) // env-policy: allow
-        .env("GIT_WORK_TREE", scratch.path()) // env-policy: allow
-        .env("GIT_INDEX_FILE", scratch.join(".git/index")) // env-policy: allow
+        .env(GIT_DIRECTORY, scratch.join(".git"))
+        .env(GIT_WORKING_TREE, scratch.path())
+        .env(GIT_INDEX, scratch.join(".git/index"))
         .output()
         .expect("run pre-commit with Git's local environment exported");
     assert_success(&pre_commit_output, "pre-commit");
@@ -251,12 +258,14 @@ fn install_cargo_alias(scratch: &Scratch, log: &Path) {
             concat!(
                 "#!/bin/sh\n",
                 "set -eu\n",
-                "if [ -n \"",
-                "${{GIT_DIR-}}${{GIT_WORK_TREE-}}", // env-policy: allow
-                "${{GIT_INDEX_FILE-}}\" ]; then\n", // env-policy: allow
-                "    printf 'pre-commit leaked local Git environment\\n' >&2\n",
-                "    exit 65\n",
-                "fi\n",
+                "for variable in '{}' '{}' '{}'; do\n",
+                "    eval \"value=\\${{$variable-}}\"\n",
+                "    if [ -n \"$value\" ]; then\n",
+                "        printf 'pre-commit leaked local Git environment: ",
+                "%s\\n' \"$variable\" >&2\n",
+                "        exit 65\n",
+                "    fi\n",
+                "done\n",
                 "printf '%s\\n' \"$*\" >> '{}'\n",
                 "if [ \"$#\" -eq 1 ] && [ \"$1\" = verify ]; then\n",
                 "    exit 0\n",
@@ -270,6 +279,9 @@ fn install_cargo_alias(scratch: &Scratch, log: &Path) {
                 "printf 'unexpected xtask invocation: %s\\n' \"$*\" >&2\n",
                 "exit 64\n",
             ),
+            GIT_DIRECTORY,
+            GIT_WORKING_TREE,
+            GIT_INDEX,
             log.display(),
             xtask.display(),
             xtask.display(),

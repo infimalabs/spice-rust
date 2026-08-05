@@ -143,7 +143,7 @@ impl ArmEvidence {
     /// Typed terminal state derived from the retained family authority.
     pub fn state(&self) -> Result<BatteryState, BatteryError> {
         match self {
-            Self::Core { report } => Ok(core_state(report.standing())),
+            Self::Core { report } => Ok(core_state(report.id(), report.standing())),
             Self::Toolchain { report } => Ok(toolchain_state(report.outcome)),
             Self::Metrics { report } => metric_state(report),
             Self::Hygiene { report } => Ok(hygiene_state(report.outcome)),
@@ -165,6 +165,16 @@ impl ArmEvidence {
     /// Declaration-owned provenance for applicability or exclusion.
     pub fn provenance(&self) -> Result<Option<ResultProvenance>, BatteryError> {
         match self {
+            Self::Core { report }
+                if report.id() == GateId::RepoShape
+                    && report.standing() == CoreStanding::Skipped =>
+            {
+                Ok(Some(ResultProvenance::new(
+                    "current",
+                    "gate::core::repo-shape",
+                    vec!["compiled-applicability".to_owned()],
+                )?))
+            }
             Self::Toolchain { report } if report.outcome.is_skip() => {
                 Ok(Some(ResultProvenance::new(
                     "current",
@@ -259,7 +269,7 @@ impl ArmEvidence {
     }
 }
 
-const fn core_state(standing: CoreStanding) -> BatteryState {
+const fn core_state(gate_id: GateId, standing: CoreStanding) -> BatteryState {
     match standing {
         CoreStanding::Passed => BatteryState::Passed,
         CoreStanding::Failed => BatteryState::Failed,
@@ -267,6 +277,9 @@ const fn core_state(standing: CoreStanding) -> BatteryState {
         CoreStanding::Unsupported => BatteryState::Unsupported,
         CoreStanding::Unmeasured => BatteryState::Unmeasured,
         CoreStanding::TimedOut => BatteryState::TimedOut,
+        CoreStanding::Skipped if matches!(gate_id, GateId::RepoShape) => {
+            BatteryState::NotApplicable
+        }
         CoreStanding::Skipped => BatteryState::ExplicitSkip,
     }
 }

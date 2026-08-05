@@ -61,7 +61,7 @@ pub fn reference_transaction(
 /// the structural family that once lacked acquisition. Contract landing is
 /// therefore terminal: no alternate runtime or executable discovered from
 /// `PATH` repeats policy after the Rust-owned checks finish.
-const VERIFY_ACTIONS: [Action; 7] = [
+const VERIFY_ACTIONS: [Action; 8] = [
     Action::Command(Step::cargo(
         "cargo fmt --all -- --check",
         &["fmt", "--all", "--", "--check"],
@@ -94,8 +94,11 @@ const VERIFY_ACTIONS: [Action; 7] = [
         "cargo test --locked --workspace --doc",
         &["test", "--locked", "--workspace", "--doc"],
     )),
+    Action::Battery,
     Action::Landing,
 ];
+
+const BATTERY_LABEL: &str = "canonical Rust gate battery";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Step {
@@ -112,6 +115,7 @@ impl Step {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Action {
     Command(Step),
+    Battery,
     Landing,
 }
 
@@ -119,6 +123,7 @@ impl Action {
     const fn label(self) -> &'static str {
         match self {
             Self::Command(step) => step.label,
+            Self::Battery => BATTERY_LABEL,
             Self::Landing => landing::LABEL,
         }
     }
@@ -132,7 +137,13 @@ struct Status {
 
 trait Runner {
     fn run(&mut self, step: Step) -> io::Result<Status>;
+    fn battery(&mut self) -> Result<BatteryRun, String>;
     fn landing(&mut self) -> Result<landing::Report, landing::Error>;
+}
+
+struct BatteryRun {
+    document: Vec<u8>,
+    admitted: bool,
 }
 
 struct SystemRunner;
@@ -144,6 +155,21 @@ impl Runner for SystemRunner {
             success: status.success(),
             code: status.code(),
         })
+    }
+
+    fn battery(&mut self) -> Result<BatteryRun, String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let report =
+                spice::gate::run(gate::Selector::staged()).map_err(|error| error.to_string())?;
+            let admitted = report.admits();
+            let document = report.encode().map_err(|error| error.to_string())?;
+            Ok(BatteryRun { document, admitted })
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Err("the canonical native Rust gate battery is unavailable on wasm32".to_owned())
+        }
     }
 
     fn landing(&mut self) -> Result<landing::Report, landing::Error> {
@@ -177,6 +203,16 @@ fn verify_with<R: Runner>(runner: &mut R, output: &mut impl Write) -> Result<(),
                     });
                 }
             }
+            Action::Battery => {
+                let run = runner.battery().map_err(VerifyError::Battery)?;
+                output
+                    .write_all(&run.document)
+                    .map_err(VerifyError::Output)?;
+                writeln!(output).map_err(VerifyError::Output)?;
+                if !run.admitted {
+                    return Err(VerifyError::BatteryRefused);
+                }
+            }
             Action::Landing => {
                 let report = runner
                     .landing()
@@ -199,6 +235,8 @@ pub enum VerifyError {
     Encode(serde_json::Error),
     Landing(String),
     LandingRefused,
+    Battery(String),
+    BatteryRefused,
     Launch {
         label: &'static str,
         source: io::Error,
@@ -218,6 +256,8 @@ impl fmt::Display for VerifyError {
                 write!(formatter, "[verify] landing acquisition failed: {detail}")
             }
             Self::LandingRefused => formatter.write_str("[verify] contract landing refused"),
+            Self::Battery(detail) => write!(formatter, "[verify] battery failed: {detail}"),
+            Self::BatteryRefused => formatter.write_str("[verify] battery refused publication"),
             Self::Launch { label, source } => {
                 write!(formatter, "[verify] failed to launch: {label} ({source})")
             }
@@ -237,7 +277,11 @@ impl std::error::Error for VerifyError {
         match self {
             Self::Output(source) | Self::Launch { source, .. } => Some(source),
             Self::Encode(source) => Some(source),
-            Self::Landing(_) | Self::LandingRefused | Self::Exit { .. } => None,
+            Self::Landing(_)
+            | Self::LandingRefused
+            | Self::Battery(_)
+            | Self::BatteryRefused
+            | Self::Exit { .. } => None,
         }
     }
 }
@@ -256,6 +300,7 @@ mod tests {
 
     struct FakeRunner {
         outcomes: VecDeque<Outcome>,
+        battery: Option<Result<BatteryRun, String>>,
         landing: Option<Result<landing::Report, landing::Error>>,
         calls: Vec<&'static str>,
     }
@@ -274,6 +319,13 @@ mod tests {
                 }),
                 Outcome::Launch => Err(io::Error::other("fixture launch refusal")),
             }
+        }
+
+        fn battery(&mut self) -> Result<BatteryRun, String> {
+            self.calls.push(BATTERY_LABEL);
+            self.battery
+                .take()
+                .expect("fixture has one battery outcome")
         }
 
         fn landing(&mut self) -> Result<landing::Report, landing::Error> {
@@ -299,6 +351,7 @@ mod tests {
             .into_iter()
             .map(|action| match action {
                 Action::Command(step) => format!("[verify] {}\n", step.label),
+                Action::Battery => format!("[verify] {BATTERY_LABEL}\n{{\"admitted\":true}}\n"),
                 Action::Landing => format!("[verify] {}\n{report}\n", landing::LABEL),
             })
             .collect::<String>();
@@ -307,7 +360,7 @@ mod tests {
 
     #[test]
     fn verifier_steps_match_the_complete_command_guard() {
-        const GUARDED_ACTIONS: [Action; 7] = [
+        const GUARDED_ACTIONS: [Action; 8] = [
             Action::Command(Step::cargo(
                 "cargo fmt --all -- --check",
                 &["fmt", "--all", "--", "--check"],
@@ -346,6 +399,7 @@ mod tests {
                 "cargo test --locked --workspace --doc",
                 &["test", "--locked", "--workspace", "--doc"],
             )),
+            Action::Battery,
             Action::Landing,
         ];
 
@@ -366,7 +420,19 @@ mod tests {
             .expect("the verifier has a doctest step");
 
         assert_eq!(step.arguments, ["test", "--locked", "--workspace", "--doc"]);
-        assert_eq!(VERIFY_ACTIONS[index + 1], Action::Landing);
+        assert_eq!(VERIFY_ACTIONS[index + 1], Action::Battery);
+        assert_eq!(VERIFY_ACTIONS[index + 2], Action::Landing);
+    }
+
+    #[test]
+    fn verifier_owns_exactly_one_battery_action() {
+        assert_eq!(
+            VERIFY_ACTIONS
+                .iter()
+                .filter(|action| matches!(action, Action::Battery))
+                .count(),
+            1
+        );
     }
 
     /// The battery builds for a second target, and says which one.
@@ -428,6 +494,21 @@ mod tests {
         let error = verify_with(&mut runner, &mut output).expect_err("landing refuses");
 
         assert!(matches!(error, VerifyError::LandingRefused));
+        assert_eq!(runner.calls, labels()[..8]);
+    }
+
+    #[test]
+    fn battery_refusal_is_terminal_before_landing() {
+        let mut runner = runner(successful_commands());
+        runner.battery = Some(Ok(BatteryRun {
+            document: br#"{"admitted":false}"#.to_vec(),
+            admitted: false,
+        }));
+        let mut output = Vec::new();
+
+        let error = verify_with(&mut runner, &mut output).expect_err("battery refusal surfaces");
+
+        assert!(matches!(error, VerifyError::BatteryRefused));
         assert_eq!(runner.calls, labels()[..7]);
     }
 
@@ -440,12 +521,13 @@ mod tests {
         let error = verify_with(&mut runner, &mut output).expect_err("landing fails");
 
         assert!(matches!(error, VerifyError::Landing(_)));
-        assert_eq!(runner.calls, labels()[..7]);
+        assert_eq!(runner.calls, labels()[..8]);
     }
 
     #[test]
     fn compiled_contract_landing_is_the_verifier_terminus() {
         assert_eq!(VERIFY_ACTIONS.last(), Some(&Action::Landing));
+        assert_eq!(VERIFY_ACTIONS[VERIFY_ACTIONS.len() - 2], Action::Battery);
         assert_eq!(
             VERIFY_ACTIONS
                 .iter()
@@ -459,6 +541,10 @@ mod tests {
     fn runner(outcomes: impl IntoIterator<Item = Outcome>) -> FakeRunner {
         FakeRunner {
             outcomes: outcomes.into_iter().collect(),
+            battery: Some(Ok(BatteryRun {
+                document: br#"{"admitted":true}"#.to_vec(),
+                admitted: true,
+            })),
             landing: Some(Ok(landing::fixture_report(true))),
             calls: Vec::new(),
         }

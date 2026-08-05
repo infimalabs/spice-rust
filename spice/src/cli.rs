@@ -499,6 +499,17 @@ const CONTRACTS: &[Contract] = &[
         "journal::restore_verify"
     ),
     row!(
+        ["dev", "pre-commit"],
+        "dev pre-commit",
+        Local,
+        None,
+        [],
+        [Daemonless, Toolful],
+        GATE_POLICY_TOOLS,
+        Reply,
+        "gate::pre-commit"
+    ),
+    row!(
         ["gate"],
         "gate [--at REV]",
         Local,
@@ -1193,6 +1204,7 @@ pub fn landing(path: &[&str]) -> Landing {
         | ["session", "turns"]
         | ["doctor"]
         | ["version"]
+        | ["dev", "pre-commit"]
         | ["gate"]
         | ["gate", "camp"]
         | ["gate", "kill"]

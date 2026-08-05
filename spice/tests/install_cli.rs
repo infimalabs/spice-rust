@@ -18,7 +18,12 @@ mod readiness;
 use readiness::Readiness;
 
 /// How long a paused install is given to reach its mutation rendezvous.
-const RENDEZVOUS: Duration = Duration::from_secs(10);
+///
+/// Debug binaries are deliberately large, and unapply authenticates the
+/// installed image before reaching its first mutation. Keep this harness
+/// horizon comfortably above that validation cost; the production rendezvous
+/// retains its own ten-second release bound.
+const RENDEZVOUS: Duration = Duration::from_secs(30);
 
 static PAUSE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
