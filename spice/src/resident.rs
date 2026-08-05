@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{self, Seek, SeekFrom, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use bus::{Bus, CommitOutcome, JournalCommit};

@@ -5,9 +5,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::lock::replacement_record;
+
 use super::owner::{
-    GuardianState, LockOwnerEvidence, guardian_state, owner_record, read_owner, replacement_record,
-    resolve_refusal, write_owner, write_owner_with,
+    GuardianState, LockOwnerEvidence, guardian_state, owner_record, read_owner, resolve_refusal,
+    write_owner, write_owner_with,
 };
 use super::process_state::{
     process_group_absent, process_group_terminal, process_terminal, process_zombie,
