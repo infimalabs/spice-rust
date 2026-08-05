@@ -91,8 +91,7 @@ impl PendingGuardian {
             .as_raw_fd()
     }
 
-    #[cfg(all(test, target_os = "macos"))]
-    fn id(&self) -> u32 {
+    pub(super) fn id(&self) -> u32 {
         self.guardian
             .as_ref()
             .expect("pending guardian retains its process")

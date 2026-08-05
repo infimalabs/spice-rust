@@ -35,7 +35,14 @@ pub(super) fn process_group_members_terminal(pid: u32) -> bool {
     let Ok(pid) = libc::pid_t::try_from(pid) else {
         return false;
     };
-    // SAFETY: a null buffer asks libproc for the current member count.
+    // A null buffer asks libproc how many PIDs to make room for, and both calls
+    // answer in PIDs rather than bytes. The sizing answer is not scoped to the
+    // group: on this host it reported 613 for a one-member group and 615 for a
+    // three-member group, tracking the whole process table, so it is an upper
+    // bound on any group rather than a measurement of this one. The buffer is
+    // therefore always larger than the membership, which is why the truncation
+    // check below can refuse but is not expected to.
+    // SAFETY: a null buffer requests the sizing answer without writing anything.
     let required = unsafe { libc::proc_listpgrppids(pid, std::ptr::null_mut(), 0) };
     let Ok(required) = usize::try_from(required) else {
         return false;

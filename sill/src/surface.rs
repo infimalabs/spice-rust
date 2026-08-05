@@ -105,14 +105,35 @@ impl LockOwnerEvidence {
         })
     }
 
+    /// What this record says about possession that outlived the owner naming it.
     #[cfg(unix)]
-    fn terminal_guardian_pending(&self) -> bool {
-        self.protected_group.is_some_and(process_group_terminal)
-            && self
-                .protected_guardian
-                .is_some_and(|pid| !process_absent(pid))
-            && (self.owner_released || process_terminal(self.pid))
+    fn guardian_state(&self) -> GuardianState {
+        let finished = self.protected_group.is_some_and(process_group_terminal)
+            && (self.owner_released || process_terminal(self.pid));
+        if !finished {
+            return GuardianState::Unbounded;
+        }
+        match self.protected_guardian {
+            Some(guardian) if !process_absent(guardian) => GuardianState::Pending,
+            Some(_) => GuardianState::Departed,
+            None => GuardianState::Unbounded,
+        }
     }
+}
+
+/// How a record's protected topology bounds a reader that found the lock held.
+#[cfg(unix)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GuardianState {
+    /// A guardian is still holding possession for work that has already ended,
+    /// so waiting for it costs only the moment it takes to notice.
+    Pending,
+    /// The guardian named here is gone, and a guardian releases what it held on
+    /// its way out, so whatever the probe saw was not this record's possession.
+    Departed,
+    /// Nothing here bounds a wait: the protected work may still be running, or
+    /// no guardian was ever named to end it.
+    Unbounded,
 }
 
 /// Whether a nonblocking acquisition would have succeeded when observed.
@@ -616,15 +637,22 @@ fn synchronized_acquire(lock: &LockFile, file: fs::File) -> io::Result<Acquisiti
     let owner = read_owner(&file)?;
     match lock.try_acquire_opened(file.try_clone()?)? {
         Acquisition::Acquired(possession) => Ok(Acquisition::Acquired(possession)),
-        Acquisition::Contended
-            if owner
-                .as_ref()
-                .is_some_and(LockOwnerEvidence::terminal_guardian_pending) =>
-        {
-            lock.acquire_opened(file).map(Acquisition::Acquired)
-        }
-        Acquisition::Contended => Ok(Acquisition::Contended),
+        Acquisition::Contended => match guardian_state(owner.as_ref()) {
+            GuardianState::Pending => lock.acquire_opened(file).map(Acquisition::Acquired),
+            // The guardian outlived the probe above but not this reading of it,
+            // and it releases possession on its way out. Reporting the refusal
+            // the probe collected would describe a holder that no longer exists,
+            // so the question is put to the kernel once more instead.
+            GuardianState::Departed => lock.try_acquire_opened(file),
+            GuardianState::Unbounded => Ok(Acquisition::Contended),
+        },
     }
+}
+
+/// What one optional owner record says about waiting for the lock it describes.
+#[cfg(unix)]
+fn guardian_state(owner: Option<&LockOwnerEvidence>) -> GuardianState {
+    owner.map_or(GuardianState::Unbounded, LockOwnerEvidence::guardian_state)
 }
 
 #[cfg(not(unix))]
@@ -639,13 +667,19 @@ fn synchronized_availability(
     owner: Option<&LockOwnerEvidence>,
 ) -> io::Result<Availability> {
     let availability = lock.availability_opened(file.try_clone()?)?;
-    if availability == Availability::Held
-        && owner.is_some_and(LockOwnerEvidence::terminal_guardian_pending)
-    {
-        drop(lock.acquire_opened(file)?);
-        return Ok(Availability::Available);
+    if availability == Availability::Available {
+        return Ok(availability);
     }
-    Ok(availability)
+    match guardian_state(owner) {
+        GuardianState::Pending => {
+            drop(lock.acquire_opened(file)?);
+            Ok(Availability::Available)
+        }
+        // The guardian the report described is gone, so the held answer above
+        // outlived its holder and the kernel is asked again rather than quoted.
+        GuardianState::Departed => lock.availability_opened(file),
+        GuardianState::Unbounded => Ok(availability),
+    }
 }
 
 #[cfg(not(unix))]
@@ -672,14 +706,30 @@ fn write_owner(
     protected: Option<(u32, u32)>,
     owner_released: bool,
 ) -> io::Result<()> {
-    let bytes = serde_json::to_vec(&owner(protected, owner_released)?).map_err(io::Error::other)?;
-    file.set_len(0)?;
+    let record = serde_json::to_vec(&owner(protected, owner_released)?).map_err(io::Error::other)?;
+    let spanned = file.metadata()?.len().min(OWNER_BYTES_LIMIT);
+    let bytes = replacement_record(record, spanned);
     let mut writer = file;
     writer.seek(SeekFrom::Start(0))?;
     writer.write_all(&bytes)?;
-    writer.write_all(b"\n")?;
     writer.flush()?;
     file.sync_data()
+}
+
+/// One record covering every byte the file already spans, ready to be written whole.
+///
+/// An empty file is how release is spelled, so emptying the file before writing
+/// leaves a window in which the lock states that nothing holds it while a
+/// guardian still does. A reader inside that window refuses an acquisition the
+/// evidence would have granted, and an owner killed inside it freezes the window
+/// open for as long as the file survives. Padding the record out to the span it
+/// replaces lets one write supersede the whole record, so every reader sees
+/// either the record before it or the record after it.
+fn replacement_record(mut record: Vec<u8>, spanned: u64) -> Vec<u8> {
+    record.push(b'\n');
+    let spanned = usize::try_from(spanned).unwrap_or(usize::MAX);
+    record.resize(record.len().max(spanned), b' ');
+    record
 }
 
 fn clear_owner(file: &fs::File) -> io::Result<()> {
@@ -750,17 +800,14 @@ impl HeldShard {
     /// child's new process group is terminally absent.
     #[cfg(unix)]
     pub fn spawn_protected(&mut self, spec: Spec) -> io::Result<Running> {
-        let running = crate::spawn::spawn_guarded(spec, self.possession.file())?;
+        let file = self.possession.file();
+        let running = crate::spawn::spawn_guarded(spec, file, &mut |group, guardian| {
+            write_owner(file, Some((group, guardian)), false)
+        })?;
         let guardian = running
             .guardian_id()
             .expect("protected spawn retains a guardian");
-        let protected = (running.id(), guardian);
-        if let Err(error) = write_owner(self.possession.file(), Some(protected), false) {
-            let _signal_result = running.signal_kill();
-            let _wait_result = running.wait();
-            return Err(error);
-        }
-        self.protected = Some(protected);
+        self.protected = Some((running.id(), guardian));
         self.possession.retain_until_last_close();
         Ok(running)
     }
@@ -878,10 +925,12 @@ mod tests {
     use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use super::process_state::{process_group_terminal, process_terminal, process_zombie};
+    use super::process_state::{
+        process_group_absent, process_group_terminal, process_terminal, process_zombie,
+    };
     use super::{
-        Contention, LockAttempt, LockAvailability, LockOwnerEvidence, LockSurfaceError,
-        LockTargetKind, LockTopology,
+        Contention, GuardianState, LockAttempt, LockAvailability, LockOwnerEvidence,
+        LockSurfaceError, LockTargetKind, LockTopology, replacement_record,
     };
     use crate::LockConfig;
 
@@ -1061,7 +1110,7 @@ mod tests {
     }
 
     #[test]
-    fn guardian_synchronization_requires_terminal_group_and_live_guardian() {
+    fn guardian_synchronization_separates_a_pending_guardian_from_a_departed_one() {
         let mut departed = Command::new("/usr/bin/true");
         departed.process_group(0);
         let mut departed = departed.spawn().expect("departed process launches");
@@ -1075,7 +1124,7 @@ mod tests {
             protected_group: Some(pid),
             protected_guardian: Some(std::process::id()),
         };
-        assert!(completed.terminal_guardian_pending());
+        assert_eq!(completed.guardian_state(), GuardianState::Pending);
 
         let live_owner = LockOwnerEvidence {
             pid: std::process::id(),
@@ -1084,14 +1133,14 @@ mod tests {
             protected_group: Some(pid),
             protected_guardian: Some(std::process::id()),
         };
-        assert!(!live_owner.terminal_guardian_pending());
+        assert_eq!(live_owner.guardian_state(), GuardianState::Unbounded);
 
         let released_owner = LockOwnerEvidence {
             owner_released: true,
             ..live_owner
         };
         assert!(released_owner.report().is_none());
-        assert!(released_owner.terminal_guardian_pending());
+        assert_eq!(released_owner.guardian_state(), GuardianState::Pending);
 
         let unguarded = LockOwnerEvidence {
             pid,
@@ -1100,7 +1149,7 @@ mod tests {
             protected_group: None,
             protected_guardian: None,
         };
-        assert!(!unguarded.terminal_guardian_pending());
+        assert_eq!(unguarded.guardian_state(), GuardianState::Unbounded);
 
         let departed_guardian = LockOwnerEvidence {
             pid,
@@ -1109,7 +1158,32 @@ mod tests {
             protected_group: Some(pid),
             protected_guardian: Some(pid),
         };
-        assert!(!departed_guardian.terminal_guardian_pending());
+        // The guardian is gone rather than merely uninteresting, and a guardian
+        // releases what it held on its way out. Collapsing this into the same
+        // answer as an unbounded record is what made a reader quote a refusal
+        // its holder had already withdrawn.
+        assert_eq!(departed_guardian.guardian_state(), GuardianState::Departed);
+    }
+
+    #[test]
+    fn a_replacement_record_supersedes_every_byte_the_previous_one_spanned() {
+        let record = replacement_record(br#"{"pid":7}"#.to_vec(), 40);
+        assert_eq!(record.len(), 40, "the write covers the whole span");
+        assert!(record.starts_with(b"{\"pid\":7}\n"));
+        assert!(
+            record[10..].iter().all(|byte| *byte == b' '),
+            "the tail is whitespace a reader can ignore"
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&record).expect("padded record reads")
+                ["pid"],
+            7
+        );
+
+        // A record longer than the span it replaces is written whole, and a
+        // fresh file spans nothing at all; neither case may clip the record.
+        assert_eq!(replacement_record(br#"{"pid":7}"#.to_vec(), 4), b"{\"pid\":7}\n");
+        assert_eq!(replacement_record(br#"{"pid":7}"#.to_vec(), 0), b"{\"pid\":7}\n");
     }
 
     #[test]
@@ -1134,8 +1208,17 @@ mod tests {
 
         assert!(process_zombie(pid));
         assert!(process_terminal(pid));
+        // The group's only remaining member is that zombie, and signal zero
+        // still resolves the group while it goes unreaped, so a terminal answer
+        // here cannot have come from the group having gone absent. It has to
+        // come from enumerating the member and finding it terminal, which is
+        // also what pins the PID reading of the platform enumeration: reading
+        // its answer as a byte count would divide the single member away and
+        // leave the group identity to answer for itself, which it refuses to do.
+        assert!(!process_group_absent(pid));
         assert!(process_group_terminal(pid));
         assert!(child.wait().expect("zombie fixture reaps").success());
+        assert!(process_group_absent(pid));
     }
 
     #[test]

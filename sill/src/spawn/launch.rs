@@ -17,8 +17,9 @@ pub(super) fn spawn_inner(
     spec: Spec,
     observation: Option<Observation>,
     guarded: Option<&File>,
+    publish: &mut dyn FnMut(u32, u32) -> io::Result<()>,
 ) -> io::Result<Running> {
-    spawn_inner_with_guardian(spec, observation, guarded, PendingGuardian::start)
+    spawn_inner_with_guardian(spec, observation, guarded, publish, PendingGuardian::start)
 }
 
 #[cfg(test)]
@@ -30,6 +31,7 @@ pub(super) fn spawn_inner_refusing_descriptor_setup(
         spec,
         None,
         Some(guarded),
+        &mut |_, _| Ok(()),
         PendingGuardian::start_refusing_descriptor_setup,
     )
 }
@@ -38,6 +40,7 @@ fn spawn_inner_with_guardian(
     spec: Spec,
     observation: Option<Observation>,
     guarded: Option<&File>,
+    publish: &mut dyn FnMut(u32, u32) -> io::Result<()>,
     start_guardian: fn(&File) -> io::Result<PendingGuardian>,
 ) -> io::Result<Running> {
     validate_observation(&spec, observation.as_ref())?;
@@ -52,6 +55,19 @@ fn spawn_inner_with_guardian(
     let mut child = command(&spec, guardian.as_ref()).spawn()?;
     let started = Instant::now();
     let pid = child.id();
+    // The topology is published here rather than on the way out, because
+    // everything below this line -- three thread spawns among it -- runs while
+    // the child is already alive. A wrapper that dies before publishing hands
+    // possession to a guardian nothing on disk names, and no later reader can
+    // tell that waiting for it would be bounded, so this runs first and the
+    // group is made to exist before the record claims it. The child is already
+    // observable by now and cannot be held back: `spawn` does not return until
+    // the child has `exec`ed, so no wrapper-side ordering can close that gap.
+    if let Some(guardian) = guardian.as_ref()
+        && let Err(error) = adopt_group(pid).and_then(|()| publish(pid, guardian.id()))
+    {
+        return spawn_cleanup(child, spec.group, pid, error);
+    }
     let pipes = match capture_pipes(&mut child, &spec) {
         Ok(pipes) => pipes,
         Err(error) => return spawn_cleanup(child, spec.group, pid, error),
@@ -107,6 +123,31 @@ fn spawn_inner_with_guardian(
         stderr,
         guardian,
     })
+}
+
+/// Create the child's process group from this side too, before naming it.
+///
+/// The published record names a group, and a reader that probes a group its
+/// child has not created yet is told it is absent -- which reads as terminal,
+/// the one answer that licenses another acquisition. Both sides setting the
+/// same group is how that gap is closed rather than narrowed: whichever runs
+/// first creates it, and the wrapper returning from here means it exists.
+/// The two refusals are that same success seen from behind, and both report a
+/// child that is already past the point of needing this: `EACCES` is refused
+/// only once the child has `exec`ed, which it cannot reach without its own
+/// group, and `ESRCH` only once it has exited, after which no group of its
+/// making can still appear.
+fn adopt_group(pid: u32) -> io::Result<()> {
+    let pid = libc::pid_t::try_from(pid).map_err(io::Error::other)?;
+    // SAFETY: `pid` is this wrapper's child, joining the group it is named by.
+    if unsafe { libc::setpgid(pid, pid) } == 0 {
+        return Ok(());
+    }
+    let error = io::Error::last_os_error();
+    if matches!(error.raw_os_error(), Some(libc::EACCES | libc::ESRCH)) {
+        return Ok(());
+    }
+    Err(error)
 }
 
 fn validate_observation(spec: &Spec, observation: Option<&Observation>) -> io::Result<()> {

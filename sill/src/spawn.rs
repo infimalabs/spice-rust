@@ -207,12 +207,24 @@ pub struct Running {
 
 #[cfg(unix)]
 pub fn spawn(spec: Spec) -> io::Result<Running> {
-    spawn_inner(spec, None, None)
+    spawn_inner(spec, None, None, &mut |_, _| Ok(()))
 }
 
+/// Spawn one child whose possession outlives this process, publishing the
+/// protected group and its guardian the moment both exist.
+///
+/// `publish` is called with the child's process group and the guardian holding
+/// possession, at the first instant both exist, and a failure there refuses the
+/// spawn rather than leaving possession unnamed. The child is already running by
+/// then and cannot be held back for it, so `publish` races the child's own first
+/// moments and must not be read as happening before them.
 #[cfg(unix)]
-pub(crate) fn spawn_guarded(spec: Spec, file: &File) -> io::Result<Running> {
-    spawn_inner(spec, None, Some(file))
+pub(crate) fn spawn_guarded(
+    spec: Spec,
+    file: &File,
+    publish: &mut dyn FnMut(u32, u32) -> io::Result<()>,
+) -> io::Result<Running> {
+    spawn_inner(spec, None, Some(file), publish)
 }
 
 /// Spawn one child with a bounded selected-stream observer.
@@ -226,7 +238,7 @@ pub(crate) fn spawn_guarded(spec: Spec, file: &File) -> io::Result<Running> {
 /// or when the child and its capture workers cannot be created.
 #[cfg(unix)]
 pub fn spawn_observed(spec: Spec, observation: Observation) -> io::Result<Running> {
-    spawn_inner(spec, Some(observation), None)
+    spawn_inner(spec, Some(observation), None, &mut |_, _| Ok(()))
 }
 
 #[cfg(not(unix))]

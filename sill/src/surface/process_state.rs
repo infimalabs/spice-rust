@@ -29,7 +29,7 @@ pub(crate) fn process_group_terminal(pid: u32) -> bool {
     process_group_absent(pid) || platform::process_group_members_terminal(pid)
 }
 
-fn process_group_absent(pid: u32) -> bool {
+pub(super) fn process_group_absent(pid: u32) -> bool {
     let Ok(pid) = libc::pid_t::try_from(pid) else {
         return false;
     };
