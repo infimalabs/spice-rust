@@ -30,7 +30,13 @@ struct CsharpDeclaration {
 /// The declaration kinds a type can enclose, and which can therefore go unused.
 const CSHARP_MEMBER_KINDS: &[&str] = &["method", "property", "field", "event"];
 /// The declaration kinds that open a type context around their members.
-const CSHARP_TYPE_KINDS: &[&str] = &["class", "interface", "struct"];
+///
+/// `record` is one kind and three spellings: C# writes `record`, `record class`,
+/// and `record struct`, and the grammar gives all three one node. A kind missing
+/// here would not be a type that encloses nothing; it would be a type nothing is
+/// found inside, so its members answer to no declaration and every rule read off
+/// the enclosing type stops applying to them without saying so.
+const CSHARP_TYPE_KINDS: &[&str] = &["class", "interface", "struct", "record"];
 /// Access modifiers that publish a member beyond its declaring type.
 const CSHARP_PUBLISHING_MODIFIERS: &[&str] = &["public", "protected", "internal"];
 

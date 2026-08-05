@@ -831,6 +831,51 @@ fn csharp_unused_retention_alone_leaves_the_battery_passing() {
     assert_eq!(state, BatteryState::Passed);
 }
 
+/// A partial record holds its members the way a partial class does.
+///
+/// C# spells a record three ways and the grammar gives all three one node, so a
+/// fixture naming only `record` would prove the node rather than the language.
+/// Each form declares one private member no name reaches, and the count in the
+/// reason is what proves every form was held: a form the arm cannot see encloses
+/// nothing, so its member answers to no declaration and is accused instead.
+#[test]
+fn csharp_unused_retains_a_member_of_every_partial_record_form() {
+    let repository = scanning_repository(
+        "toolchain-csharp-record",
+        "fn main() {}\n",
+        "Every sentence here is ordinary.\n",
+    );
+    repository.write(
+        "dotnet/Records.cs",
+        concat!(
+            "public partial record Plain\n{\n",
+            "    private void HeldByPlain() { }\n}\n\n",
+            "public partial record class Classy\n{\n",
+            "    private void HeldByClass() { }\n}\n\n",
+            "public partial record struct Valued\n{\n",
+            "    private void HeldByValue() { }\n}\n",
+        ),
+    );
+    git_commit(&repository, "csharp partial record fixture");
+
+    let observations = acquired(
+        &repository,
+        Some(toolchain_directory().into_os_string()),
+        &[],
+    );
+    let observation = arm(&observations, GateId::CsharpUnusedCandidates);
+    assert_eq!(observation.outcome, ArmOutcome::Passed);
+    assert!(
+        observation
+            .reason
+            .ends_with("; 3 unreached members retained (partial_declaration 3)"),
+        "a partial record's members left no retained trace: {}",
+        observation.reason
+    );
+
+    measure_toolchain(observations).expect("retained-only C# record evidence is admitted");
+}
+
 /// What a module owns, and what counts as reaching it.
 ///
 /// The nested locals below are declared and never read, so an inventory that
