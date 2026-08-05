@@ -13,11 +13,12 @@ pub enum MetricId {
     RepositoryDocumentCharacters,
     MagicNumberRegressions,
     MarkdownLinkCaseMismatches,
+    RustDocMarkdownTargetAbsences,
 }
 
 impl MetricId {
     /// Every structural metric in deterministic declaration order.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::FileLines,
         Self::FileBytes,
         Self::RoutineCcn,
@@ -25,6 +26,7 @@ impl MetricId {
         Self::RepositoryDocumentCharacters,
         Self::MagicNumberRegressions,
         Self::MarkdownLinkCaseMismatches,
+        Self::RustDocMarkdownTargetAbsences,
     ];
 
     /// Stable current identity spelling.
@@ -38,6 +40,7 @@ impl MetricId {
             Self::RepositoryDocumentCharacters => "repository-document.characters",
             Self::MagicNumberRegressions => "magic-number.regressions",
             Self::MarkdownLinkCaseMismatches => "markdown-link.case-mismatches",
+            Self::RustDocMarkdownTargetAbsences => "rust-doc-markdown.target-absences",
         }
     }
 }
@@ -53,6 +56,7 @@ pub enum MetricUnit {
     UnicodeScalarValues,
     Regressions,
     CaseMismatches,
+    TargetAbsences,
 }
 
 impl MetricUnit {
@@ -74,7 +78,7 @@ impl MetricUnit {
     #[must_use]
     pub const fn admits_only_zero(self) -> bool {
         match self {
-            Self::CaseMismatches | Self::Regressions => true,
+            Self::CaseMismatches | Self::Regressions | Self::TargetAbsences => true,
             Self::SourceLines
             | Self::Bytes
             | Self::CyclomaticComplexity
@@ -94,6 +98,7 @@ impl MetricUnit {
             Self::UnicodeScalarValues => "unicode-scalar-values",
             Self::Regressions => "regressions",
             Self::CaseMismatches => "case-mismatches",
+            Self::TargetAbsences => "target-absences",
         }
     }
 }
@@ -114,7 +119,7 @@ pub enum ParserId {
     TreeSitterComplexityV1,
     Utf8DocumentCharactersV1,
     CGrammarMagicDeltaV1,
-    MarkdownInlineLinkCaseV1,
+    MarkdownTrackedTargetsV2,
 }
 
 impl ParserId {
@@ -126,10 +131,93 @@ impl ParserId {
             Self::TreeSitterComplexityV1 => "tree-sitter-complexity-v1",
             Self::Utf8DocumentCharactersV1 => "utf8-document-characters-v1",
             Self::CGrammarMagicDeltaV1 => "c-grammar-magic-delta-v1",
-            Self::MarkdownInlineLinkCaseV1 => "markdown-inline-link-case-v1",
+            Self::MarkdownTrackedTargetsV2 => "markdown-tracked-targets-v2",
         }
     }
 }
+
+/// Why one exact Rust doc-comment citation does not name a tracked path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RustDocMarkdownCitationAllowanceKind {
+    /// The named document belongs to an external operator surface.
+    External,
+    /// The spelling describes a document created inside a test fixture.
+    Fixture,
+}
+
+/// One exact compiled allowance for a Rust doc-comment Markdown citation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RustDocMarkdownCitationAllowance {
+    source_path: Option<&'static str>,
+    target_path: &'static str,
+    kind: RustDocMarkdownCitationAllowanceKind,
+    reason: &'static str,
+}
+
+impl RustDocMarkdownCitationAllowance {
+    #[must_use]
+    pub const fn source_path(self) -> Option<&'static str> {
+        self.source_path
+    }
+
+    #[must_use]
+    pub const fn target_path(self) -> &'static str {
+        self.target_path
+    }
+
+    #[must_use]
+    pub const fn kind(self) -> RustDocMarkdownCitationAllowanceKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub const fn reason(self) -> &'static str {
+        self.reason
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn matches(self, source_path: &str, target_path: &str) -> bool {
+        self.target_path == target_path
+            && self
+                .source_path
+                .is_none_or(|declared| declared == source_path)
+    }
+}
+
+/// Exact non-tracked Markdown spellings admitted in Rust doc comments.
+///
+/// The external declaration is target-wide because Claude owns that operator
+/// document wherever the launch contract explains it. Fixture declarations are
+/// source-bound so the same missing name anywhere else remains a finding.
+pub const RUST_DOC_MARKDOWN_CITATION_ALLOWANCES: [RustDocMarkdownCitationAllowance; 4] = [
+    RustDocMarkdownCitationAllowance {
+        source_path: None,
+        target_path: "CLAUDE.md",
+        kind: RustDocMarkdownCitationAllowanceKind::External,
+        reason: "Claude Code reads this operator-owned document outside repository tracking",
+    },
+    RustDocMarkdownCitationAllowance {
+        source_path: Some("gate/src/battery/tests/file_shape.rs"),
+        target_path: "app/notes.md",
+        kind: RustDocMarkdownCitationAllowanceKind::Fixture,
+        reason: "the battery test names this path inside its synthetic repository fixture",
+    },
+    RustDocMarkdownCitationAllowance {
+        source_path: Some("gate/tests/core_docs.rs"),
+        target_path: "GUIDE.md",
+        kind: RustDocMarkdownCitationAllowanceKind::Fixture,
+        reason: concat!(
+            "the core-docs test creates and measures this document inside its ",
+            "fixture repository"
+        ),
+    },
+    RustDocMarkdownCitationAllowance {
+        source_path: Some("gate/tests/input.rs"),
+        target_path: "AGENTS.md",
+        kind: RustDocMarkdownCitationAllowanceKind::Fixture,
+        reason: "the input test names this packaged default as fixture document identity",
+    },
+];
 
 /// One parser declaration fixed at compile time.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -258,11 +346,14 @@ impl ArmDeclaration {
 const FILE_SHAPE_METRICS: &[MetricId] = &[MetricId::FileLines, MetricId::FileBytes];
 const COMPLEXITY_METRICS: &[MetricId] = &[MetricId::RoutineCcn, MetricId::RoutineLength];
 const MAGIC_METRICS: &[MetricId] = &[MetricId::MagicNumberRegressions];
-const MARKDOWN_METRICS: &[MetricId] = &[MetricId::MarkdownLinkCaseMismatches];
+const MARKDOWN_METRICS: &[MetricId] = &[
+    MetricId::MarkdownLinkCaseMismatches,
+    MetricId::RustDocMarkdownTargetAbsences,
+];
 
 /// All quantities declared by this slice, including the document-character
 /// metric consumed by the earlier `repo-docs` arm.
-pub const STRUCTURAL_METRICS: [MetricDeclaration; 7] = [
+pub const STRUCTURAL_METRICS: [MetricDeclaration; 8] = [
     metric(
         MetricId::FileLines,
         GateId::FileShape,
@@ -322,8 +413,17 @@ pub const STRUCTURAL_METRICS: [MetricDeclaration; 7] = [
         GateId::MarkdownLinks,
         MetricUnit::CaseMismatches,
         KeyShape::Path,
-        ParserId::MarkdownInlineLinkCaseV1,
+        ParserId::MarkdownTrackedTargetsV2,
         "tracked markdown inventory",
+        None,
+    ),
+    metric(
+        MetricId::RustDocMarkdownTargetAbsences,
+        GateId::MarkdownLinks,
+        MetricUnit::TargetAbsences,
+        KeyShape::Path,
+        ParserId::MarkdownTrackedTargetsV2,
+        "tracked path inventory + exact compiled citation allowances",
         None,
     ),
 ];
@@ -400,19 +500,23 @@ pub const STRUCTURAL_ARMS: [ArmDeclaration; 4] = [
     ArmDeclaration {
         id: GateId::MarkdownLinks,
         parser: parser(
-            ParserId::MarkdownInlineLinkCaseV1,
-            "tracked-path inventory and tracked Markdown text",
+            ParserId::MarkdownTrackedTargetsV2,
+            "tracked-path inventory, tracked Markdown text, and grammar-parsed Rust doc comments",
         ),
         metrics: MARKDOWN_METRICS,
         scope: scope(
-            &["tracked .md paths after staged rename/delete projection"],
+            &[
+                "tracked .md paths after staged rename/delete projection",
+                "tracked Rust doc comments containing code-spanned .md paths",
+            ],
             &[
                 "external URLs",
                 "anchors",
                 "absolute paths",
                 "targets outside the tree",
+                "exact declared external and fixture citations",
             ],
-            "one tracked Markdown source and a complete tracked-path inventory",
+            "one tracked Markdown or Rust doc-comment source and the complete tracked inventory",
         ),
     },
 ];
@@ -426,7 +530,9 @@ pub(crate) const fn metric_parser_declaration(metric: MetricId) -> ParserDeclara
             "repository-truth document bytes",
         ),
         MetricId::MagicNumberRegressions => STRUCTURAL_ARMS[2].parser(),
-        MetricId::MarkdownLinkCaseMismatches => STRUCTURAL_ARMS[3].parser(),
+        MetricId::MarkdownLinkCaseMismatches | MetricId::RustDocMarkdownTargetAbsences => {
+            STRUCTURAL_ARMS[3].parser()
+        }
     }
 }
 

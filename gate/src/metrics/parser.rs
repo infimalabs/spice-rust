@@ -21,6 +21,10 @@ pub use file::{
 };
 pub use magic::{MagicFinding, admit_magic_source, scan_magic_regressions};
 pub use markdown::{MarkdownLinkFinding, scan_markdown_link_case};
+#[cfg(not(target_arch = "wasm32"))]
+pub use markdown::{
+    RustDocMarkdownCitationFinding, RustDocMarkdownCitationScan, scan_rust_doc_markdown_citations,
+};
 
 /// Exact reason compiled parsing could not produce a measurement.
 #[derive(Clone, Debug, Eq, PartialEq)]

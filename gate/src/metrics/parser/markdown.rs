@@ -1,10 +1,16 @@
 use std::collections::BTreeMap;
+#[cfg(not(target_arch = "wasm32"))]
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::OnceLock;
 
 use regex::Regex;
+#[cfg(not(target_arch = "wasm32"))]
+use tree_sitter::{Language, Node, Parser};
 
 use super::{ParseError, canonical_path, python_splitlines};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::metrics::declaration::RUST_DOC_MARKDOWN_CITATION_ALLOWANCES;
 
 /// One case-mismatched tracked Markdown target.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -40,6 +46,54 @@ impl MarkdownLinkFinding {
     #[must_use]
     pub fn expected_path(&self) -> &str {
         &self.expected_path
+    }
+}
+
+/// One Rust doc-comment citation whose Markdown target is not tracked or allowed.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct RustDocMarkdownCitationFinding {
+    source_path: String,
+    line: u64,
+    target_path: String,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl RustDocMarkdownCitationFinding {
+    #[must_use]
+    pub fn source_path(&self) -> &str {
+        &self.source_path
+    }
+
+    #[must_use]
+    pub const fn line(&self) -> u64 {
+        self.line
+    }
+
+    #[must_use]
+    pub fn target_path(&self) -> &str {
+        &self.target_path
+    }
+}
+
+/// Complete scan of one Rust source's doc-comment Markdown citations.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RustDocMarkdownCitationScan {
+    citations: u64,
+    findings: Vec<RustDocMarkdownCitationFinding>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl RustDocMarkdownCitationScan {
+    #[must_use]
+    pub const fn citations(&self) -> u64 {
+        self.citations
+    }
+
+    #[must_use]
+    pub fn findings(&self) -> &[RustDocMarkdownCitationFinding] {
+        &self.findings
     }
 }
 
@@ -88,6 +142,117 @@ pub fn scan_markdown_link_case(
     Ok(findings)
 }
 
+/// Scan code-spanned Markdown paths in Rust doc comments against tracked paths.
+///
+/// Line and block doc comments are both admitted. Ordinary comments, string
+/// literals, and bare file-name spellings are not citations and never enter the
+/// candidate set. A target absent from the live inventory is clean only when an
+/// exact compiled external or source-bound fixture declaration admits it.
+///
+/// # Errors
+///
+/// Non-Rust sources are not applicable. Noncanonical or non-ASCII source,
+/// target, or inventory paths refuse rather than acquiring a different path
+/// identity from the one reports retain.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn scan_rust_doc_markdown_citations(
+    source_path: &str,
+    text: &str,
+    tracked_paths: &[String],
+) -> Result<RustDocMarkdownCitationScan, ParseError> {
+    let source_path = canonical_path(source_path)?;
+    if !source_path.to_ascii_lowercase().ends_with(".rs") {
+        return Err(ParseError::NotApplicable {
+            reason: format!("tracked source {source_path:?} is not Rust"),
+        });
+    }
+    require_ascii_path(&source_path, "tracked Rust source")?;
+    let mut parser = Parser::new();
+    parser
+        .set_language(&Language::new(tree_sitter_rust::LANGUAGE))
+        .map_err(|error| {
+            ParseError::malformed(
+                format!("Rust doc-comment grammar for {source_path:?}"),
+                error.to_string(),
+            )
+        })?;
+    let tree = parser.parse(text, None).ok_or_else(|| {
+        ParseError::malformed(
+            format!("Rust doc-comment source {source_path:?}"),
+            "grammar produced no tree",
+        )
+    })?;
+    let tracked = tracked_case_map(tracked_paths)?
+        .into_values()
+        .collect::<BTreeSet<_>>();
+    let mut citations = 0_u64;
+    let mut findings = Vec::new();
+    visit_rust_doc_comments(
+        tree.root_node(),
+        text,
+        &source_path,
+        &tracked,
+        &mut citations,
+        &mut findings,
+    )?;
+    findings.sort();
+    Ok(RustDocMarkdownCitationScan {
+        citations,
+        findings,
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn visit_rust_doc_comments(
+    node: Node<'_>,
+    text: &str,
+    source_path: &str,
+    tracked: &BTreeSet<String>,
+    citations: &mut u64,
+    findings: &mut Vec<RustDocMarkdownCitationFinding>,
+) -> Result<(), ParseError> {
+    if node.kind() == "doc_comment" {
+        let fragment = node.utf8_text(text.as_bytes()).map_err(|error| {
+            ParseError::malformed(
+                format!("Rust doc comment in {source_path:?}"),
+                error.to_string(),
+            )
+        })?;
+        for captures in rust_doc_citation_regex().captures_iter(fragment) {
+            let matched = captures.get(1).expect("citation regex has one capture");
+            let raw = matched.as_str();
+            let target_path = canonical_path(raw)?;
+            require_ascii_path(&target_path, "Rust doc Markdown target")?;
+            *citations = citations.saturating_add(1);
+            let allowed = tracked.contains(&target_path)
+                || RUST_DOC_MARKDOWN_CITATION_ALLOWANCES
+                    .into_iter()
+                    .any(|allowance| allowance.matches(source_path, &target_path));
+            if !allowed {
+                findings.push(RustDocMarkdownCitationFinding {
+                    source_path: source_path.to_owned(),
+                    line: rust_source_line(text, node.start_byte() + matched.start()),
+                    target_path,
+                });
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        visit_rust_doc_comments(child, text, source_path, tracked, citations, findings)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn rust_source_line(text: &str, byte_offset: usize) -> u64 {
+    let newlines = text.as_bytes()[..byte_offset]
+        .iter()
+        .filter(|byte| **byte == b'\n')
+        .count();
+    u64::try_from(newlines + 1).expect("line number fits in u64")
+}
+
 fn tracked_case_map(paths: &[String]) -> Result<BTreeMap<String, String>, ParseError> {
     let mut tracked = BTreeMap::new();
     for path in paths {
@@ -129,6 +294,15 @@ fn url_scheme_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
         Regex::new(r"^[A-Za-z][A-Za-z0-9+.-]*:").expect("compiled URL scheme regex is valid")
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn rust_doc_citation_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r#"`((?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.md)`"#)
+            .expect("compiled Rust doc Markdown citation regex is valid")
     })
 }
 

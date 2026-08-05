@@ -15,7 +15,7 @@ use super::{
     MetricKey, MetricMeasurement, MetricStateBinding, ParseError, ParserEvidence, ParserId,
     ResolvedMagicMetric, STRUCTURAL_ARMS, StructuralArmEvidence, admit_magic_source,
     measure_complexity, measure_file_shape, resolve_magic_metric, resolve_metric_rule,
-    scan_magic_regressions, scan_markdown_link_case,
+    scan_magic_regressions, scan_markdown_link_case, scan_rust_doc_markdown_citations,
 };
 use crate::core::ActorCapture;
 use crate::input::Contract;
@@ -394,10 +394,12 @@ fn markdown_metrics(
 ) -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
     let tracked = source.tracked();
     let mut metrics = Vec::new();
+    let mut markdown_sources = 0_u64;
     for path in source.measurable() {
         if !path.to_ascii_lowercase().ends_with(".md") {
             continue;
         }
+        markdown_sources = markdown_sources.saturating_add(1);
         let state = markdown_state(source.root(), path, &tracked);
         let key = MetricKey::path(path).map_err(MetricAcquisitionError::Evidence)?;
         metrics.push(
@@ -405,20 +407,46 @@ fn markdown_metrics(
                 .map_err(MetricAcquisitionError::Evidence)?,
         );
     }
-    if metrics.is_empty() {
-        return unavailable_markdown();
+    if markdown_sources == 0 {
+        metrics.push(not_applicable_markdown_metric(
+            MetricId::MarkdownLinkCaseMismatches,
+            "the selected tree admits no Markdown source",
+        )?);
+    }
+
+    let mut cited_rust_sources = 0_u64;
+    for path in source.measurable() {
+        if !path.to_ascii_lowercase().ends_with(".rs") {
+            continue;
+        }
+        let Some(state) = rust_doc_markdown_state(source.root(), path, &tracked) else {
+            continue;
+        };
+        cited_rust_sources = cited_rust_sources.saturating_add(1);
+        let key = MetricKey::path(path).map_err(MetricAcquisitionError::Evidence)?;
+        metrics.push(
+            MetricEvidence::new(MetricId::RustDocMarkdownTargetAbsences, key, state)
+                .map_err(MetricAcquisitionError::Evidence)?,
+        );
+    }
+    if cited_rust_sources == 0 {
+        metrics.push(not_applicable_markdown_metric(
+            MetricId::RustDocMarkdownTargetAbsences,
+            "the selected tree admits no Rust doc-comment Markdown citation",
+        )?);
     }
     Ok(metrics)
 }
 
-/// The one row a tree with no admitted Markdown still owes its arm.
-fn unavailable_markdown() -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
+/// The row one Markdown metric owes when its own source class is absent.
+fn not_applicable_markdown_metric(
+    metric: MetricId,
+    reason: &str,
+) -> Result<MetricEvidence, MetricAcquisitionError> {
     let state = EvidenceState::NotApplicable {
-        reason: "the selected tree admits no Markdown source".to_owned(),
+        reason: reason.to_owned(),
     };
-    let evidence = MetricEvidence::new(MetricId::MarkdownLinkCaseMismatches, MetricKey::Arm, state)
-        .map_err(MetricAcquisitionError::Evidence)?;
-    Ok(vec![evidence])
+    MetricEvidence::new(metric, MetricKey::Arm, state).map_err(MetricAcquisitionError::Evidence)
 }
 
 /// One Markdown source's own state: its mismatch count, or why it has none.
@@ -439,10 +467,39 @@ fn markdown_state(root: &Path, path: &str, tracked: &[String]) -> EvidenceState 
         Ok(findings) => EvidenceState::measured(MetricMeasurement::new(
             findings.len() as u64,
             ParserEvidence::Native {
-                parser: ParserId::MarkdownInlineLinkCaseV1,
+                parser: ParserId::MarkdownTrackedTargetsV2,
             },
         )),
         Err(error) => error.into_evidence_state(),
+    }
+}
+
+/// One Rust source containing doc-comment citations, or why it was unreadable.
+///
+/// A clean Rust source with no citations contributes no row; the arm emits one
+/// whole-metric non-applicability row only if no selected Rust source cites a
+/// Markdown path. An unreadable source must contribute its refusal because the
+/// acquisition cannot know whether it contained a citation.
+fn rust_doc_markdown_state(root: &Path, path: &str, tracked: &[String]) -> Option<EvidenceState> {
+    let text = match std::fs::read_to_string(root.join(path)) {
+        Ok(text) => text,
+        Err(error) => {
+            return Some(EvidenceState::Unavailable {
+                reason: format!(
+                    "selected Rust source could not be read for doc citations: {error}"
+                ),
+            });
+        }
+    };
+    match scan_rust_doc_markdown_citations(path, &text, tracked) {
+        Ok(scan) if scan.citations() == 0 => None,
+        Ok(scan) => Some(EvidenceState::measured(MetricMeasurement::new(
+            scan.findings().len() as u64,
+            ParserEvidence::Native {
+                parser: ParserId::MarkdownTrackedTargetsV2,
+            },
+        ))),
+        Err(error) => Some(error.into_evidence_state()),
     }
 }
 
