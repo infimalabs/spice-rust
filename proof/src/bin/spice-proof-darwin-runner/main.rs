@@ -545,12 +545,14 @@ fn host_dependency_denials() -> String {
 
 /// The directory whose contents the boundary takes away, or why it cannot.
 ///
-/// `(allow default)` leaves readable everything no rule names, and on a machine
-/// that keeps its checkouts together that is every other checkout: ten peer
-/// worktrees sit beside this one here. A sealed build reading a neighbour's tree
-/// would be reading source no receipt names and no pin covers, so the directory
-/// holding the workspace is denied and only the paths this profile itself names
-/// are given back.
+/// `(allow default)` leaves everything no rule names both readable and
+/// writable, and on a machine that keeps its checkouts together that is every
+/// other checkout: ten peer worktrees sit beside this one here. A sealed build
+/// reading a neighbour's tree would be reading source no receipt names and no
+/// pin covers, and one writing to it would be destroying a lane it was never
+/// told about while still attesting a clean boundary. Neither is a difference
+/// the receipt could show afterward, so the directory holding the workspace is
+/// denied for both and only the paths this profile itself names are given back.
 ///
 /// A pinned path under that parent refuses the run instead, because the denial
 /// would take it with nothing to allow it back from and the build would then
@@ -560,9 +562,11 @@ fn host_dependency_denials() -> String {
 /// `rustc --print sysroot` answers exactly the grandparent of the pinned path --
 /// so a toolchain under the parent brings the `rustc` pin under it and refuses.
 ///
-/// A pin below the workspace is exempt, because the workspace is allowed back
-/// whole. Nothing else is: a path is compared as the pin document spells it,
-/// which for a tool is the canonical path [`Tool::validate`] already insisted on.
+/// A pin below the workspace is exempt, because the workspace is read back
+/// whole and reading is the whole of what a pin is reached through -- the
+/// sealed run is handed the workspace read-only either way. Nothing else is
+/// exempt: a path is compared as the pin document spells it, which for a tool
+/// is the canonical path [`Tool::validate`] already insisted on.
 fn denied_parent<'a>(workspace: &'a Path, pins: &Pins) -> Result<&'a Path, String> {
     let parent = workspace.parent().ok_or_else(|| {
         format!(
@@ -574,8 +578,8 @@ fn denied_parent<'a>(workspace: &'a Path, pins: &Pins) -> Result<&'a Path, Strin
         if path.starts_with(parent) && !path.starts_with(workspace) {
             return Err(format!(
                 "pinned {label} {} sits beside the proof workspace, under {}, which the \
-                 boundary denies so no neighbouring checkout is readable; the sealed build \
-                 would lose it with nothing to allow it back from",
+                 boundary denies so no neighbouring checkout is readable or writable; the \
+                 sealed build would lose it with nothing to allow it back from",
                 path.display(),
                 parent.display()
             ));
@@ -616,13 +620,19 @@ fn git_common_dir(workspace: &Path, git: &Path) -> Result<PathBuf, String> {
 /// own knowledge of itself. It also means this profile still denies less than
 /// the container half does, which has no host filesystem to deny.
 ///
-/// The one allow-list here is the pair [`denied_parent`] forces: the workspace's
-/// neighbourhood is denied, then the workspace, its repository and the run's own
-/// scratch root are named back. That pair sits above every later denial on
-/// purpose. Read downward, nothing below it is weakened -- the warm Cargo caches
-/// and the host dependency roots still resolve to their denials even for a
-/// workspace that happens to contain one -- so what the pair adds is subtraction
-/// only, which is the whole of what it is for.
+/// The one allow-list here is the pair [`denied_parent`] forces: the
+/// workspace's neighbourhood is denied for reading and writing alike, then the
+/// workspace, its repository and the run's own scratch root are read back. Only
+/// reading is given back there. What the run is allowed to write is one path and
+/// it is named by the last rule in the profile, so a scratch root that happens
+/// to sit inside the neighbourhood is still writable while the workspace and its
+/// repository stay read-only, which they already were two rules above.
+///
+/// That pair sits above every later denial on purpose. Read downward, nothing
+/// below it is weakened -- the warm Cargo caches and the host dependency roots
+/// still resolve to their denials even for a workspace that happens to contain
+/// one -- so what the pair adds is subtraction only, which is the whole of what
+/// it is for.
 fn sandbox_profile(workspace: &Path, pins: &Pins, temporary: &Temporary) -> Result<String, String> {
     let parent = denied_parent(workspace, pins)?;
     let git_common = git_common_dir(workspace, &pins.git.path)?;
@@ -637,7 +647,7 @@ fn sandbox_profile(workspace: &Path, pins: &Pins, temporary: &Temporary) -> Resu
             "(allow network-inbound (local ip \"localhost:*\"))\n",
             "(allow network-outbound (remote ip \"localhost:*\"))\n",
             "(deny file-write* (subpath \"{}\") (subpath \"{}\"))\n",
-            "(deny file-read* (subpath \"{}\"))\n",
+            "(deny file-read* file-write* (subpath \"{}\"))\n",
             "(allow file-read* (subpath \"{}\") (subpath \"{}\") (subpath \"{}\"))\n",
             "(deny file-read* (subpath \"{}\") (subpath \"{}\"))\n",
             "{}",
@@ -808,454 +818,4 @@ fn escaped_path(path: &Path, label: &str) -> Result<String, String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::path::{Path, PathBuf};
-
-    use super::{Digest, Domain, Pins, Temporary, Tool, allowed_cargo_arguments};
-
-    /// A pin naming a path and no bytes worth checking.
-    ///
-    /// Nothing below validates a pin: what these fixtures exercise composes the
-    /// profile, which reads paths out of the document and never opens them.
-    fn pinned(path: &str) -> Tool {
-        Tool {
-            path: PathBuf::from(path),
-            digest: Digest::compute(Domain::GateTool, b""),
-        }
-    }
-
-    /// A pin document written here rather than admitted.
-    ///
-    /// A workspace check-out carries none, and the two tools these fixtures
-    /// actually run are this machine's for the same reason. Every other path is
-    /// absent on purpose, and all of them sit outside any workspace parent used
-    /// below, so a refusal from [`denied_parent`] is one the caller asked for.
-    fn fixture_pins() -> Pins {
-        Pins {
-            source_commit: "0".repeat(40),
-            vendor_digest: Digest::compute(Domain::ProofNativeClosure, b""),
-            sdk_path: PathBuf::from("/nonexistent/sdk"),
-            developer_dir: PathBuf::from("/nonexistent/developer"),
-            cargo_home: PathBuf::from("/nonexistent/cargo-home"),
-            cargo: pinned("/nonexistent/cargo"),
-            rustc: pinned("/nonexistent/rustc"),
-            cargo_mutants: pinned("/nonexistent/cargo-mutants"),
-            git: pinned("/usr/bin/git"),
-            sandbox_exec: pinned("/usr/bin/sandbox-exec"),
-        }
-    }
-
-    /// The scratch root layout, spelled without creating any of it.
-    fn fixture_temporary() -> Temporary {
-        let root = PathBuf::from("/private/tmp/spice-proof-native-profile-fixture");
-        Temporary {
-            cargo_home: root.join("cargo-home"),
-            cargo_target: root.join("cargo-target"),
-            home: root.join("home"),
-            mutants: root.join("mutants"),
-            temporary: root.join("tmp"),
-            root,
-        }
-    }
-
-    /// The checkout this test binary was compiled from.
-    ///
-    /// The repository root, not the crate directory: the sealed run is handed
-    /// the workspace, and the neighbourhood the profile denies is the one the
-    /// root sits in. On this repository that is a directory of peer worktrees.
-    fn repository_workspace() -> &'static Path {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("the proof crate sits inside the repository it is proving")
-    }
-
-    /// The bytes a sealed run of this checkout would be sandboxed with.
-    #[cfg(target_os = "macos")]
-    fn shipped_profile() -> String {
-        super::sandbox_profile(
-            repository_workspace(),
-            &fixture_pins(),
-            &fixture_temporary(),
-        )
-        .expect("the sealed profile composes for a workspace check-out")
-    }
-
-    /// A profile that denies what the shipped one denies and gives nothing back.
-    ///
-    /// Cut from the shipped bytes rather than written out, so what it measures
-    /// is the shipped allow going missing and not a second author's idea of the
-    /// rest of the profile.
-    #[cfg(target_os = "macos")]
-    fn without_the_allow(profile: &str) -> String {
-        let mut kept = String::new();
-        let mut dropped = 0_usize;
-        for line in profile.lines() {
-            if line.starts_with("(allow file-read*") {
-                dropped += 1;
-                continue;
-            }
-            kept.push_str(line);
-            kept.push('\n');
-        }
-        assert_eq!(
-            dropped, 1,
-            "the profile names its readable paths in one allow, and this cut {dropped}:\n{profile}",
-        );
-        kept
-    }
-
-    /// A profile that denies nothing, so a path unreadable under it was already
-    /// unreachable for a reason no rule here can claim.
-    #[cfg(target_os = "macos")]
-    const OPEN: &str = "(version 1)\n(allow default)\n";
-
-    /// The attestation claims host dependencies are denied, and until the roots
-    /// below were named this profile denied none of them. The claim is only
-    /// worth its bytes if a library under one of them is actually unreachable,
-    /// so this runs the shipped denial through `sandbox-exec` and looks. The
-    /// binary here is this machine's rather than the pinned one, because a
-    /// workspace check-out has no pin document to read a path out of; what is
-    /// being measured is the dialect's answer, which does not vary by caller.
-    ///
-    /// Each root is measured twice, because a root that is unreadable for any
-    /// other reason -- absent, or unreadable to this user -- would refuse under
-    /// the denial too and prove nothing. The open profile establishes that the
-    /// denial is what took it away.
-    ///
-    /// The inventory is written out here rather than read from
-    /// `HOST_DEPENDENCY_ROOTS`, because a test that asks the subject which
-    /// roots to check loses the one mutation that matters: dropping a root
-    /// would drop its own check with it and pass. Measured -- deriving the list
-    /// from the constant, replacing `/opt/homebrew` with an absent path left
-    /// all tests green.
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn a_host_dependency_root_is_unreachable_inside_the_boundary() {
-        use super::host_dependency_denials;
-
-        const MUST_BE_UNREACHABLE: [&str; 6] = [
-            "/Library/Frameworks",
-            "/nix",
-            "/opt/homebrew",
-            "/opt/local",
-            "/sw",
-            "/usr/local",
-        ];
-        let denied = format!("{OPEN}{}", host_dependency_denials());
-
-        let present = MUST_BE_UNREACHABLE
-            .into_iter()
-            .filter(|root| Path::new(root).is_dir())
-            .collect::<Vec<_>>();
-        assert!(
-            !present.is_empty(),
-            "no host dependency root exists on this machine, so nothing here could fail",
-        );
-
-        let mut libraries = 0_usize;
-        for root in present {
-            assert!(
-                readable(OPEN, root),
-                "{root} was already unreachable without the denial, so its refusal proves nothing",
-            );
-            assert!(
-                !readable(&denied, root),
-                "{root} stayed readable inside the boundary that attests host-dependencies=denied",
-            );
-            let Some(library) = first_file_under(Path::new(root)) else {
-                continue;
-            };
-            let library = library.to_str().expect("a discovered path is UTF-8");
-            assert!(
-                contents_readable(OPEN, library),
-                "{library} was already unreadable without the denial",
-            );
-            assert!(
-                !contents_readable(&denied, library),
-                "{library} could still be read inside the boundary",
-            );
-            libraries += 1;
-        }
-        assert!(
-            libraries > 0,
-            "every present root was empty, so no host library was measured",
-        );
-
-        for kept in ["/usr/lib", "/Library/Developer"] {
-            if Path::new(kept).is_dir() {
-                assert!(
-                    readable(&denied, kept),
-                    "the denial reached past the host dependency roots and took {kept}",
-                );
-            }
-        }
-    }
-
-    /// The profile this runner ships carries the denial proved above.
-    ///
-    /// That proof composes its own profile out of [`host_dependency_denials`],
-    /// so what it measures is the dialect, not the runner. [`sandbox_profile`]
-    /// has one other caller and it is the sealed run, so nothing else can
-    /// observe the bytes that actually seal a build. Measured -- deleting the
-    /// denial from the profile left every test green, and the boundary would
-    /// have denied nothing while still attesting `host-dependencies=denied`.
-    ///
-    /// Position is asserted as well as presence: the dialect resolves a path by
-    /// its last matching rule, so a denial spelled above `(allow default)` is in
-    /// the profile and does nothing.
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn the_shipped_profile_denies_the_host_dependency_roots() {
-        use super::host_dependency_denials;
-
-        let profile = shipped_profile();
-        let Some(denied) = profile.find(&host_dependency_denials()) else {
-            panic!("the profile this runner ships denies no host dependency root:\n{profile}");
-        };
-        let opened = profile
-            .find("(allow default)")
-            .expect("the profile opens by allowing what it does not deny");
-        assert!(
-            opened < denied,
-            "the denial is spelled above (allow default), which takes it back:\n{profile}",
-        );
-    }
-
-    /// A checkout beside this one cannot be read inside the boundary.
-    ///
-    /// `(allow default)` left every peer worktree on this machine readable, and
-    /// a sealed build that read one would be reading source no receipt names.
-    /// The neighbour is measured twice for the reason the host dependency proof
-    /// above measures twice: a directory unreadable for some other reason would
-    /// refuse under the denial too and prove nothing about it. Metadata and
-    /// bytes are both measured, because listing a directory only asks the
-    /// boundary about metadata and source is read.
-    ///
-    /// The neighbour is discovered rather than named, so this asks the machine
-    /// it runs on which checkout sits beside the workspace instead of asserting
-    /// a lane's own layout.
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn a_checkout_beside_the_workspace_is_unreachable_inside_the_boundary() {
-        let workspace = repository_workspace();
-        let profile = shipped_profile();
-        let parent = workspace.parent().expect("the workspace sits somewhere");
-        let repository = super::git_common_dir(workspace, Path::new("/usr/bin/git"))
-            .expect("this check-out has a repository");
-
-        let mut neighbours = std::fs::read_dir(parent)
-            .expect("the directory holding the workspace is readable")
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path != workspace && path != &repository && path.join(".git").exists())
-            .collect::<Vec<_>>();
-        neighbours.sort();
-        let Some((neighbour, file)) = neighbours
-            .iter()
-            .find_map(|path| first_file_under(path).map(|file| (path, file)))
-        else {
-            panic!(
-                "no checkout sits beside {}, so nothing here could fail",
-                parent.display()
-            );
-        };
-        let neighbour = neighbour.to_str().expect("a discovered path is UTF-8");
-        let file = file.to_str().expect("a discovered path is UTF-8");
-
-        assert!(
-            readable(OPEN, neighbour),
-            "{neighbour} was already unreachable, so its refusal proves nothing",
-        );
-        assert!(
-            contents_readable(OPEN, file),
-            "{file} was already unreadable, so its refusal proves nothing",
-        );
-        assert!(
-            !readable(&profile, neighbour),
-            "{neighbour} stayed listable inside the boundary this runner seals with",
-        );
-        assert!(
-            !contents_readable(&profile, file),
-            "{file} could still be read inside the boundary this runner seals with",
-        );
-    }
-
-    /// The workspace and its repository survive the denial that takes the rest.
-    ///
-    /// A linked worktree keeps the repository beside the workspace rather than
-    /// inside it, which is what makes the allow load-bearing here rather than
-    /// decorative: measured on a lane of this repository, the common directory
-    /// is a sibling of the workspace, and the denial would take it.
-    ///
-    /// Each path is measured against the shipped profile with its allow cut
-    /// away, so what is proved is that the allow is holding the path up. A plain
-    /// clone, whose repository sits inside the workspace, answers the same way
-    /// for the same reason -- the cut takes the workspace with it.
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn the_workspace_and_its_repository_stay_readable_inside_the_boundary() {
-        let workspace = repository_workspace();
-        let profile = shipped_profile();
-        let cut = without_the_allow(&profile);
-        let repository = super::git_common_dir(workspace, Path::new("/usr/bin/git"))
-            .expect("this check-out has a repository");
-
-        let manifest = workspace.join("Cargo.toml");
-        let head = repository.join("HEAD");
-        for path in [workspace, repository.as_path(), &manifest, &head] {
-            let path = path.to_str().expect("a repository path is UTF-8");
-            assert!(
-                readable(&profile, path),
-                "the boundary took {path}, which the sealed run is handed",
-            );
-            assert!(
-                !readable(&cut, path),
-                "{path} survives without the allow, so nothing here measures it",
-            );
-        }
-        for file in [&manifest, &head] {
-            let file = file.to_str().expect("a repository path is UTF-8");
-            assert!(
-                contents_readable(&profile, file),
-                "the boundary allows {file} to be listed but not read",
-            );
-        }
-    }
-
-    /// A pin the denial would swallow refuses the run and says which one.
-    ///
-    /// The refusal is asserted by its words, not by being a refusal. This
-    /// function has two ways to refuse and a bare `is_err` cannot tell them
-    /// apart, so a check that named the wrong pin, or named none, would pass.
-    ///
-    /// Two different pins are put under the parent, because one case cannot
-    /// show a check that stops after the entry it happens to name. The `rustc`
-    /// case is the toolchain root: the pin document names no such root, and
-    /// needs none, because the compiler it does name lives inside it.
-    #[test]
-    fn a_pin_beside_the_workspace_refuses_instead_of_being_denied() {
-        use super::denied_parent;
-
-        let workspace = Path::new("/fixture/workspace");
-        assert_eq!(
-            denied_parent(workspace, &fixture_pins()),
-            Ok(Path::new("/fixture")),
-            "a pin document naming nothing beside the workspace has nothing to refuse",
-        );
-
-        let mut sdk = fixture_pins();
-        sdk.sdk_path = PathBuf::from("/fixture/sdk");
-        let refusal =
-            denied_parent(workspace, &sdk).expect_err("the SDK sits beside the workspace");
-        for named in ["pinned SDK", "/fixture/sdk", "/fixture"] {
-            assert!(
-                refusal.contains(named),
-                "the refusal does not name {named}: {refusal}"
-            );
-        }
-
-        let mut toolchain = fixture_pins();
-        toolchain.rustc = pinned("/fixture/toolchain/bin/rustc");
-        let refusal =
-            denied_parent(workspace, &toolchain).expect_err("the toolchain sits beside it too");
-        for named in ["pinned rustc", "/fixture/toolchain/bin/rustc"] {
-            assert!(
-                refusal.contains(named),
-                "the refusal does not name {named}: {refusal}"
-            );
-        }
-
-        let mut inside = fixture_pins();
-        inside.cargo_home = PathBuf::from("/fixture/workspace/.cargo");
-        assert!(
-            denied_parent(workspace, &inside).is_ok(),
-            "a pin below the workspace is allowed back with it and refuses nothing",
-        );
-
-        let mut adjacent = fixture_pins();
-        adjacent.sdk_path = PathBuf::from("/fixtureXX/sdk");
-        assert!(
-            denied_parent(workspace, &adjacent).is_ok(),
-            "a directory whose name merely starts with the parent's is not under it",
-        );
-
-        assert!(
-            denied_parent(Path::new("/"), &fixture_pins()).is_err(),
-            "a workspace with no parent leaves the boundary nothing to take",
-        );
-    }
-
-    /// Whether `sandbox-exec` lets a directory be listed under one profile.
-    #[cfg(target_os = "macos")]
-    fn readable(profile: &str, directory: &str) -> bool {
-        sandboxed(profile, "/bin/ls", directory)
-    }
-
-    /// Whether `sandbox-exec` lets a file's bytes be read under one profile.
-    ///
-    /// Listing a directory only asks the boundary about metadata. A library is
-    /// linked by reading it, so the claim is about this.
-    #[cfg(target_os = "macos")]
-    fn contents_readable(profile: &str, file: &str) -> bool {
-        sandboxed(profile, "/bin/cat", file)
-    }
-
-    #[cfg(target_os = "macos")]
-    fn sandboxed(profile: &str, tool: &str, path: &str) -> bool {
-        std::process::Command::new("/usr/bin/sandbox-exec")
-            .args(["-p", profile, tool, path])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .expect("macOS carries sandbox-exec, which this runner is pinned against")
-            .success()
-    }
-
-    /// The first regular file at or one level below a directory.
-    ///
-    /// Enough to put a real file under a denied root in front of the boundary
-    /// without walking a whole prefix, and `None` rather than a panic when a
-    /// root turns out to be empty, which the caller counts.
-    ///
-    /// The type comes from the directory entry, which does not follow symlinks,
-    /// so a link is skipped rather than followed. That is deliberate: a link
-    /// under a denied root can point outside it, and reading its target would
-    /// measure a path the denial never named. `Path::is_file` would follow it.
-    #[cfg(target_os = "macos")]
-    fn first_file_under(root: &std::path::Path) -> Option<std::path::PathBuf> {
-        let mut directories = Vec::new();
-        for entry in std::fs::read_dir(root).ok()?.flatten() {
-            let path = entry.path();
-            match entry.file_type() {
-                Ok(kind) if kind.is_file() => return Some(path),
-                Ok(kind) if kind.is_dir() => directories.push(path),
-                _ => {}
-            }
-        }
-        directories.into_iter().find_map(|directory| {
-            std::fs::read_dir(directory)
-                .ok()?
-                .flatten()
-                .find_map(|entry| {
-                    entry
-                        .file_type()
-                        .is_ok_and(|kind| kind.is_file())
-                        .then(|| entry.path())
-                })
-        })
-    }
-
-    #[test]
-    fn command_inventory_is_closed() {
-        assert!(allowed_cargo_arguments(&["--version".into()]));
-        assert!(allowed_cargo_arguments(&[
-            "test".into(),
-            "--locked".into(),
-            "-p".into(),
-            "gate".into(),
-            "--all-targets".into(),
-        ]));
-        assert!(!allowed_cargo_arguments(&["test".into()]));
-        assert!(!allowed_cargo_arguments(&["metadata".into()]));
-    }
-}
+mod tests;
