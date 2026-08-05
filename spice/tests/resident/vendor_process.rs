@@ -200,14 +200,112 @@ fn resident_agent_process_receives_both_git_shadow_scopes() {
 }
 
 #[test]
-fn installed_neutral_skill_bootstraps_both_lanes_through_native_surface() {
-    let fixture = Fixture::linked("installed-native-bootstrap");
+fn staged_installed_spice_rehearses_clean_break_without_predecessor_tools() {
+    let fixture = Fixture::new("installed-native-bootstrap");
     let rig = configure(&fixture);
+    prepare_cutover_repository(&fixture, &rig);
+    let (installed_binary, plan_digest, binary_digest) = stage_cutover_appliance(&fixture);
+    assert!(
+        !fixture.journal().exists(),
+        "the clean-break fixture inherited a current authority"
+    );
+
+    let mut resident = RunningResident::spawn_with(&fixture, &installed_binary);
+    resident.assert_ready(&fixture);
+    let created = add_cutover_tasks(&fixture, &installed_binary);
+    let claude = add_lane_with(&fixture, &installed_binary, None, Dialect::Claude);
+    let codex = add_lane_with(
+        &fixture,
+        &installed_binary,
+        Some(&rig.codex_worktree),
+        Dialect::Codex,
+    );
+    let lanes = [(Dialect::Claude, claude), (Dialect::Codex, codex)];
+    assert_launches_with_executable(&fixture, &rig, &lanes, false, &installed_binary);
+
+    let empty_path = fixture.cleanup.join("empty-path");
+    fs::create_dir(&empty_path).expect("empty PATH directory");
+    assert_cutover_allocation(&fixture, &installed_binary, &empty_path, &lanes, &created);
+    let directive_keys =
+        assert_cutover_steering(&fixture, &installed_binary, &empty_path, claude, codex);
+    exercise_installed_surface(&fixture, &installed_binary, &empty_path, &lanes);
+    stop_cutover(
+        &fixture,
+        &rig,
+        &installed_binary,
+        &empty_path,
+        &lanes,
+        resident,
+    );
+    eprintln!(
+        "cutover-evidence plan={plan_digest} binary={binary_digest} journal={} tasks=[{},{}] \
+         lanes=[{claude},{codex}] directives=[{},{}] vendor_logs=2 path_entries=0 shutdown=clean",
+        fixture.journal().display(),
+        created[0],
+        created[1],
+        directive_keys[0],
+        directive_keys[1],
+    );
+}
+
+fn prepare_cutover_repository(fixture: &Fixture, rig: &Rig) {
+    let mut document =
+        fs::read_to_string(fixture.root.join("spice.toml")).expect("fixture config reads");
+    document.push_str("\n[tasks]\nstems = [\"cutover\"]\n");
+    fs::write(fixture.root.join("spice.toml"), &document).expect("Claude config extends");
+    fs::write(
+        fixture.root.join(".gitignore"),
+        concat!(
+            ".agents/\n",
+            ".spice/\n",
+            "codex-worktree/\n",
+            "fixture-claude\n",
+            "fixture-codex\n",
+            "launch-captures/\n",
+            "launch-index\n",
+        ),
+    )
+    .expect("cutover fixture ignore policy writes");
+    fixture_git(&fixture.root, &["init", "-b", "main"]);
+    fixture_git(&fixture.root, &["config", "user.name", "Spice Cutover"]);
+    fixture_git(
+        &fixture.root,
+        &["config", "user.email", "cutover@spice.invalid"],
+    );
+    fixture_git(&fixture.root, &["add", ".gitignore", "spice.toml"]);
+    fixture_git(&fixture.root, &["commit", "-m", "empty cutover authority"]);
+    fs::remove_dir_all(&rig.codex_worktree).expect("synthetic Codex worktree withdraws");
+    fs::remove_dir_all(fixture.root.join(".git/worktrees/vendor-process-codex"))
+        .expect("synthetic Codex Git directory withdraws");
+    let codex_worktree = rig.codex_worktree.display().to_string();
+    fixture_git(
+        &fixture.root,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "cutover-codex",
+            &codex_worktree,
+            "HEAD",
+        ],
+    );
+}
+
+fn stage_cutover_appliance(fixture: &Fixture) -> (PathBuf, String, String) {
     let repository = spice::repository::Repository::discover(&fixture.root)
         .expect("linked repository discovers");
     let source_binary = Path::new(env!("CARGO_BIN_EXE_spice"));
     let plan = spice::install::plan(&repository, Some(source_binary)).expect("install plans");
     let digest = plan.digest().expect("install plan digests");
+    let binary_digest = plan
+        .operations()
+        .iter()
+        .find(|operation| operation.asset() == spice::install::Asset::Binary)
+        .expect("binary operation exists")
+        .generated()
+        .digest()
+        .as_str()
+        .to_owned();
     let receipt =
         spice::install::apply(&repository, Some(source_binary), &digest).expect("install applies");
     assert_eq!(receipt.status(), spice::install::InstallStatus::Complete);
@@ -227,6 +325,11 @@ fn installed_neutral_skill_bootstraps_both_lanes_through_native_surface() {
             .path(),
     );
     assert!(installed_binary.is_file(), "installed binary is visible");
+    assert_eq!(
+        fs::read(&installed_binary).expect("installed binary reads"),
+        fs::read(source_binary).expect("source binary reads"),
+        "the staged appliance binary drifted from the reviewed source binary"
+    );
     assert_eq!(
         installed_skill.strip_prefix(&fixture.root).unwrap(),
         Path::new(".agents/skills/spice/SKILL.md")
@@ -252,21 +355,135 @@ fn installed_neutral_skill_bootstraps_both_lanes_through_native_surface() {
             "installed skill named unavailable command {unavailable:?}"
         );
     }
+    (installed_binary, digest.as_str().to_owned(), binary_digest)
+}
 
-    let mut resident = RunningResident::spawn_with(&fixture, &installed_binary);
-    resident.assert_ready(&fixture);
-    let claude = add_lane_with(&fixture, &installed_binary, None, Dialect::Claude);
-    let codex = add_lane_with(
-        &fixture,
-        &installed_binary,
-        Some(&rig.codex_worktree),
-        Dialect::Codex,
-    );
-    let lanes = [(Dialect::Claude, claude), (Dialect::Codex, codex)];
-    assert_launches_with_executable(&fixture, &rig, &lanes, false, &installed_binary);
+fn add_cutover_tasks(fixture: &Fixture, installed_binary: &Path) -> [wire::TaskHandle; 2] {
+    [
+        reply_body::<wire::intent::TaskAnswer>(&operator_with(
+            fixture,
+            installed_binary,
+            &[
+                "task",
+                "add",
+                "Fresh Claude cutover work",
+                "--project",
+                "cutover.rehearsal",
+            ],
+            true,
+        ))
+        .task,
+        reply_body::<wire::intent::TaskAnswer>(&operator_with(
+            fixture,
+            installed_binary,
+            &[
+                "task",
+                "add",
+                "Fresh Codex cutover work",
+                "--project",
+                "cutover.rehearsal",
+            ],
+            true,
+        ))
+        .task,
+    ]
+}
 
-    let empty_path = fixture.cleanup.join("empty-path");
-    fs::create_dir(&empty_path).expect("empty PATH directory");
+fn assert_cutover_allocation(
+    fixture: &Fixture,
+    installed_binary: &Path,
+    empty_path: &Path,
+    lanes: &[(Dialect, wire::CanonicalUuid); 2],
+    created: &[wire::TaskHandle; 2],
+) {
+    let mut allocated = Vec::new();
+    for (_, lane) in lanes {
+        let claimed = reply_body::<wire::intent::ClaimAnswer>(&lane_command(
+            fixture,
+            installed_binary,
+            *lane,
+            empty_path,
+            &["task", "next"],
+            true,
+        ));
+        assert_eq!(claimed.holder, wire::Actor::Lane(*lane));
+        allocated.push(claimed.task);
+    }
+    let mut created_handles = created.to_vec();
+    created_handles.sort();
+    allocated.sort();
+    assert_eq!(allocated, created_handles);
+    let board = reply_body::<wire::intent::BoardAnswer>(&operator_with_path(
+        fixture,
+        installed_binary,
+        empty_path,
+        &["board"],
+        true,
+    ));
+    let mut board_handles = board
+        .tasks
+        .iter()
+        .map(|task| task.statement.body.handle.clone())
+        .collect::<Vec<_>>();
+    board_handles.sort();
+    assert_eq!(board_handles, created_handles);
+}
+
+fn assert_cutover_steering(
+    fixture: &Fixture,
+    installed_binary: &Path,
+    empty_path: &Path,
+    claude: wire::CanonicalUuid,
+    codex: wire::CanonicalUuid,
+) -> [String; 2] {
+    let claude_direction = reply_body::<wire::intent::DirectiveAnswer>(&operator_with_path(
+        fixture,
+        installed_binary,
+        empty_path,
+        &[
+            "steer",
+            &claude.to_string(),
+            "Claude-only cutover direction",
+        ],
+        true,
+    ));
+    let codex_direction = reply_body::<wire::intent::DirectiveAnswer>(&operator_with_path(
+        fixture,
+        installed_binary,
+        empty_path,
+        &["steer", &codex.to_string(), "Codex-only cutover direction"],
+        true,
+    ));
+    for (lane, own, foreign) in [
+        (claude, &claude_direction.key, &codex_direction.key),
+        (codex, &codex_direction.key, &claude_direction.key),
+    ] {
+        let inbox = reply_body::<wire::intent::InboxAnswer>(&lane_command(
+            fixture,
+            installed_binary,
+            lane,
+            empty_path,
+            &["inbox"],
+            true,
+        ));
+        assert_eq!(inbox.lanes.len(), 1);
+        let keys = inbox.lanes[0]
+            .pending
+            .iter()
+            .map(|pending| pending.key.as_str())
+            .collect::<Vec<_>>();
+        assert!(keys.contains(&own.as_str()));
+        assert!(!keys.contains(&foreign.as_str()));
+    }
+    [claude_direction.key, codex_direction.key]
+}
+
+fn exercise_installed_surface(
+    fixture: &Fixture,
+    installed_binary: &Path,
+    empty_path: &Path,
+    lanes: &[(Dialect, wire::CanonicalUuid); 2],
+) {
     let native_probe = fixture.cleanup.join("native-probe");
     fs::write(&native_probe, "#!/bin/sh\nexit 0\n").expect("native probe writes");
     #[cfg(unix)]
@@ -275,10 +492,10 @@ fn installed_neutral_skill_bootstraps_both_lanes_through_native_surface() {
     for (_, lane) in lanes {
         for command in ["recall", "board", "inbox"] {
             let output = lane_command(
-                &fixture,
-                &installed_binary,
-                lane,
-                &empty_path,
+                fixture,
+                installed_binary,
+                *lane,
+                empty_path,
                 &[command],
                 true,
             );
@@ -290,10 +507,10 @@ fn installed_neutral_skill_bootstraps_both_lanes_through_native_surface() {
             );
         }
         let output = lane_command(
-            &fixture,
-            &installed_binary,
-            lane,
-            &empty_path,
+            fixture,
+            installed_binary,
+            *lane,
+            empty_path,
             &[
                 "run",
                 "--",
@@ -308,12 +525,32 @@ fn installed_neutral_skill_bootstraps_both_lanes_through_native_surface() {
             output.stderr
         );
     }
+}
 
+fn stop_cutover(
+    fixture: &Fixture,
+    rig: &Rig,
+    installed_binary: &Path,
+    empty_path: &Path,
+    lanes: &[(Dialect, wire::CanonicalUuid); 2],
+    resident: RunningResident,
+) {
     for (_, lane) in lanes {
-        drain_with(&fixture, &installed_binary, lane);
+        let drained = operator_with_path(
+            fixture,
+            installed_binary,
+            empty_path,
+            &["lane", "drain", &lane.to_string()],
+            true,
+        );
+        assert!(
+            drained.status.success(),
+            "drain failed: {:?}",
+            drained.stderr
+        );
     }
     assert_processes_stopped(&rig.capture_index, 1);
-    let down = operator_with(&fixture, &installed_binary, &["down"], true);
+    let down = operator_with_path(fixture, installed_binary, empty_path, &["down"], true);
     assert!(down.status.success(), "down failed: {:?}", down.stderr);
     assert!(resident.wait().status.success(), "resident failed");
 }
@@ -629,6 +866,27 @@ fn operator_with(fixture: &Fixture, executable: &Path, arguments: &[&str], json:
         .expect("operator command launches")
 }
 
+fn operator_with_path(
+    fixture: &Fixture,
+    executable: &Path,
+    path: &Path,
+    arguments: &[&str],
+    json: bool,
+) -> Output {
+    let mut process = Command::new(executable);
+    process
+        .env_remove(spice::agent_launch::SPICE_LANE)
+        .env("PATH", path);
+    if json {
+        process.arg("--json");
+    }
+    process
+        .args(arguments)
+        .current_dir(&fixture.root)
+        .output()
+        .expect("PATH-confined operator command launches")
+}
+
 fn lane_command(
     fixture: &Fixture,
     executable: &Path,
@@ -814,6 +1072,31 @@ fn assert_environment(
     let mut observed = captured.clone();
     for shell_owned in ["PWD", "SHLVL", "_"] {
         observed.remove(shell_owned);
+    }
+    if let Some(count) = observed.remove("GIT_CONFIG_COUNT") {
+        let count = count
+            .parse::<usize>()
+            .expect("Git command-scope entry count is numeric");
+        let system = observed
+            .remove("GIT_CONFIG_SYSTEM")
+            .expect("Git shadow names its system config");
+        assert!(
+            system.ends_with("/agent.gitconfig"),
+            "unexpected Git shadow path: {system}"
+        );
+        for index in 0..count {
+            let key = observed
+                .remove(&format!("GIT_CONFIG_KEY_{index}"))
+                .expect("Git command-scope key exists");
+            let value = observed
+                .remove(&format!("GIT_CONFIG_VALUE_{index}"))
+                .expect("Git command-scope value exists");
+            assert!(key.starts_with("branch."));
+            assert!(key.ends_with(".merge") || key.ends_with(".remote"));
+            assert!(!value.is_empty());
+        }
+    } else {
+        assert!(!observed.contains_key("GIT_CONFIG_SYSTEM"));
     }
     let mut expected = ["HOME", "PATH", "SHELL", "TMPDIR", "USER"]
         .into_iter()

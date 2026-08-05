@@ -20,6 +20,9 @@ The plan publishes `.spice/bin/spice`, the operator skill, and the
 .spice/bin/spice up
 ```
 
+The one-time predecessor shutdown and empty-authority start are specified in
+[CUTOVER.md](CUTOVER.md).
+
 The activation script refuses unless all three hooks are executable. The
 pre-commit hook runs the canonical verifier, which performs
 formatting, Clippy, native and browser-target builds, deterministic app
