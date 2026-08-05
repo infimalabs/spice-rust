@@ -187,21 +187,28 @@ fn refused_batteries_keep_receipt_and_repository_bytes_unchanged_in_both_forms()
     for command in [&["proof"][..], &["proof", "replay"][..]] {
         let refusal = refusal_pair(&fixture, command, "proof::battery-refused");
         assert!(refusal.witness.is_some());
-        assert!(
-            refusal
-                .observed
-                .as_deref()
-                .is_some_and(|observed| observed.contains("gate=failed(code=19)"))
+        // Both member lists are written out whole rather than joined from
+        // `CheckKind::ALL`, because an assertion built from the array the
+        // subject builds from shortens together with it: a truncation would
+        // leave the two sides equal and only a renaming would ever show.
+        // Naming the five also reds these lines when the array gains a sixth
+        // member, rather than quietly accepting the shorter set it once had.
+        assert_eq!(
+            refusal.observed.as_deref(),
+            Some(
+                "gate=failed(code=19), mutation-corpus=failed(code=19), \
+                 dialect-refusals=failed(code=19), wait-and-process=failed(code=19), \
+                 supply-rebuild=failed(code=19)"
+            )
         );
         // `refusal_pair` has already proved the text form is exactly the reason
         // and the remedy, so a remedy that names the member is the text form
         // naming it. Stated against the remedy because that is the only field
         // of the four the text rendering keeps.
-        assert!(
-            refusal.remedy.starts_with("repair gate")
-                && refusal.remedy.ends_with("and rerun the proof leaf"),
-            "the text remedy must name the members to repair: {}",
+        assert_eq!(
             refusal.remedy,
+            "repair gate, mutation-corpus, dialect-refusals, wait-and-process, \
+             supply-rebuild and rerun the proof leaf"
         );
     }
 
