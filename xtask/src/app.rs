@@ -70,9 +70,9 @@ fn compiled_for_staging_host() -> bool {
     owns_the_stage(&host_spelling())
 }
 
-/// This host, spelled in the four fields ownership is decided on.
+/// This host, spelled in every field ownership is decided on.
 ///
-/// A triple's vendor and environment fields are observable after all --
+/// A triple's vendor, environment and ABI fields are observable after all --
 /// `std::env::consts` simply stops at arch and OS, and stopping there spells a
 /// musl host and the image's gnu host identically while their `-Cmetadata`
 /// differs. This is the sole reading of those fields, and [`owns_the_stage`]
@@ -80,6 +80,13 @@ fn compiled_for_staging_host() -> bool {
 /// was compared. A field this cannot spell exactly becomes `other`, which no
 /// owning tuple matches, so an unrecognised host refuses rather than resembling
 /// the image.
+///
+/// The ABI is read for the same reason the environment is: `x86_64-unknown-
+/// linux-gnux32` agrees with the image in arch, vendor, OS and environment and
+/// is told apart by nothing else, so a spelling that stopped at the environment
+/// would hand it the image's tuple exactly. `proof::environment` reads the same
+/// field for the same reason. It joins the environment rather than becoming a
+/// fifth field, because that is how the triple it is compared against spells it.
 fn host_spelling() -> String {
     let vendor = if cfg!(target_vendor = "apple") {
         "apple"
@@ -97,11 +104,31 @@ fn host_spelling() -> String {
     } else {
         "other"
     };
-    format!(
-        "{}-{vendor}-{}-{environment}",
+    let abi = if cfg!(target_abi = "") {
+        ""
+    } else if cfg!(target_abi = "x32") {
+        "x32"
+    } else {
+        "other"
+    };
+    spell_host(
         std::env::consts::ARCH,
+        vendor,
         std::env::consts::OS,
+        environment,
+        abi,
     )
+}
+
+/// One host's fields, assembled the way the owning tuple is spelled.
+///
+/// Composition is separated from the `cfg!` reading above so that this half can
+/// be handed values: no lane compiles for the ABI-bearing neighbour, but every
+/// lane can ask what this would spell for one, and whether [`owns_the_stage`]
+/// admits what came back. Drop a field here and that question answers wrongly
+/// on the host running the test rather than only on a host nobody runs.
+fn spell_host(arch: &str, vendor: &str, os: &str, environment: &str, abi: &str) -> String {
+    format!("{arch}-{vendor}-{os}-{environment}{abi}")
 }
 
 const APP_FILES: [&str; 4] = ["app.module", "app_bg.wasm", "canvas-app.html", "style.css"];
@@ -782,12 +809,14 @@ mod tests {
 
     /// An x86_64 Linux host that is not the image spells its arch and OS
     /// exactly as the image does, so ownership cannot be decided on those two
-    /// fields. Each tuple below differs from the owning one in exactly one
-    /// field, so every field is load-bearing: drop any of them from
-    /// [`STAGING_HOST`] and the neighbour that field alone separates is
-    /// admitted here. None of these hosts is one this fleet compiles for, which
-    /// is the point -- the decision takes a value, so a macOS lane can offer it
-    /// the musl tuple that would otherwise be refused only in theory.
+    /// fields. Each tuple below is separated from the owning one by a single
+    /// field -- one that differs, one that is missing, one that is appended --
+    /// so every field is load-bearing: drop any of them from [`STAGING_HOST`],
+    /// or compare less of the string than all of it, and the neighbour that
+    /// field alone separates is admitted here. None of these hosts is one this
+    /// fleet compiles for, which is the point -- the decision takes a value, so
+    /// a macOS lane can offer it the musl tuple that would otherwise be refused
+    /// only in theory.
     #[test]
     fn only_the_owning_tuple_may_write_the_stage() {
         assert!(
@@ -801,13 +830,39 @@ mod tests {
             "x86_64-unknown-macos-gnu",
             "x86_64-unknown-linux-musl",
             "x86_64-unknown-linux",
+            "x86_64-unknown-linux-gnux32",
         ] {
             assert!(
                 !owns_the_stage(foreign),
-                "{foreign} differs from {STAGING_HOST} in one field and was admitted anyway, so \
-                 that field is not part of the decision",
+                "{foreign} is separated from {STAGING_HOST} by one field and was admitted \
+                 anyway, so that field is not part of the decision",
             );
         }
+    }
+
+    /// The ABI is the field the fleet cannot reach: every lane compiles for an
+    /// empty one, so a spelling that dropped it would be wrong only on the host
+    /// that would then be admitted. Composition takes values, so the question is
+    /// asked here instead -- what this spells for the neighbour that carries an
+    /// ABI, and whether that spelling is admitted.
+    #[test]
+    fn an_abi_bearing_neighbour_is_spelled_apart_from_the_image() {
+        let neighbour = spell_host("x86_64", "unknown", "linux", "gnu", "x32");
+
+        assert_eq!(
+            neighbour, "x86_64-unknown-linux-gnux32",
+            "the ABI left the spelling, so this host wears the image's tuple",
+        );
+        assert!(
+            !owns_the_stage(&neighbour),
+            "{neighbour} was admitted, and its -Cmetadata is not the image's",
+        );
+        assert_eq!(
+            spell_host("x86_64", "unknown", "linux", "gnu", ""),
+            STAGING_HOST,
+            "an empty ABI has to leave the owning tuple spelled exactly, or the image \
+             refuses itself",
+        );
     }
 
     /// The decision is only as wide as the tuple it is handed. A spelling that
