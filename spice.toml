@@ -55,6 +55,12 @@ project_min_depth = 2
 project_max_depth = 3
 
 [policy]
+# The native Git publisher runs this cheap repository load over every
+# synthesized integration before it can reach the shared baseline.
+admission = [
+    "cargo", "metadata", "--no-deps", "--offline", "--format-version", "1",
+]
+
 # Every environment name this workspace defines, spelled once.
 #
 # This is the workspace's own vocabulary: the names Spice writes and the names

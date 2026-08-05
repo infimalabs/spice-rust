@@ -16,6 +16,15 @@ CUTOVER_STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 CUTOVER_EVIDENCE="$CUTOVER_COMMON/cutover-$CUTOVER_STAMP"
 mkdir -p "$CUTOVER_EVIDENCE"
 cd "$CUTOVER_REPO"
+test -z "$(git status --porcelain)"
+CUTOVER_POLICY_COMMIT=$(git log -1 --format=%H -- spice.toml)
+git show HEAD:spice.toml |
+  grep -F '"cargo", "metadata", "--no-deps", "--offline", "--format-version", "1"'
+git show "$CUTOVER_POLICY_COMMIT^:spice.toml" |
+  grep -F '"cargo", "metadata", "--no-deps", "--offline", "--format-version", "1"' && exit 1
+git update-index --skip-worktree spice.toml
+git show "$CUTOVER_POLICY_COMMIT^:spice.toml" > spice.toml
+git diff --quiet -- spice.toml
 cargo build --locked -p spice
 target/debug/spice install
 target/debug/spice install --apply=DIGEST_PRINTED_BY_PREVIEW
@@ -24,7 +33,10 @@ shasum -a 256 target/debug/spice .spice/bin/spice | tee "$CUTOVER_EVIDENCE/new-b
 ```
 
 The two hashes must match. Do not run `.spice/bin/spice up` yet: that is the
-forward-only boundary.
+forward-only boundary. The skipped `spice.toml` is a one-time parser bridge:
+Git already tracks the native-only `policy.admission`, while the predecessor
+temporarily reads the immediately preceding tracked document until its fleet is
+dry. No admission run uses the predecessor reader.
 
 ## Prove the predecessor is dry
 
@@ -87,11 +99,20 @@ if test -e "$CUTOVER_COMMON/.spice-rust"; then
 fi
 test ! -e "$CUTOVER_COMMON/.spice-rust"
 test ! -e "$CUTOVER_COMMON/.spice/data/spicejournal.sqlite3"
+git update-index --no-skip-worktree spice.toml
+git restore --source=HEAD --worktree -- spice.toml
+git diff --exit-code -- spice.toml
+target/debug/spice --json config policy.admission |
+  tee "$CUTOVER_EVIDENCE/native-admission-policy.json"
+cargo metadata --no-deps --offline --format-version 1 >
+  "$CUTOVER_EVIDENCE/native-admission-metadata.json"
 ```
 
 The archive, its checksum, lane identities, process identities, old executable
-identity, and staged binary identity are the rollback record. The last
-assertion proves the current authority is absent.
+identity, staged binary identity, and native admission evidence are the rollback
+record. The journal assertion proves the current authority is absent. The clean
+diff proves the bridge is gone and the worktree again carries exactly the
+native policy committed at `HEAD`.
 
 ## Start the singular appliance
 
@@ -136,10 +157,20 @@ Rollback is permitted only while
 `$CUTOVER_COMMON/.spice/data/spicejournal.sqlite3` is still absent and `up` has
 never been invoked. In that state, move the saved 0.31.0 entrypoint back to
 `$CUTOVER_OLD_BIN`, move `retired-release-one-state` back to
-`$CUTOVER_COMMON/.spice-rust` when that archived tree exists, and verify both
-archived checksums again. If `up` was invoked or the current journal exists,
-do not restore predecessor authority or its entrypoint; diagnose and continue
-forward with the installed appliance.
+`$CUTOVER_COMMON/.spice-rust` when that archived tree exists, verify both
+archived checksums again, then re-arm the parser bridge before invoking the
+predecessor:
+
+```sh
+cd "$CUTOVER_REPO"
+git update-index --skip-worktree spice.toml
+git show "$CUTOVER_POLICY_COMMIT^:spice.toml" > spice.toml
+git diff --quiet -- spice.toml
+```
+
+If `up` was invoked or the current journal exists, do not restore predecessor
+authority, its entrypoint, or the parser bridge; diagnose and continue forward
+with the installed appliance.
 
 The process-level rehearsal is:
 
