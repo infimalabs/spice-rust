@@ -252,15 +252,14 @@ impl AbruptProtected {
             .parse()
             .expect("child PID parses");
 
-        // The child announces itself the instant it `exec`s, which is before its
-        // wrapper has necessarily finished recording the topology that protects
-        // it -- `spawn` returns only once that `exec` has happened, so the
-        // wrapper cannot get there first. Killing on the announcement alone
-        // would sometimes kill a wrapper mid-publication and put an unrelated
-        // failure inside a test about terminal groups, so the write itself is
-        // what this waits for.
-        await_published_topology(fixture);
-
+        // The child's announcement is enough to kill on. It arrives before the
+        // wrapper could have finished any record -- `spawn` returns only once
+        // that `exec` has happened -- and that is precisely what this fixture
+        // wants to hold the wrapper to: the guardian, not the wrapper, is what
+        // names the group, so a wrapper killed here has already handed over
+        // everything a later reader needs. Waiting for the record instead would
+        // be waiting on the wrapper, and would hide a regression that put the
+        // publication back on the side that can die.
         let exited = ProcessExitObserver::new(wrapper_pid);
         // SAFETY: SIGKILL terminates only the wrapper retained by this fixture.
         assert_eq!(
@@ -269,6 +268,7 @@ impl AbruptProtected {
         );
         exited.wait();
         assert_process_zombie(wrapper_pid);
+        await_topology_published_without_its_wrapper(fixture);
 
         Self {
             wrapper,
@@ -322,25 +322,41 @@ impl AbruptProtected {
     }
 }
 
-/// Block until the lock record names the group and guardian protecting it.
+/// Block until the record names the group, with nothing alive that could name it.
+///
+/// This runs after the wrapper is a confirmed zombie, so it is the one witness
+/// that publication does not belong to the wrapper: the group appearing here is
+/// the guardian's writing, because there is no longer anybody else. A slot the
+/// wrapper reserved and nobody filled would hang here rather than pass, which
+/// is what makes the wait an assertion rather than a courtesy.
 ///
 /// The watch is registered before the first read, so a record written between
 /// the two is delivered to the wait rather than lost by it, and the loop
-/// re-reads on every write until the topology is there to be read.
-fn await_published_topology(fixture: &Fixture) {
+/// re-reads on every write until the group is there to be read.
+fn await_topology_published_without_its_wrapper(fixture: &Fixture) {
     let path = fixture.lock_root().join("solo.lock");
     let written = FileChangeObserver::new(&path);
     loop {
         let record = fs::read(&path).expect("owner record reads");
         let record = String::from_utf8_lossy(&record);
-        if record.contains("protected_group") && record.contains("protected_guardian") {
+        if published_group(&record).is_some() {
             return;
         }
         assert!(
             written.wait(),
-            "wrapper never recorded the topology it protects: {record}"
+            "no group was published once the wrapper was gone: {record}"
         );
     }
+}
+
+/// The group a record names, if the slot in it has been filled in.
+///
+/// A reserved slot and a published one are the same width and the same field,
+/// so the field being present says nothing; only its contents do.
+fn published_group(record: &str) -> Option<u32> {
+    let (_, slot) = record.split_once(r#""protected_group":""#)?;
+    let (slot, _) = slot.split_once('"')?;
+    slot.parse().ok().filter(|group| *group != 0)
 }
 
 /// What signal zero says about one kernel identity, named rather than numbered.

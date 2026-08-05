@@ -222,7 +222,7 @@ pub struct Running {
 
 #[cfg(unix)]
 pub fn spawn(spec: Spec) -> io::Result<Running> {
-    spawn_inner(spec, None, None, &mut |_, _| Ok(()))
+    spawn_inner(spec, None, None, &mut |_| Ok(()))
 }
 
 /// Spawn one child whose possession outlives this process, publishing the
@@ -237,9 +237,9 @@ pub fn spawn(spec: Spec) -> io::Result<Running> {
 pub(crate) fn spawn_guarded(
     spec: Spec,
     file: &File,
-    publish: &mut dyn FnMut(u32, u32) -> io::Result<()>,
+    arm: &mut dyn FnMut(u32) -> io::Result<()>,
 ) -> io::Result<Running> {
-    spawn_inner(spec, None, Some(file), publish)
+    spawn_inner(spec, None, Some(file), arm)
 }
 
 /// Spawn one child with a bounded selected-stream observer.
@@ -253,7 +253,7 @@ pub(crate) fn spawn_guarded(
 /// or when the child and its capture workers cannot be created.
 #[cfg(unix)]
 pub fn spawn_observed(spec: Spec, observation: Observation) -> io::Result<Running> {
-    spawn_inner(spec, Some(observation), None, &mut |_, _| Ok(()))
+    spawn_inner(spec, Some(observation), None, &mut |_| Ok(()))
 }
 
 #[cfg(not(unix))]

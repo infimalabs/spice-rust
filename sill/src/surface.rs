@@ -11,6 +11,7 @@ use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::process;
 
+use crate::protected::ProtectedGroup;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -84,17 +85,26 @@ pub struct LockOwnerReport {
     pub cwd: String,
 }
 
+/// What one lock file says about who holds it and what outlives them.
+///
+/// The field order is load-bearing. Everything ahead of `protected_group` is
+/// fixed for as long as the process writing it lives, so the group's slot sits
+/// at the same offset in every record this owner will ever write, and the
+/// guardian publishing into that offset cannot be made to write into the wrong
+/// place by a record rewritten under it. `owner_released` follows the slot for
+/// exactly that reason: it is the one field ahead of it that would otherwise
+/// change width mid-life, and it changes width by appearing at all.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct LockOwnerEvidence {
     pid: u32,
     cwd: String,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    owner_released: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    protected_group: Option<u32>,
+    protected_group: Option<ProtectedGroup>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     protected_guardian: Option<u32>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    owner_released: bool,
 }
 
 impl LockOwnerEvidence {
@@ -106,9 +116,16 @@ impl LockOwnerEvidence {
     }
 
     /// What this record says about possession that outlived the owner naming it.
+    ///
+    /// A slot still holding no group answers the same way an absent one does:
+    /// unbounded, the refusing answer. It cannot answer any other way, because
+    /// a group nobody has named yet is not a group that has finished.
     #[cfg(unix)]
     fn guardian_state(&self) -> GuardianState {
-        let finished = self.protected_group.is_some_and(process_group_terminal)
+        let finished = self
+            .protected_group
+            .and_then(ProtectedGroup::group)
+            .is_some_and(process_group_terminal)
             && (self.owner_released || process_terminal(self.pid));
         if !finished {
             return GuardianState::Unbounded;
@@ -716,7 +733,10 @@ fn synchronized_availability(
     lock.availability_opened(file)
 }
 
-fn owner(protected: Option<(u32, u32)>, owner_released: bool) -> io::Result<LockOwnerEvidence> {
+fn owner(
+    protected: Option<(ProtectedGroup, u32)>,
+    owner_released: bool,
+) -> io::Result<LockOwnerEvidence> {
     Ok(LockOwnerEvidence {
         pid: process::id(),
         cwd: std::env::current_dir()?.display().to_string(),
@@ -728,7 +748,7 @@ fn owner(protected: Option<(u32, u32)>, owner_released: bool) -> io::Result<Lock
 
 fn write_owner(
     file: &fs::File,
-    protected: Option<(u32, u32)>,
+    protected: Option<(ProtectedGroup, u32)>,
     owner_released: bool,
 ) -> io::Result<()> {
     let record =
@@ -824,11 +844,17 @@ impl HeldShard {
     ///
     /// An independent guardian holds the descriptor until every member of the
     /// child's new process group is terminally absent.
+    ///
+    /// The record is written before the child exists, naming the guardian and
+    /// reserving the group's slot, and the guardian fills that slot in once the
+    /// child announces the group. Nothing this process does after the fork is
+    /// what makes the topology readable, so nothing that happens to this
+    /// process after the fork can stop it from becoming readable.
     #[cfg(unix)]
     pub fn spawn_protected(&mut self, spec: Spec) -> io::Result<Running> {
         let file = self.possession.file();
-        let running = crate::spawn::spawn_guarded(spec, file, &mut |group, guardian| {
-            write_owner(file, Some((group, guardian)), false)
+        let running = crate::spawn::spawn_guarded(spec, file, &mut |guardian| {
+            write_owner(file, Some((ProtectedGroup::Blank, guardian)), false)
         })?;
         let guardian = running
             .guardian_id()
@@ -845,7 +871,8 @@ impl Drop for HeldShard {
         if let Some((group, guardian)) = self.protected
             && !process_absent(guardian)
         {
-            let _ = write_owner(self.possession.file(), Some((group, guardian)), true);
+            let published = Some((ProtectedGroup::Published(group), guardian));
+            let _ = write_owner(self.possession.file(), published, true);
             return;
         }
         let _ = clear_owner(self.possession.file());
@@ -957,7 +984,8 @@ mod tests {
     };
     use super::{
         Contention, GuardianState, LockAttempt, LockAvailability, LockOwnerEvidence,
-        LockSurfaceError, LockTargetKind, LockTopology, replacement_record, resolve_refusal,
+        LockSurfaceError, LockTargetKind, LockTopology, ProtectedGroup, replacement_record,
+        resolve_refusal,
     };
     use crate::LockConfig;
 
@@ -1181,7 +1209,7 @@ mod tests {
             pid,
             cwd: "/departed".to_owned(),
             owner_released: false,
-            protected_group: Some(pid),
+            protected_group: Some(ProtectedGroup::Published(pid)),
             protected_guardian: Some(std::process::id()),
         };
         assert_eq!(completed.guardian_state(), GuardianState::Pending);
@@ -1190,7 +1218,7 @@ mod tests {
             pid: std::process::id(),
             cwd: "/current".to_owned(),
             owner_released: false,
-            protected_group: Some(pid),
+            protected_group: Some(ProtectedGroup::Published(pid)),
             protected_guardian: Some(std::process::id()),
         };
         assert_eq!(live_owner.guardian_state(), GuardianState::Unbounded);
@@ -1211,11 +1239,23 @@ mod tests {
         };
         assert_eq!(unguarded.guardian_state(), GuardianState::Unbounded);
 
+        // A slot reserved before the fork and never filled in is the state a
+        // wrapper killed in that window leaves behind. Nothing about it has
+        // finished, and reading it as a group that has -- which is what any
+        // stand-in group id would do, since an id nobody uses probes as absent
+        // and absent reads as terminal -- would hand the lock to a second
+        // holder while the first one is still running under a live guardian.
+        let reserved = LockOwnerEvidence {
+            protected_group: Some(ProtectedGroup::Blank),
+            ..released_owner.clone()
+        };
+        assert_eq!(reserved.guardian_state(), GuardianState::Unbounded);
+
         let departed_guardian = LockOwnerEvidence {
             pid,
             cwd: "/departed".to_owned(),
             owner_released: false,
-            protected_group: Some(pid),
+            protected_group: Some(ProtectedGroup::Published(pid)),
             protected_guardian: Some(pid),
         };
         // The guardian is gone rather than merely uninteresting, and a guardian
@@ -1248,6 +1288,60 @@ mod tests {
             replacement_record(br#"{"pid":7}"#.to_vec(), 0),
             b"{\"pid\":7}\n"
         );
+    }
+
+    #[test]
+    fn a_reserved_slot_is_filled_in_place_and_never_moves_under_the_guardian() {
+        use crate::protected::{GROUP_SLOT_BLANK, GROUP_SLOT_BYTES, GROUP_SLOT_PREFIX, group_slot};
+
+        let guardian = std::process::id();
+        let reserved = serde_json::to_vec(
+            &super::owner(Some((ProtectedGroup::Blank, guardian)), false).expect("owner reads"),
+        )
+        .expect("a reserved record serializes");
+        let start = reserved
+            .windows(GROUP_SLOT_PREFIX.len())
+            .position(|window| window == GROUP_SLOT_PREFIX)
+            .expect("a reserved record carries the slot the guardian seeks")
+            + GROUP_SLOT_PREFIX.len();
+        assert!(
+            reserved[start..start + GROUP_SLOT_BYTES]
+                .iter()
+                .all(|byte| *byte == GROUP_SLOT_BLANK),
+            "the slot is reserved blank, at its full width"
+        );
+
+        // Every later record this owner writes puts the slot in the same place,
+        // which is the whole of why the guardian may write into an offset it
+        // read a moment ago. `owner_released` is the field that would break it
+        // by appearing between the two, so it is the one asked here.
+        for record in [
+            super::owner(Some((ProtectedGroup::Published(4242), guardian)), false),
+            super::owner(Some((ProtectedGroup::Published(4242), guardian)), true),
+        ] {
+            let record = serde_json::to_vec(&record.expect("owner reads")).expect("serializes");
+            assert_eq!(
+                &record[start - GROUP_SLOT_PREFIX.len()..start],
+                GROUP_SLOT_PREFIX,
+                "the slot moved: {}",
+                String::from_utf8_lossy(&record)
+            );
+        }
+
+        // What the guardian does is exactly this: the reserved bytes, replaced
+        // where they lie, by a record it never re-serializes.
+        let mut published = reserved.clone();
+        published[start..start + GROUP_SLOT_BYTES].copy_from_slice(&group_slot(4242));
+        let published: LockOwnerEvidence =
+            serde_json::from_slice(&published).expect("a filled record reads");
+        assert_eq!(
+            published.protected_group,
+            Some(ProtectedGroup::Published(4242))
+        );
+        let reserved: LockOwnerEvidence =
+            serde_json::from_slice(&reserved).expect("a reserved record reads");
+        assert_eq!(reserved.protected_group, Some(ProtectedGroup::Blank));
+        assert_eq!(published.protected_guardian, reserved.protected_guardian);
     }
 
     #[test]

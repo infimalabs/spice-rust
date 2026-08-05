@@ -6,6 +6,7 @@ compile_error!("sill supports the Linux and macOS release targets plus wasm cont
 pub mod config;
 mod lock;
 mod observe;
+mod protected;
 mod spawn;
 mod spec;
 mod surface;
