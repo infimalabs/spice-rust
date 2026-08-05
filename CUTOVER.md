@@ -42,8 +42,9 @@ That bridge is per-worktree index state, so no commit carries it. Every lane
 still driven by the predecessor arms it in its own worktree with the same two
 commands, or the tracked `policy.admission` reaches the predecessor reader
 there and claim renewal refuses the whole document as a backend error while the
-phase advance it accompanies still lands. Those lanes disarm it the way the
-final check below does, once the appliance is ambient.
+phase advance it accompanies still lands. Those lanes disarm it the way "Back
+up and disable the predecessor" does below, once the appliance is ambient. The
+arming repeated under "Rollback boundary" is the rollback path, not that step.
 
 ## Prove the predecessor is dry
 
