@@ -1,14 +1,15 @@
 #![cfg(unix)]
 
-//! The shared readiness wait, exercised on each of the four ways it ends.
+//! The shared readiness wait, exercised on each of the ways it ends.
 //!
 //! Every battery that waits for a spawned child now goes through one helper, so
 //! the ways that wait can end are proved here once rather than trusted eight
 //! times. They are not interchangeable: a state that already holds returns
-//! without any signal, a state reached later returns on a filesystem event, a
-//! child that ends first returns on the exit observer, and a state that never
-//! arrives spends the horizon. A battery that hangs is told apart from one whose
-//! child died only because the wait keeps those endings apart.
+//! without any signal, a state reached later returns on a filesystem event or
+//! on the recheck beneath it, a child that ends first returns on the exit
+//! observer, and a state that never arrives spends the horizon. A battery that
+//! hangs is told apart from one whose child died only because the wait keeps
+//! those endings apart.
 //!
 //! Two of them can be reachable at the same instant, and which one comes back
 //! then is an order rather than an ending, so the order is pinned here as well.
@@ -30,6 +31,11 @@ use readiness::Readiness;
 const IDLE_HORIZON: Duration = Duration::from_secs(30);
 /// Short enough that a battery waiting on nothing fails promptly.
 const SPENT_HORIZON: Duration = Duration::from_millis(500);
+/// Long enough that no event from building the watched tree is still in flight.
+///
+/// The wait this bounds is answered by a recheck rather than by a signal, so
+/// the delay only has to outlast the notifications the fixture itself caused.
+const UNREPORTED_DELAY: Duration = Duration::from_millis(300);
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -315,15 +321,17 @@ fn a_child_that_already_exited_is_answered_before_its_observer_is_armed() {
     );
 }
 
-/// A state reached after arming is delivered by the watcher.
+/// A state reached after arming is observed without the child ending.
 ///
-/// This is the ending every converted battery actually takes, and the only one
-/// that cannot be reached without a filesystem notification. The child creates
+/// This is the ending every converted battery actually takes. The child creates
 /// the awaited file only once released, which happens after both evaluations
 /// the helper makes on its own, and then goes on blocking: the exit signal is
-/// still owed, so the watcher is the sole thing that can wake the wait.
+/// still owed, so nothing the wait already knew can account for the answer. It
+/// deliberately does not pin which of the two remaining paths delivered it,
+/// because the filesystem notification is the very thing that cannot be relied
+/// on to arrive; a state reported by neither is covered separately below.
 #[test]
-fn a_state_reached_after_arming_arrives_on_the_watcher() {
+fn a_state_reached_after_arming_is_observed_before_the_horizon() {
     let mut held = Held::new("created", r#"read release; : > "$1/ready"; read hold"#);
     let awaited = held.watched.join("ready");
     let asked = AtomicU64::new(0);
@@ -350,6 +358,51 @@ fn a_state_reached_after_arming_arrives_on_the_watcher() {
     assert!(
         elapsed < IDLE_HORIZON / 2,
         "the creation was waited out rather than delivered: {elapsed:?}"
+    );
+    assert!(
+        held.child
+            .try_wait()
+            .expect("fixture child status")
+            .is_none(),
+        "the child outlived the state, so its exit is not what ended the wait"
+    );
+}
+
+/// A state whose arrival no signal reports is still observed.
+///
+/// Nothing writes to the watched tree here and the child never exits, so the
+/// watcher has no change to deliver and the exit observer owes nothing: both
+/// signals are severed for the whole wait, which is what a coalesced or dropped
+/// filesystem notification looks like from inside it. The state turns on by
+/// itself after long enough that no event queued while the tree was created
+/// could still be in flight. A wait that re-read its state only when a signal
+/// arrived would spend the entire horizon here and then name a state that had
+/// held nearly all of it.
+#[test]
+fn a_state_no_signal_reports_is_still_observed() {
+    let mut held = Held::new("unreported", "read hold");
+    let armed = Instant::now();
+
+    let waited = readiness::wait_until_ready(
+        &mut held.child,
+        &held.watched,
+        IDLE_HORIZON,
+        "unreported state",
+        || armed.elapsed() >= UNREPORTED_DELAY,
+    );
+    let elapsed = armed.elapsed();
+
+    assert!(
+        matches!(waited, Readiness::Ready),
+        "the unreported state was observed"
+    );
+    assert!(
+        elapsed >= UNREPORTED_DELAY,
+        "the wait returned before the state could hold: {elapsed:?}"
+    );
+    assert!(
+        elapsed < IDLE_HORIZON / 10,
+        "the unreported state was waited out rather than rechecked: {elapsed:?}"
     );
     assert!(
         held.child
