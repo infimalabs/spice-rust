@@ -34,7 +34,7 @@ impl Fixture {
             std::process::id(),
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
-        let runtime = root.join(".git/.spice-rust");
+        let runtime = root.join(".git/.spice");
         fs::create_dir_all(root.join(".git")).expect("fixture git directory");
         let vendor = root.join("fake-claude");
         fs::write(

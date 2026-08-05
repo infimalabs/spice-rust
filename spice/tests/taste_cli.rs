@@ -55,7 +55,7 @@ impl Fixture {
         fs::create_dir_all(requested.join(".git")).expect("fixture Git directory");
         let root = fs::canonicalize(requested).expect("fixture root canonicalizes");
         fs::write(root.join("spice.toml"), POLICY).expect("tracked taste policy");
-        let runtime = root.join(".git/.spice-rust");
+        let runtime = root.join(".git/.spice");
         let fixture = Self {
             journal: runtime.join("data/spicejournal.sqlite3"),
             canvas: runtime.join("canvas"),

@@ -275,7 +275,8 @@ fn root_help_exposes_the_generated_command_families() {
 
 #[test]
 fn a_registered_landed_leaf_reaches_its_implementation() {
-    let spoken = invoke(&["taste"]);
+    let repository = RepositoryScratch::new();
+    let spoken = invoke_at(&["taste"], repository.path());
 
     assert_eq!(spoken.code, Some(FAULT_EXIT));
     assert!(spoken.out.is_empty());
@@ -391,8 +392,9 @@ fn version_refuses_unfinalized_and_incompatible_schema_without_mutation() {
 /// that happen to match today.
 #[test]
 fn one_outcome_reaches_one_stream_in_either_form() {
-    let text = invoke(&["taste"]);
-    let json = invoke(&["--json", "taste"]);
+    let repository = RepositoryScratch::new();
+    let text = invoke_at(&["taste"], repository.path());
+    let json = invoke_at(&["--json", "taste"], repository.path());
 
     assert_eq!(text.code, Some(FAULT_EXIT));
     assert_eq!(json.code, Some(FAULT_EXIT));
@@ -624,7 +626,7 @@ impl RepositoryScratch {
             ));
             match fs::create_dir(&path) {
                 Ok(()) => {
-                    fs::create_dir_all(path.join(".git/.spice-rust/data"))
+                    fs::create_dir_all(path.join(".git/.spice/data"))
                         .expect("create repository-common Spice state");
                     return Self { path };
                 }
@@ -640,7 +642,7 @@ impl RepositoryScratch {
     }
 
     fn journal_path(&self) -> PathBuf {
-        self.path.join(".git/.spice-rust/data/spicejournal.sqlite3")
+        self.path.join(".git/.spice/data/spicejournal.sqlite3")
     }
 }
 

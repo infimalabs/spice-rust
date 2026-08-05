@@ -414,7 +414,7 @@ impl Fixture {
     }
 
     fn proof_root(&self) -> PathBuf {
-        self.repository.join(".git/.spice-rust/proof")
+        self.repository.join(".git/.spice/proof")
     }
 
     fn receipt_path(&self) -> PathBuf {
@@ -507,11 +507,11 @@ impl Fixture {
     fn assert_daemonless(&self) {
         assert!(!self.python_marker.exists(), "no Python shim was started");
         for path in [
-            ".git/.spice-rust/data",
-            ".git/.spice-rust/resident",
-            ".git/.spice-rust/canvas",
-            ".git/.spice-rust/degraded",
-            ".git/.spice-rust/tape",
+            ".git/.spice/data",
+            ".git/.spice/resident",
+            ".git/.spice/canvas",
+            ".git/.spice/degraded",
+            ".git/.spice/tape",
         ] {
             assert!(
                 !self.repository.join(path).exists(),

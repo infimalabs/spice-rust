@@ -147,7 +147,8 @@ fn failure<B>(error: InstallError) -> Outcome<B> {
         InstallError::State(
             StateError::Linked { .. }
             | StateError::NotDirectory { .. }
-            | StateError::NotRegularFile { .. },
+            | StateError::NotRegularFile { .. }
+            | StateError::RetiredState { .. },
         ) => Outcome::Refusal(Refusal {
             reason: refusal_reason.to_owned(),
             witness: Some("install-state".to_owned()),

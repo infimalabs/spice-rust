@@ -41,7 +41,7 @@ const LEGACY_RECORDS: [(&str, &str); 2] = [
 ];
 const LEGACY_RECORD_VERSIONS: [(u16, &str); 1] = [(2, "SURFACE-1kJRGpf2")];
 const RECORD_NAME: &str = "install.json";
-const RECORD_PATH: &str = ".spice-rust/install.json";
+const RECORD_PATH: &str = ".spice/install.json";
 const RECORD_MODE: u32 = 0o600;
 const DIRECTORY_MODE: u32 = 0o700;
 const DATA_MODE: u32 = 0o644;

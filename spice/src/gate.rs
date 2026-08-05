@@ -16,7 +16,7 @@ use ::gate::{
     HygieneConfiguration, RepositoryExecutionEvent, RimCapture, Selector,
 };
 
-use crate::repository::Repository;
+use crate::repository::{Repository, StateError};
 
 const GIT: &str = "/usr/bin/git";
 const PROCESS_PATH: &str = concat!("PA", "TH");
@@ -71,6 +71,10 @@ fn capture<'trace>(
         .map_err(|error| RunError::fault("gate::working-directory-unavailable", error))?;
     let repository = Repository::discover(&directory)
         .map_err(|error| RunError::fault("gate::repository-unresolved", error))?;
+    repository.admit_state().map_err(|error| match error {
+        StateError::Filesystem { .. } => RunError::fault("gate::state-unavailable", error),
+        _ => RunError::refusal("gate::state-refused", error),
+    })?;
     let actor = acting_actor(repository.worktree_root())?;
     let changes = selected_changes(repository.worktree_root(), &selector)?;
     let rim = RimCapture::new(directory, search_path(), changes)
