@@ -1,36 +1,21 @@
 //! One blocking wait for a spawned child to reach a state a battery needs.
 //!
 //! Four endings are reachable here, and telling them apart is the point. A
-//! state that already holds, or that comes to hold while the wait is arming,
-//! returns Ready on an evaluation with no signal involved. A state reached
-//! after that returns Ready on a filesystem notification, or on the recheck
-//! beneath it when that notification is lost. A child that ends first returns
-//! Exited on the process-exit observer. A state that never arrives spends the
-//! horizon and names itself in the panic.
+//! state that already holds returns Ready on the first read, before the child
+//! is asked about at all. A state reached later returns Ready on the read that
+//! finds it. A child that ends without reaching it returns Exited, and the
+//! caller owns the diagnosis. A state that never arrives spends the horizon and
+//! names itself in the panic.
 //!
-//! The two signals arrive on one channel, so the wait blocks on whichever comes
-//! first. It does not trust them to be complete: a dropped or coalesced
-//! filesystem event would otherwise hold the wait until the horizon over a
-//! state that already held, so the block goes through [`recheck::capped_recv`]
-//! and the horizon is spent by the state reads rather than by one long sleep.
+//! Nothing tells this wait when the state arrives; it looks. A filesystem
+//! watcher was the alternative and it was measured out at [`recheck`], which
+//! owns the one bound on how long the wait goes without looking.
 
-use std::path::Path;
 use std::process::Child;
-use std::sync::mpsc;
-use std::thread;
 use std::time::{Duration, Instant};
 
-use notify::{RecursiveMode, Watcher};
-
-const WATCH_SCAN_INTERVAL: Duration = Duration::from_millis(100);
-
-#[path = "process_exit.rs"]
-mod process_exit;
 #[path = "recheck.rs"]
 pub(crate) mod recheck;
-
-use process_exit::ProcessExitObserver;
-use recheck::capped_recv;
 
 /// Which ending a readiness wait observed.
 pub(super) enum Readiness {
@@ -40,63 +25,23 @@ pub(super) enum Readiness {
     Exited,
 }
 
-/// One signal that can end a readiness wait.
-enum Signal {
-    /// The watched tree changed, so the state may now hold.
-    Changed,
-    /// The observed child exited.
-    Exited,
-    /// The watcher itself stopped being able to report.
-    WatchFailed(String),
-}
-
 /// Block until `ready` holds, the child exits, or `horizon` is spent.
 ///
-/// `watched` is the tree whose changes can make `ready` hold, and `what` names
-/// the awaited state in every failure message. The predicate is evaluated once
-/// after both signals are armed, so a state reached in that window is still
-/// observed rather than waited out.
+/// `what` names the awaited state in every failure message. Both reads happen
+/// before anything is slept on, so a state that already holds is answered
+/// without the wait ever pausing.
 pub(super) fn wait_until_ready(
     child: &mut Child,
-    watched: &Path,
     horizon: Duration,
     what: &str,
     ready: impl Fn() -> bool,
 ) -> Readiness {
-    // The state winning over the child is deliberate: one that already holds
-    // was reached, whatever the child did afterwards. Answering a reaped child
-    // here also keeps the exit observer, which requires a live pid, from being
-    // armed against a pid that is gone or has already been reused.
-    if ready() {
-        return Readiness::Ready;
-    }
-    if ended(child, what) {
-        return Readiness::Exited;
-    }
-    let (sender, receiver) = mpsc::channel::<Signal>();
-    let changes = sender.clone();
-    let mut watcher = notify::PollWatcher::new(
-        move |event: notify::Result<notify::Event>| {
-            let _ = changes.send(match event {
-                Ok(_) => Signal::Changed,
-                Err(error) => Signal::WatchFailed(error.to_string()),
-            });
-        },
-        notify::Config::default().with_poll_interval(WATCH_SCAN_INTERVAL),
-    )
-    .unwrap_or_else(|error| panic!("{what} watcher starts: {error}"));
-    watcher
-        .watch(watched, RecursiveMode::Recursive)
-        .unwrap_or_else(|error| panic!("{what} watcher arms before the state can hold: {error}"));
-
-    let observer = ProcessExitObserver::new(child.id());
-    thread::spawn(move || {
-        observer.wait();
-        let _ = sender.send(Signal::Exited);
-    });
-
     let deadline = Instant::now() + horizon;
     loop {
+        // The state winning over the child is deliberate: one that holds was
+        // reached, whatever the child did afterwards, so a battery whose child
+        // does its work and exits promptly is told its work is done rather than
+        // that its child died.
         if ready() {
             return Readiness::Ready;
         }
@@ -107,16 +52,7 @@ pub(super) fn wait_until_ready(
         if remaining.is_zero() {
             panic!("{what} did not arrive within {horizon:?}")
         }
-        match capped_recv(&receiver, remaining) {
-            Ok(Signal::Changed | Signal::Exited) => {}
-            Ok(Signal::WatchFailed(error)) => panic!("{what} watcher failed: {error}"),
-            // A quiet interval is not an answer, so the horizon is spent only
-            // by the check at the top of the loop.
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                panic!("{what} watcher disconnected")
-            }
-        }
+        recheck::pause(remaining);
     }
 }
 

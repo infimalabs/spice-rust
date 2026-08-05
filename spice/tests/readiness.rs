@@ -4,12 +4,11 @@
 //!
 //! Every battery that waits for a spawned child now goes through one helper, so
 //! the ways that wait can end are proved here once rather than trusted eight
-//! times. They are not interchangeable: a state that already holds returns
-//! without any signal, a state reached later returns on a filesystem event or
-//! on the recheck beneath it, a child that ends first returns on the exit
-//! observer, and a state that never arrives spends the horizon. A battery that
-//! hangs is told apart from one whose child died only because the wait keeps
-//! those endings apart.
+//! times. They are not interchangeable: a state that already holds returns on
+//! the first read, a state reached later returns on the read that finds it, a
+//! child that ends without reaching it returns Exited, and a state that never
+//! arrives spends the horizon. A battery that hangs is told apart from one
+//! whose child died only because the wait keeps those endings apart.
 //!
 //! Two of them can be reachable at the same instant, and which one comes back
 //! then is an order rather than an ending, so the order is pinned here as well.
@@ -27,19 +26,20 @@ mod readiness;
 
 use readiness::Readiness;
 
-/// Wide enough that reaching it means no signal arrived at all.
+/// Wide enough that reaching it means the wait stopped reading its state.
 const IDLE_HORIZON: Duration = Duration::from_secs(30);
 /// Short enough that a battery waiting on nothing fails promptly.
 const SPENT_HORIZON: Duration = Duration::from_millis(500);
-/// Long enough that no event from building the watched tree is still in flight.
+/// Long enough to span several rechecks, so waiting it out is a real risk.
 ///
-/// The wait this bounds is answered by a recheck rather than by a signal, so
-/// the delay only has to outlast the notifications the fixture itself caused.
+/// Nothing announces the state this bounds, so a wait that read it once and
+/// then stopped would spend the whole horizon. The delay has to outlast enough
+/// rechecks that returning inside the horizon means the wait kept reading.
 const UNREPORTED_DELAY: Duration = Duration::from_millis(300);
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
-/// A fixture child, the empty tree it is watched in, and the handle that frees it.
+/// A fixture child, the tree it writes into, and the handle that frees it.
 ///
 /// The child blocks on its own input rather than on a timer, so nothing here is
 /// decided by how long a sleep outlasts a wait: the test says when the child
@@ -48,7 +48,7 @@ static NEXT: AtomicU64 = AtomicU64::new(0);
 /// belongs in a drop rather than at the end of a test body.
 struct Held {
     child: Child,
-    watched: PathBuf,
+    tree: PathBuf,
     input: RefCell<ChildStdin>,
 }
 
@@ -56,26 +56,22 @@ impl Held {
     /// A child running `script` in a tree only that child ever writes to.
     ///
     /// `script` receives the tree as `$1` and is expected to block on a `read`
-    /// until [`released_after_arming`] answers it.
+    /// until [`released_on_the_second_read`] answers it.
     fn new(label: &str, script: &str) -> Self {
-        let watched = std::env::temp_dir().join(format!(
+        let tree = std::env::temp_dir().join(format!(
             "spice-readiness-{label}-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        fs::create_dir_all(&watched).expect("readiness fixture directory");
+        fs::create_dir_all(&tree).expect("readiness fixture directory");
         let mut child = Command::new("/bin/sh")
             .args(["-c", script, "sh"])
-            .arg(&watched)
+            .arg(&tree)
             .stdin(Stdio::piped())
             .spawn()
             .expect("readiness fixture child starts");
         let input = RefCell::new(child.stdin.take().expect("fixture child reads its release"));
-        Self {
-            child,
-            watched,
-            input,
-        }
+        Self { child, tree, input }
     }
 }
 
@@ -86,19 +82,19 @@ impl Drop for Held {
         // the process, so each ending is attempted and its failure discarded.
         let _killed = self.child.kill();
         let _reaped = self.child.wait();
-        let _removed = fs::remove_dir_all(&self.watched);
+        let _removed = fs::remove_dir_all(&self.tree);
     }
 }
 
-/// Answer `holds`, releasing the child once the wait has armed its signals.
+/// Answer `holds`, releasing the child once the wait has read its state twice.
 ///
-/// The helper asks once before arming and again immediately after, and nothing
-/// else of the test's runs in between. Releasing on that second ask puts
-/// everything the child then does strictly after both evaluations, so neither
-/// of them can have seen it and a wait that returns at all returned on a
-/// signal. The answer is taken before the release for the same reason: reading
-/// it afterwards would race the child that the release just started.
-fn released_after_arming<'a>(
+/// Nothing else of the test's runs between those two reads. Releasing on the
+/// second one puts everything the child then does strictly after both of them,
+/// so neither can have seen it and a wait that returns at all returned on a
+/// read it took later. The answer is taken before the release for the same
+/// reason: reading it afterwards would race the child that the release just
+/// started.
+fn released_on_the_second_read<'a>(
     input: &'a RefCell<ChildStdin>,
     asked: &'a AtomicU64,
     holds: impl Fn() -> bool + 'a,
@@ -112,32 +108,26 @@ fn released_after_arming<'a>(
     }
 }
 
-/// The exit is a signal, not something the horizon eventually reveals.
+/// A child that ends is observed, not left for the horizon to reveal.
 ///
-/// Nothing writes to the watched tree, so the wait can only end by observing
-/// the process itself, and the child does not begin ending until the wait is
-/// already armed. A wait that returned by spending its horizon would take half
-/// a minute here instead of a moment.
+/// The state never holds, so the wait can only end by looking at the process
+/// itself, and the child does not begin ending until the wait has already read
+/// twice. A wait that stopped looking would take half a minute here instead of
+/// a moment.
 #[test]
 fn a_child_that_ends_first_ends_the_wait_when_it_ends() {
     let mut held = Held::new("exits", "read release; exit 3");
     let asked = AtomicU64::new(0);
-    let ready = released_after_arming(&held.input, &asked, || false);
+    let ready = released_on_the_second_read(&held.input, &asked, || false);
 
     let started = Instant::now();
-    let waited = readiness::wait_until_ready(
-        &mut held.child,
-        &held.watched,
-        IDLE_HORIZON,
-        "quiet state",
-        ready,
-    );
+    let waited = readiness::wait_until_ready(&mut held.child, IDLE_HORIZON, "quiet state", ready);
     let elapsed = started.elapsed();
 
     assert!(matches!(waited, Readiness::Exited), "the child ended first");
     assert!(
         asked.load(Ordering::Relaxed) > 2,
-        "the exit was seen by an evaluation rather than by the observer"
+        "the exit was answered without reading the state again"
     );
     assert!(
         elapsed < IDLE_HORIZON / 2,
@@ -150,65 +140,54 @@ fn a_child_that_ends_first_ends_the_wait_when_it_ends() {
     );
 }
 
-/// A state reached while the wait is arming is still observed.
+/// A state reached between two reads is still observed.
 ///
-/// The predicate is false when the helper first asks and true ever after, so it
-/// holds exactly during the window between arming the watcher and blocking on
-/// it. Nothing writes to the watched tree, so no event will ever arrive: this
-/// returns only because the helper asks again after arming.
+/// The predicate is false when the wait first asks and true ever after, so it
+/// comes to hold in the gap between two reads. Nothing exists to announce that
+/// arrival to anyone: this returns only because the wait reads again.
 #[test]
-fn a_state_reached_while_arming_needs_no_event() {
+fn a_state_reached_between_two_reads_needs_no_signal() {
     let mut held = Held::new("holds", "read hold");
     let asked = AtomicU64::new(0);
 
     let started = Instant::now();
-    let waited = readiness::wait_until_ready(
-        &mut held.child,
-        &held.watched,
-        IDLE_HORIZON,
-        "held state",
-        || asked.fetch_add(1, Ordering::Relaxed) > 0,
-    );
+    let waited = readiness::wait_until_ready(&mut held.child, IDLE_HORIZON, "held state", || {
+        asked.fetch_add(1, Ordering::Relaxed) > 0
+    });
     let elapsed = started.elapsed();
 
     assert!(
         matches!(waited, Readiness::Ready),
-        "the state held once arming finished"
+        "the state held by the second read"
     );
     assert_eq!(
         asked.load(Ordering::Relaxed),
         2,
-        "the predicate was never asked again after arming"
+        "the predicate was never read a second time"
     );
     assert!(
         elapsed < IDLE_HORIZON / 2,
-        "an already-held state waited for an event: {elapsed:?}"
+        "the state was waited out rather than read again: {elapsed:?}"
     );
 }
 
-/// A state that already holds is answered before anything is armed.
+/// A state that already holds is answered on the first read.
 ///
-/// This is the first ending the module names, and only its arming-window
+/// This is the first ending the module names, and only its between-reads
 /// variant was covered: the predicate above is false on the first ask and true
-/// ever after, so it proves the second evaluation happens without ever proving
-/// the first one answers. A predicate that simply holds is answered once, and
-/// the child is never asked about at all.
+/// ever after, so it proves the second read happens without ever proving the
+/// first one answers. A predicate that simply holds is answered once, and the
+/// child is never asked about at all.
 #[test]
-fn a_state_that_already_holds_is_answered_before_anything_is_armed() {
+fn a_state_that_already_holds_is_answered_on_the_first_read() {
     let mut held = Held::new("prompt", "read hold");
     let asked = AtomicU64::new(0);
 
     let started = Instant::now();
-    let waited = readiness::wait_until_ready(
-        &mut held.child,
-        &held.watched,
-        IDLE_HORIZON,
-        "prompt state",
-        || {
-            asked.fetch_add(1, Ordering::Relaxed);
-            true
-        },
-    );
+    let waited = readiness::wait_until_ready(&mut held.child, IDLE_HORIZON, "prompt state", || {
+        asked.fetch_add(1, Ordering::Relaxed);
+        true
+    });
     let elapsed = started.elapsed();
 
     assert!(matches!(waited, Readiness::Ready), "the state already held");
@@ -238,10 +217,10 @@ fn a_state_that_already_holds_is_answered_before_anything_is_armed() {
 /// child did afterwards, so a battery whose child does its work and exits
 /// promptly is told its work is done rather than that its child died.
 ///
-/// A deletion cannot reach this claim. Removing the pre-arm evaluation leaves
-/// the fixture above green, because a state that holds is still answered at the
-/// top of the loop; it changes the answer only once the child has gone, which
-/// is the case this fixture is. Swapping the two guards is what it pins.
+/// A deletion cannot reach this claim. Removing either read reds a fixture
+/// above, and the order between them decides nothing while the child is still
+/// live; it decides only once the child has gone, which is the case this
+/// fixture is. Swapping the two reads is what it pins.
 #[test]
 fn a_state_that_already_holds_outranks_a_child_that_has_already_exited() {
     let mut held = Held::new("outranked", "read release; exit 5");
@@ -253,16 +232,11 @@ fn a_state_that_already_holds_outranks_a_child_that_has_already_exited() {
     );
     let asked = AtomicU64::new(0);
 
-    let waited = readiness::wait_until_ready(
-        &mut held.child,
-        &held.watched,
-        IDLE_HORIZON,
-        "outranked state",
-        || {
+    let waited =
+        readiness::wait_until_ready(&mut held.child, IDLE_HORIZON, "outranked state", || {
             asked.fetch_add(1, Ordering::Relaxed);
             true
-        },
-    );
+        });
 
     assert!(
         matches!(waited, Readiness::Ready),
@@ -275,15 +249,14 @@ fn a_state_that_already_holds_outranks_a_child_that_has_already_exited() {
     );
 }
 
-/// A child that has already exited is answered before its observer is armed.
+/// A child that has already exited is answered on the first pass.
 ///
-/// The child is reaped before the wait starts and the state never holds, so the
-/// second pre-arm guard is the only valid ending. Arming an observer instead
-/// asks the platform to observe a pid that is no longer live (and may already
-/// have been reused), while falling through to the horizon would wait on
-/// signals that can never arrive.
+/// The child is reaped before the wait starts and the state never holds, so
+/// reading the child is the only valid ending. Reaching the horizon instead
+/// would wait out a state that nothing is left to bring about, and asking the
+/// predicate again could not change the answer.
 #[test]
-fn a_child_that_already_exited_is_answered_before_its_observer_is_armed() {
+fn a_child_that_already_exited_is_answered_on_the_first_pass() {
     let mut held = Held::new("already-exited", "read release; exit 7");
     writeln!(held.input.borrow_mut()).expect("fixture child takes its release");
     assert_eq!(
@@ -296,7 +269,6 @@ fn a_child_that_already_exited_is_answered_before_its_observer_is_armed() {
     let started = Instant::now();
     let waited = readiness::wait_until_ready(
         &mut held.child,
-        &held.watched,
         IDLE_HORIZON,
         "already-exited child",
         || {
@@ -313,7 +285,7 @@ fn a_child_that_already_exited_is_answered_before_its_observer_is_armed() {
     assert_eq!(
         asked.load(Ordering::Relaxed),
         1,
-        "the never-held state was evaluated past the pre-arm exit guard"
+        "the never-held state was read again past the exited child"
     );
     assert!(
         elapsed < IDLE_HORIZON / 2,
@@ -321,30 +293,21 @@ fn a_child_that_already_exited_is_answered_before_its_observer_is_armed() {
     );
 }
 
-/// A state reached after arming is observed without the child ending.
+/// A state reached after the wait begins is observed without the child ending.
 ///
 /// This is the ending every converted battery actually takes. The child creates
-/// the awaited file only once released, which happens after both evaluations
-/// the helper makes on its own, and then goes on blocking: the exit signal is
-/// still owed, so nothing the wait already knew can account for the answer. It
-/// deliberately does not pin which of the two remaining paths delivered it,
-/// because the filesystem notification is the very thing that cannot be relied
-/// on to arrive; a state reported by neither is covered separately below.
+/// the awaited file only once released, which happens after both reads the
+/// helper makes on its own, and then goes on blocking: the child is still live,
+/// so nothing the wait already knew can account for the answer.
 #[test]
-fn a_state_reached_after_arming_is_observed_before_the_horizon() {
+fn a_state_reached_after_the_wait_begins_is_observed_before_the_horizon() {
     let mut held = Held::new("created", r#"read release; : > "$1/ready"; read hold"#);
-    let awaited = held.watched.join("ready");
+    let awaited = held.tree.join("ready");
     let asked = AtomicU64::new(0);
-    let ready = released_after_arming(&held.input, &asked, || awaited.exists());
+    let ready = released_on_the_second_read(&held.input, &asked, || awaited.exists());
 
     let started = Instant::now();
-    let waited = readiness::wait_until_ready(
-        &mut held.child,
-        &held.watched,
-        IDLE_HORIZON,
-        "created state",
-        ready,
-    );
+    let waited = readiness::wait_until_ready(&mut held.child, IDLE_HORIZON, "created state", ready);
     let elapsed = started.elapsed();
 
     assert!(
@@ -357,7 +320,7 @@ fn a_state_reached_after_arming_is_observed_before_the_horizon() {
     );
     assert!(
         elapsed < IDLE_HORIZON / 2,
-        "the creation was waited out rather than delivered: {elapsed:?}"
+        "the creation was waited out rather than read: {elapsed:?}"
     );
     assert!(
         held.child
@@ -368,28 +331,24 @@ fn a_state_reached_after_arming_is_observed_before_the_horizon() {
     );
 }
 
-/// A state whose arrival no signal reports is still observed.
+/// A state whose arrival nothing reports is still observed.
 ///
-/// Nothing writes to the watched tree here and the child never exits, so the
-/// watcher has no change to deliver and the exit observer owes nothing: both
-/// signals are severed for the whole wait, which is what a coalesced or dropped
-/// filesystem notification looks like from inside it. The state turns on by
-/// itself after long enough that no event queued while the tree was created
-/// could still be in flight. A wait that re-read its state only when a signal
-/// arrived would spend the entire horizon here and then name a state that had
-/// held nearly all of it.
+/// Nothing writes to the tree here and the child never exits, so there is no
+/// change any watcher could have delivered and no exit to observe. The state
+/// turns on by itself, well after the wait has started and with nothing to
+/// announce it, which is what a coalesced or dropped filesystem notification
+/// looks like from inside a wait. A wait that read its state only when
+/// something told it to would spend the entire horizon here and then name a
+/// state that had held nearly all of it.
 #[test]
 fn a_state_no_signal_reports_is_still_observed() {
     let mut held = Held::new("unreported", "read hold");
     let armed = Instant::now();
 
-    let waited = readiness::wait_until_ready(
-        &mut held.child,
-        &held.watched,
-        IDLE_HORIZON,
-        "unreported state",
-        || armed.elapsed() >= UNREPORTED_DELAY,
-    );
+    let waited =
+        readiness::wait_until_ready(&mut held.child, IDLE_HORIZON, "unreported state", || {
+            armed.elapsed() >= UNREPORTED_DELAY
+        });
     let elapsed = armed.elapsed();
 
     assert!(
@@ -415,18 +374,12 @@ fn a_state_no_signal_reports_is_still_observed() {
 
 /// A state that never arrives fails by name rather than blocking forever.
 ///
-/// The child and the watched tree outlive the panic this raises, which is why
-/// both are ended from a drop: nothing after the call below runs.
+/// The child and its tree outlive the panic this raises, which is why both are
+/// ended from a drop: nothing after the call below runs.
 #[test]
 #[should_panic(expected = "absent state did not arrive within")]
 fn a_state_that_never_arrives_fails_with_its_name() {
     let mut held = Held::new("absent", "read hold");
 
-    readiness::wait_until_ready(
-        &mut held.child,
-        &held.watched,
-        SPENT_HORIZON,
-        "absent state",
-        || false,
-    );
+    readiness::wait_until_ready(&mut held.child, SPENT_HORIZON, "absent state", || false);
 }

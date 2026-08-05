@@ -104,7 +104,6 @@ impl Resident {
         let mut resident = Self { child: Some(child) };
         match readiness::wait_until_ready(
             resident.child.as_mut().expect("resident child"),
-            &fixture.root.join(".git"),
             READY,
             "resident discovery",
             || fixture.canvas.is_file(),

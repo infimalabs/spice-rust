@@ -267,12 +267,11 @@ fn restart_resident(
         !crashed.status.success(),
         "fixture resident must crash abruptly"
     );
-    stop_vendor_processes(fixture, &vendors.stopped, &baseline.pids);
+    stop_vendor_processes(&vendors.stopped, &baseline.pids);
     fs::remove_file(fixture.canvas()).expect("stale crashed discovery is removed");
     let mut replacement = RunningResident::spawn(fixture);
     replacement.assert_ready(fixture);
-    wait_for_event(
-        &fixture.runtime.join("data"),
+    wait_for_effect(
         || {},
         || {
             let renewals = journal::JournalReader::open(fixture.journal())
@@ -406,7 +405,7 @@ fn finish_and_verify(
         !crashed.status.success(),
         "replacement fixture must crash abruptly"
     );
-    stop_vendor_processes(fixture, &vendors.stopped, &resumed_pids);
+    stop_vendor_processes(&vendors.stopped, &resumed_pids);
     assert_no_codex_compaction(fixture, lanes.codex);
     journal::Journal::open(fixture.journal())
         .expect("continuity journal opens")
@@ -679,8 +678,7 @@ fn emit_record(
 ) {
     let tape = tape_path(fixture, lane, vendor);
     let expected = format!("{record}\n").into_bytes();
-    wait_for_event(
-        &tape,
+    wait_for_effect(
         || {
             fs::write(control, &expected).expect("control record writes");
         },
@@ -698,9 +696,7 @@ fn emit_compaction(
     lane: wire::CanonicalUuid,
     control: &Path,
 ) -> wire::body::LaneCompacted {
-    let data = fixture.runtime.join("data");
-    wait_for_event(
-        &data,
+    wait_for_effect(
         || {
             fs::write(control, format!("{COMPACTION_RECORD}\n"))
                 .expect("compaction control record writes");
@@ -818,9 +814,8 @@ fn latest_pid(path: &Path) -> u32 {
         .expect("vendor PID is numeric")
 }
 
-fn stop_vendor_processes(fixture: &Fixture, stopped: &Path, pids: &[u32]) {
-    wait_for_event(
-        &fixture.cleanup,
+fn stop_vendor_processes(stopped: &Path, pids: &[u32]) {
+    wait_for_effect(
         || {
             for pid in pids {
                 let output = Command::new("kill")

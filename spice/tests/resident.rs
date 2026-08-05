@@ -5,12 +5,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc;
 use std::time::{Duration, Instant as Monotonic};
 
 use bus::{Bus, CommitOutcome};
 use journal::{FactCause, JournalWrite};
-use notify::{RecursiveMode, Watcher};
 use rusqlite::{Connection, params};
 use sill::{Acquisition, LockFile, LockName};
 use tungstenite::client::IntoClientRequest;
@@ -23,7 +21,6 @@ use wire::{
 
 const FAULT_EXIT: i32 = 1;
 const REFUSAL_EXIT: i32 = 2;
-const WATCH_SCAN_INTERVAL: Duration = Duration::from_millis(100);
 const READINESS_DEADLINE: Duration = Duration::from_secs(10);
 const CLIENT_DEADLINE_BOUND: Duration = Duration::from_secs(10);
 const LANE_DEADLINE_BOUND: Duration = Duration::from_secs(20);
@@ -131,14 +128,8 @@ impl RunningResident {
     }
 
     fn assert_ready(&mut self, fixture: &Fixture) {
-        let watched = fixture
-            .runtime
-            .parent()
-            .expect("runtime has Git-common parent")
-            .to_path_buf();
         match readiness::wait_until_ready(
             self.child.as_mut().expect("resident child"),
-            &watched,
             READINESS_DEADLINE,
             "resident discovery",
             || fixture.canvas().is_file(),
@@ -838,66 +829,30 @@ fn instant(value: &str) -> Instant {
     value.parse().expect("canonical fixture instant")
 }
 
-/// Block until `observe` sees the effect of `trigger` under `path`.
+/// Block until `observe` sees the effect of `trigger`.
 ///
-/// The watcher arms before `trigger` runs and `observe` is polled once before
-/// any wait, so an effect that lands between those two points is still seen.
-/// A trigger that already ran passes `|| {}` and relies on that first poll.
+/// `observe` runs immediately after `trigger` and before anything is slept on,
+/// so an effect that lands at once is seen at once. A trigger that already ran
+/// passes `|| {}` and relies on that first observation.
 ///
-/// The notification is the fast path but not the only one: a filesystem event
-/// can be dropped or coalesced, so waiting solely for one would spend the whole
-/// deadline on an effect that had already landed. The block is capped at
-/// [`readiness::recheck::capped_recv`] and `observe` runs on each quiet interval
-/// too.
+/// Nothing announces the effect. A filesystem notification would, but only when
+/// it is not dropped or coalesced, so the deadline is spent re-observing at the
+/// one bound in [`readiness::recheck::pause`] rather than waiting to be told.
 ///
 /// Panics report the waiting call site rather than this shared helper.
 #[track_caller]
-fn wait_for_event<T>(
-    path: &Path,
-    trigger: impl FnOnce(),
-    mut observe: impl FnMut() -> Option<T>,
-) -> T {
-    let (sender, receiver) = mpsc::channel::<notify::Result<notify::Event>>();
-    let mut watcher = notify::PollWatcher::new(
-        move |event| {
-            let _ = sender.send(event);
-        },
-        notify::Config::default()
-            .with_poll_interval(WATCH_SCAN_INTERVAL)
-            .with_compare_contents(true),
-    )
-    .expect("event watcher starts");
-    watcher
-        .watch(path, RecursiveMode::Recursive)
-        .expect("event watcher arms before trigger");
+fn wait_for_effect<T>(trigger: impl FnOnce(), mut observe: impl FnMut() -> Option<T>) -> T {
     trigger();
-    if let Some(observed) = observe() {
-        return observed;
-    }
     let deadline = Monotonic::now() + READINESS_DEADLINE;
     loop {
+        if let Some(observed) = observe() {
+            return observed;
+        }
         let remaining = deadline.saturating_duration_since(Monotonic::now());
         if remaining.is_zero() {
-            panic!("event was not observed before {READINESS_DEADLINE:?}")
+            panic!("effect was not observed before {READINESS_DEADLINE:?}")
         }
-        match readiness::recheck::capped_recv(&receiver, remaining) {
-            Ok(Ok(_)) => {
-                if let Some(observed) = observe() {
-                    return observed;
-                }
-            }
-            Ok(Err(error)) => panic!("event notification failed: {error}"),
-            // A quiet interval is not an answer: the notification that would
-            // have reported this effect can be dropped or coalesced, so the
-            // effect is re-observed on the way past rather than trusted to
-            // announce itself. The horizon is spent by those observations.
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                if let Some(observed) = observe() {
-                    return observed;
-                }
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => panic!("event watcher disconnected"),
-        }
+        readiness::recheck::pause(remaining);
     }
 }
 
@@ -916,9 +871,8 @@ fn wait_for_event<T>(
 ///
 /// Panics report the waiting call site rather than this shared helper.
 #[track_caller]
-fn wait_for_vendor_stop(watch: &Path, pid_file: &Path, stopped: &Path) -> String {
-    let observed = wait_for_event(
-        watch,
+fn wait_for_vendor_stop(pid_file: &Path, stopped: &Path) -> String {
+    let observed = wait_for_effect(
         || {},
         || {
             if let Some(stop) = recorded_stop(stopped) {
