@@ -11,8 +11,8 @@
 //! The two signals arrive on one channel, so the wait blocks on whichever comes
 //! first. It does not trust them to be complete: a dropped or coalesced
 //! filesystem event would otherwise hold the wait until the horizon over a
-//! state that already held, so the block is capped at [`RECHECK`] and the
-//! horizon is spent by the state reads rather than by one long sleep.
+//! state that already held, so the block goes through [`recheck::capped_recv`]
+//! and the horizon is spent by the state reads rather than by one long sleep.
 
 use std::path::Path;
 use std::process::Child;
@@ -26,20 +26,11 @@ const WATCH_SCAN_INTERVAL: Duration = Duration::from_millis(100);
 
 #[path = "process_exit.rs"]
 mod process_exit;
+#[path = "recheck.rs"]
+pub(crate) mod recheck;
 
 use process_exit::ProcessExitObserver;
-
-/// How long the wait will sit on a silent channel before reading state again.
-///
-/// The two signals remain the fast path and answer in microseconds; this is a
-/// floor beneath them, not a replacement for them. A filesystem notification
-/// can be coalesced or dropped, and a wait that re-reads its state only when
-/// one arrives sleeps through a state that already holds. That is not
-/// hypothetical here: measured across the resident batteries, every observed
-/// timeout was a wait whose predicate was already true, so the horizon was
-/// reporting a lost notification rather than an absent state. Deleting this to
-/// make the wait purely signal-driven restores that hang.
-pub(super) const RECHECK: Duration = Duration::from_millis(50);
+use recheck::capped_recv;
 
 /// Which ending a readiness wait observed.
 pub(super) enum Readiness {
@@ -116,7 +107,7 @@ pub(super) fn wait_until_ready(
         if remaining.is_zero() {
             panic!("{what} did not arrive within {horizon:?}")
         }
-        match receiver.recv_timeout(remaining.min(RECHECK)) {
+        match capped_recv(&receiver, remaining) {
             Ok(Signal::Changed | Signal::Exited) => {}
             Ok(Signal::WatchFailed(error)) => panic!("{what} watcher failed: {error}"),
             // A quiet interval is not an answer, so the horizon is spent only
