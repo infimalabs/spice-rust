@@ -151,11 +151,10 @@ pub(super) fn write_owner(
 /// window is a separate process, and a clone of this one would share the cursor
 /// the write is about to use.
 ///
-/// The window is the reason for the seam. It occupies only the moment between
-/// emptying the file and filling it, which no caller can hold open, so the
-/// question is made decidable here rather than left observable only by
-/// reproducing the race -- the same reason resolve_refusal takes its two
-/// answers as callables.
+/// The window is the reason for the seam. It occupies only the last instant
+/// before the replacement lands, which no caller can hold open, so the question
+/// is made decidable here rather than left observable only by reproducing the
+/// race -- the same reason resolve_refusal takes its two answers as callables.
 pub(super) fn write_owner_with(
     file: &fs::File,
     protected: Option<(ProtectedGroup, u32)>,
@@ -181,12 +180,26 @@ pub(super) fn clear_owner(file: &fs::File) -> io::Result<()> {
 
 pub(super) fn read_owner(file: &fs::File) -> io::Result<Option<LockOwnerEvidence>> {
     let length = file.metadata()?.len();
-    if length == 0 || length > OWNER_BYTES_LIMIT {
+    if length == 0 {
         return Ok(None);
+    }
+    if length > OWNER_BYTES_LIMIT {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "owner record is neither empty nor a whole record: {length} bytes exceeds the \
+                 {OWNER_BYTES_LIMIT}-byte limit"
+            ),
+        ));
     }
     let mut reader = file;
     reader.seek(SeekFrom::Start(0))?;
     let mut bytes = Vec::with_capacity(length as usize);
     reader.take(OWNER_BYTES_LIMIT).read_to_end(&mut bytes)?;
-    Ok(serde_json::from_slice(&bytes).ok())
+    serde_json::from_slice(&bytes).map(Some).map_err(|source| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("owner record is neither empty nor a whole record: {source}"),
+        )
+    })
 }
