@@ -620,6 +620,291 @@ mod tests {
         );
     }
 
+    /// A manifest neither side of the landing merge is wrong about.
+    ///
+    /// The two tables the sides move sit far apart on purpose. Adjacent
+    /// insertions would conflict, and a conflict is the case Git already
+    /// reports; what has to be reproduced here is the merge that reports
+    /// nothing.
+    const MANIFEST_BASE: &str = concat!(
+        "[workspace]\n",
+        "\n",
+        "[package]\n",
+        "name = \"probe\"\n",
+        "version = \"0.0.0\"\n",
+        "edition = \"2024\"\n",
+        "\n",
+        "[features]\n",
+        "default = []\n",
+        "\n",
+        "[lib]\n",
+        "path = \"src/lib.rs\"\n",
+        "\n",
+        "[profile.dev]\n",
+        "opt-level = 0\n",
+    );
+
+    /// The lane's history: the table is declared at the end of the manifest.
+    const MANIFEST_APPENDED: &str = concat!(
+        "[workspace]\n",
+        "\n",
+        "[package]\n",
+        "name = \"probe\"\n",
+        "version = \"0.0.0\"\n",
+        "edition = \"2024\"\n",
+        "\n",
+        "[features]\n",
+        "default = []\n",
+        "\n",
+        "[lib]\n",
+        "path = \"src/lib.rs\"\n",
+        "\n",
+        "[profile.dev]\n",
+        "opt-level = 0\n",
+        "\n",
+        "[dev-dependencies]\n",
+    );
+
+    /// The baseline's history: the same table, relocated above `[features]`.
+    const MANIFEST_RELOCATED: &str = concat!(
+        "[workspace]\n",
+        "\n",
+        "[package]\n",
+        "name = \"probe\"\n",
+        "version = \"0.0.0\"\n",
+        "edition = \"2024\"\n",
+        "\n",
+        "[dev-dependencies]\n",
+        "\n",
+        "[features]\n",
+        "default = []\n",
+        "\n",
+        "[lib]\n",
+        "path = \"src/lib.rs\"\n",
+        "\n",
+        "[profile.dev]\n",
+        "opt-level = 0\n",
+    );
+
+    /// A manifest that does not load at all, committed by one side alone.
+    const MANIFEST_DUPLICATED: &str = concat!(
+        "[workspace]\n",
+        "\n",
+        "[package]\n",
+        "name = \"probe\"\n",
+        "version = \"0.0.0\"\n",
+        "edition = \"2024\"\n",
+        "\n",
+        "[features]\n",
+        "default = []\n",
+        "\n",
+        "[lib]\n",
+        "path = \"src/lib.rs\"\n",
+        "\n",
+        "[profile.dev]\n",
+        "opt-level = 0\n",
+        "\n",
+        "[features]\n",
+        "extra = []\n",
+    );
+
+    /// The cheap load: whether Cargo can read this repository at all.
+    fn admission_document() -> String {
+        concat!(
+            "[policy]\n",
+            "admission = [\"cargo\", \"metadata\", \"--no-deps\", ",
+            "\"--offline\", \"--format-version\", \"1\"]\n",
+        )
+        .to_owned()
+    }
+
+    /// A repository whose baseline already carries the manifest and the
+    /// command that admits it, so both sides of every merge below inherit it.
+    fn manifest_fixture(name: &str) -> Fixture {
+        let fixture = Fixture::new(name);
+        fs::create_dir(fixture.agent.join("src"))
+            .expect("create fixture package source");
+        fs::write(fixture.agent.join("src/lib.rs"), "")
+            .expect("write fixture package source");
+        fs::write(fixture.agent.join("spice.toml"), admission_document())
+            .expect("write fixture admission policy");
+        fs::write(fixture.agent.join("Cargo.toml"), MANIFEST_BASE)
+            .expect("write fixture manifest");
+        git(
+            &fixture.agent,
+            &["add", "src/lib.rs", "spice.toml", "Cargo.toml"],
+        );
+        git(&fixture.agent, &["commit", "-m", "manifest base"]);
+        git(&fixture.agent, &["push", "origin", "main"]);
+        git(&fixture.peer, &["pull", "--ff-only", "origin", "main"]);
+        fixture
+    }
+
+    fn remote_head(fixture: &Fixture) -> String {
+        stdout(&fixture.agent, &["ls-remote", "origin", "refs/heads/main"])
+            .split_whitespace()
+            .next()
+            .expect("remote names a branch head")
+            .to_owned()
+    }
+
+    /// Two valid manifests whose clean merge carries one table twice.
+    ///
+    /// Nothing in Git reports this: the sides edited different regions, so the
+    /// three-way merge succeeds and the published workspace is the first
+    /// artifact that cannot be read. The refusal has to come from loading the
+    /// merged tree, which is the only place the duplicate exists.
+    #[test]
+    fn a_clean_merge_that_duplicates_a_manifest_table_is_refused() {
+        let fixture = manifest_fixture("duplicate-table");
+        fixture.agent_commit("Cargo.toml", MANIFEST_APPENDED);
+        let upstream =
+            fixture.peer_commit("Cargo.toml", MANIFEST_RELOCATED);
+
+        let error = publish(&fixture.repository(), metadata())
+            .expect_err("a manifest that cannot be read refuses");
+
+        assert_eq!(error.reason(), "git::admission-failed");
+        assert!(
+            error.detail().contains("duplicate key"),
+            "the failing output is preserved: {}",
+            error.detail()
+        );
+        assert!(
+            error.detail().contains("cargo metadata"),
+            "the failing command is preserved: {}",
+            error.detail()
+        );
+        assert_eq!(remote_head(&fixture), upstream);
+    }
+
+    /// Admission reads the tree, not the paths the lane happens to have moved.
+    ///
+    /// The baseline commit here is the kind no lane ever gated. The lane's own
+    /// change is one document, so any check keyed on what the lane touched
+    /// would admit this and publish a workspace that does not load.
+    #[test]
+    fn an_ungated_baseline_commit_refuses_a_lane_that_only_moved_a_document() {
+        let fixture = manifest_fixture("ungated-baseline");
+        let agent = fixture.agent_commit("NOTES.md", "lane work\n");
+        let upstream =
+            fixture.peer_commit("Cargo.toml", MANIFEST_DUPLICATED);
+
+        let error = publish(&fixture.repository(), metadata())
+            .expect_err("an unreadable baseline refuses");
+
+        assert_eq!(error.reason(), "git::admission-failed");
+        assert_eq!(remote_head(&fixture), upstream);
+        // The integrated state is recoverable rather than discarded: the merge
+        // is checked out, carries both sides, and names its second parent.
+        assert_eq!(
+            parents(&fixture.agent, "HEAD"),
+            vec![upstream, agent]
+        );
+        assert_eq!(
+            stdout(&fixture.agent, &["status", "--porcelain"]),
+            ""
+        );
+    }
+
+    /// A conflict is still the conflict path, not an admission refusal.
+    #[test]
+    fn a_real_conflict_keeps_its_recoverable_merge_path_under_admission() {
+        let fixture = manifest_fixture("conflict-under-admission");
+        fixture.agent_commit(
+            "Cargo.toml",
+            &MANIFEST_BASE.replace("0.0.0", "0.1.0"),
+        );
+        fixture.peer_commit(
+            "Cargo.toml",
+            &MANIFEST_BASE.replace("0.0.0", "0.2.0"),
+        );
+
+        let error = publish(&fixture.repository(), metadata())
+            .expect_err("a conflicted manifest refuses");
+
+        assert_eq!(error.reason(), "git::recoverable-conflict");
+        assert!(
+            fixture
+                .agent
+                .join("Cargo.toml")
+                .read_to_string()
+                .contains("<<<<<<<")
+        );
+    }
+
+    /// The lane is not charged for bytes it authored itself.
+    ///
+    /// This manifest does not load, and it is published anyway, because no
+    /// merge changed it: landing admits the trees nobody wrote, and the tree a
+    /// lane wrote is the verification gate's subject rather than this one's.
+    /// Were the command run unconditionally, this would refuse.
+    #[test]
+    fn a_tree_the_lane_authored_publishes_without_running_the_command() {
+        let fixture = manifest_fixture("authored-tree");
+        let agent = fixture
+            .agent_commit("Cargo.toml", MANIFEST_DUPLICATED);
+
+        let result = publish(&fixture.repository(), metadata())
+            .expect("an unmerged lane tree publishes");
+
+        assert_eq!(result.head, agent);
+        assert_eq!(remote_head(&fixture), result.integrated);
+    }
+
+    /// A tree built by losing the publication race is read like any other.
+    ///
+    /// The lane authored the tree its first push carries, so nothing runs over
+    /// it. The baseline that beats it to the remote brings a manifest that does
+    /// not load, and the tree that would replace it is synthesized inside the
+    /// retry. Admitting only what the first attempt held would publish this.
+    #[test]
+    fn a_tree_built_by_losing_the_publication_race_is_refused() {
+        let fixture = manifest_fixture("race-admission");
+        fixture.agent_commit("NOTES.md", "lane work\n");
+        let broken = fixture.agent.join(".git/broken-manifest");
+        fs::write(&broken, MANIFEST_DUPLICATED)
+            .expect("write raced manifest");
+        let counter = fixture.agent.join(".git/race-count");
+        let hook = fixture.agent.join(".git/hooks/pre-push");
+        let script = format!(
+            concat!(
+                "#!/bin/sh\n",
+                "[ ! -f {counter} ] || exit 0\n",
+                ": > {counter}\n",
+                "git -C {peer} pull --ff-only origin main\n",
+                "cp {broken} {peer}/Cargo.toml\n",
+                "git -C {peer} add Cargo.toml\n",
+                "git -C {peer} commit -m \"peer manifest\"\n",
+                "git -C {peer} push origin main\n",
+            ),
+            counter = path(&counter),
+            peer = path(&fixture.peer),
+            broken = path(&broken),
+        );
+        fs::write(&hook, script).expect("write racing pre-push hook");
+        let mut permissions =
+            fs::metadata(&hook).expect("hook metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&hook, permissions)
+            .expect("make hook executable");
+
+        let error = publish(&fixture.repository(), metadata())
+            .expect_err("a raced manifest that cannot be read refuses");
+
+        assert_eq!(
+            error.reason(),
+            "git::admission-failed",
+            "{}",
+            error.detail()
+        );
+        assert!(
+            error.detail().contains("duplicate key"),
+            "the raced tree is what was read: {}",
+            error.detail()
+        );
+    }
+
     trait ReadText {
         fn read_to_string(&self) -> String;
     }

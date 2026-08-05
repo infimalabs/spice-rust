@@ -382,6 +382,7 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "policy.name_cluster_threshold",
     "policy.test_paths",
     "policy.package.boundary_underscore_pattern",
+    "policy.admission",
     "taste.<name>.words",
     "taste.<name>.message",
     "consent.posture",

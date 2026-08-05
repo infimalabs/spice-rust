@@ -341,6 +341,9 @@ pub fn publish(
     };
     let local_commits = ahead_count(root, &target.baseline)?;
     let message = compose_message(meta, &agent_head);
+    // Read before the merge, so the declared command and the authored tree are
+    // both the lane's own rather than whatever the baseline brings in.
+    let admission = Admission::resolve(repository, &agent_head)?;
     let integrated = integrate(
         root,
         &agent_head,
@@ -353,9 +356,12 @@ pub fn publish(
         &target,
         integrated,
         upstream_head,
-        &agent_head,
-        &message,
-        meta.label,
+        Publication {
+            agent_head: &agent_head,
+            message: &message,
+            label: meta.label,
+            admission: &admission,
+        },
     )?;
     Ok(boundary(
         agent_head,
@@ -621,15 +627,29 @@ fn merge_tree(
     ))
 }
 
+/// What stays fixed across every attempt to publish one task phase.
+#[derive(Clone, Copy)]
+struct Publication<'a> {
+    agent_head: &'a str,
+    message: &'a str,
+    label: &'a str,
+    admission: &'a Admission,
+}
+
 fn publish_with_retry(
     root: &Path,
     target: &Target,
     mut integrated: String,
     mut upstream_head: String,
-    agent_head: &str,
-    message: &str,
-    label: &str,
+    publication: Publication<'_>,
 ) -> Result<(String, String), Error> {
+    let Publication {
+        agent_head,
+        message,
+        label,
+        admission,
+    } = publication;
+    admission.admit(root, &integrated, label)?;
     let mut pushed = push(root, target, &integrated, &upstream_head)?;
     if pushed.success() {
         return Ok((integrated, upstream_head));
@@ -662,6 +682,9 @@ fn publish_with_retry(
                 label,
             )?;
             upstream_head = fresh;
+            // The race produced a tree nothing has read yet. Every other path
+            // out of this loop pushes the commit admitted above it.
+            admission.admit(root, &integrated, label)?;
         }
         pushed = push(root, target, &integrated, &upstream_head)?;
         if pushed.success() {
@@ -776,6 +799,7 @@ fn is_push_race(output: &GitOutput) -> bool {
             && detail.contains("failed to update ref"))
 }
 
+include!("task_git/admission.rs");
 include!("task_git/transaction.rs");
 include!("task_git/command.rs");
 #[cfg(test)]
