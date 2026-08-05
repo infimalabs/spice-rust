@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use spice::placeholder::PlaceholderReason;
 use wire::manifest::{BuildPins, InventoryEntry, ProofReceipt, ReleaseTarget, TargetPayload};
 use wire::{Digest, Domain, Fault, Outcome, ProofEvidence, Refusal, ReplyPosition};
 
@@ -339,10 +340,11 @@ fn fault_pair(fixture: &Fixture, command: &[&str], reason: &str) -> Fault {
 }
 
 fn assert_not_unlanded(bytes: &[u8]) {
+    let placeholder = PlaceholderReason::NotLanded.as_str().as_bytes();
     assert!(
         !bytes
-            .windows(b"release::not-landed".len())
-            .any(|window| window == b"release::not-landed")
+            .windows(placeholder.len())
+            .any(|window| window == placeholder)
     );
 }
 
