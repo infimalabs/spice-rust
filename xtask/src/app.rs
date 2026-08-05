@@ -16,7 +16,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::release::ReleaseEnvironment;
-use crate::stage_sources::{STAGE_SOURCE_LISTING, compare_stage_sources, record_stage_sources};
+use crate::stage_sources::{
+    STAGE_INSTRUCTIONS, STAGE_SOURCE_LISTING, compare_stage_sources, record_stage_sources,
+};
 use crate::toolchain;
 
 /// The target the browser app is compiled for.
@@ -523,7 +525,9 @@ impl fmt::Display for AppBuildError {
                 "the committed app stage was not built from the sources now in the tree: \
                  {} changed since {STAGE_SOURCE_LISTING} recorded them; restage with \
                  cargo xtask stage-app in image {}, which is the one environment allowed \
-                 to write the stage",
+                 to write the stage, from a checkout whose repository is under the mount \
+                 as {STAGE_INSTRUCTIONS} describes, because that run refuses a linked \
+                 worktree",
                 paths.join(", "),
                 proof::DEFAULT_IMAGE
             ),
