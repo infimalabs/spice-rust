@@ -43,7 +43,7 @@ use crate::metrics::{
     resolve_metric_rule,
 };
 use crate::policy::PolicyContext;
-use crate::state::{ActorInputs, BoundDecision, LatchEntry, PeerClaim, owning_claim};
+use crate::state::{ActorInputs, BoundDecision, BoundError, LatchEntry, PeerClaim, owning_claim};
 use crate::tree::SelectedTree;
 
 /// The one program both Git-declared arms observe through.
@@ -125,10 +125,15 @@ impl ActorCapture {
     /// bound rule resolves it itself, and resolving it here as well would let
     /// this family and the rule that decides its limit name two different
     /// actors for one document.
-    pub(crate) fn actor_inputs(&self, path: &str) -> Result<ActorInputs, CoreInputError> {
-        let inputs = ActorInputs::new(path).map_err(|error| {
-            CoreInputError::new(format!("actor provenance for {path:?}: {error}"))
-        })?;
+    ///
+    /// The structural file-shape and complexity arms seed the same way over
+    /// their own selected paths, so this is visible to them rather than
+    /// restated there: two spellings of the order above could disagree about
+    /// which actor a path's headroom varies with, and each would look right
+    /// beside its own arm. The refusal crosses whole for the same reason, and
+    /// each caller names the family the path was selected for.
+    pub(crate) fn actor_inputs(&self, path: &str) -> Result<ActorInputs, BoundError> {
+        let inputs = ActorInputs::new(path)?;
         Ok(match self {
             Self::Acting { actor, .. } => inputs.with_active_actor(actor),
             Self::Absent => inputs,
@@ -425,13 +430,16 @@ fn document_measurement(
     )
     .map_err(|error| CoreInputError::new(format!("bind repository-document {path:?}: {error}")))?;
     let latched = latches.contains(binding.entry());
-    let decision = binding
-        .decide(latched, &actor.actor_inputs(path)?)
-        .map_err(|error| {
-            CoreInputError::new(format!(
-                "resolve active repository-document bound for {path:?}: {error}"
-            ))
-        })?;
+    let actor_inputs = actor.actor_inputs(path).map_err(|error| {
+        CoreInputError::new(format!(
+            "actor provenance for repository document {path:?}: {error}"
+        ))
+    })?;
+    let decision = binding.decide(latched, &actor_inputs).map_err(|error| {
+        CoreInputError::new(format!(
+            "resolve active repository-document bound for {path:?}: {error}"
+        ))
+    })?;
     let measurement = if decision.unlimited() {
         DocMeasurement::unlimited(path, characters)?
     } else {

@@ -3,24 +3,16 @@
 use super::*;
 use crate::metrics::{EvidenceState, MetricId, MetricKey, StructuralArmEvidence};
 
-/// The metric arms this build still measures nothing for, and each one's blocker.
+/// What each metric arm reports for this fixture, by state and by evidence.
 ///
-/// The blocker is pinned as a substring rather than left to the shared
-/// `Unavailable` state, so an arm that started reporting the wrong missing input
-/// fails here instead of passing on the state alone. This list is what the
-/// canonical verifier's retained predecessor stage is justified by, so an arm
-/// leaving it has to be read against that justification rather than quietly
-/// shortening it.
-const UNREACHED_METRIC_ARMS: [(GateId, &str); 1] =
-    [(GateId::FileShape, "policy handle nor the actor seed")];
-
-/// What each metric arm that does reach its input reports for this fixture.
-///
-/// Each is pinned by state *and* by a substring of the reason. The three states
-/// happen to differ here, but that is a property of this fixture rather than of
-/// the arms: an arm that started answering for another's scope would land on a
-/// state this list already contains, and only the reason would still say so.
-const ACQUIRED_METRIC_ARMS: [(GateId, BatteryState, &str); 3] = [
+/// Every compiled metric arm reaches its input, so there is no second list of
+/// arms blocked before measurement and an arm absent from this one fails rather
+/// than passing unexamined. Each row is pinned by state *and* by a substring of
+/// the reason, because neither alone separates the family: the two passing arms
+/// carry the one sentence every passing structural arm carries, so what says
+/// each of them measured its own scope is the row-level assertion -- below for
+/// complexity, and in `super::file_shape` for file shape.
+const ACQUIRED_METRIC_ARMS: [(GateId, BatteryState, &str); 4] = [
     // The fixture's three routines are each inside every declared complexity
     // bound, so the arm measures and passes. A pass is also what an arm that
     // measured *nothing* would report, so the rows themselves are checked
@@ -28,7 +20,18 @@ const ACQUIRED_METRIC_ARMS: [(GateId, BatteryState, &str); 3] = [
     (
         GateId::Complexity,
         BatteryState::Passed,
-        "completed within threshold",
+        "all declared structural measurements completed within threshold",
+    ),
+    // Every source file the fixture commits is inside its own elastic bound, so
+    // the file-shape arm reports that same passing sentence. What the rows
+    // themselves carry -- one path key per selected file, paired across both
+    // metrics, each with the limit it was judged against -- is asserted in
+    // `super::file_shape`, since a whole-arm state cannot see whether anything
+    // was measured at all.
+    (
+        GateId::FileShape,
+        BatteryState::Passed,
+        "all declared structural measurements completed within threshold",
     ),
     // The fixture repository commits three `.py` sources, and `.py` is in the
     // workspace policy's magic class. The scan reaches its baseline for every
@@ -567,16 +570,15 @@ fn assert_every_family_projected_its_own_evidence(report: &BatteryReport) {
 
 /// One metric arm carried its own acquired evidence rather than a family refusal.
 ///
-/// Both halves are asserted from the same result: the two unreached arms each
-/// name their own blocker, and the two that reach their input each land on the
-/// state that input produces. Asserting only the refusals would pass just as
-/// well if the family had gone back to refusing wholesale, which is the exact
-/// regression this arm's acquisition undoes.
+/// Each arm lands on the state its own input produces, and names the evidence
+/// that state rests on. Accepting any acquired state would pass just as well if
+/// the family had gone back to refusing wholesale, which is the exact regression
+/// this family's acquisition undoes.
 ///
-/// Every arm is claimed by exactly one of the two lists, and an arm claimed by
-/// neither fails here rather than passing unexamined. The lists are what says
-/// which arms this build measures, so an arm quietly leaving both would be an
-/// arm nothing checks at all.
+/// Every arm is claimed by a row of `ACQUIRED_METRIC_ARMS`, and an arm claimed
+/// by none fails here rather than passing unexamined. That list is what says
+/// which arms this build measures, so an arm quietly leaving it would be an arm
+/// nothing checks at all.
 fn assert_metric_arm_acquired(result: &BatteryArmResult) {
     let ArmEvidence::Metrics { report } = result.evidence() else {
         panic!(
@@ -586,29 +588,19 @@ fn assert_metric_arm_acquired(result: &BatteryArmResult) {
         )
     };
     assert_eq!(report.gate_id(), result.gate_id());
-    let unreached = UNREACHED_METRIC_ARMS
+    let (_, expected, evidence) = ACQUIRED_METRIC_ARMS
         .iter()
-        .find(|(gate_id, _)| *gate_id == result.gate_id());
-    let (expected, evidence) = match unreached {
-        Some((_, blocker)) => (BatteryState::Unavailable, *blocker),
-        None => {
-            let (_, state, evidence) = ACQUIRED_METRIC_ARMS
-                .iter()
-                .find(|(gate_id, ..)| *gate_id == result.gate_id())
-                .unwrap_or_else(|| {
-                    panic!(
-                        "{} is claimed by neither metric-arm list, so nothing states what it \
-                         should report: {}",
-                        result.gate_id(),
-                        result.reason()
-                    )
-                });
-            (*state, *evidence)
-        }
-    };
+        .find(|(gate_id, ..)| *gate_id == result.gate_id())
+        .unwrap_or_else(|| {
+            panic!(
+                "{} is claimed by no metric-arm row, so nothing states what it should report: {}",
+                result.gate_id(),
+                result.reason()
+            )
+        });
     assert_eq!(
         result.state(),
-        expected,
+        *expected,
         "{} reported the wrong state for this fixture: {}",
         result.gate_id(),
         result.reason()
@@ -631,12 +623,15 @@ fn assert_metric_arm_acquired(result: &BatteryArmResult) {
 /// empty scope folds to `NotApplicable`, which no measurement outranks. So the
 /// rows are read directly rather than inferred from the state.
 ///
-/// The whole set is pinned, not a sample. The fixture commits one `.rs` and two
-/// `.py` sources, so this is also what says both vendored grammars are reached
-/// through the arm rather than only the one this workspace is written in: a
-/// build that measured Rust alone would still pass, and would fail here. The
-/// lengths differ across the two classes for the same reason -- a parser
-/// answering one constant per routine cannot produce both `1` and `2`.
+/// The whole set is pinned, not a sample. The fixture commits one `.rs` and
+/// three `.py` sources, so this is also what says both vendored grammars are
+/// reached through the arm rather than only the one this workspace is written
+/// in: a build that measured Rust alone would still pass, and would fail here.
+/// Only two of the `.py` sources declare a routine, `app/__init__.py` being a
+/// lone import, so a parsed file holding none contributes no row rather than a
+/// zero, and an invented row fails here as surely as a dropped one. The lengths
+/// differ across the two classes for the same reason: a parser answering one
+/// constant per routine could not produce both `1` and `2`.
 fn assert_complexity_measured_the_fixture_routine(report: &StructuralArmEvidence) {
     let measured: Vec<_> = report
         .metrics()

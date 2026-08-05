@@ -14,7 +14,8 @@ use super::{
     ArmDeclaration, ComplexityRoutine, EvidenceError, EvidenceState, MetricEvidence, MetricId,
     MetricKey, MetricMeasurement, MetricStateBinding, ParseError, ParserEvidence, ParserId,
     ResolvedMagicMetric, STRUCTURAL_ARMS, StructuralArmEvidence, measure_complexity,
-    resolve_magic_metric, resolve_metric_rule, scan_magic_regressions, scan_markdown_link_case,
+    measure_file_shape, resolve_magic_metric, resolve_metric_rule, scan_magic_regressions,
+    scan_markdown_link_case,
 };
 use crate::core::ActorCapture;
 use crate::input::Contract;
@@ -35,12 +36,13 @@ use crate::tree::SelectedTree;
 /// against the live repository's `HEAD`, which the capture that materialized
 /// this tree is the last thing allowed to observe.
 ///
-/// The actor and the durable latches are borrowed for the same reason and used
-/// for a different one: a bounded arm decides each measurement against an
-/// elastic limit that varies with the actor and collapses to the base limit for
-/// an already-latched key. Both are read by the caller from the ledger this run
-/// publishes as its state authority, so the limit an arm judges against and the
-/// limit that ledger would latch are one reading rather than two.
+/// The acting actor and the durable latches are borrowed for the same reason,
+/// and are what a bounded arm needs beyond bytes: an elastic limit varies with
+/// the actor a path's headroom is seeded from, and collapses to the base limit
+/// for a path already latched. Both come from the caller that reads the ledger
+/// this run publishes as its state authority, so the limit the file-shape and
+/// complexity arms judge against and the limit that ledger would latch are one
+/// reading rather than two.
 #[derive(Debug)]
 pub struct MetricSource<'a> {
     root: &'a Path,
@@ -121,6 +123,7 @@ pub fn acquire_metrics(
     for declaration in STRUCTURAL_ARMS {
         let metrics = match declaration.id() {
             GateId::Complexity => complexity_metrics(source)?,
+            GateId::FileShape => file_shape_metrics(source, declaration)?,
             GateId::MagicNumbers => magic_metrics(source, declaration)?,
             GateId::MarkdownLinks => markdown_metrics(source)?,
             _ => unavailable(declaration, unreached_input(declaration.id()))?,
@@ -130,23 +133,17 @@ pub fn acquire_metrics(
     Ok(arms)
 }
 
-/// The exact input an arm needs and this build cannot yet reach.
+/// The exact input an arm needs and this build cannot reach.
 ///
-/// Each names one missing thing rather than a general incompleteness, so the
-/// arm that becomes reachable first can be built without re-deriving why the
-/// other two still are not.
+/// Every structural arm now acquires, so all four say that rather than naming a
+/// missing input. Reaching one of them would mean the dispatch above stopped
+/// covering an arm it names, and the row says so instead of reporting an
+/// unavailability that has no cause. The last is for a gate declaring no
+/// structural arm at all, which `STRUCTURAL_ARMS` holds none of.
 const fn unreached_input(gate_id: GateId) -> &'static str {
     match gate_id {
-        GateId::FileShape => concat!(
-            "no per-path elastic bound reaches acquisition: the tracked policy document ",
-            "selects this scope through file_shape.source_suffixes and the contract ",
-            "resolves a bound for a measured path, but the captured source retains only a ",
-            "root and a tracked inventory, so neither that policy handle nor the actor ",
-            "seed its headroom varies with is in hand"
-        ),
-        // These three arms measure; reaching any would mean the match above
-        // stopped covering an arm it names.
         GateId::Complexity => "the complexity arm is acquired rather than reported unreached",
+        GateId::FileShape => "the file-shape arm is acquired rather than reported unreached",
         GateId::MagicNumbers => "the magic-number arm is acquired rather than reported unreached",
         GateId::MarkdownLinks => "the Markdown arm is acquired rather than reported unreached",
         _ => "this gate declares no structural arm",
@@ -162,20 +159,180 @@ fn unavailable(
     declaration: ArmDeclaration,
     reason: &str,
 ) -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
+    declared_rows(
+        declaration,
+        &MetricKey::Arm,
+        &EvidenceState::Unavailable {
+            reason: reason.to_owned(),
+        },
+    )
+}
+
+/// Every metric an arm declares, carrying one shared state under one key.
+///
+/// Both callers need the same guarantee for different reasons: a whole-arm row
+/// set has to cover the declaration, and a per-path row set has to cover it
+/// with identical keys. Building both here is what makes a paired arm's
+/// keysets equal by construction rather than by two call sites agreeing.
+fn declared_rows(
+    declaration: ArmDeclaration,
+    key: &MetricKey,
+    state: &EvidenceState,
+) -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
     declaration
         .metrics()
         .iter()
         .map(|metric| {
-            MetricEvidence::new(
-                *metric,
-                MetricKey::Arm,
-                EvidenceState::Unavailable {
-                    reason: reason.to_owned(),
-                },
-            )
-            .map_err(MetricAcquisitionError::Evidence)
+            MetricEvidence::new(*metric, key.clone(), state.clone())
+                .map_err(MetricAcquisitionError::Evidence)
         })
         .collect()
+}
+
+/// Measure every selected source file's shape against its own elastic bound.
+///
+/// The file class is tested here for the reason the other two acquiring arms
+/// test theirs: a row per unselected path would bury the sources the arm is
+/// about. What is additionally selected out is a repository-truth document,
+/// even when its suffix is in the class. Those answer to a character bound on
+/// the repository-document arm, and a document measured here as well would be
+/// held to two limits at once and could fail its file-shape one while passing
+/// the bound the predecessor actually holds it to.
+fn file_shape_metrics(
+    source: &MetricSource<'_>,
+    declaration: ArmDeclaration,
+) -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
+    let policy = source.contract.rule_policy();
+    let suffixes = policy.document().file_classes().file_shape();
+    let mut metrics = Vec::new();
+    for path in source.measurable() {
+        if !selects(path, suffixes) {
+            continue;
+        }
+        let document = policy.selects_repository_document(path).map_err(|error| {
+            MetricAcquisitionError::Source(format!(
+                "repository-document selection for {path:?}: {error}"
+            ))
+        })?;
+        if document {
+            continue;
+        }
+        let key = MetricKey::path(path).map_err(MetricAcquisitionError::Evidence)?;
+        metrics.extend(file_shape_rows(source, declaration, path, &key)?);
+    }
+    if metrics.is_empty() {
+        return declared_rows(
+            declaration,
+            &MetricKey::Arm,
+            &EvidenceState::NotApplicable {
+                reason: "the selected tree admits no declared source file class".to_owned(),
+            },
+        );
+    }
+    Ok(metrics)
+}
+
+/// One selected file's paired rows: its measured shape, or why it has none.
+///
+/// A file that cannot be read or decoded reports that once and both rows carry
+/// it, because the two metrics answer for the same bytes: a lines row that
+/// measured beside a bytes row that refused would claim this file was half
+/// observed, and the arm would report a keyset its declaration forbids.
+fn file_shape_rows(
+    source: &MetricSource<'_>,
+    declaration: ArmDeclaration,
+    path: &str,
+    key: &MetricKey,
+) -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
+    let bytes = match std::fs::read(source.root().join(path)) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return declared_rows(
+                declaration,
+                key,
+                &EvidenceState::Unavailable {
+                    reason: format!("selected source file could not be read: {error}"),
+                },
+            );
+        }
+    };
+    let shape = match measure_file_shape(path, &bytes) {
+        Ok(shape) => shape,
+        Err(error) => return declared_rows(declaration, key, &error.into_evidence_state()),
+    };
+    [
+        (MetricId::FileLines, shape.lines()),
+        (MetricId::FileBytes, shape.bytes()),
+    ]
+    .into_iter()
+    .map(|(metric, value)| bounded_row(source, path, key, metric, value))
+    .collect()
+}
+
+/// One measured quantity's row, judged against the limit it was decided under.
+///
+/// A bound that cannot be resolved, bound, or decided is this row's own
+/// unavailability rather than the family's refusal, matching what an unreadable
+/// file gets: the paths whose bounds did resolve still speak for the arm, and
+/// the arm still carries one explicit state per declared metric.
+fn bounded_row(
+    source: &MetricSource<'_>,
+    path: &str,
+    key: &MetricKey,
+    metric: MetricId,
+    value: u64,
+) -> Result<MetricEvidence, MetricAcquisitionError> {
+    match bounded_evidence(source, path, key, metric, value) {
+        Ok(evidence) => Ok(evidence),
+        Err(reason) => {
+            MetricEvidence::new(metric, key.clone(), EvidenceState::Unavailable { reason })
+                .map_err(MetricAcquisitionError::Evidence)
+        }
+    }
+}
+
+/// Resolve one path's rule, decide its bound, and carry both on the value.
+///
+/// The decision travels on the measurement rather than being compared here, so
+/// an over-limit file fails through the latch binding every consumer already
+/// reads. The latch is the ledger's, and a latched path is held to its base
+/// limit: the elastic headroom a ratchet lends was already spent by the breach
+/// that latched it.
+fn bounded_evidence(
+    source: &MetricSource<'_>,
+    path: &str,
+    key: &MetricKey,
+    metric: MetricId,
+    value: u64,
+) -> Result<MetricEvidence, String> {
+    let name = metric.as_str();
+    let rule = resolve_metric_rule(
+        source.contract.rule_policy(),
+        metric,
+        &PolicyContext::new().with_path(path),
+    )
+    .map_err(|error| format!("{name} bound did not resolve for {path:?}: {error}"))?;
+    let binding = MetricStateBinding::new(
+        metric,
+        key.clone(),
+        value,
+        ParserEvidence::Native {
+            parser: ParserId::Utf8FileShapeV1,
+        },
+        rule,
+    )
+    .map_err(|error| format!("{name} did not bind for {path:?}: {error}"))?;
+    let actor_inputs = source
+        .actor
+        .actor_inputs(path)
+        .map_err(|error| format!("actor provenance for selected source {path:?}: {error}"))?;
+    let latched = source.latches.contains(binding.entry());
+    let decision = binding
+        .decide(latched, &actor_inputs)
+        .map_err(|error| format!("active {name} bound for {path:?}: {error}"))?;
+    binding
+        .measured(&decision)
+        .map_err(|error| format!("{name} evidence for {path:?}: {error}"))
 }
 
 /// Measure inline Markdown link case against the tracked inventory.

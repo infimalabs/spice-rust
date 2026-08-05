@@ -57,15 +57,21 @@ enum FamilyExecution {
 /// are the live repository's `HEAD`, and `HEAD` moves: a read deferred to first
 /// request would compare part of the selection against one commit and the rest
 /// against another, and the report would name neither.
+///
+/// The acting actor and the latch inventory are retained instead of consumed by
+/// the core capture, because the structural family decides elastic bounds of its
+/// own over a different set of paths. Retaining the two the caller supplied is
+/// what keeps both families deciding against one ledger reading rather than the
+/// structural one taking a second, later look at state that may have moved.
 pub struct RepositoryExecutor<'trace> {
     tree: SelectedTree,
     contract: Contract,
     source: Digest,
     core: Result<Vec<ArmEvidence>, String>,
     baselines: BaselineCapture,
-    bounds: Vec<BoundDecision>,
     actor: ActorCapture,
     latches: Vec<LatchEntry>,
+    bounds: Vec<BoundDecision>,
     rim: RimCapture,
     hygiene: HygieneConfiguration,
     context: Option<BatteryContext>,
@@ -146,9 +152,9 @@ impl<'trace> RepositoryExecutor<'trace> {
             source,
             core,
             baselines,
-            bounds,
             actor,
             latches: latches.to_vec(),
+            bounds,
             rim,
             hygiene,
             context: None,
@@ -251,12 +257,13 @@ impl<'trace> RepositoryExecutor<'trace> {
     /// A family-wide refusal is reserved for a source that cannot be walked or
     /// evidence that violates its declaration. An arm this build cannot measure
     /// is not one of those: it acquires as evidence naming the input it lacks,
-    /// so the ones that stay unreachable cannot suppress the ones that measure.
+    /// so an arm that stopped reaching its input could not suppress the others.
+    /// All four reach one now, which is a property of this build rather than a
+    /// guarantee: the projection is what keeps that from mattering.
     ///
-    /// The actor and the latches are the same two this executor handed the core
-    /// family, so a bounded structural measurement is judged against the limit
-    /// the core family would have judged the same path against, rather than
-    /// against a second reading of a ledger that moved in between.
+    /// The actor and latches the capture retained are handed over here rather
+    /// than re-read, so the two bounded arms judge a path against the same
+    /// elastic limit the core family decided its own bounds under.
     fn acquire_metrics_family(&self) -> Result<Vec<ArmEvidence>, String> {
         let source = MetricSource::capture(
             &self.tree,

@@ -130,20 +130,20 @@ fn tracked_inputs_load_one_operational_current_contract() {
     );
 }
 
-/// The file-shape arm's blocker is its acquisition, not the inputs it is offered.
+/// The tracked contract carries the bound the file-shape arm now measures against.
 ///
-/// `metrics::acquire` reports that arm unavailable in a sentence naming what the
-/// captured source failed to retain, and it may say that only while all three of
-/// its claims about the inputs hold: this scope is selected by
+/// These three claims were asserted while the arm was still unavailable, because
+/// the sentence it reported named them and had previously blamed the contract for
+/// its own missing acquisition. The arm acquires now, so they stopped describing a
+/// refusal and started describing its inputs: this scope is selected by
 /// `file_shape.source_suffixes`, the tracked contract resolves a bound for a path
-/// the arm would measure, and the actor seed the sentence also names really moves
-/// that bound. Each is measured here rather than restated, because the sentence
-/// previously blamed the contract and only a call against the tracked document
-/// could tell that apart from the truth. A zero variation would demote the seed
-/// from a missing input to decoration; a refused bound would mean the sentence
-/// blames the wrong side again.
+/// the arm really measures, and the actor seed moves that bound. Each is still
+/// measured against the tracked document rather than restated, since an arm
+/// reading a bound nobody declared would measure every path against a default.
+/// A zero variation would leave the elastic limit no headroom to vary, which is
+/// the same as having no seed at all.
 #[test]
-fn tracked_contract_offers_the_file_shape_bound_acquisition_never_receives() {
+fn the_tracked_contract_resolves_the_file_shape_bound_the_arm_measures_against() {
     let contract = Contract::load(&workspace_root()).expect("tracked current gate inputs load");
     let policy = contract.rule_policy();
     assert!(
@@ -153,13 +153,13 @@ fn tracked_contract_offers_the_file_shape_bound_acquisition_never_receives() {
             .file_shape()
             .iter()
             .any(|suffix| suffix == ".rs"),
-        "the measured path the sentence speaks of is outside the class it names"
+        "the measured path is outside the class the arm selects its scope from"
     );
 
     let measured = PolicyContext::new().with_path("gate/src/metrics/acquire.rs");
     let bound = policy
         .resolve_bound(BoundName::FileLoc, &measured)
-        .expect("the tracked contract resolves a file-shape bound for a measured path");
+        .expect("the tracked contract resolves the file-shape bound for a measured path");
     assert_eq!(bound.limit(), TRACKED_FILE_LOC_LIMIT);
     assert_eq!(bound.ratchet_limit(), TRACKED_FILE_LOC_RATCHET);
     assert!(!bound.unlimited());
@@ -169,7 +169,7 @@ fn tracked_contract_offers_the_file_shape_bound_acquisition_never_receives() {
         .expect("no declared file_loc rule leaves the global bound owed to any context");
     assert_eq!(
         unpathed, bound,
-        "a bound this contract yields without even a path cannot be what acquisition lacks"
+        "no declared rule narrows this path, so the arm measures it against the global bound"
     );
     assert!(
         policy.document().ratchet().variation_percent() > 0,

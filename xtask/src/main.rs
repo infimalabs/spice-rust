@@ -114,6 +114,8 @@ fn release_environment() -> xtask::ReleaseEnvironment {
         bootstrap_environment("SDKROOT"),
         bootstrap_environment("DEVELOPER_DIR"),
         bootstrap_environment("CARGO_TARGET_DIR"),
+        bootstrap_environment("RUSTC"),
+        bootstrap_environment("CARGO_BUILD_RUSTC"),
     )
 }
 

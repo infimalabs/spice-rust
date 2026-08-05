@@ -134,23 +134,19 @@ impl MetricStateBinding {
                 "state decision entry does not match the compiled metric key".to_owned(),
             ));
         }
-        let measurement = self.measurement(decision.bound())?;
-        MetricEvidence::new(
-            self.metric,
-            self.key.clone(),
-            EvidenceState::measured(measurement),
-        )
-        .map_err(StateBindingError::Evidence)
+        self.measured(decision.bound())
     }
 
-    /// Convert one directly decided bound into complete metric evidence.
+    /// Convert a bound decided by [`Self::decide`] into complete metric evidence.
     ///
-    /// [`Self::evidence`] is the same conversion for the reconciling route,
+    /// [`Self::evidence`] is this same conversion for the reconciling route,
     /// which owns a [`StateDecision`] because it rewrote the ledger. An arm that
     /// only measures holds the [`BoundDecision`] [`Self::decide`] handed back
     /// and has no state decision to present, so it converts from that instead.
-    /// Both arrive at [`Self::measurement`], so neither can report a limit the
-    /// other would not.
+    /// Both arrive at [`Self::measurement`] and attach the same rule and latch
+    /// bindings to the same measured value, so the row an arm reports and the
+    /// row the state transaction would report cannot disagree about the limit
+    /// that value was judged against.
     ///
     /// # Errors
     ///

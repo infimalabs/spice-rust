@@ -25,6 +25,7 @@ const MARKED: &str = "src/marked.rs";
 const PROSE: &str = "docs/guide.md";
 
 mod executor;
+mod file_shape;
 mod magic;
 mod manifest;
 mod minting;
@@ -331,6 +332,31 @@ impl Fixture {
             &wire::encode(self.policy.document()).expect("policy JSON"),
         )
     }
+}
+
+/// The acting actor every real-repository battery below is captured under.
+///
+/// Named once and shared because it is not decoration: an elastic limit is
+/// seeded from the actor a path's headroom varies with, so two fixtures spelling
+/// it differently would measure the same file against two different limits.
+const FIXTURE_BATTERY_ACTOR: &str = "battery-actor";
+
+/// Run one complete battery over a repository and return its report.
+fn battery_report(repository: &Path) -> BatteryReport {
+    let mut capture = crate::BatteryCapture::capture(
+        repository,
+        &crate::Selector::staged(),
+        crate::ClaimCapture::Idle,
+        crate::ActorCapture::Acting {
+            actor: FIXTURE_BATTERY_ACTOR.to_owned(),
+            bound_claims: Vec::new(),
+        },
+        crate::RimCapture::new(repository, None, Vec::new())
+            .expect("the fixture repository root is absolute"),
+        crate::HygieneConfiguration::new(["app/main.py"], ["tests"]).expect("hygiene roots"),
+    )
+    .expect("capture the fixture battery source");
+    capture.execute().expect("complete fixture battery")
 }
 
 fn production_repository(root: &Path) -> PathBuf {
