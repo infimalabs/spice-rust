@@ -18,6 +18,15 @@ mkdir -p "$CUTOVER_EVIDENCE"
 cd "$CUTOVER_REPO"
 test -z "$(git status --porcelain)"
 git diff --exit-code -- spice.toml
+CUTOVER_PINNED=$(git worktree list --porcelain |
+awk '/^worktree / { sub(/^worktree /, ""); print }' |
+while IFS= read -r CUTOVER_WORKTREE; do
+  test -e "$CUTOVER_WORKTREE/spice.toml" || continue
+  printf '%s %s\n' \
+    "$(git -C "$CUTOVER_WORKTREE" ls-files -v spice.toml)" "$CUTOVER_WORKTREE"
+done | grep -v '^H ' || true)
+printf '%s' "$CUTOVER_PINNED" | tee "$CUTOVER_EVIDENCE/pinned-configuration.txt"
+test -z "$CUTOVER_PINNED"
 spice config show > "$CUTOVER_EVIDENCE/predecessor-config.json"
 python3 - "$CUTOVER_EVIDENCE/predecessor-config.json" <<'PY'
 import json
@@ -49,6 +58,19 @@ document hides the reviewed policy. The hook activation follows installation
 because its three executable inputs are installer-owned assets, but it waits
 until predecessor state is disabled below. It configures only this reviewed
 worktree, which is the one the appliance and operator use.
+
+One tracked `spice.toml` serves both runtimes, so no lane needs an index-level
+parser bridge: the predecessor admits `policy.admission` into its typed
+registry without evaluating it, exactly as it already admits `policy.taste`. An
+earlier revision of this runbook instead had every predecessor-driven lane pin
+the preceding document with `git update-index --skip-worktree`. That pin now
+only hides staleness, and it hides it from the instruments above:
+`skip-worktree` makes `git status` and `git diff` both report the file clean,
+and makes checkout and merge decline to update it, so a lane left pinned
+carries stale configuration indefinitely, invisibly, and across the cutover.
+The worktree sweep is therefore spelled with `git ls-files -v`, the only one of
+the three that can still see a pin, and it stops the cutover while any worktree
+holds one.
 
 ## Prove the predecessor is dry
 
