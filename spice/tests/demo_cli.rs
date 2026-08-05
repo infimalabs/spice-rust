@@ -40,7 +40,7 @@ impl Fixture {
             &ambient_spice,
             format!("#!/bin/sh\nprintf invoked > {marker}\nexit 91\n"),
         )
-        .expect("plant ambient Python authority sentinel");
+        .expect("plant ambient executable sentinel");
         let mut permissions = fs::metadata(&ambient_spice)
             .expect("read ambient sentinel permissions")
             .permissions();
@@ -81,12 +81,12 @@ impl Fixture {
 
     fn assert_ambient_untouched(&self, expected: &[u8]) {
         assert_eq!(
-            fs::read(&self.ambient_spice).expect("read ambient Python sentinel"),
+            fs::read(&self.ambient_spice).expect("read ambient executable sentinel"),
             expected
         );
         assert!(
             !self.invocation_marker.exists(),
-            "native demo must not resolve or launch ambient Python spice"
+            "native demo must not resolve or launch an ambient executable"
         );
     }
 }
@@ -102,7 +102,7 @@ fn shell_quote(value: &str) -> String {
 }
 
 #[test]
-fn seed_only_process_is_anchored_recoverable_and_python_inert() {
+fn seed_only_process_is_anchored_recoverable_and_ambient_inert() {
     let fixture = Fixture::new();
     let ambient_before = fs::read(&fixture.ambient_spice).expect("snapshot ambient authority");
     let root = fixture.root("demo root's");
@@ -250,7 +250,7 @@ fn a_seeded_root_is_born_on_main_under_a_renamed_ambient_default_branch() {
 }
 
 #[test]
-fn reuse_refuses_a_moved_demo_root_over_the_wire_without_python() {
+fn reuse_refuses_a_moved_demo_root_over_the_wire_without_ambient_resolution() {
     let fixture = Fixture::new();
     let ambient_before = fs::read(&fixture.ambient_spice).expect("snapshot ambient authority");
     let root = fixture.root("moved root");

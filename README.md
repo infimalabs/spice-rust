@@ -1,11 +1,10 @@
 # Spice
 
-## Development hooks
+## Install and start
 
-A digest-bound Spice install publishes `pre-commit`, `commit-msg`, and
-`reference-transaction` artifacts under `.spice/git-hooks`. Preview and
-apply the current install plan, then activate its exact hook directory once per
-checkout or linked worktree:
+Spice is this repository's installed appliance. Preview and apply its
+digest-bound install plan, then activate the installed hooks once per checkout
+or linked worktree:
 
 ```sh
 cargo run --locked -p spice -- install
@@ -13,13 +12,15 @@ cargo run --locked -p spice -- install --apply=DIGEST_FROM_PREVIEW
 ./scripts/install-hooks.sh
 ```
 
-After installation, start the repository appliance with exactly one command:
+The plan publishes `.spice/bin/spice`, the operator skill, and the
+`pre-commit`, `commit-msg`, and `reference-transaction` hooks under
+`.spice/git-hooks`. Start Spice with:
 
 ```sh
 .spice/bin/spice up
 ```
 
-The activation script refuses unless all three Spice hooks are executable. The
+The activation script refuses unless all three hooks are executable. The
 pre-commit hook runs the canonical verifier, which performs
 formatting, Clippy, native and browser-target builds, deterministic app
 verification, workspace tests, doctests, the machine-readable

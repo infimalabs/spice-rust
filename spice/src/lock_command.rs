@@ -259,8 +259,8 @@ impl Invocation {
                 error.to_string(),
             )
         })?;
-        let resolved = spice::config::load_coexisting_repository(&repository, &[])
-            .map_err(Failure::configuration)?;
+        let resolved =
+            spice::config::load_repository(&repository, &[]).map_err(Failure::configuration)?;
         repository
             .admit_state()
             .map_err(|error| match crate::state_failure(&error) {

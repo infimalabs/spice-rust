@@ -302,12 +302,9 @@ mod tests {
         );
     }
 
-    /// Gate advertises policy keys a live repository may declare while the
-    /// predecessor still shares the document. This workspace is such a
-    /// repository, so its own tracked bytes must survive declaring them under
-    /// the strict admission that guards landing.
+    /// The tracked document admits every current structural-policy spelling.
     #[test]
-    fn tracked_configuration_admits_every_advertised_coexisting_key() {
+    fn tracked_configuration_admits_current_structural_policy() {
         let current = include_str!("../../spice.toml");
         // Four advertised keys sit directly under `[policy]`, and TOML refuses a
         // reopened table, so they join the one the document already carries.
@@ -321,14 +318,6 @@ mod tests {
                  name_cluster_threshold = 3\ntest_paths = [\"tests\"]\n",
             ),
         );
-        for key in gate::COEXISTING_TRACKED_KEYS {
-            let leaf = key.rsplit('.').next().expect("a key names a leaf");
-            assert!(
-                declared.contains(&format!("\n{leaf} = ")),
-                "{key} undeclared"
-            );
-        }
-
         assert_eq!(admit_tracked_configuration(&declared), Ok(()));
     }
 

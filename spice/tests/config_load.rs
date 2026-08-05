@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use spice::config::{
     AcquisitionKind, FlagOverride, FlagValue, PathSegment, Resolved, capture_repository,
-    descriptor, descriptors, load, load_coexisting_repository,
+    descriptor, descriptors, load, load_repository,
 };
 use wire::{ConfigSource, Name};
 
@@ -72,9 +72,9 @@ fn missing_documents_are_defaults_repeatably_without_mutation() {
 }
 
 #[test]
-fn coexisting_loader_reads_rust_local_intent_without_admitting_python_tracked_tables() {
+fn repository_loader_reads_current_tracked_and_local_intent_without_mutation() {
     let scratch = Scratch::new();
-    let root = repository(&scratch, "coexisting");
+    let root = repository(&scratch, "current");
     write(
         root.join("spice.toml"),
         concat!(
@@ -89,14 +89,9 @@ fn coexisting_loader_reads_rust_local_intent_without_admitting_python_tracked_ta
     );
     let repository = spice::repository::Repository::discover(&root).expect("fixture repository");
 
-    let strict = spice::config::load_repository(&repository, &[])
-        .expect("strict loader admits typed Rust metadata");
-    assert_eq!(strict.root().tasks().stems(), ["rim"]);
-    assert!(strict.root().policy().env_names().is_empty());
-
     let before = snapshot(scratch.path());
-    let resolved = load_coexisting_repository(&repository, &[])
-        .expect("coexisting loader projects out tracked shared metadata");
+    let resolved =
+        load_repository(&repository, &[]).expect("repository loader admits current typed metadata");
     assert_eq!(resolved.root().tasks().stems(), ["rim"]);
     assert_eq!(
         resolved.root().tasks().hidden_stems(),
@@ -108,7 +103,7 @@ fn coexisting_loader_reads_rust_local_intent_without_admitting_python_tracked_ta
     assert_eq!(
         snapshot(scratch.path()),
         before,
-        "coexisting load is read-only"
+        "repository load is read-only"
     );
 }
 

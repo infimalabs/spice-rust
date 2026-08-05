@@ -37,7 +37,7 @@ impl Fixture {
         )
         .as_bytes()
         .to_vec();
-        fs::write(root.join("spice.toml"), &tracked).expect("write tracked coexistence config");
+        fs::write(root.join("spice.toml"), &tracked).expect("write tracked current config");
         Self { root, tracked }
     }
 
@@ -80,18 +80,16 @@ struct Spoken {
 }
 
 #[test]
-fn reads_name_the_coexistence_effective_tree_and_provenance() {
+fn reads_name_the_current_effective_tree_and_provenance() {
     let fixture = Fixture::new("read");
     let text = fixture.invoke(&["config"]);
     let json = fixture.invoke(&["--json", "config"]);
     let text = text_body(text);
     let json = reply_body(json);
     assert_eq!(text["mode"], json["mode"]);
-    assert_eq!(text["ignored_tracked_roots"], json["ignored_tracked_roots"]);
     assert_eq!(text["effective"], json["effective"]);
     assert_eq!(text["provenance"], json["provenance"]);
-    assert_eq!(json["mode"], "python-scaffold-coexistence");
-    assert_eq!(json["ignored_tracked_roots"], serde_json::json!(["policy"]));
+    assert_eq!(json["mode"], "current");
     assert_eq!(
         json["effective"]["taste"]["polling"]["message"],
         "use events"
@@ -311,17 +309,17 @@ fn local_symlinks_are_refused_without_following_or_replacing_them() {
 }
 
 #[test]
-fn linked_repository_owner_refuses_without_mutating_python_authority() {
+fn linked_repository_owner_refuses_without_mutating_outside_authority() {
     use std::os::unix::fs::symlink;
 
     let fixture = Fixture::new("linked-owner");
     let marker = fixture.root.join(".git");
     let outside = fixture.root.join("outside-git-owner");
     fs::rename(&marker, &outside).expect("park real Git owner");
-    let python = outside.join(".spice/data/spicejournal.sqlite3");
-    fs::create_dir_all(python.parent().expect("Python authority parent"))
-        .expect("create Python authority");
-    fs::write(&python, b"python authority\n").expect("plant Python authority");
+    let authority = outside.join(".spice/data/spicejournal.sqlite3");
+    fs::create_dir_all(authority.parent().expect("outside authority parent"))
+        .expect("create outside authority");
+    fs::write(&authority, b"outside authority\n").expect("plant outside authority");
     symlink(&outside, &marker).expect("link repository owner");
 
     refusal(
@@ -329,8 +327,8 @@ fn linked_repository_owner_refuses_without_mutating_python_authority() {
         "config::parent-refused",
     );
     assert_eq!(
-        fs::read(&python).expect("read Python authority"),
-        b"python authority\n"
+        fs::read(&authority).expect("read outside authority"),
+        b"outside authority\n"
     );
     assert!(!outside.join(".spice/config.toml").exists());
     assert!(!outside.join(".spice/config.lock").exists());

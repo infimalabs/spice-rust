@@ -21,7 +21,6 @@ use wire::{
     ConfigSource, Digest, Domain, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition,
 };
 
-const IGNORED_TRACKED_ROOTS: &[&str] = &["policy"];
 const CONFIG_PLAN_VERSION: u16 = 1;
 #[cfg(unix)]
 const PUBLICATION_ATTEMPTS: usize = 128;
@@ -31,7 +30,6 @@ static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub(crate) struct ConfigReport {
     mode: ConfigMode,
-    ignored_tracked_roots: &'static [&'static str],
     effective: config::Root,
     provenance: Vec<ProvenanceRow>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -55,7 +53,7 @@ impl ConfigReport {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 enum ConfigMode {
-    PythonScaffoldCoexistence,
+    Current,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -296,7 +294,7 @@ impl Documents {
         let tracked_text = optional_utf8(self.tracked.as_deref(), &self.tracked_path)?;
         let tracked_location = self.tracked_path.display().to_string();
         let local_location = self.local_path.display().to_string();
-        config::resolve(Inputs::coexisting(
+        config::resolve(Inputs::new(
             tracked_text.map(|text| Document::new(&tracked_location, text)),
             local.map(|text| Document::new(&local_location, text)),
             &[],
@@ -774,8 +772,7 @@ fn report(
         })
         .collect();
     Ok(ConfigReport {
-        mode: ConfigMode::PythonScaffoldCoexistence,
-        ignored_tracked_roots: IGNORED_TRACKED_ROOTS,
+        mode: ConfigMode::Current,
         effective: resolved.into_root(),
         provenance,
         selected,

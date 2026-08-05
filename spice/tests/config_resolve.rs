@@ -25,14 +25,6 @@ fn documents<'a>(tracked: Option<&'a str>, local: Option<&'a str>) -> Inputs<'a>
     )
 }
 
-fn coexisting_documents<'a>(tracked: Option<&'a str>, local: Option<&'a str>) -> Inputs<'a> {
-    Inputs::coexisting(
-        tracked.map(|text| Document::new("spice.toml", text)),
-        local.map(|text| Document::new(".spice/local.toml", text)),
-        &[],
-    )
-}
-
 fn path_source(resolved: &Resolved, expected: &str) -> ConfigSource {
     resolved
         .provenance()
@@ -170,76 +162,52 @@ fn speech_configuration_refuses_untrusted_or_malformed_execution() {
     }
 }
 
-/// Coexistence projects out predecessor spellings, not the tables holding them.
-///
-/// The declared values are non-empty so that admitting a key and dropping it
-/// are distinguishable readings: an empty list would satisfy both. `policy`
-/// carries one key this release declares beside one only the predecessor
-/// spells, because the whole point of the narrowed rule is that those two share
-/// a table and only the second may vanish.
 #[test]
-fn coexistence_admits_current_metadata_and_projects_out_only_predecessor_spellings() {
+fn current_metadata_resolves_and_removed_spellings_refuse() {
     let tracked = concat!(
-        "[tasks]\nbase_stems = ['task']\nstems = ['rim']\nhidden_stems = ['sandbox']\n",
-        "[policy]\nenv_names = ['FIXTURE_INBOX']\npredecessor_only = ['scaffold']\n",
+        "[tasks]\nstems = ['rim']\nhidden_stems = ['sandbox']\n",
+        "[policy]\nenv_names = ['FIXTURE_INBOX']\n",
         "[taste.polling]\nwords = ['poll*']\nmessage = 'use events'\n",
     );
     let local = "[lock.worker]\ndirectory = 'locks/worker'\nshards = 2\n";
 
-    let strict_tracked = tracked
-        .replace("base_stems = ['task']\n", "")
-        .replace("predecessor_only = ['scaffold']\n", "");
-    let strict = resolve(documents(Some(&strict_tracked), Some(local)))
-        .expect("strict resolution admits typed shared metadata");
-    assert_eq!(strict.root().tasks().stems(), ["rim"]);
-    assert_eq!(strict.root().policy().env_names(), ["FIXTURE_INBOX"]);
-
-    let coexisting = resolve(coexisting_documents(Some(tracked), Some(local)))
-        .expect("coexistence projects out only predecessor roots");
-    assert_eq!(coexisting.root().tasks().stems(), ["rim"]);
+    let current = resolve(documents(Some(tracked), Some(local)))
+        .expect("current resolution admits typed shared metadata");
+    assert_eq!(current.root().tasks().stems(), ["rim"]);
     assert_eq!(
-        coexisting.root().tasks().hidden_stems(),
+        current.root().tasks().hidden_stems(),
         ["oops", "maxim_proposal", "sandbox"]
     );
     assert_eq!(
-        coexisting.root().tasks().project_min_depth(),
+        current.root().tasks().project_min_depth(),
         dialect::PROJECT_MIN_DEPTH as u64
     );
     assert_eq!(
-        coexisting.root().tasks().project_max_depth(),
+        current.root().tasks().project_max_depth(),
         dialect::PROJECT_MAX_DEPTH as u64
     );
-    assert_eq!(coexisting.root().policy().env_names(), ["FIXTURE_INBOX"]);
-    assert_eq!(coexisting.root().taste().bag().tastes().len(), 1);
-    assert_eq!(coexisting.root().lock().named().len(), 1);
+    assert_eq!(current.root().policy().env_names(), ["FIXTURE_INBOX"]);
+    assert_eq!(current.root().taste().bag().tastes().len(), 1);
+    assert_eq!(current.root().lock().named().len(), 1);
     assert_eq!(
-        path_source(&coexisting, "taste.polling.words"),
+        path_source(&current, "taste.polling.words"),
         ConfigSource::Tracked
     );
     assert_eq!(
-        path_source(&coexisting, "lock.worker.shards"),
+        path_source(&current, "lock.worker.shards"),
         ConfigSource::Local
     );
 
-    let typo = resolve(coexisting_documents(
-        Some("[tasks]\nhidden_stem = ['sandbox']\n"),
-        None,
-    ))
-    .expect_err("unknown current task metadata must not disappear as scaffold");
-    assert!(typo.issues().iter().any(|issue| {
-        issue.kind() == IssueKind::Unknown
-            && issue
-                .path()
-                .is_some_and(|path| path.to_string() == "tasks.hidden_stem")
-    }));
-
-    for (tracked, local, path) in [
-        (Some("[unknown]\nvalue = 1\n"), None, "unknown"),
-        (None, Some("[tasks]\nvalue = 1\n"), "tasks.value"),
-        (None, Some("[policy]\nvalue = 1\n"), "policy.value"),
+    for (document, path) in [
+        ("[tasks]\nbase_stems = ['task']\n", "tasks.base_stems"),
+        (
+            "[policy]\npredecessor_only = ['removed']\n",
+            "policy.predecessor_only",
+        ),
+        ("[unknown]\nvalue = 1\n", "unknown"),
     ] {
-        let error = resolve(coexisting_documents(tracked, local))
-            .expect_err("coexistence must not widen another source or root");
+        let error = resolve(documents(Some(document), None))
+            .expect_err("removed or unknown tracked intent must refuse");
         assert!(error.issues().iter().any(|issue| {
             issue.kind() == IssueKind::Unknown
                 && issue.path().is_some_and(|found| found.to_string() == path)

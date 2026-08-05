@@ -54,8 +54,8 @@ pub use camp::{
 pub use config::{Config, WalkConfig};
 #[cfg(not(target_arch = "wasm32"))]
 pub use core::{
-    ActorCapture, COEXISTING_TRACKED_KEYS, CONFIG_KEY_DECLARATIONS, ClaimCapture,
-    ConfigKeyDeclaration, CoreSource, acquire_core,
+    ActorCapture, CONFIG_KEY_DECLARATIONS, ClaimCapture, ConfigKeyDeclaration, CoreSource,
+    acquire_core,
 };
 pub use core::{
     CORE_GATE_IDS, CORE_REPORT_VERSION, ConfigInventoryEvidence, ConfigKeyEvidence,

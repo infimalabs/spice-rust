@@ -1,5 +1,5 @@
 {
-  "name": "spice-rust-browser-tests",
+  "name": "spice-browser-tests",
   "private": true,
   "scripts": {
     "test:canvas": "node app/browser/canvas.spec.mjs"

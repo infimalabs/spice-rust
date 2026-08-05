@@ -41,7 +41,7 @@ fn load_startup_surface_with<F>(
 where
     F: FnOnce(),
 {
-    let loaded = spice::config::capture_coexisting_repository(repository, &[])?;
+    let loaded = spice::config::capture_repository(repository, &[])?;
     after_capture();
     Ok(StartupSurface {
         config: SurfaceConfig {
@@ -59,7 +59,7 @@ fn require_current_surface(
     repository: &Repository,
     surface: &crate::trust_command::Surface,
 ) -> Result<(), GuardError> {
-    match surface.is_current_coexisting(repository) {
+    match surface.is_current(repository) {
         Ok(true) => Ok(()),
         Ok(false) | Err(_) => Err(GuardError::refused("trust::surface-moved")),
     }

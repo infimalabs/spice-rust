@@ -39,7 +39,7 @@ impl Drop for Scratch {
 }
 
 #[test]
-fn seed_is_deterministic_quoted_and_reopenable_without_touching_python() {
+fn seed_is_deterministic_quoted_and_reopenable_without_touching_parent_state() {
     let scratch = Scratch::new("seed");
     let root = scratch.child("demo root's");
     let executable = Path::new("/opt/spice bin/spice's");

@@ -422,50 +422,6 @@ pub fn capture_repository(
     repository: &Repository,
     flags: &[FlagOverride],
 ) -> Result<Loaded, LoadError> {
-    capture_repository_with(repository, flags, false)
-}
-
-/// Load configuration while the Python scaffold still owns tracked task and
-/// gate-policy tables in the same `spice.toml`.
-///
-/// This mode ignores exactly the tracked root tables `tasks` and `policy`.
-/// Their bytes never enter the Rust typed tree, local configuration remains
-/// strict, and every other unknown path still refuses. Release-one admission
-/// stays available through [`load_repository`] without this interregnum rule.
-///
-/// # Errors
-///
-/// Returns every ordinary acquisition and resolution diagnostic, including
-/// unknown roots other than the two named scaffold tables.
-pub fn load_coexisting_repository(
-    repository: &Repository,
-    flags: &[FlagOverride],
-) -> Result<Resolved, LoadError> {
-    capture_coexisting_repository(repository, flags).map(Loaded::into_resolved)
-}
-
-/// Capture exact repository documents while applying the Python scaffold
-/// coexistence rule to the effective configuration.
-///
-/// The returned documents and generation still cover every byte in both
-/// configuration files, including tracked tables omitted from the typed tree.
-///
-/// # Errors
-///
-/// Returns every ordinary acquisition and resolution diagnostic, including
-/// unknown roots other than the two named scaffold tables.
-pub fn capture_coexisting_repository(
-    repository: &Repository,
-    flags: &[FlagOverride],
-) -> Result<Loaded, LoadError> {
-    capture_repository_with(repository, flags, true)
-}
-
-fn capture_repository_with(
-    repository: &Repository,
-    flags: &[FlagOverride],
-    coexist: bool,
-) -> Result<Loaded, LoadError> {
     let locations = locations(repository);
     let tracked_path = locations.tracked();
     let local_path = locations.local();
@@ -493,12 +449,7 @@ fn capture_repository_with(
         .as_ref()
         .and_then(|document| document.text.as_deref())
         .map(|text| Document::new(&local_location, text));
-    let inputs = if coexist {
-        Inputs::coexisting(tracked_document, local_document, flags)
-    } else {
-        Inputs::new(tracked_document, local_document, flags)
-    };
-    let resolved = resolve(inputs);
+    let resolved = resolve(Inputs::new(tracked_document, local_document, flags));
 
     match (acquisition.is_empty(), resolved) {
         (true, Ok(resolved)) => {

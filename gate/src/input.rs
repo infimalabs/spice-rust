@@ -386,8 +386,7 @@ struct TrackedPolicy {
     policy: TrackedPolicyTable,
 }
 
-/// The `[policy]` table, whose admitted fields are predecessor spellings that
-/// coexist with the current `[gate]` registry until each one is cut over.
+/// The current `[policy]` table consumed by the compiled gate providers.
 ///
 /// The repository-document inventory is admitted on every target because the
 /// rule policy it feeds is compiled on every target. The shape fields are read

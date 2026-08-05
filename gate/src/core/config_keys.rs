@@ -48,6 +48,15 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("policy.commit_message.allowed_trailers", TRACKED),
     ConfigKeyDeclaration::new("policy.commit_message.blocked_trailers", TRACKED),
     ConfigKeyDeclaration::new("policy.admission", TRACKED),
+    ConfigKeyDeclaration::new("policy.repo_truth.docs", TRACKED),
+    ConfigKeyDeclaration::new("policy.file_shape.source_suffixes", TRACKED),
+    ConfigKeyDeclaration::new("policy.languages.complexity", TRACKED),
+    ConfigKeyDeclaration::new("policy.languages.magic", TRACKED),
+    ConfigKeyDeclaration::new("policy.package_roots", TRACKED),
+    ConfigKeyDeclaration::new("policy.generated_paths", TRACKED),
+    ConfigKeyDeclaration::new("policy.name_cluster_threshold", TRACKED),
+    ConfigKeyDeclaration::new("policy.test_paths", TRACKED),
+    ConfigKeyDeclaration::new("policy.package.boundary_underscore_pattern", TRACKED),
     ConfigKeyDeclaration::new("taste.<name>.words", TRACKED),
     ConfigKeyDeclaration::new("taste.<name>.message", TRACKED),
     ConfigKeyDeclaration::new("consent.posture", TRACKED),
@@ -91,35 +100,6 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("proof.image", TRACKED),
     ConfigKeyDeclaration::new("proof.container", LOCAL),
     ConfigKeyDeclaration::new("proof.runner", LOCAL),
-];
-
-/// Tracked predecessor fields that coexist with the current resolver registry.
-///
-/// These belong to the tracked layer but not to [`CONFIG_KEY_DECLARATIONS`],
-/// because their consumers still admit their values from the same captured
-/// document under predecessor spellings. Every entry here must be a key the
-/// workspace schema also accepts, or this registry would advertise a setting
-/// that makes the whole document refuse to load; `spice` proves that agreement
-/// against this list rather than against a second copy of it.
-///
-/// Most subtables `migrate_predecessor_policy` reads are deliberately absent.
-/// That migration exists to translate a predecessor document into this release,
-/// so its spellings are ordinarily inputs to a one-time translation rather than
-/// settings a current repository declares, and admitting one here would promise
-/// a door the workspace schema keeps shut. The listed exceptions are the fields
-/// that migration *requires*: a repository cannot load at all without saying
-/// which files its structural arms measure, which makes those spellings
-/// settings this release expects to read rather than relics it merely accepts.
-pub const COEXISTING_TRACKED_KEYS: &[&str] = &[
-    "policy.repo_truth.docs",
-    "policy.file_shape.source_suffixes",
-    "policy.languages.complexity",
-    "policy.languages.magic",
-    "policy.package_roots",
-    "policy.generated_paths",
-    "policy.name_cluster_threshold",
-    "policy.test_paths",
-    "policy.package.boundary_underscore_pattern",
 ];
 
 pub(super) fn config_keys(contract: &Contract) -> Result<CoreObservation, CoreInputError> {
@@ -214,18 +194,9 @@ fn disposition(path: &[Segment<'_>], source: ConfigSource) -> Disposition {
             };
         }
     }
-    if COEXISTING_TRACKED_KEYS
-        .iter()
-        .any(|template| template_covers(template, path, true))
-    {
-        return Disposition::Admitted;
-    }
     if CONFIG_KEY_DECLARATIONS
         .iter()
         .any(|declaration| template_covers(declaration.template, path, false))
-        || COEXISTING_TRACKED_KEYS
-            .iter()
-            .any(|template| template_covers(template, path, false))
     {
         Disposition::Prefix
     } else {

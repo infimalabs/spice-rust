@@ -247,60 +247,52 @@ fn malformed_policy_values_are_refused_under_their_domain_paths() {
     assert!(duplicate.contains("consent.rule"), "{duplicate}");
 }
 
-/// Every key Gate admits as coexisting is one this schema also accepts.
+/// Every tracked structural-policy key Gate admits is one this schema accepts.
 ///
 /// Gate's registry decides that a tracked key is legitimate; this schema
 /// decides whether the document carrying it loads at all. When the two
 /// disagree the registry advertises a setting that makes the whole file
-/// refuse, so each declaration below is checked against `COEXISTING_TRACKED_KEYS`
-/// itself rather than against a second copy of the list. Adding a key to that
-/// registry without a spelling this schema admits fails here.
+/// refuse. Each declaration below is therefore checked against Gate's sole
+/// registry before the complete document is decoded.
 #[test]
-fn every_coexisting_tracked_key_is_one_this_schema_admits() {
-    assert_eq!(
-        COEXISTING_DECLARATIONS.map(|(key, _)| key).as_slice(),
-        gate::COEXISTING_TRACKED_KEYS,
-        "the coexisting registry and the keys this schema admits disagree"
-    );
+fn every_tracked_structural_policy_key_is_one_this_schema_admits() {
+    for (key, _) in TRACKED_STRUCTURAL_DECLARATIONS {
+        assert!(
+            gate::CONFIG_KEY_DECLARATIONS
+                .iter()
+                .any(|entry| entry.template() == key),
+            "Gate does not admit {key} through its current registry"
+        );
+    }
 
-    let policy = decode(&coexisting_document())
-        .expect("every coexisting key declared together loads")
+    let policy = decode(&structural_policy_document())
+        .expect("every tracked structural-policy key declared together loads")
         .policy()
         .clone();
-    assert_coexisting_values(&policy);
+    assert_structural_policy_values(&policy);
 }
 
-/// Every coexisting key reaches its accessor through the resolver door.
+/// Every tracked structural-policy key reaches its accessor through the resolver.
 ///
 /// The schema test above proves serde accepts these spellings, but a tracked
 /// document reaches serde only after `resolve` sanitizes it against the
 /// descriptor registry. A key missing from that registry is refused as
-/// `IssueKind::Unknown` under strict resolution and dropped without a word
-/// under coexisting resolution, leaving the accessor empty while Gate still
-/// advertises the setting. Both modes are exercised because live repository
-/// commands resolve coexisting and the landing verifier resolves strict, so a
-/// key that only works in one door is still broken for someone.
+/// `IssueKind::Unknown`, leaving the accessor unreachable while Gate still
+/// advertises the setting.
 #[test]
-fn every_coexisting_tracked_key_reaches_its_accessor_through_both_resolver_doors() {
-    let document = coexisting_document();
-    for (mode, inputs) in [
-        (
-            "strict",
-            Inputs::new(Some(Document::new("spice.toml", &document)), None, &[]),
-        ),
-        (
-            "coexisting",
-            Inputs::coexisting(Some(Document::new("spice.toml", &document)), None, &[]),
-        ),
-    ] {
-        let resolved = spice::config::resolve(inputs)
-            .unwrap_or_else(|error| panic!("{mode} resolution refused a coexisting key: {error}"));
-        assert_coexisting_values(resolved.root().policy());
-    }
+fn every_tracked_structural_policy_key_reaches_its_accessor() {
+    let document = structural_policy_document();
+    let resolved = spice::config::resolve(Inputs::new(
+        Some(Document::new("spice.toml", &document)),
+        None,
+        &[],
+    ))
+    .unwrap_or_else(|error| panic!("current resolution refused a tracked key: {error}"));
+    assert_structural_policy_values(resolved.root().policy());
 }
 
 /// Each value is distinct so no reading can be satisfied by another's bytes.
-const COEXISTING_DECLARATIONS: [(&str, &str); 9] = [
+const TRACKED_STRUCTURAL_DECLARATIONS: [(&str, &str); 9] = [
     ("policy.repo_truth.docs", "[\"DOCTRINE.md\"]"),
     ("policy.file_shape.source_suffixes", "[\".rs\"]"),
     ("policy.languages.complexity", "[\".rs\", \".py\"]"),
@@ -312,14 +304,14 @@ const COEXISTING_DECLARATIONS: [(&str, &str); 9] = [
     ("policy.package.boundary_underscore_pattern", "\"^[a-z]+$\""),
 ];
 
-fn coexisting_document() -> String {
-    COEXISTING_DECLARATIONS
+fn structural_policy_document() -> String {
+    TRACKED_STRUCTURAL_DECLARATIONS
         .iter()
         .map(|(key, value)| format!("{key} = {value}\n"))
         .collect()
 }
 
-fn assert_coexisting_values(policy: &spice::config::WorkspacePolicy) {
+fn assert_structural_policy_values(policy: &spice::config::WorkspacePolicy) {
     assert_eq!(
         policy.repo_truth().docs(),
         Some(["DOCTRINE.md".to_owned()].as_slice())
