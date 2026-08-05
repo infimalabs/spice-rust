@@ -308,7 +308,12 @@ impl PolicyError {
                 "give the rule a name; every consent fact cites the rule that decided".to_owned()
             }
             Self::ReservedName => format!(
-                "rename the rule; `{POSTURE}` names the disposition unmatched requests take and `{OPERATOR}` names the operator answering a held request"
+                concat!(
+                    "rename the rule; `{POSTURE}` names the disposition unmatched requests take ",
+                    "and `{OPERATOR}` names the operator answering a held request"
+                ),
+                POSTURE = POSTURE,
+                OPERATOR = OPERATOR,
             ),
             Self::MalformedName { rule } => format!(
                 "rename `{rule}` with one lower-case word; rule names are stable fact identities"
@@ -317,13 +322,21 @@ impl PolicyError {
                 format!("give `{rule}` an exact operation or a glob such as `git push*`")
             }
             Self::UngrantableBudget { rule } => format!(
-                "drop the budget from `{rule}` or answer `allow`; a budget bounds grants and this rule grants none"
+                concat!(
+                    "drop the budget from `{rule}` or answer `allow`; ",
+                    "a budget bounds grants and this rule grants none"
+                ),
+                rule = rule,
             ),
             Self::ZeroBudget { rule } => {
                 format!("raise `{rule}`'s budget above zero or answer `queue` outright")
             }
             Self::DuplicateName { rule } => format!(
-                "rename one of the rules called `{rule}`; a name is a rule's identity and its budget"
+                concat!(
+                    "rename one of the rules called `{rule}`; ",
+                    "a name is a rule's identity and its budget"
+                ),
+                rule = rule,
             ),
         }
     }
