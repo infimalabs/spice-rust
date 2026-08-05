@@ -24,6 +24,33 @@ mod process_exit;
 
 use process_exit::ProcessExitObserver;
 
+/// The longest a battery waits for a state only a callback can announce.
+///
+/// Nothing here decides when the state arrives, so this is sized from what
+/// announcing one costs rather than from what publishing one ought to take. It
+/// was measured by recording every wait's elapsed time on its way out, across
+/// three rounds of the eight batteries that wait, on this eleven-lane machine
+/// at load averages between 1.9 and 4.8.
+///
+/// The awaited state is usually already there: of 177 recorded waits, all but
+/// three returned within 3.9 seconds. The three were 7.59, 17.14 and 17.45
+/// seconds, and they are the reason this is not a small number. The battery
+/// below measures the same delivery in isolation and puts its worst at 21.86
+/// seconds, against 0.03 to 0.26 to arm the observer and 0.02 to 0.04 for the
+/// process-exit signal in the same fixture. The tail is the filesystem
+/// deciding when to speak, not a resident being slow to publish.
+///
+/// The ten seconds these batteries inherited from the poller they replaced sat
+/// inside that tail. At that value the waits recorded 10.002 through 10.007
+/// seconds six times in one three-round sweep, which is the ceiling rather
+/// than an arrival, and consent_cli, steering, release_publish and resident
+/// failed in two rounds of three. The same sweep at sixty seconds was green in
+/// three of three and never waited longer than the 17.45 above. This value is
+/// twice the slowest arrival ever seen here, sits between those two, and was
+/// itself green in three rounds of three, so reaching it means no callback came
+/// rather than that a slow one was cut off.
+pub(super) const ARRIVAL_HORIZON: Duration = Duration::from_secs(45);
+
 /// Which ending a readiness wait observed.
 pub(super) enum Readiness {
     /// The awaited state holds.

@@ -27,7 +27,13 @@ mod readiness;
 use readiness::Readiness;
 
 /// Wide enough that reaching it means no completion signal arrived at all.
-const IDLE_HORIZON: Duration = Duration::from_secs(30);
+///
+/// This is deliberately wider than the horizon the batteries allow. A delivery
+/// slower than they tolerate is a fact about this machine that this battery
+/// should report, with the number it took, rather than one its own bound cuts
+/// off: the assertions below fail at [`readiness::ARRIVAL_HORIZON`] and leave
+/// the same margin again above it for the wait to keep running into.
+const IDLE_HORIZON: Duration = Duration::from_secs(readiness::ARRIVAL_HORIZON.as_secs() * 2);
 /// Short enough that a battery waiting on nothing fails promptly.
 const SPENT_HORIZON: Duration = Duration::from_millis(500);
 
@@ -127,7 +133,7 @@ fn a_child_that_ends_first_ends_the_wait_when_it_ends() {
         "the exit was answered without a completion signal"
     );
     assert!(
-        elapsed < IDLE_HORIZON / 2,
+        elapsed < readiness::ARRIVAL_HORIZON,
         "the exit was waited out rather than observed: {elapsed:?}"
     );
     assert_eq!(
@@ -172,7 +178,7 @@ fn a_state_reached_during_the_post_arm_read_needs_no_callback() {
         "a callback caused an unnecessary second state read"
     );
     assert!(
-        elapsed < IDLE_HORIZON / 2,
+        elapsed < readiness::ARRIVAL_HORIZON,
         "the post-arm state read waited for its own callback: {elapsed:?}"
     );
 }
@@ -208,7 +214,7 @@ fn a_state_that_already_holds_is_answered_on_the_first_post_arm_read() {
         "a state that already holds was asked about more than once"
     );
     assert!(
-        elapsed < IDLE_HORIZON / 2,
+        elapsed < readiness::ARRIVAL_HORIZON,
         "an already-held state waited for something: {elapsed:?}"
     );
     assert!(
@@ -304,7 +310,7 @@ fn a_child_that_already_exited_is_answered_on_the_first_pass() {
         "the never-held state was read again past the exited child"
     );
     assert!(
-        elapsed < IDLE_HORIZON / 2,
+        elapsed < readiness::ARRIVAL_HORIZON,
         "an already-exited child spent the readiness horizon: {elapsed:?}"
     );
 }
@@ -341,7 +347,7 @@ fn a_state_reached_after_arming_arrives_on_the_filesystem_callback() {
         "the state was answered before the child could have created it"
     );
     assert!(
-        elapsed < IDLE_HORIZON / 2,
+        elapsed < readiness::ARRIVAL_HORIZON,
         "the creation was waited out rather than read: {elapsed:?}"
     );
     assert!(
