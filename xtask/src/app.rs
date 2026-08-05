@@ -102,7 +102,8 @@ const GENERATED_MODULE_REFERENCES: usize = 2;
 ///
 /// Returns an unreadable toolchain report, an unpinned release, a foreign
 /// staging host, a missing Cargo home, Trunk execution failure, a refused
-/// generated stage, or an unreadable build input.
+/// generated stage, a build input the repository does not track or cannot be
+/// asked about, or an unreadable build input.
 pub fn stage_app(
     environment: &ReleaseEnvironment,
     output: &mut impl Write,
@@ -154,9 +155,10 @@ fn admit_staging_environment(
 /// # Errors
 ///
 /// Returns build inputs the recorded stage identity no longer describes, a
-/// toolchain report that cannot be read, a missing Cargo home, Trunk execution
-/// failure, an inventory that differs from the rebuild, or, on the staging
-/// host, the first staged asset whose bytes differ.
+/// tracked set that cannot be read, a toolchain report that cannot be read, a
+/// missing Cargo home, Trunk execution failure, an inventory that differs from
+/// the rebuild, or, on the staging host, the first staged asset whose bytes
+/// differ.
 pub fn check_app(
     environment: &ReleaseEnvironment,
     output: &mut impl Write,
@@ -423,6 +425,8 @@ pub enum AppBuildError {
     },
     Drift(String),
     SourceInput(PathBuf),
+    UnreadableSourceIndex(String),
+    UntrackedSourceInput(String),
     StaleStage(Vec<String>),
 }
 
@@ -469,8 +473,18 @@ impl fmt::Display for AppBuildError {
             Self::Drift(path) => write!(formatter, "staged app drifted at {path}"),
             Self::SourceInput(path) => write!(
                 formatter,
-                "a staged app build input is neither a regular file nor a directory: {}",
+                "a staged app build input is tracked but is not a regular file: {}",
                 path.display()
+            ),
+            Self::UnreadableSourceIndex(reason) => write!(
+                formatter,
+                "the tracked build inputs could not be read, so what the stage was built \
+                 from cannot be stated: {reason}"
+            ),
+            Self::UntrackedSourceInput(input) => write!(
+                formatter,
+                "the staged app build input {input} names no tracked file, so the recorded \
+                 stage identity would leave out sources the stage was built from"
             ),
             Self::StaleStage(paths) => write!(
                 formatter,

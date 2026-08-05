@@ -10,14 +10,23 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use wire::{Digest, Domain};
 
 use crate::app::AppBuildError;
 
+/// The one program the tracked set is read through.
+///
+/// Named absolutely, the way the gate names its own Git arms, so this reads no
+/// ambient search path. The listing it feeds is compared across machines, and
+/// two of them resolving two different programs would put a difference in the
+/// record that no source ever moved.
+const GIT: &str = "/usr/bin/git";
+
 /// Everything the staged app bytes are built from, named rather than derived.
 ///
-/// A directory stands for every regular file beneath it. `app` and `wire` are
+/// A directory stands for every tracked file beneath it. `app` and `wire` are
 /// the only workspace crates the browser build compiles, and `Cargo.lock` pins
 /// every registry crate they link; a test refuses either manifest declaring a
 /// path dependency this list does not already cover, so the closure cannot grow
@@ -68,14 +77,16 @@ pub(crate) fn compare_stage_sources(root: &Path) -> Result<(), AppBuildError> {
 /// a refusal can name the files that moved, and so a reader can see which
 /// inputs are claimed without running anything.
 fn stage_source_listing(root: &Path) -> Result<String, AppBuildError> {
-    let mut paths = Vec::new();
-    for input in STAGE_SOURCE_INPUTS {
-        collect_source_paths(root, input, &mut paths)?;
-    }
-    paths.sort();
     let mut listing = String::new();
-    for path in paths {
+    for path in tracked_source_paths(root)? {
         let file = root.join(&path);
+        let metadata = fs::symlink_metadata(&file).map_err(|source| AppBuildError::Io {
+            path: file.clone(),
+            source,
+        })?;
+        if !metadata.is_file() {
+            return Err(AppBuildError::SourceInput(file));
+        }
         let bytes = fs::read(&file).map_err(|source| AppBuildError::Io { path: file, source })?;
         let _ = writeln!(
             listing,
@@ -86,45 +97,66 @@ fn stage_source_listing(root: &Path) -> Result<String, AppBuildError> {
     Ok(listing)
 }
 
-/// Every regular file at or beneath one named input, repository-relative.
+/// Every tracked file at or beneath the named inputs, repository-relative.
 ///
-/// The relative path is carried down rather than stripped back off afterwards,
-/// so the name recorded for a file is built the same way on every host and no
-/// step can fail in a way that has to be interpreted. Anything that is neither
-/// a regular file nor a directory refuses, because the stage is built from
-/// bytes and only those two shapes say which bytes.
-fn collect_source_paths(
-    root: &Path,
-    relative: &str,
-    found: &mut Vec<String>,
-) -> Result<(), AppBuildError> {
-    let path = root.join(relative);
-    let metadata = fs::symlink_metadata(&path).map_err(|source| AppBuildError::Io {
-        path: path.clone(),
-        source,
-    })?;
-    if metadata.is_file() {
-        found.push(relative.to_owned());
-        return Ok(());
-    }
-    if !metadata.is_dir() {
-        return Err(AppBuildError::SourceInput(path));
-    }
-    for entry in fs::read_dir(&path).map_err(|source| AppBuildError::Io {
-        path: path.clone(),
-        source,
-    })? {
-        let entry = entry.map_err(|source| AppBuildError::Io {
-            path: path.clone(),
-            source,
+/// The tracked set is asked for rather than the directories walked, because a
+/// stray beside these sources compiles nothing and so is not something the
+/// stage was built from. A walk records it anyway, and then every host that
+/// does not carry that stray reads the stage as stale: one `.DS_Store` under
+/// `app/src` is enough to red `cargo xtask check-app` on a lane whose `git
+/// status` and `git log` are both clean, because an operator's global excludes
+/// hide such a file from every report but this one, which never asked git.
+///
+/// Each declared input has to name at least one tracked file. An input that
+/// names none was renamed, deleted, or never added, and a listing that simply
+/// grew shorter would state a closure the stage was not built from -- so this
+/// refuses instead, which is also what answers a tree that is no repository at
+/// all rather than recording every input as absent.
+fn tracked_source_paths(root: &Path) -> Result<Vec<String>, AppBuildError> {
+    let output = Command::new(GIT)
+        .args(["ls-files", "-z", "--cached", "--"])
+        .args(STAGE_SOURCE_INPUTS)
+        .current_dir(root)
+        .output()
+        .map_err(|error| {
+            AppBuildError::UnreadableSourceIndex(format!("{GIT} did not run: {error}"))
         })?;
-        let name = entry
-            .file_name()
-            .into_string()
-            .map_err(|_| AppBuildError::NonUtf8(entry.path()))?;
-        collect_source_paths(root, &format!("{relative}/{name}"), found)?;
+    if !output.status.success() {
+        return Err(AppBuildError::UnreadableSourceIndex(format!(
+            "{GIT} reported {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
     }
-    Ok(())
+    let listed = String::from_utf8(output.stdout).map_err(|_| {
+        AppBuildError::UnreadableSourceIndex(format!("{GIT} named a path that is not UTF-8"))
+    })?;
+    let mut paths = listed
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    paths.sort();
+    for input in STAGE_SOURCE_INPUTS {
+        if !paths.iter().any(|path| covers(input, path)) {
+            return Err(AppBuildError::UntrackedSourceInput(input.to_owned()));
+        }
+    }
+    Ok(paths)
+}
+
+/// Whether one declared input is this path, or the directory holding it.
+///
+/// The separator is required rather than left to the prefix, so an input never
+/// answers for a sibling whose name merely starts with its own: `wire/src`
+/// covers `wire/src/lib.rs` and not `wire/src-old/lib.rs`, and an input the
+/// repository stopped tracking is then reported as untracked instead of being
+/// covered by whatever sits beside it.
+fn covers(input: &str, path: &str) -> bool {
+    path == input
+        || path
+            .strip_prefix(input)
+            .is_some_and(|rest| rest.starts_with('/'))
 }
 
 /// Which build inputs two listings disagree about, in path order.
@@ -167,6 +199,209 @@ mod tests {
             .parent()
             .expect("the xtask manifest directory sits inside the repository")
             .to_path_buf()
+    }
+
+    /// One tracked file for every declared input, which is what a fixture has
+    /// to carry to be a repository this listing can be made from.
+    ///
+    /// Written out rather than derived from [`STAGE_SOURCE_INPUTS`], because a
+    /// fixture that derived its own contents would agree with any list at all.
+    /// It cannot drift silently either: an input this misses names no tracked
+    /// file, and every test below then refuses before it asserts anything.
+    const FIXTURE_FILES: [&str; 7] = [
+        "Cargo.lock",
+        "app/Cargo.toml",
+        "app/index.html",
+        "app/src/lib.rs",
+        "app/style.css",
+        "wire/Cargo.toml",
+        "wire/src/lib.rs",
+    ];
+
+    /// A repository carrying every declared build input, each one tracked.
+    ///
+    /// A real repository rather than a directory, because the whole question
+    /// is what git says is in it, and an index is not something a filesystem
+    /// fixture can imitate.
+    fn tracked_repository(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "spice-xtask-stage-sources-{name}-{}",
+            std::process::id()
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        fs::create_dir_all(&root).expect("create the fixture repository");
+        git(&root, &["init", "-q"]);
+        for file in FIXTURE_FILES {
+            let path = root.join(file);
+            let parent = path
+                .parent()
+                .expect("every fixture file sits in a directory");
+            fs::create_dir_all(parent).expect("create the fixture source directory");
+            fs::write(&path, file).expect("write a fixture build input");
+        }
+        let mut add = vec!["add", "-f", "--"];
+        add.extend(FIXTURE_FILES);
+        git(&root, &add);
+        root
+    }
+
+    /// One git command against the fixture, refusing rather than reporting.
+    ///
+    /// The caller passes `-f` when adding so the fixture carries what it
+    /// declares whatever an operator's global excludes say, which is the one
+    /// ambient input that could otherwise decide what these tests observe.
+    fn git(root: &Path, arguments: &[&str]) {
+        let status = Command::new(GIT)
+            .args(arguments)
+            .current_dir(root)
+            .status()
+            .unwrap_or_else(|error| panic!("{GIT} {arguments:?}: {error}"));
+        assert!(status.success(), "{GIT} {arguments:?} answered {status}");
+    }
+
+    /// An untracked file beside the sources is not something the stage was
+    /// built from, and a listing that recorded it would call every host that
+    /// does not carry it stale. The stray is added after the listing is
+    /// recorded, which is the order an operator meets this in: stage, then
+    /// open an editor, then watch a clean tree go red.
+    #[test]
+    fn an_untracked_stray_beside_the_sources_leaves_the_stage_fresh() {
+        let root = tracked_repository("stray");
+        let listing = stage_source_listing(&root).expect("a tracked fixture has a listing");
+        assert_eq!(
+            listing.lines().count(),
+            FIXTURE_FILES.len(),
+            "the listing does not cover the tracked inputs, so agreeing with it proves \
+             nothing: {listing}",
+        );
+        fs::create_dir_all(root.join("dist")).expect("create the fixture stage directory");
+        fs::write(root.join(STAGE_SOURCE_LISTING), &listing).expect("record the fixture listing");
+
+        fs::write(root.join("app/src/.DS_Store"), "stray").expect("write an ignored stray");
+        fs::write(root.join("wire/src/scratch.rs"), "stray").expect("write an untracked source");
+
+        if let Err(error) = compare_stage_sources(&root) {
+            panic!("an untracked file beside the sources made the stage stale: {error}");
+        }
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    /// Ignoring what git does not carry must not start ignoring what it does.
+    /// A tracked input can change or leave the worktree, and both still have to
+    /// reach the operator naming the path, because those are the two ways the
+    /// stage actually goes stale.
+    #[test]
+    fn a_tracked_input_that_changed_or_left_is_still_named() {
+        let root = tracked_repository("moved");
+        let listing = stage_source_listing(&root).expect("a tracked fixture has a listing");
+        fs::create_dir_all(root.join("dist")).expect("create the fixture stage directory");
+        fs::write(root.join(STAGE_SOURCE_LISTING), &listing).expect("record the fixture listing");
+        compare_stage_sources(&root).expect("a tree matching its own record is not stale");
+
+        fs::write(root.join("wire/src/lib.rs"), "moved").expect("change a tracked build input");
+        let error = compare_stage_sources(&root).expect_err("a changed input leaves a stale stage");
+        assert!(
+            matches!(&error, AppBuildError::StaleStage(paths) if *paths == ["wire/src/lib.rs"]),
+            "a changed tracked input was not reported as the stale one: {error}",
+        );
+
+        fs::remove_file(root.join("app/style.css")).expect("remove a tracked build input");
+        let error = compare_stage_sources(&root).expect_err("a removed input cannot be digested");
+        assert!(
+            error.to_string().contains("app/style.css"),
+            "a tracked input that left the worktree went unnamed: {error}",
+        );
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    /// An input covers what sits beneath it and nothing that merely starts the
+    /// same way. Today's list holds no such pair, and git's own pathspec would
+    /// keep a sibling out of the answer if it did, so the question is asked of
+    /// values here: leave the separator out and the day two inputs share a
+    /// prefix, one of them is covered by the other's sources and stops being
+    /// held to naming any of its own.
+    #[test]
+    fn an_input_covers_only_what_sits_beneath_it() {
+        assert!(covers("wire/src", "wire/src/lib.rs"));
+        assert!(covers("Cargo.lock", "Cargo.lock"));
+
+        for (input, path) in [
+            ("wire/src", "wire/src-old/lib.rs"),
+            ("wire/src", "wire/srclib.rs"),
+            ("wire/src/lib.rs", "wire/src"),
+        ] {
+            assert!(
+                !covers(input, path),
+                "{input} covered {path}, which is not a file beneath it",
+            );
+        }
+    }
+
+    /// A tracked symlink names bytes that live somewhere else, possibly outside
+    /// the repository entirely, so digesting what it points at would record one
+    /// file's content under another file's name. The stage is built from bytes
+    /// and only a regular file says which ones.
+    #[cfg(unix)]
+    #[test]
+    fn a_tracked_input_that_is_not_a_regular_file_refuses() {
+        let root = tracked_repository("symlink");
+        std::os::unix::fs::symlink("lib.rs", root.join("app/src/alias.rs"))
+            .expect("write a symlinked build input");
+        git(&root, &["add", "-f", "--", "app/src/alias.rs"]);
+
+        let error = stage_source_listing(&root).expect_err("a symlink is not a build input");
+
+        assert!(
+            matches!(&error, AppBuildError::SourceInput(path) if path.ends_with("alias.rs")),
+            "a tracked symlink was digested as a build input instead of refused: {error}",
+        );
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    /// A tree git cannot answer for is refused by name rather than read as a
+    /// repository holding nothing. Both answers stop the run, but only this one
+    /// says the index was never reached; the other reports the first declared
+    /// input as untracked and sends an operator looking for a source that never
+    /// moved. The fixture is a directory under the temporary root, which is
+    /// inside no repository on any machine this runs on.
+    #[test]
+    fn a_tree_that_is_no_repository_refuses_by_name() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-xtask-stage-sources-unrepository-{}",
+            std::process::id()
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        fs::create_dir_all(&root).expect("create the fixture directory");
+
+        let error = stage_source_listing(&root).expect_err("no index answers for this tree");
+
+        assert!(
+            matches!(&error, AppBuildError::UnreadableSourceIndex(reason) if reason.contains(GIT)),
+            "a tree with no index answered with something other than an unread one: {error}",
+        );
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    /// A declared input the repository stopped tracking is the one way asking
+    /// git can lose sources a walk would have found. The listing would simply
+    /// come back shorter and agree with itself on every host, so the input is
+    /// held to naming something rather than left to shrink quietly.
+    #[test]
+    fn a_declared_input_naming_no_tracked_file_refuses() {
+        let root = tracked_repository("untracked-input");
+        git(&root, &["rm", "-q", "--cached", "wire/src/lib.rs"]);
+
+        let error = stage_source_listing(&root).expect_err("an untracked input names no sources");
+
+        assert!(
+            matches!(&error, AppBuildError::UntrackedSourceInput(input) if input == "wire/src"),
+            "an input covering no tracked file answered with something else: {error}",
+        );
+        fs::remove_dir_all(root).expect("remove fixture");
     }
 
     /// A stage goes stale three ways, and a comparison answering only one of

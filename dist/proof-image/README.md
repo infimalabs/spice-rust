@@ -76,6 +76,11 @@ docker run --rm --platform linux/amd64 --network none \
   "$(cat dist/proof-image/identity.txt)" cargo xtask stage-app
 ```
 
+The run records what it compiled by asking `git` inside that mount, so stage
+from a checkout whose repository is under `$PWD`. A linked worktree's `.git`
+names a directory outside it, and the run then refuses by name instead of
+recording a listing no index ever answered for.
+
 `cargo xtask check-app` runs everywhere and splits its answer accordingly. Every
 host rebuilds the app and compares the staged inventory, which is the part a
 rebuild anywhere can settle; only this image goes on to compare bytes. A macOS
@@ -93,6 +98,14 @@ refuses before it rebuilds anything when the two disagree, naming each input
 that moved. Nothing else writes the file: it is renewed only by the staging run
 that publishes the bytes it describes, so a claim cannot be refreshed without
 refreshing what it is a claim about.
+
+What the listing covers is what the repository tracks, asked of `git` rather
+than read off the directories, because an untracked file beside those sources
+compiles nothing and recording it would call every host that does not carry it
+stale — a lane whose `git status` is clean included, since the excludes that
+hide such a file from every other report do not hide it from a walk. Each
+declared input has to name at least one tracked file, so the listing refuses
+rather than quietly shrinking when one is renamed away.
 
 A host that cannot reproduce the staged bytes can therefore conclude whether
 the stage was built from the sources now in the tree, and name the source that
