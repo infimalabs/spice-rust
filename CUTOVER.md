@@ -43,6 +43,13 @@ CUTOVER_OLD_HOOKS=$(git config --worktree --get core.hooksPath)
 test -n "$CUTOVER_OLD_HOOKS"
 printf '%s\n' "$CUTOVER_OLD_HOOKS" |
   tee "$CUTOVER_EVIDENCE/predecessor-hooks-path.txt"
+if test -e "$CUTOVER_COMMON/.spice-rust"; then
+  tar -C "$CUTOVER_COMMON" -cpf "$CUTOVER_EVIDENCE/retired-release-one-state.tar" .spice-rust
+  shasum -a 256 "$CUTOVER_EVIDENCE/retired-release-one-state.tar" > "$CUTOVER_EVIDENCE/retired-release-one-state.tar.sha256"
+  shasum -a 256 -c "$CUTOVER_EVIDENCE/retired-release-one-state.tar.sha256"
+  mv "$CUTOVER_COMMON/.spice-rust" "$CUTOVER_EVIDENCE/retired-release-one-state"
+fi
+test ! -e "$CUTOVER_COMMON/.spice-rust"
 cargo build --locked -p spice
 target/debug/spice install
 target/debug/spice install --apply=DIGEST_PRINTED_BY_PREVIEW
@@ -51,13 +58,18 @@ shasum -a 256 target/debug/spice .spice/bin/spice | tee "$CUTOVER_EVIDENCE/new-b
 ```
 
 The two hashes must match. Do not run `.spice/bin/spice up` yet: that is the
-forward-only boundary. The predecessor configuration capture proves the ambient
-Python reader accepts the exact tracked `policy.admission` command before any
-native install or authority mutation. No index bit or alternate working-tree
-document hides the reviewed policy. The hook activation follows installation
-because its three executable inputs are installer-owned assets, but it waits
-until predecessor state is disabled below. It configures only this reviewed
-worktree, which is the one the appliance and operator use.
+forward-only boundary. Any release-one `.spice-rust` is archived before the
+build: every install path resolves repository state before it plans and refuses
+with `install::state-refused` while that tree exists, so archiving it later
+leaves nothing staged to test or hash. It belongs to a retired release rather
+than to the predecessor, so it needs no drained writer. The predecessor
+configuration capture proves the ambient Python reader accepts the exact tracked
+`policy.admission` command before any native install or authority mutation. No
+index bit or alternate working-tree document hides the reviewed policy. The hook
+activation follows installation because its three executable inputs are
+installer-owned assets, but it waits until predecessor state is disabled below.
+It configures only this reviewed worktree, which is the one the appliance and
+operator use.
 
 One tracked `spice.toml` serves both runtimes, so no lane needs an index-level
 parser bridge: the predecessor admits `policy.admission` into its typed
@@ -125,13 +137,6 @@ tar -C "$CUTOVER_COMMON" -cpf "$CUTOVER_EVIDENCE/predecessor-state.tar" .spice
 shasum -a 256 "$CUTOVER_EVIDENCE/predecessor-state.tar" > "$CUTOVER_EVIDENCE/predecessor-state.tar.sha256"
 shasum -a 256 -c "$CUTOVER_EVIDENCE/predecessor-state.tar.sha256"
 mv "$CUTOVER_OLD_BIN" "$CUTOVER_OLD_BIN.pre-spice-0.31.0"
-if test -e "$CUTOVER_COMMON/.spice-rust"; then
-  tar -C "$CUTOVER_COMMON" -cpf "$CUTOVER_EVIDENCE/retired-release-one-state.tar" .spice-rust
-  shasum -a 256 "$CUTOVER_EVIDENCE/retired-release-one-state.tar" > "$CUTOVER_EVIDENCE/retired-release-one-state.tar.sha256"
-  shasum -a 256 -c "$CUTOVER_EVIDENCE/retired-release-one-state.tar.sha256"
-  mv "$CUTOVER_COMMON/.spice-rust" "$CUTOVER_EVIDENCE/retired-release-one-state"
-fi
-test ! -e "$CUTOVER_COMMON/.spice-rust"
 test ! -e "$CUTOVER_COMMON/.spice/data/spicejournal.sqlite3"
 git diff --exit-code -- spice.toml
 target/debug/spice --json config policy.admission |
