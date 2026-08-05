@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{self, Seek, SeekFrom, Write};
+use std::io;
 
 use sill::{Acquisition, LockFile, LockName, Possession};
 use spice::repository::StatePaths;
@@ -17,26 +17,16 @@ impl JournalLock {
         let lock = LockFile::new(name, root.join("resident"));
         match lock.try_acquire().map_err(Error::Io)? {
             Acquisition::Acquired(possession) => {
-                let held = Self { possession };
-                held.write_holder().map_err(Error::Io)?;
-                Ok(held)
+                possession
+                    .rewrite_record(
+                        format!("pid={};operation=journal-maintenance", std::process::id())
+                            .as_bytes(),
+                    )
+                    .map_err(Error::Io)?;
+                Ok(Self { possession })
             }
             Acquisition::Contended => Err(Error::Contended),
         }
-    }
-
-    fn write_holder(&self) -> io::Result<()> {
-        let file = self.possession.file();
-        file.set_len(0)?;
-        let mut writer = file;
-        writer.seek(SeekFrom::Start(0))?;
-        writeln!(
-            writer,
-            "pid={};operation=journal-maintenance",
-            std::process::id()
-        )?;
-        writer.flush()?;
-        file.sync_data()
     }
 }
 

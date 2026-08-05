@@ -12,6 +12,7 @@ use std::process;
 
 use serde::{Deserialize, Serialize};
 
+use crate::lock::replacement_record;
 use crate::protected::ProtectedGroup;
 
 use super::LockOwnerReport;
@@ -171,22 +172,6 @@ pub(super) fn write_owner_with(
     writer.write_all(&bytes)?;
     writer.flush()?;
     file.sync_data()
-}
-
-/// One record covering every byte the file already spans, ready to be written whole.
-///
-/// An empty file is how release is spelled, so emptying the file before writing
-/// leaves a window in which the lock states that nothing holds it while a
-/// guardian still does. A reader inside that window refuses an acquisition the
-/// evidence would have granted, and an owner killed inside it freezes the window
-/// open for as long as the file survives. Padding the record out to the span it
-/// replaces lets one write supersede the whole record, so every reader sees
-/// either the record before it or the record after it.
-pub(super) fn replacement_record(mut record: Vec<u8>, spanned: u64) -> Vec<u8> {
-    record.push(b'\n');
-    let spanned = usize::try_from(spanned).unwrap_or(usize::MAX);
-    record.resize(record.len().max(spanned), b' ');
-    record
 }
 
 pub(super) fn clear_owner(file: &fs::File) -> io::Result<()> {

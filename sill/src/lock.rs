@@ -3,7 +3,7 @@ use std::fmt;
 use std::fs::File;
 #[cfg(unix)]
 use std::fs::OpenOptions;
-use std::io;
+use std::io::{self, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -138,10 +138,56 @@ impl Possession {
         &self.file
     }
 
+    /// Replace the holder record without first publishing an empty lock file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an operating-system refusal measuring, writing, flushing, or
+    /// synchronizing the lock file.
+    pub fn rewrite_record(&self, record: &[u8]) -> io::Result<()> {
+        self.rewrite_record_with(record, || Ok(()))
+    }
+
+    /// Replace the holder record, exposing the instant before it lands.
+    ///
+    /// The callback runs after every preparatory step a separate reader could
+    /// observe and immediately before the one write that lands the replacement.
+    /// It exists so callers can prove what a contended reader finds mid-rewrite
+    /// without relying on a scheduler to reproduce that instant.
+    #[doc(hidden)]
+    pub fn rewrite_record_with(
+        &self,
+        record: &[u8],
+        before_landing: impl FnOnce() -> io::Result<()>,
+    ) -> io::Result<()> {
+        let spanned = self.file.metadata()?.len();
+        let bytes = replacement_record(record.to_vec(), spanned);
+        let mut writer = &self.file;
+        writer.seek(SeekFrom::Start(0))?;
+        before_landing()?;
+        writer.write_all(&bytes)?;
+        writer.flush()?;
+        self.file.sync_data()
+    }
+
     #[cfg(unix)]
     pub(crate) fn retain_until_last_close(&mut self) {
         self.unlock_on_drop = false;
     }
+}
+
+/// One record covering every byte the file already spans, ready to be written whole.
+///
+/// An empty file is how release is spelled, so emptying the file before writing
+/// leaves a window in which the lock claims no holder while a process still has
+/// kernel possession. Padding the record out to the span it replaces lets one
+/// write supersede the whole record, so a contended reader never lands in an
+/// artificial empty window.
+pub(crate) fn replacement_record(mut record: Vec<u8>, spanned: u64) -> Vec<u8> {
+    record.push(b'\n');
+    let spanned = usize::try_from(spanned).unwrap_or(usize::MAX);
+    record.resize(record.len().max(spanned), b' ');
+    record
 }
 
 #[cfg(unix)]

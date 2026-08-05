@@ -119,15 +119,17 @@ impl ResidentLock {
             .map_err(|error| environment_fault("resident::lock-unavailable", &error.to_string()))?
         {
             Acquisition::Acquired(possession) => {
-                let resident = Self { possession };
-                resident
-                    .write_holder(&format!("pid={};epoch=pending\n", std::process::id()))
+                possession
+                    .rewrite_record(format!("pid={};epoch=pending", std::process::id()).as_bytes())
                     .map_err(|error| {
                         environment_fault("resident::holder-unwritable", &error.to_string())
                     })?;
-                Ok(resident)
+                Ok(Self { possession })
             }
             Acquisition::Contended => {
+                // Holder rewrites never publish an empty intermediate state,
+                // so a contender arriving during the pending-to-epoch change
+                // can still name the holder instead of taking this fallback.
                 let observed = fs::read_to_string(&paths.resident)
                     .ok()
                     .map(|holder| holder.trim().to_owned())
@@ -146,16 +148,8 @@ impl ResidentLock {
     }
 
     fn set_epoch(&self, epoch: CanonicalUuid) -> io::Result<()> {
-        self.write_holder(&format!("pid={};epoch={epoch}\n", std::process::id()))
-    }
-
-    fn write_holder(&self, holder: &str) -> io::Result<()> {
-        let file = self.possession.file();
-        file.set_len(0)?;
-        let mut writer = file;
-        writer.seek(SeekFrom::Start(0))?;
-        writer.write_all(holder.as_bytes())?;
-        writer.sync_data()
+        self.possession
+            .rewrite_record(format!("pid={};epoch={epoch}", std::process::id()).as_bytes())
     }
 }
 

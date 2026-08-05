@@ -39,6 +39,54 @@ fn runtime_paths_follow_the_repository_common_directory() {
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
+/// A holder replacement never creates an empty observation for a contender.
+///
+/// The callback is the exact instant after the writer has prepared its one
+/// landing write and before that write occurs. The second acquisition therefore
+/// exercises the resident's real contended-refusal path while the replacement
+/// is in flight. Restoring a truncation before that callback makes this fixture
+/// observe `holder metadata unavailable` instead of the seeded holder.
+#[test]
+fn contended_resident_names_the_holder_while_its_record_is_rewritten() {
+    let root = fixture("holder-rewrite");
+    fs::create_dir_all(root.join(".git")).expect("git directory");
+    let paths = RuntimePaths::discover(&root).expect("runtime paths resolve");
+    fs::create_dir_all(&paths.runtime).expect("runtime directory");
+    let lock = LockFile::new(
+        LockName::new("resident").expect("resident lock name"),
+        &paths.resident,
+    );
+    let Acquisition::Acquired(possession) = lock.try_acquire().expect("holder acquires") else {
+        panic!("fresh resident lock unexpectedly contended");
+    };
+    let seeded = "pid=4242;epoch=seeded-holder";
+    possession
+        .rewrite_record(seeded.as_bytes())
+        .expect("seeded holder lands");
+
+    let mut observed = None;
+    possession
+        .rewrite_record_with(b"pid=4242;epoch=replacement", || {
+            let Err(Outcome::Refusal(refusal)) = ResidentLock::acquire(&paths) else {
+                panic!("the resident contender did not refuse");
+            };
+            assert_eq!(refusal.reason, "resident::already-up");
+            observed = refusal.observed;
+            Ok(())
+        })
+        .expect("replacement holder lands");
+
+    assert_eq!(observed.as_deref(), Some(seeded));
+    assert_eq!(
+        fs::read_to_string(&paths.resident)
+            .expect("replacement holder reads")
+            .trim(),
+        "pid=4242;epoch=replacement"
+    );
+    drop(possession);
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
 #[test]
 fn stale_surface_cleanup_is_idempotent_and_leaves_inbox_authority() {
     let root = fixture("stale-surfaces");
