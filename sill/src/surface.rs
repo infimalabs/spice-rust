@@ -1119,6 +1119,27 @@ mod tests {
         assert!(!pool.entries[0].owner_stale);
     }
 
+    /// One pid that is proved departed rather than assumed to be.
+    ///
+    /// A literal pid is departed only by luck: this machine runs eleven lanes
+    /// and a full run spawns hundreds of children, so any number small enough
+    /// to write down is one something else can be holding. A child this test
+    /// spawned and reaped is a pid the kernel will not hand out again until it
+    /// has wrapped the whole space, and the assertion keeps even that from
+    /// being a premise -- a reused pid fails here, where the cause is named.
+    fn departed_pid() -> u32 {
+        let mut departed = Command::new("/usr/bin/true");
+        departed.process_group(0);
+        let mut departed = departed.spawn().expect("departed process launches");
+        let pid = departed.id();
+        assert!(departed.wait().expect("departed process reaps").success());
+        assert!(
+            process_terminal(pid),
+            "pid {pid} was live again between the reap and the naming"
+        );
+        pid
+    }
+
     #[test]
     fn stale_owner_evidence_never_becomes_kernel_possession() {
         let scratch = Scratch::new("stale-owner");
@@ -1126,7 +1147,8 @@ mod tests {
         let path = root.join("pool/0.lock");
         fs::create_dir_all(path.parent().expect("stale owner parent"))
             .expect("stale owner parent creates");
-        fs::write(&path, br#"{"pid":4242,"cwd":"/departed"}"#)
+        let departed = departed_pid();
+        fs::write(&path, format!(r#"{{"pid":{departed},"cwd":"/departed"}}"#))
             .expect("stale owner evidence writes");
         let topology = topology(&root);
 
@@ -1138,7 +1160,7 @@ mod tests {
             .expect("pool is reported")
             .entries[0];
         assert_eq!(entry.availability, LockAvailability::Available);
-        assert_eq!(entry.owner.as_ref().map(|owner| owner.pid), Some(4242));
+        assert_eq!(entry.owner.as_ref().map(|owner| owner.pid), Some(departed));
         assert!(entry.owner_stale);
 
         let held = match topology
@@ -1199,11 +1221,7 @@ mod tests {
 
     #[test]
     fn guardian_synchronization_separates_a_pending_guardian_from_a_departed_one() {
-        let mut departed = Command::new("/usr/bin/true");
-        departed.process_group(0);
-        let mut departed = departed.spawn().expect("departed process launches");
-        let pid = departed.id();
-        assert!(departed.wait().expect("departed process reaps").success());
+        let pid = departed_pid();
 
         let completed = LockOwnerEvidence {
             pid,
