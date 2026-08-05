@@ -78,9 +78,23 @@ project_max_depth = 3
 # repeats into every bounded cargo-mutants process. Its hygiene acquisition
 # fixture passes the captured repository and interpreter-tripwire marker to an
 # isolated copy of the current test process.
+#
+# Git's three local-environment names are the one class of foreign name this
+# vocabulary admits. Spice does not own them, but it does write them: the
+# installed pre-commit hook unsets Git's local environment before it execs
+# verify, and the hooks fixture exports exactly these three to prove the child
+# sees none of them. The ledger accounts what the tree references rather than
+# what it invented, so they are counted here. Their access waiver is a separate
+# arm and does not account them; a waived name is still a name, and one written
+# without being counted here is one nobody can find again. Doctor reports only
+# the names Spice owns, so these three are the difference wire pins between this
+# manifest and SpiceVariable.
 env_names = [
     "CLAUDE_CODE_SESSION_ID",
     "CODEX_THREAD_ID",
+    "GIT_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_WORK_TREE",
     "SPICE_AGENT_VENDOR",
     "SPICE_HOOKS",
     "SPICE_HYGIENE_ACQUIRE_REPOSITORY",
