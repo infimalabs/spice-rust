@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use spice::placeholder::PlaceholderReason;
+
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy)]
@@ -335,13 +337,30 @@ fn assert_one_stream(output: &Output, path: &str) {
     assert!(silent.is_empty(), "{path} mixed stdout and stderr");
 }
 
+/// The exact sentences the placeholder inventory stands for, written out.
+///
+/// The scan below reads the inventory rather than this list, so that it can
+/// never search for a sentence the binary stopped emitting. That leaves one
+/// thing unguarded: the inventory could be renamed, and the scan would follow
+/// it without complaint. This is the inventory read back as text, so a changed
+/// sentence fails here and is answered deliberately instead of travelling
+/// silently to every operator surface.
+#[test]
+fn the_placeholder_inventory_carries_exactly_the_documented_sentences() {
+    assert_eq!(
+        PlaceholderReason::ALL.map(PlaceholderReason::as_str),
+        [
+            "release::not-landed",
+            "release::dispatch-gap",
+            "release::landing-unaccounted",
+            "command::handler-not-landed",
+        ]
+    );
+}
+
 fn assert_no_placeholder(output: &Output, path: &str) {
-    for placeholder in [
-        "release::not-landed",
-        "release::dispatch-gap",
-        "release::landing-unaccounted",
-        "command::handler-not-landed",
-    ] {
+    for reason in PlaceholderReason::ALL {
+        let placeholder = reason.as_str();
         assert!(
             !output
                 .stdout

@@ -11,6 +11,7 @@ use std::{
 
 use listen::{RetroSelector, StreamOutcome, SurfaceError, Watch};
 use spice::cli;
+use spice::placeholder::PlaceholderReason;
 use wire::{Fault, FaultClass, Outcome, Refusal};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -330,7 +331,7 @@ fn not_landed_from(path: &[&str], landing: cli::Landing) -> Outcome<()> {
     match landing {
         cli::Landing::Landed => Outcome::Fault(Fault {
             class: FaultClass::Protocol,
-            reason: "release::dispatch-gap".to_owned(),
+            reason: PlaceholderReason::DispatchGap.to_reason(),
             detail: format!(
                 concat!(
                     "registered landed command reached the terminal ",
@@ -340,7 +341,7 @@ fn not_landed_from(path: &[&str], landing: cli::Landing) -> Outcome<()> {
             ),
         }),
         cli::Landing::GapOwned(owner) => Outcome::Refusal(Refusal {
-            reason: "release::not-landed".to_owned(),
+            reason: PlaceholderReason::NotLanded.to_reason(),
             witness: Some("landing-owner".to_owned()),
             expected: Some(owner.to_owned()),
             observed: Some(path.join(" ")),
@@ -348,7 +349,7 @@ fn not_landed_from(path: &[&str], landing: cli::Landing) -> Outcome<()> {
         }),
         cli::Landing::Unaccounted => Outcome::Fault(Fault {
             class: FaultClass::Protocol,
-            reason: "release::landing-unaccounted".to_owned(),
+            reason: PlaceholderReason::LandingUnaccounted.to_reason(),
             detail: format!(
                 "registered command has no landing disposition: {}",
                 path.join(" ")
@@ -803,6 +804,7 @@ const fn exit_status<B>(outcome: &Outcome<B>) -> i32 {
 #[cfg(test)]
 mod tests {
     use spice::cli;
+    use spice::placeholder::PlaceholderReason;
     use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
     use super::render::{self, Stream};
@@ -874,7 +876,7 @@ mod tests {
         ) else {
             panic!("an owned gap must remain one visible refusal");
         };
-        assert_eq!(owned.reason, "release::not-landed");
+        assert_eq!(owned.reason, PlaceholderReason::NotLanded.as_str());
         // The witness serializes beside the reason, so it is a string an
         // operator matches on rather than private naming.
         assert_eq!(owned.witness.as_deref(), Some("landing-owner"));
@@ -886,7 +888,10 @@ mod tests {
         else {
             panic!("an unaccounted path must fault");
         };
-        assert_eq!(unaccounted.reason, "release::landing-unaccounted");
+        assert_eq!(
+            unaccounted.reason,
+            PlaceholderReason::LandingUnaccounted.as_str()
+        );
     }
 
     /// The stream an outcome speaks on and the exit it carries read the same.

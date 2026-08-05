@@ -6,6 +6,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use gate::{CampReport, CampStanding, GateReport, Standing, Verdict};
+use spice::placeholder::PlaceholderReason;
 use wire::{Outcome, ReplyPosition};
 
 const REFUSAL_EXIT: i32 = 2;
@@ -215,7 +216,11 @@ fn repository_selection_and_contract_failures_are_named_and_never_fall_through()
         panic!("foreign contract must refuse: {contract:?}");
     };
     assert_eq!(contract.reason, "gate::contract-refused");
-    assert!(!contract.remedy.contains("release::not-landed"));
+    assert!(
+        !contract
+            .remedy
+            .contains(PlaceholderReason::NotLanded.as_str())
+    );
 }
 
 struct GateRepository {

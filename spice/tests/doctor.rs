@@ -6,6 +6,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use spice::config::Root;
+use spice::placeholder::PlaceholderReason;
 use wire::{
     ConfigSource, DoctorCommand, DoctorObservation, DoctorReport, DoctorToolSource, Outcome,
     ReplyPosition, SpiceVariable,
@@ -526,7 +527,7 @@ fn doctor_exposes_no_fix_or_aggregate_execution_path() {
     assert!(spoken.out.is_empty());
     let stderr = String::from_utf8(spoken.err).expect("Clap speaks UTF-8");
     assert!(stderr.contains("unexpected argument '--fix'"));
-    assert!(!stderr.contains("release::not-landed"));
+    assert!(!stderr.contains(PlaceholderReason::NotLanded.as_str()));
 }
 
 #[derive(Debug, Eq, PartialEq)]

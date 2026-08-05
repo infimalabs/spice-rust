@@ -158,6 +158,7 @@ fn text<B: Serialize>(outcome: &Outcome<B>) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
+    use spice::placeholder::PlaceholderReason;
     use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
     use super::{Form, Stream, render};
@@ -171,7 +172,7 @@ mod tests {
 
     fn refusal() -> Outcome<()> {
         Outcome::Refusal(Refusal {
-            reason: "release::not-landed".to_owned(),
+            reason: PlaceholderReason::NotLanded.to_reason(),
             witness: None,
             expected: None,
             observed: Some("task next".to_owned()),
@@ -282,7 +283,11 @@ mod tests {
             render(&refusal(), Form::Text)
                 .expect("refusal renders")
                 .document,
-            b"spice: release::not-landed; finish the battery\n",
+            format!(
+                "spice: {}; finish the battery\n",
+                PlaceholderReason::NotLanded.as_str()
+            )
+            .into_bytes(),
         );
         assert_eq!(
             render(&fault(), Form::Text)

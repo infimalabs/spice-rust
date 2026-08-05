@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use listen::{EventKind, Mode, Observation, StreamOutcome};
 use rusqlite::{Connection, params};
+use spice::placeholder::PlaceholderReason;
 use tape::Tape;
 use wire::{Outcome, ReplyPosition, Version};
 
@@ -279,8 +280,8 @@ fn a_registered_landed_leaf_reaches_its_implementation() {
     assert_eq!(spoken.code, Some(FAULT_EXIT));
     assert!(spoken.out.is_empty());
     let stderr = utf8(spoken.err);
-    assert!(!stderr.contains("release::not-landed"));
-    assert!(!stderr.contains("release::dispatch-gap"));
+    assert!(!stderr.contains(PlaceholderReason::NotLanded.as_str()));
+    assert!(!stderr.contains(PlaceholderReason::DispatchGap.as_str()));
 }
 
 #[test]
@@ -295,11 +296,12 @@ fn version_reports_the_running_artifacts_and_finalized_schema_in_both_forms() {
     assert_eq!(json.code, Some(0));
     assert!(text.err.is_empty());
     assert!(json.err.is_empty());
+    let placeholder = PlaceholderReason::NotLanded.as_str().as_bytes();
     assert!(
         !text
             .out
-            .windows(b"release::not-landed".len())
-            .any(|window| { window == b"release::not-landed" })
+            .windows(placeholder.len())
+            .any(|window| { window == placeholder })
     );
 
     let text_body: Version = wire::decode(&text.out).expect("text is the stable version body");
@@ -560,7 +562,7 @@ fn a_required_contract_operand_is_enforced_at_the_process_boundary() {
     let stderr = utf8(spoken.err);
     assert!(stderr.contains("required arguments were not provided"));
     assert!(stderr.contains("<TITLE>"));
-    assert!(!stderr.contains("release::not-landed"));
+    assert!(!stderr.contains(PlaceholderReason::NotLanded.as_str()));
 }
 
 #[test]
@@ -571,7 +573,7 @@ fn an_operand_outside_a_leaf_contract_is_rejected_by_clap() {
     assert!(spoken.out.is_empty());
     let stderr = utf8(spoken.err);
     assert!(stderr.contains("unexpected argument 'garbage'"));
-    assert!(!stderr.contains("release::not-landed"));
+    assert!(!stderr.contains(PlaceholderReason::NotLanded.as_str()));
 }
 
 static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(0);

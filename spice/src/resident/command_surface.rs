@@ -3,6 +3,7 @@
 
 use bus::Bus;
 use lane::occupant::Seats;
+use spice::placeholder::PlaceholderReason;
 use spice::repository::Repository;
 use wire::intent::{CommandAnswer, Intent};
 use wire::{CanonicalUuid, CommandKind, Outcome, Refusal};
@@ -130,7 +131,7 @@ impl<'a> Surface<'a> {
                 )
             }
             _ => Outcome::Refusal(Refusal {
-                reason: "command::handler-not-landed".to_owned(),
+                reason: PlaceholderReason::HandlerNotLanded.to_reason(),
                 witness: None,
                 expected: Some(command.kind().to_string()),
                 observed: None,
