@@ -9,6 +9,9 @@
 //! child that ends first returns on the exit observer, and a state that never
 //! arrives spends the horizon. A battery that hangs is told apart from one whose
 //! child died only because the wait keeps those endings apart.
+//!
+//! Two of them can be reachable at the same instant, and which one comes back
+//! then is an order rather than an ending, so the order is pinned here as well.
 
 use std::cell::RefCell;
 use std::fs;
@@ -174,6 +177,95 @@ fn a_state_reached_while_arming_needs_no_event() {
     assert!(
         elapsed < IDLE_HORIZON / 2,
         "an already-held state waited for an event: {elapsed:?}"
+    );
+}
+
+/// A state that already holds is answered before anything is armed.
+///
+/// This is the first ending the module names, and only its arming-window
+/// variant was covered: the predicate above is false on the first ask and true
+/// ever after, so it proves the second evaluation happens without ever proving
+/// the first one answers. A predicate that simply holds is answered once, and
+/// the child is never asked about at all.
+#[test]
+fn a_state_that_already_holds_is_answered_before_anything_is_armed() {
+    let mut held = Held::new("prompt", "read hold");
+    let asked = AtomicU64::new(0);
+
+    let started = Instant::now();
+    let waited = readiness::wait_until_ready(
+        &mut held.child,
+        &held.watched,
+        IDLE_HORIZON,
+        "prompt state",
+        || {
+            asked.fetch_add(1, Ordering::Relaxed);
+            true
+        },
+    );
+    let elapsed = started.elapsed();
+
+    assert!(matches!(waited, Readiness::Ready), "the state already held");
+    assert_eq!(
+        asked.load(Ordering::Relaxed),
+        1,
+        "a state that already holds was asked about more than once"
+    );
+    assert!(
+        elapsed < IDLE_HORIZON / 2,
+        "an already-held state waited for something: {elapsed:?}"
+    );
+    assert!(
+        held.child
+            .try_wait()
+            .expect("fixture child status")
+            .is_none(),
+        "the child was still live, so nothing about it can have answered"
+    );
+}
+
+/// A state that already holds outranks a child that has already exited.
+///
+/// Both endings are available at the same instant here, so which one comes back
+/// is decided by nothing but the order of the two guards. That order is the
+/// claim the helper documents: a state that holds was reached, whatever the
+/// child did afterwards, so a battery whose child does its work and exits
+/// promptly is told its work is done rather than that its child died.
+///
+/// A deletion cannot reach this claim. Removing the pre-arm evaluation leaves
+/// the fixture above green, because a state that holds is still answered at the
+/// top of the loop; it changes the answer only once the child has gone, which
+/// is the case this fixture is. Swapping the two guards is what it pins.
+#[test]
+fn a_state_that_already_holds_outranks_a_child_that_has_already_exited() {
+    let mut held = Held::new("outranked", "read release; exit 5");
+    writeln!(held.input.borrow_mut()).expect("fixture child takes its release");
+    assert_eq!(
+        held.child.wait().expect("fixture child status").code(),
+        Some(5),
+        "the child had not already exited when the wait began"
+    );
+    let asked = AtomicU64::new(0);
+
+    let waited = readiness::wait_until_ready(
+        &mut held.child,
+        &held.watched,
+        IDLE_HORIZON,
+        "outranked state",
+        || {
+            asked.fetch_add(1, Ordering::Relaxed);
+            true
+        },
+    );
+
+    assert!(
+        matches!(waited, Readiness::Ready),
+        "a child that had already exited outranked a state that already held"
+    );
+    assert_eq!(
+        asked.load(Ordering::Relaxed),
+        1,
+        "the state was not the first thing the wait asked about"
     );
 }
 
