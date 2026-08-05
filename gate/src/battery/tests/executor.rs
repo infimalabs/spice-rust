@@ -419,13 +419,18 @@ fn assert_captured_authorities(
     );
     assert_eq!(context.state(), &ledger.digest());
     // The repository-document arm measured the one selected document this
-    // fixture holds, so the run resolved exactly one elastic bound and the
-    // report publishes it. A capture that reported none would describe a run
-    // whose own core family was held to a limit the report never names.
-    let [bound] = context.bounds() else {
+    // fixture holds, so the report publishes that exact decision alongside
+    // any structural decisions. A capture that reported none would describe a
+    // run whose own core family was held to a limit the report never names.
+    let document_bounds = context
+        .bounds()
+        .iter()
+        .filter(|bound| bound.actor_inputs().candidate_path() == "app/notes.md")
+        .collect::<Vec<_>>();
+    let [bound] = document_bounds.as_slice() else {
         panic!(
             "one selected document decided one bound: {:?}",
-            context.bounds()
+            document_bounds
         );
     };
     assert_eq!(bound.actor_inputs().candidate_path(), "app/notes.md");

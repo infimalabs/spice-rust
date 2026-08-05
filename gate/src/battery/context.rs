@@ -436,6 +436,12 @@ impl BoundEvidence {
         &self.rule
     }
 
+    /// Stable metric name the rule bounded.
+    #[must_use]
+    pub fn metric(&self) -> &str {
+        &self.metric
+    }
+
     /// Exact measured value.
     #[must_use]
     pub const fn measured(&self) -> u64 {

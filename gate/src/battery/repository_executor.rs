@@ -12,7 +12,7 @@ use crate::GateId;
 use crate::core::{ActorCapture, ClaimCapture, CoreSource, acquire_core, evaluate_core};
 use crate::hygiene::{HygieneConfiguration, HygieneSource, acquire_hygiene};
 use crate::input::Contract;
-use crate::metrics::{BaselineCapture, MetricSource, acquire_metrics};
+use crate::metrics::{BaselineCapture, MetricSource, acquire_metrics_with_bounds};
 use crate::state::{BoundDecision, LatchEntry};
 use crate::toolchain::{RimCapture, ToolchainSource, acquire_toolchain, measure_toolchain};
 use crate::tree::{SelectedTree, Selector};
@@ -44,13 +44,15 @@ enum FamilyExecution {
 /// set or refusal is cached, so the remaining canonical positions only project
 /// family-owned evidence and cannot run the family again.
 ///
-/// The core family is the one exception, and it is acquired in full at capture.
-/// Two of its arms observe the live repository the tree was materialized from,
-/// so they can only be taken in the same moment the source is captured: an
-/// acquisition deferred to first request would read an index, a `MERGE_HEAD`,
-/// or a worktree that moved after the capture the report names. Its complete
-/// result or refusal is retained from that one capture and handed over
-/// unchanged when the first core arm is requested.
+/// The core and metrics families are the two exceptions, and are acquired in
+/// full at capture. Two core arms observe the live repository the tree was
+/// materialized from, so they can only be taken in the same moment the source
+/// is captured: an acquisition deferred to first request would read an index, a
+/// `MERGE_HEAD`, or a worktree that moved after the capture the report names.
+/// Metrics are acquired immediately after that observation because their
+/// file-shape rows decide per-path bounds which must be present in the immutable
+/// run context before any arm executes. Each complete result or refusal is
+/// retained and handed over unchanged when its first arm is requested.
 ///
 /// The committed magic-number baselines are read in that same moment and for
 /// the same reason, even though the arm that reads them is not a core arm. They
@@ -58,19 +60,15 @@ enum FamilyExecution {
 /// request would compare part of the selection against one commit and the rest
 /// against another, and the report would name neither.
 ///
-/// The acting actor and the latch inventory are retained instead of consumed by
-/// the core capture, because the structural family decides elastic bounds of its
-/// own over a different set of paths. Retaining the two the caller supplied is
-/// what keeps both families deciding against one ledger reading rather than the
-/// structural one taking a second, later look at state that may have moved.
+/// The acting actor and the latch inventory are handed directly from the core
+/// capture to the structural acquisition. That keeps both families deciding
+/// against one ledger reading; neither is retained for a later observation.
 pub struct RepositoryExecutor<'trace> {
     tree: SelectedTree,
     contract: Contract,
     source: Digest,
     core: Result<Vec<ArmEvidence>, String>,
-    baselines: BaselineCapture,
-    actor: ActorCapture,
-    latches: Vec<LatchEntry>,
+    metrics: Result<Vec<ArmEvidence>, String>,
     bounds: Vec<BoundDecision>,
     rim: RimCapture,
     hygiene: HygieneConfiguration,
@@ -134,7 +132,7 @@ impl<'trace> RepositoryExecutor<'trace> {
         // baselines the magic-number delta is measured against are all read
         // here, and nothing below this block can reach the live repository
         // again.
-        let (source, core, bounds, baselines) = {
+        let (source, core, mut bounds, baselines) = {
             let captured = CoreSource::capture(&tree, &contract, claim, actor.clone(), latches)
                 .map_err(|error| {
                     BatteryError::new(format!("cannot identify battery source: {error}"))
@@ -146,14 +144,15 @@ impl<'trace> RepositoryExecutor<'trace> {
             );
             (captured.digest().clone(), core, bounds, baselines)
         };
+        let (metrics, metric_bounds) =
+            metrics_family(&tree, &contract, &baselines, &actor, latches);
+        bounds.extend(metric_bounds);
         Ok(Self {
             tree,
             contract,
             source,
             core,
-            baselines,
-            actor,
-            latches: latches.to_vec(),
+            metrics,
             bounds,
             rim,
             hygiene,
@@ -180,11 +179,11 @@ impl<'trace> RepositoryExecutor<'trace> {
         &self.contract
     }
 
-    /// Every elastic bound the capture's core acquisition decided.
+    /// Every elastic bound the capture's core and structural acquisitions decided.
     ///
     /// These are the decisions the arms were already judged against, not a
-    /// second resolution taken for the report. A core family that refused to
-    /// acquire decided none, and reports none.
+    /// second resolution taken for the report. A family or row that could not
+    /// decide a bound reports none for that position.
     pub(super) fn bounds(&self) -> &[BoundDecision] {
         &self.bounds
     }
@@ -232,7 +231,9 @@ impl<'trace> RepositoryExecutor<'trace> {
             // took, so the first core arm cannot start a second observation.
             ArmFamily::Core => self.core.clone(),
             ArmFamily::Toolchain => self.acquire_toolchain_family(),
-            ArmFamily::Metrics => self.acquire_metrics_family(),
+            // Like core, this hands over the one result captured before the run
+            // context froze its exact bound decisions.
+            ArmFamily::Metrics => self.metrics.clone(),
             ArmFamily::Hygiene => self.acquire_hygiene_family(),
         };
         match result {
@@ -249,34 +250,6 @@ impl<'trace> RepositoryExecutor<'trace> {
             .arms
             .into_iter()
             .map(|report| ArmEvidence::Toolchain { report })
-            .collect())
-    }
-
-    /// Acquire all four structural arms, each carrying its own typed state.
-    ///
-    /// A family-wide refusal is reserved for a source that cannot be walked or
-    /// evidence that violates its declaration. An arm this build cannot measure
-    /// is not one of those: it acquires as evidence naming the input it lacks,
-    /// so an arm that stopped reaching its input could not suppress the others.
-    /// All four reach one now, which is a property of this build rather than a
-    /// guarantee: the projection is what keeps that from mattering.
-    ///
-    /// The actor and latches the capture retained are handed over here rather
-    /// than re-read, so the two bounded arms judge a path against the same
-    /// elastic limit the core family decided its own bounds under.
-    fn acquire_metrics_family(&self) -> Result<Vec<ArmEvidence>, String> {
-        let source = MetricSource::capture(
-            &self.tree,
-            &self.contract,
-            &self.baselines,
-            &self.actor,
-            &self.latches,
-        )
-        .map_err(|error| error.to_string())?;
-        Ok(acquire_metrics(&source)
-            .map_err(|error| error.to_string())?
-            .into_iter()
-            .map(|report| ArmEvidence::Metrics { report })
             .collect())
     }
 
@@ -337,6 +310,32 @@ impl BatteryExecutor for RepositoryExecutor<'_> {
             evidence,
         )
     }
+}
+
+/// Acquire the complete structural family and retain its decided file bounds.
+///
+/// This happens before [`BatteryInputs`] freezes the run context. The evidence
+/// is still projected only when the canonical metrics positions execute, but
+/// both that evidence and these decisions come from this single acquisition.
+fn metrics_family(
+    tree: &SelectedTree,
+    contract: &Contract,
+    baselines: &BaselineCapture,
+    actor: &ActorCapture,
+    latches: &[LatchEntry],
+) -> (Result<Vec<ArmEvidence>, String>, Vec<BoundDecision>) {
+    let source = match MetricSource::capture(tree, contract, baselines, actor, latches) {
+        Ok(source) => source,
+        Err(error) => return (Err(error.to_string()), Vec::new()),
+    };
+    let (evidence, bounds) = acquire_metrics_with_bounds(&source).into_parts();
+    let arms = evidence.map_err(|error| error.to_string()).map(|reports| {
+        reports
+            .into_iter()
+            .map(|report| ArmEvidence::Metrics { report })
+            .collect()
+    });
+    (arms, bounds)
 }
 
 /// Acquire and judge the complete core family from one captured source.

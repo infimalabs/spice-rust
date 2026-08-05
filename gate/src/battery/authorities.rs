@@ -165,18 +165,11 @@ impl<'trace> BatteryCapture<'trace> {
             scope,
             configuration: tracked_evidence(contract)?,
             policy: contract.rule_policy().clone(),
-            // The repository-document arm measured every selected document
-            // against a per-actor elastic limit, and those are the decisions
-            // reported here: the ones this capture already judged its arms
-            // against, decided against the same ledger published above.
-            //
-            // The structural family's file-shape arm now decides a bound per
-            // selected path, and those are not here yet: the family is acquired
-            // on first request through a `&self` executor, which has nowhere to
-            // put them, and SUCCESS-1kKDLnsv is the restructuring that gives it
-            // one. Their absence narrows what this list reports rather than what
-            // the run enforces — each decision travels on the row it was decided
-            // for, so an over-limit path still fails through its own latch.
+            // The repository-document and structural file-shape arms measured
+            // every selected path against a per-actor elastic limit. These are
+            // the exact decisions those capture-time acquisitions judged their
+            // rows against, all decided from the same ledger published above;
+            // nothing is re-resolved merely to describe the run.
             bounds: executor.bounds().to_vec(),
             state,
             tools: tool_evidence(contract)?,
