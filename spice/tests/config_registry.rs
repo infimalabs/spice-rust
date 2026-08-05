@@ -496,14 +496,11 @@ fn templates_are_unique_canonical_non_overlapping_and_stably_ordered() {
     }
 }
 
-/// Gate admits exactly the keys the resolver can carry, counting both lists.
+/// Gate admits exactly the keys the resolver can carry.
 ///
-/// Gate admits a tracked key from `CONFIG_KEY_DECLARATIONS` or from
-/// `COEXISTING_TRACKED_KEYS`, so the resolver registry must cover their union:
-/// a key gate admits but the resolver cannot place makes the whole document
-/// refuse to load, and a resolver row gate does not admit is a setting the
-/// gate would report as unknown. Layers are compared only for the declared
-/// half because the coexisting half carries no layer of its own.
+/// A key Gate admits but the resolver cannot place makes the whole document
+/// refuse to load, and a resolver row Gate does not admit is a setting Gate
+/// would report as unknown.
 #[test]
 fn gate_key_admission_uses_the_resolvers_exact_packaged_registry() {
     let resolver = descriptors()
@@ -513,7 +510,6 @@ fn gate_key_admission_uses_the_resolvers_exact_packaged_registry() {
     let admitted = CONFIG_KEY_DECLARATIONS
         .iter()
         .map(|entry| entry.template())
-        .chain(gate::COEXISTING_TRACKED_KEYS.iter().copied())
         .collect::<BTreeSet<_>>();
     assert_eq!(
         resolver, admitted,

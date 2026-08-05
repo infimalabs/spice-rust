@@ -44,7 +44,6 @@ pub struct Inputs<'a> {
     tracked: Option<Document<'a>>,
     local: Option<Document<'a>>,
     flags: &'a [FlagOverride],
-    coexist: bool,
 }
 
 impl<'a> Inputs<'a> {
@@ -59,23 +58,6 @@ impl<'a> Inputs<'a> {
             tracked,
             local,
             flags,
-            coexist: false,
-        }
-    }
-
-    /// Supply the same layers while the tracked Python scaffold tables still
-    /// coexist with the Rust tree.
-    #[must_use]
-    pub const fn coexisting(
-        tracked: Option<Document<'a>>,
-        local: Option<Document<'a>>,
-        flags: &'a [FlagOverride],
-    ) -> Self {
-        Self {
-            tracked,
-            local,
-            flags,
-            coexist: true,
         }
     }
 
@@ -486,13 +468,12 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Resolved, ResolveError> {
     let mut layers = Vec::new();
 
     if let Some(document) = inputs.tracked
-        && let Some(layer) =
-            parse_layer(ConfigSource::Tracked, document, inputs.coexist, &mut issues)
+        && let Some(layer) = parse_layer(ConfigSource::Tracked, document, &mut issues)
     {
         layers.push(layer);
     }
     if let Some(document) = inputs.local
-        && let Some(layer) = parse_layer(ConfigSource::Local, document, false, &mut issues)
+        && let Some(layer) = parse_layer(ConfigSource::Local, document, &mut issues)
     {
         layers.push(layer);
     }
@@ -529,7 +510,6 @@ pub fn resolve(inputs: Inputs<'_>) -> Result<Resolved, ResolveError> {
 fn parse_layer(
     source: ConfigSource,
     document: Document<'_>,
-    coexist: bool,
     issues: &mut Vec<Issue>,
 ) -> Option<Layer> {
     let mut value = match toml::from_str::<Value>(document.text) {
@@ -558,7 +538,6 @@ fn parse_layer(
         &mut path,
         source,
         document.location,
-        coexist,
         issues,
         &mut leaves,
     );
@@ -575,7 +554,6 @@ fn sanitize(
     path: &mut ConcretePath,
     source: ConfigSource,
     document: &str,
-    coexist: bool,
     issues: &mut Vec<Issue>,
     leaves: &mut Vec<ConcretePath>,
 ) -> bool {
@@ -620,9 +598,6 @@ fn sanitize(
         .iter()
         .any(|entry| entry.template().accepts_prefix(&borrowed))
     {
-        if coexist && (is_coexisting_task_extra(path) || is_scaffold_policy_extra(path)) {
-            return false;
-        }
         issues.push(Issue::at(
             IssueKind::Unknown,
             source,
@@ -637,7 +612,7 @@ fn sanitize(
         Value::Table(table) => {
             table.retain(|key, child| {
                 path.push_key(key);
-                let keep = sanitize(child, path, source, document, coexist, issues, leaves);
+                let keep = sanitize(child, path, source, document, issues, leaves);
                 path.pop();
                 keep
             });
@@ -647,7 +622,7 @@ fn sanitize(
             let mut index = 0;
             values.retain_mut(|child| {
                 path.push_index(index);
-                let keep = sanitize(child, path, source, document, coexist, issues, leaves);
+                let keep = sanitize(child, path, source, document, issues, leaves);
                 path.pop();
                 index += 1;
                 keep
@@ -665,56 +640,6 @@ fn sanitize(
             false
         }
     }
-}
-
-/// Whether a `policy` path the registry does not know is a predecessor spelling.
-///
-/// While the Python scaffold shares the tracked document it declares `policy`
-/// keys this release never adopted. Those are projected out instead of refused,
-/// but only the ones the registry cannot place: a key the registry does declare
-/// must reach its accessor under coexistence too, because Gate advertises those
-/// spellings as settings a live repository may declare today.
-fn is_scaffold_policy_extra(path: &ConcretePath) -> bool {
-    matches!(
-        path.0.as_slice(),
-        [OwnedSegment::Key(root), ..] if root == "policy"
-    )
-}
-
-fn is_coexisting_task_extra(path: &ConcretePath) -> bool {
-    matches!(
-        path.0.as_slice(),
-        [OwnedSegment::Key(root), OwnedSegment::Key(key), ..]
-            if root == "tasks" && matches!(key.as_str(),
-                "base_stems"
-                    | "internal_stems"
-                    | "oops_hidden_stem"
-                    | "maxim_proposal_hidden_stem"
-                    | "approved_phases"
-                    | "phase_slot_count"
-                    | "default_flow"
-                    | "private_default_flow"
-                    | "oops_default_flow"
-                    | "default_priority"
-                    | "severities"
-                    | "claim_ttl_seconds"
-                    | "claim_context_seconds"
-                    | "deferred_wait"
-                    | "oops_wait_seconds"
-                    | "allocator_band_width"
-                    | "allocator_anti_self_review"
-                    | "priority"
-                    | "severity_priority"
-                    | "severity_shorthands"
-                    | "priority_urgency"
-                    | "taskwarrior_urgency"
-                    | "sla_due_seconds"
-                    | "reports"
-                    | "analytics"
-                    | "flows"
-                    | "phase_models"
-            )
-    )
 }
 
 fn compatible(kind: ValueKind, value: &Value) -> bool {

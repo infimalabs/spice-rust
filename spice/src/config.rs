@@ -16,8 +16,7 @@ mod task_migration;
 
 pub use load::{
     AcquisitionIssue, AcquisitionKind, CaptureGeneration, LoadError, Loaded, Locations,
-    capture_coexisting_repository, capture_repository, load, load_coexisting_repository,
-    load_repository, locations,
+    capture_repository, load, load_repository, locations,
 };
 pub use resolve::{
     ConcretePath, Document, FlagError, FlagOverride, FlagValue, Inputs, Issue, IssueKind,

@@ -178,7 +178,7 @@ fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
         .expect("copy exact tracked configuration");
     let hook = repository.path().join(".git/.spice/hooks/pre-commit");
     fs::create_dir_all(hook.parent().expect("hook parent")).expect("create hook directory");
-    fs::write(&hook, b"active Python hook sentinel\n").expect("write active hook sentinel");
+    fs::write(&hook, b"active operator hook sentinel\n").expect("write active hook sentinel");
     let empty_path = repository.path().join("empty-path");
     fs::create_dir(&empty_path).expect("create empty executable search path");
     let before = directory_state(repository.path());
@@ -284,7 +284,7 @@ fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
         fs::read(repository.path().join("spice.toml")).unwrap(),
         tracked
     );
-    assert_eq!(fs::read(&hook).unwrap(), b"active Python hook sentinel\n");
+    assert_eq!(fs::read(&hook).unwrap(), b"active operator hook sentinel\n");
     assert_eq!(directory_state(repository.path()), before);
 }
 

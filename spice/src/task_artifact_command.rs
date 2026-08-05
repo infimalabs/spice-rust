@@ -176,8 +176,8 @@ fn snapshot() -> Result<Snapshot, Failure> {
 }
 
 fn task_project_policy(repository: &Repository) -> Result<board::ProjectPolicy, Failure> {
-    let resolved = spice::config::load_coexisting_repository(repository, &[])
-        .map_err(Failure::configuration)?;
+    let resolved =
+        spice::config::load_repository(repository, &[]).map_err(Failure::configuration)?;
     Ok(resolved.root().tasks().project_policy())
 }
 
