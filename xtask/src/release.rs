@@ -114,6 +114,16 @@ impl ReleaseEnvironment {
             .map_or_else(|| root.join("target"), PathBuf::from)
     }
 
+    /// The `rustc` a build started from this environment would compile with.
+    ///
+    /// Resolved by the same walk over the same `PATH` that the release
+    /// pipeline's own program discovery uses, so the compiler asked for its
+    /// release is the one a build here would run, rather than whichever one
+    /// this process happens to sit beside.
+    pub(crate) fn rustc(&self) -> Option<PathBuf> {
+        find_program(self.path.as_deref()?, "rustc").ok()
+    }
+
     /// The Cargo home the builds this binary starts must read crates from.
     ///
     /// `HOME` supplies the same default Cargo itself would, so the fallback is

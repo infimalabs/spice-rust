@@ -35,20 +35,28 @@ the read-only workspace, empty tmpfs caches, and disabled network boundary.
 
 This image is the one environment allowed to write `dist/stage`. Its `rustc`
 reports `x86_64-unknown-linux-gnu`, and Cargo folds `rustc --version
---verbose` — which names that triple — into every crate's `-Cmetadata`. The
-same sources therefore compile to different wasm-bindgen disambiguator symbols
-and a differently hashed `canvas-app.html` on any other host. Cross-host byte
+--verbose` — which names that triple and the compiler release beside it — into
+every crate's `-Cmetadata`. The same sources therefore compile to different
+wasm-bindgen disambiguator symbols and a differently hashed `canvas-app.html`
+on any other host, and on this one under any other release. Cross-host byte
 equality is not a check the repository declines to make; it is one no host can
 pass, so the alternative to a single owning environment is not a stricter check
 but a stage nobody can reproduce.
 
-`cargo xtask stage-app` enforces that as a tuple: it admits only a program
-compiled for `x86_64-unknown-linux-gnu` and refuses every other host, naming
-the observed tuple and this image's digest. What the guard reads is the tuple,
-not the image, so another host reporting that exact tuple with the toolchain
-`rust-toolchain.toml` pins is admitted too; what it forecloses is the quiet
-substitution, because no macOS or musl host can pass, and those are the hosts
-a developer actually stages from. Stage from the repository root with the workspace writable, the
+`cargo xtask stage-app` enforces both halves of what that report names. It
+asks the running `rustc` for its release first and refuses anything but the
+one `rust-toolchain.toml` selects, naming the pinned release and the observed
+one; then it admits only a program compiled for `x86_64-unknown-linux-gnu` and
+refuses every other host, naming the observed tuple and this image's digest.
+The release is read from `rust-toolchain.toml` alone, and the two other places
+that declare it — `rust-version` in the workspace manifest and
+`RUSTUP_TOOLCHAIN` above — are held equal to it by a test rather than read, so
+a bump that moves one of them and not the others fails here instead of
+compiling the stage under a release nothing pinned. What neither guard reads
+is the image, so another host reporting that exact tuple under the pinned
+release is admitted too; what they foreclose is the quiet substitution,
+because no macOS or musl host can pass, and those are the hosts a developer
+actually stages from. Stage from the repository root with the workspace writable, the
 image's Cargo home named explicitly, and the build root on a writable mount,
 because the app build writes nothing under the workspace:
 
