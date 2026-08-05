@@ -235,8 +235,12 @@ fn metric_measurement(metric: MetricId) -> MetricMeasurement {
         MetricId::FileBytes => bounded_metric(metric, 100, "file_bytes"),
         MetricId::RoutineCcn => bounded_metric(metric, 5, "routine_ccn"),
         MetricId::RoutineLength => bounded_metric(metric, 17, "routine_length"),
+        // Zero, because a regression count is itself the finding: this is the
+        // measurement a passing battery carries, and any other value is one the
+        // arm fails on. The threshold below is not an allowance that could hold
+        // a nonzero count up — it records which literals were examined.
         MetricId::MagicNumberRegressions => MetricMeasurement::new(
-            1,
+            0,
             ParserEvidence::Native {
                 parser: ParserId::CGrammarMagicDeltaV1,
             },

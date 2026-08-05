@@ -9,14 +9,16 @@
 
 use std::path::Path;
 
+use super::baseline::{BaselineCapture, MagicBaselines, selects};
 use super::{
     ArmDeclaration, EvidenceError, EvidenceState, MetricEvidence, MetricId, MetricKey,
-    MetricMeasurement, ParserEvidence, ParserId, STRUCTURAL_ARMS, StructuralArmEvidence,
-    scan_markdown_link_case,
+    MetricMeasurement, ParserEvidence, ParserId, ResolvedMagicMetric, STRUCTURAL_ARMS,
+    StructuralArmEvidence, resolve_magic_metric, scan_magic_regressions, scan_markdown_link_case,
 };
 use crate::input::Contract;
 use crate::jurisdiction::{Entry, Jurisdiction, Shape};
 use crate::manifest::GateId;
+use crate::policy::PolicyContext;
 use crate::tree::SelectedTree;
 
 /// One immutable selected tree and the path inventory the arms read from it.
@@ -24,10 +26,17 @@ use crate::tree::SelectedTree;
 /// The inventory is captured once and shared, rather than walked per arm: the
 /// Markdown arm resolves link targets against the whole tracked set, so two
 /// walks could disagree about what a link points at.
+///
+/// The committed baselines are borrowed rather than read here, because they are
+/// the one input no selected tree holds: the magic delta compares the selection
+/// against the live repository's `HEAD`, which the capture that materialized
+/// this tree is the last thing allowed to observe.
 #[derive(Debug)]
 pub struct MetricSource<'a> {
     root: &'a Path,
     jurisdiction: Jurisdiction,
+    contract: &'a Contract,
+    baselines: &'a BaselineCapture,
 }
 
 impl<'a> MetricSource<'a> {
@@ -38,13 +47,16 @@ impl<'a> MetricSource<'a> {
     /// Refuses a walk that cannot complete over the selected tree.
     pub fn capture(
         tree: &'a SelectedTree,
-        contract: &Contract,
+        contract: &'a Contract,
+        baselines: &'a BaselineCapture,
     ) -> Result<Self, MetricAcquisitionError> {
         let jurisdiction = Jurisdiction::walk(tree.root(), contract.policy().ignore())
             .map_err(|error| MetricAcquisitionError::Source(format!("metric walk: {error}")))?;
         Ok(Self {
             root: tree.root(),
             jurisdiction,
+            contract,
+            baselines,
         })
     }
 
@@ -88,6 +100,7 @@ pub fn acquire_metrics(
     let mut arms = Vec::with_capacity(STRUCTURAL_ARMS.len());
     for declaration in STRUCTURAL_ARMS {
         let metrics = match declaration.id() {
+            GateId::MagicNumbers => magic_metrics(source, declaration)?,
             GateId::MarkdownLinks => markdown_metrics(source)?,
             _ => unavailable(declaration, unreached_input(declaration.id()))?,
         };
@@ -115,13 +128,9 @@ const fn unreached_input(gate_id: GateId) -> &'static str {
             "external tool contract for a metric parser, and every measured routine ",
             "would also need one elastic bound the battery input contract does not report"
         ),
-        GateId::MagicNumbers => concat!(
-            "no baseline blob state is reachable: the delta compares selected text ",
-            "against the same path's committed bytes, and the capture retains only the ",
-            "selection, so scanning without it would report every literal as a regression"
-        ),
-        // The Markdown arm measures; reaching this would mean the match above
-        // stopped covering the arm it names.
+        // These two arms measure; reaching either would mean the match above
+        // stopped covering an arm it names.
+        GateId::MagicNumbers => "the magic-number arm is acquired rather than reported unreached",
         GateId::MarkdownLinks => "the Markdown arm is acquired rather than reported unreached",
         _ => "this gate declares no structural arm",
     }
@@ -211,6 +220,119 @@ fn markdown_state(root: &Path, path: &str, tracked: &[String]) -> EvidenceState 
             findings.len() as u64,
             ParserEvidence::Native {
                 parser: ParserId::MarkdownInlineLinkCaseV1,
+            },
+        )),
+        Err(error) => error.into_evidence_state(),
+    }
+}
+
+/// Measure new comparison-adjacent literals against each path's committed text.
+///
+/// The file class is tested here for the same reason the Markdown arm tests its
+/// own: offering the scanner every measurable path would bury the arm under one
+/// `NotApplicable` row per non-source file. What is deliberately *not* filtered
+/// out is a declared class this parser cannot read exactly, because that path is
+/// in scope and unmeasured, and the arm has to say so.
+fn magic_metrics(
+    source: &MetricSource<'_>,
+    declaration: ArmDeclaration,
+) -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
+    let baselines = match source.baselines {
+        BaselineCapture::Reached(baselines) => baselines,
+        BaselineCapture::Unreachable(reason) => {
+            return unavailable(
+                declaration,
+                &format!("committed magic-number baselines could not be read: {reason}"),
+            );
+        }
+    };
+    let suffixes = source
+        .contract
+        .rule_policy()
+        .document()
+        .file_classes()
+        .magic();
+    let mut metrics = Vec::new();
+    for path in source.measurable() {
+        if !selects(path, suffixes) {
+            continue;
+        }
+        let state = magic_state(source, path, baselines);
+        let key = MetricKey::path(path).map_err(MetricAcquisitionError::Evidence)?;
+        metrics.push(
+            MetricEvidence::new(MetricId::MagicNumberRegressions, key, state)
+                .map_err(MetricAcquisitionError::Evidence)?,
+        );
+    }
+    if metrics.is_empty() {
+        return not_applicable_magic();
+    }
+    Ok(metrics)
+}
+
+/// The one row a tree with no declared magic source still owes its arm.
+fn not_applicable_magic() -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
+    let state = EvidenceState::NotApplicable {
+        reason: "the selected tree admits no declared magic-number source class".to_owned(),
+    };
+    let evidence = MetricEvidence::new(MetricId::MagicNumberRegressions, MetricKey::Arm, state)
+        .map_err(MetricAcquisitionError::Evidence)?;
+    Ok(vec![evidence])
+}
+
+/// One source file's own state: its regression count, or why it has none.
+///
+/// A path `HEAD` does not carry is reported inapplicable rather than scanned
+/// against nothing. A regression is a literal this file did not have before, so
+/// a file that did not exist before has no delta to take: scanning it against an
+/// empty baseline would count every literal it was born with, and the count
+/// would be a property of the file's size rather than of any change to it. The
+/// fold lets a measurement outrank inapplicability, so the paths that do have a
+/// baseline still speak for the arm.
+fn magic_state(source: &MetricSource<'_>, path: &str, baselines: &MagicBaselines) -> EvidenceState {
+    let Some(baseline) = baselines.text(path) else {
+        let reason = match baselines.commit() {
+            Some(commit) => {
+                format!("{path:?} is absent from {commit}, so it has no baseline to regress from")
+            }
+            None => format!("{path:?} has no baseline: this repository has no commit yet"),
+        };
+        return EvidenceState::NotApplicable { reason };
+    };
+    let resolved = match resolve_magic_metric(
+        source.contract.rule_policy(),
+        &PolicyContext::new().with_path(path),
+    ) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            return EvidenceState::Unavailable {
+                reason: format!("magic threshold did not resolve for {path:?}: {error}"),
+            };
+        }
+    };
+    let current = match std::fs::read_to_string(source.root().join(path)) {
+        Ok(text) => text,
+        Err(error) => {
+            return EvidenceState::Unavailable {
+                reason: format!("selected magic-number source could not be read: {error}"),
+            };
+        }
+    };
+    measured_magic(path, &current, baseline, &resolved)
+}
+
+/// The delta itself, once both sides of the comparison are in hand.
+fn measured_magic(
+    path: &str,
+    current: &str,
+    baseline: &str,
+    resolved: &ResolvedMagicMetric,
+) -> EvidenceState {
+    match scan_magic_regressions(path, current, Some(baseline), resolved.threshold()) {
+        Ok(findings) => EvidenceState::measured(resolved.measurement(
+            findings.len() as u64,
+            ParserEvidence::Native {
+                parser: ParserId::CGrammarMagicDeltaV1,
             },
         )),
         Err(error) => error.into_evidence_state(),

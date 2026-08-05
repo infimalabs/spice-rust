@@ -12,7 +12,7 @@ use crate::GateId;
 use crate::core::{ActorCapture, ClaimCapture, CoreSource, acquire_core, evaluate_core};
 use crate::hygiene::{HygieneConfiguration, HygieneSource, acquire_hygiene};
 use crate::input::Contract;
-use crate::metrics::{MetricSource, acquire_metrics};
+use crate::metrics::{BaselineCapture, MetricSource, acquire_metrics};
 use crate::state::{BoundDecision, LatchEntry};
 use crate::toolchain::{RimCapture, ToolchainSource, acquire_toolchain, measure_toolchain};
 use crate::tree::{SelectedTree, Selector};
@@ -51,11 +51,18 @@ enum FamilyExecution {
 /// or a worktree that moved after the capture the report names. Its complete
 /// result or refusal is retained from that one capture and handed over
 /// unchanged when the first core arm is requested.
+///
+/// The committed magic-number baselines are read in that same moment and for
+/// the same reason, even though the arm that reads them is not a core arm. They
+/// are the live repository's `HEAD`, and `HEAD` moves: a read deferred to first
+/// request would compare part of the selection against one commit and the rest
+/// against another, and the report would name neither.
 pub struct RepositoryExecutor<'trace> {
     tree: SelectedTree,
     contract: Contract,
     source: Digest,
     core: Result<Vec<ArmEvidence>, String>,
+    baselines: BaselineCapture,
     bounds: Vec<BoundDecision>,
     rim: RimCapture,
     hygiene: HygieneConfiguration,
@@ -114,22 +121,29 @@ impl<'trace> RepositoryExecutor<'trace> {
         let contract = Contract::load(tree.root()).map_err(|error| {
             BatteryError::new(format!("cannot load captured battery contract: {error}"))
         })?;
-        // One capture, taken once: the digest every arm is labelled with and the
-        // whole core family are read from the same `CoreSource`, and nothing
-        // below this block can reach the live repository again.
-        let (source, core, bounds) = {
+        // One capture, taken once: the digest every arm is labelled with, the
+        // whole core family and the bounds it decided, and the committed
+        // baselines the magic-number delta is measured against are all read
+        // here, and nothing below this block can reach the live repository
+        // again.
+        let (source, core, bounds, baselines) = {
             let captured =
                 CoreSource::capture(&tree, &contract, claim, actor, latches).map_err(|error| {
                     BatteryError::new(format!("cannot identify battery source: {error}"))
                 })?;
             let (core, bounds) = core_family(&captured, &contract);
-            (captured.digest().clone(), core, bounds)
+            let baselines = BaselineCapture::capture(
+                &repository,
+                contract.rule_policy().document().file_classes().magic(),
+            );
+            (captured.digest().clone(), core, bounds, baselines)
         };
         Ok(Self {
             tree,
             contract,
             source,
             core,
+            baselines,
             bounds,
             rim,
             hygiene,
@@ -235,8 +249,8 @@ impl<'trace> RepositoryExecutor<'trace> {
     /// is not one of those: it acquires as evidence naming the input it lacks,
     /// so the three that stay unreachable cannot suppress the one that measures.
     fn acquire_metrics_family(&self) -> Result<Vec<ArmEvidence>, String> {
-        let source =
-            MetricSource::capture(&self.tree, &self.contract).map_err(|error| error.to_string())?;
+        let source = MetricSource::capture(&self.tree, &self.contract, &self.baselines)
+            .map_err(|error| error.to_string())?;
         Ok(acquire_metrics(&source)
             .map_err(|error| error.to_string())?
             .into_iter()
