@@ -263,12 +263,16 @@ mod tests {
                 "printf '%s:runner=%s:challenge=%s:%s\\n' ",
                 "\"$marker\" \"$identity\" \"$challenge\" \"$claims\" >&2\n",
                 "printf 'ran\\n' >> '{}'\n",
-                // Every member announces the scope it selected, in the words its
-                // own runner uses, because a member that announces none is
-                // refused rather than sealed.
+                // Every member reports the scope it ran, in the words its own
+                // runner uses, because a member that ran none of one is refused
+                // rather than sealed. The test members report a summary and not
+                // just an announcement, since an announcement counts the tests
+                // it skipped among the ones it ran.
                 "case \" $* \" in\n",
                 "  *' mutants '*) printf 'Found 36 mutants to test\\n' ;;\n",
-                "  *) printf 'running 7 tests\\n' ;;\n",
+                "  *) printf 'running 7 tests\\n",
+                "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; ",
+                "0 filtered out; finished in 0.00s\\n' ;;\n",
                 "esac\n",
                 "exit 0\n"
             ),
