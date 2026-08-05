@@ -7,6 +7,10 @@
 use std::error::Error;
 use std::fmt;
 use std::fmt::Write as _;
+use std::path::Path;
+use std::process::Command;
+
+use crate::{Contract, Metric};
 
 use crate::kill::{
     AttemptEvidence, AttemptKind, KillRun, MutantDisposition, MutationMovement,

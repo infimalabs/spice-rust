@@ -136,3 +136,105 @@ fn render_movement(rendered: &mut String, movement: ReportMutationMovement) {
         }
     }
 }
+
+/// Name every metric refusing this tree, and the files behind each one.
+///
+/// Public because two callers need exactly these words, and only one of them
+/// can see this crate's insides. The report fixtures adjudicate the live
+/// workspace from within; `tracked_inputs_load_one_operational_current_contract`
+/// in `gate/tests/input.rs` adjudicates the same root from outside, and without
+/// this would fail with a bare standing that names no metric and no path. One
+/// copy is what stops the two explanations from drifting apart.
+///
+/// A refusal here says nothing about the commit gate having passed: `spice dev
+/// pre-commit` exits clean on a tree these assertions reject, so a green commit
+/// is not evidence the baselines hold. `cargo xtask verify` runs the cargo
+/// battery first and the commit gate last; only the battery reads the ratchet
+/// against the working tree.
+///
+/// Built only from the contract's own declarations: the per-file counts come
+/// from re-running each metric's declared parser, so this attribution cannot
+/// drift from what the gate measured. Every carrying file is listed, unranked
+/// and untruncated, because the file that moved a baseline is often not the
+/// file that holds the most.
+#[must_use]
+pub fn refusal_detail(root: &Path, contract: &Contract, report: &GateReport) -> String {
+    let mut detail = String::from(
+        "the live workspace is refused, so this run carries neither a clean \
+         standing nor a tightening proposal. a green `spice dev pre-commit` does \
+         not contradict this: it passes the same tree, and this battery is what \
+         reads the ratchet.",
+    );
+    for finding in report
+        .findings()
+        .iter()
+        .filter(|finding| !finding.movement.passes())
+    {
+        let _ = write!(detail, "\n\n{} {}", finding.metric, finding.movement);
+        let Some(metric) = contract
+            .policy()
+            .metrics()
+            .iter()
+            .find(|metric| metric.name() == finding.metric)
+        else {
+            let _ = write!(
+                detail,
+                "\n  nothing declares this metric, so the baseline is what moves"
+            );
+            continue;
+        };
+        let _ = write!(detail, "\n  counts {}", metric.target());
+        let Some(measurement) = report
+            .measurements()
+            .iter()
+            .find(|measurement| measurement.metric() == finding.metric)
+        else {
+            continue;
+        };
+        let mut carried: Vec<(u64, &str)> = measurement
+            .files()
+            .iter()
+            .filter_map(|file| {
+                let count = metric_count(root, metric, file)?;
+                (count > 0).then_some((count, file.as_str()))
+            })
+            .collect();
+        carried.sort_by(|left, right| right.0.cmp(&left.0).then(left.1.cmp(right.1)));
+        let attributed: u64 = carried.iter().map(|(count, _)| count).sum();
+        if attributed == measurement.value() {
+            let _ = write!(
+                detail,
+                "\n  {} of {} measured files hold all {}:",
+                carried.len(),
+                measurement.files().len(),
+                measurement.value()
+            );
+        } else {
+            let _ = write!(
+                detail,
+                "\n  these total {attributed}, not the measured {}, so read them \
+                 as where to look:",
+                measurement.value()
+            );
+        }
+        for (count, file) in carried {
+            let _ = write!(detail, "\n    {count} {file}");
+        }
+    }
+    detail
+}
+
+/// Re-run one metric's declared parser over a single file.
+///
+/// Returns nothing when the parser cannot be run or does not print a count;
+/// such a file drops out of the attribution, which the total then reports as
+/// a shortfall rather than passing off as a clean breakdown.
+fn metric_count(root: &Path, metric: &Metric, file: &str) -> Option<u64> {
+    let output = Command::new(metric.parser().program())
+        .args(metric.parser().arguments())
+        .arg(file)
+        .current_dir(root)
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+}
