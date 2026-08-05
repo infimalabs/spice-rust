@@ -44,6 +44,10 @@ const RESTORING_COUNTER: &str = "printf 'one\\ntwo\\n' > \"$1\"; count=0; \
      while IFS= read -r line || [ -n \"$line\" ]; do count=$((count + 1)); done < \"$1\"; \
      printf 'one\\n' > \"$1\"; printf '%s\\n' \"$count\"";
 
+/// Make the same transient change but return a value no metric can read.
+const RESTORING_UNREADABLE_COUNTER: &str = "printf 'one\\ntwo\\n' > \"$1\"; \
+     printf 'one\\n' > \"$1\"; printf 'not-a-count\\n'";
+
 /// Mutate the live root named by the first fixed argument, then count only the
 /// captured file arguments that follow it.
 const MUTATING_LIVE_COUNTER: &str = "printf 'changed\\n' >> \"$1/src/lib.rs\"; \
@@ -660,13 +664,58 @@ fn a_parser_cannot_measure_transient_bytes_then_restore_them() {
             &refused,
             RunError::SnapshotChanged {
                 metric,
-                measured: Some(2),
+                measured: Some(2) | None,
                 path,
                 tree,
                 observed_tree: Some(observed_tree),
             } if metric == "rust.lines" && path == "src/lib.rs" && tree == observed_tree
         ),
         "the restored bytes hid the transient measurement: {refused:?}",
+    );
+    assert_eq!(
+        fs::read_to_string(tree.path("src/lib.rs")).expect("read the live source"),
+        "one\n",
+    );
+}
+
+/// Snapshot mutation outranks a parser result that cannot become a measurement.
+///
+/// Adjudication verifies the private snapshot before it propagates the parser's
+/// error. The transient write therefore remains the refusal even when the
+/// parser returned no trustworthy count; restored bytes make the two tree
+/// digests equal without erasing the fingerprint or change-notification seal.
+#[test]
+fn restored_snapshot_change_outranks_an_unreadable_measurement() {
+    let tree = Tree::new("restoring-unreadable-parser");
+    tree.write("src/lib.rs", "one\n");
+    let restoring_metric = Metric::new(
+        "rust.lines",
+        "rust",
+        "lines while an unreadable parser rewrites its input",
+        Parser::new("/bin/sh", ["-c", RESTORING_UNREADABLE_COUNTER, "sh"])
+            .expect("declare a parser"),
+        "*.rs\n",
+        "",
+    )
+    .expect("declare a metric");
+    let policy = Policy::new(Ignore::parse("").expect("parse ignore"), [restoring_metric])
+        .expect("declare a policy");
+
+    let refused = Run::adjudicate(&policy, &tree.root, &ratchet("rust.lines 2\n"), &bounds())
+        .expect_err("snapshot mutation must outrank an unreadable count");
+
+    assert!(
+        matches!(
+            &refused,
+            RunError::SnapshotChanged {
+                metric,
+                measured: None,
+                path,
+                tree,
+                observed_tree: Some(observed_tree),
+            } if metric == "rust.lines" && path == "src/lib.rs" && tree == observed_tree
+        ),
+        "restored bytes erased the mutation when measurement also refused: {refused:?}",
     );
     assert_eq!(
         fs::read_to_string(tree.path("src/lib.rs")).expect("read the live source"),
