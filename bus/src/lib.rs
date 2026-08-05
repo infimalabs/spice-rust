@@ -30,10 +30,14 @@ mod runtime {
 
     impl JournalCommit {
         fn from_applied(applied: journal::Applied) -> Self {
+            Self::from_range(applied.first(), applied.last())
+        }
+
+        fn from_range(first: journal::crossing::Seq, last: journal::crossing::Seq) -> Self {
             Self {
-                first: applied.first().get(),
-                last: applied.last().get(),
-                cursor: fold::Cursor::at(applied.last()),
+                first: first.get(),
+                last: last.get(),
+                cursor: fold::Cursor::at(last),
             }
         }
 
@@ -65,6 +69,34 @@ mod runtime {
         Refused(GuardRefusal),
         /// Storage or encoding faulted and rolled the transaction back.
         Fault(CommitFault),
+    }
+
+    /// Result and optional durable range from one sole-writer transaction.
+    pub struct JournalTransaction<T> {
+        result: T,
+        committed: Option<(journal::crossing::Seq, journal::crossing::Seq)>,
+    }
+
+    impl<T> JournalTransaction<T> {
+        /// A transaction that made no durable change.
+        pub const fn settled(result: T) -> Self {
+            Self {
+                result,
+                committed: None,
+            }
+        }
+
+        /// A transaction that committed the exact supplied journal range.
+        pub const fn committed(
+            result: T,
+            first: journal::crossing::Seq,
+            last: journal::crossing::Seq,
+        ) -> Self {
+            Self {
+                result,
+                committed: Some((first, last)),
+            }
+        }
     }
 
     /// One queued, immutable view of the heads needed by board requests.
@@ -253,6 +285,29 @@ mod runtime {
             receiver.recv().map_err(|_| BusError::Closed)
         }
 
+        /// Run one domain transaction through the sole journal writer.
+        pub fn transact<T, F>(&self, transaction: F) -> Result<T, BusError>
+        where
+            T: Send + 'static,
+            F: FnOnce(&mut Journal) -> JournalTransaction<T> + Send + 'static,
+        {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            let transaction = Box::new(move |journal: &mut Journal| {
+                let transaction = transaction(journal);
+                let commit = transaction
+                    .committed
+                    .map(|(first, last)| JournalCommit::from_range(first, last));
+                let respond = Box::new(move || {
+                    let _ = answer.send(transaction.result);
+                });
+                TransactionCompletion { commit, respond }
+            });
+            self.requests
+                .send(Request::Transaction { transaction })
+                .map_err(|_| BusError::Closed)?;
+            receiver.recv().map_err(|_| BusError::Closed)
+        }
+
         /// Subscribe to commits that become durable after registration.
         pub fn subscribe(&self) -> Result<CommitSubscriber, BusError> {
             let (commits, receiver) = mpsc::channel();
@@ -371,6 +426,9 @@ mod runtime {
             write: Box<JournalWrite>,
             answer: SyncSender<CommitOutcome>,
         },
+        Transaction {
+            transaction: Box<dyn FnOnce(&mut Journal) -> TransactionCompletion + Send>,
+        },
         Subscribe {
             commits: mpsc::Sender<JournalCommit>,
             ready: SyncSender<()>,
@@ -425,6 +483,14 @@ mod runtime {
                     };
                     let _ = answer.send(outcome);
                 }
+                Request::Transaction { transaction } => {
+                    let TransactionCompletion { commit, respond } = transaction(&mut journal);
+                    if let Some(commit) = commit {
+                        subscribers.retain(|subscriber| subscriber.send(commit).is_ok());
+                        let _ = broadcasts.send(commit);
+                    }
+                    respond();
+                }
                 Request::Subscribe { commits, ready } => {
                     subscribers.push(commits);
                     let _ = ready.send(());
@@ -477,6 +543,11 @@ mod runtime {
                 }
             }
         }
+    }
+
+    struct TransactionCompletion {
+        commit: Option<JournalCommit>,
+        respond: Box<dyn FnOnce() + Send>,
     }
 
     /// The dedicated writer could not be reached or did not end normally.
@@ -551,5 +622,5 @@ mod runtime {
 #[cfg(not(target_arch = "wasm32"))]
 pub use runtime::{
     BroadcastSubscriber, Bus, BusError, BusReadError, BusReader, BusVerifyError, CanvasSnapshot,
-    CommitOutcome, CommitSubscriber, JournalCommit, TaskSnapshot,
+    CommitOutcome, CommitSubscriber, JournalCommit, JournalTransaction, TaskSnapshot,
 };

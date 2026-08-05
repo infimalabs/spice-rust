@@ -18,6 +18,8 @@ use std::time::{Duration, Instant};
 
 use notify::{RecursiveMode, Watcher};
 
+const WATCH_SCAN_INTERVAL: Duration = Duration::from_millis(100);
+
 #[path = "process_exit.rs"]
 mod process_exit;
 
@@ -66,12 +68,15 @@ pub(super) fn wait_until_ready(
     }
     let (sender, receiver) = mpsc::channel::<Signal>();
     let changes = sender.clone();
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        let _ = changes.send(match event {
-            Ok(_) => Signal::Changed,
-            Err(error) => Signal::WatchFailed(error.to_string()),
-        });
-    })
+    let mut watcher = notify::PollWatcher::new(
+        move |event: notify::Result<notify::Event>| {
+            let _ = changes.send(match event {
+                Ok(_) => Signal::Changed,
+                Err(error) => Signal::WatchFailed(error.to_string()),
+            });
+        },
+        notify::Config::default().with_poll_interval(WATCH_SCAN_INTERVAL),
+    )
     .unwrap_or_else(|error| panic!("{what} watcher starts: {error}"));
     watcher
         .watch(watched, RecursiveMode::Recursive)

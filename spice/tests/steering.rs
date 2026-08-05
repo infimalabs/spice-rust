@@ -15,6 +15,7 @@ use notify::{RecursiveMode, Watcher};
 use wire::{Actor, FactKind, Instant, Outcome, Producer};
 
 const REFUSAL_EXIT: i32 = 2;
+const WATCH_SCAN_INTERVAL: Duration = Duration::from_millis(100);
 const READINESS_DEADLINE: Duration = Duration::from_secs(10);
 const SESSION_ID: &str = "018f7777-7777-7444-8888-999999999999";
 const SESSION_RECORD: &str =
@@ -103,9 +104,12 @@ impl RunningResident {
 
     fn assert_ready(&mut self, fixture: &Fixture) {
         let (sender, receiver) = mpsc::channel::<notify::Result<notify::Event>>();
-        let mut watcher = notify::recommended_watcher(move |event| {
-            let _ = sender.send(event);
-        })
+        let mut watcher = notify::PollWatcher::new(
+            move |event| {
+                let _ = sender.send(event);
+            },
+            notify::Config::default().with_poll_interval(WATCH_SCAN_INTERVAL),
+        )
         .expect("readiness watcher starts");
         watcher
             .watch(

@@ -7,6 +7,7 @@ use std::{
     io::{self, Write},
     process::ExitStatus,
     sync::mpsc,
+    time::Duration,
 };
 
 use listen::{RetroSelector, StreamOutcome, SurfaceError, Watch};
@@ -66,6 +67,8 @@ use render::Form;
 const REPLY_EXIT: i32 = 0;
 const FAULT_EXIT: i32 = 1;
 const REFUSAL_EXIT: i32 = 2;
+#[cfg(not(target_arch = "wasm32"))]
+const WATCH_SCAN_INTERVAL: Duration = Duration::from_millis(100);
 
 enum StateFailure {
     Refusal(Refusal),
@@ -580,9 +583,12 @@ fn follow(root: &Path, watch: &mut Watch, form: Form) -> ! {
     use notify::{RecursiveMode, Watcher};
 
     let (sender, receiver) = mpsc::channel::<notify::Result<notify::Event>>();
-    let mut watcher = match notify::recommended_watcher(move |event| {
-        let _ = sender.send(event);
-    }) {
+    let mut watcher = match notify::PollWatcher::new(
+        move |event| {
+            let _ = sender.send(event);
+        },
+        notify::Config::default().with_poll_interval(WATCH_SCAN_INTERVAL),
+    ) {
         Ok(watcher) => watcher,
         Err(error) => deliver_fault(watch_fault("create filesystem watcher", error), form),
     };

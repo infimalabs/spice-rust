@@ -36,6 +36,7 @@ const SEED_NAME: &str = "spice demo";
 const SEED_EMAIL: &str = "demo@spice.invalid";
 const SEED_MESSAGE: &str = "spice demo seed\n";
 const SEED_COMMIT: &str = "a53ad58b1356a5f7abea7437975321850e04b217";
+const WATCH_SCAN_INTERVAL: Duration = Duration::from_millis(100);
 const READY_DEADLINE: Duration = Duration::from_secs(10);
 const STOP_DEADLINE: Duration = Duration::from_secs(10);
 
@@ -823,11 +824,14 @@ where
 fn watch_environment(
     environment: &Environment,
     events: Sender<Event>,
-) -> DemoResult<notify::RecommendedWatcher> {
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        let observed = event.map(|_| ()).map_err(|error| error.to_string());
-        let _ = events.send(Event::Changed(observed));
-    })
+) -> DemoResult<notify::PollWatcher> {
+    let mut watcher = notify::PollWatcher::new(
+        move |event: notify::Result<notify::Event>| {
+            let observed = event.map(|_| ()).map_err(|error| error.to_string());
+            let _ = events.send(Event::Changed(observed));
+        },
+        notify::Config::default().with_poll_interval(WATCH_SCAN_INTERVAL),
+    )
     .map_err(|error| environment_fault("demo::readiness-unavailable", error.to_string()))?;
     watcher
         .watch(&environment.root, RecursiveMode::Recursive)

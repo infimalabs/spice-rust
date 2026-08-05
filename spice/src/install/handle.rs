@@ -20,6 +20,8 @@ static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(debug_assertions)]
 static MUTATION_RENDEZVOUS: OnceLock<Option<MutationRendezvous>> = OnceLock::new();
+#[cfg(debug_assertions)]
+const MUTATION_WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
 #[cfg(debug_assertions)]
 #[derive(Debug)]
@@ -874,9 +876,12 @@ fn await_release(release: &Path, display: &Path) -> Result<(), InstallError> {
 
     let released = release.join("continue");
     let (sender, receiver) = mpsc::channel::<notify::Result<notify::Event>>();
-    let mut watcher = notify::recommended_watcher(move |event| {
-        let _ = sender.send(event);
-    })
+    let mut watcher = notify::PollWatcher::new(
+        move |event| {
+            let _ = sender.send(event);
+        },
+        notify::Config::default().with_poll_interval(MUTATION_WATCH_INTERVAL),
+    )
     .map_err(|error| unwatchable(display, &error.to_string()))?;
     watcher
         .watch(release, RecursiveMode::NonRecursive)
