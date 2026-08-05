@@ -14,12 +14,16 @@ use crate::metrics::{
 /// Every committed source the fixture repository expects the arm to measure.
 ///
 /// Spelled out rather than derived from the tree, because a list the subject
-/// produces cannot notice a path the subject stopped selecting. The four cover
-/// two suffixes across three directories, so a selection narrowed to one
-/// language or one directory fails here rather than passing over what is left.
-const SELECTED_SOURCES: [&str; 4] = [
+/// produces cannot notice a path the subject stopped selecting. The seven cover
+/// three suffixes across the root and three directories, so a selection
+/// narrowed to one language or one directory fails here rather than passing
+/// over what is left.
+const SELECTED_SOURCES: [&str; 7] = [
     "app/__init__.py",
     "app/main.py",
+    "baseline.toml",
+    "pyproject.toml",
+    "spice.toml",
     "src/lib.rs",
     "tests/test_main.py",
 ];
@@ -112,9 +116,33 @@ fn each_selected_source_measures_both_shapes_and_documents_stay_with_their_own_b
     let repository = production_repository(&fixture.root);
 
     let report = battery_report(&repository);
+    assert_eq!(
+        report.context().bounds().len(),
+        1 + SELECTED_SOURCES.len() * 2,
+        "one document bound and two exact file-shape decisions per selected source are published"
+    );
 
     for path in SELECTED_SOURCES {
         let bytes = fs::read(repository.join(path)).expect("the fixture committed this source");
+        let decisions = report
+            .context()
+            .bounds()
+            .iter()
+            .filter(|bound| bound.actor_inputs().candidate_path() == path)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            decisions.len(),
+            2,
+            "{path:?} must publish both structural decisions, but reported {decisions:?}"
+        );
+        assert_eq!(
+            decisions
+                .iter()
+                .map(|decision| decision.metric())
+                .collect::<Vec<_>>(),
+            [MetricId::FileLines.as_str(), MetricId::FileBytes.as_str()],
+            "{path:?} published decisions for the wrong structural metrics"
+        );
         let rows = rows_for(&report, path);
         assert_eq!(
             rows.len(),
@@ -135,6 +163,14 @@ fn each_selected_source_measures_both_shapes_and_documents_stay_with_their_own_b
             u64::try_from(bytes.len()).expect("a fixture source shorter than the address space"),
             "{path:?} measured a byte count its committed bytes do not hold"
         );
+        assert_eq!(
+            decisions
+                .iter()
+                .map(|decision| decision.measured())
+                .collect::<Vec<_>>(),
+            [lines, measured_bytes],
+            "{path:?} reported reconstructed bounds instead of the decisions carried by its rows"
+        );
     }
 
     assert!(
@@ -146,13 +182,16 @@ fn each_selected_source_measures_both_shapes_and_documents_stay_with_their_own_b
         .iter()
         .find(|result| result.gate_id() == GateId::RepoDocs)
         .expect("the battery ran the repository-document arm");
-    let ArmEvidence::Core { report } = documents.evidence() else {
+    let ArmEvidence::Core {
+        report: document_report,
+    } = documents.evidence()
+    else {
         panic!("the repository-document arm projects core evidence")
     };
-    let Some(CoreEvidence::RepoDocs(documents)) = report.evidence() else {
+    let Some(CoreEvidence::RepoDocs(documents)) = document_report.evidence() else {
         panic!(
             "the repository-document arm measured the documents it selected, but carried {:?}",
-            report.evidence()
+            document_report.evidence()
         )
     };
     assert!(
@@ -161,6 +200,21 @@ fn each_selected_source_measures_both_shapes_and_documents_stay_with_their_own_b
             .iter()
             .any(|measurement| measurement.path() == "app/notes.md"),
         "the Markdown the file-shape arm skipped is measured by the arm that owns it"
+    );
+    let document_bounds = report
+        .context()
+        .bounds()
+        .iter()
+        .filter(|bound| bound.actor_inputs().candidate_path() == "app/notes.md")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        document_bounds.len(),
+        1,
+        "the context must retain the document's core decision alongside the structural ones"
+    );
+    assert_eq!(
+        document_bounds[0].metric(),
+        MetricId::RepositoryDocumentCharacters.as_str()
     );
 }
 

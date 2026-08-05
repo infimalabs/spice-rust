@@ -22,7 +22,7 @@ use crate::input::Contract;
 use crate::jurisdiction::{Entry, Jurisdiction, Shape};
 use crate::manifest::GateId;
 use crate::policy::PolicyContext;
-use crate::state::LatchEntry;
+use crate::state::{BoundDecision, LatchEntry};
 use crate::tree::SelectedTree;
 
 /// One immutable selected tree and the path inventory the arms read from it.
@@ -119,11 +119,48 @@ impl<'a> MetricSource<'a> {
 pub fn acquire_metrics(
     source: &MetricSource<'_>,
 ) -> Result<Vec<StructuralArmEvidence>, MetricAcquisitionError> {
+    acquire_metrics_with_bounds(source).evidence
+}
+
+/// Acquire the family while retaining the exact per-path bounds it decided.
+///
+/// The public acquisition surface returns evidence alone. The battery capture
+/// additionally needs the decisions the file-shape rows were judged against so
+/// it can publish them in the run context without resolving policy a second
+/// time. Keeping both products of this one traversal together is what makes
+/// that report evidence rather than a reconstruction.
+pub(crate) fn acquire_metrics_with_bounds(source: &MetricSource<'_>) -> MetricAcquisition {
+    let mut bounds = Vec::new();
+    let evidence = acquire_metric_evidence(source, &mut bounds);
+    MetricAcquisition { evidence, bounds }
+}
+
+/// Both products of one structural-family acquisition.
+pub(crate) struct MetricAcquisition {
+    evidence: Result<Vec<StructuralArmEvidence>, MetricAcquisitionError>,
+    bounds: Vec<BoundDecision>,
+}
+
+impl MetricAcquisition {
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        Result<Vec<StructuralArmEvidence>, MetricAcquisitionError>,
+        Vec<BoundDecision>,
+    ) {
+        (self.evidence, self.bounds)
+    }
+}
+
+fn acquire_metric_evidence(
+    source: &MetricSource<'_>,
+    bounds: &mut Vec<BoundDecision>,
+) -> Result<Vec<StructuralArmEvidence>, MetricAcquisitionError> {
     let mut arms = Vec::with_capacity(STRUCTURAL_ARMS.len());
     for declaration in STRUCTURAL_ARMS {
         let metrics = match declaration.id() {
             GateId::Complexity => complexity_metrics(source)?,
-            GateId::FileShape => file_shape_metrics(source, declaration)?,
+            GateId::FileShape => file_shape_metrics(source, declaration, bounds)?,
             GateId::MagicNumbers => magic_metrics(source, declaration)?,
             GateId::MarkdownLinks => markdown_metrics(source)?,
             _ => unavailable(declaration, unreached_input(declaration.id()))?,
@@ -201,6 +238,7 @@ fn declared_rows(
 fn file_shape_metrics(
     source: &MetricSource<'_>,
     declaration: ArmDeclaration,
+    bounds: &mut Vec<BoundDecision>,
 ) -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
     let policy = source.contract.rule_policy();
     let suffixes = policy.document().file_classes().file_shape();
@@ -218,7 +256,7 @@ fn file_shape_metrics(
             continue;
         }
         let key = MetricKey::path(path).map_err(MetricAcquisitionError::Evidence)?;
-        metrics.extend(file_shape_rows(source, declaration, path, &key)?);
+        metrics.extend(file_shape_rows(source, declaration, path, &key, bounds)?);
     }
     if metrics.is_empty() {
         return declared_rows(
@@ -243,6 +281,7 @@ fn file_shape_rows(
     declaration: ArmDeclaration,
     path: &str,
     key: &MetricKey,
+    bounds: &mut Vec<BoundDecision>,
 ) -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
     let bytes = match std::fs::read(source.root().join(path)) {
         Ok(bytes) => bytes,
@@ -260,13 +299,18 @@ fn file_shape_rows(
         Ok(shape) => shape,
         Err(error) => return declared_rows(declaration, key, &error.into_evidence_state()),
     };
-    [
+    let mut rows = Vec::with_capacity(2);
+    for (metric, value) in [
         (MetricId::FileLines, shape.lines()),
         (MetricId::FileBytes, shape.bytes()),
-    ]
-    .into_iter()
-    .map(|(metric, value)| bounded_row(source, path, key, metric, value))
-    .collect()
+    ] {
+        let (row, decision) = bounded_row(source, path, key, metric, value)?;
+        rows.push(row);
+        if let Some(decision) = decision {
+            bounds.push(decision);
+        }
+    }
+    Ok(rows)
 }
 
 /// One measured quantity's row, judged against the limit it was decided under.
@@ -281,11 +325,12 @@ fn bounded_row(
     key: &MetricKey,
     metric: MetricId,
     value: u64,
-) -> Result<MetricEvidence, MetricAcquisitionError> {
+) -> Result<(MetricEvidence, Option<BoundDecision>), MetricAcquisitionError> {
     match bounded_evidence(source, path, key, metric, value) {
-        Ok(evidence) => Ok(evidence),
+        Ok((evidence, decision)) => Ok((evidence, Some(decision))),
         Err(reason) => {
             MetricEvidence::new(metric, key.clone(), EvidenceState::Unavailable { reason })
+                .map(|evidence| (evidence, None))
                 .map_err(MetricAcquisitionError::Evidence)
         }
     }
@@ -304,7 +349,7 @@ fn bounded_evidence(
     key: &MetricKey,
     metric: MetricId,
     value: u64,
-) -> Result<MetricEvidence, String> {
+) -> Result<(MetricEvidence, BoundDecision), String> {
     let name = metric.as_str();
     let rule = resolve_metric_rule(
         source.contract.rule_policy(),
@@ -330,9 +375,10 @@ fn bounded_evidence(
     let decision = binding
         .decide(latched, &actor_inputs)
         .map_err(|error| format!("active {name} bound for {path:?}: {error}"))?;
-    binding
+    let evidence = binding
         .measured(&decision)
-        .map_err(|error| format!("{name} evidence for {path:?}: {error}"))
+        .map_err(|error| format!("{name} evidence for {path:?}: {error}"))?;
+    Ok((evidence, decision))
 }
 
 /// Measure inline Markdown link case against the tracked inventory.
