@@ -105,12 +105,15 @@ project_max_depth = 3
 # they are counted here. Their access waiver is a separate arm and does not
 # account them; a waived name is still a name, and one written without being
 # counted here is one nobody can find again. Doctor reports only the names Spice
-# owns, so these four are the difference wire pins between this manifest and
+# owns, so these seven are the difference wire pins between this manifest and
 # SpiceVariable.
 env_names = [
     "CLAUDE_CODE_SESSION_ID",
     "CODEX_THREAD_ID",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_SYSTEM",
     "GIT_DIR",
+    "GIT_EDITOR",
     "GIT_INDEX_FILE",
     "GIT_WORK_TREE",
     "SPICE_AGENT_VENDOR",

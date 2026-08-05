@@ -91,6 +91,115 @@ fn composed_vendor_launches_cross_the_resident_and_sill_boundary_without_drift()
 }
 
 #[test]
+fn resident_agent_process_receives_both_git_shadow_scopes() {
+    let fixture = Fixture::new("vendor-git-shadow");
+    let capture_dir = fixture.root.join("launch-captures");
+    fs::create_dir_all(&capture_dir).expect("capture directory");
+    let capture_index = fixture.root.join("launch-index");
+    let binary = fixture.root.join("fixture-claude");
+    write_vendor(&binary, &capture_dir, &capture_index, Dialect::Claude);
+    let document = format!(
+        concat!(
+            "[lane]\nlease = \"30s\"\n\n",
+            "[vendor.claude]\n",
+            "binary = {:?}\nmodel = {:?}\neffort = \"xhigh\"\n",
+            "auto_compact_window_tokens = 424242\n",
+        ),
+        binary.display().to_string(),
+        CLAUDE_MODEL,
+    );
+    fs::write(fixture.root.join("spice.toml"), document).expect("vendor configuration");
+    fs::write(
+        fixture.root.join(".gitignore"),
+        "fixture-claude\nlaunch-captures\nlaunch-index\n",
+    )
+    .expect("fixture ignore policy");
+    fixture_git(&fixture.root, &["init", "-b", "main-d"]);
+    fixture_git(&fixture.root, &["config", "user.name", "Spice Tests"]);
+    fixture_git(
+        &fixture.root,
+        &["config", "user.email", "spice@example.test"],
+    );
+    fixture_git(&fixture.root, &["add", ".gitignore", "spice.toml"]);
+    fixture_git(&fixture.root, &["commit", "-m", "fixture baseline"]);
+    fixture_git(&fixture.root, &["branch", "integration"]);
+    fixture_git(
+        &fixture.root,
+        &["commit", "--allow-empty", "-m", "lane head"],
+    );
+    fixture_git(&fixture.root, &["config", "branch.main-d.remote", "origin"]);
+    fixture_git(
+        &fixture.root,
+        &["config", "branch.main-d.merge", "refs/heads/integration"],
+    );
+    let native_config = fixture.root.join(".git/config");
+    let native_before = fs::read(&native_config).expect("native config reads");
+    let mut resident = RunningResident::spawn(&fixture);
+    resident.assert_ready(&fixture);
+
+    let lane = add_lane(&fixture, None, Dialect::Claude);
+    let capture = CapturedLaunch::read(
+        captures(&capture_index, Dialect::Claude)
+            .last()
+            .expect("agent launch captured"),
+    );
+
+    assert_eq!(capture.environment["GIT_CONFIG_COUNT"], "2");
+    assert_eq!(
+        capture.environment["GIT_CONFIG_KEY_0"],
+        "branch.main-d.merge"
+    );
+    assert_eq!(
+        capture.environment["GIT_CONFIG_VALUE_0"],
+        "refs/heads/integration"
+    );
+    assert_eq!(
+        capture.environment["GIT_CONFIG_KEY_1"],
+        "branch.main-d.remote"
+    );
+    assert_eq!(capture.environment["GIT_CONFIG_VALUE_1"], ".");
+    assert_eq!(
+        Path::new(&capture.environment["GIT_CONFIG_SYSTEM"]),
+        fs::canonicalize(fixture.root.join(".git/agent.gitconfig"))
+            .expect("agent Git shadow canonicalizes")
+    );
+    assert_eq!(
+        fixture_git_stdout_with_environment(
+            &fixture.root,
+            &["rev-parse", "--symbolic-full-name", "@{upstream}"],
+            &capture.environment,
+        ),
+        "refs/heads/main-d"
+    );
+    assert_eq!(
+        fixture_git_stdout_with_environment(
+            &fixture.root,
+            &["config", "--get", "branch.main-d.merge"],
+            &capture.environment,
+        ),
+        "refs/heads/integration"
+    );
+    assert_eq!(
+        fixture_git_stdout_with_environment(
+            &fixture.root,
+            &["status", "--short", "--branch"],
+            &capture.environment,
+        ),
+        "## main-d...main-d"
+    );
+    assert_eq!(
+        fs::read(&native_config).expect("native config rereads"),
+        native_before,
+        "agent shadow mutated repository configuration"
+    );
+
+    drain(&fixture, lane);
+    let down = operator(&fixture, &["down"], true);
+    assert!(down.status.success(), "down failed: {:?}", down.stderr);
+    assert!(resident.wait().status.success(), "resident failed");
+}
+
+#[test]
 fn installed_neutral_skill_bootstraps_both_lanes_through_native_surface() {
     let fixture = Fixture::linked("installed-native-bootstrap");
     let rig = configure(&fixture);
@@ -872,4 +981,53 @@ fn json_string(value: &str) -> String {
 
 fn shell_word(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn fixture_git(root: &Path, arguments: &[&str]) {
+    let output = native_git_command(root, arguments)
+        .output()
+        .expect("fixture Git launches");
+    assert!(
+        output.status.success(),
+        "git {arguments:?}: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+fn fixture_git_stdout_with_environment(
+    root: &Path,
+    arguments: &[&str],
+    environment: &BTreeMap<String, String>,
+) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(arguments)
+        .env_clear()
+        .envs(environment)
+        .output()
+        .expect("shadowed fixture Git launches");
+    assert!(
+        output.status.success(),
+        "shadowed git {arguments:?}: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    String::from_utf8(output.stdout)
+        .expect("shadowed Git output is UTF-8")
+        .trim()
+        .to_owned()
+}
+
+fn native_git_command(root: &Path, arguments: &[&str]) -> Command {
+    let mut command = Command::new("git");
+    command.arg("-C").arg(root).args(arguments);
+    command
+        .env_remove("GIT_CONFIG_SYSTEM")
+        .env_remove("GIT_CONFIG_COUNT");
+    for index in 0..8 {
+        command
+            .env_remove(format!("GIT_CONFIG_KEY_{index}"))
+            .env_remove(format!("GIT_CONFIG_VALUE_{index}"));
+    }
+    command
 }
