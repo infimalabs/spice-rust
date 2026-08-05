@@ -134,7 +134,24 @@ impl MetricStateBinding {
                 "state decision entry does not match the compiled metric key".to_owned(),
             ));
         }
-        let measurement = self.measurement(decision.bound())?;
+        self.measured(decision.bound())
+    }
+
+    /// Convert a bound decided by [`Self::decide`] into complete metric evidence.
+    ///
+    /// This is the evidence [`Self::evidence`] produces once the reconciliation
+    /// around it has unwrapped its decision, and it is the whole of what an
+    /// acquisition that only measures needs. Both routes attach the same rule
+    /// and latch bindings to the same measured value, so the row an arm reports
+    /// and the row the state transaction would report cannot disagree about the
+    /// limit the value was judged against.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a decision that disagrees with this binding's metric, value, or
+    /// resolved rule, and evidence that violates its own declaration.
+    pub fn measured(&self, decision: &BoundDecision) -> Result<MetricEvidence, StateBindingError> {
+        let measurement = self.measurement(decision)?;
         MetricEvidence::new(
             self.metric,
             self.key.clone(),
