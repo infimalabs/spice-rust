@@ -1,10 +1,11 @@
-//! The file-shape arm measured against a real selected tree.
+//! File shape and its sibling routine bounds measured against one real tree.
 //!
-//! Both tests run one whole battery over a committed repository, because the
-//! arm's two obligations are only visible from opposite ends of the same run:
-//! what it measured, and what it did with a measurement that broke its bound. A
-//! fixture that built rows by hand could satisfy either one while the production
-//! walk selected nothing at all.
+//! These tests run one whole battery over a committed repository. The first
+//! pins file-shape selection, document jurisdiction, and the complete bound
+//! count; the second pins each routine decision; the third pins what file shape
+//! does with a measurement that breaks its bound; the fourth proves a durable
+//! latch spends elastic headroom. A fixture that built rows by hand could
+//! satisfy any one while the production walk selected nothing.
 
 use super::*;
 use crate::metrics::{
@@ -26,6 +27,18 @@ const SELECTED_SOURCES: [&str; 7] = [
     "spice.toml",
     "src/lib.rs",
     "tests/test_main.py",
+];
+
+/// Every routine the same fixture's complexity arm measures, with both values.
+///
+/// Each lives in a different path, so the path carried by [`BoundDecision`]
+/// plus the metric identifies one exact routine decision. The function name is
+/// still asserted against the arm row, closing the identity back to the parsed
+/// routine rather than inferring it from the context count.
+const SELECTED_ROUTINES: [(&str, &str, u64, u64); 3] = [
+    ("app/main.py", "entry", 1, 2),
+    ("src/lib.rs", "fixture", 1, 1),
+    ("tests/test_main.py", "test_entry", 1, 2),
 ];
 
 /// A source long enough that no elastic headroom can admit it.
@@ -51,6 +64,28 @@ fn rows_for<'report>(report: &'report BatteryReport, path: &str) -> Vec<&'report
         panic!("the file-shape arm projects structural metric evidence")
     };
     let key = MetricKey::path(path).expect("a selected path key");
+    report
+        .metrics()
+        .iter()
+        .filter(|metric| metric.key() == &key)
+        .collect()
+}
+
+/// Both complexity rows the arm carries for one exact parsed routine.
+fn routine_rows_for<'report>(
+    report: &'report BatteryReport,
+    path: &str,
+    function: &str,
+) -> Vec<&'report MetricEvidence> {
+    let result = report
+        .results()
+        .iter()
+        .find(|result| result.gate_id() == GateId::Complexity)
+        .expect("the battery ran the complexity arm");
+    let ArmEvidence::Metrics { report } = result.evidence() else {
+        panic!("the complexity arm projects structural metric evidence")
+    };
+    let key = MetricKey::function(path, function).expect("a fixture routine key");
     report
         .metrics()
         .iter()
@@ -117,7 +152,7 @@ fn seed_file_line_latch(repository: &Path, path: &str) {
     .expect("seed the file-line latch");
 }
 
-/// Each selected source measures both shapes; a document measures neither here.
+/// Selected sources and routines publish their bounds; documents keep their own.
 ///
 /// The values are compared against the bytes on disk rather than against each
 /// other, so an arm that measured the wrong file — or measured one file twice
@@ -140,8 +175,8 @@ fn each_selected_source_measures_both_shapes_and_documents_stay_with_their_own_b
     let report = battery_report(&repository);
     assert_eq!(
         report.context().bounds().len(),
-        1 + SELECTED_SOURCES.len() * 2,
-        "one document bound and two exact file-shape decisions per selected source are published"
+        1 + SELECTED_SOURCES.len() * 2 + SELECTED_ROUTINES.len() * 2,
+        "one document bound plus every file-shape and routine decision are published"
     );
 
     for path in SELECTED_SOURCES {
@@ -150,7 +185,14 @@ fn each_selected_source_measures_both_shapes_and_documents_stay_with_their_own_b
             .context()
             .bounds()
             .iter()
-            .filter(|bound| bound.actor_inputs().candidate_path() == path)
+            .filter(|decision| {
+                decision.actor_inputs().candidate_path() == path
+                    && matches!(
+                        decision.metric(),
+                        metric if metric == MetricId::FileLines.as_str()
+                            || metric == MetricId::FileBytes.as_str()
+                    )
+            })
             .collect::<Vec<_>>();
         assert_eq!(
             decisions.len(),
@@ -238,6 +280,58 @@ fn each_selected_source_measures_both_shapes_and_documents_stay_with_their_own_b
         document_bounds[0].metric(),
         MetricId::RepositoryDocumentCharacters.as_str()
     );
+}
+
+/// Each parsed routine publishes the exact decisions its measured rows used.
+///
+/// The function key is asserted in the arm rows while the path, metric, and
+/// value are asserted in the run context. Binding both views keeps the total of
+/// 21 from hiding a dropped routine behind a duplicated file-shape decision.
+#[test]
+fn each_measured_routine_publishes_both_complexity_decisions() {
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    let report = battery_report(&repository);
+
+    for (path, function, expected_ccn, expected_length) in SELECTED_ROUTINES {
+        let rows = routine_rows_for(&report, path, function);
+        assert_eq!(rows.len(), 2, "{path:?} routine {function:?} row count");
+        let decisions = report
+            .context()
+            .bounds()
+            .iter()
+            .filter(|decision| {
+                decision.actor_inputs().candidate_path() == path
+                    && matches!(
+                        decision.metric(),
+                        metric if metric == MetricId::RoutineCcn.as_str()
+                            || metric == MetricId::RoutineLength.as_str()
+                    )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            decisions.len(),
+            2,
+            "{path:?} routine {function:?} decisions"
+        );
+        let expected = [
+            (MetricId::RoutineCcn.as_str(), expected_ccn),
+            (MetricId::RoutineLength.as_str(), expected_length),
+        ];
+        let published = decisions
+            .iter()
+            .map(|decision| (decision.metric(), decision.measured()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            published, expected,
+            "{path:?} routine {function:?} identity"
+        );
+        let measured = rows
+            .iter()
+            .map(|row| (row.metric().as_str(), measured(row, path).0))
+            .collect::<Vec<_>>();
+        assert_eq!(published, measured, "{path:?} routine {function:?} bounds");
+    }
 }
 
 /// A file past its elastic limit fails the arm through the bound on its own row.

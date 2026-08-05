@@ -122,13 +122,13 @@ pub fn acquire_metrics(
     acquire_metrics_with_bounds(source).evidence
 }
 
-/// Acquire the family while retaining the exact per-path bounds it decided.
+/// Acquire the family while retaining the exact bounds its measured rows used.
 ///
 /// The public acquisition surface returns evidence alone. The battery capture
-/// additionally needs the decisions the file-shape rows were judged against so
-/// it can publish them in the run context without resolving policy a second
-/// time. Keeping both products of this one traversal together is what makes
-/// that report evidence rather than a reconstruction.
+/// additionally needs the decisions the file-shape and routine-complexity rows
+/// were judged against so it can publish them in the run context without
+/// resolving policy a second time. Keeping both products of this one traversal
+/// together is what makes that report evidence rather than a reconstruction.
 pub(crate) fn acquire_metrics_with_bounds(source: &MetricSource<'_>) -> MetricAcquisition {
     let mut bounds = Vec::new();
     let evidence = acquire_metric_evidence(source, &mut bounds);
@@ -159,7 +159,7 @@ fn acquire_metric_evidence(
     let mut arms = Vec::with_capacity(STRUCTURAL_ARMS.len());
     for declaration in STRUCTURAL_ARMS {
         let metrics = match declaration.id() {
-            GateId::Complexity => complexity_metrics(source)?,
+            GateId::Complexity => complexity_metrics(source, bounds)?,
             GateId::FileShape => file_shape_metrics(source, declaration, bounds)?,
             GateId::MagicNumbers => magic_metrics(source, declaration)?,
             GateId::MarkdownLinks => markdown_metrics(source)?,
@@ -504,6 +504,7 @@ fn magic_metrics(
 /// skip and a clean parse of an empty file are indistinguishable from.
 fn complexity_metrics(
     source: &MetricSource<'_>,
+    bounds: &mut Vec<BoundDecision>,
 ) -> Result<Vec<MetricEvidence>, MetricAcquisitionError> {
     let suffixes = source
         .contract
@@ -516,7 +517,7 @@ fn complexity_metrics(
         if !selects(path, suffixes) {
             continue;
         }
-        complexity_rows(source, path, &mut metrics)?;
+        complexity_rows(source, path, &mut metrics, bounds)?;
     }
     if metrics.is_empty() {
         return not_applicable_complexity();
@@ -524,11 +525,16 @@ fn complexity_metrics(
     Ok(metrics)
 }
 
-/// One selected file's rows: two per routine, or one pair naming its refusal.
+/// One selected file's rows and the exact bounds each measured routine used.
+///
+/// A refused routine contributes its paired unavailable rows and no decision;
+/// a measured routine contributes both. Appending here keeps evidence and
+/// decisions in the same parse traversal and the same canonical metric order.
 fn complexity_rows(
     source: &MetricSource<'_>,
     path: &str,
     metrics: &mut Vec<MetricEvidence>,
+    bounds: &mut Vec<BoundDecision>,
 ) -> Result<(), MetricAcquisitionError> {
     let routines = match read_complexity(source, path) {
         Ok(routines) => routines,
@@ -539,13 +545,12 @@ fn complexity_rows(
             (MetricId::RoutineCcn, routine.ccn()),
             (MetricId::RoutineLength, routine.length()),
         ] {
-            metrics.push(routine_evidence(
-                source,
-                path,
-                routine.function(),
-                metric,
-                value,
-            )?);
+            let (evidence, decision) =
+                routine_evidence(source, path, routine.function(), metric, value)?;
+            metrics.push(evidence);
+            if let Some(decision) = decision {
+                bounds.push(decision);
+            }
         }
     }
     Ok(())
@@ -570,30 +575,33 @@ fn read_complexity(
 /// ledger reconciles a latch through, so the limit this arm judges against and
 /// the limit that ledger would latch are one computation. A binding, key, or
 /// bound failure becomes this routine's own state rather than the arm's, because
-/// one unresolvable routine is not evidence about the rest of the tree.
+/// one unresolvable routine is not evidence about the rest of the tree. A
+/// successful row returns the exact decision used to build it so the caller can
+/// publish that decision without repeating any input read or policy resolution.
 fn routine_evidence(
     source: &MetricSource<'_>,
     path: &str,
     function: &str,
     metric: MetricId,
     value: u64,
-) -> Result<MetricEvidence, MetricAcquisitionError> {
+) -> Result<(MetricEvidence, Option<BoundDecision>), MetricAcquisitionError> {
     let key = MetricKey::function(path, function).map_err(MetricAcquisitionError::Evidence)?;
     match bound_routine(source, path, key.clone(), metric, value) {
-        Ok(evidence) => Ok(evidence),
+        Ok((evidence, decision)) => Ok((evidence, Some(decision))),
         Err(reason) => MetricEvidence::new(metric, key, EvidenceState::Unavailable { reason })
+            .map(|evidence| (evidence, None))
             .map_err(MetricAcquisitionError::Evidence),
     }
 }
 
-/// Resolve, bind, and decide one routine's bound, or say what refused.
+/// Resolve, bind, and decide one routine's bound, returning its row and decision.
 fn bound_routine(
     source: &MetricSource<'_>,
     path: &str,
     key: MetricKey,
     metric: MetricId,
     value: u64,
-) -> Result<MetricEvidence, String> {
+) -> Result<(MetricEvidence, BoundDecision), String> {
     let rule = resolve_metric_rule(
         source.contract.rule_policy(),
         metric,
@@ -626,9 +634,10 @@ fn bound_routine(
             metric.as_str()
         )
     })?;
-    binding
+    let evidence = binding
         .measured(&decision)
-        .map_err(|error| format!("{} evidence for {path:?}: {error}", metric.as_str()))
+        .map_err(|error| format!("{} evidence for {path:?}: {error}", metric.as_str()))?;
+    Ok((evidence, decision))
 }
 
 /// A file the parser refused speaks once per metric, on one shared key.
