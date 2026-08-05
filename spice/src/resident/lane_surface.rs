@@ -129,11 +129,8 @@ pub(super) fn read(
     bus: &Bus,
     _paths: &RuntimePaths,
     epoch: CanonicalUuid,
-    command: &wire::AdmittedCommand,
+    _command: &wire::AdmittedCommand,
 ) -> Outcome<CommandAnswer> {
-    if !matches!(command.actor(), Actor::Operator) {
-        return authority_refusal(command.actor(), "operator");
-    }
     let head = match current_residency(bus, epoch) {
         Ok(head) => head,
         Err(outcome) => return typed_outcome(outcome),
@@ -154,9 +151,6 @@ pub(super) fn seat(
     command: &wire::AdmittedCommand,
     request: &LaneSeat,
 ) -> Outcome<CommandAnswer> {
-    if !matches!(command.actor(), Actor::Operator) {
-        return authority_refusal(command.actor(), "operator");
-    }
     let observed = match admit_seat(bus, paths, epoch, request) {
         Ok(observed) => observed,
         Err(outcome) => return outcome,
@@ -343,9 +337,6 @@ pub(super) fn state(
     command: &wire::AdmittedCommand,
     request: &LaneState,
 ) -> Outcome<CommandAnswer> {
-    if !matches!(command.actor(), Actor::Operator) {
-        return authority_refusal(command.actor(), "operator");
-    }
     match request.action {
         LaneAction::Drain => drain(bus, epoch, seats, command, request),
         LaneAction::Wake => wake(bus, paths, epoch, seats, runtime, command, request),

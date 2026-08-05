@@ -130,7 +130,7 @@ mod tests {
         let cargo = fixture.script("cargo", "exit 0");
         let trunk = fixture.script("trunk", "exit 0");
 
-        let analysis = fixture.analyze(&cargo, &trunk, &canvas_bounds(Duration::from_secs(2)));
+        let analysis = fixture.analyze(&cargo, &trunk, &canvas_exit_bounds());
 
         assert_eq!(analysis.outcome, ArmOutcome::Passed);
         assert!(analysis.findings.is_empty());
@@ -154,7 +154,7 @@ mod tests {
         let cargo = fixture.script("cargo", "exit 99");
         let trunk = fixture.script("trunk", "exit 99");
 
-        let analysis = fixture.analyze(&cargo, &trunk, &canvas_bounds(Duration::from_secs(2)));
+        let analysis = fixture.analyze(&cargo, &trunk, &canvas_exit_bounds());
 
         assert_eq!(analysis.outcome, ArmOutcome::NotApplicable);
         assert!(fixture.log_lines().is_empty());
@@ -173,7 +173,7 @@ mod tests {
         );
         let trunk = fixture.script("trunk", "exit 99");
 
-        let analysis = fixture.analyze(&cargo, &trunk, &canvas_bounds(Duration::from_secs(2)));
+        let analysis = fixture.analyze(&cargo, &trunk, &canvas_exit_bounds());
 
         assert_eq!(analysis.outcome, ArmOutcome::Findings);
         assert_eq!(analysis.exit_code, None);
@@ -195,7 +195,7 @@ mod tests {
         let cargo = fixture.script("cargo", "printf 'opaque refusal\\n' >&2\nexit 17");
         let trunk = fixture.script("trunk", "exit 99");
 
-        let analysis = fixture.analyze(&cargo, &trunk, &canvas_bounds(Duration::from_secs(2)));
+        let analysis = fixture.analyze(&cargo, &trunk, &canvas_exit_bounds());
 
         assert_eq!(analysis.outcome, ArmOutcome::NonzeroAnalysis);
         assert_eq!(analysis.exit_code, Some(17));
@@ -560,6 +560,18 @@ mod tests {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.root).expect("remove canvas fixture");
         }
+    }
+
+    /// Bounds for the fixtures whose outcome is decided by the stub's exit status.
+    ///
+    /// These fixtures assert nothing about the runtime deadline, so a deadline that
+    /// can elapse only gives them a second way to finish: on a loaded lane the wrapper
+    /// can take longer to observe a stub that exited immediately than any budget worth
+    /// naming, and the arm then reports Timeout instead of what the stub said. A runtime
+    /// that cannot elapse removes that race by construction rather than lengthening it,
+    /// leaving the blocking wait on the child's exit as the only way these fixtures end.
+    fn canvas_exit_bounds() -> Bounds {
+        canvas_bounds(Duration::MAX)
     }
 
     fn canvas_bounds(runtime: Duration) -> Bounds {

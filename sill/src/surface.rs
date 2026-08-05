@@ -654,15 +654,41 @@ fn synchronized_acquire(lock: &LockFile, file: fs::File) -> io::Result<Acquisiti
     let owner = read_owner(&file)?;
     match lock.try_acquire_opened(file.try_clone()?)? {
         Acquisition::Acquired(possession) => Ok(Acquisition::Acquired(possession)),
-        Acquisition::Contended => match guardian_state(owner.as_ref()) {
-            GuardianState::Pending => lock.acquire_opened(file).map(Acquisition::Acquired),
-            // The guardian outlived the probe above but not this reading of it,
-            // and it releases possession on its way out. Reporting the refusal
-            // the probe collected would describe a holder that no longer exists,
-            // so the question is put to the kernel once more instead.
-            GuardianState::Departed => lock.try_acquire_opened(file),
-            GuardianState::Unbounded => Ok(Acquisition::Contended),
-        },
+        Acquisition::Contended => resolve_refusal(
+            guardian_state(owner.as_ref()),
+            Acquisition::Contended,
+            || {
+                lock.acquire_opened(file.try_clone()?)
+                    .map(Acquisition::Acquired)
+            },
+            || lock.try_acquire_opened(file.try_clone()?),
+        ),
+    }
+}
+
+/// Answer a refusal the kernel already returned against what the record bounds.
+///
+/// A guardian still holding possession for work that has finished is worth
+/// waiting out. A guardian that departed between the probe and this reading
+/// released what the probe saw, so the question goes back to the kernel rather
+/// than being quoted from a holder that no longer exists. Nothing else bounds
+/// the wait, and the refusal as collected stands.
+///
+/// Both answers are taken as callables because the departure this distinguishes
+/// occupies only the moment between collecting a refusal and reading the record
+/// against it. No caller can hold that window open, so the choice is made
+/// decidable here instead of being observable only by reproducing the race.
+#[cfg(unix)]
+fn resolve_refusal<T>(
+    state: GuardianState,
+    collected: T,
+    wait: impl FnOnce() -> io::Result<T>,
+    reask: impl FnOnce() -> io::Result<T>,
+) -> io::Result<T> {
+    match state {
+        GuardianState::Pending => wait(),
+        GuardianState::Departed => reask(),
+        GuardianState::Unbounded => Ok(collected),
     }
 }
 
@@ -687,16 +713,15 @@ fn synchronized_availability(
     if availability == Availability::Available {
         return Ok(availability);
     }
-    match guardian_state(owner) {
-        GuardianState::Pending => {
-            drop(lock.acquire_opened(file)?);
+    resolve_refusal(
+        guardian_state(owner),
+        availability,
+        || {
+            drop(lock.acquire_opened(file.try_clone()?)?);
             Ok(Availability::Available)
-        }
-        // The guardian the report described is gone, so the held answer above
-        // outlived its holder and the kernel is asked again rather than quoted.
-        GuardianState::Departed => lock.availability_opened(file),
-        GuardianState::Unbounded => Ok(availability),
-    }
+        },
+        || lock.availability_opened(file.try_clone()?),
+    )
 }
 
 #[cfg(not(unix))]
@@ -947,6 +972,7 @@ impl Error for LockSurfaceError {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::fs;
     use std::os::unix::process::CommandExt;
     use std::path::{Path, PathBuf};
@@ -959,6 +985,7 @@ mod tests {
     use super::{
         Contention, GuardianState, LockAttempt, LockAvailability, LockOwnerEvidence,
         LockSurfaceError, LockTargetKind, LockTopology, ProtectedGroup, replacement_record,
+        resolve_refusal,
     };
     use crate::LockConfig;
 
@@ -1135,6 +1162,39 @@ mod tests {
         );
         assert!(!entry.owner_stale);
         drop(held);
+    }
+
+    /// A departed guardian must send the question back to the kernel, and only
+    /// a departed guardian may. The difference is otherwise visible only inside
+    /// the moment between collecting a refusal and reading the record against
+    /// it, so what each state does is asserted here rather than raced for.
+    #[test]
+    fn only_a_departed_guardian_puts_a_collected_refusal_back_to_the_kernel() {
+        fn resolved(state: GuardianState) -> (&'static str, u32, u32) {
+            let waited = Cell::new(0);
+            let reasked = Cell::new(0);
+            let answer = resolve_refusal(
+                state,
+                "collected",
+                || {
+                    waited.set(waited.get() + 1);
+                    Ok("waited")
+                },
+                || {
+                    reasked.set(reasked.get() + 1);
+                    Ok("reasked")
+                },
+            );
+            (
+                answer.expect("every state answers"),
+                waited.get(),
+                reasked.get(),
+            )
+        }
+
+        assert_eq!(resolved(GuardianState::Departed), ("reasked", 0, 1));
+        assert_eq!(resolved(GuardianState::Pending), ("waited", 1, 0));
+        assert_eq!(resolved(GuardianState::Unbounded), ("collected", 0, 0));
     }
 
     #[test]
