@@ -2,8 +2,14 @@
 
 use super::*;
 
+/// Why one occupant's session declaration was not admitted.
+///
+/// Reached by lane seating and by predecessor import, which carried a second
+/// enum of its own until RECOVER-1kK7X4f2: the two mapped to the same seven
+/// reasons through separate variants, so a reason could be reworded on one
+/// path and left standing on the other.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum SessionProofError {
+pub(in crate::resident) enum SessionProofError {
     Missing,
     Capture(String),
     CrossLane {
@@ -25,7 +31,7 @@ pub(super) enum SessionProofError {
 }
 
 impl SessionProofError {
-    pub(super) fn refusal(&self) -> Refusal {
+    pub(in crate::resident) fn refusal(&self) -> Refusal {
         let (reason, expected, observed, remedy) = match self {
             Self::Missing => (
                 "lane::session-missing",
@@ -79,26 +85,33 @@ impl SessionProofError {
         }
     }
 
-    pub(super) fn outcome(&self) -> Outcome<CommandAnswer> {
+    pub(in crate::resident) fn outcome(&self) -> Outcome<CommandAnswer> {
         Outcome::Refusal(self.refusal())
     }
 }
 
-pub(super) struct DeclarationState {
-    pub(super) reply: mpsc::SyncSender<Result<wire::LaneSession, SessionProofError>>,
-    pub(super) seen: Option<String>,
+pub(in crate::resident) struct DeclarationState {
+    pub(in crate::resident) reply: mpsc::SyncSender<Result<wire::LaneSession, SessionProofError>>,
+    pub(in crate::resident) seen: Option<String>,
 }
 
-pub(super) struct DeclarationReporter {
-    pub(super) inner: Arc<dyn CaptureReporter>,
-    pub(super) lane: CanonicalUuid,
-    pub(super) occupant: CanonicalUuid,
-    pub(super) worktree: String,
-    pub(super) vendor: wire::Name,
-    pub(super) epoch: CanonicalUuid,
-    pub(super) stream: vendor::RecordStream,
-    pub(super) expected: Option<String>,
-    pub(super) state: Mutex<DeclarationState>,
+/// The one observer that admits a session declaration.
+///
+/// Seating and predecessor import both install this, and its seven refusals
+/// are proven against it in `lane_recovery_tests.rs`, which is where import
+/// held the copy this replaced. The proofs stayed there rather than moving
+/// beside the type, because the silent reporter they drive is a fixture that
+/// file already needs for its own launch tests.
+pub(in crate::resident) struct DeclarationReporter {
+    pub(in crate::resident) inner: Arc<dyn CaptureReporter>,
+    pub(in crate::resident) lane: CanonicalUuid,
+    pub(in crate::resident) occupant: CanonicalUuid,
+    pub(in crate::resident) worktree: String,
+    pub(in crate::resident) vendor: wire::Name,
+    pub(in crate::resident) epoch: CanonicalUuid,
+    pub(in crate::resident) stream: vendor::RecordStream,
+    pub(in crate::resident) expected: Option<String>,
+    pub(in crate::resident) state: Mutex<DeclarationState>,
 }
 
 impl DeclarationReporter {
@@ -210,7 +223,7 @@ pub(in crate::resident) fn record_stream(stream: vendor::RecordStream) -> &'stat
     }
 }
 
-pub(super) fn await_session(
+pub(in crate::resident) fn await_session(
     session: mpsc::Receiver<Result<wire::LaneSession, SessionProofError>>,
 ) -> Result<wire::LaneSession, SessionProofError> {
     match session.recv_timeout(SESSION_PROOF) {

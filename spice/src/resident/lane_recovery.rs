@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use bus::Bus;
 use journal::{FactCause, JournalGuard, JournalWrite, PendingFact};
-use lane::capture::{CaptureFailure, CaptureRecord, CaptureReportError, CaptureReporter};
+use lane::capture::CaptureReporter;
 use lane::occupant::{OccupantWait, Seats};
 use sill::{
     Cancellation, Deadlines, Environment, Observation, RestartDisposition, Spec, WaitPolicy,
@@ -18,7 +18,10 @@ use wire::{
     Actor, CanonicalUuid, Command, Outcome, Producer, Refusal, Reply, ReplyPosition, SeqRange,
 };
 
-use super::lane_surface::{record_stream, resume_session, session_fact};
+use super::lane_surface::{
+    DeclarationReporter, DeclarationState, SessionProofError, await_session, resume_session,
+    session_fact,
+};
 use super::shutdown::{current_residency, guard_residency};
 use super::{
     CommandResult, RuntimePaths, commit, new_uuid, seq, store_fault, typed_outcome, write,
@@ -31,8 +34,6 @@ const OUTPUT_DRAIN: Duration = Duration::from_secs(2);
 const REAP: Duration = Duration::from_secs(2);
 const TERMINATION_GRACE: Duration = Duration::from_secs(1);
 const RECORD_QUEUE: usize = 64;
-const SESSION_PROOF: Duration = Duration::from_secs(10);
-const SESSION_SETTLE: Duration = Duration::from_millis(25);
 
 pub(super) struct Runtime {
     capture: Arc<dyn CaptureReporter>,
@@ -41,176 +42,6 @@ pub(super) struct Runtime {
 impl Runtime {
     pub(super) const fn new(capture: Arc<dyn CaptureReporter>) -> Self {
         Self { capture }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum SessionProofError {
-    Missing,
-    Capture(String),
-    CrossLane(CanonicalUuid),
-    CrossOccupant(CanonicalUuid),
-    WrongStream,
-    Mismatched { expected: String, observed: String },
-    Duplicate(String),
-}
-
-impl SessionProofError {
-    fn refusal(&self) -> Refusal {
-        let (reason, expected, observed, remedy) = match self {
-            Self::Missing => (
-                "lane::session-missing",
-                Some("one session declaration".into()),
-                None,
-                "retry after the vendor emits initialization",
-            ),
-            Self::Capture(detail) => (
-                "lane::session-capture-failed",
-                Some("intact selected-stream capture".into()),
-                Some(detail.clone()),
-                "repair capture and retry",
-            ),
-            Self::CrossLane(observed) => (
-                "lane::session-cross-lane",
-                None,
-                Some(observed.to_string()),
-                "use this lane's supervised declaration",
-            ),
-            Self::CrossOccupant(observed) => (
-                "lane::session-cross-occupant",
-                None,
-                Some(observed.to_string()),
-                "use the current occupant's declaration",
-            ),
-            Self::WrongStream => (
-                "lane::session-wrong-stream",
-                Some("vendor-selected stream".into()),
-                None,
-                "declare on the selected JSONL stream",
-            ),
-            Self::Mismatched { expected, observed } => (
-                "lane::session-mismatched",
-                Some(expected.clone()),
-                Some(observed.clone()),
-                "resume the exact durable identity",
-            ),
-            Self::Duplicate(identity) => (
-                "lane::session-duplicate",
-                Some("one declaration".into()),
-                Some(identity.clone()),
-                "emit initialization exactly once",
-            ),
-        };
-        Refusal {
-            reason: reason.into(),
-            witness: Some("session-declaration".into()),
-            expected,
-            observed,
-            remedy: remedy.into(),
-        }
-    }
-}
-
-struct DeclarationState {
-    reply: mpsc::SyncSender<Result<wire::LaneSession, SessionProofError>>,
-    seen: Option<String>,
-}
-
-struct DeclarationReporter {
-    inner: Arc<dyn CaptureReporter>,
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
-    worktree: String,
-    vendor: wire::Name,
-    epoch: CanonicalUuid,
-    stream: vendor::RecordStream,
-    expected: Option<String>,
-    state: Mutex<DeclarationState>,
-}
-
-impl DeclarationReporter {
-    fn reject(&self, error: SessionProofError) -> CaptureReportError {
-        if let Ok(state) = self.state.lock() {
-            let _sent = state.reply.try_send(Err(error.clone()));
-        }
-        CaptureReportError::new(format!("session declaration refused: {error:?}"))
-    }
-
-    fn declaration(&self, record: &CaptureRecord) -> Result<wire::LaneSession, CaptureReportError> {
-        let declaration = record
-            .declaration
-            .as_ref()
-            .expect("caller selected declaration");
-        if record.lane != self.lane {
-            return Err(self.reject(SessionProofError::CrossLane(record.lane)));
-        }
-        if record.occupant != self.occupant {
-            return Err(self.reject(SessionProofError::CrossOccupant(record.occupant)));
-        }
-        if record.stream != self.stream {
-            return Err(self.reject(SessionProofError::WrongStream));
-        }
-        let identity = declaration.session.as_str().to_owned();
-        if self
-            .expected
-            .as_ref()
-            .is_some_and(|expected| expected != &identity)
-        {
-            return Err(self.reject(SessionProofError::Mismatched {
-                expected: self.expected.clone().expect("checked expected identity"),
-                observed: identity,
-            }));
-        }
-        Ok(wire::LaneSession {
-            lane: self.lane,
-            occupant: self.occupant,
-            worktree: self.worktree.clone(),
-            vendor: self.vendor.clone(),
-            epoch: self.epoch,
-            stream: record_stream(self.stream).into(),
-            identity,
-            locus: wire::TapeLocus {
-                member: declaration.locus.member,
-                offset: declaration.locus.offset,
-                length: declaration.locus.length,
-            },
-        })
-    }
-}
-
-impl CaptureReporter for DeclarationReporter {
-    fn record(&self, record: CaptureRecord) -> Result<(), CaptureReportError> {
-        if record.declaration.is_none() {
-            return self.inner.record(record);
-        }
-        let session = self.declaration(&record)?;
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| CaptureReportError::new("session proof lock is poisoned"))?;
-        if let Some(identity) = &state.seen {
-            let error = SessionProofError::Duplicate(identity.clone());
-            let _sent = state.reply.try_send(Err(error.clone()));
-            return Err(CaptureReportError::new(format!(
-                "session declaration refused: {error:?}"
-            )));
-        }
-        self.inner.record(record)?;
-        state.seen = Some(session.identity.clone());
-        state.reply.try_send(Ok(session)).map_err(|error| {
-            CaptureReportError::new(format!(
-                "session proof receiver refused declaration: {error}"
-            ))
-        })
-    }
-
-    fn failed(&self, failure: CaptureFailure) {
-        if let Ok(state) = self.state.lock() {
-            let _sent = state
-                .reply
-                .try_send(Err(SessionProofError::Capture(failure.failure.to_string())));
-        }
-        self.inner.failed(failure);
     }
 }
 
@@ -775,24 +606,6 @@ fn declaration_reporter(
         expected,
         state: Mutex::new(DeclarationState { reply, seen: None }),
     })
-}
-
-fn await_session(
-    receiver: mpsc::Receiver<Result<wire::LaneSession, SessionProofError>>,
-) -> Result<wire::LaneSession, SessionProofError> {
-    match receiver.recv_timeout(SESSION_PROOF) {
-        Ok(Ok(session)) => match receiver.recv_timeout(SESSION_SETTLE) {
-            Ok(Err(error)) => Err(error),
-            Ok(Ok(duplicate)) => Err(SessionProofError::Duplicate(duplicate.identity)),
-            Err(mpsc::RecvTimeoutError::Timeout | mpsc::RecvTimeoutError::Disconnected) => {
-                Ok(session)
-            }
-        },
-        Ok(Err(error)) => Err(error),
-        Err(mpsc::RecvTimeoutError::Timeout | mpsc::RecvTimeoutError::Disconnected) => {
-            Err(SessionProofError::Missing)
-        }
-    }
 }
 
 fn stop_lane(seats: &mut Seats, lane: CanonicalUuid) {

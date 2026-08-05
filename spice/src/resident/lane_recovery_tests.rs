@@ -1,3 +1,5 @@
+use lane::capture::{CaptureFailure, CaptureRecord, CaptureReportError};
+
 use super::*;
 
 static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -658,13 +660,32 @@ fn declared(identity: &str) -> CaptureRecord {
     }
 }
 
-fn session_refusal_reason(
+/// The refusal one rejected declaration reaches its caller with.
+///
+/// The whole refusal is returned rather than its reason alone: import and
+/// seating shared these seven reasons through separate enums until
+/// RECOVER-1kK7X4f2, and the two disagreed on what each one witnessed, so the
+/// reason is the part a collapse cannot get wrong.
+fn session_refusal(
     session: mpsc::Receiver<Result<wire::LaneSession, SessionProofError>>,
-) -> String {
+) -> Refusal {
     match await_session(session) {
         Ok(admitted) => panic!("session proof admitted {}", admitted.identity),
-        Err(error) => error.refusal().reason,
+        Err(error) => {
+            let refusal = error.refusal();
+            assert_eq!(refusal.witness.as_deref(), Some("session-declaration"));
+            refusal
+        }
     }
+}
+
+/// The identifying triple a refused declaration carries.
+fn session_evidence(refusal: &Refusal) -> (&str, Option<&str>, Option<&str>) {
+    (
+        refusal.reason.as_str(),
+        refusal.expected.as_deref(),
+        refusal.observed.as_deref(),
+    )
 }
 
 #[test]
@@ -678,9 +699,14 @@ fn session_proof_refuses_a_declaration_belonging_to_another_lane() {
         .reporter
         .record(record)
         .expect_err("a foreign lane declaration must be refused");
+    let refusal = session_refusal(proof.session);
     assert_eq!(
-        session_refusal_reason(proof.session),
-        "lane::session-cross-lane"
+        session_evidence(&refusal),
+        (
+            "lane::session-cross-lane",
+            Some(uuid(3).to_string().as_str()),
+            Some(uuid(9).to_string().as_str()),
+        )
     );
 }
 
@@ -695,9 +721,14 @@ fn session_proof_refuses_a_declaration_belonging_to_another_occupant() {
         .reporter
         .record(record)
         .expect_err("a foreign occupant declaration must be refused");
+    let refusal = session_refusal(proof.session);
     assert_eq!(
-        session_refusal_reason(proof.session),
-        "lane::session-cross-occupant"
+        session_evidence(&refusal),
+        (
+            "lane::session-cross-occupant",
+            Some(uuid(5).to_string().as_str()),
+            Some(uuid(9).to_string().as_str()),
+        )
     );
 }
 
@@ -712,9 +743,14 @@ fn session_proof_refuses_a_declaration_off_the_selected_stream() {
         .reporter
         .record(record)
         .expect_err("an unselected stream declaration must be refused");
+    let refusal = session_refusal(proof.session);
     assert_eq!(
-        session_refusal_reason(proof.session),
-        "lane::session-wrong-stream"
+        session_evidence(&refusal),
+        (
+            "lane::session-wrong-stream",
+            Some("the vendor-selected record stream"),
+            Some("another child stream"),
+        )
     );
 }
 
@@ -725,9 +761,14 @@ fn session_proof_refuses_a_declaration_resuming_another_identity() {
         .reporter
         .record(declared("successor-session"))
         .expect_err("a resumed launch must declare the exact durable identity");
+    let refusal = session_refusal(proof.session);
     assert_eq!(
-        session_refusal_reason(proof.session),
-        "lane::session-mismatched"
+        session_evidence(&refusal),
+        (
+            "lane::session-mismatched",
+            Some("predecessor-session"),
+            Some("successor-session"),
+        )
     );
 }
 
@@ -742,9 +783,14 @@ fn session_proof_refuses_a_second_declaration_from_one_occupant() {
         .reporter
         .record(declared("successor-session"))
         .expect_err("a second declaration must be refused");
+    let refusal = session_refusal(proof.session);
     assert_eq!(
-        session_refusal_reason(proof.session),
-        "lane::session-duplicate"
+        session_evidence(&refusal),
+        (
+            "lane::session-duplicate",
+            Some("one declaration per occupant"),
+            Some("successor-session"),
+        )
     );
 }
 
@@ -759,9 +805,18 @@ fn session_proof_refuses_a_terminal_capture_failure() {
             detail: "selected pipe closed".into(),
         },
     });
+    let refusal = session_refusal(proof.session);
+    assert_eq!(refusal.reason, "lane::session-capture-failed");
     assert_eq!(
-        session_refusal_reason(proof.session),
-        "lane::session-capture-failed"
+        refusal.expected.as_deref(),
+        Some("one intact selected-stream capture")
+    );
+    let observed = refusal
+        .observed
+        .expect("a capture failure witnesses its detail");
+    assert!(
+        observed.contains("selected pipe closed"),
+        "the refusal carries the failure that ended the capture: {observed}"
     );
 }
 
@@ -769,9 +824,14 @@ fn session_proof_refuses_a_terminal_capture_failure() {
 fn session_proof_refuses_a_launch_that_never_declared() {
     let proof = proof(None);
     drop(proof.reporter);
+    let refusal = session_refusal(proof.session);
     assert_eq!(
-        session_refusal_reason(proof.session),
-        "lane::session-missing"
+        session_evidence(&refusal),
+        (
+            "lane::session-missing",
+            Some("one current selected-stream session declaration"),
+            None,
+        )
     );
 }
 
