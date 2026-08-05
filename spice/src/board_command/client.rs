@@ -236,6 +236,7 @@ fn client_capture(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
+    let stealing = matches.get_flag("steal");
     let task = match matches.get_one::<String>("HANDLE") {
         Some(written) => {
             if matches.contains_id("title") || matches.contains_id("project") {
@@ -257,6 +258,13 @@ fn client_capture(
             }
         }
         None => {
+            if stealing {
+                return refusal(
+                    "task::steal-handle-missing",
+                    None,
+                    "name the HANDLE of the claim to steal; a new task has no holder",
+                );
+            }
             let Some(project) = matches.get_one::<String>("project").cloned() else {
                 return refusal(
                     "task::capture-project-missing",
@@ -293,7 +301,9 @@ fn client_capture(
     mutate_from_board(repository, contract, |board| {
         let heads = task_heads(&board, &task)?;
         let (lane, occupant) = actor_seat(&board)?;
-        let rule = "capture".parse::<Name>().expect("capture is a wire name");
+        let rule = if stealing { "steal" } else { "capture" }
+            .parse::<Name>()
+            .expect("possession rules are wire names");
         Ok((
             CommandKind::ClaimWin,
             vec![
@@ -398,6 +408,9 @@ fn client_free(
                 "name a task carrying a current live claim",
             )
         })?;
+        if let Err(error) = spice::task_git::prepare_free(repository, &task.to_string()) {
+            return Err(task_git_outcome(error));
+        }
         Ok((
             CommandKind::ClaimFree,
             vec![

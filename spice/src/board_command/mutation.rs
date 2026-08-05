@@ -421,8 +421,8 @@ fn claim_win(
     repository: Option<&Repository>,
     projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
-    let capture = match capture_rule(win) {
-        Ok(capture) => capture,
+    let possession = match possession_rule(win) {
+        Ok(possession) => possession,
         Err(outcome) => return outcome,
     };
     let snapshot = match validated_snapshot(
@@ -433,11 +433,7 @@ fn claim_win(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let selected = match claim_selection(
-        &snapshot,
-        command,
-        capture,
-    ) {
+    let selected = match claim_selection(&snapshot, command, possession) {
         Ok(selected) => selected,
         Err(outcome) => return outcome,
     };
@@ -454,7 +450,7 @@ fn claim_win(
         repository,
         &snapshot,
         command,
-        capture,
+        possession.captures(),
     ) {
         Ok(git) => git,
         Err(outcome) => return outcome,
@@ -473,7 +469,7 @@ fn claim_win(
         &mut write,
         &snapshot,
         command,
-        capture,
+        possession.captures(),
         &task,
         projects,
     );
@@ -508,16 +504,35 @@ fn claim_win(
     committed(bus, write, CommandAnswer::Claim(answer))
 }
 
-fn capture_rule(
+/// Which possession law one claim win asks the board to apply.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Possession {
+    /// The allocator chooses among tasks nobody holds.
+    Next,
+    /// The caller names a task nobody holds.
+    Capture,
+    /// The caller names a task and takes it from its current holder.
+    Steal,
+}
+
+impl Possession {
+    /// Whether the lane's local commits become this claim's boundary.
+    const fn captures(self) -> bool {
+        !matches!(self, Self::Next)
+    }
+}
+
+fn possession_rule(
     win: &ClaimWin,
-) -> Result<bool, Outcome<CommandAnswer>> {
+) -> Result<Possession, Outcome<CommandAnswer>> {
     match win.rule.as_str() {
-        "next" => Ok(false),
-        "capture" => Ok(true),
+        "next" => Ok(Possession::Next),
+        "capture" => Ok(Possession::Capture),
+        "steal" => Ok(Possession::Steal),
         _ => Err(refusal(
             "board::allocator-rule",
             Some(win.rule.to_string()),
-            "use the next or capture possession rule",
+            "use the next, capture or steal possession rule",
         )),
     }
 }
@@ -525,9 +540,9 @@ fn capture_rule(
 fn claim_selection<'a>(
     snapshot: &'a ValidatedSnapshot,
     command: &wire::AdmittedCommand,
-    capture: bool,
+    possession: Possession,
 ) -> Result<&'a Entry, Outcome<CommandAnswer>> {
-    if !capture {
+    if !possession.captures() {
         return board::select(
             &snapshot.entries,
             command.actor(),
@@ -568,18 +583,30 @@ fn claim_selection<'a>(
                 "capture into one current pending task",
             )
         })?;
-    if board::eligible_entry(
-        &snapshot.entries,
-        entry,
-        command.actor(),
-    ) {
+    let (admitted, reason, remedy) = match possession {
+        Possession::Steal => (
+            board::stealable_entry(
+                &snapshot.entries,
+                entry,
+                command.actor(),
+            ),
+            "claim::steal-ineligible",
+            "steal only a ready, pending task",
+        ),
+        _ => (
+            board::eligible_entry(
+                &snapshot.entries,
+                entry,
+                command.actor(),
+            ),
+            "claim::capture-ineligible",
+            "capture only an unclaimed, ready, pending task",
+        ),
+    };
+    if admitted {
         Ok(entry)
     } else {
-        Err(refusal(
-            "claim::capture-ineligible",
-            Some(task.to_string()),
-            "capture only an unclaimed, ready, pending task",
-        ))
+        Err(refusal(reason, Some(task.to_string()), remedy))
     }
 }
 

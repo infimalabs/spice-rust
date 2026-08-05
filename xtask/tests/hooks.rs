@@ -42,6 +42,77 @@ fn install_exercises_spice_hooks_before_explicit_activation() {
     );
 }
 
+/// A lane running under the git shadow environment sees its own branch as its
+/// upstream, deliberately, so `git status` never moves when origin advances.
+/// The reference guard must read the integration branch the shadow keeps
+/// readable instead, or every backwards move of an unpublished lane commit is
+/// reported as abandoning published history.
+#[test]
+fn a_shadowed_upstream_does_not_publish_a_lanes_local_commits() {
+    let scratch = Scratch::new();
+    let (base, protected, local) = repository_history(&scratch);
+    shadow_lane_branch(&scratch, "main-b", &local, &base);
+
+    assert_eq!(rev_parse(&scratch, "@{upstream}^{commit}"), local);
+    assert_eq!(
+        config_get(&scratch, "branch.main-b.merge"),
+        "refs/heads/main"
+    );
+    assert_eq!(rev_parse(&scratch, "refs/remotes/origin/main"), protected);
+    assert_eq!(rev_parse(&scratch, "refs/heads/main"), base);
+
+    guard(
+        &scratch,
+        &format!("{local} {protected} refs/heads/main-b\n"),
+    )
+    .expect("a shadowed lane may rewind a commit it never published");
+
+    let refusal = guard(&scratch, &format!("{protected} {base} refs/heads/main-b\n"))
+        .expect_err("history published to the integration branch stays protected");
+    assert!(
+        refusal
+            .to_string()
+            .contains("refused to abandon upstream-merged commits")
+    );
+}
+
+/// Put `lane` under the shadow: the self-merge the shadow pins in system scope
+/// is recorded first, so `@{upstream}` resolves to the lane itself, and the true
+/// integration branch is appended last, where `git config --get` reports it.
+///
+/// The local `refs/heads/main` is left behind at `stale` so it cannot stand in
+/// for the remote-tracking reference the contract names; a lane worktree has no
+/// reason to hold a current copy of the integration branch it never checks out.
+fn shadow_lane_branch(scratch: &Scratch, lane: &str, tip: &str, stale: &str) {
+    git(scratch, &["branch", lane, tip]);
+    git(
+        scratch,
+        &["symbolic-ref", "HEAD", &format!("refs/heads/{lane}")],
+    );
+    git(scratch, &["update-ref", "refs/heads/main", stale]);
+    let merge = format!("branch.{lane}.merge");
+    git(
+        scratch,
+        &["config", "--add", &merge, &format!("refs/heads/{lane}")],
+    );
+    git(
+        scratch,
+        &["config", "--add", &format!("branch.{lane}.remote"), "."],
+    );
+    git(scratch, &["config", "--add", &merge, "refs/heads/main"]);
+}
+
+fn guard(scratch: &Scratch, prepared: &str) -> Result<(), impl std::error::Error + use<>> {
+    xtask::reference_transaction(scratch.path(), OsStr::new("prepared"), prepared)
+}
+
+fn config_get(scratch: &Scratch, key: &str) -> String {
+    String::from_utf8(git(scratch, &["config", "--get", key]).stdout)
+        .unwrap()
+        .trim()
+        .to_owned()
+}
+
 fn install_spice_hooks(scratch: &Scratch) -> PriorHookEvidence {
     let operator = scratch.join(".spice/hooks");
     let tracked = scratch.join(".githooks");

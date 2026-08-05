@@ -675,7 +675,7 @@ const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "capture"],
-        "task capture [HANDLE] [--title TITLE] [--project PROJECT]",
+        "task capture [HANDLE] [--title TITLE] [--project PROJECT] [--steal]",
         OperatorOrLane,
         Command,
         [ClaimWon],
