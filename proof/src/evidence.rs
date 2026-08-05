@@ -115,7 +115,7 @@ pub(crate) fn admit_receipt(receipt_bytes: &[u8]) -> Result<AdmittedReceipt, Evi
 
     Ok(AdmittedReceipt {
         value: receipt,
-        digest: Digest::compute(Domain::ProofReceiptV2, &canonical_receipt),
+        digest: Digest::compute(Domain::ProofReceiptV3, &canonical_receipt),
     })
 }
 
@@ -181,7 +181,7 @@ pub(crate) fn verify_admitted(
         })?;
     let rederived_bytes = wire::encode(&rederived_receipt)
         .map_err(|source| EvidenceError::Encode(source.to_string()))?;
-    if admitted_receipt.digest != Digest::compute(Domain::ProofReceiptV2, &rederived_bytes) {
+    if admitted_receipt.digest != Digest::compute(Domain::ProofReceiptV3, &rederived_bytes) {
         return Err(EvidenceError::ReceiptDigest);
     }
 
@@ -208,7 +208,7 @@ pub fn publish(receipt: &ProofReceipt, destination: &Path) -> Result<Digest, Evi
         .map_err(EvidencePublishError::Publish)?
         .publish(|staged| staged.write_all(&bytes))
         .map_err(EvidencePublishError::Publish)?;
-    Ok(Digest::compute(Domain::ProofReceiptV2, &bytes))
+    Ok(Digest::compute(Domain::ProofReceiptV3, &bytes))
 }
 
 /// Why payload, replay, and receipt did not form one proof.
@@ -432,7 +432,7 @@ mod tests {
         );
 
         let mut wrong_replay = receipt.clone();
-        wrong_replay.replay = other(Domain::ProofReplayV2);
+        wrong_replay.replay = other(Domain::ProofReplayV3);
         assert_refuses(
             &admitted,
             &wrong_replay,
@@ -547,7 +547,7 @@ mod tests {
         let digest = publish(&receipt, &destination).expect("receipt publishes");
         let published = fs::read(&destination).expect("published receipt");
 
-        assert_eq!(digest, Digest::compute(Domain::ProofReceiptV2, &published));
+        assert_eq!(digest, Digest::compute(Domain::ProofReceiptV3, &published));
         assert_eq!(
             wire::decode::<wire::manifest::ProofReceipt>(&published)
                 .expect("published receipt decodes"),

@@ -234,7 +234,7 @@ mod tests {
             assert_ne!(derive_fixture(&payload).identity, baseline);
 
             let mut proof = original.clone();
-            proof.targets[index].proof.receipt = digest(Domain::ProofReceiptV2, "other-proof");
+            proof.targets[index].proof.receipt = digest(Domain::ProofReceiptV3, "other-proof");
             assert_ne!(derive_fixture(&proof).identity, baseline);
 
             let mut gate = original.clone();
@@ -322,7 +322,7 @@ mod tests {
                         proof: ReleaseNotesProof {
                             target,
                             payload,
-                            receipt: digest(Domain::ProofReceiptV2, &format!("proof-{index}")),
+                            receipt: digest(Domain::ProofReceiptV3, &format!("proof-{index}")),
                         },
                         gate: ReleaseNotesGate {
                             target,
