@@ -70,6 +70,23 @@ pub fn scan_magic_regressions(
         .collect())
 }
 
+/// Whether this build can read the magic-number class a path belongs to.
+///
+/// The scanner asks this on the way in, and the acquiring arm asks it before it
+/// asks anything else about a path, so both settle a class the same way. It is
+/// separate from scanning because it needs neither side of the comparison: which
+/// classes are readable is a property of the compiled parser, answerable for a
+/// path holding no bytes this build can reach.
+///
+/// # Errors
+///
+/// Returns the predecessor-owned refusal for a class released 0.31.0 parsed by
+/// AST parent semantics, and the inapplicability for a path in no declared magic
+/// class at all. A path this parser reads exactly returns nothing.
+pub fn admit_magic_source(path: &str) -> Result<(), ParseError> {
+    admit_suffix(&canonical_path(path)?)
+}
+
 fn admit_suffix(path: &str) -> Result<(), ParseError> {
     let suffix = Path::new(path)
         .extension()

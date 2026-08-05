@@ -38,8 +38,8 @@ pub use parity::{
 pub use parser::{ComplexityRoutine, measure_complexity};
 pub use parser::{
     FileShapeMeasurement, MagicFinding, MarkdownLinkFinding, ParseError,
-    RepositoryDocumentMeasurement, measure_file_shape, measure_repository_document,
-    scan_magic_regressions, scan_markdown_link_case,
+    RepositoryDocumentMeasurement, admit_magic_source, measure_file_shape,
+    measure_repository_document, scan_magic_regressions, scan_markdown_link_case,
 };
 pub use policy_binding::{
     PolicyBindingError, ResolvedMagicMetric, ResolvedMetricRule, resolve_magic_metric,

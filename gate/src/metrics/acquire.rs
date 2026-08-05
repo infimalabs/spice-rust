@@ -13,9 +13,9 @@ use super::baseline::{BaselineCapture, MagicBaselines, selects};
 use super::{
     ArmDeclaration, ComplexityRoutine, EvidenceError, EvidenceState, MetricEvidence, MetricId,
     MetricKey, MetricMeasurement, MetricStateBinding, ParseError, ParserEvidence, ParserId,
-    ResolvedMagicMetric, STRUCTURAL_ARMS, StructuralArmEvidence, measure_complexity,
-    measure_file_shape, resolve_magic_metric, resolve_metric_rule, scan_magic_regressions,
-    scan_markdown_link_case,
+    ResolvedMagicMetric, STRUCTURAL_ARMS, StructuralArmEvidence, admit_magic_source,
+    measure_complexity, measure_file_shape, resolve_magic_metric, resolve_metric_rule,
+    scan_magic_regressions, scan_markdown_link_case,
 };
 use crate::core::ActorCapture;
 use crate::input::Contract;
@@ -639,14 +639,34 @@ fn not_applicable_magic() -> Result<Vec<MetricEvidence>, MetricAcquisitionError>
 
 /// One source file's own state: its regression count, or why it has none.
 ///
-/// A path `HEAD` does not carry is reported inapplicable rather than scanned
-/// against nothing. A regression is a literal this file did not have before, so
-/// a file that did not exist before has no delta to take: scanning it against an
-/// empty baseline would count every literal it was born with, and the count
-/// would be a property of the file's size rather than of any change to it. The
-/// fold lets a measurement outrank inapplicability, so the paths that do have a
-/// baseline still speak for the arm.
+/// Two different obstructions can reach one row — a class this build cannot
+/// read, and a path `HEAD` does not carry — and this is where the order between
+/// them is chosen. **The class is asked first.** Which classes are readable is a
+/// property of the compiled parser and holds of the path either way, while
+/// having no baseline is a property of one commit pair and stops being true at
+/// the next commit, after which the same file reports the class refusal anyway.
+/// Asking absence first would report the obstruction that expires and withhold
+/// the one that does not, withhold it precisely for newly added files, and those
+/// are how an unreadable class enters a tree in the first place. It is also the
+/// only order under which the arm can say what `magic_metrics` keeps these paths
+/// in scope to say: inapplicability may speak for an arm only when it speaks for
+/// every row, so a tree adding its first `.py` beside readable sources would fold
+/// to `Passed` with an unreadable class sitting in scope unmeasured, and a tree
+/// whose whole magic surface is newly added would fold to `NotApplicable` and
+/// mint skip provenance over it. Of the two, only the class refusal outranks a
+/// measurement.
+///
+/// A path `HEAD` does not carry is then reported inapplicable rather than
+/// scanned against nothing. A regression is a literal this file did not have
+/// before, so a file that did not exist before has no delta to take: scanning it
+/// against an empty baseline would count every literal it was born with, and the
+/// count would be a property of the file's size rather than of any change to it.
+/// The fold lets a measurement outrank inapplicability, so the paths that do
+/// have a baseline still speak for the arm.
 fn magic_state(source: &MetricSource<'_>, path: &str, baselines: &MagicBaselines) -> EvidenceState {
+    if let Err(unreadable) = admit_magic_source(path) {
+        return unreadable.into_evidence_state();
+    }
     let Some(baseline) = baselines.text(path) else {
         let reason = match baselines.commit() {
             Some(commit) => {
