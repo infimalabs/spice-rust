@@ -7,8 +7,8 @@ use toml::Value;
 
 use super::matcher::{compile_stem_expression, normalize_path};
 use super::{
-    BoundLimits, BoundName, CompileError, GlobalRatchet, MagicRule, OneLetterBehavior, Policy,
-    PolicyDocument, RuleDeclaration, RuleId, RuleSettings, RuleSource, RuleSourceKind,
+    BoundLimits, BoundName, CompileError, FileClasses, GlobalRatchet, MagicRule, OneLetterBehavior,
+    Policy, PolicyDocument, RuleDeclaration, RuleId, RuleSettings, RuleSource, RuleSourceKind,
     ScopeSelector, encode_id_component,
 };
 
@@ -53,13 +53,20 @@ pub fn migrate_predecessor_policy(
     let ratchet = parse_legacy_ratchet(policy, &limits, &source)?;
     let magic_threshold = parse_magic(policy, &source)?;
     let repo_truth_docs = parse_repo_truth_docs(policy, &source)?;
+    let file_classes = parse_file_classes(policy, &source)?;
     let markdown = parse_markdown(policy, &source)?;
     let mut rules = generated_markdown_rules(&source, &markdown)?;
     let generated = rules.len();
     rules.extend(parse_list_rules(policy, &source, generated)?);
 
-    let document =
-        PolicyDocument::predecessor(limits, ratchet, magic_threshold, repo_truth_docs, rules);
+    let document = PolicyDocument::predecessor(
+        limits,
+        ratchet,
+        magic_threshold,
+        repo_truth_docs,
+        file_classes,
+        rules,
+    );
     Policy::compile(document).map_err(|error| compile_error(&source, &error))
 }
 
@@ -112,6 +119,75 @@ fn parse_repo_truth_docs(
         .map(|value| string_list(value, "policy.repo_truth.docs", source, true))
         .transpose()?;
     repo_truth_inventory(declared.as_deref(), source)
+}
+
+/// Resolve the three file classes the structural arms select their scopes from.
+///
+/// Every one is required, which is the opposite of the inventory above. A
+/// repository that declares no truth documents still has a packaged answer to
+/// fall back on, but nothing packages an answer to which files this repository
+/// wants measured: a selection defaulted here would measure a set nobody chose,
+/// and an empty one would let a structural arm report a clean family over no
+/// files at all. Both are indistinguishable from having passed.
+fn parse_file_classes(
+    policy: Option<&toml::Table>,
+    source: &str,
+) -> Result<FileClasses, MigrationError> {
+    let shape = optional_nested(policy, "file_shape", "policy.file_shape", source)?;
+    reject_unknown(shape, &["source_suffixes"], "policy.file_shape", source)?;
+    let languages = optional_nested(policy, "languages", "policy.languages", source)?;
+    reject_unknown(
+        languages,
+        &["complexity", "magic"],
+        "policy.languages",
+        source,
+    )?;
+    Ok(FileClasses::predecessor(
+        suffix_list(
+            shape,
+            "source_suffixes",
+            "policy.file_shape.source_suffixes",
+            source,
+        )?,
+        suffix_list(
+            languages,
+            "complexity",
+            "policy.languages.complexity",
+            source,
+        )?,
+        suffix_list(languages, "magic", "policy.languages.magic", source)?,
+    ))
+}
+
+/// One required selection, spelled the way the extension of a path is spelled.
+///
+/// The leading period is demanded rather than added, because a selection this
+/// silently rewrote would no longer be the text the repository can read back
+/// and predict its own measured set from.
+fn suffix_list(
+    table: Option<&toml::Table>,
+    key: &str,
+    field: &str,
+    source: &str,
+) -> Result<Vec<String>, MigrationError> {
+    let value = table.and_then(|table| table.get(key)).ok_or_else(|| {
+        MigrationError::new(
+            source,
+            field,
+            "must be declared; no file-class selection is packaged to fall back on",
+        )
+    })?;
+    let suffixes = string_list(value, field, source, false)?;
+    for (index, suffix) in suffixes.iter().enumerate() {
+        if !suffix.starts_with('.') || suffix.len() == 1 {
+            return Err(MigrationError::new(
+                source,
+                format!("{field}[{}]", index + 1),
+                format!("{suffix:?}: must be a file suffix beginning with a period"),
+            ));
+        }
+    }
+    Ok(suffixes)
 }
 
 #[derive(Debug)]

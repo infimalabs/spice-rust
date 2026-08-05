@@ -147,8 +147,11 @@ fn identical_tracked_bytes_yield_identical_execution_identities() {
 #[test]
 fn admitted_walk_intent_moves_policy_without_selecting_an_executable() {
     let compiled = fixture_contract(TRACKED_POLICY, TRACKED_BASELINE).expect("compiled defaults");
-    let narrowed = fixture_contract("[gate.walk]\nskip = [\"fixtures/\"]\n", TRACKED_BASELINE)
-        .expect("tracked skip is admitted");
+    let narrowed = fixture_contract(
+        &loadable("[gate.walk]\nskip = [\"fixtures/\"]\n"),
+        TRACKED_BASELINE,
+    )
+    .expect("tracked skip is admitted");
 
     assert_ne!(compiled.policy().digest(), narrowed.policy().digest());
     assert_eq!(compiled.gate_set().digest(), narrowed.gate_set().digest());
@@ -281,7 +284,7 @@ fn malformed_policy_and_unknown_gate_fields_refuse_before_a_contract_exists() {
     assert!(source.to_string().contains("timeout"));
 
     let source = "[gate.walk]\nskip = [\"fixtures/**\"]\n";
-    let selector = fixture_contract(source, TRACKED_BASELINE)
+    let selector = fixture_contract(&loadable(source), TRACKED_BASELINE)
         .expect("documented crossing-star skip is admitted");
     let configured = toml::from_str::<GateDocument>(source)
         .expect("the same tracked bytes decode through the configuration tree");
@@ -439,6 +442,12 @@ routine_length = {{ max = 55 }}
 #[derive(Deserialize)]
 struct GateDocument {
     gate: gate::Config,
+}
+
+/// One tracked policy document that can load: a fixture body carrying the
+/// file-class selections migration requires of every document.
+fn loadable(body: &str) -> String {
+    format!("{}{body}", gate::NARROWEST_FILE_CLASSES)
 }
 
 fn fixture_contract(policy: &str, baseline: &str) -> Result<Contract, ContractError> {

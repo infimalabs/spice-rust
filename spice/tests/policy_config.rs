@@ -300,8 +300,11 @@ fn every_coexisting_tracked_key_reaches_its_accessor_through_both_resolver_doors
 }
 
 /// Each value is distinct so no reading can be satisfied by another's bytes.
-const COEXISTING_DECLARATIONS: [(&str, &str); 6] = [
+const COEXISTING_DECLARATIONS: [(&str, &str); 9] = [
     ("policy.repo_truth.docs", "[\"DOCTRINE.md\"]"),
+    ("policy.file_shape.source_suffixes", "[\".rs\"]"),
+    ("policy.languages.complexity", "[\".rs\", \".py\"]"),
+    ("policy.languages.magic", "[\".rs\"]"),
     ("policy.package_roots", "[\"src/sample\"]"),
     ("policy.generated_paths", "[\"build/derived\"]"),
     ("policy.name_cluster_threshold", "3"),
@@ -320,6 +323,18 @@ fn assert_coexisting_values(policy: &spice::config::WorkspacePolicy) {
     assert_eq!(
         policy.repo_truth().docs(),
         Some(["DOCTRINE.md".to_owned()].as_slice())
+    );
+    assert_eq!(
+        policy.file_shape().source_suffixes(),
+        Some([".rs".to_owned()].as_slice())
+    );
+    assert_eq!(
+        policy.languages().complexity(),
+        Some([".rs".to_owned(), ".py".to_owned()].as_slice())
+    );
+    assert_eq!(
+        policy.languages().magic(),
+        Some([".rs".to_owned()].as_slice())
     );
     assert_eq!(policy.package_roots(), ["src/sample".to_owned()]);
     assert_eq!(policy.generated_paths(), ["build/derived".to_owned()]);

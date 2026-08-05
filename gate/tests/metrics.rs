@@ -27,6 +27,15 @@ const STATE_TEST_CLOCK: f64 = 10_000.0;
 
 static NEXT_STATE_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
+/// One predecessor document that can load: a fixture body carrying the
+/// file-class selections migration requires of every document.
+///
+/// The bodies below say nothing about file classes because none of them is
+/// about file classes, but a document omitting them does not load at all.
+fn loadable(body: &str) -> String {
+    format!("{}{body}", gate::NARROWEST_FILE_CLASSES)
+}
+
 const SCOPED_POLICY: &str = r#"
 [policy.limits]
 file_loc = 10
@@ -100,7 +109,7 @@ fn declarations_freeze_ids_units_parsers_scopes_and_order() {
 
 #[test]
 fn measured_parser_evidence_binds_mode_tool_version_and_executable_identity() {
-    let policy = migrate_predecessor_policy("fixtures/metrics.toml", SCOPED_POLICY)
+    let policy = migrate_predecessor_policy("fixtures/metrics.toml", &loadable(SCOPED_POLICY))
         .expect("predecessor policy migrates once");
     let complexity_rule = resolve_metric_rule(
         &policy,
@@ -398,7 +407,7 @@ fn markdown_links_use_projected_inventory_and_exact_ascii_case() {
 
 #[test]
 fn policy_binding_preserves_regex_rules_magic_and_markdown_depth() {
-    let policy = migrate_predecessor_policy("fixtures/metrics.toml", SCOPED_POLICY)
+    let policy = migrate_predecessor_policy("fixtures/metrics.toml", &loadable(SCOPED_POLICY))
         .expect("predecessor policy migrates once");
     let file = resolve_metric_rule(
         &policy,
@@ -465,7 +474,7 @@ fn policy_binding_preserves_regex_rules_magic_and_markdown_depth() {
 
 #[test]
 fn missing_rule_context_refuses_instead_of_selecting_a_global_default() {
-    let policy = migrate_predecessor_policy("fixtures/metrics.toml", SCOPED_POLICY)
+    let policy = migrate_predecessor_policy("fixtures/metrics.toml", &loadable(SCOPED_POLICY))
         .expect("predecessor policy migrates once");
     let error = resolve_metric_rule(&policy, MetricId::FileLines, &PolicyContext::new())
         .expect_err("path-constrained rule requires path context");
@@ -474,7 +483,7 @@ fn missing_rule_context_refuses_instead_of_selecting_a_global_default() {
 
 #[test]
 fn bounded_metrics_cross_current_state_with_every_latch_transition_and_actor_variation() {
-    let policy = migrate_predecessor_policy("fixtures/metrics.toml", SCOPED_POLICY)
+    let policy = migrate_predecessor_policy("fixtures/metrics.toml", &loadable(SCOPED_POLICY))
         .expect("predecessor policy migrates once");
     let fixture = MetricStateFixture::new();
 
@@ -513,7 +522,7 @@ fn bounded_metrics_cross_current_state_with_every_latch_transition_and_actor_var
 
 #[test]
 fn state_binding_preserves_function_keys_and_unlimited_document_rules() {
-    let policy = migrate_predecessor_policy("fixtures/metrics.toml", SCOPED_POLICY)
+    let policy = migrate_predecessor_policy("fixtures/metrics.toml", &loadable(SCOPED_POLICY))
         .expect("predecessor policy migrates once");
     let function_rule = resolve_metric_rule(
         &policy,
@@ -584,7 +593,7 @@ fn state_binding_preserves_the_current_u64_variation_domain() {
     const ABOVE_U32: u64 = 4_294_967_296;
     let policy = migrate_predecessor_policy(
         "fixtures/large-variation.toml",
-        "[policy.flex]\nratio = 2.0\njitter_percent = 4294967296\n",
+        &loadable("[policy.flex]\nratio = 2.0\njitter_percent = 4294967296\n"),
     )
     .expect("large predecessor variation migrates");
     let rule = resolve_metric_rule(
@@ -638,12 +647,12 @@ fn state_binding_refuses_a_decision_from_another_variation_policy() {
     const ABOVE_U32: u64 = 4_294_967_296;
     let large_policy = migrate_predecessor_policy(
         "fixtures/large-variation.toml",
-        "[policy.flex]\nratio = 2.0\njitter_percent = 4294967296\n",
+        &loadable("[policy.flex]\nratio = 2.0\njitter_percent = 4294967296\n"),
     )
     .expect("large predecessor variation migrates");
     let small_policy = migrate_predecessor_policy(
         "fixtures/small-variation.toml",
-        "[policy.flex]\nratio = 2.0\njitter_percent = 7\n",
+        &loadable("[policy.flex]\nratio = 2.0\njitter_percent = 7\n"),
     )
     .expect("small predecessor variation migrates");
     let context = PolicyContext::new().with_path("src/lib.rs");

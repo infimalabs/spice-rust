@@ -67,7 +67,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert_eq!(missing.root(), &spice::config::Root::default());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 47);
+    assert_eq!(missing.provenance().len(), 50);
     assert!(
         missing
             .provenance()
@@ -632,6 +632,13 @@ test_paths = ["tests/fixture"]
 
 [policy.repo_truth]
 docs = ["DOCTRINE.md"]
+
+[policy.file_shape]
+source_suffixes = [".rs", ".py"]
+
+[policy.languages]
+complexity = [".rs", ".py"]
+magic = [".rs"]
 
 [policy.package]
 boundary_underscore_pattern = "^[a-z][a-z0-9_]*$"

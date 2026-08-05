@@ -275,13 +275,17 @@ impl Fixture {
         ];
         let policy = crate::migrate_predecessor_policy(
             "spice.toml",
-            r#"
+            &format!(
+                "{}{}",
+                crate::NARROWEST_FILE_CLASSES,
+                r#"
                 [[policy.rules]]
                 scopes = { paths = ["src/**"] }
 
                 [policy.rules.file_loc]
                 multiplier = 1.0
-            "#,
+            "#
+            ),
         )
         .expect("compiled fixture policy");
         let tools = vec![

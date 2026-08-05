@@ -53,7 +53,7 @@ fn production_contract_distinguishes_clean_and_camped_complete_populations() {
 
 fn profile_tree(label: &str, lengths: [usize; 4]) -> Tree {
     let tree = Tree::new(label);
-    tree.write("spice.toml", "");
+    tree.write("spice.toml", gate::NARROWEST_FILE_CLASSES);
     tree.write("baseline.toml", BASELINE);
     for (path, length) in LOCI.into_iter().zip(lengths) {
         assert!(length <= LONG_LINE_LIMIT + 6);

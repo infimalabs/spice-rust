@@ -166,7 +166,10 @@ fn current_policy_variation_domain_reaches_canonical_state_evidence() {
     const ABOVE_U32: u64 = 4_294_967_296;
     let policy = crate::migrate_predecessor_policy(
         "fixtures/policy.toml",
-        "[policy.flex]\njitter_percent = 4294967296\n",
+        &format!(
+            "{}[policy.flex]\njitter_percent = 4294967296\n",
+            crate::NARROWEST_FILE_CLASSES
+        ),
     )
     .expect("the predecessor percentage has an exact current meaning");
     assert_eq!(policy.document().ratchet().variation_percent(), ABOVE_U32);

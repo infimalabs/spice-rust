@@ -135,6 +135,15 @@ pub(crate) fn workspace_document(name: &str) -> String {
         .unwrap_or_else(|error| panic!("read {} for the fixture: {error}", path.display()))
 }
 
+/// One tracked policy document a fixture repository can be gated against.
+///
+/// Every document carries the file-class selections migration requires, so a
+/// fixture states only what it is actually about and still loads at all.
+#[allow(dead_code)]
+pub(crate) fn policy_document(body: &str) -> String {
+    format!("{}{body}", gate::NARROWEST_FILE_CLASSES)
+}
+
 /// One committed fixture repository carrying the tracked contract documents.
 #[allow(dead_code)]
 pub(crate) fn contract_repository(label: &str) -> Tree {

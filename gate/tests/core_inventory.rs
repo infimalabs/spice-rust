@@ -10,7 +10,7 @@ mod support;
 
 use support::{
     Tree, acquired, acquired_arm, contract_repository, git_commit, git_repository, measured,
-    workspace_document,
+    policy_document, workspace_document,
 };
 
 #[test]
@@ -18,7 +18,11 @@ fn configuration_key_admission_names_the_unknown_active_layer_key() {
     let repository = git_repository("core-acquire-config-key-unknown");
     repository.write(
         "spice.toml",
-        concat!("[tasks]\n", "stems = ['rim']\n", "strms = ['misspelled']\n",),
+        &policy_document(concat!(
+            "[tasks]\n",
+            "stems = ['rim']\n",
+            "strms = ['misspelled']\n",
+        )),
     );
     repository.write("baseline.toml", &workspace_document("baseline.toml"));
     repository.write("src/app.rs", "pub fn app() {}\n");
@@ -49,7 +53,10 @@ fn configuration_key_admission_names_the_unknown_active_layer_key() {
 #[test]
 fn configuration_key_admission_names_a_known_key_forbidden_in_the_active_layer() {
     let repository = git_repository("core-acquire-config-key-layer");
-    repository.write("spice.toml", "[say]\ncommand = ['/usr/bin/say']\n");
+    repository.write(
+        "spice.toml",
+        &policy_document("[say]\ncommand = ['/usr/bin/say']\n"),
+    );
     repository.write("baseline.toml", &workspace_document("baseline.toml"));
     repository.write("src/app.rs", "pub fn app() {}\n");
     git_commit(&repository, "forbidden active configuration layer");
@@ -73,19 +80,26 @@ fn configuration_key_admission_names_a_known_key_forbidden_in_the_active_layer()
     repository.remove();
 }
 
-/// No `[policy]` subtable the rule-policy migration reads is admitted.
+/// Only the `[policy]` subtables migration requires are admitted.
 ///
-/// These are predecessor spellings a one-time migration translates, not
-/// settings a current repository declares, and the workspace schema refuses
-/// every one of them. Admitting them here would tell a repository it may write
-/// a key that makes its whole document fail to load, so admission names each
-/// one instead.
+/// Most subtables the rule-policy migration reads are predecessor spellings it
+/// translates once, not settings a current repository declares, and the
+/// workspace schema refuses them. Admitting one would tell a repository it may
+/// write a key that makes its whole document fail to load, so admission names
+/// each instead.
+///
+/// The file classes are the exception, and the document below carries both
+/// kinds at once because that is the only way to see the registry tell them
+/// apart. `policy.file_shape` and `policy.languages` are predecessor spellings
+/// too, but no repository loads without them, which makes them settings this
+/// release reads rather than relics it tolerates. Reporting them absent from
+/// the registry would refuse every document that can be gated at all.
 #[test]
-fn configuration_key_admission_refuses_every_migrated_policy_subtable() {
+fn configuration_key_admission_separates_required_file_classes_from_migrated_subtables() {
     let repository = git_repository("core-acquire-config-key-migrated");
     repository.write(
         "spice.toml",
-        concat!(
+        &policy_document(concat!(
             "[policy.limits]\n",
             "file_loc = 1234\n",
             "[policy.flex]\n",
@@ -100,7 +114,7 @@ fn configuration_key_admission_refuses_every_migrated_policy_subtable() {
             "extensions = ['.rst']\n",
             "[[policy.rules]]\n",
             "routine_length = { max = 55 }\n",
-        ),
+        )),
     );
     repository.write("baseline.toml", &workspace_document("baseline.toml"));
     repository.write("src/app.rs", "pub fn app() {}\n");
