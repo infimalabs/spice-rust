@@ -3,12 +3,16 @@
 //! Four endings are reachable here, and telling them apart is the point. A
 //! state that already holds, or that comes to hold while the wait is arming,
 //! returns Ready on an evaluation with no signal involved. A state reached
-//! after that returns Ready on a filesystem notification. A child that ends
-//! first returns Exited on the process-exit observer. A state that never
-//! arrives spends the horizon and names itself in the panic.
+//! after that returns Ready on a filesystem notification, or on the recheck
+//! beneath it when that notification is lost. A child that ends first returns
+//! Exited on the process-exit observer. A state that never arrives spends the
+//! horizon and names itself in the panic.
 //!
 //! The two signals arrive on one channel, so the wait blocks on whichever comes
-//! first and carries no timer of its own beyond the horizon that bounds it.
+//! first. It does not trust them to be complete: a dropped or coalesced
+//! filesystem event would otherwise hold the wait until the horizon over a
+//! state that already held, so the block is capped at [`RECHECK`] and the
+//! horizon is spent by the state reads rather than by one long sleep.
 
 use std::path::Path;
 use std::process::Child;
@@ -24,6 +28,18 @@ const WATCH_SCAN_INTERVAL: Duration = Duration::from_millis(100);
 mod process_exit;
 
 use process_exit::ProcessExitObserver;
+
+/// How long the wait will sit on a silent channel before reading state again.
+///
+/// The two signals remain the fast path and answer in microseconds; this is a
+/// floor beneath them, not a replacement for them. A filesystem notification
+/// can be coalesced or dropped, and a wait that re-reads its state only when
+/// one arrives sleeps through a state that already holds. That is not
+/// hypothetical here: measured across the resident batteries, every observed
+/// timeout was a wait whose predicate was already true, so the horizon was
+/// reporting a lost notification rather than an absent state. Deleting this to
+/// make the wait purely signal-driven restores that hang.
+pub(super) const RECHECK: Duration = Duration::from_millis(50);
 
 /// Which ending a readiness wait observed.
 pub(super) enum Readiness {
@@ -96,12 +112,16 @@ pub(super) fn wait_until_ready(
         if ended(child, what) {
             return Readiness::Exited;
         }
-        match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            panic!("{what} did not arrive within {horizon:?}")
+        }
+        match receiver.recv_timeout(remaining.min(RECHECK)) {
             Ok(Signal::Changed | Signal::Exited) => {}
             Ok(Signal::WatchFailed(error)) => panic!("{what} watcher failed: {error}"),
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                panic!("{what} did not arrive within {horizon:?}")
-            }
+            // A quiet interval is not an answer, so the horizon is spent only
+            // by the check at the top of the loop.
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 panic!("{what} watcher disconnected")
             }

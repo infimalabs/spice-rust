@@ -832,6 +832,11 @@ fn instant(value: &str) -> Instant {
 /// any wait, so an effect that lands between those two points is still seen.
 /// A trigger that already ran passes `|| {}` and relies on that first poll.
 ///
+/// The notification is the fast path but not the only one: a filesystem event
+/// can be dropped or coalesced, so waiting solely for one would spend the whole
+/// deadline on an effect that had already landed. The block is capped at
+/// [`readiness::RECHECK`] and `observe` runs on each quiet interval too.
+///
 /// Panics report the waiting call site rather than this shared helper.
 #[track_caller]
 fn wait_for_event<T>(
@@ -859,15 +864,24 @@ fn wait_for_event<T>(
     let deadline = Monotonic::now() + READINESS_DEADLINE;
     loop {
         let remaining = deadline.saturating_duration_since(Monotonic::now());
-        match receiver.recv_timeout(remaining) {
+        if remaining.is_zero() {
+            panic!("event was not observed before {READINESS_DEADLINE:?}")
+        }
+        match receiver.recv_timeout(remaining.min(readiness::RECHECK)) {
             Ok(Ok(_)) => {
                 if let Some(observed) = observe() {
                     return observed;
                 }
             }
             Ok(Err(error)) => panic!("event notification failed: {error}"),
+            // A quiet interval is not an answer: the notification that would
+            // have reported this effect can be dropped or coalesced, so the
+            // effect is re-observed on the way past rather than trusted to
+            // announce itself. The horizon is spent by those observations.
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                panic!("event was not observed before {READINESS_DEADLINE:?}")
+                if let Some(observed) = observe() {
+                    return observed;
+                }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => panic!("event watcher disconnected"),
         }
