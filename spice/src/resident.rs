@@ -24,6 +24,7 @@ mod lane_surface;
 mod policy_surface;
 mod shutdown;
 mod steering;
+mod timers;
 
 use shutdown::{current_residency, drive_shutdown};
 

@@ -491,21 +491,11 @@ async fn run_surface(
     seats: &mut Seats,
 ) -> CommandResult<()> {
     let operator = new_uuid();
-    let capabilities = canvas::axum::Capabilities::default();
-    capabilities
-        .insert(operator, Actor::Operator)
-        .map_err(|error| environment_fault("canvas::capability-invalid", &error.to_string()))?;
     let residency = current_residency(bus, epoch)?;
-    for lane in &residency.body().lanes {
-        for capability in &lane.capabilities {
-            capabilities
-                .insert(*capability, Actor::Lane(lane.lane))
-                .map_err(|error| {
-                    environment_fault("canvas::capability-invalid", &error.to_string())
-                })?;
-        }
-    }
-    let (server, mut control) = canvas::axum::Server::bind_streaming(
+    let capabilities = surface_capabilities(operator, residency.body())?;
+    let timer_commits = bus.reader().subscribe();
+    let timers = timers::Runtime::start(config.projects.clone())?;
+    let (server, control) = canvas::axum::Server::bind_streaming(
         epoch,
         capabilities.clone(),
         config.speech.clone(),
@@ -527,40 +517,82 @@ async fn run_surface(
         .publish(&paths.canvas)
         .map_err(|error| environment_fault("canvas::publish-failed", &error.to_string()))?;
     let (shutdown, stopped) = oneshot::channel();
-    let mut server_task = tokio::spawn(server.up_until(async move {
+    let server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;
     }));
     let capture::Channels {
         reporter,
-        mut records,
-        mut failures,
+        records,
+        failures,
     } = capture::channels();
     lane_surface::restore_seats(bus, paths, epoch, seats, &reporter)?;
-    let recovery = lane_recovery::Runtime::new(reporter.clone());
     let command_surface = command_surface::Surface::new(
         bus,
         repository,
         paths,
         epoch,
-        lane_surface::Runtime::new(&capabilities, &discovery, reporter),
-        recovery,
+        lane_surface::Runtime::new(&capabilities, &discovery, reporter.clone()),
+        lane_recovery::Runtime::new(reporter),
         config,
     );
+    drive_surface(
+        bus,
+        epoch,
+        seats,
+        &command_surface,
+        control,
+        published,
+        shutdown,
+        server_task,
+        records,
+        failures,
+        timers.drive(bus, timer_commits),
+    )
+    .await
+}
+
+fn surface_capabilities(
+    operator: CanonicalUuid,
+    residency: &ResidencyHead,
+) -> CommandResult<canvas::axum::Capabilities> {
+    let capabilities = canvas::axum::Capabilities::default();
+    capabilities
+        .insert(operator, Actor::Operator)
+        .map_err(|error| environment_fault("canvas::capability-invalid", &error.to_string()))?;
+    for lane in &residency.lanes {
+        for capability in &lane.capabilities {
+            capabilities
+                .insert(*capability, Actor::Lane(lane.lane))
+                .map_err(|error| {
+                    environment_fault("canvas::capability-invalid", &error.to_string())
+                })?;
+        }
+    }
+    Ok(capabilities)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the resident loop owns one receiver for each closed event source"
+)]
+async fn drive_surface(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    command_surface: &command_surface::Surface<'_>,
+    mut control: canvas::axum::Control,
+    published: PublishedDiscovery,
+    shutdown: oneshot::Sender<()>,
+    mut server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
+    mut records: tokio::sync::mpsc::Receiver<lane::capture::CaptureRecord>,
+    mut failures: tokio::sync::mpsc::UnboundedReceiver<lane::capture::CaptureFailure>,
+    timer: impl std::future::Future<Output = CommandResult<()>>,
+) -> CommandResult<()> {
+    tokio::pin!(timer);
     loop {
         tokio::select! {
             request = control.recv() => {
-                let request = request.ok_or_else(|| {
-                    environment_fault("canvas::control-closed", "canvas control receiver closed")
-                })?;
-                let dark = is_dark_command(request.command());
-                let outcome = command_surface.dispatch(seats, request.command());
-                let reached_dark = dark && matches!(outcome, Outcome::Reply(_));
-                let response = request.respond(outcome);
-                if reached_dark {
-                    if let Ok(response) = response {
-                        response.wait().await;
-                    }
-                    control.close();
+                if dispatch_control(command_surface, seats, &mut control, request).await? {
                     drop(published);
                     let _ = shutdown.send(());
                     return match server_task.await {
@@ -583,11 +615,34 @@ async fn run_surface(
                 ))?;
                 lane_surface::capture_failed(bus, epoch, seats, &failure)?;
             }
+            timed = &mut timer => return timed,
             served = &mut server_task => {
                 return Err(server_outcome(served));
             }
         }
     }
+}
+
+async fn dispatch_control(
+    command_surface: &command_surface::Surface<'_>,
+    seats: &mut Seats,
+    control: &mut canvas::axum::Control,
+    request: Option<canvas::axum::ControlRequest>,
+) -> CommandResult<bool> {
+    let request = request.ok_or_else(|| {
+        environment_fault("canvas::control-closed", "canvas control receiver closed")
+    })?;
+    let dark = is_dark_command(request.command());
+    let outcome = command_surface.dispatch(seats, request.command());
+    let reached_dark = dark && matches!(outcome, Outcome::Reply(_));
+    let response = request.respond(outcome);
+    if reached_dark {
+        if let Ok(response) = response {
+            response.wait().await;
+        }
+        control.close();
+    }
+    Ok(reached_dark)
 }
 
 fn is_dark_command(command: &wire::AdmittedCommand) -> bool {

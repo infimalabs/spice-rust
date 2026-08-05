@@ -23,6 +23,7 @@ use wire::{
 
 const FAULT_EXIT: i32 = 1;
 const REFUSAL_EXIT: i32 = 2;
+const WATCH_SCAN_INTERVAL: Duration = Duration::from_millis(100);
 const READINESS_DEADLINE: Duration = Duration::from_secs(10);
 const CLIENT_DEADLINE_BOUND: Duration = Duration::from_secs(10);
 const LANE_DEADLINE_BOUND: Duration = Duration::from_secs(20);
@@ -839,9 +840,14 @@ fn wait_for_event<T>(
     mut observe: impl FnMut() -> Option<T>,
 ) -> T {
     let (sender, receiver) = mpsc::channel::<notify::Result<notify::Event>>();
-    let mut watcher = notify::recommended_watcher(move |event| {
-        let _ = sender.send(event);
-    })
+    let mut watcher = notify::PollWatcher::new(
+        move |event| {
+            let _ = sender.send(event);
+        },
+        notify::Config::default()
+            .with_poll_interval(WATCH_SCAN_INTERVAL)
+            .with_compare_contents(true),
+    )
     .expect("event watcher starts");
     watcher
         .watch(path, RecursiveMode::Recursive)
