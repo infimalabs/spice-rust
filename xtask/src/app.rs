@@ -50,32 +50,36 @@ const REMAPPED_CARGO_HOME: &str = "/cargo-home";
 /// [`toolchain`] owns it.
 const STAGING_HOST: &str = "x86_64-unknown-linux-gnu";
 
-/// Whether this program was compiled for the tuple [`STAGING_HOST`] names.
+/// Whether a host tuple owns the app stage.
 ///
 /// This is the tuple half of what decides ownership, and it admits one tuple or
 /// none; [`toolchain::pinned_release`] is the release half, and a host passing
-/// this one still refuses under any other release. A triple's vendor and
-/// environment fields are observable after all --
-/// `std::env::consts` simply stops at arch and OS, and stopping there spells a
-/// musl host and the image's gnu host identically while their `-Cmetadata`
-/// differs. Every field the triple names is asserted here, so a near miss is a
-/// refusal rather than a silent admission.
-const fn compiled_for_staging_host() -> bool {
-    cfg!(all(
-        target_arch = "x86_64",
-        target_vendor = "unknown",
-        target_os = "linux",
-        target_env = "gnu",
-    ))
+/// this one still refuses under any other release. The decision reads a spelled
+/// tuple rather than a `cfg!` predicate over the same four fields, because a
+/// predicate answers only for the target its binary was compiled for: dropping
+/// a field from one fails nothing anywhere this fleet runs, since a foreign
+/// host already disagrees in every field and the owning host still agrees in
+/// every remaining one. Given a value, a test can offer this the musl
+/// neighbour no lane compiles for.
+fn owns_the_stage(host: &str) -> bool {
+    host == STAGING_HOST
 }
 
-/// This host, named for a reader rather than for the comparison above.
+/// Whether this program was compiled for the tuple [`STAGING_HOST`] names.
+fn compiled_for_staging_host() -> bool {
+    owns_the_stage(&host_spelling())
+}
+
+/// This host, spelled in the four fields ownership is decided on.
 ///
-/// Spelled in the same four fields as [`STAGING_HOST`] so the mismatch reads as
-/// the tuple comparison it is, and the environment field, which is the one that
-/// separates the owning host from its nearest neighbour, is legible. Nothing
-/// decides on this string: a host it cannot spell exactly still refuses,
-/// because [`compiled_for_staging_host`] answered first.
+/// A triple's vendor and environment fields are observable after all --
+/// `std::env::consts` simply stops at arch and OS, and stopping there spells a
+/// musl host and the image's gnu host identically while their `-Cmetadata`
+/// differs. This is the sole reading of those fields, and [`owns_the_stage`]
+/// decides on what it returns, so the tuple a refusal names is the tuple that
+/// was compared. A field this cannot spell exactly becomes `other`, which no
+/// owning tuple matches, so an unrecognised host refuses rather than resembling
+/// the image.
 fn host_spelling() -> String {
     let vendor = if cfg!(target_vendor = "apple") {
         "apple"
@@ -131,12 +135,12 @@ pub fn stage_app(
 /// Whether this build may write the stage: the release first, then the tuple.
 ///
 /// Both dimensions Cargo folds into `-Cmetadata` are asked here, and the
-/// release is asked first deliberately. The tuple is a `cfg!` about this
-/// binary, so on every host but the owning one it answers before anything else
-/// can be observed -- and a door that only the owning host can reach is a door
-/// no test anywhere else can prove is still there. Asking the environment
-/// first puts the release refusal in reach of every host, and a foreign host
-/// still refuses on the tuple immediately after.
+/// release is asked first deliberately. The tuple is a fact about this binary,
+/// settled when it was compiled, so on every host but the owning one it answers
+/// before anything else can be observed -- and a door that only the owning host
+/// can reach is a door no test anywhere else can prove is still there. Asking
+/// the environment first puts the release refusal in reach of every host, and a
+/// foreign host still refuses on the tuple immediately after.
 fn admit_staging_environment(
     root: &Path,
     environment: &ReleaseEnvironment,
@@ -602,12 +606,14 @@ mod tests {
 
     /// Staging reads the release, and reads it through the door it ships.
     ///
-    /// The tuple half of the identity is a `cfg!` no test can arrange, so this
-    /// arranges the half that can be: a `PATH` whose `rustc` reports a release
-    /// this workspace does not pin. Nothing else in `stage_app` can stand in
-    /// for the refusal, which is the point -- delete the call and a foreign
-    /// host answers with the tuple instead, while the owning host goes on to
-    /// build, so the wiring is what fails here rather than only the rule.
+    /// The tuple half of the identity is settled for this binary -- a test can
+    /// hand [`owns_the_stage`] any tuple, but none can make this process the
+    /// owning host -- so this arranges the half that can be reached from here:
+    /// a `PATH` whose `rustc` reports a release this workspace does not pin.
+    /// Nothing else in `stage_app` can stand in for the refusal, which is the
+    /// point -- delete the call and a foreign host answers with the tuple
+    /// instead, while the owning host goes on to build, so the wiring is what
+    /// fails here rather than only the rule.
     #[cfg(unix)]
     #[test]
     fn staging_refuses_a_toolchain_release_the_workspace_does_not_pin() {
@@ -776,23 +782,48 @@ mod tests {
 
     /// An x86_64 Linux host that is not the image spells its arch and OS
     /// exactly as the image does, so ownership cannot be decided on those two
-    /// fields. Requiring all four is what separates the image's gnu tuple from
-    /// a musl one, and the spelling has to agree with the decision or the
-    /// mismatch message would name a tuple the guard did not compare.
+    /// fields. Each tuple below differs from the owning one in exactly one
+    /// field, so every field is load-bearing: drop any of them from
+    /// [`STAGING_HOST`] and the neighbour that field alone separates is
+    /// admitted here. None of these hosts is one this fleet compiles for, which
+    /// is the point -- the decision takes a value, so a macOS lane can offer it
+    /// the musl tuple that would otherwise be refused only in theory.
     #[test]
-    fn staging_ownership_is_decided_on_the_whole_tuple() {
-        assert_eq!(
-            STAGING_HOST.split('-').collect::<Vec<_>>(),
-            ["x86_64", "unknown", "linux", "gnu"],
-            "the owning host is spelled {STAGING_HOST}; every field is named here because a \
-             count would survive dropping the environment, which is the field that separates \
-             this tuple from a musl one",
+    fn only_the_owning_tuple_may_write_the_stage() {
+        assert!(
+            owns_the_stage("x86_64-unknown-linux-gnu"),
+            "the owning tuple was refused, so no host at all could write the stage",
         );
+
+        for foreign in [
+            "aarch64-unknown-linux-gnu",
+            "x86_64-apple-linux-gnu",
+            "x86_64-unknown-macos-gnu",
+            "x86_64-unknown-linux-musl",
+            "x86_64-unknown-linux",
+        ] {
+            assert!(
+                !owns_the_stage(foreign),
+                "{foreign} differs from {STAGING_HOST} in one field and was admitted anyway, so \
+                 that field is not part of the decision",
+            );
+        }
+    }
+
+    /// The decision is only as wide as the tuple it is handed. A spelling that
+    /// stopped early would offer a musl host the same four-field string the
+    /// image spells, so the count is held here rather than left to the fields
+    /// this lane happens to be compiled for -- on macOS every field disagrees
+    /// already, and a dropped one would not change the answer.
+    #[test]
+    fn this_host_is_spelled_in_every_field_the_decision_reads() {
+        let spelling = host_spelling();
+
         assert_eq!(
-            compiled_for_staging_host(),
-            host_spelling() == STAGING_HOST,
-            "the guard and the spelling disagree about this host: {}",
-            host_spelling(),
+            spelling.split('-').count(),
+            STAGING_HOST.split('-').count(),
+            "this host is spelled {spelling}, in fewer fields than {STAGING_HOST}, so a host \
+             differing from the owning one only in a dropped field would spell it exactly",
         );
     }
 }
