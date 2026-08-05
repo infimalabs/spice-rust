@@ -62,10 +62,11 @@ pub fn reference_transaction(
 /// has no acquisition entrypoint for, so they are refused instead of measured.
 /// The other 21 steps belong to families that do acquire.
 ///
-/// Three of those four read this repository's own sources rather than passing
-/// over it: `.rs` is in the predecessor's complexity and magic suffix sets, and
-/// its Markdown is tracked. Dropping this action drops live coverage, so it
-/// stays until the metrics family can be acquired.
+/// All four read this repository's own sources rather than passing over it:
+/// `.rs` is in the predecessor's complexity, magic, and file-shape suffix
+/// sets, and its Markdown is both tracked and file-shape bounded. Dropping
+/// this action drops live coverage, so it stays until the metrics family can
+/// be acquired.
 const VERIFY_ACTIONS: [Action; 8] = [
     Action::Command(Step::cargo(
         "cargo fmt --all -- --check",
