@@ -55,18 +55,21 @@ pub fn reference_transaction(
 /// Every verification action, in the one order a run performs them.
 ///
 /// The last action still runs the predecessor's external Python policy gate,
-/// and the reason is coverage rather than habit. `gate/src/battery/manifest.toml`
-/// names all 25 of that gate's standard steps against a compiled arm, but being
-/// named is not being run: three metrics arms — `file-shape`, `complexity`, and
-/// `magic-numbers` — acquire as evidence naming an input this build cannot reach
-/// rather than as a measurement. The other 22 steps are measured here, the
-/// fourth metrics arm `markdown-links` among them.
+/// and the reason is a second reading rather than habit.
+/// `gate/src/battery/manifest.toml` names all 25 of that gate's standard steps
+/// against a compiled arm, and every one of them is measured here now. The three
+/// metrics arms that once acquired evidence naming an input this build could not
+/// reach — `file-shape`, `complexity`, and `magic-numbers` — all measure, the
+/// first two for every class they declare and the third for every class this
+/// repository commits; `markdown-links` measured already.
 ///
-/// All three read this repository's own sources rather than passing over it:
-/// `.rs` is in the predecessor's complexity, magic, and file-shape suffix sets,
-/// and its Markdown stays file-shape bounded even now that the Markdown-link
-/// arm measures. Dropping this action drops live coverage, so it stays until
-/// those three arms can be measured.
+/// What is left is a class gap rather than an arm gap: the magic scan still
+/// refuses `.py`, `.cs`, and `.js`, which need predecessor parent semantics, and
+/// this repository commits none of the three, so nothing here goes unmeasured
+/// for want of it. The action stays for what it does once every arm measures --
+/// it runs the predecessor's own implementations over the same sources, so a
+/// compiled arm that drifted lenient is still met by the one it replaced.
+/// Dropping it drops that second reading, not the only one.
 const VERIFY_ACTIONS: [Action; 8] = [
     Action::Command(Step::cargo(
         "cargo fmt --all -- --check",

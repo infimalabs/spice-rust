@@ -257,10 +257,12 @@ impl<'trace> RepositoryExecutor<'trace> {
     /// A family-wide refusal is reserved for a source that cannot be walked or
     /// evidence that violates its declaration. An arm this build cannot measure
     /// is not one of those: it acquires as evidence naming the input it lacks,
-    /// so the one that stays unreachable cannot suppress the three that measure.
+    /// so an arm that stopped reaching its input could not suppress the others.
+    /// All four reach one now, which is a property of this build rather than a
+    /// guarantee: the projection is what keeps that from mattering.
     ///
     /// The actor and latches the capture retained are handed over here rather
-    /// than re-read, so the file-shape arm judges a path against the same
+    /// than re-read, so the two bounded arms judge a path against the same
     /// elastic limit the core family decided its own bounds under.
     fn acquire_metrics_family(&self) -> Result<Vec<ArmEvidence>, String> {
         let source = MetricSource::capture(

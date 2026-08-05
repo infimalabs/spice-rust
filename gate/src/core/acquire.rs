@@ -126,12 +126,12 @@ impl ActorCapture {
     /// this family and the rule that decides its limit name two different
     /// actors for one document.
     ///
-    /// The structural file-shape arm seeds the same way over its own selected
-    /// paths, so this is visible to it rather than restated there: two
-    /// spellings of the order above could disagree about which actor a path's
-    /// headroom varies with, and each would look right beside its own arm.
-    /// The refusal crosses whole for the same reason, and each caller names the
-    /// family the path was selected for.
+    /// The structural file-shape and complexity arms seed the same way over
+    /// their own selected paths, so this is visible to them rather than
+    /// restated there: two spellings of the order above could disagree about
+    /// which actor a path's headroom varies with, and each would look right
+    /// beside its own arm. The refusal crosses whole for the same reason, and
+    /// each caller names the family the path was selected for.
     pub(crate) fn actor_inputs(&self, path: &str) -> Result<ActorInputs, BoundError> {
         let inputs = ActorInputs::new(path)?;
         Ok(match self {

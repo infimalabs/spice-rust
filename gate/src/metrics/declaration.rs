@@ -111,7 +111,7 @@ pub enum KeyShape {
 #[serde(rename_all = "kebab-case")]
 pub enum ParserId {
     Utf8FileShapeV1,
-    LizardCsvV1,
+    TreeSitterComplexityV1,
     Utf8DocumentCharactersV1,
     CGrammarMagicDeltaV1,
     MarkdownInlineLinkCaseV1,
@@ -123,7 +123,7 @@ impl ParserId {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Utf8FileShapeV1 => "utf8-file-shape-v1",
-            Self::LizardCsvV1 => "lizard-csv-v1",
+            Self::TreeSitterComplexityV1 => "tree-sitter-complexity-v1",
             Self::Utf8DocumentCharactersV1 => "utf8-document-characters-v1",
             Self::CGrammarMagicDeltaV1 => "c-grammar-magic-delta-v1",
             Self::MarkdownInlineLinkCaseV1 => "markdown-inline-link-case-v1",
@@ -131,57 +131,11 @@ impl ParserId {
     }
 }
 
-/// Whether parsing is in-process or consumes one bounded external tool result.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ParserMode {
-    Native,
-    External,
-}
-
-/// Sole admitted executable contract for one external parser.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ToolRequirement {
-    name: &'static str,
-    program: &'static str,
-    version_arguments: &'static [&'static str],
-    exact_version: &'static str,
-    analysis_arguments: &'static [&'static str],
-}
-
-impl ToolRequirement {
-    #[must_use]
-    pub const fn name(self) -> &'static str {
-        self.name
-    }
-
-    #[must_use]
-    pub const fn program(self) -> &'static str {
-        self.program
-    }
-
-    #[must_use]
-    pub const fn version_arguments(self) -> &'static [&'static str] {
-        self.version_arguments
-    }
-
-    #[must_use]
-    pub const fn exact_version(self) -> &'static str {
-        self.exact_version
-    }
-
-    #[must_use]
-    pub const fn analysis_arguments(self) -> &'static [&'static str] {
-        self.analysis_arguments
-    }
-}
-
 /// One parser declaration fixed at compile time.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ParserDeclaration {
     id: ParserId,
-    mode: ParserMode,
     input: &'static str,
-    tool: Option<ToolRequirement>,
 }
 
 impl ParserDeclaration {
@@ -191,18 +145,8 @@ impl ParserDeclaration {
     }
 
     #[must_use]
-    pub const fn mode(self) -> ParserMode {
-        self.mode
-    }
-
-    #[must_use]
     pub const fn input(self) -> &'static str {
         self.input
-    }
-
-    #[must_use]
-    pub const fn tool(self) -> Option<ToolRequirement> {
-        self.tool
     }
 }
 
@@ -311,14 +255,6 @@ impl ArmDeclaration {
     }
 }
 
-const LIZARD: ToolRequirement = ToolRequirement {
-    name: "lizard",
-    program: "lizard",
-    version_arguments: &["--version"],
-    exact_version: "1.23.0",
-    analysis_arguments: &["--csv"],
-};
-
 const FILE_SHAPE_METRICS: &[MetricId] = &[MetricId::FileLines, MetricId::FileBytes];
 const COMPLEXITY_METRICS: &[MetricId] = &[MetricId::RoutineCcn, MetricId::RoutineLength];
 const MAGIC_METRICS: &[MetricId] = &[MetricId::MagicNumberRegressions];
@@ -350,7 +286,7 @@ pub const STRUCTURAL_METRICS: [MetricDeclaration; 7] = [
         GateId::Complexity,
         MetricUnit::CyclomaticComplexity,
         KeyShape::PathFunction,
-        ParserId::LizardCsvV1,
+        ParserId::TreeSitterComplexityV1,
         "routine_ccn",
         Some("complexity_ccn"),
     ),
@@ -359,7 +295,7 @@ pub const STRUCTURAL_METRICS: [MetricDeclaration; 7] = [
         GateId::Complexity,
         MetricUnit::RoutineLines,
         KeyShape::PathFunction,
-        ParserId::LizardCsvV1,
+        ParserId::TreeSitterComplexityV1,
         "routine_length",
         Some("complexity_length"),
     ),
@@ -416,12 +352,7 @@ const fn metric(
 pub const STRUCTURAL_ARMS: [ArmDeclaration; 4] = [
     ArmDeclaration {
         id: GateId::FileShape,
-        parser: parser(
-            ParserId::Utf8FileShapeV1,
-            ParserMode::Native,
-            "selected source-file bytes",
-            None,
-        ),
+        parser: parser(ParserId::Utf8FileShapeV1, "selected source-file bytes"),
         metrics: FILE_SHAPE_METRICS,
         scope: scope(
             &["staged paths selected by policy.file_shape.source_suffixes"],
@@ -437,25 +368,24 @@ pub const STRUCTURAL_ARMS: [ArmDeclaration; 4] = [
     ArmDeclaration {
         id: GateId::Complexity,
         parser: parser(
-            ParserId::LizardCsvV1,
-            ParserMode::External,
-            "bounded lizard --csv stdout",
-            Some(LIZARD),
+            ParserId::TreeSitterComplexityV1,
+            "selected source parsed by one vendored grammar",
         ),
         metrics: COMPLEXITY_METRICS,
         scope: scope(
             &["staged paths selected by policy.languages.complexity"],
-            &["excluded, absent, or unsupported-suffix paths"],
-            "one selected complexity source file",
+            &[
+                "excluded or absent paths",
+                "source classes with no vendored grammar",
+            ],
+            "one named routine in one selected complexity source file",
         ),
     },
     ArmDeclaration {
         id: GateId::MagicNumbers,
         parser: parser(
             ParserId::CGrammarMagicDeltaV1,
-            ParserMode::Native,
             "current and baseline UTF-8 source text",
-            None,
         ),
         metrics: MAGIC_METRICS,
         scope: scope(
@@ -471,9 +401,7 @@ pub const STRUCTURAL_ARMS: [ArmDeclaration; 4] = [
         id: GateId::MarkdownLinks,
         parser: parser(
             ParserId::MarkdownInlineLinkCaseV1,
-            ParserMode::Native,
             "tracked-path inventory and tracked Markdown text",
-            None,
         ),
         metrics: MARKDOWN_METRICS,
         scope: scope(
@@ -495,27 +423,15 @@ pub(crate) const fn metric_parser_declaration(metric: MetricId) -> ParserDeclara
         MetricId::RoutineCcn | MetricId::RoutineLength => STRUCTURAL_ARMS[1].parser(),
         MetricId::RepositoryDocumentCharacters => parser(
             ParserId::Utf8DocumentCharactersV1,
-            ParserMode::Native,
             "repository-truth document bytes",
-            None,
         ),
         MetricId::MagicNumberRegressions => STRUCTURAL_ARMS[2].parser(),
         MetricId::MarkdownLinkCaseMismatches => STRUCTURAL_ARMS[3].parser(),
     }
 }
 
-const fn parser(
-    id: ParserId,
-    mode: ParserMode,
-    input: &'static str,
-    tool: Option<ToolRequirement>,
-) -> ParserDeclaration {
-    ParserDeclaration {
-        id,
-        mode,
-        input,
-        tool,
-    }
+const fn parser(id: ParserId, input: &'static str) -> ParserDeclaration {
+    ParserDeclaration { id, input }
 }
 
 const fn scope(

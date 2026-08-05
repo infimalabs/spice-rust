@@ -5,7 +5,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use super::declaration::{
-    KeyShape, MetricDeclaration, MetricId, MetricUnit, ParserDeclaration, ParserId, ParserMode,
+    KeyShape, MetricDeclaration, MetricId, MetricUnit, ParserDeclaration, ParserId,
     STRUCTURAL_ARMS, STRUCTURAL_METRICS, metric_parser_declaration,
 };
 use crate::manifest::{GateId, PREDECESSOR_GATE_RELEASE};
@@ -78,15 +78,7 @@ impl MetricKey {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case", tag = "mode")]
 pub enum ParserEvidence {
-    Native {
-        parser: ParserId,
-    },
-    External {
-        parser: ParserId,
-        tool: String,
-        version: String,
-        executable_digest: String,
-    },
+    Native { parser: ParserId },
 }
 
 impl ParserEvidence {
@@ -94,33 +86,12 @@ impl ParserEvidence {
     #[must_use]
     pub const fn parser(&self) -> ParserId {
         match self {
-            Self::Native { parser } | Self::External { parser, .. } => *parser,
+            Self::Native { parser } => *parser,
         }
     }
 
     pub(crate) fn matches_declaration(&self, declaration: ParserDeclaration) -> bool {
-        if self.parser() != declaration.id() {
-            return false;
-        }
-        match (declaration.mode(), declaration.tool(), self) {
-            (ParserMode::Native, None, Self::Native { .. }) => true,
-            (
-                ParserMode::External,
-                Some(requirement),
-                Self::External {
-                    tool,
-                    version,
-                    executable_digest,
-                    ..
-                },
-            ) => {
-                tool == requirement.name()
-                    && tool == requirement.program()
-                    && version == requirement.exact_version()
-                    && valid_text(executable_digest)
-            }
-            _ => false,
-        }
+        self.parser() == declaration.id()
     }
 }
 

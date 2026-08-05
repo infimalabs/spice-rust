@@ -139,17 +139,19 @@ impl MetricStateBinding {
 
     /// Convert a bound decided by [`Self::decide`] into complete metric evidence.
     ///
-    /// This is the evidence [`Self::evidence`] produces once the reconciliation
-    /// around it has unwrapped its decision, and it is the whole of what an
-    /// acquisition that only measures needs. Both routes attach the same rule
-    /// and latch bindings to the same measured value, so the row an arm reports
-    /// and the row the state transaction would report cannot disagree about the
-    /// limit the value was judged against.
+    /// [`Self::evidence`] is this same conversion for the reconciling route,
+    /// which owns a [`StateDecision`] because it rewrote the ledger. An arm that
+    /// only measures holds the [`BoundDecision`] [`Self::decide`] handed back
+    /// and has no state decision to present, so it converts from that instead.
+    /// Both arrive at [`Self::measurement`] and attach the same rule and latch
+    /// bindings to the same measured value, so the row an arm reports and the
+    /// row the state transaction would report cannot disagree about the limit
+    /// that value was judged against.
     ///
     /// # Errors
     ///
     /// Refuses a decision that disagrees with this binding's metric, value, or
-    /// resolved rule, and evidence that violates its own declaration.
+    /// resolved rule, and refuses evidence its own declaration rejects.
     pub fn measured(&self, decision: &BoundDecision) -> Result<MetricEvidence, StateBindingError> {
         let measurement = self.measurement(decision)?;
         MetricEvidence::new(
