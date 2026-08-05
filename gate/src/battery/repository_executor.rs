@@ -5,8 +5,9 @@ use std::path::{Path, PathBuf};
 use wire::Digest;
 
 use super::{
-    ArmEvidence, ArmExecution, ArmFamily, BatteryContext, BatteryError, BatteryExecutor,
-    BatteryInputs, CompiledArm, inline_evidence,
+    ArmDisposition, ArmEvidence, ArmExecution, ArmFamily, BatteryContext, BatteryError,
+    BatteryExecutor, BatteryInputs, BatteryManifest, BatteryManifestArm, CompiledArm,
+    inline_evidence,
 };
 use crate::GateId;
 use crate::core::{ActorCapture, ClaimCapture, CoreSource, acquire_core, evaluate_core};
@@ -184,11 +185,7 @@ impl<'trace> RepositoryExecutor<'trace> {
             // took, so the first core arm cannot start a second observation.
             ArmFamily::Core => self.core.clone(),
             ArmFamily::Toolchain => self.acquire_toolchain_family(),
-            ArmFamily::Metrics => Err(concat!(
-                "metrics family acquisition is unavailable: this build has no complete ",
-                "selected-scope structural acquisition entrypoint"
-            )
-            .to_owned()),
+            ArmFamily::Metrics => Err(metrics_unavailable()),
             ArmFamily::Hygiene => self.acquire_hygiene_family(),
         };
         match result {
@@ -282,6 +279,36 @@ fn core_family(source: &CoreSource<'_>, contract: &Contract) -> Result<Vec<ArmEv
         .cloned()
         .map(|report| ArmEvidence::Core { report })
         .collect())
+}
+
+/// Why no metrics arm runs here, and which predecessor steps that leaves open.
+///
+/// The manifest gives every row one `compiled` disposition, which reads as
+/// covered, so a refusal naming only the absent entrypoint would leave whoever
+/// is deciding whether the predecessor gate can be retired to work the cost out
+/// by hand. The step names are read back out of the canonical manifest rather
+/// than restated here, so a row that changes family carries this list with it.
+fn metrics_unavailable() -> String {
+    let manifest = BatteryManifest::canonical()
+        .expect("the canonical manifest decodes before any arm is executed");
+    let unanswered: Vec<&str> = manifest
+        .arms()
+        .iter()
+        .filter(|arm| declared_family(arm) == ArmFamily::Metrics)
+        .filter_map(BatteryManifestArm::predecessor)
+        .collect();
+    format!(
+        "metrics family acquisition is unavailable: this build has no complete \
+         selected-scope structural acquisition entrypoint, so the predecessor steps \
+         it answers for ({}) are measured by nothing here",
+        unanswered.join(", ")
+    )
+}
+
+/// The family one manifest row's single compiled disposition declares.
+fn declared_family(arm: &BatteryManifestArm) -> ArmFamily {
+    let ArmDisposition::Compiled { family, .. } = arm.disposition();
+    *family
 }
 
 const fn family_index(family: ArmFamily) -> usize {
