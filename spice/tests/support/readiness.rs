@@ -1,10 +1,14 @@
 //! One blocking wait for a spawned child to reach a state a battery needs.
 //!
-//! Two real signals end this wait. The filesystem notification says the state
-//! a battery is waiting for may now hold, and the process-exit observer says
-//! the child that owed it is gone. Both arrive on one channel, so the wait
-//! blocks on whichever comes first and carries no timer of its own beyond the
-//! horizon that bounds the whole wait.
+//! Four endings are reachable here, and telling them apart is the point. A
+//! state that already holds, or that comes to hold while the wait is arming,
+//! returns Ready on an evaluation with no signal involved. A state reached
+//! after that returns Ready on a filesystem notification. A child that ends
+//! first returns Exited on the process-exit observer. A state that never
+//! arrives spends the horizon and names itself in the panic.
+//!
+//! The two signals arrive on one channel, so the wait blocks on whichever comes
+//! first and carries no timer of its own beyond the horizon that bounds it.
 
 use std::path::Path;
 use std::process::Child;
