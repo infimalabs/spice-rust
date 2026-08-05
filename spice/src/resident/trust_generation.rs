@@ -17,12 +17,10 @@ static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 #[test]
 fn startup_runtime_policy_and_trust_share_one_capture_generation() {
     const FIRST: &str = concat!(
-        "[tasks]\nclaim_ttl_seconds = 3600\n",
         "[steer]\nexpiry = \"12h\"\nresend = [\"2m\"]\n",
         "[consent]\nposture = \"deny\"\n",
     );
     const SECOND: &str = concat!(
-        "[tasks]\nclaim_ttl_seconds = 7200\n",
         "[steer]\nexpiry = \"48h\"\nresend = [\"10m\"]\n",
         "[consent]\nposture = \"allow\"\n",
     );
