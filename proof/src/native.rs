@@ -491,6 +491,14 @@ printf '%s:runner=%s:challenge=%s:%s\n' "$marker" "$identity" "$challenge" "$cla
 exit 70
 "#;
     const TIMED_OUT_RUNNER: &str = "#!/bin/sh\n/bin/sleep 2\n";
+    /// A runner that exits at once and leaves its stderr held open behind it.
+    ///
+    /// The backgrounded child inherits the capture pipe, so the reader never
+    /// reaches end of output no matter how idle the host is. That is the one
+    /// input that makes a drain deadline decide the ending, which is what
+    /// [`an_abandoned_output_drain_refuses_as_incomplete_not_unattested`] needs
+    /// and what every other fixture here must not depend on.
+    const HELD_PIPE_RUNNER: &str = "#!/bin/sh\n/bin/sleep 2 &\n";
 
     #[test]
     fn native_spec_uses_the_shared_sealed_process_laws() {
@@ -577,10 +585,34 @@ exit 70
                 .runner()
                 .execute("cargo", &["test".to_owned()])
                 .expect_err("invalid attestation cannot create Execution");
-            assert!(matches!(error, NativeError::RunnerNotAttested { .. }));
+            // Named for the same reason the timed-out fixture below is: this
+            // one assertion answers for five scripts, so a bare pattern would
+            // not even say which script produced the ending it rejected.
+            assert!(
+                matches!(error, NativeError::RunnerNotAttested { .. }),
+                "a runner whose marker is absent, fixed, stale, wrong, or failed \
+                 refused for another reason: {error:?}"
+            );
         }
     }
 
+    /// A runner killed by its runtime deadline is still held to the marker.
+    ///
+    /// The ending is asserted by name because everything ahead of the marker
+    /// comparison can refuse first, and each of those means something different
+    /// about the host rather than about attestation. Only two of them can be
+    /// reached by a host under load, and both are held off by construction
+    /// rather than by hoping the machine is idle: `IncompleteAttestation`,
+    /// which [`Self::verify_attestation`] returns before it ever compares the
+    /// marker, needs a reader still working when the drain deadline arrives,
+    /// and `WaitError::ReapDeadlineExceeded` needs a signalled child still
+    /// unreaped -- both are bounded by [`CLEANUP_DEADLINE`], which is five
+    /// seconds here and is spent only when one of them is genuinely stuck.
+    /// `MissingCapture` cannot be reached at all: `process_spec` captures both
+    /// streams unconditionally, so neither is ever absent. `Spawn` remains, and
+    /// it is admitted rather than defended against, because a host that cannot
+    /// fork has failed in a way no fixture should paper over -- the message
+    /// below names it instead of reporting that a pattern did not hold.
     #[test]
     fn a_timed_out_exchange_without_a_marker_refuses_execution() {
         let fixture = Fixture::new(TIMED_OUT_RUNNER, short_limits());
@@ -589,7 +621,56 @@ exit 70
             .execute("cargo", &["test".to_owned()])
             .expect_err("timed-out attestation cannot create Execution");
 
-        assert!(matches!(error, NativeError::RunnerNotAttested { .. }));
+        assert!(
+            matches!(error, NativeError::RunnerNotAttested { .. }),
+            "a timed-out runner that never attested refused for another reason: {error:?}"
+        );
+    }
+
+    /// An abandoned drain is a different ending, and the assertion can tell.
+    ///
+    /// This is the ending the fixture above must never reach, constructed on
+    /// purpose so that the difference is measured rather than assumed. The
+    /// runner exits immediately and leaves a child holding the capture pipe, so
+    /// the reader cannot reach end of output and the drain deadline -- 20ms
+    /// here, against five seconds there -- decides the ending. Neither the
+    /// runner nor the deadline waits on anything the host controls: the pipe is
+    /// held open by construction, so no amount of idleness closes it and no
+    /// amount of load is needed to keep it open.
+    ///
+    /// Both endings mean "no marker was read", which is why the bare pattern
+    /// they were once both asserted with could not separate them, and why a
+    /// loaded run reporting only that the pattern failed named neither.
+    ///
+    /// The deadline is what decides, and that was measured rather than assumed:
+    /// on 2026-08-05 this same runner, given [`CLEANUP_DEADLINE`] to drain
+    /// instead of 20ms, outlived its held pipe and ended as
+    /// `RunnerNotAttested { observed: "" }` in 2.12s. The contrast is recorded
+    /// here rather than kept as a second fixture because the arm that proves it
+    /// costs those two seconds on every run, and the ending it demonstrates is
+    /// already the one the timed-out fixture above asserts.
+    #[test]
+    fn an_abandoned_output_drain_refuses_as_incomplete_not_unattested() {
+        let fixture = Fixture::new(
+            HELD_PIPE_RUNNER,
+            limits_with_deadlines(Duration::from_secs(30), Duration::from_millis(20)),
+        );
+        let error = fixture
+            .runner()
+            .execute("cargo", &["test".to_owned()])
+            .expect_err("an incomplete capture cannot create Execution");
+
+        assert!(
+            matches!(
+                error,
+                NativeError::IncompleteAttestation {
+                    truncated: false,
+                    complete: false
+                }
+            ),
+            "a capture abandoned with its reader still working was not reported \
+             as incomplete: {error:?}"
+        );
     }
 
     #[test]
@@ -686,6 +767,18 @@ exit 70
         }
     }
 
+    /// The cleanup bound every fixture that is not about cleanup gets.
+    ///
+    /// A drain or reap deadline is an upper bound on tidying up after the
+    /// subject has already finished, so a generous one costs nothing when it is
+    /// not needed and never lengthens a passing run: both loops exit the moment
+    /// their condition holds. A tight one buys nothing either, and on a starved
+    /// host it converts a fixture's real ending into an unrelated variant --
+    /// `IncompleteAttestation` from an abandoned reader, or
+    /// `WaitError::ReapDeadlineExceeded` from a child the kernel has not yet
+    /// reaped. Only a deadline a test is actually about is worth keeping short.
+    const CLEANUP_DEADLINE: Duration = Duration::from_secs(5);
+
     fn limits() -> Limits {
         limits_with_runtime(Duration::from_secs(30))
     }
@@ -695,9 +788,12 @@ exit 70
     }
 
     fn limits_with_runtime(runtime: Duration) -> Limits {
+        limits_with_deadlines(runtime, CLEANUP_DEADLINE)
+    }
+
+    fn limits_with_deadlines(runtime: Duration, output_drain: Duration) -> Limits {
         Limits::new(
-            Deadlines::new(runtime, Duration::from_secs(1), Duration::from_secs(1))
-                .expect("deadlines"),
+            Deadlines::new(runtime, output_drain, CLEANUP_DEADLINE).expect("deadlines"),
             Duration::from_millis(10),
             4096,
         )
