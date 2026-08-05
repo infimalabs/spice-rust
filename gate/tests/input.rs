@@ -107,7 +107,17 @@ fn tracked_inputs_load_one_operational_current_contract() {
     let run = contract
         .adjudicate(&root)
         .expect("an operational contract reaches a complete verdict");
-    assert_eq!(run.receipt().standing(), Standing::Clean);
+    // This adjudicates the live workspace, so it refuses whenever any tracked
+    // metric rises past its floor -- a condition about the tree, not about the
+    // inputs this test is named for. Say which metric and which files, in the
+    // same words the report fixtures use, rather than only Refused against
+    // Clean.
+    assert_eq!(
+        run.receipt().standing(),
+        Standing::Clean,
+        "{}",
+        gate::report::refusal_detail(&root, &contract, &run.report())
+    );
     assert_eq!(run.measurements().len(), 1);
     assert!(
         run.measurements()[0].value()
