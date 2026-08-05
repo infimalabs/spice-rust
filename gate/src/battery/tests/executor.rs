@@ -11,7 +11,7 @@ use super::*;
 /// justified by, so an arm leaving it has to be read against that justification
 /// rather than quietly shortening it.
 const UNREACHED_METRIC_ARMS: [(GateId, &str); 3] = [
-    (GateId::FileShape, "per-path elastic bound"),
+    (GateId::FileShape, "policy handle nor the actor seed"),
     (GateId::Complexity, "lizard 1.23.0"),
     (GateId::MagicNumbers, "baseline blob"),
 ];
