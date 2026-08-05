@@ -245,7 +245,7 @@ mod tests {
         });
 
         let mut drifted = receipt.clone();
-        drifted.replay = other(Domain::ProofReplayV2);
+        drifted.replay = other(Domain::ProofReplayV3);
         assert_evidence_error(&fixture, &admitted, &replay, drifted, |error| {
             *error == EvidenceError::ReplayDigest
         });
@@ -257,7 +257,7 @@ mod tests {
         });
 
         let mut drifted = fixture.prepared().1;
-        drifted.replace_digest(other(Domain::ProofReceiptV2));
+        drifted.replace_digest(other(Domain::ProofReceiptV3));
         let error = finish(&admitted, &drifted, fixture.target, || Ok(replay))
             .expect_err("stored receipt digest drift refuses");
         assert!(matches!(
