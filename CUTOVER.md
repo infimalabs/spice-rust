@@ -5,7 +5,7 @@ appliance. Run it from an operator shell outside every lane being stopped. It
 does not import predecessor tasks, claims, sessions, handles, databases, or
 executables.
 
-## Stage without starting
+## Capture and build without staging
 
 Choose the reviewed worktree and keep every path explicit:
 
@@ -43,33 +43,18 @@ CUTOVER_OLD_HOOKS=$(git config --worktree --get core.hooksPath)
 test -n "$CUTOVER_OLD_HOOKS"
 printf '%s\n' "$CUTOVER_OLD_HOOKS" |
   tee "$CUTOVER_EVIDENCE/predecessor-hooks-path.txt"
-if test -e "$CUTOVER_COMMON/.spice-rust"; then
-  tar -C "$CUTOVER_COMMON" -cpf "$CUTOVER_EVIDENCE/retired-release-one-state.tar" .spice-rust
-  shasum -a 256 "$CUTOVER_EVIDENCE/retired-release-one-state.tar" > "$CUTOVER_EVIDENCE/retired-release-one-state.tar.sha256"
-  shasum -a 256 -c "$CUTOVER_EVIDENCE/retired-release-one-state.tar.sha256"
-  mv "$CUTOVER_COMMON/.spice-rust" "$CUTOVER_EVIDENCE/retired-release-one-state"
-fi
-test ! -e "$CUTOVER_COMMON/.spice-rust"
 cargo build --locked -p spice
-target/debug/spice install
-target/debug/spice install --apply=DIGEST_PRINTED_BY_PREVIEW
-test -x .spice/bin/spice
-shasum -a 256 target/debug/spice .spice/bin/spice | tee "$CUTOVER_EVIDENCE/new-binary.sha256"
 ```
 
-The two hashes must match. Do not run `.spice/bin/spice up` yet: that is the
-forward-only boundary. Any release-one `.spice-rust` is archived before the
-build: every install path resolves repository state before it plans and refuses
-with `install::state-refused` while that tree exists, so archiving it later
-leaves nothing staged to test or hash. It belongs to a retired release rather
-than to the predecessor, so it needs no drained writer. The predecessor
-configuration capture proves the ambient Python reader accepts the exact tracked
-`policy.admission` command before any native install or authority mutation. No
-index bit or alternate working-tree document hides the reviewed policy. The hook
-activation follows installation because its three executable inputs are
-installer-owned assets, but it waits until predecessor state is disabled below.
-It configures only this reviewed worktree, which is the one the appliance and
-operator use.
+The predecessor configuration capture proves the ambient Python reader accepts
+the exact tracked `policy.admission` command before any native install or
+authority mutation. No index bit or alternate working-tree document hides the
+reviewed policy. Building is the last step that runs while lanes are live: the
+installer resolves repository state before it plans and refuses with
+`install::state-refused` while a retired release-one `.spice-rust` exists, and
+that tree cannot be cleared until the drain below stops every writer that would
+put it back. Staging therefore happens in the third section, still before the
+predecessor entrypoint is disabled.
 
 One tracked `spice.toml` serves both runtimes, so no lane needs an index-level
 parser bridge: the predecessor admits `policy.admission` into its typed
@@ -125,9 +110,9 @@ processes report completion, repeat the capture into
 its settled status may be `idle`, `stopped`, or `unstarted`. An idle row with a
 PID is not drained.
 
-## Back up and disable the predecessor
+## Back up, stage, and disable the predecessor
 
-No predecessor writer may remain when this archive is taken:
+No predecessor writer may remain when these archives are taken:
 
 ```sh
 CUTOVER_OLD_BIN=$(command -v spice)
@@ -136,6 +121,17 @@ shasum -a 256 "$CUTOVER_OLD_BIN" | tee "$CUTOVER_EVIDENCE/predecessor-binary.sha
 tar -C "$CUTOVER_COMMON" -cpf "$CUTOVER_EVIDENCE/predecessor-state.tar" .spice
 shasum -a 256 "$CUTOVER_EVIDENCE/predecessor-state.tar" > "$CUTOVER_EVIDENCE/predecessor-state.tar.sha256"
 shasum -a 256 -c "$CUTOVER_EVIDENCE/predecessor-state.tar.sha256"
+if test -e "$CUTOVER_COMMON/.spice-rust"; then
+  tar -C "$CUTOVER_COMMON" -cpf "$CUTOVER_EVIDENCE/retired-release-one-state.tar" .spice-rust
+  shasum -a 256 "$CUTOVER_EVIDENCE/retired-release-one-state.tar" > "$CUTOVER_EVIDENCE/retired-release-one-state.tar.sha256"
+  shasum -a 256 -c "$CUTOVER_EVIDENCE/retired-release-one-state.tar.sha256"
+  mv "$CUTOVER_COMMON/.spice-rust" "$CUTOVER_EVIDENCE/retired-release-one-state"
+fi
+test ! -e "$CUTOVER_COMMON/.spice-rust"
+target/debug/spice install
+target/debug/spice install --apply=DIGEST_PRINTED_BY_PREVIEW
+test -x .spice/bin/spice
+shasum -a 256 target/debug/spice .spice/bin/spice | tee "$CUTOVER_EVIDENCE/new-binary.sha256"
 mv "$CUTOVER_OLD_BIN" "$CUTOVER_OLD_BIN.pre-spice-0.31.0"
 test ! -e "$CUTOVER_COMMON/.spice/data/spicejournal.sqlite3"
 git diff --exit-code -- spice.toml
@@ -147,11 +143,17 @@ cargo metadata --no-deps --offline --format-version 1 \
 test "$(git config --worktree --get core.hooksPath)" = .spice/git-hooks
 ```
 
-The archive, its checksum, lane identities, process identities, old executable
-identity, staged binary identity, predecessor configuration and hook path, and
-native admission evidence are the rollback record. The journal assertion proves
-the current authority is absent. The clean diff proves the worktree still
-carries exactly the policy committed at `HEAD`.
+The two staged-binary hashes must match. Do not run `.spice/bin/spice up` yet:
+that is the forward-only boundary. The retired release-one root is archived
+between the drain and the install because the installer refuses while it exists
+and a live lane holding a release-one binary writes it back. Both archives,
+their checksums, lane identities, process identities, old executable identity,
+staged binary identity, predecessor configuration and hook path, and native
+admission evidence are the rollback record. The journal assertion proves the
+current authority is absent. The clean diff proves the worktree still carries
+exactly the policy committed at `HEAD`. The hook activation follows the install
+because its three executable inputs are installer-owned assets, and it
+configures only this reviewed worktree.
 
 ## Start the singular appliance
 
