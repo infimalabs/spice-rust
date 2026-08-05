@@ -71,7 +71,12 @@ impl InstallRecord {
                 self.version
             )));
         }
-        self.plan.validate()?;
+        match self.status {
+            InstallStatus::Uninstalled => self.plan.validate_historical_receipt()?,
+            InstallStatus::Applying | InstallStatus::Complete | InstallStatus::Unapplying => {
+                self.plan.validate()?;
+            }
+        }
         if self.repository != self.plan.repository {
             return Err(InstallError::InvalidRecord(
                 "install record repository does not close over its plan".to_owned(),
@@ -161,7 +166,7 @@ impl InstallRecord {
     ) -> Result<(), InstallError> {
         self.validate()?;
         self.repository.validate(repository)?;
-        self.plan.validate_for_repository(repository)
+        self.plan.validate_repository_binding(repository)
     }
 
     pub(super) fn receipt(&self) -> InstallReceipt {

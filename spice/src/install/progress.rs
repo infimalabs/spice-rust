@@ -78,13 +78,13 @@ fn prepare_loaded(
     loaded: LoadedRecord,
 ) -> Result<(InstallRecord, Option<Generation>, bool), InstallError> {
     let record = loaded.record;
-    verify_binary_context(&record.plan, rust_binary)?;
     if record.status == InstallStatus::Uninstalled {
         verify_progress(repository, &record)?;
         let plan = build_plan(repository, rust_binary)?;
         admit_digest(&plan, expected)?;
         return Ok((InstallRecord::new(plan)?, Some(loaded.generation), true));
     }
+    verify_binary_context(&record.plan, rust_binary)?;
     if &record.plan_digest != expected {
         return Err(InstallError::DigestMismatch {
             expected: expected.clone(),
