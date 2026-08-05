@@ -8,6 +8,8 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 mod acquire;
+#[cfg(not(target_arch = "wasm32"))]
+mod baseline;
 mod declaration;
 mod evidence;
 mod parity;
@@ -17,6 +19,8 @@ mod state_binding;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use acquire::{MetricAcquisitionError, MetricSource, acquire_metrics};
+#[cfg(not(target_arch = "wasm32"))]
+pub use baseline::{BaselineCapture, MagicBaselines};
 pub use declaration::{
     ArmDeclaration, KeyShape, MetricDeclaration, MetricId, MetricUnit, ParserDeclaration, ParserId,
     ParserMode, STRUCTURAL_ARMS, STRUCTURAL_METRICS, ScopeDeclaration, ToolRequirement,

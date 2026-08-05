@@ -25,6 +25,7 @@ const MARKED: &str = "src/marked.rs";
 const PROSE: &str = "docs/guide.md";
 
 mod executor;
+mod magic;
 mod manifest;
 mod minting;
 mod report;

@@ -5,15 +5,43 @@ use super::*;
 /// The metric arms this build still measures nothing for, and each one's blocker.
 ///
 /// The distinguishing substring is pinned per arm rather than a shared phrase
-/// because all three report the same `Unavailable` state: without it the three
-/// assertions could pass while every arm named one other arm's missing input.
+/// because both report the same `Unavailable` state: without it the two
+/// assertions could pass while each arm named the other's missing input.
 /// This list is what the canonical verifier's retained predecessor stage is
 /// justified by, so an arm leaving it has to be read against that justification
 /// rather than quietly shortening it.
-const UNREACHED_METRIC_ARMS: [(GateId, &str); 3] = [
+const UNREACHED_METRIC_ARMS: [(GateId, &str); 2] = [
     (GateId::FileShape, "per-path elastic bound"),
     (GateId::Complexity, "lizard 1.23.0"),
-    (GateId::MagicNumbers, "baseline blob"),
+];
+
+/// What each metric arm that does reach its input reports for this fixture.
+///
+/// Both are pinned by state *and* by a substring of the reason, because the two
+/// arms would otherwise be interchangeable to this assertion: they are the two
+/// that acquire, and an arm that started answering for the other's scope would
+/// still land on a state this list contains.
+const ACQUIRED_METRIC_ARMS: [(GateId, BatteryState, &str); 2] = [
+    // The fixture repository commits three `.py` sources, and `.py` is in the
+    // workspace policy's magic class. The scan reaches its baseline for every
+    // path and measures `src/lib.rs` clean, but those three are a declared class
+    // this build's C-grammar parser cannot read exactly, and an unestablished row
+    // outranks a measured one.
+    (
+        GateId::MagicNumbers,
+        BatteryState::Unsupported,
+        "predecessor AST/tree-sitter parent semantics",
+    ),
+    // The Markdown arm measured the one case-mismatched inline link the fixture
+    // commits. A failing arm's reason is the shared bound sentence rather than
+    // the finding, so the state is what distinguishes this row from the one
+    // above; an arm that started answering for the other's scope would land on
+    // the other's state and fail here.
+    (
+        GateId::MarkdownLinks,
+        BatteryState::Failed,
+        "exceeded their declared bound",
+    ),
 ];
 
 #[test]
@@ -510,10 +538,16 @@ fn assert_every_family_projected_its_own_evidence(report: &BatteryReport) {
 
 /// One metric arm carried its own acquired evidence rather than a family refusal.
 ///
-/// Both halves are asserted from the same result: the three unreached arms each
-/// name their own blocker, and `markdown-links` measured. Asserting only the
-/// refusals would pass just as well if the family had gone back to refusing
-/// wholesale, which is the exact regression this arm's acquisition undoes.
+/// Both halves are asserted from the same result: the two unreached arms each
+/// name their own blocker, and the two that reach their input each land on the
+/// state that input produces. Asserting only the refusals would pass just as
+/// well if the family had gone back to refusing wholesale, which is the exact
+/// regression this arm's acquisition undoes.
+///
+/// Every arm is claimed by exactly one of the two lists, and an arm claimed by
+/// neither fails here rather than passing unexamined. The lists are what says
+/// which arms this build measures, so an arm quietly leaving both would be an
+/// arm nothing checks at all.
 fn assert_metric_arm_acquired(result: &BatteryArmResult) {
     let ArmEvidence::Metrics { report } = result.evidence() else {
         panic!(
@@ -526,29 +560,33 @@ fn assert_metric_arm_acquired(result: &BatteryArmResult) {
     let unreached = UNREACHED_METRIC_ARMS
         .iter()
         .find(|(gate_id, _)| *gate_id == result.gate_id());
-    let Some((_, blocker)) = unreached else {
-        assert_eq!(
-            result.gate_id(),
-            GateId::MarkdownLinks,
-            "every metric arm is either unreached or the one that measures"
-        );
-        assert_eq!(
-            result.state(),
-            BatteryState::Failed,
-            "markdown-links measured the sealed tree's one case-mismatched link: {}",
-            result.reason()
-        );
-        return;
+    let (expected, evidence) = match unreached {
+        Some((_, blocker)) => (BatteryState::Unavailable, *blocker),
+        None => {
+            let (_, state, evidence) = ACQUIRED_METRIC_ARMS
+                .iter()
+                .find(|(gate_id, ..)| *gate_id == result.gate_id())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{} is claimed by neither metric-arm list, so nothing states what it \
+                         should report: {}",
+                        result.gate_id(),
+                        result.reason()
+                    )
+                });
+            (*state, *evidence)
+        }
     };
     assert_eq!(
         result.state(),
-        BatteryState::Unavailable,
-        "{} has no reachable input yet",
-        result.gate_id()
+        expected,
+        "{} reported the wrong state for this fixture: {}",
+        result.gate_id(),
+        result.reason()
     );
     assert!(
-        result.reason().contains(blocker),
-        "{} names the one input it lacks, but {blocker:?} is absent from: {}",
+        result.reason().contains(evidence),
+        "{} names the evidence its state rests on, but {evidence:?} is absent from: {}",
         result.gate_id(),
         result.reason()
     );

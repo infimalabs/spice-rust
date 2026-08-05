@@ -60,19 +60,26 @@ impl MetricUnit {
     ///
     /// A magnitude is bounded by a policy rule and fails by exceeding it. A
     /// violation count has no rule to exceed — the count *is* the violation — so
-    /// its bound cannot be configured and is fixed at zero here. Regressions are
-    /// deliberately excluded: that count is compared against a policy-set
-    /// allowance, so it does have a threshold and is judged by that instead.
+    /// its bound cannot be configured and is fixed at zero here.
+    ///
+    /// A regression count belongs to the second group even though its metric
+    /// does carry a threshold, because that threshold bounds a different
+    /// quantity. `magic.examine_threshold` is the magnitude at which one literal
+    /// becomes worth examining at all, applied per literal while the file is
+    /// scanned; by the time a count exists, every literal in it has already
+    /// cleared that bar. Reading it a second time as an allowance for the count
+    /// would let a file introduce as many new magic numbers as the smallest one
+    /// the policy bothers to look at, which is a number chosen to answer an
+    /// unrelated question.
     #[must_use]
     pub const fn admits_only_zero(self) -> bool {
         match self {
-            Self::CaseMismatches => true,
+            Self::CaseMismatches | Self::Regressions => true,
             Self::SourceLines
             | Self::Bytes
             | Self::CyclomaticComplexity
             | Self::RoutineLines
-            | Self::UnicodeScalarValues
-            | Self::Regressions => false,
+            | Self::UnicodeScalarValues => false,
         }
     }
 

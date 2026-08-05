@@ -230,7 +230,7 @@ pub(crate) fn git_directories(repository: &Path) -> Result<(PathBuf, PathBuf), T
     Ok((repo.path().to_path_buf(), repo.common_dir().to_path_buf()))
 }
 
-fn open_repository(path: &Path) -> Result<gix::Repository, TreeError> {
+pub(crate) fn open_repository(path: &Path) -> Result<gix::Repository, TreeError> {
     let options = gix::open::Options::isolated()
         .strict_config(true)
         .config_overrides(["gitoxide.objects.noReplace=true", "index.skipHash=false"]);
@@ -510,7 +510,7 @@ fn normalized_path(path: &[u8]) -> Result<String, TreeError> {
     Ok(path.to_owned())
 }
 
-fn normalized_component(component: &[u8]) -> Result<String, TreeError> {
+pub(crate) fn normalized_component(component: &[u8]) -> Result<String, TreeError> {
     let component = std::str::from_utf8(component).map_err(|_| TreeError::UnnameablePath {
         path: String::from_utf8_lossy(component).into_owned(),
     })?;
@@ -566,7 +566,7 @@ fn materialize_items(repo: &gix::Repository, root: &Path, items: &[Item]) -> Res
     Ok(())
 }
 
-fn verified_object<'repo>(
+pub(crate) fn verified_object<'repo>(
     repo: &'repo gix::Repository,
     id: gix::ObjectId,
     path: &str,
