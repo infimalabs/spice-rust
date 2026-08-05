@@ -43,7 +43,7 @@ fn installed_rust_binary_coexists_with_the_python_entrypoint() {
         fs::metadata(&installed).unwrap().len(),
         fs::metadata(rust).unwrap().len()
     );
-    let receipt = fs::metadata(scratch.join(".git/.spice-rust/install.json")).unwrap();
+    let receipt = fs::metadata(scratch.join(".git/.spice/install.json")).unwrap();
     assert!(receipt.len() < MAX_COMPACT_RECORD_BYTES);
     assert_eq!(receipt.permissions().mode() & 0o777, 0o600);
     assert!(!scratch.join(".git/.spice/rust/install.json").exists());
@@ -77,9 +77,9 @@ fn stable_and_swapped_parent_symlinks_bind_one_physical_destination() {
     symlink(&target, stable.join(".agents")).unwrap();
     let planned = plan(&repository, None).unwrap();
     apply(&repository, None, &planned.digest().unwrap()).unwrap();
-    assert!(target.join("skills/spice-rust/SKILL.md").is_file());
+    assert!(target.join("skills/spice/SKILL.md").is_file());
     unapply(&repository).unwrap();
-    assert!(!target.join("skills/spice-rust/SKILL.md").exists());
+    assert!(!target.join("skills/spice/SKILL.md").exists());
 
     let swapped = Scratch::new("swapped-symlink");
     let repository = swapped.repository();
@@ -108,7 +108,7 @@ fn parent_creation_replacement_and_same_byte_destination_drift_are_inert() {
 
     let replaced_parent = Scratch::new("replaced-parent");
     let repository = replaced_parent.repository();
-    let parent = replaced_parent.join(".agents/skills/spice-rust");
+    let parent = replaced_parent.join(".agents/skills/spice");
     fs::create_dir_all(&parent).unwrap();
     let stale = plan(&repository, None).unwrap().digest().unwrap();
     fs::rename(&parent, replaced_parent.join(".agents/skills/prior-parent")).unwrap();
@@ -117,7 +117,7 @@ fn parent_creation_replacement_and_same_byte_destination_drift_are_inert() {
 
     let replaced_file = Scratch::new("replaced-file");
     let repository = replaced_file.repository();
-    let skill = replaced_file.join(".agents/skills/spice-rust/SKILL.md");
+    let skill = replaced_file.join(".agents/skills/spice/SKILL.md");
     fs::create_dir_all(skill.parent().unwrap()).unwrap();
     fs::write(&skill, b"operator skill\n").unwrap();
     let stale = plan(&repository, None).unwrap().digest().unwrap();
@@ -380,7 +380,7 @@ impl Scratch {
     }
 
     fn record(&self) -> PathBuf {
-        self.join(".git/.spice-rust/install.json")
+        self.join(".git/.spice/install.json")
     }
 
     fn snapshot(&self) -> Snapshot {

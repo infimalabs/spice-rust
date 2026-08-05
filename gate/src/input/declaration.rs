@@ -180,7 +180,10 @@ const MUTATION_RUNTIME: Duration = Duration::from_secs(300);
 const MUTATION_OUTPUT_DRAIN: Duration = Duration::from_secs(2);
 const MUTATION_REAP: Duration = Duration::from_secs(2);
 const MUTATION_GRACE: Duration = Duration::from_secs(1);
-const MUTATION_CAPTURE: usize = 512 * 1024;
+/// The pinned 27.1.0 inventory over the four current targets is 528,161 bytes
+/// for 331 mutants. 640 KiB is the first 128 KiB step above that measurement:
+/// it retains 127,199 bytes of growth margin while keeping each stream bounded.
+const MUTATION_CAPTURE: usize = 640 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct KillBoundsDeclaration {

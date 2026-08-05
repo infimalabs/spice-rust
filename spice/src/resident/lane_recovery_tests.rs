@@ -350,11 +350,19 @@ fn runtime_paths(fixture: &Fixture, common: std::path::PathBuf) -> RuntimePaths 
     }
 }
 
-/// The one real worktree these tests can offer an admission that reaches
-/// [`validate_worktree`], which resolves its argument against a live repository.
-fn real_worktree() -> (String, std::path::PathBuf) {
-    let repository = Repository::discover(env!("CARGO_MANIFEST_DIR"))
-        .expect("crate tests run inside a repository worktree");
+/// A fixture-owned worktree for admissions that reach [`validate_worktree`].
+///
+/// The mutation gate runs workspace tests from a materialized source snapshot,
+/// not a Git checkout, so no fixture may borrow repository identity from the
+/// directory this crate happened to be compiled in.
+fn real_worktree(fixture: &Fixture) -> (String, std::path::PathBuf) {
+    let initialized = std::process::Command::new("/usr/bin/git")
+        .args(["init", "--quiet", "--initial-branch", "fixture"])
+        .current_dir(&fixture.root)
+        .status()
+        .expect("the fixture Git process starts");
+    assert!(initialized.success(), "the fixture worktree initializes");
+    let repository = Repository::discover(&fixture.root).expect("the fixture is a repository");
     (
         repository.worktree_root().display().to_string(),
         repository.common_dir().to_path_buf(),
@@ -460,7 +468,7 @@ fn import_refuses_a_lane_absent_from_the_current_residency() {
 #[test]
 fn import_refuses_a_durable_lane_carrying_no_predecessor_lineage() {
     let fixture = fixture();
-    let (worktree, common) = real_worktree();
+    let (worktree, common) = real_worktree(&fixture);
     seed_lanes(
         &fixture,
         vec![wire::LaneResidency {
@@ -488,7 +496,7 @@ fn import_refuses_a_durable_lane_carrying_no_predecessor_lineage() {
 #[test]
 fn import_refuses_a_lane_whose_durable_session_head_no_longer_holds() {
     let fixture = fixture();
-    let (worktree, common) = real_worktree();
+    let (worktree, common) = real_worktree(&fixture);
     seed_lanes(&fixture, vec![vacant_row(&fixture)]);
     let paths = runtime_paths(&fixture, common);
     assert_eq!(

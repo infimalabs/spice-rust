@@ -41,7 +41,7 @@ const LEGACY_RECORDS: [(&str, &str); 2] = [
 ];
 const LEGACY_RECORD_VERSIONS: [(u16, &str); 1] = [(2, "SURFACE-1kJRGpf2")];
 const RECORD_NAME: &str = "install.json";
-const RECORD_PATH: &str = ".spice-rust/install.json";
+const RECORD_PATH: &str = ".spice/install.json";
 const RECORD_MODE: u32 = 0o600;
 const DIRECTORY_MODE: u32 = 0o700;
 const DATA_MODE: u32 = 0o644;
@@ -53,7 +53,7 @@ const GIT_COMMIT_MESSAGE_PATH: &str = ".spice/rust/git-hooks/commit-msg";
 const GIT_REFERENCE_TRANSACTION_PATH: &str = ".spice/rust/git-hooks/reference-transaction";
 const ENTRY_PATH: &str = ".spice/rust/hooks/entry.sh";
 const STATIC_PATH: &str = ".spice/rust/hooks/static/stage.sh";
-const SKILL_PATH: &str = ".agents/skills/spice-rust/SKILL.md";
+const SKILL_PATH: &str = ".agents/skills/spice/SKILL.md";
 const BINARY_PATH: &str = ".spice/rust/bin/spice-rust";
 
 const EXCLUDE_BEGIN: &str = "# BEGIN spice-rust coexistence";
@@ -61,7 +61,7 @@ const EXCLUDE_END: &str = "# END spice-rust coexistence";
 const EXCLUDE_BLOCK: &str = concat!(
     "# BEGIN spice-rust coexistence\n",
     "/.spice/rust/\n",
-    "/.agents/skills/spice-rust/\n",
+    "/.agents/skills/spice/\n",
     "# END spice-rust coexistence\n",
 );
 const SKILL: &str = include_str!("install/skill.md");

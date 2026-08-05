@@ -31,7 +31,7 @@ pub const PREDECESSOR_STATE_RELEASE: &str = "0.31.0";
 pub const PEER_CLAIM_TTL_SECONDS: u64 = 6 * 60 * 60;
 
 const CURRENT_STATE_RELEASE: &str = "current-rust";
-const CURRENT_STATE_DIRECTORY: &str = ".spice-rust";
+const CURRENT_STATE_DIRECTORY: &str = ".spice";
 const CURRENT_STATE_DATA_DIRECTORY: &str = "data";
 const CURRENT_STATE_FILE: &str = "gate-state.json";
 const CURRENT_STATE_LOCK_FILE: &str = "gate-state.lock";

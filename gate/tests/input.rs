@@ -29,7 +29,7 @@ fn tracked_inputs_load_one_operational_current_contract() {
         300
     );
     assert_eq!(contract.kill().bounds().grace().as_secs(), 1);
-    assert_eq!(contract.kill().bounds().capture(), 512 * 1024);
+    assert_eq!(contract.kill().bounds().capture(), 640 * 1024);
     assert_eq!(contract.kill().floor().numerator(), 0);
     assert_eq!(contract.kill().floor().denominator(), 1);
     the_kill_declaration_is_current(&contract.gate_set().render());

@@ -111,7 +111,12 @@ impl SurvivorRate {
 
 fn greatest_common_divisor(mut left: u64, mut right: u64) -> u64 {
     while right != 0 {
-        (left, right) = (right, left % right);
+        let remainder = left % right;
+        assert!(
+            remainder < right,
+            "a Euclidean remainder must strictly decrease"
+        );
+        (left, right) = (right, remainder);
     }
     left.max(1)
 }
