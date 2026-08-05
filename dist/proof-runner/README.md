@@ -28,13 +28,26 @@ every execution, revalidates every pin, then emits its attestation on stderr and
 runs the battery member under `sandbox-exec` with every route off this host
 denied, the repository read-only, the host's Cargo caches unreadable, the
 package-manager prefixes and framework directory a `-sys` build script probes
-for a library unreadable, and fresh empty Cargo home, target, and
-mutation-output directories that it removes afterward. Loopback stays reachable
-because the battery's own corpus binds it, which is the boundary the container
-half gets from a network namespace holding nothing but a loopback interface.
+for a library unreadable, every checkout beside this one unreadable, and fresh
+empty Cargo home, target, and mutation-output directories that it removes
+afterward. Loopback stays reachable because the battery's own corpus binds it,
+which is the boundary the container half gets from a network namespace holding
+nothing but a loopback interface.
 
 That profile opens with `(allow default)`, so it denies named things rather than
 admitting named things, and it therefore still denies less than the container
 half, which has no host filesystem to deny at all. What it establishes about
 host dependencies is that the prefixes such a dependency is found under are
 unreachable, not that the host is absent.
+
+The neighbouring checkouts are the exception that proves the shape: the
+directory the workspace sits in is denied whole, and three paths are then named
+back — the workspace, the Git common directory the runner resolved, and the
+run's own scratch root. The common directory is named because a linked worktree
+keeps it beside the workspace rather than inside it, so denying the
+neighbourhood would otherwise take the repository being proved. A seal whose
+workspace parent holds a pinned path instead refuses, naming that pin: the
+denial would take it with nothing to allow it back from. The rustup toolchain
+root is not pinned by name and needs no pin of its own, because `build.sh` seals
+the compiler `rustup which rustc` resolves and that binary lives inside the
+root.
