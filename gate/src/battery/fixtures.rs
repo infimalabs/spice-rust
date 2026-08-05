@@ -255,12 +255,14 @@ fn metric_measurement(metric: MetricId) -> MetricMeasurement {
             .expect("magic policy binding"),
         )
         .with_threshold(10),
-        MetricId::MarkdownLinkCaseMismatches => MetricMeasurement::new(
-            0,
-            ParserEvidence::Native {
-                parser: ParserId::MarkdownInlineLinkCaseV1,
-            },
-        ),
+        MetricId::MarkdownLinkCaseMismatches | MetricId::RustDocMarkdownTargetAbsences => {
+            MetricMeasurement::new(
+                0,
+                ParserEvidence::Native {
+                    parser: ParserId::MarkdownTrackedTargetsV2,
+                },
+            )
+        }
         MetricId::RepositoryDocumentCharacters => {
             unreachable!("repository documents are not structural arms")
         }

@@ -278,7 +278,7 @@ fn metric_arms_cannot_assemble_mixed_terminal_evidence() {
 fn a_metric_arm_carries_one_unread_file_beside_its_measured_neighbours() {
     let unread = "selected Markdown source could not be read: No such file or directory";
     let arm = |states: Vec<(&str, crate::metrics::EvidenceState)>| {
-        let metrics = states
+        let mut metrics = states
             .into_iter()
             .map(|(path, state)| {
                 crate::metrics::MetricEvidence::new(
@@ -288,7 +288,17 @@ fn a_metric_arm_carries_one_unread_file_beside_its_measured_neighbours() {
                 )
                 .expect("markdown metric evidence")
             })
-            .collect();
+            .collect::<Vec<_>>();
+        metrics.push(
+            crate::metrics::MetricEvidence::new(
+                crate::metrics::MetricId::RustDocMarkdownTargetAbsences,
+                crate::metrics::MetricKey::Arm,
+                crate::metrics::EvidenceState::NotApplicable {
+                    reason: "fixture carries no Rust doc-comment citation".to_owned(),
+                },
+            )
+            .expect("Rust doc citation metric evidence"),
+        );
         let report = crate::metrics::StructuralArmEvidence::new(GateId::MarkdownLinks, metrics)
             .expect("markdown arm evidence");
         ArmEvidence::Metrics { report }
@@ -297,7 +307,7 @@ fn a_metric_arm_carries_one_unread_file_beside_its_measured_neighbours() {
         crate::metrics::EvidenceState::measured(crate::metrics::MetricMeasurement::new(
             count,
             crate::metrics::ParserEvidence::Native {
-                parser: crate::metrics::ParserId::MarkdownInlineLinkCaseV1,
+                parser: crate::metrics::ParserId::MarkdownTrackedTargetsV2,
             },
         ))
     };

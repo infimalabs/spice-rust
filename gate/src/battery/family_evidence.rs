@@ -373,9 +373,9 @@ fn metric_terminal(evidence: &MetricEvidence) -> BatteryState {
 ///
 /// The unit is consulted first, and decides alone for a unit whose count is
 /// itself the finding. Reaching the threshold for those would report every case
-/// mismatch and every magic-number regression in the tree as a pass, which is
-/// the one result the predecessor steps they answer for never give. A
-/// Markdown-link measurement is forbidden a threshold outright; a magic
+/// mismatch, absent doc target, and magic-number regression in the tree as a
+/// pass, which is the one result the steps they answer for never give. The two
+/// Markdown-arm measurements are forbidden a threshold outright; a magic
 /// measurement is required to carry one, because there the threshold records
 /// which literals were examined rather than how many regressions are allowed.
 fn over_bound(unit: MetricUnit, measurement: &MetricMeasurement) -> bool {

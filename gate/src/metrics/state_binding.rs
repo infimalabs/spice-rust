@@ -233,7 +233,9 @@ const fn latch_kind(metric: MetricId) -> Option<LatchKind> {
         MetricId::RoutineCcn => Some(LatchKind::ComplexityCcn),
         MetricId::RoutineLength => Some(LatchKind::ComplexityLength),
         MetricId::RepositoryDocumentCharacters => Some(LatchKind::RepoDocChars),
-        MetricId::MagicNumberRegressions | MetricId::MarkdownLinkCaseMismatches => None,
+        MetricId::MagicNumberRegressions
+        | MetricId::MarkdownLinkCaseMismatches
+        | MetricId::RustDocMarkdownTargetAbsences => None,
     }
 }
 

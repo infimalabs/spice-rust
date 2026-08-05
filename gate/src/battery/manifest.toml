@@ -145,7 +145,7 @@ predecessor = "markdown-links"
 disposition = "compiled"
 gate_id = "markdown-links"
 family = "metrics"
-declaration = "gate::metrics::markdown-links::markdown-inline-link-case-v1"
+declaration = "gate::metrics::markdown-links::markdown-tracked-targets-v2"
 
 [[arms]]
 predecessor = "reachability"
