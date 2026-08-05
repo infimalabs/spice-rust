@@ -131,7 +131,7 @@ predecessor = "complexity"
 disposition = "compiled"
 gate_id = "complexity"
 family = "metrics"
-declaration = "gate::metrics::complexity::lizard-csv-v1"
+declaration = "gate::metrics::complexity::tree-sitter-complexity-v1"
 
 [[arms]]
 predecessor = "magic-numbers"

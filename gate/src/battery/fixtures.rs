@@ -272,11 +272,8 @@ fn bounded_metric(metric: MetricId, value: u64, field: &str) -> MetricMeasuremen
         MetricId::FileLines | MetricId::FileBytes => ParserEvidence::Native {
             parser: ParserId::Utf8FileShapeV1,
         },
-        MetricId::RoutineCcn | MetricId::RoutineLength => ParserEvidence::External {
-            parser: ParserId::LizardCsvV1,
-            tool: "lizard".to_owned(),
-            version: "1.23.0".to_owned(),
-            executable_digest: "sha256:fixture-lizard".to_owned(),
+        MetricId::RoutineCcn | MetricId::RoutineLength => ParserEvidence::Native {
+            parser: ParserId::TreeSitterComplexityV1,
         },
         _ => unreachable!("bounded structural fixture metric"),
     };
