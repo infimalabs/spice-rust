@@ -1,6 +1,10 @@
+use std::sync::{Arc, Mutex, mpsc};
+
 use lane::capture::{CaptureFailure, CaptureRecord, CaptureReportError};
+use sill::{Cancellation, Deadlines, Environment, RestartDisposition, Spec, WaitPolicy};
 
 use super::*;
+use crate::resident::lane_surface::{DeclarationReporter, DeclarationState, SessionProofError};
 
 static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
