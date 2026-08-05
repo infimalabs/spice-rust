@@ -105,9 +105,11 @@ impl RunningResident {
             .expect("launch foreground resident");
         let mut resident = Self { child: Some(child) };
         let canvas = fixture.root.join(".git/.spice/canvas");
+        let watched = canvas.parent().expect("canvas has runtime parent");
+        fs::create_dir_all(watched).expect("runtime directory");
         match readiness::wait_until_ready(
             resident.child.as_mut().expect("resident child"),
-            &fixture.root.join(".git"),
+            watched,
             readiness::ARRIVAL_HORIZON,
             "resident discovery",
             || canvas.is_file(),

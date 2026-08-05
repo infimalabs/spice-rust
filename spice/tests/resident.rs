@@ -27,6 +27,11 @@ const REFUSAL_EXIT: i32 = 2;
 /// lives with the wait itself, in [`readiness::ARRIVAL_HORIZON`].
 const CLIENT_DEADLINE_BOUND: Duration = Duration::from_secs(10);
 const LANE_DEADLINE_BOUND: Duration = Duration::from_secs(20);
+/// The hang guard around a supervised vendor effect reaching its tape.
+///
+/// The wait itself is event-driven; this covers the full vendor, capture,
+/// decode, and persistence pipeline rather than resident discovery.
+const LANE_EFFECT_HORIZON: Duration = Duration::from_secs(45);
 const ADVERSARIAL_PEER_LIFE: Duration = Duration::from_secs(7);
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -131,13 +136,10 @@ impl RunningResident {
     }
 
     fn assert_ready(&mut self, fixture: &Fixture) {
-        let watched = fixture
-            .runtime
-            .parent()
-            .expect("runtime has Git-common parent");
+        fs::create_dir_all(&fixture.runtime).expect("runtime directory");
         match readiness::wait_until_ready(
             self.child.as_mut().expect("resident child"),
-            watched,
+            &fixture.runtime,
             readiness::ARRIVAL_HORIZON,
             "resident discovery",
             || fixture.canvas().is_file(),
@@ -841,8 +843,9 @@ fn instant(value: &str) -> Instant {
 ///
 /// The native observer arms before `trigger` runs and `observe` is read once
 /// immediately afterwards, so an effect that lands during setup is still seen.
-/// After that read, only the filesystem callback can cause another observation.
-/// A trigger that already ran passes `|| {}` and relies on the post-arm read.
+/// After that read, only a direct kernel notification can cause another
+/// observation. A trigger that already ran passes `|| {}` and relies on the
+/// post-arm read.
 ///
 /// Panics report the waiting call site rather than this shared helper.
 #[track_caller]
@@ -851,34 +854,74 @@ fn wait_for_event<T>(
     trigger: impl FnOnce(),
     mut observe: impl FnMut() -> Option<T>,
 ) -> T {
-    let (sender, receiver) = mpsc::channel::<notify::Result<notify::Event>>();
-    let _observer = readiness::filesystem_event::arm(path, "effect", move |event| {
-        let _ = sender.send(event);
-    });
+    let (sender, receiver) = mpsc::channel::<std::io::Result<()>>();
+    let observers = effect_observers(path);
     trigger();
     if let Some(observed) = observe() {
         return observed;
     }
-    let deadline = Monotonic::now() + readiness::ARRIVAL_HORIZON;
+    wait_for_effect_change(observers, sender.clone());
+    let deadline = Monotonic::now() + LANE_EFFECT_HORIZON;
+    let mut change_signals = 0_u64;
     loop {
         let remaining = deadline.saturating_duration_since(Monotonic::now());
         match receiver.recv_timeout(remaining) {
-            Ok(Ok(_)) => {
+            Ok(Ok(())) => {
+                change_signals += 1;
+                let observers = effect_observers(path);
                 if let Some(observed) = observe() {
                     return observed;
                 }
+                wait_for_effect_change(observers, sender.clone());
             }
             Ok(Err(error)) => panic!("effect observer failed: {error}"),
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 panic!(
-                    "effect was not observed before {:?}",
-                    readiness::ARRIVAL_HORIZON
+                    "effect was not observed before {:?}: change_signals={change_signals}",
+                    LANE_EFFECT_HORIZON,
                 )
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 panic!("effect observer disconnected")
             }
         }
+    }
+}
+
+fn effect_observers(path: &Path) -> Vec<readiness::filesystem_event::DirectObserver> {
+    let root = if path.is_dir() {
+        path
+    } else {
+        path.parent().expect("effect path has a parent")
+    };
+    let mut watched = vec![root.to_path_buf()];
+    if path.is_file() {
+        watched.push(path.to_path_buf());
+    } else {
+        watched.extend(
+            fs::read_dir(root)
+                .expect("effect directory reads")
+                .map(|entry| entry.expect("effect directory entry reads").path())
+                .filter(|entry| entry.is_file()),
+        );
+    }
+    watched.sort();
+    watched.dedup();
+    watched
+        .iter()
+        .map(|watched| readiness::filesystem_event::DirectObserver::arm(watched, "effect"))
+        .collect()
+}
+
+fn wait_for_effect_change(
+    observers: Vec<readiness::filesystem_event::DirectObserver>,
+    sender: mpsc::Sender<std::io::Result<()>>,
+) {
+    for observer in observers {
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(observer.wait());
+        });
     }
 }
 

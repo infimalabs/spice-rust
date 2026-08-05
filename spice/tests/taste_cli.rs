@@ -100,9 +100,11 @@ impl Resident {
             .spawn()
             .expect("resident starts");
         let mut resident = Self { child: Some(child) };
+        let watched = fixture.canvas.parent().expect("canvas has runtime parent");
+        fs::create_dir_all(watched).expect("runtime directory");
         match readiness::wait_until_ready(
             resident.child.as_mut().expect("resident child"),
-            &fixture.root.join(".git"),
+            watched,
             readiness::ARRIVAL_HORIZON,
             "resident discovery",
             || fixture.canvas.is_file(),

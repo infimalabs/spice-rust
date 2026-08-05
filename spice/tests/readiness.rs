@@ -5,10 +5,11 @@
 //! Every battery that waits for a spawned child now goes through one helper, so
 //! the ways that wait can end are proved here once rather than trusted eight
 //! times. They are not interchangeable: a state that already holds returns on
-//! the first post-arm read, a state reached later returns on a filesystem
-//! callback, a child that ends first returns on its process signal, and a state
-//! that never arrives spends the horizon. A battery that hangs is told apart
-//! from one whose child died only because the wait keeps those endings apart.
+//! the first post-arm read, a state reached later returns on a direct kernel
+//! notification, a child that ends first returns on its process signal, and a
+//! state that never arrives spends the horizon. A battery that hangs is told
+//! apart from one whose child died only because the wait keeps those endings
+//! apart.
 //!
 //! Two of them can be reachable at the same instant, and which one comes back
 //! then is an order rather than an ending, so the order is pinned here as well.
@@ -90,8 +91,8 @@ impl Drop for Held {
 ///
 /// The observer is already armed when `holds` is first called. Taking the
 /// answer before releasing the child puts everything the child does after that
-/// read, so a later answer can only follow a real child-exit or filesystem
-/// callback.
+/// read, so a later answer can only follow a real child-exit or kernel
+/// notification.
 fn released_after_arming<'a>(
     input: &'a RefCell<ChildStdin>,
     asked: &'a AtomicU64,
@@ -143,13 +144,13 @@ fn a_child_that_ends_first_ends_the_wait_when_it_ends() {
     );
 }
 
-/// A state reached during the post-arm read needs no later callback.
+/// A state reached during the post-arm read needs no later notification.
 ///
 /// The predicate creates and then reads the state itself. This can only happen
 /// after the observer is armed, and it proves the one immediate state read
-/// closes the setup window without waiting for the callback it just caused.
+/// closes the setup window without waiting for the notification it just caused.
 #[test]
-fn a_state_reached_during_the_post_arm_read_needs_no_callback() {
+fn a_state_reached_during_the_post_arm_read_needs_no_notification() {
     let mut held = Held::new("holds", "read hold");
     let reached = held.tree.join("reached");
     let asked = AtomicU64::new(0);
@@ -175,11 +176,11 @@ fn a_state_reached_during_the_post_arm_read_needs_no_callback() {
     assert_eq!(
         asked.load(Ordering::Relaxed),
         1,
-        "a callback caused an unnecessary second state read"
+        "a notification caused an unnecessary second state read"
     );
     assert!(
         elapsed < readiness::ARRIVAL_HORIZON,
-        "the post-arm state read waited for its own callback: {elapsed:?}"
+        "the post-arm state read waited for its own notification: {elapsed:?}"
     );
 }
 
@@ -315,14 +316,14 @@ fn a_child_that_already_exited_is_answered_on_the_first_pass() {
     );
 }
 
-/// A state reached after arming arrives on the filesystem callback.
+/// A state reached after arming arrives on the kernel notification.
 ///
 /// This is the ending every converted battery actually takes. The child creates
 /// the awaited file only once released, which happens after both reads the
 /// helper makes on its own, and then goes on blocking: the child is still live,
 /// so nothing the wait already knew can account for the answer.
 #[test]
-fn a_state_reached_after_arming_arrives_on_the_filesystem_callback() {
+fn a_state_reached_after_arming_arrives_on_the_kernel_notification() {
     let mut held = Held::new("created", r#"read release; : > "$1/ready"; read hold"#);
     let awaited = held.tree.join("ready");
     let asked = AtomicU64::new(0);

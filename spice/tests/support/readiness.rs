@@ -2,14 +2,14 @@
 //!
 //! Four endings are reachable here, and telling them apart is the point. A
 //! state that already holds returns Ready on the first post-arm read. A state
-//! reached later returns Ready after a filesystem callback. A child that ends
-//! first returns Exited on its process observer, and a state that never arrives
-//! spends the horizon and names itself in the panic.
+//! reached later returns Ready after a direct kernel notification. A child that
+//! ends first returns Exited on its process observer, and a state that never
+//! arrives spends the horizon and names itself in the panic.
 //!
 //! The two completion sources feed one channel, so no time-driven recheck is a
-//! hidden second mechanism. The filesystem observer is armed before state is
-//! read, closing the setup race; after that read, only a real callback or child
-//! exit can wake the receiver.
+//! hidden second mechanism. The kernel observer is armed before state is
+//! read, closing the setup race; after that read, only a real kernel notification
+//! or child exit can wake the receiver.
 
 use std::path::Path;
 use std::process::Child;
@@ -24,32 +24,24 @@ mod process_exit;
 
 use process_exit::ProcessExitObserver;
 
-/// The longest a battery waits for a state only a callback can announce.
+/// The failure guard around a state only a kernel event can announce.
 ///
-/// Nothing here decides when the state arrives, so this is sized from what
-/// announcing one costs rather than from what publishing one ought to take. It
-/// was measured by recording every wait's elapsed time on its way out, across
-/// three rounds of the eight batteries that wait, on this eleven-lane machine
-/// at load averages between 1.9 and 4.8.
+/// This does not pace readiness: inotify or kqueue wakes the blocked waiter as
+/// soon as the runtime directory changes. The horizon exists only to make an
+/// absent publication or broken kernel notification fail by name.
 ///
-/// The awaited state is usually already there: of 177 recorded waits, all but
-/// three returned within 3.9 seconds. The three were 7.59, 17.14 and 17.45
-/// seconds, and they are the reason this is not a small number. The battery
-/// below measures the same delivery in isolation and puts its worst at 21.86
-/// seconds, against 0.03 to 0.26 to arm the observer and 0.02 to 0.04 for the
-/// process-exit signal in the same fixture. The tail is the filesystem
-/// deciding when to speak, not a resident being slow to publish.
+/// The recursive FSEvents observer this replaced was disproved rather than
+/// given more time. Under lane load, release_publish reached forty-five seconds
+/// with `state_ready=true`, a live child, and zero change signals. The state had
+/// already arrived; FSEvents had not announced it. An isolated rerun then
+/// completed in 6.63 seconds, confirming that the variable was delivery, not
+/// publication. A larger number could not repair that mechanism.
 ///
-/// The ten seconds these batteries inherited from the poller they replaced sat
-/// inside that tail. At that value the waits recorded 10.002 through 10.007
-/// seconds six times in one three-round sweep, which is the ceiling rather
-/// than an arrival, and consent_cli, steering, release_publish and resident
-/// failed in two rounds of three. The same sweep at sixty seconds was green in
-/// three of three and never waited longer than the 17.45 above. This value is
-/// twice the slowest arrival ever seen here, sits between those two, and was
-/// itself green in three rounds of three, so reaching it means no callback came
-/// rather than that a slow one was cut off.
-pub(super) const ARRIVAL_HORIZON: Duration = Duration::from_secs(45);
+/// Ten seconds is therefore a failure budget around a direct event, not an
+/// estimate of FSEvents latency. The mechanism battery derives its wider idle
+/// horizon from this value so it can prove both prompt notification and loud
+/// silence without inventing another bound.
+pub(super) const ARRIVAL_HORIZON: Duration = Duration::from_secs(10);
 
 /// Which ending a readiness wait observed.
 pub(super) enum Readiness {
@@ -83,15 +75,7 @@ pub(super) fn wait_until_ready(
     ready: impl Fn() -> bool,
 ) -> Readiness {
     let deadline = Instant::now() + horizon;
-    let (sender, receiver) = mpsc::channel::<Signal>();
-    let changes = sender.clone();
-    let _observer = filesystem_event::arm(watched, what, move |event| {
-        let signal = match event {
-            Ok(_) => Signal::Changed,
-            Err(error) => Signal::ObserverFailed(error.to_string()),
-        };
-        let _ = changes.send(signal);
-    });
+    let observer = filesystem_event::DirectObserver::arm(watched, what);
 
     // The state winning over the child is deliberate: one that holds was
     // reached, whatever the child did afterwards. This is also the immediate
@@ -103,38 +87,79 @@ pub(super) fn wait_until_ready(
         return Readiness::Exited;
     }
 
+    let (sender, receiver) = mpsc::channel::<Signal>();
+    wait_for_change(observer, sender.clone());
     let exit = ProcessExitObserver::new(child.id());
+    let exits = sender.clone();
     thread::spawn(move || {
         exit.wait();
-        let _ = sender.send(Signal::Exited);
+        let _ = exits.send(Signal::Exited);
     });
 
+    let mut changed_signals = 0_u64;
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            panic!("{what} did not arrive within {horizon:?}")
+            timeout(what, horizon, changed_signals, ready(), ended(child, what))
         }
-        match receiver.recv_timeout(remaining) {
-            Ok(Signal::Changed | Signal::Exited) => {}
+        let next_observer = match receiver.recv_timeout(remaining) {
+            Ok(Signal::Changed) => {
+                changed_signals += 1;
+                // Re-arm before reading the state. If this change was
+                // unrelated, a state arriving during the read is either seen
+                // by that read or retained by the next kernel observer.
+                Some(filesystem_event::DirectObserver::arm(watched, what))
+            }
+            Ok(Signal::Exited) => None,
             Ok(Signal::ObserverFailed(error)) => {
                 panic!("{what} observer failed: {error}")
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                panic!("{what} did not arrive within {horizon:?}")
+                timeout(what, horizon, changed_signals, ready(), ended(child, what))
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 panic!("{what} completion channel disconnected")
             }
-        }
+        };
         // If a child publishes the state and exits in one burst, the reached
-        // state remains the answer regardless of which callback arrived first.
+        // state remains the answer regardless of which signal arrived first.
         if ready() {
             return Readiness::Ready;
         }
         if ended(child, what) {
             return Readiness::Exited;
         }
+        if let Some(observer) = next_observer {
+            wait_for_change(observer, sender.clone());
+        }
     }
+}
+
+/// Wait for one direct directory event without making the child observer wait
+/// behind it.
+fn wait_for_change(observer: filesystem_event::DirectObserver, sender: mpsc::Sender<Signal>) {
+    thread::spawn(move || {
+        let signal = match observer.wait() {
+            Ok(()) => Signal::Changed,
+            Err(error) => Signal::ObserverFailed(error.to_string()),
+        };
+        let _ = sender.send(signal);
+    });
+}
+
+/// Report the complete terminal state without turning the horizon into a
+/// second readiness mechanism.
+fn timeout(
+    what: &str,
+    horizon: Duration,
+    changed_signals: u64,
+    state_ready: bool,
+    child_ended: bool,
+) -> ! {
+    panic!(
+        "{what} did not arrive within {horizon:?}: \
+         state_ready={state_ready} child_ended={child_ended} changed_signals={changed_signals}"
+    )
 }
 
 /// Whether the observed child has already ended.
