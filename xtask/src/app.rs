@@ -71,21 +71,32 @@ fn owns_the_stage(host: &str) -> bool {
 /// Both callers that decide anything on the compiler's identity come through
 /// here, so neither can end up reading a different `rustc` than the one whose
 /// bytes are at stake -- including when that one is named by a compiler
-/// override instead of by `PATH`, which [`ReleaseEnvironment::rustc`] settles.
+/// override or by the `build.rustc` key of a Cargo config file instead of by
+/// `PATH`, which [`ReleaseEnvironment::rustc`] settles in Cargo's own order.
+/// The directory handed to it is the app build's own working directory, so the
+/// config files walked are the ones that build reads rather than the ones some
+/// other directory would have offered.
+///
 /// An environment naming no `rustc` at all is refused here rather than treated
 /// as an unknown host: the question is what the compiler is, and there is no
-/// compiler to ask.
+/// compiler to ask. A Cargo config that exists and cannot be read carries its
+/// own refusal up, because a build whose compiler is undecided is not a build
+/// whose compiler is the one on `PATH`.
 fn observed_toolchain(
     root: &Path,
     environment: &ReleaseEnvironment,
 ) -> Result<toolchain::ObservedToolchain, AppBuildError> {
-    let rustc = environment.rustc().ok_or_else(|| {
-        AppBuildError::UnreadableToolchainReport(
-            "no rustc is named by RUSTC, by CARGO_BUILD_RUSTC, or on PATH, so the toolchain \
-             a build here would compile under is unknown"
-                .to_owned(),
-        )
-    })?;
+    let rustc = environment
+        .rustc(&root.join("app"))
+        .map_err(|error| AppBuildError::UnreadableToolchainReport(error.to_string()))?
+        .ok_or_else(|| {
+            AppBuildError::UnreadableToolchainReport(
+                "no rustc is named by RUSTC, by CARGO_BUILD_RUSTC, by build.rustc in any cargo \
+                 config this build reads, or on PATH, so the toolchain a build here would \
+                 compile under is unknown"
+                    .to_owned(),
+            )
+        })?;
     toolchain::observed(&rustc, root)
 }
 
@@ -236,17 +247,22 @@ fn prepare_app_build(build_root: &Path) -> Result<(), AppBuildError> {
 /// The Trunk invocation, and the inherited environment it edits.
 ///
 /// Trunk inherits this process's environment, so every variable Cargo reads is
-/// carried into the app build whether or not this function mentions it. Three
-/// are edited, and the reason each one is edited is recorded beside it, because
-/// a variable that is simply absent from this list is indistinguishable from
-/// one somebody meant to handle: `CARGO` is removed, and `RUSTC_WRAPPER` and
-/// `RUSTC_WORKSPACE_WRAPPER` are emptied.
+/// carried into the app build whether or not this function mentions it. Nine
+/// entries are named here and the assertion below pins all nine. Three of them
+/// are edits to what was inherited rather than values supplied fresh, and the
+/// reason for each is recorded beside it, because a variable that is simply
+/// absent from this list is indistinguishable from one somebody meant to
+/// handle: `CARGO` is removed, and `RUSTC_WRAPPER` and `RUSTC_WORKSPACE_WRAPPER`
+/// are emptied.
 ///
 /// `RUSTC` and `CARGO_BUILD_RUSTC` are deliberately not among them. They name
 /// the compiler this build will run, and removing them here would make the
 /// build disagree with the report [`admit_staging_environment`] admitted it
 /// on; they are passed through and measured instead, by
-/// [`ReleaseEnvironment::rustc`], which reads them in Cargo's own order.
+/// [`ReleaseEnvironment::rustc`], which reads them in Cargo's own order. The
+/// working directory set below is the same one that resolver walks for a
+/// `build.rustc` a config file names, so the compiler admitted and the compiler
+/// Cargo picks are settled from one hierarchy rather than two.
 fn trunk_command(
     root: &Path,
     build_root: &Path,
@@ -772,6 +788,79 @@ mod tests {
             "CARGO_BUILD_RUSTC",
             &CompilerOverride::CargoBuildRustc,
         );
+    }
+
+    /// Staging refuses the compiler a Cargo config file names, not only the
+    /// two environment spellings.
+    ///
+    /// The Cargo home config is the one file on the app build's own resolution
+    /// path a test may write: `run_trunk` hands Trunk the Cargo home this
+    /// environment names and the resolver asks that same one, while the other
+    /// two -- the workspace's tracked `.cargo/config.toml` and the config the
+    /// sealed image lays at the filesystem root -- are files no fixture may
+    /// edit. It is the same door regardless: `build.rustc` is one key and the
+    /// walk that finds it is one walk.
+    ///
+    /// The compiler on `PATH` reports the pinned release and the owning tuple,
+    /// so it clears both admission doors by itself. Any refusal reachable from
+    /// here is therefore one that read the config, and 9.9.9 is a release only
+    /// the config names -- with the file unread this call goes on to build.
+    #[cfg(unix)]
+    #[test]
+    fn staging_refuses_the_compiler_a_cargo_config_names() {
+        let root =
+            std::env::temp_dir().join(format!("spice-xtask-app-configured-{}", std::process::id()));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale fixture");
+        }
+        rustc_script(
+            &root.join("path"),
+            &format!(
+                "rustc {release}\nrelease: {release}\nhost: {STAGING_HOST}\n",
+                release = toolchain::pinned_release(),
+            ),
+        );
+        let foreign = rustc_script(
+            &root.join("configured"),
+            "rustc 9.9.9\nrelease: 9.9.9\nhost: x86_64-unknown-linux-gnu\n",
+        );
+        let cargo_home = root.join("cargo-home");
+        fs::create_dir_all(&cargo_home).expect("fixture cargo home");
+        fs::write(
+            cargo_home.join("config.toml"),
+            format!("[build]\nrustc = \"{}\"\n", foreign.display()),
+        )
+        .expect("fixture cargo config");
+        let environment = ReleaseEnvironment::new(
+            Some(root.join("path").into_os_string()),
+            None,
+            Some(cargo_home.into_os_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let mut output: Vec<u8> = Vec::new();
+        let error = stage_app(&environment, &mut output)
+            .expect_err("a compiler this workspace does not pin may not write the stage");
+
+        assert!(
+            matches!(
+                &error,
+                AppBuildError::ForeignToolchainRelease(observed) if observed == "9.9.9"
+            ),
+            "staging measured the compiler on PATH rather than the one build.rustc names: {error}",
+        );
+        assert!(
+            output.is_empty(),
+            "staging began before the release was admitted"
+        );
+        fs::remove_dir_all(root).expect("remove configured toolchain fixture");
     }
 
     /// `RUSTC` is read ahead of `CARGO_BUILD_RUSTC`, which is Cargo's own order.

@@ -122,30 +122,76 @@ impl ReleaseEnvironment {
             .map_or_else(|| root.join("target"), PathBuf::from)
     }
 
-    /// The `rustc` a build started from this environment would compile with.
+    /// The `rustc` a build started in `build_dir` from this environment would
+    /// compile with.
     ///
-    /// `PATH` is the last question, not the only one. Cargo runs `RUSTC` in
-    /// place of the compiler it would otherwise find, and `CARGO_BUILD_RUSTC`
-    /// is the environment spelling of the `build.rustc` key, which does the
-    /// same when `RUSTC` is absent. Measured against the installed Cargo: with
-    /// both set the `RUSTC` one runs, with either alone that one runs, and
-    /// only with neither does the `PATH` walk decide. Asking in that order is
-    /// what makes this the compiler the build runs rather than the one a bare
-    /// `PATH` would have found -- and the app stage is bytes only one compiler
-    /// release can reproduce, so a build under an unmeasured one is exactly
-    /// what must not happen.
+    /// `PATH` is the last question, not the only one, and the environment is
+    /// not the only place a compiler is named. Cargo settles this in five
+    /// ranks and all five are asked here in that order: `RUSTC`, then
+    /// `CARGO_BUILD_RUSTC`, then the `build.rustc` key of the Cargo config
+    /// found by walking up from the build directory nearest-first, then that
+    /// same key in the `CARGO_HOME` config, and only then the `PATH` walk.
+    /// Measured against the installed Cargo 1.97.1, one build per rank, each
+    /// dying on the compiler Cargo chose so the winner is named in the error
+    /// rather than deduced: `RUSTC` beat `CARGO_BUILD_RUSTC`,
+    /// `CARGO_BUILD_RUSTC` beat every config file, a nearer config beat a
+    /// farther one, every ancestor config beat the `CARGO_HOME` one, and the
+    /// config layer as a whole beat `PATH`.
     ///
-    /// An override is taken as written, because that is what Cargo hands the
+    /// The order is written out rather than delegated because Cargo cannot be
+    /// asked for it: `cargo config get` is nightly-only and this toolchain is
+    /// stable. The build directory is the one Trunk is handed as its working
+    /// directory, so the hierarchy walked is the hierarchy that decides the
+    /// build rather than one rooted wherever this process happens to be.
+    ///
+    /// The config ranks are about bytes and not tidiness. The sealed image
+    /// ships a Cargo config at the filesystem root deliberately, because that
+    /// is the one location every Cargo in it reads, and the workspace tracks
+    /// one of its own. A compiler named in either would have built the app
+    /// stage while the release admitted here came from `PATH`, and that stage
+    /// is bytes only one compiler release reproduces.
+    ///
+    /// A name is taken as written, because that is what Cargo hands the
     /// operating system; a name that resolves to nothing is a compiler that
-    /// cannot be read rather than an environment that has none.
+    /// cannot be read rather than an environment that has none. `Ok(None)` is
+    /// for an environment that names no compiler at any of the five ranks.
     ///
-    /// The `PATH` walk is the same one the release pipeline's own program
-    /// discovery uses, so the fallback is that rule rather than a second one.
-    pub(crate) fn rustc(&self) -> Option<PathBuf> {
+    /// # Errors
+    ///
+    /// Returns a Cargo config that exists and cannot be opened, that names
+    /// `build.rustc` as something other than one quoted string, or that puts a
+    /// bare `rustc` key somewhere [`named_rustc`] will not place it. Such a
+    /// file is refused rather than stepped over, because stepping over it would
+    /// answer with the compiler Cargo was not going to run.
+    pub(crate) fn rustc(&self, build_dir: &Path) -> Result<Option<PathBuf>, TargetBuildError> {
         if let Some(overridden) = self.rustc.as_ref().or(self.build_rustc.as_ref()) {
-            return Some(PathBuf::from(overridden));
+            return Ok(Some(PathBuf::from(overridden)));
         }
-        find_program(self.path.as_deref()?, "rustc").ok()
+        if let Some(configured) = self.configured_rustc(build_dir)? {
+            return Ok(Some(configured));
+        }
+        let Some(path) = self.path.as_deref() else {
+            return Ok(None);
+        };
+        Ok(find_program(path, "rustc").ok())
+    }
+
+    /// The compiler a Cargo config names for a build started in `build_dir`.
+    ///
+    /// Nearest directory first and the `CARGO_HOME` config last, which is the
+    /// order measured above. A config that exists without the key does not end
+    /// the walk: Cargo merges these files key by key, so a parent still answers
+    /// for a key the nearer file leaves unset.
+    fn configured_rustc(&self, build_dir: &Path) -> Result<Option<PathBuf>, TargetBuildError> {
+        for directory in build_dir.ancestors() {
+            if let Some(named) = configured_rustc_in(&directory.join(".cargo"))? {
+                return Ok(Some(named));
+            }
+        }
+        match self.cargo_home() {
+            Some(cargo_home) => configured_rustc_in(Path::new(&cargo_home)),
+            None => Ok(None),
+        }
     }
 
     /// The Cargo home the builds this binary starts must read crates from.
@@ -577,6 +623,141 @@ impl Programs {
     }
 }
 
+/// The two names one Cargo config directory can carry, in Cargo's own order.
+///
+/// The extension-less spelling is deprecated and still wins: measured against
+/// the installed Cargo, a directory holding both warns that `config` is
+/// deprecated in favour of `config.toml` and then uses `config` anyway. A
+/// reader that opened only `config.toml` would be reading the file Cargo did
+/// not read, which is the whole failure this exists to prevent.
+const CARGO_CONFIG_NAMES: [&str; 2] = ["config", "config.toml"];
+
+/// What `build.rustc` says in the first Cargo config `directory` holds.
+///
+/// The first name found is the only one read, because that is what Cargo does
+/// with a directory holding both. `None` means a file was read and left the key
+/// unset, or that the directory holds no config at all; the caller continues
+/// outward either way, since Cargo would too.
+fn configured_rustc_in(directory: &Path) -> Result<Option<PathBuf>, TargetBuildError> {
+    for name in CARGO_CONFIG_NAMES {
+        let path = directory.join(name);
+        let document = match fs::read_to_string(&path) {
+            Ok(document) => document,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => continue,
+            Err(source) => return Err(TargetBuildError::Io { path, source }),
+        };
+        return named_rustc(&document, &path);
+    }
+    Ok(None)
+}
+
+/// The `build.rustc` string one Cargo config document names, if it names one.
+///
+/// One key out of a document, read as text the way [`crate::toolchain`] reads
+/// the pin document rather than by admitting a TOML parser into this crate to
+/// reach a single line. Unlike that document this repository does not write
+/// these -- one of them is the developer's own `~/.cargo/config.toml`, which is
+/// an ancestor of every worktree here -- so this reads them under one rule: no
+/// line naming a bare `rustc` key is ever walked past. Either it can be placed,
+/// and it answers, or it cannot, and the file is refused.
+///
+/// That rule is what makes the skipping safe. Every spelling that names a
+/// compiler contains `=`, every line containing `=` is placed here, and so a
+/// line holding neither a header nor a `=` cannot be the key however it is
+/// indented -- the interior of a multi-line array is the ordinary case, and
+/// stopping on it would refuse a `rustflags` list every Cargo reads happily.
+/// What a skip cannot do is hide the key, which is the whole point: a missed
+/// `build.rustc` stages bytes under a compiler nobody chose, while a refusal
+/// names the file and quotes whatever stopped it.
+fn named_rustc(document: &str, path: &Path) -> Result<Option<PathBuf>, TargetBuildError> {
+    let refuse = |detail: String| TargetBuildError::CargoConfig {
+        path: path.to_path_buf(),
+        detail,
+    };
+    let mut table = String::new();
+    for line in document.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(header) = line.strip_prefix('[') {
+            let Some(header) = header.strip_suffix(']') else {
+                return Err(refuse(format!("a table header does not close: {line}")));
+            };
+            table = header.trim().to_owned();
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let (key, value) = (key.trim(), value.trim());
+        let dotted = key_path(&table, key);
+        if dotted == ["build"] {
+            return Err(refuse(format!(
+                "build is given as one value, so whether it names a rustc cannot be read: {line}"
+            )));
+        }
+        if dotted != ["build", "rustc"] {
+            if names_a_rustc(key) {
+                return Err(refuse(format!(
+                    "a key names rustc somewhere this reader cannot place it: {line}"
+                )));
+            }
+            continue;
+        }
+        let Some(named) = quoted(value) else {
+            return Err(refuse(format!(
+                "build.rustc is not one quoted string: {value}"
+            )));
+        };
+        return Ok(Some(PathBuf::from(named)));
+    }
+    Ok(None)
+}
+
+/// The dotted key one line writes, with the header it sits under in front.
+///
+/// Both halves are split, because Cargo reads `rustc` under a `[build]` header
+/// and a top-level `build.rustc` as the same key, and a reader that knew only
+/// one spelling would miss the other.
+fn key_path(table: &str, key: &str) -> Vec<String> {
+    table
+        .split('.')
+        .chain(key.split('.'))
+        .map(|segment| unquoted(segment.trim()).to_owned())
+        .filter(|segment| !segment.is_empty())
+        .collect()
+}
+
+/// Whether a key names `rustc` itself rather than a longer key starting with it.
+///
+/// `rustc-wrapper` and `rustc-workspace-wrapper` are ordinary `[build]` keys
+/// that decide nothing about which compiler runs, so they are let past; a bare
+/// `rustc` this reader could not place under `build` is not.
+fn names_a_rustc(key: &str) -> bool {
+    key.match_indices("rustc").any(|(at, found)| {
+        let identifier = |character: char| character.is_alphanumeric() || "-_".contains(character);
+        !key[..at].ends_with(identifier) && !key[at + found.len()..].starts_with(identifier)
+    })
+}
+
+/// The contents of one quoted TOML string, if that is the whole value.
+fn quoted(value: &str) -> Option<&str> {
+    value
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .or_else(|| {
+            value
+                .strip_prefix('\'')
+                .and_then(|rest| rest.strip_suffix('\''))
+        })
+}
+
+/// One key segment with the quotes TOML allows around it removed.
+fn unquoted(segment: &str) -> &str {
+    quoted(segment).unwrap_or(segment)
+}
+
 fn find_program(path: &OsStr, name: &'static str) -> Result<PathBuf, TargetBuildError> {
     for directory in env::split_paths(path) {
         let candidate = directory.join(name);
@@ -886,6 +1067,10 @@ pub enum TargetBuildError {
         path: PathBuf,
         source: io::Error,
     },
+    CargoConfig {
+        path: PathBuf,
+        detail: String,
+    },
     Output(io::Error),
     Spec(sill::SpecError),
     Pins(dist::PinError),
@@ -940,6 +1125,11 @@ impl fmt::Display for TargetBuildError {
                 String::from_utf8_lossy(&record.stderr)
             ),
             Self::Io { path, source } => write!(formatter, "{}: {source}", path.display()),
+            Self::CargoConfig { path, detail } => write!(
+                formatter,
+                "cargo config {} decides which rustc this build runs and cannot be read: {detail}",
+                path.display()
+            ),
             Self::Output(source) => write!(formatter, "release build report failed: {source}"),
             Self::Spec(source) => write!(
                 formatter,

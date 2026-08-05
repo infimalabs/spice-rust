@@ -632,3 +632,375 @@ fn tool_drift_after_build_preserves_the_previous_target_pointer() {
 fn cargo_arguments(root: &Path, package: &str, target: ReleaseTarget) -> Vec<OsString> {
     cargo_build_arguments(package, target, &root.join("target/release-appliance"))
 }
+
+/// A throwaway tree whose Cargo configs a resolver walk can be aimed at.
+///
+/// Built under the temporary directory rather than beside the workspace, so
+/// the walk this drives climbs directories this fixture owns outright and no
+/// lane's checkout is read on the way up.
+#[cfg(unix)]
+struct ConfigTree {
+    root: PathBuf,
+}
+
+#[cfg(unix)]
+impl ConfigTree {
+    fn new() -> Self {
+        let root = env::temp_dir().join(format!(
+            "spice-release-cargo-config-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).expect("fixture root");
+        Self { root }
+    }
+
+    /// Write one Cargo config into the `.cargo` directory of `directory`.
+    ///
+    /// The name is passed rather than assumed, because which of the two names
+    /// a directory carries is itself one of the things under test.
+    fn config(&self, directory: &str, name: &str, body: &str) -> PathBuf {
+        let cargo = self.root.join(directory).join(".cargo");
+        fs::create_dir_all(&cargo).expect("fixture cargo directory");
+        let path = cargo.join(name);
+        fs::write(&path, body).expect("fixture cargo config");
+        path
+    }
+
+    /// A Cargo home holding a config, which is not inside a `.cargo` directory.
+    ///
+    /// Cargo reads `$CARGO_HOME/config.toml` directly, so a fixture that put it
+    /// under a `.cargo` child would be measuring a file Cargo never opens.
+    fn cargo_home(&self, name: &str, body: &str) -> OsString {
+        let home = self.root.join("cargo-home");
+        fs::create_dir_all(&home).expect("fixture cargo home");
+        fs::write(home.join(name), body).expect("fixture cargo home config");
+        home.into_os_string()
+    }
+
+    /// A `PATH` whose walk answers, so a config that decides has beaten one.
+    ///
+    /// Without this every config assertion below would also pass for a
+    /// resolver that simply found nothing on `PATH`, which is not the claim.
+    fn path_with_rustc(&self) -> OsString {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let directory = self.root.join("path");
+        fs::create_dir_all(&directory).expect("fixture path directory");
+        let rustc = directory.join("rustc");
+        fs::write(&rustc, b"#!/bin/sh\n").expect("fixture rustc");
+        fs::set_permissions(&rustc, fs::Permissions::from_mode(0o755)).expect("fixture rustc mode");
+        directory.into_os_string()
+    }
+
+    fn build_dir(&self, relative: &str) -> PathBuf {
+        let directory = self.root.join(relative);
+        fs::create_dir_all(&directory).expect("fixture build directory");
+        directory
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ConfigTree {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.root).expect("config fixture cleanup");
+    }
+}
+
+/// An environment naming a `PATH` and a Cargo home, and no compiler override.
+#[cfg(unix)]
+fn resolving_environment(path: OsString, cargo_home: Option<OsString>) -> ReleaseEnvironment {
+    ReleaseEnvironment::new(
+        Some(path),
+        None,
+        cargo_home,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+}
+
+/// A Cargo config naming `build.rustc` decides ahead of the `PATH` walk.
+///
+/// The `PATH` here really does answer -- it holds an executable `rustc` -- so
+/// the config winning is the config outranking a live alternative rather than
+/// filling a gap. Measured against the installed Cargo: a build with
+/// `build.rustc` in a config and a healthy compiler on `PATH` dies on the one
+/// the config names.
+#[cfg(unix)]
+#[test]
+fn a_cargo_config_names_the_compiler_ahead_of_the_path_walk() {
+    let tree = ConfigTree::new();
+    tree.config("", "config.toml", "[build]\nrustc = \"/named/by/config\"\n");
+    let environment = resolving_environment(tree.path_with_rustc(), None);
+
+    assert_eq!(
+        environment
+            .rustc(&tree.build_dir("app"))
+            .expect("a readable config resolves"),
+        Some(PathBuf::from("/named/by/config")),
+    );
+}
+
+/// The nearer config decides, and any of them decides over the Cargo home.
+///
+/// Three ranks in one assertion set because they are one ordering: the walk
+/// runs outward from the build directory and the Cargo home is asked only
+/// after it runs out. Splitting them into separate fixtures would let a
+/// resolver that asked the Cargo home first pass two of the three.
+#[cfg(unix)]
+#[test]
+fn the_nearest_cargo_config_decides_and_the_cargo_home_is_asked_last() {
+    let tree = ConfigTree::new();
+    tree.config("outer", "config.toml", "[build]\nrustc = \"/outer\"\n");
+    tree.config("outer/mid", "config.toml", "[build]\nrustc = \"/mid\"\n");
+    let cargo_home = tree.cargo_home("config.toml", "[build]\nrustc = \"/cargo-home\"\n");
+    let path = tree.path_with_rustc();
+    let build_dir = tree.build_dir("outer/mid/app");
+
+    assert_eq!(
+        resolving_environment(path.clone(), Some(cargo_home.clone()))
+            .rustc(&build_dir)
+            .expect("a readable config resolves"),
+        Some(PathBuf::from("/mid")),
+        "the nearer config did not decide",
+    );
+    assert_eq!(
+        resolving_environment(path.clone(), Some(cargo_home.clone()))
+            .rustc(&tree.build_dir("outer/app"))
+            .expect("a readable config resolves"),
+        Some(PathBuf::from("/outer")),
+        "an ancestor config did not outrank the Cargo home",
+    );
+    assert_eq!(
+        resolving_environment(path, Some(cargo_home))
+            .rustc(&tree.build_dir("elsewhere/app"))
+            .expect("a readable config resolves"),
+        Some(PathBuf::from("/cargo-home")),
+        "the Cargo home did not decide when nothing in the walk named a compiler",
+    );
+}
+
+/// A config that leaves the key unset does not end the walk.
+///
+/// Cargo merges these files key by key, so a nearer config that says nothing
+/// about `build.rustc` leaves the question to its parent. A resolver that
+/// stopped at the first file it found would answer from `PATH` here, which is
+/// a different compiler than the one Cargo would run.
+#[cfg(unix)]
+#[test]
+fn a_cargo_config_without_the_key_leaves_the_question_to_its_parent() {
+    let tree = ConfigTree::new();
+    tree.config("outer", "config.toml", "[build]\nrustc = \"/outer\"\n");
+    tree.config("outer/mid", "config.toml", "[net]\noffline = true\n");
+    let environment = resolving_environment(tree.path_with_rustc(), None);
+
+    assert_eq!(
+        environment
+            .rustc(&tree.build_dir("outer/mid/app"))
+            .expect("a readable config resolves"),
+        Some(PathBuf::from("/outer")),
+    );
+}
+
+/// Within one directory the extension-less name is the one Cargo reads.
+///
+/// Measured against the installed Cargo: a `.cargo` holding both warns that
+/// `config` is deprecated in favour of `config.toml` and then uses `config`.
+/// The two files name different compilers here, because with the same name in
+/// both a reader that opened the wrong one would answer correctly anyway.
+#[cfg(unix)]
+#[test]
+fn the_extension_less_cargo_config_is_the_one_read() {
+    let tree = ConfigTree::new();
+    tree.config("", "config", "[build]\nrustc = \"/extension-less\"\n");
+    tree.config("", "config.toml", "[build]\nrustc = \"/dot-toml\"\n");
+    let environment = resolving_environment(tree.path_with_rustc(), None);
+
+    assert_eq!(
+        environment
+            .rustc(&tree.build_dir("app"))
+            .expect("a readable config resolves"),
+        Some(PathBuf::from("/extension-less")),
+    );
+}
+
+/// A config that cannot be understood refuses rather than answering.
+///
+/// Five shapes are driven because they stop the reader in five different
+/// places, and two of them hide the key rather than malform it: an inline
+/// `build` table and a quoted dotted key both carry a compiler name that a
+/// reader placing only the two spellings it likes would never see. The danger
+/// is identical in every case -- the `PATH` here holds a working compiler, so a
+/// resolver that stepped over the file would hand back a real path and the
+/// caller would admit a release for a build that was never going to start.
+#[cfg(unix)]
+#[test]
+fn a_cargo_config_that_cannot_be_understood_refuses_the_resolution() {
+    for (label, body, expected) in [
+        (
+            "unclosed header",
+            "[build\nrustc = \"/x\"\n",
+            "a table header does not close",
+        ),
+        (
+            "not a string",
+            "[build]\nrustc = 7\n",
+            "build.rustc is not one quoted string",
+        ),
+        (
+            "build is one value",
+            "build = 7\n",
+            "build is given as one value",
+        ),
+        (
+            "the key inside an inline table",
+            "build = { rustc = \"/hidden\" }\n",
+            "build is given as one value",
+        ),
+        (
+            "the key spelled as one quoted dotted key",
+            "\"build.rustc\" = \"/hidden\"\n",
+            "a key names rustc somewhere this reader cannot place it",
+        ),
+    ] {
+        let tree = ConfigTree::new();
+        let written = tree.config("", "config.toml", body);
+        let environment = resolving_environment(tree.path_with_rustc(), None);
+
+        let error = environment
+            .rustc(&tree.build_dir("app"))
+            .expect_err("a config that cannot be understood is refused");
+        let refusal = error.to_string();
+        assert!(
+            refusal.contains(&written.display().to_string()),
+            "the {label} refusal never names the file it read: {refusal}",
+        );
+        assert!(
+            refusal.contains(expected),
+            "the {label} refusal never says what was wrong: {refusal}",
+        );
+    }
+}
+
+/// A config that exists and cannot be opened refuses rather than answering.
+///
+/// The unreadable half of the law the shapes above cover from the other side.
+/// A file Cargo would open and this one cannot is not an absent file, and
+/// answering as though it were absent hands back the `PATH` compiler for a
+/// build Cargo was never going to start. The body names a compiler, so a
+/// resolver that opened the file successfully would answer with it rather than
+/// refuse, and the mode is put back before the assertions run so a failing
+/// assertion still leaves a readable tree to clean up.
+#[cfg(unix)]
+#[test]
+fn a_cargo_config_that_cannot_be_opened_refuses_the_resolution() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let tree = ConfigTree::new();
+    let body = "[build]\nrustc = \"/named/by/config\"\n";
+    let written = tree.config("", "config.toml", body);
+    fs::set_permissions(&written, fs::Permissions::from_mode(0o000)).expect("deny the config");
+    let environment = resolving_environment(tree.path_with_rustc(), None);
+
+    let refused = environment.rustc(&tree.build_dir("app"));
+    fs::set_permissions(&written, fs::Permissions::from_mode(0o644)).expect("restore the config");
+
+    let error = refused.expect_err("a config that cannot be opened is refused");
+    let refusal = error.to_string();
+    assert!(
+        refusal.contains(&written.display().to_string()),
+        "the refusal never names the file it could not open: {refusal}",
+    );
+    assert!(
+        refusal.contains("Permission denied"),
+        "the refusal never says why the file could not be read: {refusal}",
+    );
+}
+
+/// Both spellings resolve, and the ordinary company they keep is read through.
+///
+/// Every body here puts something above the key that a reader guarding itself
+/// too broadly would stop on, so stopping costs the answer instead of passing
+/// unnoticed. `rustc-wrapper` names what wraps the compiler rather than which
+/// compiler runs and is exactly what this machine's own
+/// `~/.cargo/config.toml` sets; a multi-line `rustflags` list is the other
+/// everyday shape, and it is the reason lines without a `=` are walked through
+/// rather than refused. Cargo reads all three without complaint, and a release
+/// tool that refused them would refuse every stage on a developer's machine.
+#[cfg(unix)]
+#[test]
+fn both_spellings_resolve_through_the_company_a_config_keeps() {
+    for (label, body) in [
+        (
+            "under a header",
+            "[build]\nrustc-wrapper = \"/sccache\"\nrustc = \"/named/by/config\"\n",
+        ),
+        (
+            "as dotted keys",
+            "build.rustc-wrapper = \"/sccache\"\nbuild.rustc = \"/named/by/config\"\n",
+        ),
+        (
+            "below a multi-line list",
+            concat!(
+                "[build]\nrustflags = [\n  \"-C\",\n  \"target-cpu=native\",\n]\n",
+                "rustc = \"/named/by/config\"\n"
+            ),
+        ),
+    ] {
+        let tree = ConfigTree::new();
+        tree.config("", "config.toml", body);
+        let environment = resolving_environment(tree.path_with_rustc(), None);
+
+        assert_eq!(
+            environment
+                .rustc(&tree.build_dir("app"))
+                .unwrap_or_else(|error| panic!("the config written {label} is readable: {error}")),
+            Some(PathBuf::from("/named/by/config")),
+            "the config written {label} did not decide the compiler",
+        );
+    }
+}
+
+/// Either compiler override outranks every config file.
+///
+/// Both spellings are driven against the same config, because a resolver that
+/// asked the files before the environment would answer identically for the one
+/// it still happened to ask first.
+#[cfg(unix)]
+#[test]
+fn a_compiler_override_outranks_every_cargo_config() {
+    for (label, rustc, build_rustc) in [
+        ("RUSTC", Some(OsString::from("/by-rustc")), None),
+        ("CARGO_BUILD_RUSTC", None, Some(OsString::from("/by-rustc"))),
+    ] {
+        let tree = ConfigTree::new();
+        tree.config("", "config.toml", "[build]\nrustc = \"/by-config\"\n");
+        let environment = ReleaseEnvironment::new(
+            Some(tree.path_with_rustc()),
+            None,
+            Some(tree.cargo_home("config.toml", "[build]\nrustc = \"/by-cargo-home\"\n")),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            rustc,
+            build_rustc,
+        );
+
+        assert_eq!(
+            environment
+                .rustc(&tree.build_dir("app"))
+                .expect("an override resolves without reading a config"),
+            Some(PathBuf::from("/by-rustc")),
+            "{label} did not outrank the config files",
+        );
+    }
+}
