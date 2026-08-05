@@ -109,8 +109,10 @@ impl Fixture {
             PAUSE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&control).expect("create install race rendezvous");
+        fs::create_dir(control.join("ready")).expect("create install readiness rendezvous");
+        fs::create_dir(control.join("release")).expect("create install release rendezvous");
         if matches!(release, Release::Landed) {
-            fs::write(control.join("continue"), b"continue")
+            fs::write(control.join("release").join("continue"), b"continue")
                 .expect("land install release before the wait arms");
         }
         let child = self
@@ -181,12 +183,13 @@ struct Spoken {
 ///
 /// The disposition is stated at the spawn rather than inferred from the ending,
 /// because it decides what the wait can possibly observe: a release landed
-/// before the watcher is armed produces no notification the wait could receive.
+/// before its directory is watched produces no notification the wait can
+/// receive.
 enum Release {
-    /// Nothing has written `continue` yet, so the wait arms on an absent
-    /// release and the harness decides the ending.
+    /// Nothing has written `release/continue` yet, so the wait arms on an
+    /// absent release and the harness decides the ending.
     Withheld,
-    /// `continue` is in place before the install is spawned.
+    /// `release/continue` is in place before the install is spawned.
     Landed,
 }
 
@@ -197,11 +200,11 @@ struct Paused {
 
 impl Paused {
     fn wait_until_ready(&mut self) {
-        let control = self.control.clone();
-        let rendezvous = control.join("ready");
+        let ready = self.control.join("ready");
+        let rendezvous = ready.join("arrived");
         let waited = readiness::wait_until_ready(
             self.child.as_mut().expect("paused child is present"),
-            &control,
+            &ready,
             RENDEZVOUS,
             "install mutation rendezvous",
             || rendezvous.is_file(),
@@ -223,7 +226,7 @@ impl Paused {
     }
 
     fn resume(self) -> Spoken {
-        fs::write(self.control.join("continue"), b"continue")
+        fs::write(self.control.join("release").join("continue"), b"continue")
             .expect("release install mutation rendezvous");
         self.collect()
     }
@@ -458,11 +461,11 @@ fn apply_destination_replacement_at_publication_preserves_both_images() {
 
 /// A paused install whose harness never releases it ends on its own bound.
 ///
-/// Nothing writes `continue` here, so the only ending reachable is the horizon
-/// the wait carries. That makes the fixture cost the whole ten seconds by
-/// construction, and that cost is the point: it is what distinguishes a bound
-/// that still terminates the wait from one merely written down beside a wait
-/// that now blocks on a filesystem notification.
+/// Nothing writes `release/continue` here, so the only ending reachable is the
+/// horizon the wait carries. That makes the fixture cost the whole ten seconds
+/// by construction, and that cost is the point: it is what distinguishes a
+/// bound that still terminates the wait from one merely written down beside a
+/// wait that now blocks on a filesystem notification.
 #[test]
 fn apply_pause_no_harness_releases_faults_when_its_bound_expires() {
     let fixture = Fixture::new("apply-abandoned-pause");
@@ -503,15 +506,16 @@ fn apply_pause_no_harness_releases_faults_when_its_bound_expires() {
 
 /// A release already in place when the wait arms is observed, not waited out.
 ///
-/// `continue` is written before the install is spawned, so by the time the wait
-/// arms its watcher the file it waits for is already there -- and nothing
-/// touches that directory again, so no notification about this release can ever
-/// arrive. The only thing left that can end this wait is the release test it
-/// makes before its first receive.
+/// `release/continue` is written before the install is spawned, so by the time
+/// the wait arms its watcher the file it waits for is already there. The install
+/// then writes `ready/arrived` in a sibling directory; the release directory
+/// remains untouched, so no notification about this release can arrive. The
+/// only thing left that can end this wait is the release test it makes before
+/// its first receive.
 ///
-/// A green run here is a run that reached that wait: `ready`, which the harness
-/// waits for before collecting, is written immediately before the wait is
-/// entered, so it cannot be reported by an install that never paused at all.
+/// A green run here is a run that reached that wait: `ready/arrived`, which the
+/// harness waits for before collecting, is written immediately before the wait
+/// is entered, so it cannot be reported by an install that never paused at all.
 ///
 /// The fixture adds no horizon cost by the same construction that makes it a
 /// guard: the release is already there, so the wait ends on its first test
