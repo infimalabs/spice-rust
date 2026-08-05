@@ -296,6 +296,12 @@ fn markdown_mismatches(count: u64) -> crate::metrics::EvidenceState {
     ))
 }
 
+fn markdown_unavailable(reason: &str) -> crate::metrics::EvidenceState {
+    crate::metrics::EvidenceState::Unavailable {
+        reason: reason.to_owned(),
+    }
+}
+
 /// One Markdown row per source, so one file's own state may sit beside
 /// measurements.
 ///
@@ -313,14 +319,11 @@ fn markdown_mismatches(count: u64) -> crate::metrics::EvidenceState {
 #[test]
 fn a_metric_arm_carries_one_unread_file_beside_its_measured_neighbours() {
     let unread = "selected Markdown source could not be read: No such file or directory";
-    let unavailable = || crate::metrics::EvidenceState::Unavailable {
-        reason: unread.to_owned(),
-    };
 
     // An unread file outranks its clean neighbour, and speaks for the arm.
     let mixed = markdown_arm(vec![
         ("docs/measured.md", markdown_mismatches(0)),
-        ("docs/unread.md", unavailable()),
+        ("docs/unread.md", markdown_unavailable(unread)),
     ]);
     assert_eq!(
         mixed.state().expect("mixed arm state"),
@@ -331,7 +334,7 @@ fn a_metric_arm_carries_one_unread_file_beside_its_measured_neighbours() {
     // A proven violation outranks the unread file, because it is proven anyway.
     let violated = markdown_arm(vec![
         ("docs/measured.md", markdown_mismatches(3)),
-        ("docs/unread.md", unavailable()),
+        ("docs/unread.md", markdown_unavailable(unread)),
     ]);
     assert_eq!(
         violated.state().expect("violated arm state"),
@@ -386,8 +389,14 @@ fn a_metric_arm_carries_one_unread_file_beside_its_measured_neighbours() {
         reason: "no parser was admitted".to_owned(),
     };
     for rows in [
-        vec![("docs/a.md", unavailable()), ("docs/b.md", unmeasured())],
-        vec![("docs/a.md", unmeasured()), ("docs/b.md", unavailable())],
+        vec![
+            ("docs/a.md", markdown_unavailable(unread)),
+            ("docs/b.md", unmeasured()),
+        ],
+        vec![
+            ("docs/a.md", unmeasured()),
+            ("docs/b.md", markdown_unavailable(unread)),
+        ],
     ] {
         assert_eq!(
             markdown_arm(rows)
