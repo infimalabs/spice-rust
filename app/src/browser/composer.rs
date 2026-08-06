@@ -1,15 +1,18 @@
 //! Predecessor-style lane composer rendered inside the additive Mosaic tab.
 
-use std::{collections::BTreeMap, rc::Rc};
-
 use pulldown_cmark::{CowStr, Event as MarkdownEvent, Options, Parser, Tag};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{ClipboardEvent, DragEvent, File, FileList, FileReader, HtmlInputElement};
 
 use super::*;
-use crate::composer_markdown::{Attachment, QuotedReply};
+use crate::composer_drafts::ComposerDraft;
 use crate::watchband::{self, Standing};
+
+mod state;
+
+use state::ComposerAction;
+pub(super) use state::ComposerDrafts;
 
 const MAX_ATTACHMENTS: usize = 8;
 const MAX_ATTACHMENT_BYTES: f64 = 8.0 * 1_024.0 * 1_024.0;
@@ -75,129 +78,6 @@ impl LineageLife {
             Self::Drive => 1,
             Self::Drain => 2,
         }
-    }
-}
-
-#[derive(Clone, Default, PartialEq)]
-pub(super) struct ComposerDraft {
-    body: String,
-    quotes: Vec<QuoteDraft>,
-    attachments: Vec<DirectiveAttachment>,
-    issue: Option<String>,
-}
-
-#[derive(Clone, PartialEq)]
-struct QuoteDraft {
-    quote: String,
-    preview: Option<String>,
-    body: String,
-}
-
-#[derive(Clone, Default, PartialEq)]
-pub(super) struct ComposerDrafts(BTreeMap<String, ComposerDraft>);
-
-pub(super) enum ComposerAction {
-    SetBody {
-        lane: String,
-        body: String,
-    },
-    AddQuote {
-        lane: String,
-        quote: String,
-        preview: Option<String>,
-    },
-    RemoveQuote {
-        lane: String,
-        index: usize,
-    },
-    SetQuoteBody {
-        lane: String,
-        index: usize,
-        body: String,
-    },
-    AddAttachment {
-        lane: String,
-        attachment: DirectiveAttachment,
-    },
-    RemoveAttachment {
-        lane: String,
-        index: usize,
-    },
-    SetIssue {
-        lane: String,
-        issue: String,
-    },
-    Clear {
-        lane: String,
-    },
-}
-
-impl Reducible for ComposerDrafts {
-    type Action = ComposerAction;
-
-    fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
-        let mut next = (*self).clone();
-        match action {
-            ComposerAction::SetBody { lane, body } => next.draft_mut(lane).body = body,
-            ComposerAction::AddQuote {
-                lane,
-                quote,
-                preview,
-            } => {
-                let draft = next.draft_mut(lane);
-                if !draft.quotes.iter().any(|draft| draft.quote == quote) {
-                    draft.quotes.push(QuoteDraft {
-                        quote,
-                        preview,
-                        body: String::new(),
-                    });
-                }
-            }
-            ComposerAction::RemoveQuote { lane, index } => {
-                let draft = next.draft_mut(lane);
-                if index < draft.quotes.len() {
-                    draft.quotes.remove(index);
-                }
-            }
-            ComposerAction::SetQuoteBody { lane, index, body } => {
-                let draft = next.draft_mut(lane);
-                if let Some(quote) = draft.quotes.get_mut(index) {
-                    quote.body = body;
-                }
-            }
-            ComposerAction::AddAttachment { lane, attachment } => {
-                let draft = next.draft_mut(lane);
-                if draft.attachments.len() >= MAX_ATTACHMENTS {
-                    draft.issue = Some("Maximum images attached.".to_owned());
-                } else {
-                    draft.attachments.push(attachment);
-                    draft.issue = None;
-                }
-            }
-            ComposerAction::RemoveAttachment { lane, index } => {
-                let draft = next.draft_mut(lane);
-                if index < draft.attachments.len() {
-                    draft.attachments.remove(index);
-                }
-            }
-            ComposerAction::SetIssue { lane, issue } => {
-                next.draft_mut(lane).issue = Some(issue);
-            }
-            ComposerAction::Clear { lane } => {
-                next.0.remove(&lane);
-            }
-        }
-        Rc::new(next)
-    }
-}
-
-impl ComposerDrafts {
-    fn draft_mut(&mut self, lane: String) -> &mut ComposerDraft {
-        self.0.entry(lane).or_default()
-    }
-
-    fn get(&self, lane: &str) -> Option<&ComposerDraft> {
-        self.0.get(lane)
     }
 }
 
@@ -414,7 +294,6 @@ fn render_compose(
                             can_send,
                             sender,
                             drafts,
-                            submit.clone(),
                             mode,
                         )
                     })}
@@ -433,16 +312,33 @@ fn render_activity(
     drafts: &UseReducerHandle<ComposerDrafts>,
     controls: &view::AgentControls,
 ) -> Html {
+    let member_targets = lineage
+        .members
+        .iter()
+        .map(|member| member.lane.to_string())
+        .collect::<Vec<_>>();
     let cards = runtime
         .messages()
         .iter()
         .filter_map(|message| {
-            lineage
-                .member(message.lane)
-                .map(|member| ActivityCard::Agent {
-                    member: member.clone(),
-                    message: message.clone(),
-                })
+            let member = lineage.member(message.lane)?;
+            let producer = lineage
+                .members
+                .iter()
+                .find(|candidate| candidate.occupant == Some(message.author))
+                .map(|candidate| candidate.lane.to_string());
+            let quote_target =
+                crate::composer_drafts::quote_target(&member_targets, producer.as_deref())?;
+            let quote_lane = lineage
+                .members
+                .iter()
+                .find(|candidate| candidate.lane.to_string() == quote_target)?
+                .lane;
+            Some(ActivityCard::Agent {
+                member: member.clone(),
+                quote_lane,
+                message: message.clone(),
+            })
         })
         .chain(lineage.members.iter().flat_map(|member| {
             let lane = member.lane;
@@ -482,6 +378,7 @@ fn render_activity(
 enum ActivityCard {
     Agent {
         member: crate::runtime::LaneMember,
+        quote_lane: CanonicalUuid,
         message: wire::AgentMessage,
     },
     Directive {
@@ -512,6 +409,38 @@ fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
         .map(|card| activity_candidates(card, &geometry))
         .collect::<Vec<_>>();
     let plane = crate::mosaic_plane::arrange(&candidate_sets);
+    let rendered_cards = properties
+        .cards
+        .iter()
+        .zip(plane.cards.iter())
+        .enumerate()
+        .map(|(order, (activity, card))| match activity {
+            ActivityCard::Agent {
+                member,
+                quote_lane,
+                message,
+            } => render_agent_message_card(
+                member,
+                *quote_lane,
+                message,
+                &properties.drafts,
+                &properties.speak,
+                order as u64,
+                card,
+                plane.max_row,
+            ),
+            ActivityCard::Directive { lane, directive } => render_directive_card(
+                *lane,
+                directive,
+                &lane.to_string(),
+                &properties.drafts,
+                &properties.speak,
+                order as u64,
+                card,
+                plane.max_row,
+            ),
+        })
+        .collect::<Html>();
     html! {
         <section
             ref={host}
@@ -520,27 +449,7 @@ fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
             data-lanes={geometry.lane_count.to_string()}
             data-plane-rows={plane.rows().to_string()}
         >
-            {for properties.cards.iter().zip(plane.cards.iter()).map(|(activity, card)| {
-                match activity {
-                    ActivityCard::Agent { member, message } => render_agent_message_card(
-                        member,
-                        message,
-                        &properties.drafts,
-                        &properties.speak,
-                        card,
-                        plane.max_row,
-                    ),
-                    ActivityCard::Directive { lane, directive } => render_directive_card(
-                        *lane,
-                        directive,
-                        &lane.to_string(),
-                        &properties.drafts,
-                        &properties.speak,
-                        card,
-                        plane.max_row,
-                    ),
-                }
-            })}
+            {rendered_cards}
         </section>
     }
 }
@@ -734,7 +643,6 @@ fn render_agent_composer(
     can_send: bool,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
-    team_submit: Callback<SubmitEvent>,
     mode: &UseStateHandle<LineageMode>,
 ) -> Html {
     let lane_id = member.lane;
@@ -744,7 +652,14 @@ fn render_agent_composer(
     let send_enabled = can_send && occupant.is_some();
     let markdown = compose_markdown(&draft);
     let oninput = update_body(lane_key.clone(), drafts.clone());
-    let onkeydown = keyboard_submit(team_submit.clone());
+    let onkeydown = keyboard_submit(
+        lane_id,
+        occupant,
+        epoch,
+        lane_key.clone(),
+        sender.clone(),
+        drafts.clone(),
+    );
     let onpaste = paste_images(lane_key.clone(), drafts.clone());
     let ondragover = Callback::from(move |event: DragEvent| {
         event.prevent_default();
@@ -761,6 +676,7 @@ fn render_agent_composer(
         drafts.clone(),
     );
     let input_id = format!("mosaic-images-{lane_id}");
+    let primary_id = primary_textarea_id(&lane_key);
     let onchange = choose_images(lane_key.clone(), drafts.clone());
     let activity = standing
         .headline
@@ -770,13 +686,19 @@ fn render_agent_composer(
     let open = mode.clone();
     html! {
         <section
-            class={classes!("team-agent", (!send_enabled).then_some("team-agent--vacant"))}
+            key={lane_key.clone()}
+            class={classes!(
+                "team-agent",
+                "composer-shard",
+                (!send_enabled).then_some("team-agent--vacant"),
+            )}
             data-agent-lane={lane_id.to_string()}
+            data-shard-target-id={lane_id.to_string()}
             title={standing_title(standing)}
             {ondragover}
             {ondrop}
         >
-            {render_quote_bands(&lane_key, &draft, drafts, team_submit.clone())}
+            {render_quote_bands(&lane_key, &draft, drafts, onkeydown.clone())}
             <div class="mosaic-composer">
                 <header class="composer-shard-heading">
                     <span class="composer-shard-age">{
@@ -797,7 +719,9 @@ fn render_agent_composer(
                         <span>{standing.liveness.as_str()}</span>
                     </div>
                     <textarea
+                        id={primary_id}
                         aria-label={format!("Message for {lane_id}")}
+                        data-primary-composer-target-id={lane_id.to_string()}
                         rows="4"
                         value={draft.body.clone()}
                         placeholder={composer_placeholder(standing, pending)}
@@ -924,30 +848,41 @@ fn submit_draft(
     lane_key: &str,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
-) {
+) -> bool {
     let Some(occupant) = occupant else {
-        return;
+        return false;
     };
-    let Some(draft) = drafts.get(lane_key).cloned() else {
-        return;
+    let Some(prepared) = drafts.0.prepare(lane_key) else {
+        return false;
     };
-    let message = compose_markdown(&draft);
-    if message.trim().is_empty() {
-        return;
-    }
-    send_action(
+    let restore_drafts = drafts.clone();
+    let restore_lane = lane_key.to_owned();
+    let snapshot = prepared.snapshot;
+    let resolve = Callback::from(move |accepted: bool| {
+        if !accepted {
+            restore_drafts.dispatch(ComposerAction::Restore {
+                lane: restore_lane.clone(),
+                draft: snapshot.clone(),
+            });
+        }
+    });
+    if !send_action(
         sender,
         ClientAction::Steer {
             lane,
             occupant,
             epoch,
-            message,
-            attachments: draft.attachments,
+            message: prepared.message,
+            attachments: prepared.attachments,
+            resolve: Some(resolve),
         },
-    );
+    ) {
+        return false;
+    }
     drafts.dispatch(ComposerAction::Clear {
         lane: lane_key.to_owned(),
     });
+    true
 }
 
 fn update_body(lane_key: String, drafts: UseReducerHandle<ComposerDrafts>) -> Callback<InputEvent> {
@@ -960,21 +895,55 @@ fn update_body(lane_key: String, drafts: UseReducerHandle<ComposerDrafts>) -> Ca
     })
 }
 
-fn keyboard_submit(submit: Callback<SubmitEvent>) -> Callback<KeyboardEvent> {
+fn keyboard_submit(
+    lane: CanonicalUuid,
+    occupant: Option<CanonicalUuid>,
+    epoch: CanonicalUuid,
+    lane_key: String,
+    sender: SenderHandle,
+    drafts: UseReducerHandle<ComposerDrafts>,
+) -> Callback<KeyboardEvent> {
     Callback::from(move |event: KeyboardEvent| {
         if event.key() == "Enter" && (event.meta_key() || event.ctrl_key()) {
             event.prevent_default();
-            let event = SubmitEvent::new("submit").expect("submit event construction succeeds");
-            submit.emit(event);
+            if submit_draft(lane, occupant, epoch, &lane_key, &sender, &drafts) {
+                focus_after_render(primary_textarea_id(&lane_key));
+            }
         }
     })
 }
 
+fn primary_textarea_id(lane_key: &str) -> String {
+    format!("composer-primary-{lane_key}")
+}
+
+fn quote_textarea_id(lane_key: &str, identity: &str) -> String {
+    format!("composer-quote-{lane_key}-{identity}")
+}
+
+fn focus_after_render(id: String) {
+    spawn_local(async move {
+        TimeoutFuture::new(0).await;
+        let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+            return;
+        };
+        let Some(textarea) = document
+            .get_element_by_id(&id)
+            .and_then(|element| element.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
+        else {
+            return;
+        };
+        let _ = textarea.focus();
+    });
+}
+
 fn render_agent_message_card(
     member: &crate::runtime::LaneMember,
+    quote_lane: CanonicalUuid,
     message: &wire::AgentMessage,
     drafts: &UseReducerHandle<ComposerDrafts>,
     speak: &Callback<String>,
+    order: u64,
     card: &crate::mosaic::Card,
     max_row: i32,
 ) -> Html {
@@ -985,9 +954,20 @@ fn render_agent_message_card(
             transfer.set_effect_allowed("copy");
         }
     });
-    let lane_key = member.lane.to_string();
+    let lane_key = quote_lane.to_string();
     let quote_key = lane_key.clone();
     let quote_drafts = drafts.clone();
+    let quote_text = message.text.clone();
+    let quote_identity = format!(
+        "agent-{}-{}-{}-{}-{}",
+        message.lane,
+        message.locus.member,
+        message.locus.offset,
+        message.locus.length,
+        message.locus.event,
+    );
+    let focus_identity = quote_identity.clone();
+    let focus_lane = lane_key.clone();
     let producer = format!(
         "{} · {}",
         watchband::leaf(&member.worktree),
@@ -997,12 +977,15 @@ fn render_agent_message_card(
         name: producer.clone(),
         accent: watchband::accent(member.lane),
         speak: speak.clone(),
-        quote: Callback::from(move |text: String| {
+        quote: Callback::from(move |()| {
             quote_drafts.dispatch(ComposerAction::AddQuote {
                 lane: quote_key.clone(),
-                quote: text,
+                identity: quote_identity.clone(),
+                order,
+                quote: quote_text.clone(),
                 preview: None,
             });
+            focus_after_render(quote_textarea_id(&focus_lane, &focus_identity));
         }),
     };
     let locus = format!(
@@ -1022,7 +1005,7 @@ fn render_agent_message_card(
             aria-label={format!("Agent message from {producer}")}
             data-card-kind="agent-message"
             data-agent-lane={member.lane.to_string()}
-            data-producer-target-id={message.author.to_string()}
+            data-producer-target-id={quote_lane.to_string()}
             data-accent={correspondent.accent.to_string()}
             data-accent-slot={correspondent.accent.to_string()}
             data-state={card.lifecycle.as_str()}
@@ -1050,6 +1033,7 @@ fn render_directive_card(
     lane_key: &str,
     drafts: &UseReducerHandle<ComposerDrafts>,
     speak: &Callback<String>,
+    order: u64,
     card: &crate::mosaic::Card,
     max_row: i32,
 ) -> Html {
@@ -1063,16 +1047,23 @@ fn render_directive_card(
     let quote_key = lane_key.to_owned();
     let quote_drafts = drafts.clone();
     let quote_preview = directive.preview.clone();
+    let quote_text = directive.text.clone();
+    let quote_identity = format!("directive-{}", directive.directive);
+    let focus_identity = quote_identity.clone();
+    let focus_lane = lane_key.to_owned();
     let correspondent = view::chrome::Correspondent {
         name: watchband::short(lane),
         accent: watchband::accent(lane),
         speak: speak.clone(),
-        quote: Callback::from(move |text: String| {
+        quote: Callback::from(move |()| {
             quote_drafts.dispatch(ComposerAction::AddQuote {
                 lane: quote_key.clone(),
-                quote: text,
+                identity: quote_identity.clone(),
+                order,
+                quote: quote_text.clone(),
                 preview: quote_preview.clone(),
             });
+            focus_after_render(quote_textarea_id(&focus_lane, &focus_identity));
         }),
     };
     let remaining = directive.expires.get().as_millisecond() - js_sys::Date::now() as i64;
@@ -1124,32 +1115,41 @@ fn render_quote_bands(
     lane_key: &str,
     draft: &ComposerDraft,
     drafts: &UseReducerHandle<ComposerDrafts>,
-    team_submit: Callback<SubmitEvent>,
+    target_submit: Callback<KeyboardEvent>,
 ) -> Html {
     html! {
-        <div class="composer-quote-stack">
-            {for draft.quotes.iter().enumerate().map(|(index, quote)| {
+        <div class="composer-quote-stack" data-composer-quote-stack-target-id={lane_key.to_owned()}>
+            {for draft.quotes.iter().map(|quote| {
                 let remove_key = lane_key.to_owned();
                 let remove_drafts = drafts.clone();
+                let remove_identity = quote.identity.clone();
                 let remove = Callback::from(move |_| {
                     remove_drafts.dispatch(ComposerAction::RemoveQuote {
                         lane: remove_key.clone(),
-                        index,
+                        identity: remove_identity.clone(),
                     });
                 });
                 let update_key = lane_key.to_owned();
                 let update_drafts = drafts.clone();
+                let update_identity = quote.identity.clone();
                 let update = Callback::from(move |event: InputEvent| {
                     let input: web_sys::HtmlTextAreaElement = event.target_unchecked_into();
                     update_drafts.dispatch(ComposerAction::SetQuoteBody {
                         lane: update_key.clone(),
-                        index,
+                        identity: update_identity.clone(),
                         body: input.value(),
                     });
                 });
                 let shown = crate::composer_markdown::quote_label(quote.preview.as_deref());
+                let textarea_id = quote_textarea_id(lane_key, &quote.identity);
                 html! {
-                    <div class="composer-quote-band" title={quote.quote.clone()}>
+                    <div
+                        key={quote.identity.clone()}
+                        class="composer-quote-band"
+                        title={quote.quote.clone()}
+                        data-quote-identity={quote.identity.clone()}
+                        data-quote-target-id={lane_key.to_owned()}
+                    >
                         <header>
                             <span>{shown}</span>
                             <button
@@ -1159,12 +1159,14 @@ fn render_quote_bands(
                             >{"×"}</button>
                         </header>
                         <textarea
+                            id={textarea_id}
                             aria-label="Reply to quoted message"
+                            data-quote-draft-id={quote.identity.clone()}
                             rows="2"
                             value={quote.body.clone()}
                             placeholder="Reply to this quoted message"
                             oninput={update}
-                            onkeydown={keyboard_submit(team_submit.clone())}
+                            onkeydown={target_submit.clone()}
                         ></textarea>
                     </div>
                 }
@@ -1267,6 +1269,7 @@ fn drop_on_lane(
                 epoch,
                 message,
                 attachments: Vec::new(),
+                resolve: None,
             },
         );
     })
@@ -1340,28 +1343,9 @@ fn read_image(drafts: UseReducerHandle<ComposerDrafts>, lane_key: String, file: 
     }
 }
 
-/// Restate the draft as the borrowed parts the target-neutral composer takes.
-///
-/// Composition itself lives in [`crate::composer_markdown`], which a native
-/// test can reach; this module cannot, so it holds only the projection.
+/// Delegate preview composition to the same target-neutral model sends use.
 fn compose_markdown(draft: &ComposerDraft) -> String {
-    let quotes = draft
-        .quotes
-        .iter()
-        .map(|quote| QuotedReply {
-            quote: &quote.quote,
-            body: &quote.body,
-        })
-        .collect::<Vec<_>>();
-    let attachments = draft
-        .attachments
-        .iter()
-        .map(|attachment| Attachment {
-            name: &attachment.name,
-            data_url: &attachment.data_url,
-        })
-        .collect::<Vec<_>>();
-    crate::composer_markdown::compose(&draft.body, &quotes, &attachments)
+    crate::composer_drafts::compose(draft)
 }
 
 fn render_markdown(markdown: &str) -> Html {
