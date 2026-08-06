@@ -19,8 +19,10 @@ use super::{
     typed_outcome, typed_protocol_fault, typed_store_fault, write, write_at_origin,
 };
 
+mod preview;
 mod transcript;
 
+use preview::directive_preview;
 use transcript::transcript_recognition;
 
 pub(super) fn publish_lane_discoveries(
@@ -795,6 +797,7 @@ fn pending_directive(directive: &steer::Directive) -> PendingDirective {
         directive: directive.directive(),
         key: directive.key().to_string(),
         text: directive.text().to_owned(),
+        preview: directive_preview(directive.text()),
         control: directive.control().map(str::to_owned),
         attachments: directive.attachments().to_vec(),
         expires: directive.expires(),

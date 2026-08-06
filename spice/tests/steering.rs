@@ -438,11 +438,8 @@ fn acknowledgment_paths(
     lanes: Lanes,
 ) -> (ExpectedRecognition, String) {
     let lane = lanes.target.to_string();
-    let sent = invoke(
-        fixture,
-        &["steer", &lane, "bind the exact command family"],
-        true,
-    );
+    let direction = "> > earlier context\n> quoted context\n\nbind the exact command family";
+    let sent = invoke(fixture, &["steer", &lane, direction], true);
     if !sent.status.success() {
         resident.assert_running();
     }
@@ -459,6 +456,11 @@ fn acknowledgment_paths(
     );
     assert_eq!(inbox.lanes[0].pending[0].directive, sent.directive);
     assert_eq!(inbox.lanes[0].pending[0].key, sent.key);
+    assert_eq!(inbox.lanes[0].pending[0].text, direction);
+    assert_eq!(
+        inbox.lanes[0].pending[0].preview.as_deref(),
+        Some("bind the exact command family")
+    );
 
     let other = lanes.other.to_string();
     record_reply(

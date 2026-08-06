@@ -266,6 +266,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
       "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4",
       "key": "1kJJP87B",
       "text": "drain the queue",
+      "preview": "drain the queue",
       "expires": "2026-08-01T07:07:19.000Z"
     }]
   }]

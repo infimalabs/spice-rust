@@ -467,6 +467,13 @@ pub struct PendingDirective {
     pub key: String,
     /// Direction text.
     pub text: String,
+    /// First line authored outside quoted context, when the producer found one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub preview: Option<String>,
     /// Control channel attached to the direction, when present.
     #[serde(
         default,
