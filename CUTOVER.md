@@ -164,6 +164,7 @@ In terminal A, keep the foreground resident attached:
 
 ```sh
 cd "$CUTOVER_REPO"
+cargo xtask dev-app
 "$CUTOVER_BIN" up
 ```
 
@@ -177,9 +178,8 @@ cd "$CUTOVER_REPO"
 "$CUTOVER_BIN" --json board
 ```
 
-The Canvas web app is part of this appliance: its HTML, JavaScript, stylesheet,
-and WASM are embedded in the native binary, and `up` serves those assets from
-the resident. From terminal B, open the app and capture the discovery receipt:
+The Canvas web app is built natively into ignored `dist/stage-dev`, and `up`
+serves only those lane-local assets. From terminal B, open the app:
 
 ```sh
 .spice/bin/spice --json canvas | tee "$CUTOVER_EVIDENCE/canvas.json"

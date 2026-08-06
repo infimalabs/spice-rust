@@ -15,6 +15,8 @@ use wire::{
 
 #[path = "support/readiness.rs"]
 mod readiness;
+#[path = "support/staged_app.rs"]
+mod staged_app;
 
 use readiness::Readiness;
 
@@ -39,6 +41,7 @@ impl Fixture {
         let folds = data.join("spicefolds.sqlite3");
         let bundle = root.join("operator-backup");
         fs::create_dir_all(&data).expect("create repository state fixture");
+        staged_app::seed(&root);
         seed_authority(&authority);
         Self {
             root,

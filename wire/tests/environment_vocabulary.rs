@@ -13,10 +13,8 @@
 //! satisfied without moving the other. The foreign class is therefore named
 //! here, once, rather than resolved by widening either authority.
 //!
-//! This law lives in an integration test rather than beside the enum because
-//! `wire/src` is staged into the committed application image: editing a source
-//! file there, even to add a test, drifts `dist/stage-sources.txt` and only the
-//! sealed build image may restage it. `wire/tests` is not staged.
+//! This law lives in an integration test because it exercises the tracked
+//! workspace vocabulary as a consumer rather than extending that vocabulary.
 
 use serde::Deserialize;
 use wire::SpiceVariable;

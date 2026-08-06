@@ -11,12 +11,10 @@ mod commit_message;
 mod landing;
 mod reference_transaction;
 mod release;
-mod stage_sources;
-mod toolchain;
 
 use app::WASM_TARGET;
 
-pub use app::{AppBuildError, check_app, local_app, stage_app};
+pub use app::{AppBuildError, dev_app};
 pub use commit_message::{CommitMessageError, WRAP_LIMIT as COMMIT_MESSAGE_WRAP_LIMIT};
 pub use reference_transaction::ReferenceTransactionError;
 pub use release::{CommandRecord, ReleaseEnvironment, TargetBuild, TargetBuildError, stage_target};
@@ -61,7 +59,7 @@ pub fn reference_transaction(
 /// the structural family that once lacked acquisition. Contract landing is
 /// therefore terminal: no alternate runtime or executable discovered from
 /// `PATH` repeats policy after the Rust-owned checks finish.
-const VERIFY_ACTIONS: [Action; 8] = [
+const VERIFY_ACTIONS: [Action; 7] = [
     Action::Command(Step::cargo(
         "cargo fmt --all -- --check",
         &["fmt", "--all", "--", "--check"],
@@ -81,10 +79,6 @@ const VERIFY_ACTIONS: [Action; 8] = [
     Action::Command(Step::cargo(
         "cargo check --locked --workspace --target wasm32-unknown-unknown",
         &["check", "--locked", "--workspace", "--target", WASM_TARGET],
-    )),
-    Action::Command(Step::cargo(
-        "cargo xtask check-app",
-        &["xtask", "check-app"],
     )),
     Action::Command(Step::cargo(
         "cargo test --locked --workspace --all-targets",
@@ -360,7 +354,7 @@ mod tests {
 
     #[test]
     fn verifier_steps_match_the_complete_command_guard() {
-        const GUARDED_ACTIONS: [Action; 8] = [
+        const GUARDED_ACTIONS: [Action; 7] = [
             Action::Command(Step::cargo(
                 "cargo fmt --all -- --check",
                 &["fmt", "--all", "--", "--check"],
@@ -386,10 +380,6 @@ mod tests {
                     "--target",
                     "wasm32-unknown-unknown",
                 ],
-            )),
-            Action::Command(Step::cargo(
-                "cargo xtask check-app",
-                &["xtask", "check-app"],
             )),
             Action::Command(Step::cargo(
                 "cargo test --locked --workspace --all-targets",
@@ -494,7 +484,7 @@ mod tests {
         let error = verify_with(&mut runner, &mut output).expect_err("landing refuses");
 
         assert!(matches!(error, VerifyError::LandingRefused));
-        assert_eq!(runner.calls, labels()[..8]);
+        assert_eq!(runner.calls, labels());
     }
 
     #[test]
@@ -509,7 +499,7 @@ mod tests {
         let error = verify_with(&mut runner, &mut output).expect_err("battery refusal surfaces");
 
         assert!(matches!(error, VerifyError::BatteryRefused));
-        assert_eq!(runner.calls, labels()[..7]);
+        assert_eq!(runner.calls, labels()[..labels().len() - 1]);
     }
 
     #[test]
@@ -521,7 +511,7 @@ mod tests {
         let error = verify_with(&mut runner, &mut output).expect_err("landing fails");
 
         assert!(matches!(error, VerifyError::Landing(_)));
-        assert_eq!(runner.calls, labels()[..8]);
+        assert_eq!(runner.calls, labels());
     }
 
     #[test]
@@ -533,8 +523,8 @@ mod tests {
                 .iter()
                 .filter(|action| matches!(action, Action::Command(_)))
                 .count(),
-            6,
-            "only the six declared Cargo commands precede compiled landing"
+            5,
+            "only the five declared Cargo commands precede compiled landing"
         );
     }
 

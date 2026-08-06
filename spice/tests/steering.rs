@@ -14,6 +14,8 @@ use wire::{Actor, FactKind, Instant, Outcome, Producer};
 
 #[path = "support/readiness.rs"]
 mod readiness;
+#[path = "support/staged_app.rs"]
+mod staged_app;
 
 use readiness::Readiness;
 
@@ -38,6 +40,7 @@ impl Fixture {
         ));
         let runtime = root.join(".git/.spice");
         fs::create_dir_all(root.join(".git")).expect("fixture git directory");
+        staged_app::seed(&root);
         let vendor = root.join("fake-claude");
         fs::write(
             &vendor,

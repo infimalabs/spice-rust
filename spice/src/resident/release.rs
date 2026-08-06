@@ -58,7 +58,9 @@ fn prepare_release_publish(
     command: &wire::AdmittedCommand,
     publish: &ReleasePublish,
 ) -> Result<PreparedReleasePublish, Outcome<CommandAnswer>> {
-    let release = crate::release_command::admit_stage(&paths.stage)
+    let app = crate::release_command::app_digest(&paths.worktree)
+        .map_err(|error| release_refusal("release::app-stage-refused", &error))?;
+    let release = crate::release_command::admit_stage(&paths.stage, &app)
         .map_err(|error| release_refusal("release::manifest-refused", &error.to_string()))?;
     if publish.key != *release.key() || publish.manifest != *release.manifest() {
         return Err(Outcome::Refusal(Refusal {
@@ -113,8 +115,11 @@ fn propose_release_publish(
     .map_err(typed_outcome)?;
     let guarded_release = release.clone();
     let guarded_stage = paths.stage.clone();
+    let guarded_worktree = paths.worktree.clone();
     proposal.guard(JournalGuard::new(move |read| {
-        let current = crate::release_command::admit_stage(&guarded_stage)
+        let app = crate::release_command::app_digest(&guarded_worktree)
+            .map_err(|_| GuardError::refused("release::app-stage-moved"))?;
+        let current = crate::release_command::admit_stage(&guarded_stage, &app)
             .map_err(|_| GuardError::refused("release::manifest-moved"))?;
         if current != guarded_release {
             return Err(GuardError::refused("release::manifest-moved"));
