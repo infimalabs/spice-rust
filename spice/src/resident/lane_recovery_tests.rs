@@ -677,6 +677,8 @@ fn proof(expected: Option<&str>) -> Proof {
             occupant: uuid(5),
             worktree: SUCCESSOR.into(),
             vendor: "claude".parse().expect("fixture vendor"),
+            model: "sonnet".into(),
+            effort: "high".into(),
             epoch: uuid(2),
             stream: vendor::RecordStream::Stdout,
             expected: expected.map(str::to_owned),
@@ -818,6 +820,21 @@ fn session_proof_refuses_a_declaration_resuming_another_identity() {
 }
 
 #[test]
+fn session_proof_carries_the_one_admitted_launch_identity() {
+    let proof = proof(None);
+    proof
+        .reporter
+        .record(declared("successor-session"))
+        .expect("the initialization record is admitted");
+
+    let session = await_session(proof.session).expect("one declaration proves the session");
+
+    assert_eq!(session.model, "sonnet");
+    assert_eq!(session.effort, "high");
+    assert_eq!(session.identity, "successor-session");
+}
+
+#[test]
 fn session_proof_refuses_a_second_declaration_from_one_occupant() {
     let proof = proof(None);
     proof
@@ -912,6 +929,8 @@ fn proven(fixture: &Fixture) -> ProvenOccupant {
             occupant: fixture.successor,
             worktree: SUCCESSOR.into(),
             vendor: "claude".parse().expect("fixture vendor"),
+            model: "sonnet".into(),
+            effort: "high".into(),
             epoch: fixture.new_epoch,
             stream: "stdout".into(),
             identity: "successor-session".into(),
@@ -936,6 +955,8 @@ fn assert_imported(fixture: &Fixture) {
     assert_eq!(row.vendor.as_str(), "claude");
     let session = row.session.as_ref().expect("import declares one authority");
     assert_eq!(session.identity, "successor-session");
+    assert_eq!(session.model, "sonnet");
+    assert_eq!(session.effort, "high");
     assert_eq!(session.occupant, fixture.successor);
     assert_eq!(session.epoch, fixture.new_epoch);
     assert!(

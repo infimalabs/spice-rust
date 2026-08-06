@@ -278,18 +278,17 @@ async function assertAgentConversation(page, fixture, worktrees) {
     (worktree) => lanes.body.lanes.find((lane) => lane.worktree === worktree),
   );
   assert.ok(seated.every(Boolean), "one lineage admits all four linked worktrees");
-  assert.deepEqual(
-    seated.map((lane) => lane.lane),
-    teamLaneIds,
-    "the fixture owns four deterministic and non-colliding accent slots",
-  );
-  assert.ok(
-    seated.every((lane) => lane.lineage_id === host.lineage_id),
-    "every independently steerable member retains the shared lineage identity",
-  );
+  assert.deepEqual(seated.map((lane) => lane.lane), teamLaneIds, "four fixed lane identities render");
+  assert.ok(seated.every((lane) => lane.lineage_id === host.lineage_id), "one lineage renders");
   assert.deepEqual(seated.map((lane) => lane.name), agentNames);
   assert.ok(seated.every((lane) => lane.vendor === "claude"));
   assert.ok(seated.every((lane) => lane.life === "steer"), "the team shares one lifetime");
+  assert.equal(
+    await console.locator(".team-detail-card").first().getAttribute("title"),
+    `Claude driver; model: sonnet; effort: high; thread: ${seated[0].occupant}; `
+      + "session: 018f7777-7777-7444-8888-999999999999",
+    "the agent card tooltip carries the admitted launch and session identity",
+  );
 
   await console.getByRole("tab", { name: /^Compose/ }).click();
   await console.locator(".team-agent").nth(3).waitFor();
