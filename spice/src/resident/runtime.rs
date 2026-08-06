@@ -585,13 +585,19 @@ pub(super) fn startup_subscriptions(
                         "a legacy lineage lane has no closed task-subscription policy",
                     )
                 })?;
-                Ok(wire::LineageSubscription { lineage_id, policy })
+                Ok(wire::LineageSubscription {
+                    lineage_id,
+                    policy,
+                    manual_projects: Vec::new(),
+                    auto_projects: Vec::new(),
+                })
             })
             .collect();
     }
 
     let mut indexed = std::collections::BTreeMap::new();
-    for subscription in stored {
+    for mut subscription in stored {
+        subscription.auto_projects.clear();
         if indexed
             .insert(subscription.lineage_id, subscription)
             .is_some()

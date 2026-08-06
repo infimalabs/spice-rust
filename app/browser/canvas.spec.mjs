@@ -57,6 +57,30 @@ const entirelyQuotedMessage = [
   "> > Borrowed context has no authored preview.",
   "> > A second borrowed line stays reachable.",
 ].join("\n");
+const tallMosaicMessage = [
+  "## Measured lattice witness",
+  "",
+  "This directive is intentionally tall at the base span.",
+  "",
+  "- measurement comes from the rendered DOM",
+  "- placement comes from the Rust lattice",
+  "- the wide tier remains content-class agnostic",
+  "- track bounds stay inside twelve columns",
+  "- row spans cover the natural card height",
+  "- creation order stays deterministic",
+  "- independent lineage controls remain mounted",
+  "- attachment presence cannot choose a span",
+  "- agent identity cannot choose a span",
+  "- CSS class cannot choose a span",
+  "- one base-height read is mandatory",
+  "- only a tall base measurement admits one more read",
+  "- no third candidate is measured",
+  "- no card overlaps another card",
+  "- exact viewport geometry stays observable",
+  "- the browser test reads the instrumentation",
+  "- the short path remains one read",
+  "- the tall path remains two reads",
+].join("\n");
 
 const axisPanes = new Map([
   ["Magnitude", ["Effort", "Pressure", "Residue", "Consent Volume"]],
@@ -270,6 +294,21 @@ async function assertAgentConversation(page, fixture, worktrees) {
     .locator(`.mosaic-message-card[data-agent-lane="${seated[3].lane}"]`)
     .filter({ hasText: "Borrowed context has no authored preview." })
     .waitFor({ timeout: 10_000 });
+  const tallLane = console.locator(`.team-agent[data-agent-lane="${seated[1].lane}"]`);
+  await tallLane.getByRole("textbox").fill(tallMosaicMessage);
+  await console.getByRole("button", { name: "Steer", exact: true }).click();
+  await console
+    .locator(`.mosaic-message-card[data-agent-lane="${seated[1].lane}"]`)
+    .filter({ hasText: "Measured lattice witness" })
+    .waitFor({ timeout: 10_000 });
+  const orderedInbox = await reply(fixture, ["inbox", seated[1].lane]);
+  assert.deepEqual(
+    await console
+      .locator(`[data-card-kind="directive"][data-agent-lane="${seated[1].lane}"]`)
+      .evaluateAll((cards) => cards.map((card) => card.dataset.directive)),
+    orderedInbox.body.lanes[0].pending.map((directive) => directive.directive),
+    "pending directives reach the lattice in durable journal order",
+  );
   assert.ok(await console.locator(".mosaic-message-card h2").count(), "cards render headings");
   assert.ok(await console.locator(".mosaic-message-card ul li").count(), "cards render lists");
   assert.ok(
@@ -286,18 +325,7 @@ async function assertAgentConversation(page, fixture, worktrees) {
     `.lane-mosaic-plane[data-agent-plane="${host.lineage_id}"]`,
   );
   await plane.waitFor();
-  const placements = await plane.locator(".mosaic-message-card").evaluateAll((cards) =>
-    cards.map((card) => ({
-      lane: card.dataset.agentLane,
-      track: Number(card.dataset.track),
-      span: Number(card.dataset.span),
-      base: Number(card.dataset.base),
-      row: Number(card.dataset.row),
-      rows: Number(card.dataset.rows),
-      columnStart: Number(getComputedStyle(card).gridColumnStart),
-      rowStart: Number(getComputedStyle(card).gridRowStart),
-    })),
-  );
+  const placements = await assertMosaicLattice(page, true);
   assert.ok(placements.length > seated.length, "the lane packs agent and directive cards");
   assert.ok(placements.every((card) => card.span >= 1 && card.track + card.span <= 12));
   assert.ok(placements.every((card) => card.rows >= 2));
@@ -308,6 +336,91 @@ async function assertAgentConversation(page, fixture, worktrees) {
   for (const member of seated) {
     assert.ok(packedMembers.has(member.lane), "every worktree member reaches the lane plane");
   }
+
+  const directiveChrome = await console.locator('[data-card-kind="directive"]').evaluateAll(
+    (cards) => cards.map((card) => ({
+      lane: card.dataset.agentLane,
+      accent: card.dataset.accent,
+      edge: getComputedStyle(card).borderRightColor,
+    })),
+  );
+  const repeatedLane = seated[1].lane;
+  const repeatedChrome = directiveChrome.filter((card) => card.lane === repeatedLane);
+  assert.ok(repeatedChrome.length >= 2, "the accent probe has two cards from one lane");
+  assert.ok(repeatedChrome.every((card) => card.accent === repeatedChrome[0].accent));
+  assert.ok(repeatedChrome.every((card) => card.edge === repeatedChrome[0].edge));
+  const distinctChrome = directiveChrome.find(
+    (card) => card.lane !== repeatedLane && card.accent !== repeatedChrome[0].accent,
+  );
+  assert.ok(distinctChrome, "the fixture exposes a different lane accent slot");
+  assert.notEqual(distinctChrome.edge, repeatedChrome[0].edge);
+  const expectedActions = ["Speak this message", "Quote this message", "Copy this message"];
+  for (const kind of ["agent-message", "directive"]) {
+    const card = console.locator(`[data-card-kind="${kind}"]`).first();
+    assert.ok((await card.locator(".message-author").innerText()).trim());
+    assert.deepEqual(
+      await card.locator(".message-actions button").evaluateAll(
+        (buttons) => buttons.map((button) => button.getAttribute("aria-label")),
+      ),
+      expectedActions,
+      `${kind} exposes the reference speak, quote, and copy controls`,
+    );
+  }
+
+  const scroller = plane;
+  const compensationViewport = page.viewportSize();
+  await page.setViewportSize({ width: compensationViewport.width, height: 360 });
+  await scroller.evaluate((element) => element.scrollTo(0, element.scrollHeight));
+  const beforeCompensation = await scroller.evaluate((element) => {
+    return {
+      scrollTop: element.scrollTop,
+      maxRow: Number(element.dataset.maxRow),
+    };
+  });
+  assert.ok(beforeCompensation.scrollTop > 80, "the compensation probe begins in a scrolled pane");
+  const compensationMessage = [
+    "mosaic scroll compensation probe",
+    ...Array.from({ length: 72 }, (_, index) => `- exact row delta ${index + 1}`),
+  ].join("\n");
+  const compensationLane = console.locator(
+    `.team-agent[data-agent-lane="${seated[0].lane}"]`,
+  );
+  await compensationLane.getByRole("textbox").fill(compensationMessage);
+  await console.getByRole("button", { name: "Steer", exact: true }).click();
+  const compensationCard = console
+    .locator(`.mosaic-message-card[data-agent-lane="${seated[0].lane}"]`)
+    .filter({ hasText: "mosaic scroll compensation probe" });
+  await compensationCard.waitFor({ timeout: 10_000 });
+  await page.waitForFunction((before) => {
+    const element = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
+    const maxRow = Number(element?.dataset.maxRow);
+    return maxRow > before.maxRow;
+  }, beforeCompensation);
+  const afterCompensation = await scroller.evaluate((element) => {
+    return {
+      scrollTop: element.scrollTop,
+      maxRow: Number(element.dataset.maxRow),
+      module: Number(element.dataset.module),
+    };
+  });
+  assert.ok(afterCompensation.maxRow > beforeCompensation.maxRow);
+  assert.equal(
+    afterCompensation.scrollTop,
+    beforeCompensation.scrollTop
+      + (afterCompensation.maxRow - beforeCompensation.maxRow) * afterCompensation.module,
+    `incremental placement compensates by exactly the added lattice rows: ${JSON.stringify({
+      beforeCompensation,
+      afterCompensation,
+    })}`,
+  );
+  await page.setViewportSize(compensationViewport);
+  const compensationInbox = await reply(fixture, ["inbox", seated[0].lane]);
+  const compensationDirective = compensationInbox.body.lanes[0].pending.find(
+    (directive) => directive.text === compensationMessage,
+  );
+  assert.ok(compensationDirective, "the compensation probe reached the real inbox");
+  await reply(fixture, ["steer", "cancel", compensationDirective.directive]);
+  await compensationCard.waitFor({ state: "detached", timeout: 10_000 });
   await page.locator('.task-pill[data-task-stem="app"]').waitFor();
   await page.locator('.task-pill[data-task-stem="canvas"]').waitFor();
   assert.match(await page.locator('.task-pill[data-task-stem="app"]').innerText(), /\d+·\d+·\d+/);
@@ -324,7 +437,19 @@ async function assertAgentConversation(page, fixture, worktrees) {
     inbox.body.lanes[0].pending[0].key,
   );
   await assertQueuedRosterPip(page, console, seated[0]);
-  assert.match(await outgoing.locator(".message-age").innerText(), / left$/);
+  const age = outgoing.locator(".message-age");
+  const authoredAt = Date.parse(inbox.body.lanes[0].pending[0].authored);
+  const expectedBeforeRead = elapsedLabel(Date.now() - authoredAt);
+  const renderedAge = await age.innerText();
+  const expectedAfterRead = elapsedLabel(Date.now() - authoredAt);
+  assert.ok(
+    [expectedBeforeRead, expectedAfterRead].includes(renderedAge),
+    `the card shows authored age: ${JSON.stringify({ renderedAge, expectedBeforeRead, expectedAfterRead })}`,
+  );
+  assert.equal(
+    await age.getAttribute("title"),
+    `authored ${inbox.body.lanes[0].pending[0].authored}; expires ${inbox.body.lanes[0].pending[0].expires}`,
+  );
   assert.equal(await outgoing.locator(".message-actions button").count(), 3);
 
   for (const mode of ["Filters", "Metrics", "Info"]) {
@@ -343,6 +468,16 @@ async function assertAgentConversation(page, fixture, worktrees) {
   const remainingQuietWindow = Math.max(0, 61_000 - (Date.now() - firstSeatedAt));
   await new Promise((resolveWait) => setTimeout(resolveWait, remainingQuietWindow));
   return { lane: seated[0].lane, quoteLane: seated[3].lane };
+}
+
+
+function elapsedLabel(millis) {
+  const seconds = Math.trunc(millis / 1_000);
+  if (seconds <= 0) return "now";
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3_600) return `${Math.trunc(seconds / 60)}m`;
+  if (seconds < 86_400) return `${Math.trunc(seconds / 3_600)}h`;
+  return `${Math.trunc(seconds / 86_400)}d`;
 }
 
 
@@ -374,6 +509,111 @@ async function assertFourAgentDensity(console) {
       assert.ok(Math.abs(row[index - 1].top - row[index].top) <= 1, "agent columns share one row");
     }
   }
+}
+
+async function assertMosaicLattice(page, requireBothReadPaths) {
+  await waitForMosaicReady(page);
+  const snapshot = await page.locator('[data-pane="agent-console"]').evaluate((console) => ({
+    activities: [...console.querySelectorAll(".team-activity-grid")].map((activity) => ({
+      columnCount: getComputedStyle(activity).columnCount,
+      columnWidth: getComputedStyle(activity).columnWidth,
+    })),
+    planes: [...console.querySelectorAll(".lane-mosaic-plane")].map((plane) => ({
+      trackCount: Number(plane.dataset.trackCount),
+      baseSpan: Number(plane.dataset.baseSpan),
+      tallThreshold: Number(plane.dataset.tallThreshold),
+      cards: [...plane.querySelectorAll(".mosaic-message-card")].map((card) => {
+        const box = card.getBoundingClientRect();
+        const style = getComputedStyle(card);
+        return {
+          kind: card.dataset.cardKind,
+          lane: card.dataset.agentLane,
+          creationIndex: Number(card.dataset.creationIndex),
+          track: Number(card.dataset.track),
+          span: Number(card.dataset.span),
+          base: Number(card.dataset.base),
+          row: Number(card.dataset.row),
+          rows: Number(card.dataset.rows),
+          reads: Number(card.dataset.measurementReads),
+          heights: card.dataset.measuredHeights.split(",").filter(Boolean).map(Number),
+          candidateSpans: card.dataset.candidateSpans.split(",").filter(Boolean).map(Number),
+          columnStart: Number(style.gridColumnStart),
+          columnEnd: style.gridColumnEnd,
+          rowStart: Number(style.gridRowStart),
+          rowEnd: style.gridRowEnd,
+          box: {
+            left: box.left,
+            right: box.right,
+            top: box.top,
+            bottom: box.bottom,
+          },
+        };
+      }),
+    })),
+  }));
+
+  assert.ok(snapshot.activities.length > 0, "the live activity region is mounted");
+  assert.ok(
+    snapshot.activities.every(
+      (activity) => activity.columnCount === "auto" && activity.columnWidth === "auto",
+    ),
+    "the live activity region uses no CSS multi-column flow",
+  );
+  const readPaths = new Set();
+  const kinds = new Set();
+  const placements = [];
+  for (const plane of snapshot.planes) {
+    assert.equal(plane.trackCount, 12, "the browser renders the twelve-track lattice");
+    assert.deepEqual(
+      plane.cards.map((card) => card.creationIndex),
+      plane.cards.map((_, index) => index),
+      "DOM order is the stable creation order submitted to Rust",
+    );
+    for (const card of plane.cards) {
+      const wideSpan = Math.min(plane.trackCount, plane.baseSpan * 2);
+      const wideEligible = wideSpan > plane.baseSpan && card.heights[0] >= plane.tallThreshold;
+      const expectedSpans = wideEligible ? [plane.baseSpan, wideSpan] : [plane.baseSpan];
+      assert.equal(card.reads, wideEligible ? 2 : 1, "height reads follow the bounded policy");
+      assert.equal(card.heights.length, card.reads, "every instrumented read records one height");
+      assert.deepEqual(card.candidateSpans, expectedSpans, "height alone admits the wide tier");
+      assert.ok(card.track >= 0 && card.track + card.span <= plane.trackCount);
+      assert.ok(card.rows >= 2);
+      assert.equal(card.columnStart, card.track + 1);
+      assert.equal(card.columnEnd, `span ${card.span}`);
+      assert.equal(card.rowStart, card.row);
+      assert.equal(card.rowEnd, `span ${card.rows}`);
+      readPaths.add(card.reads);
+      kinds.add(card.kind);
+      placements.push(card);
+    }
+    for (let left = 0; left < plane.cards.length; left += 1) {
+      for (let right = left + 1; right < plane.cards.length; right += 1) {
+        const one = plane.cards[left].box;
+        const two = plane.cards[right].box;
+        const separated = one.right <= two.left + 0.5 || two.right <= one.left + 0.5
+          || one.bottom <= two.top + 0.5 || two.bottom <= one.top + 0.5;
+        assert.ok(separated, `Mosaic cards ${left} and ${right} do not overlap`);
+      }
+    }
+  }
+  assert.ok(kinds.has("agent-message"), "agent-authored cards use the measured policy");
+  assert.ok(readPaths.has(1), "a short card takes exactly one DOM height read");
+  if (requireBothReadPaths) {
+    assert.ok(kinds.has("directive"), "pending directives use the measured policy");
+    assert.ok(readPaths.has(2), "a tall card takes exactly two DOM height reads");
+  }
+  return placements;
+}
+
+async function waitForMosaicReady(page) {
+  await page.waitForFunction(() => {
+    const planes = [...document.querySelectorAll(
+      '[data-pane="agent-console"] .lane-mosaic-plane',
+    )];
+    return planes.length > 0 && planes.every(
+      (plane) => plane.dataset.measurementPhase === "ready",
+    );
+  });
 }
 
 async function assertRosterPips(page, console, seated) {
@@ -412,6 +652,7 @@ async function assertRosterPips(page, console, seated) {
   );
   await chooseCanvasView(page, "Agents");
   await console.waitFor();
+  await waitForMosaicReady(page);
 }
 
 async function assertQueuedRosterPip(page, console, member) {
@@ -456,6 +697,7 @@ async function assertQueuedRosterPip(page, console, member) {
   assert.notEqual(brandStyle.boxShadow, "none", "the queued agent remains visibly lit");
   await chooseCanvasView(page, "Agents");
   await console.waitFor();
+  await waitForMosaicReady(page);
 }
 
 async function assertPerTeamWatchbands(page, fixture, worktrees) {
@@ -485,6 +727,22 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
   assert.equal(await console.locator(".team-surface").count(), 2);
   assert.equal(await console.locator(".team-speech").count(), 2);
   assert.equal(await console.locator(".team-lifetime").count(), 2);
+  const weightedWidths = await console.locator(".team-surface").evaluateAll((surfaces) =>
+    surfaces.map((surface) => ({
+      weight: Number(surface.dataset.lineageWeight),
+      width: surface.getBoundingClientRect().width,
+    })),
+  );
+  const widthsByWeight = weightedWidths.toSorted((left, right) => left.weight - right.weight);
+  assert.deepEqual(
+    widthsByWeight.map(({ weight }) => weight),
+    [1, 4],
+    "lineage weights remain the admitted member counts",
+  );
+  assert.ok(
+    widthsByWeight[1].width > widthsByWeight[0].width,
+    "the four-agent lineage remains wider than its one-agent sibling",
+  );
 
   const primaryLife = primarySurface.locator('.team-lifetime input[type="range"]');
   const primarySeatLives = new Map(
@@ -658,6 +916,12 @@ async function captureReferenceViewport(page) {
     "the reference capture explicitly exercises dark mode",
   );
   await assertFourAgentDensity(team);
+  assert.equal(
+    await team.locator(".team-surface").getAttribute("data-lineage-weight"),
+    "4",
+    "the reference viewport retains the four-agent lineage weight",
+  );
+  await assertMosaicLattice(page, false);
   const pixels = await page.evaluate(() => ({
     width: innerWidth,
     height: innerHeight,

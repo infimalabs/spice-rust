@@ -161,12 +161,6 @@
   color: #fff;
 }
 
-.mosaic-message-grid {
-  columns: 2 320px;
-  column-gap: 14px;
-  padding: 14px;
-}
-
 .mosaic-message-card {
   display: inline-grid;
   width: 100%;
@@ -600,7 +594,13 @@
   grid-auto-flow: row;
   align-content: start;
   gap: var(--mosaic-gap);
-  overflow-anchor: auto;
+  max-height: max(12rem, calc(100vh - 20rem));
+  overflow-y: auto;
+  overflow-anchor: none;
+}
+.lane-mosaic-plane[data-measurement-phase="base"] {
+  visibility: hidden;
+  pointer-events: none;
 }
 .lane-mosaic-plane[data-lanes="2"] { --mosaic-module: 2.5rem; }
 .lane-mosaic-plane[data-lanes="1"] { --mosaic-module: 1.25rem; }
@@ -614,11 +614,18 @@
   min-width: 0;
   margin: 0;
 }
+.lane-mosaic-plane[data-measurement-phase="base"] .mosaic-message-card {
+  grid-column-start: 1;
+  grid-column-end: span attr(data-measure-span type(<integer>));
+  grid-row-start: auto;
+  grid-row-end: auto;
+  align-self: start;
+}
 .lane-mosaic-plane .mosaic-message-card.liquid { transition: opacity 180ms ease-out; }
 .lane-mosaic-plane .mosaic-message-card.frozen { transition: none; }
 .team-surface .mosaic-message-card {
   gap: 7px;
-  margin: 0 0 7px;
+  margin: 0;
   padding: 8px;
   border-left-width: 1px;
   border-right: 3px solid var(--identity, var(--accent));

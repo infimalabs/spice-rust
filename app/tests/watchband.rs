@@ -74,6 +74,7 @@ fn inbox(id: &str, directives: &[(&str, Option<&str>)]) -> LaneInbox {
                 "directive": OCCUPANT,
                 "key": format!("key{index}"),
                 "text": text,
+                "authored": spell(0),
                 "expires": spell(600_000),
             });
             if let Some(preview) = preview {

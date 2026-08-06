@@ -574,20 +574,29 @@ fn startup_migrates_one_complete_legacy_subscription_table_and_refuses_partial_a
             wire::LineageSubscription {
                 lineage_id: lineage,
                 policy: wire::intent::LineageLife::Drive,
+                manual_projects: Vec::new(),
+                auto_projects: Vec::new(),
             },
             wire::LineageSubscription {
                 lineage_id: sibling,
                 policy: wire::intent::LineageLife::Steer,
+                manual_projects: Vec::new(),
+                auto_projects: Vec::new(),
             },
         ]
     );
+    let mut projected = migrated.clone();
+    projected[0].auto_projects = vec!["task.derived".to_owned()];
     assert_eq!(
-        super::startup_subscriptions(&lanes, migrated.clone())
+        super::startup_subscriptions(&lanes, projected)
             .expect("the current complete table is preserved"),
-        migrated
+        migrated,
+        "startup discards derived auto projects before fact replay",
     );
 
-    let Err(Outcome::Fault(fault)) = super::startup_subscriptions(&lanes, vec![migrated[0]]) else {
+    let Err(Outcome::Fault(fault)) =
+        super::startup_subscriptions(&lanes, vec![migrated[0].clone()])
+    else {
         panic!("a partial current subscription table must fault")
     };
     assert_eq!(fault.reason, "lineage::subscription-misaligned");
@@ -599,15 +608,46 @@ fn startup_migrates_one_complete_legacy_subscription_table_and_refuses_partial_a
     };
     assert_eq!(fault.reason, "lineage::subscription-ambiguous");
 
-    let duplicated = vec![migrated[0], migrated[0], migrated[1]];
+    let duplicated = vec![
+        migrated[0].clone(),
+        migrated[0].clone(),
+        migrated[1].clone(),
+    ];
     let Err(Outcome::Fault(fault)) = super::startup_subscriptions(&lanes, duplicated) else {
         panic!("duplicate current subscription authority must fault")
     };
     assert_eq!(fault.reason, "lineage::subscription-ambiguous");
 }
 
+fn assert_lineage_configuration_fact(bus: &Bus, lineage: CanonicalUuid) {
+    let snapshot = bus.canvas_snapshot().expect("configured journal reads");
+    let configured = snapshot
+        .facts()
+        .facts()
+        .iter()
+        .find(|fact| fact.fact.kind() == wire::FactKind::LineageConfigured)
+        .expect("lineage configuration is durable");
+    assert_eq!(
+        configured.fact.body().get("lineage_id"),
+        Some(&serde_json::Value::String(lineage.to_string())),
+    );
+    assert_eq!(
+        configured.fact.body().get("from"),
+        Some(&serde_json::json!("drive"))
+    );
+    assert_eq!(
+        configured.fact.body().get("life"),
+        Some(&serde_json::json!("drain"))
+    );
+    assert_eq!(configured.fact.body().get("from_manual_projects"), None);
+    assert_eq!(
+        configured.fact.body().get("manual_projects"),
+        Some(&serde_json::json!(["task.manual"]))
+    );
+}
+
 #[test]
-fn lineage_configuration_changes_only_the_typed_subscription_policy() {
+fn lineage_configuration_changes_only_the_typed_task_subscription() {
     let (root, paths) = resident_fixture("lineage-configuration");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
     let surface =
@@ -642,6 +682,7 @@ fn lineage_configuration_changes_only_the_typed_subscription_policy() {
     let request = wire::intent::LineageConfigure {
         lineage_id: lineage,
         life: wire::intent::LineageLife::Drain,
+        manual_projects: Some(vec!["task.manual".to_owned()]),
     };
     let command = Command {
         v: wire::WireVersion::CURRENT,
@@ -658,8 +699,10 @@ fn lineage_configuration_changes_only_the_typed_subscription_policy() {
     })
     .expect("operator lineage configuration admits");
 
+    let projects =
+        board::ProjectPolicy::new(Vec::new(), Vec::new(), 2, 4).expect("fixture project policy");
     let Outcome::Reply(reply) =
-        super::lane_surface::configure(&bus, epoch, &seats, &command, &request)
+        super::lane_surface::configure(&bus, epoch, &seats, &projects, &command, &request)
     else {
         panic!("lineage configuration replies");
     };
@@ -675,6 +718,8 @@ fn lineage_configuration_changes_only_the_typed_subscription_policy() {
         vec![wire::LineageSubscription {
             lineage_id: lineage,
             policy: wire::intent::LineageLife::Drain,
+            manual_projects: vec!["task.manual".to_owned()],
+            auto_projects: Vec::new(),
         }]
     );
     assert_eq!(answer.lanes[0].occupant, Some(first_occupant));
@@ -690,25 +735,7 @@ fn lineage_configuration_changes_only_the_typed_subscription_policy() {
         .into_body();
     assert!(durable.lanes.iter().all(|row| row.life == "drive"));
     assert_eq!(durable.subscriptions, answer.subscriptions);
-    let snapshot = bus.canvas_snapshot().expect("configured journal reads");
-    let configured = snapshot
-        .facts()
-        .facts()
-        .iter()
-        .find(|fact| fact.fact.kind() == wire::FactKind::LineageConfigured)
-        .expect("lineage configuration is durable");
-    assert_eq!(
-        configured.fact.body().get("lineage_id"),
-        Some(&serde_json::Value::String(lineage.to_string())),
-    );
-    assert_eq!(
-        configured.fact.body().get("from"),
-        Some(&serde_json::json!("drive"))
-    );
-    assert_eq!(
-        configured.fact.body().get("life"),
-        Some(&serde_json::json!("drain"))
-    );
+    assert_lineage_configuration_fact(&bus, lineage);
     for lane in [first_lane, second_lane] {
         seats
             .vacate(lane)
@@ -783,6 +810,8 @@ fn seed_lane_in_lineage(
         head.subscriptions.push(wire::LineageSubscription {
             lineage_id,
             policy: wire::intent::LineageLife::Drive,
+            manual_projects: Vec::new(),
+            auto_projects: Vec::new(),
         });
         head.subscriptions
             .sort_by_key(|subscription| subscription.lineage_id);
@@ -1018,7 +1047,7 @@ fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
 }
 
 #[test]
-fn durable_capture_projects_only_prose_with_occupant_and_event_identity() {
+fn durable_capture_projects_only_current_occupant_prose_with_event_identity() {
     let bus = Bus::start(journal::Journal::in_memory().expect("message authority opens"))
         .expect("message bus starts");
     let source = canvas::stream::Source::new(bus.reader(), test_uuid(9), 8);
@@ -1044,8 +1073,28 @@ fn durable_capture_projects_only_prose_with_occupant_and_event_identity() {
             }),
         ]),
     };
+    let mut seats = Seats::new();
+    seats
+        .seat(
+            record.lane,
+            record.occupant,
+            process_spec(
+                "exec /usr/bin/tail -f /dev/null",
+                Duration::from_millis(100),
+            ),
+        )
+        .expect("capture fixture occupant starts");
+    let mut diagnostics = Vec::new();
 
-    publish_agent_messages(&publisher, &record).expect("capture projects");
+    accept_capture_record(
+        &bus,
+        test_uuid(4),
+        &mut seats,
+        &publisher,
+        &record,
+        &mut diagnostics,
+    )
+    .expect("current capture projects");
 
     let message = updates.try_recv().expect("prose publishes once");
     assert_eq!(message.lane, record.lane);
@@ -1064,6 +1113,55 @@ fn durable_capture_projects_only_prose_with_occupant_and_event_identity() {
         updates.try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
+
+    seats
+        .vacate(record.lane)
+        .expect("original occupant remains supervised")
+        .wait()
+        .expect("original occupant stops");
+    seats
+        .seat(
+            record.lane,
+            test_uuid(7),
+            process_spec(
+                "exec /usr/bin/tail -f /dev/null",
+                Duration::from_millis(100),
+            ),
+        )
+        .expect("replacement occupant starts");
+    let stale_locus = listen::Locus::new(4, 180, 48);
+    let stale_record = lane::capture::CaptureRecord {
+        lane: record.lane,
+        occupant: record.occupant,
+        stream: vendor::RecordStream::Stdout,
+        boundary: sill::RecordBoundary::Complete,
+        locus: stale_locus,
+        declaration: None,
+        decoded: listen::Decoded::Events(vec![listen::Event::Prose(listen::Prose {
+            text: "stale prior-occupant answer".to_owned(),
+            phase: None,
+            locus: stale_locus,
+        })]),
+    };
+    accept_capture_record(
+        &bus,
+        test_uuid(4),
+        &mut seats,
+        &publisher,
+        &stale_record,
+        &mut diagnostics,
+    )
+    .expect("stale capture is ignored");
+    assert!(matches!(
+        updates.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+    assert!(diagnostics.is_empty());
+    seats
+        .vacate(record.lane)
+        .expect("replacement occupant remains supervised")
+        .wait()
+        .expect("replacement occupant stops");
     drop(source);
     bus.shutdown().expect("message bus stops");
 }

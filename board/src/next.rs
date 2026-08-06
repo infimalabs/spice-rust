@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use wire::{Actor, ClaimDisposition, TaskHandle};
+use wire::{Actor, ClaimDisposition, LineageSubscription, TaskHandle};
 
 use crate::task::Entry;
 use crate::urgency::Urgency;
@@ -26,14 +26,86 @@ impl<'a> Selection<'a> {
     }
 }
 
-/// Select the highest-ranked eligible task for `actor`.
+/// Project server-managed create/claim subscriptions from durable history.
+///
+/// The residency head owns the policy and manual pins. Auto projects remain
+/// facts: task creation and claim transactions already record the lane and
+/// task atomically, so replaying those facts avoids a second mutable authority
+/// while surviving restart exactly.
+pub fn project_subscription_history(
+    residency: &mut wire::ResidencyHead,
+    entries: &[Entry],
+    facts: &[wire::Envelope<wire::AnyFact>],
+) -> Result<(), String> {
+    for subscription in &mut residency.subscriptions {
+        subscription.auto_projects.clear();
+    }
+    for envelope in facts {
+        let lane = match envelope.fact.kind() {
+            wire::FactKind::TaskAdded => match &envelope.actor {
+                Actor::Lane(lane) => *lane,
+                Actor::Operator | Actor::Spice => continue,
+            },
+            wire::FactKind::ClaimWon => envelope
+                .fact
+                .body()
+                .get("lane")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| "claim::won fact has no lane".to_owned())?
+                .parse()
+                .map_err(|error| format!("claim::won fact lane is invalid: {error}"))?,
+            _ => continue,
+        };
+        let task = envelope
+            .fact
+            .body()
+            .get("task")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| format!("{} fact has no task", envelope.fact.kind()))?;
+        let entry = entries
+            .iter()
+            .find(|entry| entry.statement().handle.as_str() == task)
+            .ok_or_else(|| format!("subscription history task {task} has no current heads"))?;
+        if entry.project().visibility().is_hidden() {
+            continue;
+        }
+        let Some(lineage) = residency
+            .lanes
+            .iter()
+            .find(|seat| seat.lane == lane)
+            .map(|seat| seat.lineage_id)
+        else {
+            continue;
+        };
+        let mut subscriptions = residency
+            .subscriptions
+            .iter_mut()
+            .filter(|subscription| subscription.lineage_id == lineage);
+        let subscription = subscriptions
+            .next()
+            .ok_or_else(|| format!("lineage {lineage} has no durable task-subscription policy"))?;
+        if subscriptions.next().is_some() {
+            return Err(format!(
+                "lineage {lineage} has more than one durable task-subscription policy"
+            ));
+        }
+        subscription.learn_project(entry.project().as_str());
+    }
+    Ok(())
+}
+
+/// Select the highest-ranked subscribed and eligible task for `actor`.
 ///
 /// This is the only allocation path in `board`. It derives completed
 /// dependencies from the same supplied head set, ranks by pure urgency, and
 /// breaks ties by ascending handle spelling. Identical heads and actor always
 /// return the same task regardless of slice order.
 #[must_use]
-pub fn select<'a>(entries: &'a [Entry], actor: &Actor) -> Option<Selection<'a>> {
+pub fn select<'a>(
+    entries: &'a [Entry],
+    actor: &Actor,
+    subscription: &LineageSubscription,
+) -> Option<Selection<'a>> {
     let completed: BTreeSet<TaskHandle> = entries
         .iter()
         .filter(|entry| entry.workflow().status == "completed")
@@ -43,7 +115,7 @@ pub fn select<'a>(entries: &'a [Entry], actor: &Actor) -> Option<Selection<'a>> 
     let mut selected: Option<Selection<'a>> = None;
     for entry in entries
         .iter()
-        .filter(|entry| eligible(entry, actor, &completed))
+        .filter(|entry| selectable(entry, actor, subscription, &completed))
     {
         let candidate = Selection {
             entry,
@@ -59,6 +131,15 @@ pub fn select<'a>(entries: &'a [Entry], actor: &Actor) -> Option<Selection<'a>> 
         }
     }
     selected
+}
+
+fn selectable(
+    entry: &Entry,
+    actor: &Actor,
+    subscription: &LineageSubscription,
+    completed: &BTreeSet<TaskHandle>,
+) -> bool {
+    subscription.admits_project(entry.project().as_str()) && eligible(entry, actor, completed)
 }
 
 fn eligible(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskHandle>) -> bool {
@@ -97,6 +178,17 @@ fn unheld(entry: &Entry) -> bool {
 #[must_use]
 pub fn eligible_entry(entries: &[Entry], entry: &Entry, actor: &Actor) -> bool {
     workable(entry, actor, &completed_handles(entries)) && unheld(entry)
+}
+
+/// Whether one named entry is eligible through the lineage's current task scope.
+#[must_use]
+pub fn selectable_entry(
+    entries: &[Entry],
+    entry: &Entry,
+    actor: &Actor,
+    subscription: &LineageSubscription,
+) -> bool {
+    selectable(entry, actor, subscription, &completed_handles(entries))
 }
 
 /// Whether one named entry may be taken from whoever currently holds it.

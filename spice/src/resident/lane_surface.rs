@@ -53,30 +53,61 @@ const RECORD_QUEUE: usize = 64;
 const SESSION_PROOF: Duration = Duration::from_secs(10);
 const SESSION_SETTLE: Duration = Duration::from_millis(25);
 
-/// Resolve the one durable subscription policy for a lineage.
-fn subscription_policy(
+/// Resolve the one durable subscription row for a lineage.
+fn subscription_row(
     head: &wire::ResidencyHead,
     lineage_id: CanonicalUuid,
-) -> CommandResult<Option<LineageLife>> {
+) -> CommandResult<Option<&wire::LineageSubscription>> {
     let mut durable = head
         .subscriptions
         .iter()
-        .filter(|subscription| subscription.lineage_id == lineage_id)
-        .map(|subscription| subscription.policy);
-    let policy = durable.next();
+        .filter(|subscription| subscription.lineage_id == lineage_id);
+    let subscription = durable.next();
     if durable.next().is_some() {
         return Err(store_fault(
             "lineage::subscription-ambiguous",
             "one lineage has more than one durable task-subscription policy",
         ));
     }
-    Ok(policy)
+    Ok(subscription)
+}
+
+fn subscription_policy(
+    head: &wire::ResidencyHead,
+    lineage_id: CanonicalUuid,
+) -> CommandResult<Option<LineageLife>> {
+    Ok(subscription_row(head, lineage_id)?.map(|subscription| subscription.policy))
 }
 
 pub(super) struct Runtime<'a> {
     capabilities: &'a canvas::axum::Capabilities,
     discovery: &'a canvas::Discovery,
     capture: Arc<dyn CaptureReporter>,
+}
+
+fn admit_manual_projects(
+    projects: &board::ProjectPolicy,
+    requested: Option<&[String]>,
+) -> Result<Option<Vec<String>>, Outcome<CommandAnswer>> {
+    let Some(requested) = requested else {
+        return Ok(None);
+    };
+    let mut admitted = Vec::with_capacity(requested.len());
+    for project in requested {
+        if let Err(error) = projects.admit_manual_creation(project) {
+            return Err(lane_refusal(
+                "lineage::manual-project-invalid",
+                Some("one admitted public task project".to_owned()),
+                Some(project.clone()),
+                &error.to_string(),
+            ));
+        }
+        if !admitted.contains(project) {
+            admitted.push(project.clone());
+        }
+    }
+    admitted.sort();
+    Ok(Some(admitted))
 }
 
 impl<'a> Runtime<'a> {
@@ -226,6 +257,7 @@ pub(super) fn configure(
     bus: &Bus,
     epoch: CanonicalUuid,
     seats: &Seats,
+    projects: &board::ProjectPolicy,
     command: &wire::AdmittedCommand,
     request: &LineageConfigure,
 ) -> Outcome<CommandAnswer> {
@@ -247,8 +279,8 @@ pub(super) fn configure(
             "read lane state and retry with a current lineage identity",
         );
     }
-    let from = match subscription_policy(observed.body(), request.lineage_id) {
-        Ok(Some(policy)) => policy,
+    let previous = match subscription_row(observed.body(), request.lineage_id) {
+        Ok(Some(subscription)) => subscription.clone(),
         Ok(None) => {
             return typed_store_fault(
                 "lineage::subscription-missing",
@@ -257,21 +289,28 @@ pub(super) fn configure(
         }
         Err(outcome) => return typed_outcome(outcome),
     };
+    let manual_projects = match admit_manual_projects(projects, request.manual_projects.as_deref())
+    {
+        Ok(projects) => projects,
+        Err(outcome) => return outcome,
+    };
     let mut next = observed.body().clone();
-    if let Some(subscription) = next
+    let Some(subscription) = next
         .subscriptions
         .iter_mut()
         .find(|subscription| subscription.lineage_id == request.lineage_id)
-    {
-        subscription.policy = request.life;
-    } else {
-        next.subscriptions.push(wire::LineageSubscription {
-            lineage_id: request.lineage_id,
-            policy: request.life,
-        });
-        next.subscriptions
-            .sort_by_key(|subscription| subscription.lineage_id);
+    else {
+        return typed_store_fault(
+            "lineage::subscription-missing",
+            "a current lineage lost its task-subscription policy during configuration",
+        );
+    };
+    subscription.policy = request.life;
+    subscription.auto_projects.clear();
+    if let Some(manual_projects) = manual_projects {
+        subscription.manual_projects = manual_projects;
     }
+    let configured_manual_projects = subscription.manual_projects.clone();
     let lane_answer = match answer(&next, None, seats) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
@@ -288,8 +327,10 @@ pub(super) fn configure(
     let fact = match write.fact(
         wire::body::LineageConfigured {
             lineage_id: request.lineage_id,
-            from,
+            from: previous.policy,
             life: request.life,
+            from_manual_projects: previous.manual_projects,
+            manual_projects: configured_manual_projects,
         },
         FactCause::Existing(observed.position()),
     ) {
@@ -502,18 +543,19 @@ pub(super) fn state(
 /// Admit one already-durable capture report from the current occupant.
 ///
 /// Stale reports can race a completed drain or renewal and are discarded by
-/// exact occupant identity. Session recognition consumes this same event seam.
+/// exact occupant identity. Session recognition and Canvas message projection
+/// consume this same admission decision.
 pub(super) fn capture_record(
     bus: &Bus,
     epoch: CanonicalUuid,
     seats: &mut Seats,
     record: &CaptureRecord,
-) -> CommandResult<()> {
+) -> CommandResult<bool> {
     if !seats
         .occupant(record.lane)
         .is_some_and(|occupant| occupant.occupant() == record.occupant)
     {
-        return Ok(());
+        return Ok(false);
     }
     if let Some(declaration) = &record.declaration {
         let observed = current_residency(bus, epoch)?;
@@ -598,7 +640,7 @@ pub(super) fn capture_record(
     }
     let admitted = seats.observe_activity(record.lane, record.occupant, Monotonic::now());
     debug_assert!(admitted, "the current capture record remains supervised");
-    Ok(())
+    Ok(true)
 }
 
 /// Vacate and durably degrade an occupant whose selected capture path failed.

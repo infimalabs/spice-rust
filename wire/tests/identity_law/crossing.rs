@@ -487,15 +487,19 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
     let drive = LineageSubscription {
         lineage_id: first_uuid,
         policy: wire::intent::LineageLife::Drive,
+        manual_projects: vec!["task.manual".to_owned()],
+        auto_projects: vec!["task.learned".to_owned()],
     };
     let steer = LineageSubscription {
         lineage_id: second_uuid,
         policy: wire::intent::LineageLife::Steer,
+        manual_projects: Vec::new(),
+        auto_projects: Vec::new(),
     };
     law(
         covered,
         "LineageSubscription",
-        &[drive, steer],
+        &[drive.clone(), steer.clone()],
     );
     law(
         covered,
