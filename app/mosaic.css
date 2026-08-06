@@ -594,7 +594,9 @@
   grid-auto-flow: row;
   align-content: start;
   gap: var(--mosaic-gap);
-  overflow-anchor: auto;
+  max-height: max(12rem, calc(100vh - 20rem));
+  overflow-y: auto;
+  overflow-anchor: none;
 }
 .lane-mosaic-plane[data-measurement-phase="base"] {
   visibility: hidden;
