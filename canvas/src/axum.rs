@@ -654,7 +654,7 @@ impl Server {
         capacity: usize,
     ) -> Result<(Self, Control), std::io::Error> {
         let Binding { requested, access } = binding;
-        if !is_loopback(requested) && !access.is_authenticated() {
+        if !requested.ip().is_loopback() && !access.is_authenticated() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
                 "a non-loopback canvas listener requires authenticated access",
@@ -1547,12 +1547,6 @@ async fn send_encoded<T: serde::Serialize>(socket: &mut WebSocket, value: &T) ->
         return false;
     };
     socket.send(Message::Binary(bytes.into())).await.is_ok()
-}
-
-/// Whether an address is reachable from this machine alone.
-#[must_use]
-pub const fn is_loopback(address: SocketAddr) -> bool {
-    matches!(address.ip(), IpAddr::V4(ip) if ip.is_loopback())
 }
 
 #[cfg(test)]
