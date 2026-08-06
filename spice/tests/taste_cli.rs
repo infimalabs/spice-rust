@@ -9,7 +9,7 @@ use bus::{Bus, CommitOutcome};
 use journal::{FactCause, JournalWrite};
 use serde::de::DeserializeOwned;
 use wire::body::{TasteCleared, TasteConfirmed};
-use wire::intent::{BoardAnswer, CommandAnswer, TaskAdd, TaskAnswer};
+use wire::intent::{BoardAnswer, CommandAnswer, TaskAdd, TaskAnswer, TextAnswer};
 use wire::{Actor, FactKind, Instant, Outcome, Producer, ReplyPosition};
 
 #[path = "support/readiness.rs"]
@@ -227,6 +227,85 @@ fn taste_reporting_and_review_plans_survive_restart() {
             && plan.flow.as_deref() == Some("todo,review")
             && plan.acceptance.len() == 2
     }));
+}
+
+#[test]
+fn native_task_add_carries_authored_context_through_client_add() {
+    let fixture = Fixture::new();
+    let resident = Resident::start(&fixture);
+    let added = text_reply::<TaskAnswer>(&fixture.invoke(&[
+        "task",
+        "add",
+        "Carry authored CLI context",
+        "--project",
+        "task.cli",
+        "--description",
+        "The created task must retain this operator handoff.",
+        "--acceptance",
+        "Description reaches the authoritative statement",
+        "--acceptance",
+        "Every acceptance criterion survives the client seam",
+    ]));
+
+    let current = board(&fixture);
+    let statement = &current
+        .tasks
+        .iter()
+        .find(|task| task.statement.body.handle == added.task)
+        .expect("created task is visible on the authoritative board")
+        .statement
+        .body;
+    assert_eq!(
+        statement.description.as_deref(),
+        Some("The created task must retain this operator handoff.")
+    );
+    assert_eq!(
+        statement.acceptance,
+        [
+            "Description reaches the authoritative statement",
+            "Every acceptance criterion survives the client seam",
+        ]
+    );
+
+    let requests = task_add_requests(&fixture);
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].description, statement.description);
+    assert_eq!(requests[0].acceptance, statement.acceptance);
+
+    let listed = text_reply::<TextAnswer>(&fixture.invoke(&[
+        "task",
+        "list",
+        "--project",
+        "project:task.cli",
+        "--status",
+        "pending",
+        "--limit",
+        "1",
+    ]));
+    assert!(
+        listed
+            .text
+            .starts_with("scope explicit-project project:task.cli\n")
+    );
+    assert!(listed.text.contains(added.task.as_str()), "{}", listed.text);
+    assert!(
+        listed.text.contains("Carry authored CLI context"),
+        "{}",
+        listed.text
+    );
+
+    let status = text_reply::<TextAnswer>(&fixture.invoke(&["task", "status"]));
+    assert!(
+        status
+            .text
+            .contains("filter ( project:serve or project:task or project:taste )")
+    );
+    assert!(
+        status
+            .text
+            .contains("public task project depth 2..3 dotted segments")
+    );
+    resident.stop(&fixture);
 }
 
 fn assert_report(fixture: &Fixture, report: &serde_json::Value) {

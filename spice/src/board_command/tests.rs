@@ -254,6 +254,8 @@ mod tests {
         for expected in [
             "claim -",
             "actor operator",
+            "filter ( project:board or project:rim or project:serve or project:task )",
+            "public task project depth 2..3 dotted segments",
             "active 0",
             "ready 1",
             "review 1",
@@ -265,6 +267,147 @@ mod tests {
             assert!(status.lines().any(|line| line == expected), "{status}");
         }
         clean(&root, bus);
+    }
+
+    #[test]
+    fn task_list_preserves_scope_status_project_and_newest_limit_semantics() {
+        let (root, bus, epoch, _) = fixture("task-list", 0);
+        let first = add_project(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "CLI-list0001",
+            "First task route",
+            "task.cli",
+            Some("todo"),
+        );
+        let descendant = add_project(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "CLI-list0002",
+            "Descendant task route",
+            "task.cli.deep",
+            Some("todo"),
+        );
+        let waiting = add_project(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "CLI-list0003",
+            "Deferred serve route",
+            "serve.ops",
+            Some("todo"),
+        );
+        let completed = add_project(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "CLI-list0004",
+            "Completed board route",
+            "board.test",
+            Some("todo"),
+        );
+        let mut answer = board(&bus, epoch, Actor::Operator);
+        answer
+            .tasks
+            .iter_mut()
+            .find(|task| task.statement.body.handle == first)
+            .expect("first row")
+            .statement
+            .body
+            .tags
+            .push("priority:medium".to_owned());
+        answer
+            .tasks
+            .iter_mut()
+            .find(|task| task.statement.body.handle == waiting)
+            .expect("waiting row")
+            .workflow
+            .body
+            .deferral = Some(fixture_instant("fixture deferral"));
+        let completed_row = answer
+            .tasks
+            .iter_mut()
+            .find(|task| task.statement.body.handle == completed)
+            .expect("completed row");
+        completed_row.workflow.body.status = "completed".to_owned();
+        completed_row.workflow.body.completion = Some(fixture_instant("fixture completion"));
+
+        let default = task_list(
+            &answer,
+            &TaskListOptions {
+                all: false,
+                project: None,
+                limit: None,
+                status: None,
+            },
+        );
+        assert!(default.starts_with(concat!(
+            "scope actor-route filter ",
+            "( project:board or project:rim or project:serve or project:task )\n"
+        )));
+        assert!(default.contains("CLI-list0001 [todo] P:M task.cli First task route"));
+        assert!(default.contains("CLI-list0002 [todo] task.cli.deep Descendant task route"));
+        assert!(!default.contains("CLI-list0003"), "{default}");
+        assert!(!default.contains("CLI-list0004"), "{default}");
+
+        let project = task_list(
+            &answer,
+            &TaskListOptions {
+                all: false,
+                project: Some("task.cli".to_owned()),
+                limit: None,
+                status: Some(TaskListStatus::Pending),
+            },
+        );
+        assert!(project.starts_with("scope explicit-project project:task.cli\n"));
+        assert!(project.contains(first.as_str()));
+        assert!(project.contains(descendant.as_str()));
+        assert!(!project.contains(waiting.as_str()));
+
+        let waiting_only = task_list(
+            &answer,
+            &TaskListOptions {
+                all: false,
+                project: None,
+                limit: None,
+                status: Some(TaskListStatus::Waiting),
+            },
+        );
+        assert!(waiting_only.contains(waiting.as_str()));
+        assert!(!waiting_only.contains(first.as_str()));
+
+        let newest_global = task_list(
+            &answer,
+            &TaskListOptions {
+                all: true,
+                project: None,
+                limit: Some(1),
+                status: None,
+            },
+        );
+        assert_eq!(
+            newest_global,
+            "scope global --all\nCLI-list0004 [done] board.test Completed board route"
+        );
+        let deleted = task_list(
+            &answer,
+            &TaskListOptions {
+                all: true,
+                project: None,
+                limit: None,
+                status: Some(TaskListStatus::Deleted),
+            },
+        );
+        assert_eq!(deleted, "scope global --all\nno tasks in global scope");
+        clean(&root, bus);
+    }
+
+    fn fixture_instant(context: &str) -> Instant {
+        "2030-04-12T18:44:09.271Z"
+            .parse()
+            .unwrap_or_else(|error| panic!("{context}: {error}"))
     }
 
     /// A held task is named on the claim line and counted as active.
