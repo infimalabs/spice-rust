@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { assertComposerShards, assertNoDraftPreview } from "./composer-shards.mjs";
+import {
+  assertComposerShards,
+  assertNoDraftPreview,
+  primaryDestination,
+} from "./composer-shards.mjs";
 import { assertCanvas } from "./canvas-readiness.mjs";
 import { assertAgentRenewalRequest, captureReferenceControls } from "./control-reference.mjs";
 import { assertReferenceControlStack } from "./control-stack.mjs";
@@ -732,6 +736,19 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
   const secondarySurface = console.locator(
     `.team-surface[data-lineage-id="${secondary.lineage_id}"]`,
   );
+  const noCardDestination = await primaryDestination(secondarySurface, secondary.lane);
+  assert.equal(
+    noCardDestination.rendered.length,
+    0,
+    "the freshly seated secondary agent exercises the primary lineage default before any card",
+  );
+  const firstSecondaryDirection = "the lineage default precedes this first rendered card";
+  await secondarySurface.getByRole("textbox").fill(firstSecondaryDirection);
+  await secondarySurface.getByRole("button", { name: "Drive", exact: true }).click();
+  await secondarySurface
+    .locator(".mosaic-message-card")
+    .filter({ hasText: firstSecondaryDirection })
+    .waitFor({ timeout: 10_000 });
   assert.equal(await console.locator(".team-surface").count(), 2);
   assert.equal(await console.locator(".team-speech").count(), 2);
   assert.equal(await console.locator(".team-lifetime").count(), 2);
@@ -1269,7 +1286,7 @@ await buildResident();
 const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browser-")));
 const linkedRoot = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-lanes-")));
 await mkdir(artifacts, { recursive: true });
-const worktrees = await configureFixture(fixture, linkedRoot);
+const worktrees = await configureFixture(fixture, linkedRoot, 5, { noCardMember: 5 });
 
 let resident;
 let browser;
