@@ -5,14 +5,16 @@
 //! shared is the reason this arm exists, the target set that serves it, and the
 //! `target` pair it owns; those are the whole of this file.
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::{
-    Analysis, CARGO, CARGO_BUILD_DIRECTORY, CARGO_TARGET_DIRECTORY, COMPILED_HOME_DIRECTORY,
-    CompileInvocation, HOME_DIRECTORY, run_compile_analysis_with_wait, tool_search_path,
+    Analysis, AnalysisWorkspace, CARGO, CARGO_BUILD_DIRECTORY, CARGO_TARGET_DIRECTORY,
+    COMPILED_HOME_DIRECTORY, CompileInvocation, HOME_DIRECTORY, run_compile_analysis_with_wait,
+    tool_search_path,
 };
 use crate::measure::Bounds;
 use crate::toolchain::{ArmOutcome, ArmTiming, FindingDetail, ToolchainDeclaration};
@@ -44,12 +46,33 @@ pub(in crate::toolchain) fn rust_typecheck(
     rust_typecheck_with_wait(declaration, root, bounds, programs, None)
 }
 
+/// Run the native analysis, and let a workspace left on disk outrank it.
+///
+/// The reasoning is the canvas arm's, for the same reason: a root that survives
+/// its analysis refuses every later analysis of the same tree, so an arm that
+/// passed while leaking one would report a tree it can no longer measure.
 fn rust_typecheck_with_wait(
     declaration: ToolchainDeclaration,
     root: &Path,
     bounds: &Bounds,
     programs: &BTreeMap<&str, &str>,
     wait: Option<WaitPolicy>,
+) -> Analysis {
+    let removal = Cell::new(None);
+    let analysis = rust_analysis(declaration, root, bounds, programs, wait, &removal);
+    match removal.take() {
+        Some(report) => Analysis::terminal(ArmOutcome::ParseFailure, report),
+        None => analysis,
+    }
+}
+
+fn rust_analysis(
+    declaration: ToolchainDeclaration,
+    root: &Path,
+    bounds: &Bounds,
+    programs: &BTreeMap<&str, &str>,
+    wait: Option<WaitPolicy>,
+    removal: &Cell<Option<String>>,
 ) -> Analysis {
     if !root.join("Cargo.toml").is_file() {
         return Analysis::not_applicable(declaration);
@@ -60,11 +83,15 @@ fn rust_typecheck_with_wait(
             format!("{} declares no {CARGO} program", declaration.id.as_str()),
         );
     };
-    let workspace = match RustWorkspace::create(root) {
+    let workspace = match AnalysisWorkspace::create(root, "rust", ".spice-rust-analysis", removal) {
         Ok(workspace) => workspace,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
-    let environment = match rust_environment(cargo, &workspace) {
+    let outputs = match RustOutputs::create(&workspace, root) {
+        Ok(outputs) => outputs,
+        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+    };
+    let environment = match rust_environment(cargo, &outputs) {
         Ok(environment) => environment,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
@@ -129,67 +156,49 @@ fn milliseconds(duration: Duration) -> u64 {
 ///
 /// Cargo takes an exclusive lock on a build directory. Sharing the lane's
 /// `target` would make this arm block on, and be blocked by, any `cargo` the
-/// occupant is already running, so the arm gets its own pair exactly as the
-/// canvas arm does.
-struct RustWorkspace {
-    root: PathBuf,
+/// occupant is already running, so the arm gets its own pair.
+///
+/// Unlike the canvas arm's pair, this one lives inside the owned root and is
+/// therefore discarded with it. The two arms differ because their costs differ:
+/// the canvas `trunk build` measured in `input.rs` is the workload warmth was
+/// bought for, while this `cargo check` runs over the selected tree the battery
+/// was handed and has no artifacts worth keeping past the run that made them.
+struct RustOutputs {
     cargo_target: PathBuf,
     cargo_build: PathBuf,
 }
 
-impl RustWorkspace {
-    fn create(selected: &Path) -> Result<Self, String> {
-        let Some(name) = selected.file_name() else {
-            return Err(format!(
-                "rust selected tree {selected:?} has no name for an analysis workspace"
-            ));
-        };
-        let mut workspace_name = name.to_os_string();
-        workspace_name.push(".spice-rust-analysis");
-        let root = selected.with_file_name(workspace_name);
-        fs::create_dir(&root).map_err(|error| {
-            format!(
-                "rust analysis workspace {} could not be created: {error}",
-                root.display()
-            )
-        })?;
-        let cargo_target = root.join("cargo-target");
-        let cargo_build = root.join("cargo-build");
+impl RustOutputs {
+    fn create(workspace: &AnalysisWorkspace<'_>, selected: &Path) -> Result<Self, String> {
+        let cargo_target = workspace.path().join("cargo-target");
+        let cargo_build = workspace.path().join("cargo-build");
         if let Err(error) =
             fs::create_dir(&cargo_target).and_then(|()| fs::create_dir(&cargo_build))
         {
-            let _ = fs::remove_dir_all(&root);
             return Err(format!(
                 "rust analysis output directories for {} could not be created: {error}",
                 selected.display()
             ));
         }
         Ok(Self {
-            root,
             cargo_target,
             cargo_build,
         })
     }
 }
 
-impl Drop for RustWorkspace {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
-
-fn rust_environment(cargo: &str, workspace: &RustWorkspace) -> Result<Environment, String> {
+fn rust_environment(cargo: &str, outputs: &RustOutputs) -> Result<Environment, String> {
     let path = tool_search_path("rust-typecheck", &[cargo, "/usr/bin/cc", "/bin/sh"])?;
     Environment::new([
         ("PATH", path),
         (HOME_DIRECTORY, COMPILED_HOME_DIRECTORY.into()),
         (
             CARGO_TARGET_DIRECTORY,
-            workspace.cargo_target.as_os_str().to_owned(),
+            outputs.cargo_target.as_os_str().to_owned(),
         ),
         (
             CARGO_BUILD_DIRECTORY,
-            workspace.cargo_build.as_os_str().to_owned(),
+            outputs.cargo_build.as_os_str().to_owned(),
         ),
     ])
     .map_err(|error| format!("native typecheck tool environment was refused: {error}"))
@@ -284,24 +293,51 @@ mod tests {
     const PLANTED_COLUMN: u32 = 17;
 
     /// A workspace the real compiler is run over.
+    ///
+    /// The selected tree is nested inside `base` because the workspace the arm
+    /// creates is a *sibling* of it. A tree placed straight in the temporary
+    /// directory puts that sibling there too, out of this fixture's reach: it
+    /// could not be removed with the fixture, and no test could make its removal
+    /// fail without making the temporary directory itself unwritable.
     struct RustFixture {
+        base: PathBuf,
         root: PathBuf,
     }
 
     impl RustFixture {
         fn new(label: &str) -> Self {
             let sequence = NEXT_RUST_FIXTURE.fetch_add(1, Ordering::Relaxed);
-            let root = std::env::temp_dir().join(format!(
+            let base = std::env::temp_dir().join(format!(
                 "gate-rust-{label}-{}-{sequence}",
                 std::process::id()
             ));
-            if root.exists() {
-                fs::remove_dir_all(&root).expect("remove stale native fixture");
+            if base.exists() {
+                fs::remove_dir_all(&base).expect("remove stale native fixture");
             }
+            let root = base.join("tree");
             fs::create_dir_all(root.join("src")).expect("create native fixture tree");
             fs::write(root.join("Cargo.toml"), FIXTURE_MANIFEST).expect("write fixture manifest");
             fs::write(root.join("Cargo.lock"), FIXTURE_LOCK).expect("write fixture lock");
-            Self { root }
+            Self { base, root }
+        }
+
+        /// The sibling directory the arm creates for the tree it is handed.
+        fn workspace_root(&self) -> PathBuf {
+            let mut name = self
+                .root
+                .file_name()
+                .expect("selected tree is named")
+                .to_os_string();
+            name.push(".spice-rust-analysis");
+            self.root.with_file_name(name)
+        }
+
+        fn script(&self, name: &str, body: &str) -> PathBuf {
+            let path = self.root.join(name);
+            fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write native tool stub");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+                .expect("make native tool stub executable");
+            path
         }
 
         fn source(&self, contents: &str) {
@@ -332,17 +368,13 @@ mod tests {
         }
 
         fn sleeping_cargo(&self, label: &str) -> PathBuf {
-            let path = self.root.join(label);
-            fs::write(&path, "#!/bin/sh\n/bin/sleep 5\n").expect("write sleeping Cargo");
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
-                .expect("make sleeping Cargo executable");
-            path
+            self.script(label, "/bin/sleep 5")
         }
     }
 
     impl Drop for RustFixture {
         fn drop(&mut self) {
-            fs::remove_dir_all(&self.root).expect("remove native fixture");
+            fs::remove_dir_all(&self.base).expect("remove native fixture");
         }
     }
 
@@ -428,6 +460,91 @@ mod tests {
             .expect("the successful compiler run reports wall time");
         assert!(cleared_timing.elapsed_ms <= cleared_timing.observation_bound_ms);
         assert_eq!(cleared.findings, Vec::<ArmFinding>::new());
+    }
+
+    /// A workspace an earlier analysis left behind refuses by name, untouched.
+    ///
+    /// The stub would answer 99 if it ran, so an outcome of `ParseFailure`
+    /// rather than `NonzeroAnalysis` is what proves the refusal came first. The
+    /// planted contents are asserted to survive because an existing workspace is
+    /// equally the mark of an analysis running right now: reclaiming it would
+    /// delete the directory a live run is writing into.
+    #[test]
+    fn a_rust_workspace_left_behind_refuses_by_name_and_is_not_reclaimed() {
+        let fixture = RustFixture::new("stale-workspace");
+        fixture.source(REMOVED_PLANT);
+        let stale = fixture.workspace_root();
+        fs::create_dir(&stale).expect("plant a workspace an earlier analysis left behind");
+        fs::write(stale.join("evidence"), "a live analysis owns this")
+            .expect("write planted workspace contents");
+        let cargo = fixture.script("cargo-stale", "exit 99");
+
+        let analysis = fixture.analyze_with(
+            cargo.to_str().expect("stub path is UTF-8"),
+            &rust_bounds(),
+            None,
+        );
+
+        assert_eq!(
+            analysis.outcome,
+            ArmOutcome::ParseFailure,
+            "{}",
+            analysis.reason
+        );
+        assert!(
+            analysis.reason.contains(&stale.display().to_string())
+                && analysis.reason.contains("is already held")
+                && analysis.reason.contains("remove that directory"),
+            "the refusal names the path and what to do about it: {}",
+            analysis.reason,
+        );
+        assert!(
+            stale.join("evidence").is_file(),
+            "a workspace this analysis did not create is left where it was",
+        );
+    }
+
+    /// A workspace that cannot be removed is reported, not dropped on the floor.
+    ///
+    /// The stub makes the directory holding the workspace read-only while the
+    /// analysis is between creating that workspace and removing it, so the
+    /// removal fails for the one reason a real one would: the entry cannot be
+    /// unlinked from its parent.
+    #[test]
+    fn a_rust_workspace_that_cannot_be_removed_is_reported_not_discarded() {
+        let fixture = RustFixture::new("held-workspace");
+        fixture.source(REMOVED_PLANT);
+        let cargo = fixture.script(
+            "cargo-held",
+            &format!("/bin/chmod 555 '{}'\nexit 0", fixture.base.display()),
+        );
+
+        let analysis = fixture.analyze_with(
+            cargo.to_str().expect("stub path is UTF-8"),
+            &rust_bounds(),
+            None,
+        );
+
+        fs::set_permissions(&fixture.base, fs::Permissions::from_mode(0o755))
+            .expect("restore the fixture directory before anything can panic");
+
+        assert_eq!(
+            analysis.outcome,
+            ArmOutcome::ParseFailure,
+            "{}",
+            analysis.reason
+        );
+        let workspace = fixture.workspace_root();
+        assert!(
+            analysis.reason.contains(&workspace.display().to_string())
+                && analysis.reason.contains("could not be removed"),
+            "the report names the workspace and what happened to it: {}",
+            analysis.reason,
+        );
+        assert!(
+            workspace.is_dir(),
+            "the workspace really did survive the run"
+        );
     }
 
     #[test]
