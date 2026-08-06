@@ -254,6 +254,18 @@ fn prove_pre_restart_isolation(
         &directives.codex_pending.key,
         &directives.claude_pending.key,
     );
+    assert_messages_isolated(
+        fixture,
+        lanes.claude,
+        "before compact",
+        "Codex continuity without a fabricated compaction",
+    );
+    assert_messages_isolated(
+        fixture,
+        lanes.codex,
+        "Codex continuity without a fabricated compaction",
+        "before compact",
+    );
 }
 
 fn restart_resident(
@@ -679,6 +691,7 @@ fn emit_record(
 ) {
     let tape = tape_path(fixture, lane, vendor);
     let expected = format!("{record}\n").into_bytes();
+    let before = prose_fact_count(fixture, lane);
     wait_for_event(
         &tape,
         || {
@@ -691,6 +704,26 @@ fn emit_record(
                 .then_some(())
         },
     );
+    wait_for_event(
+        &fixture.runtime.join("data"),
+        || {},
+        || (prose_fact_count(fixture, lane) > before).then_some(()),
+    );
+}
+
+fn prose_fact_count(fixture: &Fixture, lane: wire::CanonicalUuid) -> usize {
+    journal::JournalReader::open(fixture.journal())
+        .ok()
+        .and_then(|journal| journal.fact_snapshot().ok())
+        .map_or(0, |snapshot| {
+            snapshot
+                .facts()
+                .iter()
+                .filter(|fact| fact.fact.kind() == FactKind::LaneProse)
+                .filter_map(fact_body::<wire::body::LaneProse>)
+                .filter(|body| body.lane == lane)
+                .count()
+        })
 }
 
 fn emit_compaction(
@@ -806,6 +839,35 @@ fn assert_pending_isolated(
         .collect::<Vec<_>>();
     assert!(keys.contains(&expected));
     assert!(!keys.contains(&foreign));
+}
+
+fn assert_messages_isolated(
+    fixture: &Fixture,
+    lane: wire::CanonicalUuid,
+    expected: &str,
+    foreign: &str,
+) {
+    let inbox: wire::intent::InboxAnswer = reply_body(&invoke_operator(
+        fixture,
+        &["inbox", &lane.to_string()],
+        true,
+    ));
+    let messages = &inbox.lanes[0].messages;
+    assert!(messages.iter().any(|message| message.text == expected));
+    assert!(messages.iter().all(|message| message.text != foreign));
+    assert!(messages.iter().all(|message| message.producer == lane));
+    let residency = durable_head(fixture);
+    let expected_worktree = &row(&residency, lane).worktree;
+    assert!(
+        messages
+            .iter()
+            .all(|message| &message.worktree == expected_worktree),
+        "every message retains its capture-time producer worktree",
+    );
+    assert!(
+        messages.windows(2).all(|pair| pair[0].seq < pair[1].seq),
+        "agent prose stays in durable journal order",
+    );
 }
 
 fn latest_pid(path: &Path) -> u32 {

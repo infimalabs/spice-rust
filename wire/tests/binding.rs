@@ -141,7 +141,7 @@ const BODIES: &[(CommandKind, &str)] = &[
         CommandKind::LaneSeat,
         r#"{
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
-  "team": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "worktree": "worktrees/h",
   "life": "drive",
   "vendor": "claude"
@@ -268,6 +268,14 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
       "key": "1kJJP87B",
       "text": "drain the queue",
       "expires": "2026-08-01T07:07:19.000Z"
+    }],
+    "messages": [{
+      "seq": 7,
+      "at": "2026-08-01T07:07:18.000Z",
+      "producer": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+      "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c5",
+      "worktree": "/worktrees/h",
+      "text": "queue drained"
     }]
   }]
 }"#,

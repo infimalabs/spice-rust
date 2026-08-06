@@ -37,6 +37,22 @@ const axisPanes = new Map([
   ]],
 ]);
 
+async function buildResident() {
+  try {
+    await execute("cargo", ["build", "-p", "spice", "--bin", "spice"], {
+      cwd: root,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+  } catch (error) {
+    const stdout = error?.stdout ?? "<none>";
+    const stderr = error?.stderr ?? "<none>";
+    throw new Error(
+      `canvas spec could not build its resident: stdout=${stdout} stderr=${stderr}`,
+      { cause: error },
+    );
+  }
+}
+
 function waitForDiscovery(child, canvas, timeout = 30_000) {
   return new Promise((resolveDiscovery, rejectDiscovery) => {
     let settled = false;
@@ -182,7 +198,9 @@ async function configureFixture(fixture) {
   await writeFile(vendor, [
     "#!/bin/sh",
     "trap 'exit 0' TERM INT",
+    "name=${PWD##*/}",
     `printf '%s\\n' '${sessionRecord}'`,
+    concatAgentRecord(),
     "while :; do sleep 1; done",
     "",
   ].join("\n"));
@@ -211,6 +229,15 @@ async function configureFixture(fixture) {
     "rows = 2",
     "",
   ].join("\n"));
+}
+
+function concatAgentRecord() {
+  const prefix = "{\"type\":\"assistant\",\"message\":{\"type\":\"message\","
+    + "\"role\":\"assistant\",\"content\":[{\"type\":\"text\","
+    + "\"text\":\"Canvas message from ";
+  const suffix = "\"}],\"usage\":{\"input_tokens\":1,\"cache_read_input_tokens\":0,"
+    + "\"cache_creation_input_tokens\":0,\"output_tokens\":1}}}";
+  return `printf '%s%s%s\\n' '${prefix}' "$name" '${suffix}'`;
 }
 
 async function journalExtent(fixture) {
@@ -354,11 +381,11 @@ async function assertCanvas(page, scheme) {
 /// The console's one compose box, addressed so a feed full of cards cannot
 /// shadow it. Every card action is labelled "... this message", so the box has
 /// to be picked by role and by an exact name rather than by a label substring.
-function composeField(console) {
-  return console.getByRole("textbox", { name: "Message", exact: true });
+function composeField(lane) {
+  return lane.locator(".mosaic-composer").getByRole("textbox");
 }
 
-async function assertAgentConversation(page, fixture) {
+async function assertAgentConversation(page, fixture, memberWorktree) {
   const console = page.locator('[data-pane="agent-console"]');
   await page.getByRole("button", { name: "Mosaic" }).click();
   await console.getByRole("heading", { name: "Agents", exact: true }).waitFor();
@@ -381,9 +408,9 @@ async function assertAgentConversation(page, fixture) {
   await console.getByRole("button", { name: "Seat agent" }).click();
   await refusal.waitFor({ state: "detached", timeout: 10_000 });
 
-  const tab = console.locator(".agent-tab");
+  const tabs = console.locator(".agent-tab");
   try {
-    await tab.waitFor({ timeout: 15_000 });
+    await tabs.first().waitFor({ timeout: 15_000 });
   } catch (error) {
     await page.getByRole("button", { name: "Chronology" }).click();
     const rendered = await page.locator("body").innerText();
@@ -397,12 +424,49 @@ async function assertAgentConversation(page, fixture) {
   assert.ok(seated, "the Canvas seat control creates a lane in the requested worktree");
   assert.equal(seated.vendor, "claude");
   assert.equal(seated.life, "steer");
+  assert.equal(
+    seated.lineage_id,
+    seated.lane,
+    "a new seat starts a one-member lineage",
+  );
+  const added = await reply(fixture, [
+    "lane", "add", memberWorktree, "--lineage", seated.lineage_id,
+  ]);
+  const memberLane = added.body.lane;
+  const plural = await reply(fixture, ["lane"]);
+  const member = plural.body.lanes.find((lane) => lane.lane === memberLane);
+  assert.ok(member, "the second linked worktree is seated");
+  assert.equal(
+    member.lineage_id,
+    seated.lineage_id,
+    "the second seat joins the first Canvas lane",
+  );
+  try {
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-pane="agent-console"] .agent-tab').length === 2,
+      null,
+      { timeout: 15_000 },
+    );
+  } catch (error) {
+    throw new Error(
+      `Canvas did not render the plural lineage: ${JSON.stringify({
+        connection: await page.locator(".status-copy").innerText().catch(() => "unavailable"),
+        tabs: await tabs.count(),
+        chronology: await page.locator("body").innerText().catch(() => "unavailable"),
+        lanes: plural.body.lanes,
+      })}`,
+      { cause: error },
+    );
+  }
+  const tab = console.locator(`.agent-tab[data-lane="${seated.lane}"]`);
   assert.equal(await tab.getAttribute("data-lane"), seated.lane);
 
+  const lineage = page.locator(`[data-lane-id="${seated.lineage_id}"]`);
+  await lineage.waitFor({ timeout: 10_000 });
   const message = "browser direction survives streaming";
-  await composeField(console).fill(message);
-  await console.getByRole("button", { name: "Send direction" }).click();
-  const outgoing = console.locator(".message.outgoing").filter({ hasText: message });
+  await composeField(lineage).fill(message);
+  await lineage.getByRole("button", { name: "Send", exact: true }).click();
+  const outgoing = lineage.locator(".operator-direction").filter({ hasText: message });
   await outgoing.waitFor({ timeout: 10_000 });
   // A card is only drawn for a direction still in the pending region, and it
   // marks that with the time left before the direction lapses; once a lane takes
@@ -430,9 +494,76 @@ async function assertAgentConversation(page, fixture) {
   // check floods the feed: its whole claim is that the card carries the pending
   // count and the latest text, and both are only checkable against a known one.
   await assertLaneStrip(page, fixture, seated, message);
-  await assertMosaicPacking(page, console);
+  await assertLineageLane(page, lineage, fixture, memberWorktree, [seated.lane, memberLane]);
+  await assertMosaicPacking(page, lineage);
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
-  return seated.lane;
+  return {
+    lane: seated.lane,
+    lineage: seated.lineage_id,
+    memberLane,
+  };
+}
+
+async function assertLineageLane(page, lineage, fixture, memberWorktree, memberLanes) {
+  assert.equal(
+    await page.locator(".mosaic-lane").count(),
+    1,
+    "two member seats share exactly one Canvas lane",
+  );
+  assert.equal(
+    await lineage.locator(".mosaic-feed").count(),
+    1,
+    "the lineage owns exactly one packed message plane",
+  );
+
+  const leaves = [fixture, memberWorktree]
+    .map((worktree) => worktree.split("/").filter(Boolean).pop());
+  const lights = lineage.locator(".lane-light");
+  await lights.nth(1).waitFor({ timeout: 15_000 });
+  assert.deepEqual(
+    (await lights.evaluateAll((nodes) => nodes.map(
+      (node) => node.dataset.laneLightTargetId,
+    ))).sort(),
+    [...leaves].sort(),
+    "one status pip names each assigned worktree",
+  );
+  assert.ok(
+    (await lights.evaluateAll((nodes) => nodes.map((node) => node.dataset.agentStatus)))
+      .every((status) => ["queued", "running", "bound", "unbound"].includes(status)),
+    "each member pip exposes one stable status",
+  );
+
+  const authored = lineage.locator(".mosaic-card.agent-authored");
+  await authored.nth(1).waitFor({ timeout: 15_000 });
+  const producers = await authored.evaluateAll((nodes) => nodes.map(
+    (node) => node.dataset.producerTargetId,
+  ));
+  assert.deepEqual(
+    [...new Set(producers)].sort(),
+    [...leaves].sort(),
+    "one packed plane retains both producing worktrees",
+  );
+  assert.deepEqual(
+    [...new Set(await authored.locator(".message-author").allTextContents())].sort(),
+    [...leaves].sort(),
+    "card footers name both producing agents",
+  );
+  const expectedAccents = new Map(leaves.map((leaf, index) => [
+    leaf,
+    Number(BigInt(`0x${memberLanes[index].replaceAll("-", "")}`) % 6n).toString(),
+  ]));
+  for (const card of await authored.all()) {
+    const producer = await card.getAttribute("data-producer-target-id");
+    assert.equal(
+      await card.getAttribute("data-accent-slot"),
+      expectedAccents.get(producer),
+      "each authored card keeps its producer's accent slot",
+    );
+  }
+  const accessibility = await lineage.ariaSnapshot();
+  for (const leaf of leaves) {
+    assert.match(accessibility, new RegExp(leaf), `the accessibility tree names ${leaf}`);
+  }
 }
 
 /// The strip above the console: one card per seated lane, carrying its state.
@@ -444,9 +575,12 @@ async function assertAgentConversation(page, fixture) {
 /// every card up to it; the whole path is on the label a screen reader reads,
 /// and on the conversation heading the card selects.
 async function assertLaneStrip(page, fixture, seated, message) {
-  const tile = page.locator(".agent-tabs.watchband .watchband-card");
+  const tiles = page.locator(".agent-tabs.watchband .watchband-card");
+  const tile = page.locator(
+    `.agent-tabs.watchband .watchband-card[data-lane="${seated.lane}"]`,
+  );
   await tile.waitFor({ timeout: 10_000 });
-  assert.equal(await tile.count(), 1, "the strip carries one card per seated lane");
+  assert.equal(await tiles.count(), 2, "the strip carries one card per lineage member");
 
   // The card has room for one field of the path, so it carries the segment that
   // tells this lane from its neighbours, cut to that field. The cut is asserted
@@ -486,41 +620,46 @@ async function assertLaneStrip(page, fixture, seated, message) {
   // is occupied -- a vacant one disables it.
   await tile.click();
   assert.equal(await tile.getAttribute("aria-selected"), "true");
-  assert.equal(
-    await page.locator(".conversation-heading p").innerText(),
-    `occupied / steer / ${fixture}`,
-  );
-  const compose = page.locator("#agent-message");
-  assert.equal(await compose.isDisabled(), false, "an occupied lane accepts direction");
+  const compose = page.locator(`[data-lane-id="${seated.lineage_id}"] .mosaic-composer textarea`);
+  assert.equal(await compose.isDisabled(), false, "the occupied lineage host accepts direction");
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-strip.png"), fullPage: true });
 }
 
-async function assertMosaicPacking(page, console) {
-  const feed = console.locator(".mosaic-feed");
+async function assertMosaicPacking(page, lane) {
+  const feed = lane.locator(".mosaic-feed");
   const laneCount = Number(await feed.getAttribute("data-lanes"));
   assert.ok(laneCount >= 1 && laneCount <= 6, "geometry exposes a legal base-lane count");
-  const targetCards = laneCount * 2 + 1;
-  for (let index = 1; index < targetCards; index += 1) {
-    await composeField(console).fill(`mosaic placement ${index}`);
-    await console.getByRole("button", { name: "Send direction" }).click();
+  const cards = lane.locator(".mosaic-card");
+  const existingCards = await cards.count();
+  const addedCards = laneCount * 2;
+  for (let index = 0; index < addedCards; index += 1) {
+    await composeField(lane).fill(`mosaic placement ${index}`);
+    await lane.getByRole("button", { name: "Send", exact: true }).click();
   }
-  const cards = console.locator(".mosaic-card");
+  const targetCards = existingCards + addedCards;
   await cards.nth(targetCards - 1).waitFor({ timeout: 15_000 });
   assert.equal(await cards.count(), targetCards);
   assert.equal(await cards.first().getAttribute("data-state"), "frozen");
-  const keys = await cards.locator(".message-key").allTextContents();
+  const directions = lane.locator(".mosaic-card.operator-direction");
+  assert.ok(
+    (await directions.evaluateAll((elements) => elements.map(
+      (element) => element.dataset.producerTargetId,
+    ))).every((producer) => producer === undefined),
+    "operator directions never masquerade as agent-produced cards",
+  );
+  const keys = await directions.locator(".message-key").allTextContents();
   assert.deepEqual(keys, [...keys].sort(), "Canvas journal order agrees with steering key order");
   assert.deepEqual(
-    await cards.evaluateAll((elements) => elements.map((element) => element.dataset.key)),
+    await directions.evaluateAll((elements) => elements.map((element) => element.dataset.key)),
     keys,
     "each packed card binds its visible key to its machine-readable identity",
   );
-  const ages = cards.locator(".message-age");
+  const ages = directions.locator(".message-age");
   assert.ok(
     (await ages.allTextContents()).every((age) => age.endsWith(" left")),
     "spatially packed keys carry the age that orders them",
   );
-  assert.equal(await ages.count(), targetCards);
+  assert.equal(await ages.count(), addedCards + 1);
 
   const placements = await cards.evaluateAll((elements) => elements.map((element) => {
     const box = element.getBoundingClientRect();
@@ -554,8 +693,8 @@ async function assertMosaicPacking(page, console) {
 
   await feed.evaluate((element) => element.scrollTo(0, element.scrollHeight));
   const before = await feed.evaluate((element) => element.scrollTop);
-  await composeField(console).fill("mosaic scroll compensation");
-  await console.getByRole("button", { name: "Send direction" }).click();
+  await composeField(lane).fill("mosaic scroll compensation");
+  await lane.getByRole("button", { name: "Send", exact: true }).click();
   await cards.nth(targetCards).waitFor({ timeout: 10_000 });
   const after = await feed.evaluate((element) => element.scrollTop);
   assert.ok(after >= before, "incremental placement preserves a scrolled viewport");
@@ -578,7 +717,7 @@ async function assertAuthoritySurface(page, seeded) {
   await page.getByRole("button", { name: "Topology" }).click();
   const topology = page.locator("main.content");
   await topology.getByText("Resident topology", { exact: true }).waitFor();
-  await topology.getByText("claude", { exact: true }).waitFor();
+  await topology.getByText("claude", { exact: true }).first().waitFor();
   assert.match(await topology.innerText(), new RegExp(seeded.lane.slice(0, 8)));
 
   await page.getByRole("button", { name: "Chronology" }).click();
@@ -600,12 +739,12 @@ async function assertMosaicComposer(page, fixture, seeded) {
   // landed.
   await page.getByRole("button", { name: /^Mosaic/ }).click();
   await page.getByRole("heading", { name: "Mosaic", exact: true }).waitFor();
-  const lane = page.locator(`[data-lane-id="${seeded.lane}"]`);
+  const lane = page.locator(`[data-lane-id="${seeded.lineage}"]`);
   await lane.getByText("browser direction survives streaming", { exact: true }).waitFor();
 
-  await lane.locator(".mosaic-message-card")
+  await lane.locator(".mosaic-card")
     .filter({ hasText: "browser direction survives streaming" })
-    .getByRole("button", { name: "Quote reply" })
+    .getByRole("button", { name: "Quote this message" })
     .click();
   const composer = lane.locator(".mosaic-composer");
   await composer.getByLabel("Markdown preview").waitFor();
@@ -629,7 +768,7 @@ async function assertMosaicComposer(page, fixture, seeded) {
     fullPage: true,
   });
   await composer.getByRole("button", { name: "Send" }).click();
-  await lane.locator(".mosaic-message-card").filter({ hasText: "canvas quote reply" }).waitFor({
+  await lane.locator(".mosaic-card").filter({ hasText: "canvas quote reply" }).waitFor({
     timeout: 10_000,
   });
   const quoted = await reply(fixture, ["inbox", seeded.lane]);
@@ -657,7 +796,7 @@ async function assertMosaicComposer(page, fixture, seeded) {
       dataTransfer: transfer,
     }));
   });
-  await lane.locator(".mosaic-message-card").filter({ hasText: "dragged card direction" }).waitFor({
+  await lane.locator(".mosaic-card").filter({ hasText: "dragged card direction" }).waitFor({
     timeout: 10_000,
   });
   const dropped = await reply(fixture, ["inbox", seeded.lane]);
@@ -980,10 +1119,21 @@ async function assertSpeechVariants(browser, endpoint) {
   await variants.close();
 }
 
+await buildResident();
 const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browser-")));
-await mkdir(join(fixture, ".git"));
+const memberWorktree = `${fixture}-member`;
 await mkdir(artifacts, { recursive: true });
 await configureFixture(fixture);
+await execute("git", ["init", "-q"], { cwd: fixture });
+await execute("git", ["add", "spice.toml"], { cwd: fixture });
+await execute("git", [
+  "-c", "user.name=Canvas Fixture",
+  "-c", "user.email=canvas@spice.invalid",
+  "commit", "-q", "-m", "canvas fixture",
+], { cwd: fixture });
+await execute("git", ["worktree", "add", "-q", "-b", "browser-member", memberWorktree], {
+  cwd: fixture,
+});
 process.stderr.write("canvas spec: serving dist/stage-app, the app this worktree built\n");
 
 let resident;
@@ -1004,7 +1154,7 @@ try {
   lightPage.on("console", (message) => process.stderr.write(`browser console: ${message.text()}\n`));
   await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
   await assertCanvas(lightPage, "light");
-  seeded.lane = await assertAgentConversation(lightPage, fixture);
+  Object.assign(seeded, await assertAgentConversation(lightPage, fixture, memberWorktree));
   seeded.extent = await journalExtent(fixture);
   await assertAuthoritySurface(lightPage, seeded);
   await assertMosaicComposer(lightPage, fixture, seeded);
@@ -1060,6 +1210,14 @@ try {
   await dark.close();
 
   await reply(fixture, ["lane", "drain", seeded.lane]);
+  await reply(fixture, ["lane", "drain", seeded.memberLane]);
+  const drainedLineage = await reply(fixture, ["lane"]);
+  assert.ok(
+    drainedLineage.body.lanes
+      .filter((lane) => lane.lineage_id === seeded.lineage)
+      .every((lane) => lane.occupant === undefined),
+    "every member is vacant before resident shutdown",
+  );
   const firstEpoch = resident.discovery.epoch;
   const firstCapability = resident.discovery.capability;
   lightMonitor.expectNetworkInterruption(true);
@@ -1103,4 +1261,5 @@ try {
     await exited;
   }
   await rm(fixture, { recursive: true, force: true });
+  await rm(memberWorktree, { recursive: true, force: true });
 }

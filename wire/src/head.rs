@@ -270,10 +270,10 @@ pub struct LaneSession {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneResidency {
-    /// Address of this independently steerable team member.
+    /// Address of this independently steerable lineage member.
     pub lane: CanonicalUuid,
-    /// Team whose Canvas lane contains this member.
-    pub team: CanonicalUuid,
+    /// Canvas lineage whose lane contains this member.
+    pub lineage_id: CanonicalUuid,
     /// Canonical worktree permanently bound to the lane.
     pub worktree: String,
     /// Closed lane-life spelling governing re-seating.

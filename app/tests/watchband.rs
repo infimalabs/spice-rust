@@ -74,6 +74,7 @@ fn inbox(id: &str, texts: &[&str]) -> LaneInbox {
         "lane": id,
         "occupant": OCCUPANT,
         "pending": pending,
+        "messages": [],
     }))
     .expect("the fixture spells a lane inbox")
 }
@@ -158,16 +159,16 @@ fn a_standing_joins_the_lane_table_the_inbox_and_the_board() {
 }
 
 #[test]
-fn one_team_emits_one_standing_per_member_without_losing_the_team_identity() {
-    let team = LaneRow {
+fn one_lineage_emits_one_standing_per_member_without_losing_the_lineage_identity() {
+    let lineage = LaneRow {
         lane: uuid(EPOCH),
         members: vec![member(LANE_A, "main-a"), member(LANE_B, "main-b")],
     };
 
-    let rows = standings(&[team], &[], &[], at(0));
+    let rows = standings(&[lineage], &[], &[], at(0));
 
     assert_eq!(rows.len(), 2);
-    assert!(rows.iter().all(|row| row.team == uuid(EPOCH)));
+    assert!(rows.iter().all(|row| row.lineage_id == uuid(EPOCH)));
     assert_eq!(rows[0].lane, uuid(LANE_A));
     assert_eq!(rows[1].lane, uuid(LANE_B));
     assert_eq!(rows[0].label, "main-a");

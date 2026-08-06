@@ -224,12 +224,36 @@ pub(super) fn render_ticker(surface: &SurfaceData) -> Html {
 
 /// One packed card: the lattice decides where, this says what.
 pub(super) fn render_mosaic_card(
-    (directive, card): (&wire::intent::PendingDirective, &crate::mosaic::Card),
+    content: MosaicContent<'_>,
+    card: &crate::mosaic::Card,
     max_row: i32,
     correspondent: &Correspondent,
 ) -> Html {
     let state = card.lifecycle.as_str();
-    let text = directive.text.clone();
+    let text = content.text().to_owned();
+    let key = content.key();
+    let (kind, age, age_title, producer, attachments) = match content {
+        MosaicContent::Agent(message) => (
+            "agent-authored",
+            format!(
+                "{} ago",
+                watchband::elapsed_label(now_millis() - message.at.get().as_millisecond()),
+            ),
+            message.at.to_string(),
+            Some(correspondent.target.clone()),
+            Html::default(),
+        ),
+        MosaicContent::Direction(directive) => (
+            "operator-direction",
+            format!(
+                "{} left",
+                watchband::elapsed_label(directive.expires.get().as_millisecond() - now_millis(),),
+            ),
+            directive.expires.to_string(),
+            None,
+            render_attachments(&directive.attachments),
+        ),
+    };
     // A card is a quotable source as well as a rendered message: the operator
     // drags one onto a lane to carry its text into that lane's composer. The
     // payload is the card's own text, so this needs nothing the card does not
@@ -243,12 +267,14 @@ pub(super) fn render_mosaic_card(
     });
     html! {
         <article
-            class={classes!("message", "outgoing", "mosaic-card", state)}
+            class={classes!("message", "mosaic-card", kind, state)}
             draggable="true"
             {ondragstart}
             data-state={state}
-            data-key={directive.key.clone()}
+            data-key={key.clone()}
+            data-producer-target-id={producer}
             data-accent={correspondent.accent.to_string()}
+            data-accent-slot={correspondent.accent.to_string()}
             data-track={card.track.to_string()}
             data-span={card.span.to_string()}
             data-base={card.base.to_string()}
@@ -256,17 +282,10 @@ pub(super) fn render_mosaic_card(
             data-rows={card.rows.to_string()}
         >
             <p>{text.clone()}</p>
-            {render_attachments(&directive.attachments)}
+            {attachments}
             <footer class="message-meta">
-                <span class="message-key">{directive.key.clone()}</span>
-                <span class="message-age" title={directive.expires.to_string()}>
-                    {format!(
-                        "{} left",
-                        watchband::elapsed_label(
-                            directive.expires.get().as_millisecond() - now_millis(),
-                        ),
-                    )}
-                </span>
+                <span class="message-key">{key}</span>
+                <span class="message-age" title={age_title}>{age}</span>
                 <span class="message-author">{correspondent.name.clone()}</span>
                 {render_card_actions(&text, correspondent)}
             </footer>
@@ -275,13 +294,35 @@ pub(super) fn render_mosaic_card(
     }
 }
 
-/// Who the card is addressed to, and the colour that says so.
+pub(super) enum MosaicContent<'a> {
+    Agent(&'a wire::intent::AgentMessage),
+    Direction(&'a wire::intent::PendingDirective),
+}
+
+impl MosaicContent<'_> {
+    fn text(&self) -> &str {
+        match self {
+            Self::Agent(message) => &message.text,
+            Self::Direction(directive) => &directive.text,
+        }
+    }
+
+    fn key(&self) -> String {
+        match self {
+            Self::Agent(message) => format!("#{}", message.seq),
+            Self::Direction(directive) => directive.key.clone(),
+        }
+    }
+}
+
+/// The card's visible correspondent and stable colour.
 ///
-/// A pending directive carries no author of its own: the operator wrote every
-/// one of them. What distinguishes cards is the lane they are waiting on, so
-/// that is what the accent and the footer name.
+/// For assistant prose this is the immutable producing worktree. A pending
+/// direction carries no agent author, so its correspondent is the member the
+/// operator addressed.
 #[derive(Clone, PartialEq)]
 pub(super) struct Correspondent {
+    pub(super) target: String,
     pub(super) name: String,
     pub(super) accent: usize,
     pub(super) speak: Callback<String>,

@@ -133,6 +133,7 @@ const fn is_lane(kind: wire::FactKind) -> bool {
             | wire::FactKind::LaneStarted
             | wire::FactKind::LaneExited
             | wire::FactKind::LaneCompacted
+            | wire::FactKind::LaneProse
             | wire::FactKind::LaneRenewed
             | wire::FactKind::LaneDrained
             | wire::FactKind::LaneDegraded

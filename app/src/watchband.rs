@@ -32,7 +32,7 @@ pub const SHORT_LEN: usize = 8;
 
 /// Characters a band card allows one field.
 ///
-/// A card is one column of a band that has to fit a full team across the
+/// A card is one column of a band that has to fit a full lineage across the
 /// screen, so the width is the band's property rather than the renderer's.
 pub const FIELD_BUDGET: usize = 22;
 
@@ -41,8 +41,8 @@ pub const FIELD_BUDGET: usize = 22;
 pub struct Standing {
     /// Independently steerable member the row describes.
     pub lane: CanonicalUuid,
-    /// Team whose Canvas lane contains the member.
-    pub team: CanonicalUuid,
+    /// Canvas lineage whose lane contains the member.
+    pub lineage_id: CanonicalUuid,
     /// Lane identity abbreviated to what a card has room for.
     pub name: String,
     /// Worktree the lane runs in.
@@ -85,13 +85,13 @@ pub fn standings(
 ) -> Vec<Standing> {
     lanes
         .iter()
-        .flat_map(|team| team.members.iter().map(move |member| (team, member)))
-        .map(|(team, member)| {
+        .flat_map(|lineage| lineage.members.iter().map(move |member| (lineage, member)))
+        .map(|(lineage, member)| {
             let waiting = inbox.iter().find(|row| row.lane == member.lane);
             let held = held_task(tasks, member.lane);
             Standing {
                 lane: member.lane,
-                team: team.lane,
+                lineage_id: lineage.lane,
                 name: short(member.lane),
                 worktree: member.worktree.clone(),
                 label: leaf(&member.worktree).to_owned(),

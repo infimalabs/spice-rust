@@ -196,8 +196,9 @@ pub(super) fn render_agent_console(surface: &SurfaceData, controls: &AgentContro
 /// Every lane gets its own, which is what the predecessor did: each lane there
 /// owned an engine-packed plane keyed to itself, rather than one plane
 /// following whichever lane was selected. Quoting a card therefore has an
-/// unambiguous destination -- the draft of the lane the card is waiting on --
-/// so this builds the correspondent from the lane rather than from a selection.
+/// unambiguous destination -- the draft of the lane the card is waiting on.
+/// Authored cards retain their capture-time producer worktree; pending
+/// directions use the member they currently address.
 pub(super) fn lane_inbox(
     lane: &crate::runtime::LaneRow,
     runtime: &CanvasRuntime,
@@ -206,7 +207,7 @@ pub(super) fn lane_inbox(
 ) -> Html {
     let mut cards = Vec::new();
     for member in &lane.members {
-        let Some(pending) = runtime
+        let Some(inbox) = runtime
             .inbox()
             .and_then(|inbox| inbox.lanes.iter().find(|row| row.lane == member.lane))
         else {
@@ -214,22 +215,40 @@ pub(super) fn lane_inbox(
         };
         let lane_key = lane.lane.to_string();
         let drafts = drafts.clone();
+        let quote = Callback::from(move |text: String| {
+            drafts.dispatch(composer::ComposerAction::AddQuote {
+                lane: lane_key.clone(),
+                quote: text,
+            });
+        });
+        cards.extend(inbox.messages.iter().cloned().map(|message| {
+            let target = crate::watchband::leaf(&message.worktree).to_owned();
+            let correspondent = Correspondent {
+                target: target.clone(),
+                name: target,
+                accent: crate::watchband::accent(message.producer),
+                speak: controls.speak.clone(),
+                quote: quote.clone(),
+            };
+            InboxCard {
+                content: InboxContent::Agent(message),
+                correspondent,
+            }
+        }));
+        let target = crate::watchband::leaf(&member.worktree).to_owned();
         let correspondent = Correspondent {
-            name: crate::watchband::leaf(&member.worktree).to_owned(),
+            target: target.clone(),
+            name: target,
             accent: crate::watchband::accent(member.lane),
             speak: controls.speak.clone(),
-            quote: Callback::from(move |text: String| {
-                drafts.dispatch(composer::ComposerAction::AddQuote {
-                    lane: lane_key.clone(),
-                    quote: text,
-                });
-            }),
+            quote,
         };
-        cards.extend(pending.pending.iter().cloned().map(|directive| InboxCard {
-            directive,
+        cards.extend(inbox.pending.iter().cloned().map(|directive| InboxCard {
+            content: InboxContent::Direction(directive),
             correspondent: correspondent.clone(),
         }));
     }
+    cards.sort_by_key(InboxCard::order);
     html! { <MosaicInbox {cards} /> }
 }
 
@@ -246,14 +265,14 @@ fn selected_agent(lanes: &[crate::runtime::LaneRow], requested: &str) -> Option<
         .and_then(|requested| {
             lanes
                 .iter()
-                .flat_map(|team| &team.members)
+                .flat_map(|lineage| &lineage.members)
                 .find(|member| member.lane == requested)
                 .map(|member| member.lane)
         })
         .or_else(|| {
             lanes
                 .first()
-                .and_then(|team| team.host())
+                .and_then(|lineage| lineage.host())
                 .map(|member| member.lane)
         })
 }
@@ -265,8 +284,37 @@ struct MosaicInboxProps {
 
 #[derive(Clone, PartialEq)]
 struct InboxCard {
-    directive: wire::intent::PendingDirective,
+    content: InboxContent,
     correspondent: Correspondent,
+}
+
+#[derive(Clone, PartialEq)]
+enum InboxContent {
+    Agent(wire::intent::AgentMessage),
+    Direction(wire::intent::PendingDirective),
+}
+
+impl InboxCard {
+    fn order(&self) -> (u8, u64) {
+        match &self.content {
+            InboxContent::Agent(message) => (0, message.seq.get()),
+            InboxContent::Direction(_) => (1, 0),
+        }
+    }
+
+    fn text(&self) -> &str {
+        match &self.content {
+            InboxContent::Agent(message) => &message.text,
+            InboxContent::Direction(directive) => &directive.text,
+        }
+    }
+
+    fn attachments(&self) -> &[wire::body::DirectiveAttachment] {
+        match &self.content {
+            InboxContent::Agent(_) => &[],
+            InboxContent::Direction(directive) => &directive.attachments,
+        }
+    }
 }
 
 #[function_component(MosaicInbox)]
@@ -277,7 +325,7 @@ fn mosaic_inbox(properties: &MosaicInboxProps) -> Html {
     let candidate_sets = properties
         .cards
         .iter()
-        .map(|card| message_candidates(&card.directive, &geometry))
+        .map(|card| message_candidates(card.text(), card.attachments(), &geometry))
         .collect::<Vec<_>>();
     let cards = crate::mosaic::pack(&candidate_sets, crate::mosaic::TRACK_COUNT);
     let (max_row, _) = crate::mosaic::extent(&cards);
@@ -301,12 +349,19 @@ fn mosaic_inbox(properties: &MosaicInboxProps) -> Html {
             if properties.cards.is_empty() {
                 <div class="conversation-empty">
                     <strong>{"Inbox clear"}</strong>
-                    <p>{"Pending direction and acknowledgement state appear here."}</p>
+                    <p>{"Agent messages and pending direction appear here."}</p>
                 </div>
             } else {
                 {for properties.cards.iter().zip(cards.iter()).map(|(entry, card)| {
+                    let content = match &entry.content {
+                        InboxContent::Agent(message) => chrome::MosaicContent::Agent(message),
+                        InboxContent::Direction(directive) => {
+                            chrome::MosaicContent::Direction(directive)
+                        }
+                    };
                     chrome::render_mosaic_card(
-                        (&entry.directive, card),
+                        content,
+                        card,
                         max_row,
                         &entry.correspondent,
                     )
@@ -317,20 +372,19 @@ fn mosaic_inbox(properties: &MosaicInboxProps) -> Html {
 }
 
 fn message_candidates(
-    directive: &wire::intent::PendingDirective,
+    text: &str,
+    attachments: &[wire::body::DirectiveAttachment],
     geometry: &crate::mosaic::Geometry,
 ) -> Vec<crate::mosaic::Candidate> {
     crate::mosaic::span_candidates(geometry, |span| {
         let width = f64::from(geometry.card_width(0, span).max(160));
         let characters_per_line = (width / 7.2).floor().max(18.0) as usize;
-        let text_lines = directive
-            .text
+        let text_lines = text
             .lines()
             .map(|line| line.chars().count().max(1).div_ceil(characters_per_line))
             .sum::<usize>()
             .max(1);
-        let attachment_height = directive
-            .attachments
+        let attachment_height = attachments
             .iter()
             .map(|attachment| {
                 if attachment.content_type.starts_with("image/") {
@@ -639,11 +693,11 @@ pub(super) fn render_topology(surface: &SurfaceData) -> Html {
                             <th>{"Lane"}</th><th>{"Standing"}</th><th>{"Occupant"}</th>
                             <th>{"Worktree"}</th><th>{"Vendor"}</th>
                         </tr></thead>
-                        <tbody>{for lanes.lanes.iter().flat_map(|team| {
-                            team.members.iter().map(move |member| (team, member))
-                        }).map(|(team, member)| html! {
+                        <tbody>{for lanes.lanes.iter().flat_map(|lineage| {
+                            lineage.members.iter().map(move |member| (lineage, member))
+                        }).map(|(lineage, member)| html! {
                             <tr>
-                                <td class="mono">{short(&team.lane.to_string())}</td>
+                                <td class="mono">{short(&lineage.lane.to_string())}</td>
                                 <td><span class="tag active">{member.disposition.clone()}</span></td>
                                 <td class="mono">{
                                     member

@@ -64,7 +64,7 @@ fn seated_fact(position: u64, capability: Option<&str>) -> serde_json::Value {
         "fact": {
             "kind": "lane::seated",
             "lane": LANE,
-            "team": LANE,
+            "lineage_id": LANE,
             "worktree": "/tmp/lane",
             "life": "continuous",
             "vendor": "codex",
@@ -196,10 +196,10 @@ fn board_response(
 fn lane_response(rows: &[(&str, &str, Option<&str>, bool)]) -> String {
     let lanes = rows
         .iter()
-        .map(|(lane, team, occupant, bound)| {
+        .map(|(lane, lineage_id, occupant, bound)| {
             let mut row = serde_json::json!({
                 "lane": lane,
-                "team": team,
+                "lineage_id": lineage_id,
                 "worktree": format!("/tmp/worktree-{}", &lane[..8]),
                 "life": "steer",
                 "vendor": "claude",
@@ -579,7 +579,7 @@ fn staleness_inventory() -> Vec<(serde_json::Value, [bool; 4])> {
             serde_json::json!({
                 "kind": "lane::seated",
                 "lane": LANE,
-                "team": LANE,
+                "lineage_id": LANE,
                 "worktree": "/tmp/lane",
                 "life": "continuous",
                 "vendor": "codex",
@@ -774,9 +774,9 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
         .clone();
     let [never_seated, occupied, seated_before] = <[_; 3]>::try_from(lanes)
         .unwrap_or_else(|rows| panic!("three rows survive admission, got {}", rows.len()));
-    let never_seated = never_seated.host().expect("team has one member");
-    let occupied = occupied.host().expect("team has one member");
-    let seated_before = seated_before.host().expect("team has one member");
+    let never_seated = never_seated.host().expect("lineage has one member");
+    let occupied = occupied.host().expect("lineage has one member");
+    let seated_before = seated_before.host().expect("lineage has one member");
     assert_eq!(never_seated.status(0), LaneStatus::Unbound);
     assert_eq!(
         seated_before.status(0),
@@ -820,7 +820,7 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
 }
 
 #[test]
-fn one_team_groups_multiple_steerable_worktrees_without_losing_member_order() {
+fn one_lineage_groups_multiple_steerable_worktrees_without_losing_member_order() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
@@ -831,7 +831,7 @@ fn one_team_groups_multiple_steerable_worktrees_without_losing_member_order() {
     ]);
     let admitted: app::Admitted<Response<wire::intent::LaneAnswer>> = session
         .admit_frame(bytes.as_bytes())
-        .expect("plural team answer is admitted");
+        .expect("plural lineage answer is admitted");
 
     runtime.apply_lanes(&admitted);
 

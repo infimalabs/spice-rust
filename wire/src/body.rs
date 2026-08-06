@@ -537,8 +537,8 @@ pub struct ConsentFloored {
 pub struct LaneSeated {
     /// Created independently steerable member seat.
     pub lane: CanonicalUuid,
-    /// Team whose Canvas lane contains the member.
-    pub team: CanonicalUuid,
+    /// Canvas lineage whose lane contains the member.
+    pub lineage_id: CanonicalUuid,
     /// Capability minted with the lane.
     pub capability: CanonicalUuid,
     /// Worktree the lane is bound to.
@@ -590,7 +590,7 @@ pub struct LaneStarted {
 /// A vacant lane seat moved to a fresh linked worktree before exact-session seating.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneImported {
-    /// Lane whose team seat is retained.
+    /// Lane whose lineage seat is retained.
     pub lane: CanonicalUuid,
     /// Latest occupant in the retained lineage.
     pub ancestor: CanonicalUuid,
@@ -631,6 +631,34 @@ pub struct LaneCompacted {
     /// Boundary-record offset within the member.
     pub offset: u64,
     /// Number of bytes in the boundary record.
+    pub length: u64,
+}
+
+/// The resident preserved one assistant-authored prose event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaneProse {
+    /// Independently steerable member whose occupant authored the prose.
+    pub lane: CanonicalUuid,
+    /// Exact occupant that authored the prose.
+    pub occupant: CanonicalUuid,
+    /// Canonical worktree occupied when the prose was authored.
+    pub worktree: String,
+    /// Selected child stream carrying the prose record.
+    pub stream: String,
+    /// Assistant-authored text decoded from the preserved record.
+    pub text: String,
+    /// Vendor phase when its current dialect reports one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub phase: Option<String>,
+    /// Durable tape member holding the prose record.
+    pub member: u64,
+    /// Prose-record offset within the member.
+    pub offset: u64,
+    /// Number of bytes in the prose record.
     pub length: u64,
 }
 

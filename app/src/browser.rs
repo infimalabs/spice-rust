@@ -23,7 +23,9 @@ use wire::{
 use yew::prelude::*;
 
 use crate::compose::{self, Notice};
-use crate::{Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective};
+use crate::{
+    Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective, stale_reads,
+};
 
 mod composer;
 mod view;
@@ -600,7 +602,7 @@ async fn dispatch_action(
             let lane = random_uuid()?;
             let body = LaneSeat {
                 lane,
-                team: lane,
+                lineage_id: lane,
                 worktree,
                 life,
                 vendor,
@@ -944,13 +946,14 @@ fn handle_incoming(
         let admitted = session
             .admit_stream(bytes)
             .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
+        let refresh = stale_reads(&admitted).any();
         let directives = data
             .borrow_mut()
             .as_mut()
             .ok_or_else(|| "stream frame arrived before runtime acceptance".to_owned())?
             .apply_stream(&admitted);
         surface.set(data.borrow().clone());
-        return Ok((directives, false));
+        return Ok((directives, refresh));
     }
 
     let identity: ResponseIdentity = wire::decode(bytes).map_err(|error| error.to_string())?;

@@ -391,57 +391,69 @@ pub(super) fn capture_record(
             ));
         }
     }
-    let compactions = record
-        .decoded
-        .events()
-        .iter()
-        .filter_map(|event| match event {
-            listen::Event::Compaction(boundary) => Some(boundary.locus),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    if !compactions.is_empty() {
-        let observed = current_residency(bus, epoch)?;
-        let current = observed
-            .body()
-            .lanes
-            .iter()
-            .find(|row| row.lane == record.lane)
-            .ok_or_else(|| {
-                store_fault(
-                    "lane::compaction-head-missing",
-                    "a live compaction has no durable lane authority",
-                )
-            })?;
-        if current.occupant != Some(record.occupant) {
-            return Err(store_fault(
-                "lane::compaction-occupant-moved",
-                "the compaction occupant does not equal durable residency",
-            ));
-        }
-        let mut write = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
-        guard_residency(&mut write, &observed);
-        let mut cause = FactCause::Existing(observed.position());
-        for locus in compactions {
-            let fact = write
-                .fact(
-                    wire::body::LaneCompacted {
-                        lane: record.lane,
-                        occupant: record.occupant,
-                        stream: record_stream(record.stream).to_owned(),
-                        member: locus.member,
-                        offset: locus.offset,
-                        length: locus.length,
-                    },
-                    cause,
-                )
-                .map_err(|error| {
-                    store_fault("lane::compaction-fact-invalid", &error.to_string())
-                })?;
-            cause = FactCause::Pending(fact);
-        }
-        commit(bus, write)?;
+    let events = record.decoded.events();
+    if !events.iter().any(|event| {
+        matches!(
+            event,
+            listen::Event::Prose(_) | listen::Event::Compaction(_)
+        )
+    }) {
+        return Ok(());
     }
+    let observed = current_residency(bus, epoch)?;
+    let current = observed
+        .body()
+        .lanes
+        .iter()
+        .find(|row| row.lane == record.lane)
+        .ok_or_else(|| {
+            store_fault(
+                "lane::capture-head-missing",
+                "a live transcript event has no durable lane authority",
+            )
+        })?;
+    if current.occupant != Some(record.occupant) {
+        return Err(store_fault(
+            "lane::capture-occupant-moved",
+            "the transcript occupant does not equal durable residency",
+        ));
+    }
+    let mut proposal = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
+    guard_residency(&mut proposal, &observed);
+    let mut cause = FactCause::Existing(observed.position());
+    for event in events {
+        let fact = match event {
+            listen::Event::Prose(prose) => proposal.fact(
+                wire::body::LaneProse {
+                    lane: record.lane,
+                    occupant: record.occupant,
+                    worktree: current.worktree.clone(),
+                    stream: record_stream(record.stream).to_owned(),
+                    text: prose.text.clone(),
+                    phase: prose.phase.clone(),
+                    member: prose.locus.member,
+                    offset: prose.locus.offset,
+                    length: prose.locus.length,
+                },
+                cause,
+            ),
+            listen::Event::Compaction(boundary) => proposal.fact(
+                wire::body::LaneCompacted {
+                    lane: record.lane,
+                    occupant: record.occupant,
+                    stream: record_stream(record.stream).to_owned(),
+                    member: boundary.locus.member,
+                    offset: boundary.locus.offset,
+                    length: boundary.locus.length,
+                },
+                cause,
+            ),
+            _ => continue,
+        }
+        .map_err(|error| store_fault("lane::capture-fact-invalid", &error.to_string()))?;
+        cause = FactCause::Pending(fact);
+    }
+    commit(bus, proposal)?;
     Ok(())
 }
 

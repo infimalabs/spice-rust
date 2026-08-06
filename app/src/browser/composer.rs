@@ -160,15 +160,15 @@ fn render_lane(
     runtime: &CanvasRuntime,
 ) -> Html {
     let Some(host) = lane.host() else {
-        return empty("Lane team has no admitted members.");
+        return empty("Lane lineage has no admitted members.");
     };
-    let team_id = lane.lane;
+    let lineage_id = lane.lane;
     let lane_id = host.lane;
-    let lane_key = team_id.to_string();
+    let lane_key = lineage_id.to_string();
     let draft = drafts.get(&lane_key).cloned().unwrap_or_default();
     let occupant = host.occupant;
     let send_enabled = can_send && occupant.is_some();
-    let pending = team_pending_count(lane, runtime.inbox());
+    let pending = lineage_pending_count(lane, runtime.inbox());
     let markdown = compose_markdown(&draft);
     let submit = submit_callback(
         lane_id,
@@ -195,18 +195,18 @@ fn render_lane(
         sender.clone(),
         drafts.clone(),
     );
-    let input_id = format!("mosaic-images-{team_id}");
+    let input_id = format!("mosaic-images-{lineage_id}");
     let onchange = choose_images(lane_key.clone(), drafts.clone());
     html! {
         <section
             class={classes!("mosaic-lane", (!send_enabled).then_some("mosaic-lane--vacant"))}
-            data-lane-id={team_id.to_string()}
+            data-lane-id={lineage_id.to_string()}
             {ondragover}
             {ondrop}
         >
             <header class="mosaic-lane-header">
                 <div>
-                    <strong>{format!("Team {}", short(&team_id.to_string()))}</strong>
+                    <strong>{format!("Lineage {}", short(&lineage_id.to_string()))}</strong>
                     <span>{format!("{} agents", lane.members.len())}</span>
                 </div>
                 {render_member_lights(lane, runtime.inbox())}
@@ -265,7 +265,7 @@ fn composer_placeholder(member: &crate::runtime::LaneMember, pending: usize) -> 
     )
 }
 
-fn team_pending_count(
+fn lineage_pending_count(
     lane: &crate::runtime::LaneRow,
     inbox: Option<&wire::intent::InboxAnswer>,
 ) -> usize {
@@ -283,7 +283,7 @@ fn render_member_lights(
     inbox: Option<&wire::intent::InboxAnswer>,
 ) -> Html {
     html! {
-        <span class="lane-lights" aria-label={format!("{} team members", lane.members.len())}>
+        <span class="lane-lights" aria-label={format!("{} lineage members", lane.members.len())}>
             {for lane.members.iter().map(|member| {
                 let pending = inbox
                     .and_then(|inbox| inbox.lanes.iter().find(|row| row.lane == member.lane))
@@ -292,8 +292,15 @@ fn render_member_lights(
                 html! {
                     <span
                         class={classes!("agent-status-pip", "lane-light")}
-                        data-lane-light-target-id={member.lane.to_string()}
+                        data-lane-light-target-id={
+                            crate::watchband::leaf(&member.worktree).to_owned()
+                        }
                         data-agent-status={status.key()}
+                        aria-label={format!(
+                            "{}: {}",
+                            crate::watchband::leaf(&member.worktree),
+                            status.label(),
+                        )}
                         title={format!(
                             "{}: {}",
                             crate::watchband::leaf(&member.worktree),

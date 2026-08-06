@@ -119,10 +119,10 @@ pub struct LaneView {
     pub lanes: Vec<LaneRow>,
 }
 
-/// One Canvas lane: a team and every independently steerable member in it.
+/// One Canvas lane: a lineage and every independently steerable member in it.
 #[derive(Clone, PartialEq, Eq)]
 pub struct LaneRow {
-    /// Stable team identity.
+    /// Stable lineage identity.
     pub lane: CanonicalUuid,
     /// Members in canonical resident seat order.
     pub members: Vec<LaneMember>,
@@ -212,13 +212,13 @@ impl LaneMember {
 }
 
 impl LaneRow {
-    /// The team host, which is the first member in canonical seat order.
+    /// The lineage host, which is the first member in canonical seat order.
     #[must_use]
     pub fn host(&self) -> Option<&LaneMember> {
         self.members.first()
     }
 
-    /// Resolve one independently steerable member of this team.
+    /// Resolve one independently steerable member of this lineage.
     #[must_use]
     pub fn member(&self, lane: CanonicalUuid) -> Option<&LaneMember> {
         self.members.iter().find(|member| member.lane == lane)
@@ -227,7 +227,7 @@ impl LaneRow {
 
 impl From<&LaneAnswer> for LaneView {
     fn from(answer: &LaneAnswer) -> Self {
-        let mut teams = Vec::<LaneRow>::new();
+        let mut lineages = Vec::<LaneRow>::new();
         for lane in &answer.lanes {
             let member = LaneMember {
                 lane: lane.lane,
@@ -238,11 +238,14 @@ impl From<&LaneAnswer> for LaneView {
                 disposition: lane.disposition.clone(),
                 bound: lane.session.is_some(),
             };
-            if let Some(team) = teams.iter_mut().find(|team| team.lane == lane.team) {
-                team.members.push(member);
+            if let Some(lineage) = lineages
+                .iter_mut()
+                .find(|lineage| lineage.lane == lane.lineage_id)
+            {
+                lineage.members.push(member);
             } else {
-                teams.push(LaneRow {
-                    lane: lane.team,
+                lineages.push(LaneRow {
+                    lane: lane.lineage_id,
                     members: vec![member],
                 });
             }
@@ -250,7 +253,7 @@ impl From<&LaneAnswer> for LaneView {
         Self {
             epoch: answer.epoch,
             state: answer.state,
-            lanes: teams,
+            lanes: lineages,
         }
     }
 }

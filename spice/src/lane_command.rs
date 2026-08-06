@@ -95,16 +95,16 @@ fn add(
         None => resolved.root().lane().vendor().clone(),
     };
     let lane = new_uuid();
-    let team = match matches.get_one::<String>("team") {
-        Some(team) => match team.parse::<wire::CanonicalUuid>() {
-            Ok(team) => team,
-            Err(error) => return protocol_fault("lane::team-invalid", &error.to_string()),
+    let lineage_id = match matches.get_one::<String>("lineage") {
+        Some(lineage) => match lineage.parse::<wire::CanonicalUuid>() {
+            Ok(lineage_id) => lineage_id,
+            Err(error) => return protocol_fault("lane::lineage-invalid", &error.to_string()),
         },
         None => lane,
     };
     let body = LaneSeat {
         lane,
-        team,
+        lineage_id,
         worktree: worktree.worktree_root().display().to_string(),
         life,
         vendor,

@@ -103,7 +103,7 @@ fn lane_seated_stream_fact_is_strict_and_credential_free() {
         cause: None,
         fact: Fact::new(wire::body::LaneSeated {
             lane,
-            team: lane,
+            lineage_id: lane,
             capability,
             worktree: "/tmp/lane".to_owned(),
             life: "drive".to_owned(),
