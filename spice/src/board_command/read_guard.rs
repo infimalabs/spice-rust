@@ -24,6 +24,7 @@ fn validated_snapshot(
         )
     })?;
     let mut residency = positioned(residency);
+    let origin_threads = task_origin_threads(observed.facts().facts(), &residency.body)?;
     let mut tasks = Vec::with_capacity(observed.tasks().len());
     let mut entries = Vec::with_capacity(observed.tasks().len());
     for heads in observed.tasks() {
@@ -46,9 +47,16 @@ fn validated_snapshot(
             )
         })?;
         let visibility = entry.project().visibility().clone();
+        let origin_thread = origin_threads.get(&handle).cloned().ok_or_else(|| {
+            protocol_fault(
+                "board::task-origin-missing",
+                &format!("task {handle} has no authoritative creation fact"),
+            )
+        })?;
         entries.push(entry);
         tasks.push(BoardTask::from_authoritative(
             visibility,
+            origin_thread,
             statement,
             workflow,
             claim,
@@ -139,6 +147,107 @@ fn route_actor_identity(identity: &str) -> Option<String> {
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'))
     .then(|| identity.to_owned())
+}
+
+fn task_origin_threads(
+    facts: &[wire::Envelope<wire::AnyFact>],
+    residency: &wire::ResidencyHead,
+) -> Result<std::collections::BTreeMap<wire::TaskHandle, String>, Outcome<CommandAnswer>> {
+    let mut occupants = std::collections::BTreeMap::new();
+    let mut sessions = std::collections::BTreeMap::new();
+    let mut origins = std::collections::BTreeMap::new();
+    for fact in facts {
+        match fact.fact.kind() {
+            wire::FactKind::LaneSessionDeclared => {
+                let lane = required_fact_uuid(fact, "lane")?;
+                let occupant = required_fact_uuid(fact, "occupant")?;
+                let identity = required_fact_text(fact, "identity")?;
+                sessions.insert((lane, occupant), identity.to_owned());
+            }
+            wire::FactKind::LaneStarted => {
+                occupants.insert(
+                    required_fact_uuid(fact, "lane")?,
+                    required_fact_uuid(fact, "occupant")?,
+                );
+            }
+            wire::FactKind::TaskAdded => {
+                let task = required_fact_text(fact, "task")?
+                    .parse::<wire::TaskHandle>()
+                    .map_err(|error| {
+                        protocol_fault(
+                            "board::task-origin-fact-invalid",
+                            &format!("task creation fact has an invalid handle: {error}"),
+                        )
+                    })?;
+                let actor = match fact.actor {
+                    wire::Actor::Operator => "operator".to_owned(),
+                    wire::Actor::Spice => "spice".to_owned(),
+                    wire::Actor::Lane(lane) => {
+                        let occupant = occupants.get(&lane).copied().or_else(|| {
+                            residency
+                                .lanes
+                                .iter()
+                                .find(|row| row.lane == lane && row.session.is_none())
+                                .and_then(|row| row.occupant)
+                        });
+                        let occupant = occupant.ok_or_else(|| {
+                            protocol_fault(
+                                "board::task-origin-occupant-missing",
+                                "a lane task has no authoritative creating occupant",
+                            )
+                        })?;
+                        match sessions.get(&(lane, occupant)) {
+                            Some(identity) => route_actor_identity(identity).ok_or_else(|| {
+                                protocol_fault(
+                                    "board::task-origin-session-invalid",
+                                    "the creating vendor session identity cannot name an actor task route",
+                                )
+                            })?,
+                            None => occupant.get().simple().to_string(),
+                        }
+                    }
+                };
+                if origins.insert(task.clone(), actor).is_some() {
+                    return Err(protocol_fault(
+                        "board::task-origin-duplicate",
+                        &format!("task {task} has more than one creation fact"),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(origins)
+}
+
+fn required_fact_uuid(
+    fact: &wire::Envelope<wire::AnyFact>,
+    field: &str,
+) -> Result<wire::CanonicalUuid, Outcome<CommandAnswer>> {
+    required_fact_text(fact, field)?
+        .parse()
+        .map_err(|error| {
+            protocol_fault(
+                "board::task-origin-fact-invalid",
+                &format!("{} fact field {field} is invalid: {error}", fact.fact.kind()),
+            )
+        })
+}
+
+fn required_fact_text<'a>(
+    fact: &'a wire::Envelope<wire::AnyFact>,
+    field: &str,
+) -> Result<&'a str, Outcome<CommandAnswer>> {
+    fact.fact
+        .body()
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            protocol_fault(
+                "board::task-origin-fact-invalid",
+                &format!("{} fact has no text field {field}", fact.fact.kind()),
+            )
+        })
 }
 
 fn positioned<T: Clone>(head: &journal::JournalHead<T>) -> Positioned<T> {
