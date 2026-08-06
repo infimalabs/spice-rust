@@ -176,7 +176,7 @@ fn a_task_observation_returns_the_typed_handle_and_trimmed_text() {
 
 #[test]
 fn an_unparseable_task_handle_is_refused_with_a_visible_sentence() {
-    for written in ["not a handle", "spice-aBcD", "SPICE_123", "SPICE-"] {
+    for written in ["not a handle", "spice-aBcD", "SPICE_aBcD", "SPICE-"] {
         let refusal =
             compose::note(written, "observation").expect_err("an unparseable task handle refuses");
         assert_eq!(

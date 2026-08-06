@@ -1,36 +1,68 @@
 //! Target-neutral Markdown composition for the browser lane composer.
+//!
+//! The module owning the forms is wasm-only, so everything it can compose
+//! without a DOM lives here and is reachable from an ordinary native test.
+//! Nothing here may be duplicated there: a second copy is what let the shipped
+//! quote drift from the tested one until the copies disagreed on blank input.
 
-/// One block the browser renders from the composer preview.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Block {
-    /// Ordinary authored prose.
-    Paragraph(String),
-    /// Quoted message text with the Markdown prefix removed.
-    Quote(String),
+/// One quoted message and the reply the operator typed beneath it.
+pub(crate) struct QuotedReply<'a> {
+    /// Quoted text, prefixed line by line as one Markdown block quote.
+    pub(crate) quote: &'a str,
+    /// Reply body shown under the quote, blank when the operator wrote none.
+    pub(crate) body: &'a str,
 }
 
-/// Join one body and its nonblank quotes in the order the composer displays.
-pub(crate) fn compose(body: &str, quotes: &[String]) -> String {
+/// One image the operator attached, carried inline as a Markdown image.
+pub(crate) struct Attachment<'a> {
+    /// Display name, which becomes the alt text.
+    pub(crate) name: &'a str,
+    /// Data URL carrying the image bytes.
+    pub(crate) data_url: &'a str,
+}
+
+/// Join the body, every nonblank quote with its reply, and every attachment.
+///
+/// Parts are separated by the blank line Markdown reads as a block boundary,
+/// and a part that would contribute nothing is dropped rather than emitted as
+/// an empty block, which would double the separator around it.
+pub(crate) fn compose(
+    body: &str,
+    quotes: &[QuotedReply<'_>],
+    attachments: &[Attachment<'_>],
+) -> String {
     let mut parts = Vec::new();
     let body = body.trim();
     if !body.is_empty() {
         parts.push(body.to_owned());
     }
-    parts.extend(
-        quotes
-            .iter()
-            .map(|quote| block_quote(quote))
-            .filter(|quote| !quote.is_empty()),
-    );
+    parts.extend(quotes.iter().filter_map(|quoted| {
+        let quote = block_quote(quoted.quote);
+        let body = quoted.body.trim();
+        let part = [quote.as_str(), body]
+            .into_iter()
+            .filter(|part| !part.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        (!part.is_empty()).then_some(part)
+    }));
+    parts.extend(attachments.iter().map(|attachment| {
+        let name = attachment
+            .name
+            .replace(['\r', '\n'], " ")
+            .replace(']', "\\]");
+        format!("![{name}]({})", attachment.data_url)
+    }));
     parts.join("\n\n")
 }
 
 /// Normalize line endings, then prefix every line as one Markdown block quote.
 ///
 /// The trim happens to the source and never to the joined result. Trimming the
-/// result takes the space off the marker on a final blank line, leaving `>`
-/// alone, and [`render`] reads a line that is not `> ` as prose: the whole
-/// quote reaches the reader as literal markers instead of a blockquote.
+/// result takes the space off the marker on a final blank line, leaving a bare
+/// `>` on the last line, and it collapses whitespace-only text to a lone `>`
+/// instead of to nothing, which is a directive the caller then has no reason to
+/// suppress. Trimming the source empties that case, so callers can drop it.
 pub(crate) fn block_quote(raw: &str) -> String {
     let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
     let trimmed = normalized.trim();
@@ -49,44 +81,54 @@ pub(crate) fn quote_label(preview: Option<&str>) -> &str {
     preview.unwrap_or("quoted message")
 }
 
-/// Parse the exact blank-line boundary [`compose`] emits into render blocks.
-pub(crate) fn render(markdown: &str) -> Vec<Block> {
-    markdown
-        .split("\n\n")
-        .map(|block| {
-            if block.lines().all(|line| line.starts_with("> ")) {
-                Block::Quote(
-                    block
-                        .lines()
-                        .map(|line| &line[2..])
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                )
-            } else {
-                Block::Paragraph(block.to_owned())
-            }
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn quotes(values: &[&str]) -> Vec<String> {
-        values.iter().map(|value| (*value).to_owned()).collect()
+    fn quoted<'a>(values: &'a [(&'a str, &'a str)]) -> Vec<QuotedReply<'a>> {
+        values
+            .iter()
+            .map(|(quote, body)| QuotedReply { quote, body })
+            .collect()
     }
 
     #[test]
     fn composed_markdown_keeps_the_body_first_and_drops_blank_parts() {
-        assert_eq!(compose("  body only  ", &[]), "body only");
+        assert_eq!(compose("  body only  ", &[], &[]), "body only");
         assert_eq!(
-            compose("", &quotes(&["first quote", "  ", "second quote"])),
+            compose(
+                "",
+                &quoted(&[("first quote", ""), ("  ", ""), ("second quote", "")]),
+                &[]
+            ),
             "> first quote\n\n> second quote"
         );
         assert_eq!(
-            compose("body", &quotes(&["quoted line"])),
+            compose("body", &quoted(&[("quoted line", "")]), &[]),
             "body\n\n> quoted line"
+        );
+    }
+
+    #[test]
+    fn a_reply_follows_the_quote_it_answers_inside_one_part() {
+        assert_eq!(
+            compose("", &quoted(&[("quoted line", "  my reply  ")]), &[]),
+            "> quoted line\n\nmy reply"
+        );
+    }
+
+    #[test]
+    fn attachment_names_lose_the_characters_that_would_break_the_link() {
+        assert_eq!(
+            compose(
+                "",
+                &[],
+                &[Attachment {
+                    name: "one]two\nthree",
+                    data_url: "data:image/png;base64,AA"
+                }]
+            ),
+            "![one\\]two three](data:image/png;base64,AA)"
         );
     }
 
@@ -97,41 +139,31 @@ mod tests {
         assert_eq!(block_quote("first\n\nthird"), "> first\n> \n> third");
     }
 
+    /// Quoted message text routinely ends on a blank line, and the blank line is
+    /// the one the marker can lose. The copy that trimmed the joined result left
+    /// `>` alone on the last line: a bare marker, not the `> ` every line of a
+    /// block quote carries. Asserting the whole string and the per-line marker
+    /// together states both the exact output and the invariant behind it.
     #[test]
-    fn renderer_reads_the_exact_separator_the_composer_writes() {
-        let markdown = compose("body", &quotes(&["quoted\nlines"]));
+    fn a_quote_that_ends_on_a_blank_line_keeps_the_marker_on_every_line() {
+        let quote = block_quote("first\n\n");
 
-        assert_eq!(
-            render(&markdown),
-            [
-                Block::Paragraph("body".to_owned()),
-                Block::Quote("quoted\nlines".to_owned()),
-            ]
+        assert_eq!(quote, "> first");
+        assert!(
+            quote.lines().all(|line| line.starts_with("> ")),
+            "every line of a block quote carries the marker, got {quote:?}"
         );
     }
 
-    /// Quoted message text routinely ends on a blank line, and the blank line is
-    /// the one the marker can lose. Trimming the joined result rather than the
-    /// source left `>` alone on the last line, which is not the `> ` the
-    /// renderer classifies on, so the reader saw the markers as prose. Asserting
-    /// the composed text and the rendered block together is what catches it:
-    /// either half alone passes while the two disagree.
+    /// The composer drops a quote that would contribute nothing, and it can only
+    /// drop what arrives empty. The copy that trimmed the joined result returned
+    /// a lone `>` here, which is not empty, so the drag handler sent a directive
+    /// whose entire body was a marker.
     #[test]
-    fn a_quote_that_ends_on_a_blank_line_still_renders_as_a_quote() {
-        let markdown = compose("", &quotes(&["first\n\n"]));
-
-        assert_eq!(markdown, "> first");
-        assert_eq!(render(&markdown), [Block::Quote("first".to_owned())]);
-    }
-
-    /// The marker is `> ` and not `>`. A body line that opens on a bare angle
-    /// bracket is prose the author typed, and classifying it as a quote would
-    /// strip a second character the line never spent on a marker.
-    #[test]
-    fn a_body_line_opening_on_a_bare_angle_bracket_stays_prose() {
-        let markdown = compose(">note", &[]);
-
-        assert_eq!(render(&markdown), [Block::Paragraph(">note".to_owned())]);
+    fn whitespace_only_quoted_text_composes_to_nothing_at_all() {
+        assert_eq!(block_quote("   \n\t\n  "), "");
+        assert_eq!(block_quote(""), "");
+        assert_eq!(compose("", &quoted(&[("   \n  ", "")]), &[]), "");
     }
 
     #[test]
