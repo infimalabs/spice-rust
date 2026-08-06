@@ -9,6 +9,6 @@
 /dist/stage/targets/
 
 # The one browser app stage. Every lane builds it natively with
-# `cargo xtask dev-app`; the resident refuses to start without it.
-/dist/stage-dev/
-/dist/.stage-dev-build-*/
+# `cargo xtask local-app`; the resident refuses to start without it.
+/dist/stage-local/
+/dist/.stage-local-build-*/

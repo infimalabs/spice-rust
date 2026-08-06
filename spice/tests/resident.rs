@@ -122,7 +122,7 @@ impl Drop for Fixture {
 /// clean tree for unrelated reasons. Derived from the constant the stage is
 /// written from so the two cannot come to name different directories.
 fn app_stage_ignore() -> String {
-    format!("/{}/\n", canvas::DEV_STAGE)
+    format!("/{}/\n", canvas::LOCAL_STAGE)
 }
 
 /// Assert a freshly seeded fixture repository sees nothing but what it committed.

@@ -264,9 +264,9 @@ fn seed_lane_app(root: &Path) -> DemoResult<()> {
     let generation = source
         .current_generation()
         .map_err(|error| environment_fault("demo::app-unavailable", error.to_string()))?;
-    let stage = root.join(canvas::DEV_STAGE);
+    let stage = root.join(canvas::LOCAL_STAGE);
     let target_generation = stage
-        .join(canvas::DEV_STAGE_GENERATIONS)
+        .join(canvas::LOCAL_STAGE_GENERATIONS)
         .join(generation.identity().as_str());
     fs::create_dir_all(&target_generation).map_err(|error| {
         environment_fault(
@@ -286,7 +286,7 @@ fn seed_lane_app(root: &Path) -> DemoResult<()> {
             )
         })?;
     }
-    let pointer = stage.join(canvas::DEV_STAGE_CURRENT);
+    let pointer = stage.join(canvas::LOCAL_STAGE_CURRENT);
     fs::write(&pointer, format!("{}\n", generation.identity())).map_err(|error| {
         environment_fault(
             "demo::app-stage-unwritable",
