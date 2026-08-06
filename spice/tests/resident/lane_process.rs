@@ -93,9 +93,14 @@ fn initialize_task_git_fixture(fixture: &Fixture) {
     fixture_git(fixture, &["init", "-b", "main"]);
     fixture_git(fixture, &["config", "user.name", "Resident Task Fixture"]);
     fixture_git(fixture, &["config", "user.email", "resident@example.test"]);
+    // The stage is build output that `install_app` seeds into the worktree root
+    // before this repository exists, so a fixture that does not ignore it reads
+    // dirty and every `task next` here refuses with `git::worktree-dirty` instead
+    // of reaching the refusal under test. Derived from the constant rather than
+    // spelled out, so renaming the stage cannot quietly reintroduce that.
     fs::write(
         fixture.root.join(".gitignore"),
-        "vendor-launches\norigin.git\n",
+        format!("vendor-launches\norigin.git\n{}/\n", canvas::LOCAL_STAGE),
     )
     .expect("task fixture ignore writes");
     fixture_git(fixture, &["add", ".gitignore", "fake-claude", "spice.toml"]);

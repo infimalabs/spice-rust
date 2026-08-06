@@ -108,9 +108,15 @@ fn resident_agent_process_receives_both_git_shadow_scopes() {
         CLAUDE_MODEL,
     );
     fs::write(fixture.root.join("spice.toml"), document).expect("vendor configuration");
+    // The seeded app stage is build output under the worktree root; without this
+    // the fixture reads dirty and the clean-worktree assertions below fail on
+    // `?? dist/` rather than on anything this test is about.
     fs::write(
         fixture.root.join(".gitignore"),
-        "fixture-claude\nlaunch-captures\nlaunch-index\n",
+        format!(
+            "fixture-claude\nlaunch-captures\nlaunch-index\n{}/\n",
+            canvas::LOCAL_STAGE,
+        ),
     )
     .expect("fixture ignore policy");
     fixture_git(&fixture.root, &["init", "-b", "main-d"]);
@@ -307,15 +313,19 @@ fn prepare_cutover_repository(fixture: &Fixture, rig: &Rig) {
     fs::write(fixture.root.join("spice.toml"), &document).expect("Claude config extends");
     fs::write(
         fixture.root.join(".gitignore"),
-        concat!(
-            ".agents/\n",
-            ".spice/\n",
-            "codex-worktree/\n",
-            "fixture-claude\n",
-            "fixture-codex\n",
-            "launch-captures/\n",
-            "launch-index\n",
-            "native-path/\n",
+        format!(
+            concat!(
+                ".agents/\n",
+                ".spice/\n",
+                "codex-worktree/\n",
+                "fixture-claude\n",
+                "fixture-codex\n",
+                "launch-captures/\n",
+                "launch-index\n",
+                "native-path/\n",
+                "{}/\n",
+            ),
+            canvas::LOCAL_STAGE,
         ),
     )
     .expect("cutover fixture ignore policy writes");
