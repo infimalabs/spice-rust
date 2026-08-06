@@ -15,7 +15,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { connect } from "node:net";
+import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -429,7 +429,7 @@ export async function describeConnection(page) {
 /// process leaves the client connecting to something that never replies, which
 /// is a different diagnosis from a refused connection and must not be reported
 /// as the same silence.
-export async function describeResident(resident) {
+export async function describeResident(resident, probeTimeout = 2_000) {
   if (!resident) return { known: false };
   const endpoint = resident.discovery?.endpoint ?? null;
   return {
@@ -438,26 +438,35 @@ export async function describeResident(resident) {
     exitCode: resident.child.exitCode,
     signal: resident.child.signalCode,
     endpoint,
-    endpointState: await probeEndpoint(endpoint),
+    endpointState: await probeEndpoint(endpoint, probeTimeout),
   };
 }
 
-/// Ask the endpoint for a connection and nothing more.
+/// Ask the endpoint for a connection and one minimal HTTP answer.
 ///
-/// Deliberately sends no request: the question is whether the port still
-/// accepts, and issuing a request would conflate a dead listener with one that
-/// accepts and then fails to answer.
-function probeEndpoint(endpoint) {
+/// A completed TCP handshake proves only that something still owns the port.
+/// The stale-listener diagnosis is exactly a socket that accepts that handshake
+/// and never answers, so only response bytes establish the healthy accepting
+/// state; silence reaches the distinct timeout answer.
+function probeEndpoint(endpoint, timeout = 2_000) {
   const target = parseEndpoint(endpoint);
   if (!target) return Promise.resolve("unknown");
   return new Promise((done) => {
     const socket = connect({ host: target.host, port: target.port });
+    let settled = false;
     const settle = (outcome) => {
+      if (settled) return;
+      settled = true;
       socket.destroy();
       done(outcome);
     };
-    socket.setTimeout(2_000);
-    socket.on("connect", () => settle("accepting"));
+    socket.setTimeout(timeout);
+    socket.on("connect", () => {
+      socket.write(
+        `GET / HTTP/1.1\r\nHost: ${target.host}:${target.port}\r\nConnection: close\r\n\r\n`,
+      );
+    });
+    socket.on("data", () => settle("accepting"));
     socket.on("timeout", () => settle("accepted nothing before the probe timed out"));
     socket.on("error", (error) => settle(`refused: ${error.code ?? error.message}`));
   });
@@ -471,6 +480,77 @@ function parseEndpoint(endpoint) {
   } catch {
     return null;
   }
+}
+
+async function endpointFixture(onConnection = () => {}) {
+  const sockets = new Set();
+  const server = createServer((socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+    onConnection(socket);
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  assert.ok(address && typeof address === "object", "endpoint fixture has a TCP address");
+  return {
+    endpoint: `http://127.0.0.1:${address.port}`,
+    async close() {
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolveClose, rejectClose) => {
+        server.close((error) => error ? rejectClose(error) : resolveClose());
+      });
+    },
+  };
+}
+
+function residentAt(endpoint) {
+  return {
+    child: { exitCode: null, signalCode: null },
+    discovery: { endpoint },
+  };
+}
+
+/// Drive every endpoint report answer against a real TCP endpoint.
+///
+/// The refused fixture reserves and closes an ephemeral port before probing it.
+/// The healthy fixture answers the minimal request, while the stale fixture
+/// accepts and deliberately stays silent. Their reports must remain pairwise
+/// distinct so `accepting` cannot impersonate either failure cause.
+export async function assertEndpointProbeStates() {
+  const refusedFixture = await endpointFixture();
+  const refusedEndpoint = refusedFixture.endpoint;
+  await refusedFixture.close();
+  const refused = await describeResident(residentAt(refusedEndpoint), 250);
+  assert.match(
+    refused.endpointState,
+    /^refused: E[A-Z]+$/,
+    "a port with no listener reports refusal and its errno",
+  );
+
+  const answeringFixture = await endpointFixture((socket) => {
+    socket.once("data", () => {
+      socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    });
+  });
+  const accepting = await describeResident(residentAt(answeringFixture.endpoint), 250);
+  await answeringFixture.close();
+  assert.equal(
+    accepting.endpointState,
+    "accepting",
+    "an endpoint that accepts and answers reports healthy",
+  );
+
+  const silentFixture = await endpointFixture();
+  const silent = await describeResident(residentAt(silentFixture.endpoint), 100);
+  await silentFixture.close();
+  assert.equal(
+    silent.endpointState,
+    "accepted nothing before the probe timed out",
+    "an endpoint that accepts but never answers reports the stale-listener state",
+  );
+  assert.notEqual(silent.endpointState, accepting.endpointState);
+  assert.notEqual(silent.endpointState, refused.endpointState);
 }
 
 /// Name the frame that armed the wait, so a shared selector is still locatable.
