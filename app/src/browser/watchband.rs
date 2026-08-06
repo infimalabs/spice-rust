@@ -14,9 +14,9 @@ mod mosaic_view;
 mod state;
 
 use composer::{
-    agent_message_source_id, choose_images, directive_source_id, drop_on_lane, focus_after_render,
+    agent_message_source_id, directive_source_id, drop_on_lane, focus_after_render,
     keyboard_submit, paste_images, primary_textarea_id, render_agent_message_card,
-    render_attachments, render_directive_card, render_quote_shards, update_body,
+    render_directive_card, render_image_indicators, render_quote_shards, update_body,
 };
 pub(super) use controls::{LineageControlAction, LineageControls};
 use controls::{LineageLife, LineageSpeech, render_lineage_controls};
@@ -662,6 +662,7 @@ fn render_composer_body(
                 renew,
                 stream,
                 prose,
+                render_image_indicators(lane_key, draft, drafts),
             )}
             <div class="composer-shard-standing">
                 <span>{format!("{pending} pending")}</span>
@@ -678,15 +679,17 @@ fn render_composer_body(
                 {onkeydown}
                 {onpaste}
             ></textarea>
-            {render_attachments(lane_key, draft, drafts)}
             if let Some(issue) = &draft.issue {
                 <p class="composer-issue" role="status">{issue.clone()}</p>
             }
-            {render_image_picker(lane, lane_key, draft, drafts)}
         </div>
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the shard heading carries one agent's identity, prose, drafts, and drawer callbacks"
+)]
 fn render_composer_heading(
     lane: CanonicalUuid,
     lane_key: &str,
@@ -695,6 +698,7 @@ fn render_composer_heading(
     renew: Callback<MouseEvent>,
     stream: ComposerStreamLink,
     prose: String,
+    indicators: Html,
 ) -> Html {
     let focus_lane = lane_key.to_owned();
     let focus = Callback::from(move |_| {
@@ -713,7 +717,7 @@ fn render_composer_heading(
                     .unwrap_or_else(|| "now".to_owned())
             }</a>
             <strong class="composer-shard-prose" title={prose.clone()}>{prose}</strong>
-            <span class="composer-shard-image-indicators"></span>
+            {indicators}
             <details class="agent-action-menu">
                 <summary aria-label={format!("Actions for {}", standing.label)}>{"☰"}</summary>
                 <div
@@ -734,30 +738,6 @@ fn render_composer_heading(
                 </div>
             </details>
         </header>
-    }
-}
-
-fn render_image_picker(
-    lane: CanonicalUuid,
-    lane_key: &str,
-    draft: &ComposerDraft,
-    drafts: &UseReducerHandle<ComposerDrafts>,
-) -> Html {
-    let input_id = format!("mosaic-images-{lane}");
-    let onchange = choose_images(lane_key.to_owned(), drafts.clone());
-    html! {
-        <div class="mosaic-composer-actions">
-            <input
-                id={input_id.clone()}
-                class="visually-hidden"
-                type="file"
-                accept="image/*"
-                multiple=true
-                {onchange}
-            />
-            <label class="image-picker" for={input_id}>{"Images"}</label>
-            <span>{format!("{}/{}", draft.attachments.len(), MAX_ATTACHMENTS)}</span>
-        </div>
     }
 }
 
