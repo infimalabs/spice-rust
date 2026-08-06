@@ -618,7 +618,7 @@ tbody tr:last-child td { border-bottom: 0; }
   }
   .brand { display: none; }
   .workspace { height: calc(100vh - 64px); overflow-y: auto; }
-  .axis-nav { grid-template-columns: repeat(4, 1fr); }
+  .axis-nav { grid-template-columns: repeat(5, 1fr); }
   .axis-button { min-height: 48px; }
   .axis-label { display: block; font-size: .66rem; }
   .topbar { min-height: 58px; padding: 0 14px; }

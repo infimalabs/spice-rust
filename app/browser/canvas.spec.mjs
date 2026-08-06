@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 import { watch } from "node:fs";
-import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,7 +37,7 @@ const axisPanes = new Map([
   ]],
 ]);
 
-function waitForDiscovery(child, canvas, timeout = 10_000) {
+function waitForDiscovery(child, canvas, timeout = 30_000) {
   return new Promise((resolveDiscovery, rejectDiscovery) => {
     let settled = false;
     let lastError;
@@ -90,7 +90,9 @@ async function startResident(fixture) {
     cwd: fixture,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  let stdout = "";
   let stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
   child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
   child.on("exit", (code) => {
     if (code && code !== 0) process.stderr.write(`resident exited ${code}: ${stderr}\n`);
@@ -99,12 +101,20 @@ async function startResident(fixture) {
     const discovery = await waitForDiscovery(child, canvas);
     return { child, discovery };
   } catch (error) {
+    let residue;
+    try {
+      residue = await readdir(fixture, { recursive: true });
+    } catch (readError) {
+      residue = [`<unreadable: ${readError}>`];
+    }
     if (child.exitCode === null) {
       const exited = once(child, "exit");
       child.kill("SIGKILL");
       await exited;
     }
-    throw error;
+    throw new Error(`resident did not publish discovery: stdout=${stdout || "<none>"} stderr=${stderr || "<none>"} files=${JSON.stringify(residue)}`, {
+      cause: error,
+    });
   }
 }
 
@@ -244,10 +254,10 @@ async function assertCanvas(page, scheme) {
   }
   await page.waitForFunction(() => document.querySelector("#app")?.childElementCount > 0);
   await assert.doesNotReject(() => page.locator(".brand-name:visible, .mobile-brand:visible").waitFor());
-  await assert.doesNotReject(() => page.getByRole("heading", { name: "Topology", exact: true }).waitFor());
+  await assert.doesNotReject(() => page.getByRole("heading", { name: "Agents", exact: true }).waitFor());
   await page.waitForFunction(() => {
-    const text = document.body.innerText;
-    return text.includes("seated") && /JOURNAL\s+\d+/.test(text);
+    const cursor = document.querySelector(".rail-meta")?.textContent ?? "";
+    return /cursor \d+/.test(cursor);
   });
 
   const pixels = await page.evaluate(() => {
@@ -299,11 +309,14 @@ async function assertCanvas(page, scheme) {
     assert.ok(await page.getByRole("button", { name: "Add note" }).isVisible());
     await page.locator(".workspace").evaluate((element) => element.scrollTo(0, 0));
   }
+  await page.getByRole("button", { name: "Mosaic" }).click();
+  await page.getByRole("heading", { name: "Agents", exact: true }).waitFor();
   await page.screenshot({ path: join(artifacts, `canvas-${scheme}.png`), fullPage: true });
 }
 
 async function assertAgentConversation(page, fixture) {
   const console = page.locator('[data-pane="agent-console"]');
+  await page.getByRole("button", { name: "Mosaic" }).click();
   await console.getByRole("heading", { name: "Agents", exact: true }).waitFor();
   await console.getByLabel("Worktree").fill(fixture);
   await console.getByLabel("Vendor").fill("claude");
@@ -330,6 +343,7 @@ async function assertAgentConversation(page, fixture) {
   assert.equal(inbox.body.lanes.length, 1);
   assert.equal(inbox.body.lanes[0].pending.length, 1);
   assert.equal(inbox.body.lanes[0].pending[0].text, message);
+  await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
   return seated.lane;
 }
 

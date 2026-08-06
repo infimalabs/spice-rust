@@ -147,6 +147,7 @@ fn canvas_app() -> Html {
     let connection = use_state(|| Connection::Starting);
     let surface = use_state(SurfaceData::default);
     let axis = use_state(|| Axis::Topology);
+    let mosaic = use_state(|| true);
     let note_task = use_state(String::new);
     let note_text = use_state(String::new);
     let sender = use_mut_ref(|| None::<UnboundedSender<ClientAction>>);
@@ -212,6 +213,7 @@ fn canvas_app() -> Html {
         &connection,
         &surface,
         &axis,
+        &mosaic,
         &sender,
         &agents,
         &note_task,

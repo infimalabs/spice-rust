@@ -17,6 +17,7 @@ pub(super) fn render_canvas(
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
     axis: &UseStateHandle<Axis>,
+    mosaic: &UseStateHandle<bool>,
     sender: &SenderHandle,
     agents: &AgentControls,
     note_task: &UseStateHandle<String>,
@@ -35,11 +36,12 @@ pub(super) fn render_canvas(
         .unwrap_or_else(|| "-".to_owned());
     html! {
         <div class="shell">
-            {render_rail(axis, active_axis, &cursor)}
+            {render_rail(axis, mosaic, active_axis, &cursor)}
             {render_workspace(
                 connection,
                 surface,
                 active_axis,
+                **mosaic,
                 sender,
                 agents,
                 note_task,
@@ -54,23 +56,44 @@ pub(super) fn render_canvas(
     }
 }
 
-pub(super) fn render_rail(axis: &UseStateHandle<Axis>, active_axis: Axis, cursor: &str) -> Html {
+pub(super) fn render_rail(
+    axis: &UseStateHandle<Axis>,
+    mosaic: &UseStateHandle<bool>,
+    active_axis: Axis,
+    cursor: &str,
+) -> Html {
     html! {
         <aside class="rail">
             <div class="brand">
                 <span class="brand-mark">{"SP"}</span>
                 <span class="brand-name">{"Spice Canvas"}</span>
             </div>
-            <nav class="axis-nav" aria-label="Canvas axes">
+            <nav class="axis-nav" aria-label="Canvas views">
+                <button
+                    class="axis-button"
+                    aria-current={(**mosaic).then_some("page")}
+                    title="Converse with seated agents"
+                    onclick={{
+                        let mosaic = mosaic.clone();
+                        Callback::from(move |_| mosaic.set(true))
+                    }}
+                >
+                    <span class="axis-glyph mosaic-glyph"></span>
+                    <span class="axis-label">{"Mosaic"}</span>
+                </button>
                 {for Axis::ALL.iter().copied().map(|candidate| {
                     let axis = axis.clone();
-                    let selected = candidate == active_axis;
+                    let mosaic = mosaic.clone();
+                    let selected = !*mosaic && candidate == active_axis;
                     html! {
                         <button
                             class="axis-button"
                             aria-current={selected.then_some("page")}
                             title={candidate.question()}
-                            onclick={Callback::from(move |_| axis.set(candidate))}
+                            onclick={Callback::from(move |_| {
+                                axis.set(candidate);
+                                mosaic.set(false);
+                            })}
                         >
                             <span class="axis-glyph"></span>
                             <span class="axis-label">{title(candidate.as_str())}</span>
@@ -87,6 +110,7 @@ pub(super) fn render_workspace(
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
     active_axis: Axis,
+    mosaic: bool,
     sender: &SenderHandle,
     agents: &AgentControls,
     note_task: &UseStateHandle<String>,
@@ -96,6 +120,47 @@ pub(super) fn render_workspace(
     speech: &wire::SpeechPlayback,
     speech_status: &SpeechStatus,
     toggle_speech: Callback<MouseEvent>,
+) -> Html {
+    html! {
+        <div class="workspace">
+            <header class="topbar">
+                <div class="mobile-brand">{"Spice Canvas"}</div>
+                <div class={connection.class()}>
+                    <span class="status-dot"></span>
+                    <span class="status-copy">{connection.label()}</span>
+                </div>
+                <div class="topbar-actions">
+                    {speech_control(speech, speech_status, toggle_speech)}
+                    <button class="refresh" type="button" onclick={refresh}>{"Refresh"}</button>
+                </div>
+            </header>
+            <main class="content">
+                if mosaic {
+                    {render_agent_console(surface, agents)}
+                } else {
+                    {render_analytics(
+                        connection,
+                        surface,
+                        active_axis,
+                        sender,
+                        note_task,
+                        note_text,
+                        submit_note,
+                    )}
+                }
+            </main>
+        </div>
+    }
+}
+
+fn render_analytics(
+    connection: &UseStateHandle<Connection>,
+    surface: &UseStateHandle<SurfaceData>,
+    active_axis: Axis,
+    sender: &SenderHandle,
+    note_task: &UseStateHandle<String>,
+    note_text: &UseStateHandle<String>,
+    submit_note: Callback<SubmitEvent>,
 ) -> Html {
     let runtime = (**surface).as_ref();
     let task_count = runtime
@@ -115,52 +180,38 @@ pub(super) fn render_workspace(
         .map(|cursor| cursor.seq.to_string())
         .unwrap_or_else(|| "-".to_owned());
     html! {
-        <div class="workspace">
-            <header class="topbar">
-                <div class="mobile-brand">{"Spice Canvas"}</div>
-                <div class={connection.class()}>
-                    <span class="status-dot"></span>
-                    <span class="status-copy">{connection.label()}</span>
+        <>
+            <div class="page-heading">
+                <div>
+                    <h1>{title(active_axis.as_str())}</h1>
+                    <p>{active_axis.question()}</p>
                 </div>
-                <div class="topbar-actions">
-                    {speech_control(speech, speech_status, toggle_speech)}
-                    <button class="refresh" type="button" onclick={refresh}>{"Refresh"}</button>
-                </div>
-            </header>
-            <main class="content">
-                {render_agent_console(surface, agents)}
-                <div class="page-heading">
-                    <div>
-                        <h1>{title(active_axis.as_str())}</h1>
-                        <p>{active_axis.question()}</p>
-                    </div>
-                </div>
-                <section class="metrics" aria-label="Current resident metrics">
-                    {metric("Tasks", task_count.to_string(), format!("{active_tasks} active"))}
-                    {metric("Lanes", lane_count.to_string(), resident_state(surface))}
-                    {metric(
-                        "Consent",
-                        pending_count.to_string(),
-                        "pending decisions".to_owned(),
-                    )}
-                    {metric("Journal", cursor, "admitted stream cursor".to_owned())}
-                </section>
-                <div class="pane-strip" aria-label="Panes on this axis">
-                    {for active_axis.panes().map(|pane| html! {
-                        <span class="pane-chip">{title(pane.as_str())}</span>
-                    })}
-                </div>
-                {render_axis(
-                    active_axis,
-                    surface,
-                    connection,
-                    sender,
-                    note_task,
-                    note_text,
-                    submit_note,
+            </div>
+            <section class="metrics" aria-label="Current resident metrics">
+                {metric("Tasks", task_count.to_string(), format!("{active_tasks} active"))}
+                {metric("Lanes", lane_count.to_string(), resident_state(surface))}
+                {metric(
+                    "Consent",
+                    pending_count.to_string(),
+                    "pending decisions".to_owned(),
                 )}
-            </main>
-        </div>
+                {metric("Journal", cursor, "admitted stream cursor".to_owned())}
+            </section>
+            <div class="pane-strip" aria-label="Panes on this axis">
+                {for active_axis.panes().map(|pane| html! {
+                    <span class="pane-chip">{title(pane.as_str())}</span>
+                })}
+            </div>
+            {render_axis(
+                active_axis,
+                surface,
+                connection,
+                sender,
+                note_task,
+                note_text,
+                submit_note,
+            )}
+        </>
     }
 }
 
