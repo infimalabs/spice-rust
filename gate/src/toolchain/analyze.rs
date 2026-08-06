@@ -31,8 +31,8 @@ use std::path::{Path, PathBuf};
 use sill::{Argv, Completion, Environment, spawn};
 
 use super::{
-    ArmFinding, ArmOutcome, ArmTiming, EnvironmentLedgerKind, FindingDetail,
-    JavascriptUnusedStatus, LOCAL_PATH_MARKER, PACKAGED_JAVASCRIPT_EXEMPTIONS,
+    ArmFinding, ArmOutcome, ArmTiming, ENV_NAME_LITERAL_MARKER, EnvironmentLedgerKind,
+    FindingDetail, JavascriptUnusedStatus, LOCAL_PATH_MARKER, PACKAGED_JAVASCRIPT_EXEMPTIONS,
     PACKAGED_TASTE_WORDS, PACKAGED_TEST_PATHS, SourceLocus, ToolchainDeclaration, column_of,
     environment,
 };
@@ -539,7 +539,18 @@ fn env_name_ledger_with(
             .filter(|name| !referenced.contains_key(**name))
             .map(|name| ledger(EnvironmentLedgerKind::Stale, name, Vec::new())),
     );
-    Analysis::scanned(declaration.id, sources.len(), findings)
+    let has_findings = !findings.is_empty();
+    let mut analysis = Analysis::scanned(declaration.id, sources.len(), findings);
+    if has_findings {
+        analysis.reason.push_str(&format!(
+            concat!(
+                "; mark a quoted non-environment literal as ",
+                "`{marker} NAME` on its line"
+            ),
+            marker = ENV_NAME_LITERAL_MARKER
+        ));
+    }
+    analysis
 }
 
 /// One repository-wide ledger finding, which carries loci instead of a locus.

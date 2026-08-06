@@ -91,6 +91,14 @@ const PACKAGED_ENV_FINDING_NAMES: &[(&str, &str)] = &[
     ("javascript", "process.env access"),
 ];
 
+/// Inline assertion that one named quoted literal is not an environment name.
+///
+/// The environment-name ledger otherwise treats every quoted watchlist match as
+/// a reference, including negative fixtures and protocol examples. Naming the
+/// exact literal keeps that escape local and visible without waiving genuine
+/// access-, declaration-, or environment-context evidence on the same line.
+pub const ENV_NAME_LITERAL_MARKER: &str = "env-policy: not-an-env";
+
 /// Complete packaged environment scanner profile admitted for direct parity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PackagedEnvironmentProfile {

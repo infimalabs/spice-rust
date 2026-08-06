@@ -143,15 +143,15 @@ pub use structural::{
 };
 pub use toolchain::{
     ArmFinding, ArmMeasurement, ArmObservation, ArmOutcome, ArmTiming, ConfigurationSource,
-    CsharpUnusedStatus, EnvironmentLedgerKind, FindingDetail, JavascriptUnusedStatus,
-    LOCAL_PATH_MARKER, MeasurementEngine, MigrationRefusal as ToolchainMigrationRefusal,
-    PACKAGED_ENV_INCLUDES, PACKAGED_ENV_PROFILE, PACKAGED_JAVASCRIPT_EXEMPTIONS,
-    PACKAGED_SCANNER_EXCLUDES, PACKAGED_TASTE_WORDS, PACKAGED_TEST_PATHS,
-    PackagedEnvironmentProfile, PredecessorComparison, PredecessorComparisonError,
-    PredecessorConfiguration, PredecessorFinding, PredecessorObservation, PredecessorResult,
-    ProbeFailure, SourceLocus, TOOLCHAIN_ARMS, TOOLCHAIN_REPORT_VERSION, ToolEvidence,
-    ToolRequirement, ToolchainDeclaration, ToolchainError, ToolchainReport, TreeInput,
-    TreeJurisdiction, compare_predecessor, measure_toolchain,
+    CsharpUnusedStatus, ENV_NAME_LITERAL_MARKER, EnvironmentLedgerKind, FindingDetail,
+    JavascriptUnusedStatus, LOCAL_PATH_MARKER, MeasurementEngine,
+    MigrationRefusal as ToolchainMigrationRefusal, PACKAGED_ENV_INCLUDES, PACKAGED_ENV_PROFILE,
+    PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_SCANNER_EXCLUDES, PACKAGED_TASTE_WORDS,
+    PACKAGED_TEST_PATHS, PackagedEnvironmentProfile, PredecessorComparison,
+    PredecessorComparisonError, PredecessorConfiguration, PredecessorFinding,
+    PredecessorObservation, PredecessorResult, ProbeFailure, SourceLocus, TOOLCHAIN_ARMS,
+    TOOLCHAIN_REPORT_VERSION, ToolEvidence, ToolRequirement, ToolchainDeclaration, ToolchainError,
+    ToolchainReport, TreeInput, TreeJurisdiction, compare_predecessor, measure_toolchain,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use toolchain::{RimCapture, RimDirectoryError, ToolchainSource, acquire_toolchain};
