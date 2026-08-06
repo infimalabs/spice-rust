@@ -244,7 +244,18 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
     "body": {
       "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
       "state": "seated",
-      "lanes": []
+      "lanes": [{
+        "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+        "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+        "name": "Ava",
+        "worktree": "/worktrees/lane-a",
+        "life": "drive",
+        "vendor": "claude",
+        "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c5",
+        "lineage": ["018f82d4-6f59-7d06-92e3-bce9131163c5"],
+        "capabilities": ["018f82d4-6f59-7d06-92e3-bce9131163c7"],
+        "disposition": "occupied"
+      }]
     }
   }
 }"#,
@@ -297,11 +308,30 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
     ),
     (
         AnswerShape::ConsentQueue,
-        r#"{ "pending": [], "budgets": [] }"#,
+        r#"{
+  "pending": [{
+    "request": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+    "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+    "operation": "shell:git push",
+    "rule": "browser",
+    "cause": { "kind": "budget-exhausted", "bound": 2 },
+    "budget": { "rule": "browser", "bound": 2, "remaining": 0 }
+  }],
+  "budgets": [{ "rule": "browser", "bound": 2, "remaining": 0 }]
+}"#,
     ),
     (
         AnswerShape::ConsentPolicy,
-        r#"{ "posture": "queue", "rules": [] }"#,
+        r#"{
+  "posture": "queue",
+  "rules": [{
+    "name": "browser",
+    "tool": "shell:*",
+    "answer": "allow",
+    "budget": 2,
+    "remaining": 1
+  }]
+}"#,
     ),
     (
         AnswerShape::Trust,
@@ -340,7 +370,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
     "worktree": "/worktrees/lane-b",
     "life": "steer",
     "vendor": "codex",
-    "lineage": [],
+    "lineage": ["018f82d4-6f59-7d06-92e3-bce9131163c8"],
     "bound": false,
     "disposition": "vacant",
     "liveness": "vacant"
@@ -367,10 +397,36 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
   "residency": {
     "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
     "state": "seated",
-    "lanes": [],
-    "subscriptions": []
+    "lanes": [{
+      "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+      "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+      "name": "Ava",
+      "worktree": "/worktrees/lane-a",
+      "life": "drive",
+      "vendor": "claude",
+      "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c5",
+      "lineage": ["018f82d4-6f59-7d06-92e3-bce9131163c5"],
+      "bound": true,
+      "disposition": "occupied",
+      "liveness": "running"
+    }],
+    "subscriptions": [{
+      "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+      "policy": "drive"
+    }]
   },
-  "recent": []
+  "recent": [{
+    "seq": 48213,
+    "kind": "task::added",
+    "actor": "operator",
+    "origin": "task:WIRE-parent",
+    "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+    "provenance": {
+      "kind": "steering",
+      "key": "1kJJP87B",
+      "disposition": "acked"
+    }
+  }]
 }"#,
     ),
     (
