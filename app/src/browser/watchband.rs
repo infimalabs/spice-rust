@@ -303,31 +303,14 @@ fn render_activity(
     speech: LineageSpeech,
     life: LineageLife,
 ) -> Html {
-    let member_targets = lineage
-        .members
-        .iter()
-        .map(|member| member.lane.to_string())
-        .collect::<Vec<_>>();
     let cards = runtime
         .messages()
         .iter()
         .filter_map(|message| {
             let member = lineage.member(message.lane)?;
-            let producer = lineage
-                .members
-                .iter()
-                .find(|candidate| candidate.occupant == Some(message.author))
-                .map(|candidate| candidate.lane.to_string());
-            let quote_target =
-                crate::composer_drafts::quote_target(&member_targets, producer.as_deref())?;
-            let quote_lane = lineage
-                .members
-                .iter()
-                .find(|candidate| candidate.lane.to_string() == quote_target)?
-                .lane;
             Some(ActivityCard::Agent {
                 member: member.clone(),
-                quote_lane,
+                quote_lane: crate::composer_drafts::quote_lane(&lineage.members, message),
                 message: message.clone(),
             })
         })

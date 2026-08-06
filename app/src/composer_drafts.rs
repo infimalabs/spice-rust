@@ -8,8 +8,10 @@
 use std::collections::BTreeMap;
 
 use wire::body::DirectiveAttachment;
+use wire::{AgentMessage, CanonicalUuid};
 
 use crate::composer_markdown::{Attachment, QuotedReply};
+use crate::runtime::LaneMember;
 
 /// Every draft belonging to one independently steerable target.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -165,12 +167,28 @@ impl DraftStore {
     }
 }
 
-/// Route a quote to its producing member, or to the lineage host if absent.
-pub(crate) fn quote_target(members: &[String], producer: Option<&str>) -> Option<String> {
-    producer
-        .filter(|producer| members.iter().any(|member| member == producer))
-        .map(str::to_owned)
-        .or_else(|| members.first().cloned())
+/// The lane a quote taken from `message` composes into.
+///
+/// A quote answers the agent that wrote it, so a seated producer wins even when
+/// it sits in a different member than the card: an agent that moved seats still
+/// receives replies to prose it wrote from the old one.
+///
+/// Prose outlives the seat that produced it, so the author is not always seated.
+/// That case resolves to the lane the card is rendered in rather than to a
+/// member drawn out of the lineage: quoting a departed agent composes into the
+/// lane the operator is already looking at, and no unrelated agent is handed
+/// direction it never earned. One occupant seated in two members at once is not
+/// a state the resident reports; were it ever reported the answer stays the
+/// card's own lane, so this decision reads the same under every ordering of
+/// `members` and nothing in it depends on which member sorts first.
+pub(crate) fn quote_lane(members: &[LaneMember], message: &AgentMessage) -> CanonicalUuid {
+    let mut seated = members
+        .iter()
+        .filter(|member| member.occupant == Some(message.author));
+    match (seated.next(), seated.next()) {
+        (Some(producer), None) => producer.lane,
+        _ => message.lane,
+    }
 }
 
 fn sort_quotes(quotes: &mut [QuoteDraft]) {
@@ -226,18 +244,101 @@ mod tests {
         assert_eq!(store.0.len(), 2);
     }
 
+    const LANE_A: &str = "11111111-1111-4111-8111-111111111111";
+    const LANE_B: &str = "22222222-2222-4222-8222-222222222222";
+    const SEATED_A: &str = "33333333-3333-4333-8333-333333333333";
+    const SEATED_B: &str = "44444444-4444-4444-8444-444444444444";
+    const DEPARTED: &str = "55555555-5555-4555-8555-555555555555";
+
+    fn uuid(text: &str) -> CanonicalUuid {
+        text.parse().expect("the fixture spells a canonical uuid")
+    }
+
+    fn seat(lane: &str, occupant: Option<&str>) -> LaneMember {
+        LaneMember {
+            lane: uuid(lane),
+            name: None,
+            worktree: format!("worktree-{lane}"),
+            life: "steer".to_owned(),
+            vendor: "claude".parse().expect("the fixture spells a vendor name"),
+            occupant: occupant.map(uuid),
+            disposition: "seated".to_owned(),
+            liveness: wire::intent::LaneLiveness::Running,
+            bound: true,
+        }
+    }
+
+    fn message(lane: &str, author: &str) -> AgentMessage {
+        AgentMessage {
+            lane: uuid(lane),
+            author: uuid(author),
+            locus: wire::stream::MessageLocus {
+                member: 1,
+                offset: 0,
+                length: 8,
+                event: 0,
+            },
+            text: "quoted prose".to_owned(),
+        }
+    }
+
+    /// A seated author receives the quote even from another member's card.
     #[test]
-    fn quote_routing_prefers_the_producer_and_falls_back_to_the_first_member() {
-        let members = vec!["agent-a".to_owned(), "agent-b".to_owned()];
+    fn a_seated_author_receives_the_quote_from_whichever_card_carries_it() {
+        let members = vec![seat(LANE_A, Some(SEATED_A)), seat(LANE_B, Some(SEATED_B))];
+        // The card sits in lane A while the prose was written by the occupant
+        // that now sits in lane B, which is the seat-change case the preference
+        // exists for: the reply follows the agent, not the tile.
         assert_eq!(
-            quote_target(&members, Some("agent-b")).as_deref(),
-            Some("agent-b")
+            quote_lane(&members, &message(LANE_A, SEATED_B)),
+            uuid(LANE_B),
+            "a seated author elsewhere in the lineage still receives its replies"
         );
         assert_eq!(
-            quote_target(&members, Some("departed-agent")).as_deref(),
-            Some("agent-a")
+            quote_lane(&members, &message(LANE_B, SEATED_B)),
+            uuid(LANE_B),
+            "the ordinary case targets the author's own seat"
         );
-        assert_eq!(quote_target(&[], Some("agent-b")), None);
+    }
+
+    /// An unseated author's quote stays in the lane whose card carries it.
+    ///
+    /// The first member is deliberately vacant and the card is deliberately the
+    /// second one: with a single member, or with the card in the first member,
+    /// every candidate rule returns the same lane and the fixture would pass
+    /// against the row-order pick this replaced. Both orderings are asserted
+    /// because a rule that reads member order can only be caught by permuting
+    /// the members it reads.
+    #[test]
+    fn an_unseated_author_composes_into_the_card_lane_whatever_the_member_order() {
+        let vacant_first = vec![seat(LANE_A, None), seat(LANE_B, Some(SEATED_B))];
+        let vacant_last = vec![seat(LANE_B, Some(SEATED_B)), seat(LANE_A, None)];
+        for members in [vacant_first, vacant_last] {
+            assert_eq!(
+                quote_lane(&members, &message(LANE_B, DEPARTED)),
+                uuid(LANE_B),
+                "a departed author's quote belongs to the lane being looked at"
+            );
+            assert_eq!(
+                quote_lane(&members, &message(LANE_A, DEPARTED)),
+                uuid(LANE_A),
+                "including when that lane is the vacant one"
+            );
+        }
+    }
+
+    /// One occupant claimed by two seats resolves without reading their order.
+    #[test]
+    fn an_ambiguous_author_resolves_to_the_card_lane_rather_than_a_seat() {
+        let duplicated = vec![seat(LANE_A, Some(SEATED_B)), seat(LANE_B, Some(SEATED_B))];
+        let reversed = vec![seat(LANE_B, Some(SEATED_B)), seat(LANE_A, Some(SEATED_B))];
+        for members in [duplicated, reversed] {
+            assert_eq!(
+                quote_lane(&members, &message(LANE_A, SEATED_B)),
+                uuid(LANE_A),
+                "an unrepresentable lineage still answers the card's own lane"
+            );
+        }
     }
 
     #[test]

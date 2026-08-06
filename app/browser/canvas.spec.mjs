@@ -867,7 +867,22 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
   assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
   assert.equal(await secondarySurface.locator(".team-speech span").innerText(), "narrate");
 
-  const lifecycleLane = primaryRows[0];
+  const renderedPrimaryMembers = await primarySurface.locator(".team-agent").evaluateAll(
+    (members) => members.map((member) => member.dataset.agentLane),
+  );
+  assert.equal(renderedPrimaryMembers.length, 4, "the quote fixture has four ordered members");
+  const lifecycleLane = primaryRows.find((lane) => lane.lane === renderedPrimaryMembers[1]);
+  assert.ok(lifecycleLane, "the quote fixture resolves the card's second rendered member");
+  assert.notEqual(
+    lifecycleLane.lane,
+    renderedPrimaryMembers[0],
+    "the departed-author card is not the row-order member",
+  );
+  const departedAuthor = lifecycleLane.occupant;
+  const departedCards = primarySurface.locator(
+    `[data-card-kind="agent-message"][data-agent-lane="${lifecycleLane.lane}"]`,
+  );
+  await departedCards.first().waitFor({ timeout: 10_000 });
   await reply(fixture, ["lane", "drain", lifecycleLane.lane]);
   const vacantSnapshot = await reply(fixture, ["lane"]);
   const vacant = vacantSnapshot.body.lanes.find((lane) => lane.lane === lifecycleLane.lane);
@@ -875,6 +890,25 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
   assert.equal(vacant.disposition, "vacant");
   assert.equal(vacant.occupant, undefined);
   assert.equal(vacant.life, primarySeatLives.get(vacant.lane));
+  assert.equal(
+    vacantSnapshot.body.lanes.some((lane) => lane.occupant === departedAuthor),
+    false,
+    "the author of the second member's retained cards is seated in no lane",
+  );
+  await page.waitForFunction(({ lineage, lane }) => {
+    const cards = [...document.querySelectorAll(
+      `.team-surface[data-lineage-id="${lineage}"] `
+        + `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
+    )];
+    return cards.length > 0 && cards.every((card) => card.dataset.producerTargetId === lane);
+  }, { lineage: primary.lineage_id, lane: lifecycleLane.lane });
+  assert.deepEqual(
+    new Set(await departedCards.evaluateAll(
+      (cards) => cards.map((card) => card.dataset.producerTargetId),
+    )),
+    new Set([lifecycleLane.lane]),
+    "an unseated author routes every retained card to its own lane, never the first member",
+  );
   assert.equal(
     vacantSnapshot.body.subscriptions.find(
       (subscription) => subscription.lineage_id === primary.lineage_id,
