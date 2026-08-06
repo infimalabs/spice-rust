@@ -1,7 +1,7 @@
 use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
-    ACCENTS, FIELD_BUDGET, SHORT_LEN, accent, badge, elapsed_label, leaf, one_line, short,
-    standings, ticker_line, truncate,
+    ACCENTS, FIELD_BUDGET, SHORT_LEN, accent, badge, elapsed_label, leaf, one_line, reported_tasks,
+    short, standings, ticker_line, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -358,6 +358,19 @@ fn a_pill_wears_no_badge_at_zero() {
     assert_eq!(badge(0), None);
     assert_eq!(badge(4).as_deref(), Some("4"));
     assert_eq!(badge(27).as_deref(), Some("27"));
+}
+
+#[test]
+fn authored_prose_reports_each_canonical_task_once_through_markdown_punctuation() {
+    let tasks = reported_tasks(
+        "Settled `CONTROL-1kKbC3j4`; follow APP-a1 (CONTROL-1kKbC3j4 again). \
+         lower-a1 TASK- TASK-a-b and ordinary-hyphenated-prose are not handles.",
+    );
+
+    assert_eq!(
+        tasks.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        ["CONTROL-1kKbC3j4", "APP-a1"],
+    );
 }
 
 #[test]

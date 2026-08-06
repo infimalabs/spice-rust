@@ -114,6 +114,7 @@ pub(super) fn render_agent_message_card(
         "tape {}:{}+{}#{}",
         message.locus.member, message.locus.offset, message.locus.length, message.locus.event,
     );
+    let reported_tasks = watchband::reported_tasks(&message.text);
     html! {
         <article
             key={format!(
@@ -146,7 +147,20 @@ pub(super) fn render_agent_message_card(
         >
             <div class="message-body markdown-body">{render_markdown(&message.text)}</div>
             <footer class="message-meta">
-                <span class="message-key">{"agent"}</span>
+                <span class="message-classifiers">
+                    <span class="message-key">{"agent"}</span>
+                    {for reported_tasks.into_iter().map(|task| {
+                        let handle = task.to_string();
+                        html! {
+                            <span
+                                class="message-task-chip"
+                                data-task-handle={handle.clone()}
+                                aria-label={format!("Reported task {handle}")}
+                                title={handle.clone()}
+                            >{handle}</span>
+                        }
+                    })}
+                </span>
                 <span class="message-age" title={locus.clone()}>{locus}</span>
                 <span class="message-author">{producer}</span>
                 {view::chrome::render_card_actions(&message.text, &correspondent)}

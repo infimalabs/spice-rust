@@ -164,6 +164,39 @@ function assertReferenceGeometry(geometry) {
   );
 }
 
+async function assertReportedTaskChip(surface) {
+  const chip = surface.locator(".message-task-chip").first();
+  await chip.waitFor();
+  const handle = await chip.getAttribute("data-task-handle");
+  assert.ok(handle, "the reported-task chip carries its canonical handle");
+  assert.equal(await chip.innerText(), handle, "the task chip visibly names the reported handle");
+  assert.equal(
+    await chip.getAttribute("aria-label"),
+    `Reported task ${handle}`,
+    "the task chip names the same handle to assistive technology",
+  );
+  const card = chip.locator("xpath=ancestor::article[1]");
+  assert.match(
+    await card.locator(".message-body").innerText(),
+    new RegExp(handle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    "the chip is derived from the task handle the message body reports",
+  );
+  const geometry = await chip.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return {
+      height: box.height,
+      borderRadius: Number.parseFloat(style.borderRadius),
+      border: style.borderColor,
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    };
+  });
+  assert.ok(geometry.borderRadius >= geometry.height / 2 - 1, "the task marker is a chip");
+  assert.equal(geometry.border, darkPalette.green, "the task chip uses the live green accent");
+  assert.ok(geometry.scrollWidth <= geometry.clientWidth + 1, "the reported handle is not clipped");
+}
+
 export async function captureReferenceControls(page, team, artifactPath) {
   const surface = team.locator('.team-surface[data-lineage-weight="4"]').first();
   await surface.waitFor();
@@ -197,6 +230,7 @@ export async function captureReferenceControls(page, team, artifactPath) {
     assert.equal(await drain.isEnabled(), true, "a real draft enables the Drain action");
     assert.equal(await speech.inputValue(), "0", "the native speech range selects Quiet");
     assert.equal(await lifetime.inputValue(), "2", "the native lifetime range selects Drain");
+    await assertReportedTaskChip(surface);
     const geometry = await surface.evaluate(measureReference);
     assertReferenceGeometry(geometry);
     await page.screenshot({ path: artifactPath, fullPage: false });

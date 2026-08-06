@@ -650,6 +650,28 @@
   padding-top: 4px;
   font-size: .57rem;
 }
+.team-surface .message-classifiers {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+.team-surface .message-task-chip {
+  display: inline-flex;
+  max-width: 24ch;
+  min-height: 17px;
+  align-items: center;
+  padding: 1px 5px;
+  overflow: hidden;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  color: var(--accent);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .team-surface .message-actions { display: flex; gap: 3px; margin-left: auto; }
 .team-surface .mosaic-message-card footer .card-action {
   width: 22px;
