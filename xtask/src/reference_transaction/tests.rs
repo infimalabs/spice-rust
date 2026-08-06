@@ -257,6 +257,10 @@ fn parser_names_the_first_malformed_line() {
     ));
 }
 
+/// Pin the shared statement through one concrete operational variant.
+///
+/// Each caller remains a separately named test so removing the production
+/// binding from any one Display arm fails that arm's fixture, not only a sibling.
 fn assert_operational_error_names_tree_and_recovery(error: ReferenceTransactionError) {
     let message = error.to_string();
     assert!(
