@@ -108,6 +108,9 @@ fn resident_agent_process_receives_both_git_shadow_scopes() {
         CLAUDE_MODEL,
     );
     fs::write(fixture.root.join("spice.toml"), document).expect("vendor configuration");
+    // The seeded app stage is build output under the worktree root; without this
+    // the fixture reads dirty and the clean-worktree assertions below fail on
+    // `?? dist/` rather than on anything this test is about.
     fs::write(
         fixture.root.join(".gitignore"),
         format!(

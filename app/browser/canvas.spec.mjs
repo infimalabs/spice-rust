@@ -86,6 +86,12 @@ function waitForDiscovery(child, canvas, timeout = 30_000) {
 async function startResident(fixture) {
   const canvas = join(fixture, ".git/.spice/canvas");
   await mkdir(dirname(canvas), { recursive: true });
+  // Port 0 asks the kernel for a free one, as every Rust integration test that
+  // spawns a resident already does. The default is a fixed port so an operator
+  // has a stable URL, but this fixture is one of several residents alive at
+  // once -- the lane's own appliance, the other lanes', and a second copy of
+  // this spec -- and it reads the port back out of the published discovery
+  // record, so it never needed the fixed one.
   const child = spawn(binary, ["--json", "up", "--port", "0"], {
     cwd: fixture,
     stdio: ["ignore", "pipe", "pipe"],
@@ -145,8 +151,32 @@ async function reply(fixture, args) {
   return outcome;
 }
 
+/// Refuse a run whose stage carries no app to serve.
+///
+/// There is one stage now and the resident has no embedded bundle to fall back
+/// on, so a lane that has not run `cargo xtask local-app` -- or whose stage was
+/// half written -- gets a resident that starts, answers, and serves nothing the
+/// browser can execute. That failure does not announce itself: it surfaces as a
+/// timeout in whichever feature the lane just changed, ten seconds of waiting
+/// for an element no served code renders, and it reads exactly like a
+/// regression in that change. One directory read before the copy turns a
+/// debugging session into a refusal naming the command that fixes it.
 async function configureFixture(fixture) {
-  await cp(join(root, "dist/stage-local"), join(fixture, "dist/stage-local"), { recursive: true });
+  // The stage is a generation store now: one atomic pointer names a complete
+  // immutable generation, so the wasm lives under that generation rather than
+  // beside the pointer. The precondition reads the same pointer the resident
+  // reads, so it refuses on exactly what the resident would refuse on.
+  const stage = join(root, "dist/stage-local");
+  const pointer = await readFile(join(stage, "current"), "utf8").catch(() => "");
+  const generation = pointer.trim();
+  const staged = generation
+    ? await readdir(join(stage, "generations", generation)).catch(() => [])
+    : [];
+  assert.ok(
+    staged.includes("app_bg.wasm"),
+    `${stage} publishes no complete app generation: run cargo xtask local-app to build the stage this spec serves`,
+  );
+  await cp(stage, join(fixture, "dist/stage-local"), { recursive: true });
   const vendor = join(fixture, "fake-claude");
   await writeFile(vendor, [
     "#!/bin/sh",
@@ -320,6 +350,13 @@ async function assertCanvas(page, scheme) {
   await page.screenshot({ path: join(artifacts, `canvas-${scheme}.png`), fullPage: true });
 }
 
+/// The console's one compose box, addressed so a feed full of cards cannot
+/// shadow it. Every card action is labelled "... this message", so the box has
+/// to be picked by role and by an exact name rather than by a label substring.
+function composeField(console) {
+  return console.getByRole("textbox", { name: "Message", exact: true });
+}
+
 async function assertAgentConversation(page, fixture) {
   const console = page.locator('[data-pane="agent-console"]');
   await page.getByRole("button", { name: "Mosaic" }).click();
@@ -362,23 +399,99 @@ async function assertAgentConversation(page, fixture) {
   assert.equal(await tab.getAttribute("data-lane"), seated.lane);
 
   const message = "browser direction survives streaming";
-  await console.getByRole("textbox", { name: "Message", exact: true }).fill(message);
+  await composeField(console).fill(message);
   await console.getByRole("button", { name: "Send direction" }).click();
   const outgoing = console.locator(".message.outgoing").filter({ hasText: message });
   await outgoing.waitFor({ timeout: 10_000 });
+  // A card is only drawn for a direction still in the pending region, and it
+  // marks that with the time left before the direction lapses; once a lane takes
+  // the direction the card is gone rather than relabelled. So a countdown here is
+  // the browser-side proof it is still waiting. This replaces a literal "pending"
+  // label the mosaic card no longer prints -- matching that word again would pass
+  // on any card that merely mentioned it. The server-side pending state is
+  // asserted directly below, so the two together pin both ends.
+  assert.match(
+    await outgoing.locator(".message-age").innerText(),
+    /^(\d+[smhd]|now) left$/,
+  );
 
   const inbox = await reply(fixture, ["inbox", seated.lane]);
   assert.equal(inbox.body.lanes.length, 1);
   assert.equal(inbox.body.lanes[0].pending.length, 1);
   assert.equal(inbox.body.lanes[0].pending[0].text, message);
+  // The card's key is the server's key for that queued direction, which is what
+  // makes the card a view of the inbox rather than an echo of what was typed.
   assert.equal(
     await outgoing.locator(".message-key").innerText(),
     inbox.body.lanes[0].pending[0].key,
   );
-  assert.match(await outgoing.locator(".message-age").innerText(), / left$/);
+  // The strip is read while exactly one direction is queued, before the packing
+  // check floods the feed: its whole claim is that the card carries the pending
+  // count and the latest text, and both are only checkable against a known one.
+  await assertLaneStrip(page, fixture, seated, message);
   await assertMosaicPacking(page, console);
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
   return seated.lane;
+}
+
+/// The strip above the console: one card per seated lane, carrying its state.
+///
+/// The card is what the operator reads before opening a conversation, so it is
+/// checked for what it joins rather than for its existence: the lane's name,
+/// the direction that is actually queued, the count of it, and the vendor. The
+/// name is the worktree's last segment because the full path is the same for
+/// every card up to it; the whole path is on the label a screen reader reads,
+/// and on the conversation heading the card selects.
+async function assertLaneStrip(page, fixture, seated, message) {
+  const tile = page.locator(".agent-tabs.watchband .watchband-card");
+  await tile.waitFor({ timeout: 10_000 });
+  assert.equal(await tile.count(), 1, "the strip carries one card per seated lane");
+
+  // The card has room for one field of the path, so it carries the segment that
+  // tells this lane from its neighbours, cut to that field. The cut is asserted
+  // in both directions: a card that stopped truncating would still start with
+  // the leaf, and one that truncated a name that already fit would still fit.
+  const leaf = fixture.split("/").filter(Boolean).pop();
+  const name = await tile.locator(".watchband-name").innerText();
+  assert.ok(name.length <= 22, `the name fits the card's field: ${name}`);
+  assert.ok(leaf.startsWith(name.replace(/…$/, "")), `the name is the worktree leaf: ${name}`);
+  assert.equal(name.endsWith("…"), leaf.length > 22, "the ellipsis marks a cut and only a cut");
+
+  // The queued direction itself is the hover card, flattened to one line; the
+  // count and the disposition are the line under the name. Between them the
+  // card answers "how many, and what is newest" without being opened. The claim
+  // line is checked too because it is the join against a third source -- the
+  // board -- and an empty board has to read as "no claim" rather than as blank.
+  // `occupied` is the resident's own word for the seat -- the vocabulary is
+  // vacant/occupied/degraded -- so the card is showing the lane table rather
+  // than a label the view made up, and a lane that lost its occupant would read
+  // differently here without the count changing at all.
+  assert.equal(await tile.getAttribute("title"), message);
+  assert.match(
+    await tile.locator(".watchband-line.muted").first().innerText(),
+    /^1 pending, occupied/,
+  );
+  assert.equal(await tile.locator(".watchband-line.mono").innerText(), "no claim");
+  assert.equal(await tile.locator(".tag.vendor").innerText(), "claude");
+  assert.equal(
+    await tile.getAttribute("aria-label"),
+    `Open claude lane ${seated.lane.slice(0, 8)} in ${fixture}`,
+    "the label a screen reader reads carries the whole path the card cut",
+  );
+
+  // Selecting the card aims the one compose form at that lane, which is the
+  // whole point of a strip that shares a single input. The heading is what says
+  // which lane the form now writes to, and the form is live because that lane
+  // is occupied -- a vacant one disables it.
+  await tile.click();
+  assert.equal(await tile.getAttribute("aria-selected"), "true");
+  assert.equal(
+    await page.locator(".conversation-heading p").innerText(),
+    `occupied / steer / ${fixture}`,
+  );
+  const compose = page.locator("#agent-message");
+  assert.equal(await compose.isDisabled(), false, "an occupied lane accepts direction");
+  await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-strip.png"), fullPage: true });
 }
 
 async function assertMosaicPacking(page, console) {
@@ -387,9 +500,7 @@ async function assertMosaicPacking(page, console) {
   assert.ok(laneCount >= 1 && laneCount <= 6, "geometry exposes a legal base-lane count");
   const targetCards = laneCount * 2 + 1;
   for (let index = 1; index < targetCards; index += 1) {
-    await console
-      .getByRole("textbox", { name: "Message", exact: true })
-      .fill(`mosaic placement ${index}`);
+    await composeField(console).fill(`mosaic placement ${index}`);
     await console.getByRole("button", { name: "Send direction" }).click();
   }
   const cards = console.locator(".mosaic-card");
@@ -442,9 +553,7 @@ async function assertMosaicPacking(page, console) {
 
   await feed.evaluate((element) => element.scrollTo(0, element.scrollHeight));
   const before = await feed.evaluate((element) => element.scrollTop);
-  await console
-    .getByRole("textbox", { name: "Message", exact: true })
-    .fill("mosaic scroll compensation");
+  await composeField(console).fill("mosaic scroll compensation");
   await console.getByRole("button", { name: "Send direction" }).click();
   await cards.nth(targetCards).waitFor({ timeout: 10_000 });
   const after = await feed.evaluate((element) => element.scrollTop);
@@ -482,6 +591,12 @@ async function assertAuthoritySurface(page, seeded) {
 }
 
 async function assertMosaicComposer(page, fixture, seeded) {
+  // Anchored rather than exact: the pill carries a badge with the count of
+  // directions waiting across every lane, so its accessible name is "Mosaic 5"
+  // by the time anything has been sent. Anchoring still keeps it off any later
+  // control that merely ends in the word. The heading below is the exact one --
+  // it is the pane rather than the control, so it is what proves the click
+  // landed.
   await page.getByRole("button", { name: /^Mosaic/ }).click();
   await page.getByRole("heading", { name: "Mosaic", exact: true }).waitFor();
   const lane = page.locator(`[data-lane-id="${seeded.lane}"]`);
@@ -868,6 +983,7 @@ const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browse
 await mkdir(join(fixture, ".git"));
 await mkdir(artifacts, { recursive: true });
 await configureFixture(fixture);
+process.stderr.write("canvas spec: serving dist/stage-local, the app this worktree built\n");
 
 let resident;
 let browser;

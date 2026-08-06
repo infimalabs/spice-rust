@@ -46,6 +46,7 @@ fn lane(id: &str, worktree: &str) -> LaneRow {
         vendor: "codex".parse().expect("the fixture spells a vendor name"),
         occupant: Some(uuid(OCCUPANT)),
         disposition: "seated".to_owned(),
+        bound: true,
     }
 }
 

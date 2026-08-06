@@ -332,10 +332,14 @@ fn mosaic_inbox(properties: &MosaicInboxProps) -> Html {
         geometry.module,
         (*width).round() as i32,
     );
+    let feed = classes!(
+        "conversation-feed",
+        (!properties.pending.is_empty()).then_some("mosaic-feed"),
+    );
     html! {
         <div
             ref={host}
-            class={classes!("conversation-feed", (!properties.pending.is_empty()).then_some("mosaic-feed"))}
+            class={feed}
             aria-live="polite"
             data-lanes={geometry.lane_count.to_string()}
         >
