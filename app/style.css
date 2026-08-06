@@ -531,15 +531,23 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .lane-tile--focused { border-color: var(--focus); border-top-color: var(--focus); box-shadow: 0 0 0 2px var(--accent-soft); }
 .lane-tile-top { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
-.lane-tile-name { flex: 0 0 auto; font-weight: 700; font-size: .84rem; }
-.lane-tile-head { overflow: hidden; color: var(--muted); font-size: .74rem; text-overflow: ellipsis; white-space: nowrap; }
+/* The name shrinks and the key beside it does not: the key is eight characters
+   that identify a directive, so an ellipsis makes it useless, while the name
+   stays readable truncated. Both must be able to shrink to nothing rather than
+   widen the tile, because the tile is a fixed-width card and a lane names its
+   own worktree. */
+.lane-tile-name { overflow: hidden; flex: 0 1 auto; min-width: 0; font-weight: 700; font-size: .84rem; text-overflow: ellipsis; white-space: nowrap; }
+.lane-tile-head { overflow: hidden; flex: 0 0 auto; min-width: 0; color: var(--muted); font-size: .74rem; text-overflow: ellipsis; white-space: nowrap; }
 
+/* Direction is operator prose and can carry an unbroken path or handle longer
+   than the tile, which would widen the card rather than wrap inside it. */
 .lane-tile-body {
   display: -webkit-box;
   flex: 1 1 auto;
   overflow: hidden;
   font-size: .78rem;
   line-height: 1.35;
+  overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
 }

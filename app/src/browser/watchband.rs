@@ -56,6 +56,20 @@ impl Tile {
         self.occupant.is_some()
     }
 
+    /// The name the tile shows: the worktree's final segment.
+    ///
+    /// A tile is a fixed-width card in a strip meant to be read at a glance,
+    /// and a worktree is an absolute path whose distinguishing part is its
+    /// last segment -- every lane on this machine shares the leading ones. CSS
+    /// truncation would keep the shared prefix and drop exactly the segment
+    /// that names the lane. The full path stays one hover away, on the card.
+    fn name(&self) -> &str {
+        self.worktree
+            .rsplit('/')
+            .find(|segment| !segment.is_empty())
+            .unwrap_or(&self.worktree)
+    }
+
     /// The hover card, matching the predecessor's four-line tooltip.
     fn hover(&self) -> String {
         let mut lines = vec![
@@ -159,7 +173,7 @@ fn render_tile(
             {onclick}
         >
             <span class="lane-tile-top">
-                <span class="lane-tile-name">{tile.worktree.clone()}</span>
+                <span class="lane-tile-name">{tile.name().to_owned()}</span>
                 <span class="lane-tile-head">{
                     tile.headline
                         .clone()
