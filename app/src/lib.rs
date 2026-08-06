@@ -25,6 +25,7 @@
 //! with, a head-direct answer is held as [`Answer::HeadDirect`] with nowhere
 //! to keep them, and that difference survives every floor above.
 
+pub mod mosaic;
 pub mod pane;
 pub mod runtime;
 pub mod socket;
