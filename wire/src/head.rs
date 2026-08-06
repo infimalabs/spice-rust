@@ -19,6 +19,16 @@ pub struct TaskHead {
     pub uuid: CanonicalUuid,
     /// Authored title.
     pub title: String,
+    /// Longer authored context.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub description: Option<String>,
+    /// Criteria that decide whether the work is done.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub acceptance: Vec<String>,
     /// Scheduler project grouping.
     pub project: String,
     /// Authored task labels.

@@ -130,7 +130,7 @@ fn apply_operation(
             )?,
             parent.ok_or_else(|| InstallError::ParentChanged(operation.destination(repository)))?,
         )
-    } else if current == operation.previous {
+    } else if images_match(current.as_ref(), operation.previous.as_ref()) {
         publish_operation(repository, operation, generated)?
     } else {
         return Err(drift(operation, current));
@@ -149,9 +149,6 @@ fn validate_existing_generation(
     parent: Option<Generation>,
 ) -> Result<Generation, InstallError> {
     let generation = current.expect("a generated match is present").generation;
-    if record.installed[index].is_some_and(|expected| expected != generation) {
-        return Err(drift(operation, current.cloned()));
-    }
     if record.installed_parents[index].is_some_and(|expected| Some(expected) != parent) {
         return Err(InstallError::ParentChanged(
             operation.destination(repository),
@@ -207,8 +204,10 @@ pub(super) fn unapply_with_interruption(
                     restore_operation(
                         repository,
                         operation,
-                        record.installed[reverse]
-                            .expect("a complete record carries an installed generation"),
+                        current
+                            .as_ref()
+                            .expect("an installed image match is present")
+                            .generation,
                     )?,
                     false,
                 )
@@ -245,7 +244,7 @@ pub(super) fn verify_progress(
         let valid = match record.status {
             InstallStatus::Applying => record.installed[index].map_or_else(
                 || {
-                    observed == operation.previous
+                    images_match(observed.as_ref(), operation.previous.as_ref())
                         || (index == record.completed
                             && matches_generated(observed.as_ref(), operation))
                 },
@@ -320,9 +319,8 @@ fn installed_matches(
     observed_parent: Option<Generation>,
     expected_parent: Option<Generation>,
 ) -> bool {
-    matches!((observed, generation), (Some(observed), Some(generation))
-        if observed.generation == generation
-            && observed_parent == expected_parent
+    matches!((observed, generation), (Some(observed), Some(_))
+        if observed_parent == expected_parent
             && expected_parent.is_some()
             && matches_generated(Some(observed), operation))
 }
@@ -334,9 +332,7 @@ fn restored_matches(
 ) -> bool {
     match (&operation.previous, observed, generation) {
         (None, None, None) => true,
-        (Some(previous), Some(observed), Some(generation)) => {
-            observed.image == previous.image && observed.generation == generation
-        }
+        (Some(previous), Some(observed), Some(_)) => observed.image == previous.image,
         _ => false,
     }
 }

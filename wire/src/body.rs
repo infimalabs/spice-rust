@@ -58,6 +58,16 @@ pub struct TaskAdded {
     pub uuid: CanonicalUuid,
     /// Statement title.
     pub title: String,
+    /// Longer authored context.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub description: Option<String>,
+    /// Criteria that decide whether the work is done.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub acceptance: Vec<String>,
     /// Dotted project stem.
     pub project: String,
     /// Free tags carried on the statement.

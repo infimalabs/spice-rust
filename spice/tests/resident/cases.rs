@@ -588,19 +588,22 @@ fn command_client_process_refuses_untrusted_discovery_before_connecting() {
 
     let capability = uuid("00000000-0000-4000-8000-000000000041");
     let mut discovery = canvas::Discovery {
-        endpoint: "http://192.0.2.1:48123".to_owned(),
+        endpoint: "http://canvas.example:48123".to_owned(),
         capability,
         epoch: uuid("00000000-0000-4000-8000-000000000042"),
     };
     discovery
         .publish(fixture.canvas())
-        .expect("non-loopback discovery publishes");
-    let non_loopback = invoke(&fixture, "down");
-    assert_eq!(non_loopback.status.code(), Some(FAULT_EXIT));
-    let Outcome::Fault(fault) = outcome(&non_loopback) else {
-        panic!("non-loopback discovery must fault");
+        .expect("unresolved discovery publishes");
+    // Which interface the resident bound is the operator's decision and no
+    // longer this client's, but the endpoint still has to be a socket it can
+    // dial rather than a name some resolver answers for.
+    let unresolved = invoke(&fixture, "down");
+    assert_eq!(unresolved.status.code(), Some(FAULT_EXIT));
+    let Outcome::Fault(fault) = outcome(&unresolved) else {
+        panic!("named-host discovery must fault");
     };
-    assert_eq!(fault.reason, "canvas::endpoint-not-loopback");
+    assert_eq!(fault.reason, "canvas::endpoint-invalid");
 
     #[cfg(unix)]
     {

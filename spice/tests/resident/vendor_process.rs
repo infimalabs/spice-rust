@@ -5,7 +5,6 @@ use std::collections::BTreeMap;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 
-const PROMPT: &str = "[$spice](.agents/skills/spice/SKILL.md)";
 const CLAUDE_MODEL: &str = "claude-opus-fixture";
 const CODEX_MODEL: &str = "gpt-fixture";
 const CODEX_PERSONALITY: &str = "pragmatic";
@@ -364,20 +363,8 @@ fn stage_cutover_appliance(fixture: &Fixture) -> (PathBuf, String, String) {
         spice::install::apply(&repository, Some(source_binary), &digest).expect("install applies");
     assert_eq!(receipt.status(), spice::install::InstallStatus::Complete);
 
-    let installed_binary = fixture.root.join(
-        plan.operations()
-            .iter()
-            .find(|operation| operation.asset() == spice::install::Asset::Binary)
-            .expect("binary operation exists")
-            .path(),
-    );
-    let installed_skill = fixture.root.join(
-        plan.operations()
-            .iter()
-            .find(|operation| operation.asset() == spice::install::Asset::Skill)
-            .expect("skill operation exists")
-            .path(),
-    );
+    let installed_binary = spice::install::installed_binary(&repository);
+    let installed_skill = spice::install::installed_skill(&repository);
     assert!(installed_binary.is_file(), "installed binary is visible");
     assert_eq!(
         fs::read(&installed_binary).expect("installed binary reads"),
@@ -385,8 +372,10 @@ fn stage_cutover_appliance(fixture: &Fixture) -> (PathBuf, String, String) {
         "the staged appliance binary drifted from the reviewed source binary"
     );
     assert_eq!(
-        installed_skill.strip_prefix(&fixture.root).unwrap(),
-        Path::new(".agents/skills/spice/SKILL.md")
+        installed_skill
+            .strip_prefix(repository.common_dir())
+            .unwrap(),
+        Path::new(".spice-install/agents/skills/spice/SKILL.md")
     );
     let skill = fs::read_to_string(&installed_skill).expect("installed skill reads");
     for command in [
@@ -1184,9 +1173,15 @@ fn expected_argv(
     resumed: bool,
     executable: &Path,
 ) -> Vec<String> {
+    let repository = spice::repository::Repository::discover(worktree)
+        .expect("expected launch worktree discovers");
+    let prompt = format!(
+        "[$spice](<{}>)",
+        spice::install::installed_skill(&repository).display()
+    );
     match dialect {
-        Dialect::Claude => expected_claude_argv(rig, lane, resumed, executable),
-        Dialect::Codex => expected_codex_argv(rig, worktree, resumed, executable),
+        Dialect::Claude => expected_claude_argv(rig, lane, resumed, executable, &prompt),
+        Dialect::Codex => expected_codex_argv(rig, worktree, resumed, executable, &prompt),
     }
 }
 
@@ -1195,6 +1190,7 @@ fn expected_claude_argv(
     lane: wire::CanonicalUuid,
     resumed: bool,
     executable: &Path,
+    prompt: &str,
 ) -> Vec<String> {
     let executable = executable.display().to_string();
     let hook = format!("{} inbox", shell_word(&executable));
@@ -1216,7 +1212,7 @@ fn expected_claude_argv(
         token: lane.to_string(),
     };
     let system = format!(
-        "{}\n\n{PROMPT}\n\n{}",
+        "{}\n\n{prompt}\n\n{}",
         vendor::claude::SKILL_SYSTEM_PROMPT_PREAMBLE,
         key.prompt_line()
     );
@@ -1247,7 +1243,13 @@ fn expected_claude_argv(
     argv
 }
 
-fn expected_codex_argv(rig: &Rig, worktree: &str, resumed: bool, executable: &Path) -> Vec<String> {
+fn expected_codex_argv(
+    rig: &Rig,
+    worktree: &str,
+    resumed: bool,
+    executable: &Path,
+    prompt: &str,
+) -> Vec<String> {
     let executable = executable.display().to_string();
     let hook = format!("{} inbox", shell_word(&executable));
     let hook_override = format!(
@@ -1286,7 +1288,7 @@ fn expected_codex_argv(rig: &Rig, worktree: &str, resumed: bool, executable: &Pa
     if resumed {
         argv.extend(["resume".to_owned(), CODEX_SESSION_ID.to_owned()]);
     }
-    argv.push(PROMPT.to_owned());
+    argv.push(prompt.to_owned());
     argv
 }
 

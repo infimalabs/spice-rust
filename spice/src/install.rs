@@ -32,13 +32,17 @@ use record::read_record;
 #[cfg(test)]
 use record::record_path;
 
-const PLAN_VERSION: u16 = 4;
-const RECORD_VERSION: u16 = 4;
+const PLAN_VERSION: u16 = 5;
+const RECORD_VERSION: u16 = 5;
 const LEGACY_RECORDS: [(&str, &str); 2] = [
     (".spice/install", "SURFACE-1kJQkpFs"),
     (".spice/rust/install.json", "SURFACE-1kJRGpf2"),
 ];
-const LEGACY_RECORD_VERSIONS: [(u16, &str); 2] = [(2, "SURFACE-1kJRGpf2"), (3, "HOOKS-1kJQnmG8")];
+const LEGACY_RECORD_VERSIONS: [(u16, &str); 3] = [
+    (2, "SURFACE-1kJRGpf2"),
+    (3, "HOOKS-1kJQnmG8"),
+    (4, "INSTALL-1kKQTfBp"),
+];
 const RECORD_NAME: &str = "install.json";
 const RECORD_PATH: &str = ".spice/install.json";
 const RECORD_MODE: u32 = 0o600;
@@ -46,14 +50,17 @@ const DIRECTORY_MODE: u32 = 0o700;
 const DATA_MODE: u32 = 0o644;
 const EXECUTABLE_MODE: u32 = 0o755;
 
+// The receipt materializes `.spice` before applying operations. Appliance
+// assets use a sibling namespace so that publication cannot invalidate the
+// side-effect-free preview's descriptor-bound parent observations.
 const EXCLUDE_PATH: &str = "info/exclude";
-const GIT_PRE_COMMIT_PATH: &str = ".spice/git-hooks/pre-commit";
-const GIT_COMMIT_MESSAGE_PATH: &str = ".spice/git-hooks/commit-msg";
-const GIT_REFERENCE_TRANSACTION_PATH: &str = ".spice/git-hooks/reference-transaction";
-const ENTRY_PATH: &str = ".spice/hooks/entry.sh";
-const STATIC_PATH: &str = ".spice/hooks/static/stage.sh";
-const SKILL_PATH: &str = ".agents/skills/spice/SKILL.md";
-const BINARY_PATH: &str = ".spice/bin/spice";
+const GIT_PRE_COMMIT_PATH: &str = ".spice-install/git-hooks/pre-commit";
+const GIT_COMMIT_MESSAGE_PATH: &str = ".spice-install/git-hooks/commit-msg";
+const GIT_REFERENCE_TRANSACTION_PATH: &str = ".spice-install/git-hooks/reference-transaction";
+const ENTRY_PATH: &str = ".spice-install/hooks/entry.sh";
+const STATIC_PATH: &str = ".spice-install/hooks/static/stage.sh";
+const SKILL_PATH: &str = ".spice-install/agents/skills/spice/SKILL.md";
+const BINARY_PATH: &str = ".spice-install/bin/spice";
 
 const EXCLUDE_BEGIN: &str = "# BEGIN Spice managed assets";
 const EXCLUDE_END: &str = "# END Spice managed assets";
@@ -123,20 +130,21 @@ impl Location {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RepositoryIdentity {
-    worktree: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    worktree: Option<PathBuf>,
     common_git: PathBuf,
 }
 
 impl RepositoryIdentity {
     fn capture(repository: &Repository) -> Self {
         Self {
-            worktree: repository.worktree_root().to_path_buf(),
+            worktree: None,
             common_git: repository.common_dir().to_path_buf(),
         }
     }
 
     fn validate(&self, repository: &Repository) -> Result<(), InstallError> {
-        if self == &Self::capture(repository) {
+        if self.worktree.is_none() && self.common_git == repository.common_dir() {
             Ok(())
         } else {
             Err(InstallError::InvalidRecord(
@@ -165,6 +173,16 @@ struct ObservedFile {
 impl ObservedFile {
     fn generated(&self) -> GeneratedImage {
         self.image.generated()
+    }
+}
+
+fn images_match(observed: Option<&ObservedFile>, expected: Option<&ObservedFile>) -> bool {
+    // Durable drift belongs to the complete file image. A generation is only
+    // an immediate compare-and-swap guard for the mutation that follows.
+    match (observed, expected) {
+        (None, None) => true,
+        (Some(observed), Some(expected)) => observed.image == expected.image,
+        _ => false,
     }
 }
 
@@ -398,9 +416,9 @@ impl InstallPlan {
             ));
         }
 
-        if !self.repository.worktree.is_absolute() || !self.repository.common_git.is_absolute() {
+        if self.repository.worktree.is_some() || !self.repository.common_git.is_absolute() {
             return Err(InstallError::InvalidRecord(
-                "install repository identity is not absolute".to_owned(),
+                "install repository identity is not common-directory scoped".to_owned(),
             ));
         }
         validate_relative(&self.record.destination)?;
@@ -452,7 +470,7 @@ impl InstallPlan {
                 ));
             }
             let observed = observe(&operation.destination(repository))?;
-            if observed != operation.previous {
+            if !images_match(observed.as_ref(), operation.previous.as_ref()) {
                 return Err(drift(operation, observed));
             }
         }
@@ -621,11 +639,11 @@ fn build_plan(
         ),
         (Asset::Skill, SKILL_PATH, SKILL.as_bytes(), DATA_MODE),
     ] {
-        let (bound, previous) = destination_state(repository, Location::Worktree, path)?;
+        let (bound, previous) = destination_state(repository, Location::CommonGit, path)?;
         operations.push(operation(
             &mut virtual_directories,
             asset,
-            Location::Worktree,
+            Location::CommonGit,
             path,
             bound,
             previous,
@@ -635,11 +653,11 @@ fn build_plan(
 
     if let Some(binary) = spice_binary {
         let bytes = read_binary(binary)?;
-        let (bound, previous) = destination_state(repository, Location::Worktree, BINARY_PATH)?;
+        let (bound, previous) = destination_state(repository, Location::CommonGit, BINARY_PATH)?;
         operations.push(operation(
             &mut virtual_directories,
             Asset::Binary,
-            Location::Worktree,
+            Location::CommonGit,
             BINARY_PATH,
             bound,
             previous,
@@ -935,18 +953,40 @@ fn validate_introduced_parents(
 fn asset_contract(asset: Asset) -> (Location, &'static str, u32) {
     match asset {
         Asset::Exclusions => (Location::CommonGit, EXCLUDE_PATH, DATA_MODE),
-        Asset::GitPreCommit => (Location::Worktree, GIT_PRE_COMMIT_PATH, EXECUTABLE_MODE),
-        Asset::GitCommitMessage => (Location::Worktree, GIT_COMMIT_MESSAGE_PATH, EXECUTABLE_MODE),
+        Asset::GitPreCommit => (Location::CommonGit, GIT_PRE_COMMIT_PATH, EXECUTABLE_MODE),
+        Asset::GitCommitMessage => (
+            Location::CommonGit,
+            GIT_COMMIT_MESSAGE_PATH,
+            EXECUTABLE_MODE,
+        ),
         Asset::GitReferenceTransaction => (
-            Location::Worktree,
+            Location::CommonGit,
             GIT_REFERENCE_TRANSACTION_PATH,
             EXECUTABLE_MODE,
         ),
-        Asset::HookEntry => (Location::Worktree, ENTRY_PATH, EXECUTABLE_MODE),
-        Asset::HookStatic => (Location::Worktree, STATIC_PATH, EXECUTABLE_MODE),
-        Asset::Skill => (Location::Worktree, SKILL_PATH, DATA_MODE),
-        Asset::Binary => (Location::Worktree, BINARY_PATH, EXECUTABLE_MODE),
+        Asset::HookEntry => (Location::CommonGit, ENTRY_PATH, EXECUTABLE_MODE),
+        Asset::HookStatic => (Location::CommonGit, STATIC_PATH, EXECUTABLE_MODE),
+        Asset::Skill => (Location::CommonGit, SKILL_PATH, DATA_MODE),
+        Asset::Binary => (Location::CommonGit, BINARY_PATH, EXECUTABLE_MODE),
     }
+}
+
+/// Installed Spice executable shared by every linked worktree.
+#[must_use]
+pub fn installed_binary(repository: &Repository) -> PathBuf {
+    repository.common_dir().join(BINARY_PATH)
+}
+
+/// Installed operator skill shared by every linked worktree.
+#[must_use]
+pub fn installed_skill(repository: &Repository) -> PathBuf {
+    repository.common_dir().join(SKILL_PATH)
+}
+
+/// Installed Git hook directory shared by every linked worktree.
+#[must_use]
+pub fn installed_git_hooks(repository: &Repository) -> PathBuf {
+    repository.common_dir().join(".spice-install/git-hooks")
 }
 
 fn drift(operation: &Operation, observed: Option<ObservedFile>) -> InstallError {

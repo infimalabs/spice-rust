@@ -24,6 +24,7 @@ fn dispatch_client(
         ["board", "handout"] => client_handout(repository, contract, matches),
         ["doc"] => run_doc(repository, contract, matches),
         ["doc", "ledger"] => client_ledger(repository, contract, matches),
+        ["task", "status"] => client_status(repository, contract),
         ["task", "next"] => client_next(repository, contract),
         ["task", "reclaim"] => client_reclaim(repository, contract, matches),
         ["task", "add"] => client_add(repository, contract, matches),
@@ -58,6 +59,111 @@ fn client_board(
             family: matches.get_one::<String>("FAMILY").cloned(),
         },
     )
+}
+
+fn client_status(repository: &Repository, contract: &Contract) -> Outcome<CommandAnswer> {
+    match crate::command_client::execute_typed(
+        repository,
+        contract,
+        CommandKind::BoardRead,
+        Vec::new(),
+        &BoardRead { family: None },
+    ) {
+        Outcome::Reply(Reply {
+            position,
+            body: CommandAnswer::Board(board),
+        }) => match task_status(&board) {
+            Ok(text) => Outcome::Reply(Reply {
+                position,
+                body: CommandAnswer::Text(TextAnswer { text }),
+            }),
+            Err(outcome) => outcome,
+        },
+        Outcome::Reply(_) => protocol_fault(
+            "task::status-answer",
+            "task status board read returned another answer shape",
+        ),
+        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => Outcome::Fault(fault),
+    }
+}
+
+fn task_status(board: &BoardAnswer) -> Result<String, Outcome<CommandAnswer>> {
+    let entries = actor_entries(board)?;
+    let completed = entries
+        .iter()
+        .filter(|entry| entry.workflow().status == "completed")
+        .map(|entry| entry.statement().handle.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let pending_public = |entry: &&Entry| {
+        !entry.project().visibility().is_hidden()
+            && entry.workflow().status == "pending"
+            && entry.workflow().completion.is_none()
+    };
+    let active = |entry: &&Entry| {
+        entry
+            .claim()
+            .is_some_and(|claim| claim.disposition == ClaimDisposition::Active)
+    };
+    let rows = entries.iter().filter(pending_public).collect::<Vec<_>>();
+    let claim = rows
+        .iter()
+        .copied()
+        .find(|entry| {
+            active(entry)
+                && entry
+                    .claim()
+                    .is_some_and(|claim| claim.actor == board.principal)
+        })
+        .map_or_else(|| "-".to_owned(), |entry| entry.statement().handle.to_string());
+    let active_count = rows.iter().copied().filter(active).count();
+    let review = rows
+        .iter()
+        .copied()
+        .filter(|entry| entry.workflow().phase.as_str() == "review" && !active(entry))
+        .count();
+    let waiting = rows
+        .iter()
+        .filter(|entry| entry.workflow().deferral.is_some())
+        .count();
+    let blocked = rows
+        .iter()
+        .filter(|entry| {
+            entry
+                .statement()
+                .dependencies
+                .iter()
+                .any(|dependency| !completed.contains(dependency))
+        })
+        .count();
+    let ready = rows
+        .iter()
+        .copied()
+        .filter(|entry| {
+            entry.workflow().phase.as_str() != "review"
+                && board::eligible_entry(&entries, entry, &board.principal)
+        })
+        .count();
+    let stale = rows
+        .iter()
+        .filter(|entry| {
+            entry
+                .claim()
+                .is_some_and(|claim| claim.disposition == ClaimDisposition::Lapsed)
+        })
+        .count();
+    let oops = entries
+        .iter()
+        .filter(|entry| {
+            entry.project().visibility().hidden_stem() == Some("oops")
+                && entry.workflow().status == "pending"
+                && entry.workflow().completion.is_none()
+        })
+        .count();
+    Ok(format!(
+        "claim {claim}\nactor {}\nactive {active_count}\nready {ready}\nreview {review}\nblocked {blocked}\nwaiting {waiting}\nstale {stale}\noops {oops}",
+        board.principal
+    ))
 }
 
 fn client_graph(
@@ -228,7 +334,35 @@ fn client_add(
 ) -> Outcome<CommandAnswer> {
     let title = required(matches, "TITLE");
     let project = matches.get_one::<String>("project").cloned();
-    submit_add(repository, contract, title, project, None)
+    let description = matches.get_one::<String>("description").cloned();
+    let acceptance = matches
+        .get_many::<String>("acceptance")
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect();
+    let origin = match matches.get_one::<String>("origin") {
+        Some(written) => match written.parse::<wire::Origin>() {
+            Ok(origin) => Some(origin),
+            Err(error) => {
+                return refusal(
+                    "task::origin-invalid",
+                    Some(written.clone()),
+                    &error.to_string(),
+                );
+            }
+        },
+        None => None,
+    };
+    submit_add(
+        repository,
+        contract,
+        title,
+        project,
+        description,
+        acceptance,
+        origin,
+    )
 }
 
 fn client_capture(
@@ -282,7 +416,15 @@ fn client_capture(
                 .unwrap_or(candidate.subject);
             let add_contract = crate::cli::contract(&["task", "add"])
                 .expect("task add contract is registered");
-            match submit_add(repository, add_contract, title, Some(project), None) {
+            match submit_add(
+                repository,
+                add_contract,
+                title,
+                Some(project),
+                None,
+                Vec::new(),
+                None,
+            ) {
                 Outcome::Reply(Reply {
                     body: CommandAnswer::Task(answer),
                     ..
@@ -655,6 +797,8 @@ fn submit_add(
     title: String,
     project: Option<String>,
     description: Option<String>,
+    acceptance: Vec<String>,
+    origin: Option<wire::Origin>,
 ) -> Outcome<CommandAnswer> {
     submit_task_add(
         repository,
@@ -663,7 +807,8 @@ fn submit_add(
             title,
             project,
             description,
-            acceptance: Vec::new(),
+            acceptance,
+            origin,
             flow: None,
             depends: Vec::new(),
         },
