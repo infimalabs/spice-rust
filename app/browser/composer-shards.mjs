@@ -51,23 +51,39 @@ export async function assertComposerShards({
     .getByRole("button", { name: "Quote this message" });
   const quoteStack = quoteLane.locator(".agent-composer-stack");
   const quotePrimary = quoteStack.locator(".composer-shard--primary");
-  const primaryHeading = team.locator(
-    `.team-agent[data-agent-lane="${seeded.lane}"] .composer-shard--primary .composer-shard-heading > strong`,
+  const primaryShard = team.locator(
+    `.team-agent[data-agent-lane="${seeded.lane}"] .composer-shard--primary`,
   );
+  // Located by the class the heading wears rather than as a strong under the
+  // header: the renew control lives in this header's drawer and carries a
+  // strong of its own, so a descendant tag match resolves to two elements.
+  const primaryHeading = primaryShard.locator(".composer-shard-prose");
+  // Every lane's agent names itself by its own worktree basename, so this
+  // expectation differs from the quote lane's below and the pair of them fails
+  // if one lane's standing is rendered into another lane's heading.
   assert.equal(
     await primaryHeading.innerText(),
-    seeded.activityHeadline,
-    "the primary shard heading shows the agent's current activity headline",
+    seeded.primaryProse,
+    "the primary shard heading shows this lane's own newest agent prose",
   );
   assert.notEqual(
     await primaryHeading.innerText(),
     seeded.agentName,
-    "the visible activity headline cannot silently revert to the agent name",
+    "the visible heading cannot silently revert to the agent name",
   );
   assert.equal(
     await primaryHeading.getAttribute("title"),
-    seeded.agentName,
-    "the primary shard keeps the agent name discoverable from its activity heading",
+    seeded.primaryProse,
+    "the complete prose stays recoverable when the one-line heading truncates it",
+  );
+  // The agent name is required to stay discoverable from this heading rather
+  // than dropped, and it still is -- not as the heading text, which the
+  // reference shows as prose, but as the label of the control the heading ends
+  // with, so the name is reachable without leaving the header.
+  assert.equal(
+    await primaryShard.locator(".agent-action-menu > summary").getAttribute("aria-label"),
+    `Actions for ${seeded.agentName}`,
+    "the agent name stays discoverable from the heading, in its actions control",
   );
   assert.equal(
     await quoteStack.locator(".composer-shard").count(),

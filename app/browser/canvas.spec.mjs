@@ -471,8 +471,18 @@ async function assertAgentConversation(page, fixture, worktrees) {
     lane: seated[0].lane,
     quoteLane: seated[3].lane,
     agentName: agentNames[0],
-    activityHeadline: messages[0],
+    primaryProse: agentProse(teamWorktrees[0]),
+    quoteProse: agentProse(teamWorktrees[3]),
   };
+}
+
+// The newest thing an agent itself said, which is what a composer heading
+// shows. Each fake agent emits one assistant record naming its own worktree
+// (`name=${PWD##*/}` in canvas-fixture.mjs), so this is a different string per
+// lane and the seeded operator messages above are directives rather than agent
+// prose -- a heading that showed those would be showing the wrong side.
+function agentProse(worktree) {
+  return `Canvas message reports CONTROL-1kKbC3j4 from ${worktree.split("/").at(-1)}`;
 }
 
 function elapsedLabel(millis) {
@@ -1039,7 +1049,7 @@ async function assertMosaicComposer(page, fixture, seeded) {
     nestedQuotePreview,
     nestedQuoteMessage,
     entirelyQuotedMessage,
-    latestPrimaryProse: "Canvas message reports CONTROL-1kKbC3j4 from lane-4",
+    latestPrimaryProse: seeded.quoteProse,
   });
 
   await activity
