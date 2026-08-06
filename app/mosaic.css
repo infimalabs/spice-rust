@@ -387,9 +387,12 @@
   overflow-y: auto;
 }
 
+/* The control column sizes itself from the pills rather than a pinned track, so
+   the reference widths and the narrow-viewport ones both land without a second
+   place to keep in step. */
 .team-composer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(76px, 14%, 138px);
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   min-height: 184px;
   padding: 8px 8px 0;
@@ -567,19 +570,27 @@
 .team-surface .image-picker { min-height: 25px; padding: 4px 6px; font-size: .62rem; }
 .team-surface .composer-markdown { padding: 6px 7px; font-size: .68rem; }
 
+/* The lineage control stack is sized against the Python Spice reference, which
+   fixes every item to one height and one width so the two sliders and the send
+   button read as a single column of equal pills. */
 .team-composer-controls {
+  --team-control-item-height: 36px;
+  --team-control-track-width: 96px;
+  align-items: stretch;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 .team-slider {
   --control-state-accent: var(--accent);
   display: grid;
-  align-content: center;
-  gap: 4px;
-  min-height: 54px;
-  padding: 7px 9px;
+  grid-template-rows: auto auto;
+  gap: 0;
+  flex: 0 0 var(--team-control-item-height);
+  height: var(--team-control-item-height);
+  min-height: var(--team-control-item-height);
+  padding: 4px 7px;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -587,9 +598,9 @@
   cursor: ew-resize;
 }
 .team-slider input {
-  width: 100%;
+  width: var(--team-control-track-width);
   min-width: 0;
-  height: 20px;
+  height: 16px;
   margin: 0;
   padding: 0;
   border: 0;
@@ -602,7 +613,7 @@
 .team-slider span {
   overflow: hidden;
   color: var(--muted);
-  font: 650 .76rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 11px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
   text-align: center;
   text-overflow: ellipsis;
   text-transform: lowercase;
@@ -613,28 +624,41 @@
 .team-send.maxed { --control-state-accent: var(--warning); }
 .team-slider.armed,
 .team-slider.maxed {
-  border-color: var(--control-state-accent);
-  background: color-mix(in srgb, var(--control-state-accent) 24%, var(--panel));
+  border-color: color-mix(in srgb, var(--control-state-accent) 70%, var(--line));
+  background: color-mix(in srgb, var(--control-state-accent) 18%, var(--panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--control-state-accent) 22%, transparent);
 }
 .team-slider.armed span,
 .team-slider.maxed span { color: var(--control-state-accent); }
 .team-send {
-  min-width: 0;
-  min-height: 50px;
-  padding: 0 10px;
+  min-width: 6ch;
+  flex: 0 0 var(--team-control-item-height);
+  height: var(--team-control-item-height);
+  min-height: var(--team-control-item-height);
+  padding: 5px 16px;
   border-radius: 999px;
-  border-color: var(--control-state-accent, var(--accent));
+  border-color: color-mix(in srgb, var(--control-state-accent, var(--accent)) 72%, var(--line));
   background: var(--control-state-accent, var(--accent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page) 22%, transparent);
   color: var(--page);
-  font: 700 .82rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 1rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.team-send.maxed { color: #15120a; }
 .team-control-issue {
-  width: 100%;
+  width: calc(var(--team-control-track-width) + 16px);
   margin: 0;
   color: var(--danger);
   font: .55rem/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow-wrap: anywhere;
+}
+/* The reference narrows the same stack rather than letting it crowd the agent
+   cards once the viewport can no longer afford the full-width pills. */
+@media (max-width: 720px) {
+  .team-composer-controls {
+    --team-control-item-height: 34px;
+    --team-control-track-width: 68px;
+  }
+  .team-slider { padding: 3px 5px; }
+  .team-send { padding: 5px 8px; }
 }
 
 .team-activity-grid {
