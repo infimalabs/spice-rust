@@ -39,6 +39,7 @@ pub mod compose;
 #[cfg(any(target_arch = "wasm32", test))]
 mod composer_markdown;
 pub mod mosaic;
+pub mod mosaic_plane;
 pub mod pane;
 pub mod runtime;
 pub mod socket;

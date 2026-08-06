@@ -432,38 +432,178 @@ fn render_activity(
     drafts: &UseReducerHandle<ComposerDrafts>,
     controls: &view::AgentControls,
 ) -> Html {
-    let messages = runtime
+    let cards = runtime
         .messages()
         .iter()
-        .filter_map(|message| lineage.member(message.lane).map(|member| (member, message)))
-        .collect::<Vec<_>>();
-    let directives = lineage
-        .members
-        .iter()
-        .flat_map(|member| {
+        .filter_map(|message| {
+            lineage
+                .member(message.lane)
+                .map(|member| ActivityCard::Agent {
+                    member: member.clone(),
+                    message: message.clone(),
+                })
+        })
+        .chain(lineage.members.iter().flat_map(|member| {
+            let lane = member.lane;
             runtime
                 .inbox()
-                .and_then(|inbox| inbox.lanes.iter().find(|row| row.lane == member.lane))
+                .and_then(|inbox| inbox.lanes.iter().find(|row| row.lane == lane))
                 .map(|row| row.pending.as_slice())
                 .unwrap_or(&[])
                 .iter()
-                .map(move |directive| (member.lane, directive))
-        })
+                .cloned()
+                .map(move |directive| ActivityCard::Directive { lane, directive })
+        }))
         .collect::<Vec<_>>();
+    let empty = cards.is_empty();
     html! {
-        <div class="team-activity-grid" aria-live="polite" aria-label="Live agent activity">
-            if messages.is_empty() && directives.is_empty() {
+        <div
+            class="team-activity-grid"
+            aria-live="polite"
+            aria-label="Live agent activity"
+            data-empty={empty.to_string()}
+        >
+            if empty {
                 <div class="mosaic-message-empty">{"No pending direction."}</div>
-            } else {
-                {for messages.into_iter().map(|(member, message)| {
-                    render_agent_message_card(member, message, drafts, controls)
-                })}
-                {for directives.into_iter().map(|(lane, directive)| {
-                    render_directive_card(lane, directive, &lane.to_string(), drafts, controls)
-                })}
             }
+            <MosaicPlane
+                key={lineage.lane.to_string()}
+                lane={lineage.lane}
+                {cards}
+                drafts={drafts.clone()}
+                speak={controls.speak.clone()}
+            />
         </div>
     }
+}
+
+#[derive(Clone, PartialEq)]
+enum ActivityCard {
+    Agent {
+        member: crate::runtime::LaneMember,
+        message: wire::AgentMessage,
+    },
+    Directive {
+        lane: CanonicalUuid,
+        directive: wire::intent::PendingDirective,
+    },
+}
+
+#[derive(Properties, PartialEq)]
+struct MosaicPlaneProps {
+    lane: CanonicalUuid,
+    cards: Vec<ActivityCard>,
+    drafts: UseReducerHandle<ComposerDrafts>,
+    speak: Callback<String>,
+}
+
+/// One component per lineage lane is deliberate: every lane owns one width,
+/// candidate stream, engine call, and row floor for all of its worktree
+/// members. Sibling lineages can never carry a skyline into one another.
+#[function_component(MosaicPlane)]
+fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
+    let host = use_node_ref();
+    let width = use_element_width(host.clone());
+    let geometry = crate::mosaic::Geometry::new(16.0, *width);
+    let candidate_sets = properties
+        .cards
+        .iter()
+        .map(|card| activity_candidates(card, &geometry))
+        .collect::<Vec<_>>();
+    let plane = crate::mosaic_plane::arrange(&candidate_sets);
+    html! {
+        <section
+            ref={host}
+            class="lane-mosaic-plane"
+            data-agent-plane={properties.lane.to_string()}
+            data-lanes={geometry.lane_count.to_string()}
+            data-plane-rows={plane.rows().to_string()}
+        >
+            {for properties.cards.iter().zip(plane.cards.iter()).map(|(activity, card)| {
+                match activity {
+                    ActivityCard::Agent { member, message } => render_agent_message_card(
+                        member,
+                        message,
+                        &properties.drafts,
+                        &properties.speak,
+                        card,
+                        plane.max_row,
+                    ),
+                    ActivityCard::Directive { lane, directive } => render_directive_card(
+                        *lane,
+                        directive,
+                        &lane.to_string(),
+                        &properties.drafts,
+                        &properties.speak,
+                        card,
+                        plane.max_row,
+                    ),
+                }
+            })}
+        </section>
+    }
+}
+
+fn activity_candidates(
+    activity: &ActivityCard,
+    geometry: &crate::mosaic::Geometry,
+) -> Vec<crate::mosaic::Candidate> {
+    let (text, attachment_height) = match activity {
+        ActivityCard::Agent { message, .. } => (message.text.as_str(), 0.0),
+        ActivityCard::Directive { directive, .. } => {
+            let height = directive
+                .attachments
+                .iter()
+                .filter(|attachment| !directive.text.contains(&attachment.data_url))
+                .map(|attachment| {
+                    if attachment.content_type.starts_with("image/") {
+                        crate::mosaic::Reservation::Image.pixels(16.0) + 10.0
+                    } else {
+                        42.0
+                    }
+                })
+                .sum::<f64>();
+            (directive.text.as_str(), height)
+        }
+    };
+    crate::mosaic::span_candidates(geometry, |span| {
+        let width = f64::from(geometry.card_width(0, span).max(160));
+        let characters_per_line = (width / 7.2).floor().max(18.0) as usize;
+        let text_lines = text
+            .lines()
+            .map(|line| line.chars().count().max(1).div_ceil(characters_per_line))
+            .sum::<usize>()
+            .max(1);
+        54.0 + text_lines as f64 * 19.0 + attachment_height
+    })
+}
+
+#[hook]
+fn use_element_width(host: NodeRef) -> UseStateHandle<f64> {
+    let width = use_state_eq(|| 0.0);
+    {
+        let width = width.clone();
+        use_effect_with(host, move |host| {
+            let registration = host.cast::<web_sys::Element>().and_then(|element| {
+                width.set(f64::from(element.client_width()));
+                let observed = element.clone();
+                let width = width.clone();
+                let callback = Closure::<dyn FnMut(js_sys::Array, web_sys::ResizeObserver)>::new(
+                    move |_, _| width.set(f64::from(observed.client_width())),
+                );
+                let observer =
+                    web_sys::ResizeObserver::new(callback.as_ref().unchecked_ref()).ok()?;
+                observer.observe(&element);
+                Some((observer, callback))
+            });
+            move || {
+                if let Some((observer, _callback)) = registration {
+                    observer.disconnect();
+                }
+            }
+        });
+    }
+    width
 }
 
 fn render_details(
@@ -803,7 +943,9 @@ fn render_agent_message_card(
     member: &crate::runtime::LaneMember,
     message: &wire::AgentMessage,
     drafts: &UseReducerHandle<ComposerDrafts>,
-    controls: &view::AgentControls,
+    speak: &Callback<String>,
+    card: &crate::mosaic::Card,
+    max_row: i32,
 ) -> Html {
     let drag_text = message.text.clone();
     let ondragstart = Callback::from(move |event: DragEvent| {
@@ -823,7 +965,7 @@ fn render_agent_message_card(
     let correspondent = view::chrome::Correspondent {
         name: producer.clone(),
         accent: watchband::accent(member.lane),
-        speak: controls.speak.clone(),
+        speak: speak.clone(),
         quote: Callback::from(move |text: String| {
             quote_drafts.dispatch(ComposerAction::AddQuote {
                 lane: quote_key.clone(),
@@ -838,7 +980,13 @@ fn render_agent_message_card(
     );
     html! {
         <article
-            class="mosaic-message-card"
+            key={format!(
+                "agent-{}-{}-{}",
+                message.locus.member,
+                message.locus.offset,
+                message.locus.event,
+            )}
+            class={classes!("mosaic-message-card", card.lifecycle.as_str())}
             draggable="true"
             aria-label={format!("Agent message from {producer}")}
             data-card-kind="agent-message"
@@ -846,6 +994,12 @@ fn render_agent_message_card(
             data-producer-target-id={message.author.to_string()}
             data-accent={correspondent.accent.to_string()}
             data-accent-slot={correspondent.accent.to_string()}
+            data-state={card.lifecycle.as_str()}
+            data-track={card.track.to_string()}
+            data-span={card.span.to_string()}
+            data-base={card.base.to_string()}
+            data-row={crate::mosaic::css_row_start(card, max_row).to_string()}
+            data-rows={card.rows.to_string()}
             {ondragstart}
         >
             <div class="message-body markdown-body">{render_markdown(&message.text)}</div>
@@ -864,7 +1018,9 @@ fn render_directive_card(
     directive: &wire::intent::PendingDirective,
     lane_key: &str,
     drafts: &UseReducerHandle<ComposerDrafts>,
-    controls: &view::AgentControls,
+    speak: &Callback<String>,
+    card: &crate::mosaic::Card,
+    max_row: i32,
 ) -> Html {
     let drag_text = directive.text.clone();
     let ondragstart = Callback::from(move |event: DragEvent| {
@@ -879,7 +1035,7 @@ fn render_directive_card(
     let correspondent = view::chrome::Correspondent {
         name: watchband::short(lane),
         accent: watchband::accent(lane),
-        speak: controls.speak.clone(),
+        speak: speak.clone(),
         quote: Callback::from(move |text: String| {
             quote_drafts.dispatch(ComposerAction::AddQuote {
                 lane: quote_key.clone(),
@@ -896,10 +1052,17 @@ fn render_directive_card(
         .collect::<Vec<_>>();
     html! {
         <article
-            class="mosaic-message-card"
+            key={directive.directive.to_string()}
+            class={classes!("mosaic-message-card", card.lifecycle.as_str())}
             draggable="true"
             data-directive={directive.directive.to_string()}
             data-agent-lane={lane.to_string()}
+            data-state={card.lifecycle.as_str()}
+            data-track={card.track.to_string()}
+            data-span={card.span.to_string()}
+            data-base={card.base.to_string()}
+            data-row={crate::mosaic::css_row_start(card, max_row).to_string()}
+            data-rows={card.rows.to_string()}
             {ondragstart}
         >
             <div class="message-body markdown-body">{render_markdown(&directive.text)}</div>
