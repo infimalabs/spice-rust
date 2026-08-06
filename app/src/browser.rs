@@ -22,6 +22,7 @@ use yew::prelude::*;
 use crate::{Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective};
 
 mod view;
+mod watchband;
 
 use view::render_canvas;
 
@@ -111,6 +112,18 @@ enum ClientAction {
         rule: wire::Name,
         answer: Answer,
     },
+    /// Direction the operator aimed at one seated lane from its tile.
+    ///
+    /// The occupant and epoch travel with the message because the residency
+    /// witness the resident re-proves is built from the same inbox snapshot the
+    /// tile was drawn from. Recomputing them at the socket would let the tile
+    /// name one lane while the command named another.
+    Steer {
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        epoch: CanonicalUuid,
+        message: String,
+    },
 }
 
 #[derive(Clone)]
@@ -122,6 +135,7 @@ enum PendingKind {
     Policy,
     Note(TaskHandle),
     ConsentDecision,
+    Steer(CanonicalUuid),
 }
 
 #[derive(Deserialize)]
@@ -136,6 +150,8 @@ fn canvas_app() -> Html {
     let axis = use_state(|| Axis::Flow);
     let note_task = use_state(String::new);
     let note_text = use_state(String::new);
+    let focus = use_state(|| None::<CanonicalUuid>);
+    let compose = use_state(String::new);
     let sender = use_mut_ref(|| None::<UnboundedSender<ClientAction>>);
     let speech = use_state(|| wire::SpeechPlayback::Disabled {});
     let speech_status = use_state(SpeechStatus::default);
@@ -188,6 +204,38 @@ fn canvas_app() -> Html {
             note_text.set(String::new());
         })
     };
+    let submit_steer = {
+        let sender = sender.clone();
+        let surface = surface.clone();
+        let focus = focus.clone();
+        let compose = compose.clone();
+        Callback::<SubmitEvent>::from(move |event: SubmitEvent| {
+            event.prevent_default();
+            let Some(lane) = *focus else {
+                return;
+            };
+            let message = compose.trim().to_owned();
+            if message.is_empty() {
+                return;
+            }
+            // The witness is read at send time rather than at draw time: the
+            // roster can reseat between the click and the submit, and a stale
+            // occupant would be refused by the resident instead of retargeted.
+            let Some((occupant, epoch)) = watchband::residency(&surface, lane) else {
+                return;
+            };
+            send_action(
+                &sender,
+                ClientAction::Steer {
+                    lane,
+                    occupant,
+                    epoch,
+                    message,
+                },
+            );
+            compose.set(String::new());
+        })
+    };
     let toggle_speech = speech_toggle(
         speech.clone(),
         speech_status.clone(),
@@ -206,6 +254,11 @@ fn canvas_app() -> Html {
         &speech,
         &speech_status,
         toggle_speech,
+        &watchband::Steering {
+            focus,
+            compose,
+            submit: submit_steer,
+        },
     )
 }
 
@@ -517,6 +570,33 @@ async fn dispatch_action(
             )
             .await
         }
+        ClientAction::Steer {
+            lane,
+            occupant,
+            epoch,
+            message,
+        } => {
+            let body = wire::intent::SteerSend {
+                lane,
+                message,
+                attachments: Vec::new(),
+            };
+            let expected = vec![Witness::Residency {
+                lane,
+                occupant,
+                epoch,
+            }];
+            send_typed(
+                principal,
+                writer,
+                pending,
+                PendingKind::Steer(lane),
+                CommandKind::SteerSend,
+                expected,
+                body,
+            )
+            .await
+        }
     }
 }
 
@@ -788,6 +868,11 @@ fn handle_incoming(
             let admitted: crate::Admitted<Response<wire::intent::ConsentAnswer>> =
                 admit_response(session, bytes)?;
             runtime.apply_decision(&admitted);
+        }
+        PendingKind::Steer(lane) => {
+            let admitted: crate::Admitted<Response<wire::intent::DirectiveAnswer>> =
+                admit_response(session, bytes)?;
+            runtime.apply_steer(&admitted, lane);
         }
     }
     surface.set(data.clone());

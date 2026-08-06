@@ -14,6 +14,7 @@ pub(super) fn render_canvas(
     speech: &UseStateHandle<wire::SpeechPlayback>,
     speech_status: &UseStateHandle<SpeechStatus>,
     toggle_speech: Callback<MouseEvent>,
+    steering: &super::watchband::Steering,
 ) -> Html {
     let active_axis = **axis;
     let cursor = (**surface)
@@ -36,6 +37,7 @@ pub(super) fn render_canvas(
                 speech,
                 speech_status,
                 toggle_speech,
+                steering,
             )}
         </div>
     }
@@ -82,6 +84,7 @@ pub(super) fn render_workspace(
     speech: &wire::SpeechPlayback,
     speech_status: &SpeechStatus,
     toggle_speech: Callback<MouseEvent>,
+    steering: &super::watchband::Steering,
 ) -> Html {
     let runtime = (**surface).as_ref();
     let task_count = runtime
@@ -114,6 +117,7 @@ pub(super) fn render_workspace(
                 </div>
             </header>
             <main class="content">
+                {super::watchband::render(surface, steering)}
                 <div class="page-heading">
                     <div>
                         <h1>{title(active_axis.as_str())}</h1>

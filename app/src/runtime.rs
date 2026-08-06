@@ -585,6 +585,27 @@ impl CanvasRuntime {
         });
     }
 
+    /// Record the receipt for direction the operator sent from a lane tile.
+    ///
+    /// The acknowledgment key is the operator's handle on the directive from
+    /// here on, so it is the detail rather than the opaque directive identity.
+    pub fn apply_steer(
+        &mut self,
+        admitted: &Admitted<Response<wire::intent::DirectiveAnswer>>,
+        lane: CanonicalUuid,
+    ) {
+        self.apply_response(admitted, |_runtime, answer| {
+            (
+                format!("Steered lane {lane}"),
+                format!(
+                    "key {} {}",
+                    answer.key,
+                    disposition_label(answer.disposition)
+                ),
+            )
+        });
+    }
+
     fn apply_response<T>(
         &mut self,
         admitted: &Admitted<Response<T>>,
@@ -654,6 +675,20 @@ impl CanvasRuntime {
             },
         );
         self.events.truncate(EVENT_LIMIT);
+    }
+}
+
+/// The operator-facing spelling of a directive disposition.
+///
+/// The match is exhaustive, so a new retirement state must state its spelling
+/// rather than reach the operator as a debug rendering.
+const fn disposition_label(disposition: wire::Disposition) -> &'static str {
+    match disposition {
+        wire::Disposition::Live => "live",
+        wire::Disposition::Acked => "acked",
+        wire::Disposition::Declined => "declined",
+        wire::Disposition::Lapsed => "lapsed",
+        wire::Disposition::Canceled => "canceled",
     }
 }
 

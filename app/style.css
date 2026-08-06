@@ -278,6 +278,89 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .metric-value { margin-top: 8px; font-size: 1.55rem; font-weight: 750; }
 .metric-detail { margin-top: 4px; color: var(--muted); font-size: .78rem; overflow-wrap: anywhere; }
 
+.watchband { margin-bottom: 20px; }
+
+.compose {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.compose-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+}
+
+.compose-input:disabled { background: var(--panel-muted); color: var(--muted); }
+
+.compose-send {
+  flex: 0 0 auto;
+  padding: 0 18px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.compose-send:disabled { border-color: var(--line); background: var(--panel-muted); color: var(--muted); cursor: default; }
+
+.watchband-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.watchband-empty { margin: 0; color: var(--muted); font-size: .84rem; }
+
+/* A tile is fixed-width so the strip reads as one band rather than as columns
+   that resize when a lane's direction text changes length. */
+.lane-tile {
+  display: flex;
+  flex: 0 0 218px;
+  flex-direction: column;
+  gap: 6px;
+  height: 116px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--accent);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lane-tile--focused { border-color: var(--focus); border-top-color: var(--focus); box-shadow: 0 0 0 2px var(--accent-soft); }
+.lane-tile-top { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+.lane-tile-name { flex: 0 0 auto; font-weight: 700; font-size: .84rem; }
+.lane-tile-head { overflow: hidden; color: var(--muted); font-size: .74rem; text-overflow: ellipsis; white-space: nowrap; }
+
+.lane-tile-body {
+  display: -webkit-box;
+  flex: 1 1 auto;
+  overflow: hidden;
+  font-size: .78rem;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.lane-tile-foot { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.lane-tile-claim { overflow: hidden; flex: 1 1 auto; color: var(--muted); font-family: ui-monospace, monospace; font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
+.lane-tile-pending { flex: 0 0 auto; padding: 0 6px; border-radius: 999px; background: var(--warning-soft); color: var(--warning); font-size: .68rem; font-weight: 700; }
+.lane-tile-vendor { flex: 0 0 auto; color: var(--muted); font-size: .68rem; text-transform: uppercase; }
+
 .pane-strip {
   display: flex;
   gap: 7px;
