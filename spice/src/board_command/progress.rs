@@ -62,6 +62,7 @@ fn claim_free(
     let answer = wire::intent::ClaimAnswer {
         task: task.task.clone(),
         holder: command.actor().clone(),
+        warnings: Vec::new(),
     };
     if let Err(error) = write.command_result(
         request(command, task.clone()),
@@ -116,6 +117,7 @@ fn claim_reclaim(
     let answer = wire::intent::ClaimAnswer {
         task: renew.task.clone(),
         holder: command.actor().clone(),
+        warnings: Vec::new(),
     };
     if let Err(error) = write.command_result(
         request(command, renew.clone()),

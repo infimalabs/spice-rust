@@ -372,6 +372,7 @@ fn build_write(request: FreeRequest, observed: Observation) -> Result<JournalWri
             intent::ClaimAnswer {
                 task,
                 holder: request.actor,
+                warnings: Vec::new(),
             },
         )
         .map_err(FreeError::Build)?;
