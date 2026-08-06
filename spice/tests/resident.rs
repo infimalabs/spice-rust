@@ -113,7 +113,7 @@ impl Drop for Fixture {
     }
 }
 
-/// The ignore rule every fixture repository owes the stage [`Fixture`] installs.
+/// The ignore rule every fixture repository owes its generated app store.
 ///
 /// A resident refuses to start without that stage, so every fixture root holds
 /// one whether or not the case under test is about the app. It is built output
@@ -122,7 +122,7 @@ impl Drop for Fixture {
 /// clean tree for unrelated reasons. Derived from the constant the stage is
 /// written from so the two cannot come to name different directories.
 fn app_stage_ignore() -> String {
-    format!("/{}/\n", canvas::LOCAL_STAGE)
+    format!("/{}/\n", canvas::APP_STAGE)
 }
 
 /// Assert a freshly seeded fixture repository sees nothing but what it committed.

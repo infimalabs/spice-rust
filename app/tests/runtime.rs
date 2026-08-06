@@ -584,7 +584,12 @@ fn staleness_inventory() -> Vec<(serde_json::Value, [bool; 4])> {
             [false, true, true, false],
         ),
         (
-            serde_json::json!({"kind": "lane::exited", "lane": LANE, "occupant": REQUEST, "code": 0}),
+            serde_json::json!({
+                "kind": "lane::exited",
+                "lane": LANE,
+                "occupant": REQUEST,
+                "code": 0,
+            }),
             [false, true, true, false],
         ),
         (
@@ -804,7 +809,7 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
     );
 }
 
-/// The steering receipt quotes the directive key exactly as the resident set it.
+/// The one steering receipt shape quotes the key exactly as the resident set it.
 ///
 /// The key is a case-sensitive stamp drawn from a vowel-free mixed-case
 /// alphabet, and it is the handle an operator types back at the CLI to cancel
@@ -818,8 +823,13 @@ fn a_steering_receipt_preserves_the_directive_key_and_lowercases_only_its_dispos
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
-    let body = format!(r#"{{"directive":"{LANE}","key":"1kKQtLsP","disposition":"acked"}}"#);
-    let reply = format!(r#"{{"kind":"reply","cursor":41,"body":{body}}}"#);
+    let reply = format!(
+        concat!(
+            r#"{{"kind":"reply","cursor":41,"body":{{"directive":"{LANE}","#,
+            r#""key":"1kKQtLsP","disposition":"acked"}}}}"#,
+        ),
+        LANE = LANE
+    );
     let bytes = format!(r#"{{"v":1,"id":"{REQUEST}","epoch":"{EPOCH}","outcome":{reply}}}"#);
     let admitted: app::Admitted<Response<wire::intent::DirectiveAnswer>> = session
         .admit_frame(bytes.as_bytes())

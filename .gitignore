@@ -8,9 +8,9 @@
 /dist/stage/objects/
 /dist/stage/targets/
 
-# The one browser app stage. Every lane builds it natively with
-# `cargo xtask local-app`; the resident refuses to start without it.
-/dist/stage-local/
+# The sole browser app generation store. Each lane publishes it with
+# `cargo xtask app`; no resident falls back when its current generation is absent.
+/dist/stage-app/
 
 # Snapshots, console logs and screenshots the Playwright MCP browser writes
 # beside the worktree. Every lane is told to validate the canvas through that
@@ -18,4 +18,4 @@
 # gate that walks the filesystem rather than the tracked set counts it as an
 # input to the build.
 /.playwright-mcp/
-/dist/.stage-local-build-*/
+/dist/.stage-app-build-*/

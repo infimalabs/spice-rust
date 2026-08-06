@@ -154,7 +154,7 @@ async function reply(fixture, args) {
 /// Refuse a run whose stage carries no app to serve.
 ///
 /// There is one stage now and the resident has no embedded bundle to fall back
-/// on, so a lane that has not run `cargo xtask local-app` -- or whose stage was
+/// on, so a lane that has not run `cargo xtask app` -- or whose stage was
 /// half written -- gets a resident that starts, answers, and serves nothing the
 /// browser can execute. That failure does not announce itself: it surfaces as a
 /// timeout in whichever feature the lane just changed, ten seconds of waiting
@@ -162,11 +162,12 @@ async function reply(fixture, args) {
 /// regression in that change. One directory read before the copy turns a
 /// debugging session into a refusal naming the command that fixes it.
 async function configureFixture(fixture) {
+  const appStage = "dist/stage-app";
   // The stage is a generation store now: one atomic pointer names a complete
   // immutable generation, so the wasm lives under that generation rather than
   // beside the pointer. The precondition reads the same pointer the resident
   // reads, so it refuses on exactly what the resident would refuse on.
-  const stage = join(root, "dist/stage-local");
+  const stage = join(root, appStage);
   const pointer = await readFile(join(stage, "current"), "utf8").catch(() => "");
   const generation = pointer.trim();
   const staged = generation
@@ -174,9 +175,9 @@ async function configureFixture(fixture) {
     : [];
   assert.ok(
     staged.includes("app_bg.wasm"),
-    `${stage} publishes no complete app generation: run cargo xtask local-app to build the stage this spec serves`,
+    `${stage} publishes no complete app generation: run cargo xtask app to build the stage this spec serves`,
   );
-  await cp(stage, join(fixture, "dist/stage-local"), { recursive: true });
+  await cp(stage, join(fixture, appStage), { recursive: true });
   const vendor = join(fixture, "fake-claude");
   await writeFile(vendor, [
     "#!/bin/sh",
@@ -983,7 +984,7 @@ const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browse
 await mkdir(join(fixture, ".git"));
 await mkdir(artifacts, { recursive: true });
 await configureFixture(fixture);
-process.stderr.write("canvas spec: serving dist/stage-local, the app this worktree built\n");
+process.stderr.write("canvas spec: serving dist/stage-app, the app this worktree built\n");
 
 let resident;
 let browser;
