@@ -1076,6 +1076,112 @@ mod tests {
         clean(&root, bus);
     }
 
+    /// Both follow-up forms persist the dependency they promise.
+    #[test]
+    fn a_review_creates_and_links_its_follow_up_tracking() {
+        let (root, bus, epoch, seats) = fixture("review-followup-persistence", 2);
+        let implementer = Actor::Lane(seats[0].lane);
+        let reviewer = Actor::Lane(seats[1].lane);
+        assert_lane_resolution(&bus, epoch, &seats, &implementer);
+        let reviewed = add(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "TRACK-track002",
+            "Persist review tracking",
+            None,
+        );
+        advance_task_to_review(&bus, epoch, &seats[0], &implementer, &reviewed);
+        let reviewable = board(&bus, epoch, reviewer.clone());
+        assert_committed(issue(
+            &bus,
+            epoch,
+            reviewer.clone(),
+            CommandKind::ClaimWin,
+            claim_expected(&reviewable, &reviewed, &seats[1]),
+            &ClaimWin {
+                rule: "next".parse().expect("allocator rule"),
+            },
+        ));
+        let linked = add(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "TRACK-track003",
+            "Link review tracking",
+            None,
+        );
+        let assigned = board(&bus, epoch, reviewer.clone());
+        let mut expected = progress_witnesses(
+            &assigned,
+            at(&assigned, &reviewed),
+            seats[1].lane,
+            seats[1].occupant,
+            true,
+        )
+        .expect("assigned review has exact witnesses");
+        let created: TaskHandle = "FOLLOW-1kKRRsDQ".parse().expect("follow-up handle");
+        expected.push(Witness::Absence { task: created.clone() });
+        let linked_heads = at(&assigned, &linked);
+        expected.push(statement_witness(linked_heads));
+        expected.push(workflow_witness(linked_heads));
+        expected.push(Witness::Edge {
+            task: linked.clone(),
+            after: reviewed.clone(),
+        });
+        assert_committed(issue(
+            &bus,
+            epoch,
+            reviewer,
+            CommandKind::TaskReview,
+            expected,
+            &TaskReview {
+                task: reviewed.clone(),
+                finding: "two corrections need durable owners".to_owned(),
+                note: None,
+                then: vec![ReviewFollowup {
+                    task: created.clone(),
+                    add: TaskAdd {
+                        title: "Create the missing review fixture".to_owned(),
+                        project: Some("board.test".to_owned()),
+                        description: None,
+                        acceptance: vec!["the review path is covered".to_owned()],
+                        origin: None,
+                        flow: None,
+                        depends: Vec::new(),
+                    },
+                }],
+                followup: vec![linked.clone()],
+            },
+        ));
+        assert_review_followup_tracking(&bus, epoch, &reviewed, &created, &linked);
+        clean(&root, bus);
+    }
+
+    fn assert_review_followup_tracking(
+        bus: &Bus,
+        epoch: CanonicalUuid,
+        reviewed: &TaskHandle,
+        created: &TaskHandle,
+        linked: &TaskHandle,
+    ) {
+        let settled = board(bus, epoch, Actor::Operator);
+        assert_eq!(
+            at(&settled, created).statement.body.dependencies,
+            vec![reviewed.clone()],
+            "--then did not create a task behind the reviewed task"
+        );
+        assert!(
+            at(&settled, linked)
+                .statement
+                .body
+                .dependencies
+                .contains(reviewed),
+            "--followup did not wire the existing task behind the review"
+        );
+        assert_eq!(at(&settled, reviewed).workflow.body.review, "finding");
+    }
+
     fn assert_restart_preserves(
         root: &Path,
         bus: Bus,
