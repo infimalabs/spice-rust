@@ -14,8 +14,8 @@
 //! test compiles every packaged spelling to prove that cannot ship.
 //!
 //! Nothing here reads a file or produces a finding. [`super::analyze`] owns
-//! selection and outcome; this module owns only what one line of one language
-//! family says about the environment.
+//! selection and outcome; this module owns what source text says about the
+//! environment, including literal-only Rust concatenations that cross lines.
 
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
@@ -104,6 +104,18 @@ const CONTEXT_NAME_TEMPLATE: &str = QUOTED_HOLE;
 
 /// The JavaScript idiom that binds several environment names in one pattern.
 const DESTRUCTURED_TEMPLATE: &str = r"\{(?P<body>[^}]+)\}\s*=\s*process\.env\b";
+
+/// A Rust `concat!` made only from two or more environment-token fragments.
+const RUST_CONCAT_TEMPLATE: &str = concat!(
+    r#"(?s)\bconcat\s*!\s*\(\s*(?P<body>"#,
+    r#"(?:"[A-Z0-9_]+"\s*,\s*)+"[A-Z0-9_]+"\s*,?\s*)\)"#,
+);
+
+/// One token fragment inside a literal-only Rust concatenation.
+const RUST_CONCAT_PART_TEMPLATE: &str = r#""(?P<part>[A-Z0-9_]+)""#;
+
+/// The Rust macro name whose exact source offset must be structural code.
+const RUST_CONCAT_NAME: &str = "concat";
 
 /// One environment access one line commits, at the column it commits it.
 pub(super) struct Access {
@@ -302,6 +314,105 @@ pub(super) fn references(family: Option<&str>, line: &str) -> BTreeSet<String> {
     names.extend(inferred.difference(&exemptions).cloned());
     names.retain(|name| is_ledger_name(name));
     names
+}
+
+/// Every environment-name reference in one file, with its one-based line.
+///
+/// Ordinary references retain the predecessor's one-line rules. Rust adds one
+/// closed construction the line scanner cannot see: a literal-only `concat!`
+/// whose fragments reconstruct a watchlisted or declared ledger name. The
+/// macro may wrap across lines, and its reference belongs to the line where the
+/// macro opens. An exact non-environment assertion anywhere in the statement
+/// containing that macro exempts the reconstructed literal just as it exempts
+/// a plain literal.
+pub(super) fn references_in(
+    extension: Option<&str>,
+    family: Option<&str>,
+    text: &str,
+) -> BTreeSet<(u32, String)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut found = BTreeSet::new();
+    for (index, line) in lines.iter().enumerate() {
+        let Ok(number) = u32::try_from(index + 1) else {
+            continue;
+        };
+        found.extend(
+            references(family, line)
+                .into_iter()
+                .map(|name| (number, name)),
+        );
+    }
+    if extension != Some("rs") {
+        return found;
+    }
+
+    let statements = statement_spans(&lines);
+    for captures in rust_concatenations().captures_iter(text) {
+        let Some(whole) = captures.get(0) else {
+            continue;
+        };
+        let Some(body) = captures.name("body") else {
+            continue;
+        };
+        let Some(start) = source_line(text, whole.start()) else {
+            continue;
+        };
+        let Some(end) = source_line(text, whole.end()) else {
+            continue;
+        };
+        if !is_structural_rust_concat(text, whole.start()) {
+            continue;
+        }
+        let name: String = rust_concat_parts()
+            .captures_iter(body.as_str())
+            .filter_map(|part| part.name("part"))
+            .map(|part| part.as_str())
+            .collect();
+        if !is_inferred_reference(&name) {
+            continue;
+        }
+        let (scope_start, scope_end) = statements
+            .iter()
+            .find(|(statement_start, statement_end)| {
+                *statement_start <= start as usize && start as usize <= *statement_end
+            })
+            .copied()
+            .unwrap_or((start as usize, end as usize));
+        let exempt = lines[scope_start - 1..scope_end]
+            .iter()
+            .flat_map(|line| literal_exemptions(line))
+            .any(|literal| literal == name);
+        if !exempt {
+            found.insert((start, name));
+        }
+    }
+    found
+}
+
+/// One source byte offset as a one-based line, if it fits the report schema.
+fn source_line(text: &str, offset: usize) -> Option<u32> {
+    u32::try_from(text[..offset].bytes().filter(|byte| *byte == b'\n').count() + 1).ok()
+}
+
+/// Whether one matched `concat` token begins in code rather than prose.
+fn is_structural_rust_concat(text: &str, start: usize) -> bool {
+    let line_start = text[..start].rfind('\n').map_or(0, |newline| newline + 1);
+    text.get(line_start..start + RUST_CONCAT_NAME.len())
+        .is_some_and(|prefix| structural_line(prefix).ends_with(RUST_CONCAT_NAME))
+}
+
+/// Whether a reconstructed literal is one the ordinary ledger would infer.
+fn is_inferred_reference(name: &str) -> bool {
+    if !is_ledger_name(name) {
+        return false;
+    }
+    let literal = format!("\"{name}\"");
+    watchlist().iter().chain(declared_names()).any(|matcher| {
+        matcher
+            .names(&literal)
+            .into_iter()
+            .any(|(_, found)| found == name)
+    })
 }
 
 /// Exact ledger-shaped names asserted to be non-environment literals on a line.
@@ -577,6 +688,22 @@ fn destructured() -> &'static Regex {
     static DESTRUCTURED: OnceLock<Regex> = OnceLock::new();
     DESTRUCTURED.get_or_init(|| {
         Regex::new(DESTRUCTURED_TEMPLATE).expect("compiled destructuring pattern is valid")
+    })
+}
+
+/// The compiled literal-only Rust concatenation reader.
+fn rust_concatenations() -> &'static Regex {
+    static CONCATENATIONS: OnceLock<Regex> = OnceLock::new();
+    CONCATENATIONS.get_or_init(|| {
+        Regex::new(RUST_CONCAT_TEMPLATE).expect("compiled Rust concat pattern is valid")
+    })
+}
+
+/// The compiled reader for one fragment inside a Rust concatenation.
+fn rust_concat_parts() -> &'static Regex {
+    static PARTS: OnceLock<Regex> = OnceLock::new();
+    PARTS.get_or_init(|| {
+        Regex::new(RUST_CONCAT_PART_TEMPLATE).expect("compiled Rust concat part pattern is valid")
     })
 }
 
