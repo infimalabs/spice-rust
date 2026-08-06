@@ -80,8 +80,8 @@ fn verifier_process_reaches_one_rust_battery_without_forbidden_programs() {
         .collect::<Vec<_>>();
     assert_eq!(reports.len(), 1, "{}", streams(&output));
     let report = &reports[0];
-    assert_eq!(GateId::ALL.len(), 26);
-    assert_eq!(report.results().len(), 26);
+    assert_eq!(GateId::ALL.len(), 27);
+    assert_eq!(report.results().len(), 27);
     assert_eq!(
         report
             .results()
