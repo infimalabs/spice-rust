@@ -2,9 +2,10 @@
 
 use std::ffi::OsStr;
 use std::fs;
+use std::io::Write as _;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use spice::install::{InstallStatus, apply, installed_git_hooks, plan};
@@ -31,6 +32,16 @@ fn install_exercises_spice_hooks_before_explicit_activation() {
     exercise_commit_message(&scratch);
     assert_prior_hooks_unchanged(&scratch, &installation);
     exercise_reference_guard(&scratch, &base, &protected, &local);
+    // The guard ran through the installed hook several times above, holding the
+    // packed-refs lock each time. The Cargo alias appends every invocation it
+    // is handed, so a log naming no reference transaction is the runtime half
+    // of the structural pin in `tracked_current_hook`: the hook reached the
+    // published executable, and the build system was never entered at all.
+    let invocations = fs::read_to_string(&cargo_log).unwrap();
+    assert!(
+        !invocations.contains("reference-transaction"),
+        "the reference-transaction hook must not reach Cargo: {invocations}"
+    );
     assert_eq!(
         ACTIVE_HOOKS.map(|hook| image(&installation.operator.join(hook))),
         installation.operator_hooks
@@ -123,6 +134,13 @@ fn install_spice_hooks(scratch: &Scratch) -> PriorHookEvidence {
         );
         scratch.executable(&format!(".githooks/{hook}"), &tracked_current_hook(hook));
     }
+    // The tracked hooks go live here, and the reference-transaction hook among
+    // them execs the published entry point on every ref update from now on. An
+    // absent entry point aborts the transaction rather than falling back to
+    // anything, so a repository with these hooks configured is by construction
+    // one that has been activated before; the fixture publishes the entry point
+    // to be that repository instead of a state the hook is meant to refuse.
+    publish_fixture_entry_point(scratch);
     git(
         scratch,
         &["config", "--local", "core.hooksPath", ".githooks"],
@@ -176,6 +194,21 @@ fn tracked_current_hook(hook: &str) -> Vec<u8> {
     assert!(!text.contains("spice dev"));
     if hook == "pre-commit" {
         assert_eq!(text.matches("cargo xtask verify").count(), 1);
+    }
+    if hook == "reference-transaction" {
+        // Git runs this one inside the transaction, holding the repository
+        // global packed-refs lock, so a build system in its path rebuilds under
+        // a lock every worktree contends for. The pin is the absence of the
+        // word rather than a bound on how long the hook takes: a machine with a
+        // warm build directory hides the cost entirely, so timing cannot notice
+        // the wrapper coming back and reading the bytes always can.
+        assert!(
+            !text.contains("cargo"),
+            "the reference-transaction hook must reach a built executable \
+             with no build system anywhere in its path: {text}"
+        );
+        assert_eq!(text.matches("exec ").count(), 1);
+        assert!(text.contains("/.spice-install/bin/xtask\" reference-transaction"));
     }
     bytes
 }
@@ -280,7 +313,24 @@ fn exercise_reference_guard(scratch: &Scratch, base: &str, protected: &str, loca
         &["worktree", "add", "--quiet", "--detach", "linked", "HEAD"],
     );
     let mut activated = Vec::new();
-    xtask::activate_hooks(scratch.path(), &mut activated).expect("run explicit hook cutover");
+    // The binary Cargo built for this test, not `current_exe`: in an
+    // integration test that would be the harness, and publishing the harness
+    // would leave the hook running something with no guard in it at all.
+    let entry_point = Path::new(env!("CARGO_BIN_EXE_xtask"));
+    xtask::activate_hooks(scratch.path(), entry_point, &mut activated)
+        .expect("run explicit hook cutover");
+    assert_entry_point_answers_the_guard(scratch, entry_point, &prepared_input);
+    // One executable serves every worktree, so publishing to a path they share
+    // is the answer rather than a compromise. The linked worktree resolves the
+    // same file, which is also what makes a second lane activating over a first
+    // lane's copy uninteresting: `reference_transaction::apply` reads only the
+    // repository at the current directory, through Git, and carries no lane
+    // identity for a per-lane copy to differ on.
+    assert_eq!(
+        published_entry_point(&linked),
+        published_entry_point(scratch.path())
+    );
+    assert_stale_entry_point_is_republished(scratch, entry_point);
     let shared_hooks = common_hooks(scratch);
     assert_eq!(
         configured_hooks(scratch),
@@ -355,9 +405,11 @@ fn install_cargo_alias(scratch: &Scratch, log: &Path) {
                 "if [ \"$#\" -eq 2 ] && [ \"$1\" = commit-msg ]; then\n",
                 "    exec '{}' commit-msg \"$2\"\n",
                 "fi\n",
-                "if [ \"$#\" -eq 2 ] && [ \"$1\" = reference-transaction ]; then\n",
-                "    exec '{}' reference-transaction \"$2\"\n",
-                "fi\n",
+                // No reference-transaction arm on purpose. The hook execs the
+                // published binary directly now, so routing that subcommand
+                // back through Cargo has to fail loudly here rather than be
+                // quietly served: an arm answering it would let the deleted
+                // wrapper return and every assertion below still pass.
                 "printf 'unexpected xtask invocation: %s\\n' \"$*\" >&2\n",
                 "exit 64\n",
             ),
@@ -365,7 +417,6 @@ fn install_cargo_alias(scratch: &Scratch, log: &Path) {
             GIT_WORKING_TREE,
             GIT_INDEX,
             log.display(),
-            xtask.display(),
             xtask.display(),
         )
         .as_bytes(),
@@ -478,6 +529,108 @@ fn configured_hooks_at(root: &Path) -> String {
 fn common_hooks(scratch: &Scratch) -> PathBuf {
     let repository = Repository::discover(scratch.path()).expect("discover hook repository");
     installed_git_hooks(&repository)
+}
+
+fn published_entry_point(root: &Path) -> PathBuf {
+    let repository = Repository::discover(root).expect("discover hook repository");
+    repository.common_dir().join(".spice-install/bin/xtask")
+}
+
+/// Put the entry point in place the way an earlier activation would have.
+///
+/// This copies rather than calling activation, because activation also flips
+/// `core.hooksPath`, and that flip is the one thing this test watches for
+/// before and after. Borrowing it here would consume the transition it exists
+/// to observe.
+fn publish_fixture_entry_point(scratch: &Scratch) {
+    let published = published_entry_point(scratch.path());
+    fs::create_dir_all(published.parent().expect("entry point has a parent"))
+        .expect("create fixture entry point directory");
+    fs::copy(env!("CARGO_BIN_EXE_xtask"), &published).expect("publish fixture entry point");
+    fs::set_permissions(&published, fs::Permissions::from_mode(0o755))
+        .expect("make fixture entry point executable");
+}
+
+/// A stale copy is noticed by activation and by nothing else, so this drives
+/// the only path that can notice one.
+///
+/// Nothing rebuilds at hook time, by design, so the published copy stays
+/// exactly as current as the last activation left it and no amount of running
+/// the hook will reveal that it is behind. Overwriting it here stands in for
+/// the ordinary case of a copy left by an older build: to activation both are
+/// simply bytes that differ from the ones it is holding, which is the entire
+/// comparison it makes.
+fn assert_stale_entry_point_is_republished(scratch: &Scratch, source: &Path) {
+    let published = published_entry_point(scratch.path());
+    fs::write(&published, b"#!/bin/sh\nexit 0\n").expect("stale the published entry point");
+    let mut reactivated = Vec::new();
+    xtask::activate_hooks(scratch.path(), source, &mut reactivated)
+        .expect("re-run activation over a stale entry point");
+    let reactivated = String::from_utf8(reactivated).unwrap();
+    assert!(
+        reactivated.contains("published hook entry point"),
+        "activation reports the copy it replaced: {reactivated}"
+    );
+    assert_eq!(
+        fs::read(&published).expect("republished entry point reads"),
+        fs::read(source).expect("entry point source reads"),
+        "a stale copy is replaced by the bytes activation was handed"
+    );
+}
+
+/// The published copy is what the hook names, so the guarantee is read off that
+/// file and not off the binary Cargo built.
+///
+/// Identity is asserted before the interface. A published file that merely
+/// exists would let an interface check pass against some older publication, so
+/// proving the bytes are the ones activation was handed is what makes the
+/// answer below an answer from this build. Then the guard is driven through the
+/// published path with a transaction it must refuse: an admitted one would exit
+/// zero for a program that never looked at its input, while the refusal names
+/// the guard's own sentence and so cannot be produced by anything else.
+fn assert_entry_point_answers_the_guard(scratch: &Scratch, source: &Path, prepared: &str) {
+    let published = published_entry_point(scratch.path());
+    assert_eq!(
+        mode(&published),
+        0o755,
+        "published entry point is executable"
+    );
+    assert_eq!(
+        fs::read(&published).expect("published entry point reads"),
+        fs::read(source).expect("entry point source reads"),
+        "published entry point carries the bytes activation was handed"
+    );
+
+    let refusal = run_prepared(&published, scratch.path(), prepared);
+    assert_ne!(
+        refusal.status.code(),
+        Some(0),
+        "published entry point refuses a protected rewind: {}",
+        streams(&refusal)
+    );
+    assert!(
+        String::from_utf8_lossy(&refusal.stderr).contains("refused to abandon upstream-merged"),
+        "published entry point answers the reference-transaction interface: {}",
+        streams(&refusal)
+    );
+}
+
+fn run_prepared(program: &Path, root: &Path, prepared: &str) -> Output {
+    let mut child = Command::new(program)
+        .args(["reference-transaction", "prepared"])
+        .current_dir(root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("run published entry point");
+    child
+        .stdin
+        .take()
+        .expect("published entry point accepts the prepared transaction")
+        .write_all(prepared.as_bytes())
+        .expect("write the prepared transaction");
+    child.wait_with_output().expect("collect published output")
 }
 
 fn git_at(root: &Path, arguments: &[&str]) -> String {
