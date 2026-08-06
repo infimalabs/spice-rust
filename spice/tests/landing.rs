@@ -83,7 +83,6 @@ const CASES: &[Case] = &[
     case("task next", &["task", "next"]),
     case("task reclaim", &["task", "reclaim"]),
     case("task add", &["task", "add", "readiness task"]),
-    case("task status", &["task", "status"]),
     case("task capture", &["task", "capture"]),
     case("task done", &["task", "done"]),
     case("task review", &["task", "review", "READY-12345678"]),
@@ -199,11 +198,27 @@ impl Drop for Scratch {
 #[test]
 fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
     let registered = landed_contract_paths();
+    // The way this array acquires a repeat is a merge fold keeping both sides of
+    // an entry neither side moved, so the panic is read by whoever pulled the
+    // baseline rather than by whoever wrote the duplicate. Two counts tell that
+    // reader a leaf is doubled but not which one, and the array is long enough
+    // that finding it means scripting over the source; naming it here is the
+    // difference between a one-line deletion and a detour.
+    let mut seen = BTreeSet::new();
+    let repeated = CASES
+        .iter()
+        .filter(|case| !seen.insert(case.path))
+        .map(|case| case.path)
+        .collect::<Vec<_>>();
+    assert!(
+        repeated.is_empty(),
+        "process case repeated: {}",
+        repeated.join(", "),
+    );
     let exercised = CASES
         .iter()
         .map(|case| case.path.to_owned())
         .collect::<BTreeSet<_>>();
-    assert_eq!(exercised.len(), CASES.len(), "process case repeated");
     assert_eq!(
         exercised, registered,
         "process fixture and registry drifted"
