@@ -6,7 +6,7 @@ use wasm_bindgen::closure::Closure;
 use web_sys::{ClipboardEvent, DragEvent, File, FileList, FileReader, HtmlInputElement};
 
 use super::*;
-use crate::composer_drafts::ComposerDraft;
+use crate::composer_drafts::{ComposerDraft, compose};
 use crate::watchband::{self, Standing};
 
 mod controls;
@@ -249,7 +249,7 @@ fn render_compose(
             member.occupant.is_some()
                 && drafts
                     .get(&member.lane.to_string())
-                    .is_some_and(|draft| !compose_markdown(draft).trim().is_empty())
+                    .is_some_and(|draft| !compose(draft).trim().is_empty())
         });
     html! {
         <div class="team-compose">
@@ -695,8 +695,6 @@ fn render_agent_composer(
     let draft = drafts.get(&lane_key).cloned().unwrap_or_default();
     let occupant = member.occupant;
     let send_enabled = can_send && occupant.is_some();
-    let markdown = compose_markdown(&draft);
-    let oninput = update_body(lane_key.clone(), drafts.clone());
     let onkeydown = keyboard_submit(
         lane_id,
         occupant,
@@ -705,7 +703,6 @@ fn render_agent_composer(
         sender.clone(),
         drafts.clone(),
     );
-    let onpaste = paste_images(lane_key.clone(), drafts.clone());
     let ondragover = Callback::from(move |event: DragEvent| {
         event.prevent_default();
         if let Some(transfer) = event.data_transfer() {
@@ -720,15 +717,6 @@ fn render_agent_composer(
         sender.clone(),
         drafts.clone(),
     );
-    let input_id = format!("mosaic-images-{lane_id}");
-    let primary_id = primary_textarea_id(&lane_key);
-    let onchange = choose_images(lane_key.clone(), drafts.clone());
-    let activity = standing
-        .headline
-        .as_deref()
-        .or(standing.handle.as_deref())
-        .unwrap_or(&standing.disposition);
-    let open = mode.clone();
     html! {
         <section
             key={lane_key.clone()}
@@ -744,59 +732,115 @@ fn render_agent_composer(
             {ondrop}
         >
             {render_quote_bands(&lane_key, &draft, drafts, onkeydown.clone())}
-            <div class="mosaic-composer">
-                <header class="composer-shard-heading">
-                    <span class="composer-shard-age">{
-                        standing
-                            .held
-                            .map(watchband::elapsed_label)
-                            .unwrap_or_else(|| "now".to_owned())
-                    }</span>
-                    <strong title={activity.to_owned()}>{standing.label.clone()}</strong>
-                    <button
-                        type="button"
-                        aria-label={format!("Details for {}", standing.label)}
-                        onclick={Callback::from(move |_| open.set(LineageMode::Info))}
-                    >{"☰"}</button>
-                </header>
-                    <div class="composer-shard-standing">
-                        <span>{format!("{} pending", pending)}</span>
-                        <span>{standing.liveness.as_str()}</span>
-                    </div>
-                    <textarea
-                        id={primary_id}
-                        aria-label={format!("Message for {lane_id}")}
-                        data-primary-composer-target-id={lane_id.to_string()}
-                        rows="4"
-                        value={draft.body.clone()}
-                        placeholder={composer_placeholder(standing, pending)}
-                        {oninput}
-                        {onkeydown}
-                        {onpaste}
-                    ></textarea>
-                    {render_attachments(&lane_key, &draft, drafts)}
-                    if let Some(issue) = &draft.issue {
-                        <p class="composer-issue" role="status">{issue.clone()}</p>
-                    }
-                    if !markdown.is_empty() {
-                        <div class="composer-markdown markdown-body" aria-label="Markdown preview">
-                            {render_markdown(&markdown)}
-                        </div>
-                    }
-                    <div class="mosaic-composer-actions">
-                        <input
-                            id={input_id.clone()}
-                            class="visually-hidden"
-                            type="file"
-                            accept="image/*"
-                            multiple=true
-                            {onchange}
-                        />
-                        <label class="image-picker" for={input_id}>{"Images"}</label>
-                        <span>{format!("{}/{}", draft.attachments.len(), MAX_ATTACHMENTS)}</span>
-                    </div>
-            </div>
+            {render_composer_body(
+                lane_id,
+                &lane_key,
+                &draft,
+                standing,
+                pending,
+                drafts,
+                mode,
+                onkeydown,
+            )}
         </section>
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the composer body renders one target's typed state and browser callbacks"
+)]
+fn render_composer_body(
+    lane: CanonicalUuid,
+    lane_key: &str,
+    draft: &ComposerDraft,
+    standing: &Standing,
+    pending: usize,
+    drafts: &UseReducerHandle<ComposerDrafts>,
+    mode: &UseStateHandle<LineageMode>,
+    onkeydown: Callback<KeyboardEvent>,
+) -> Html {
+    let markdown = compose(draft);
+    let oninput = update_body(lane_key.to_owned(), drafts.clone());
+    let onpaste = paste_images(lane_key.to_owned(), drafts.clone());
+    html! {
+        <div class="mosaic-composer">
+            {render_composer_heading(standing, mode)}
+            <div class="composer-shard-standing">
+                <span>{format!("{pending} pending")}</span>
+                <span>{standing.liveness.as_str()}</span>
+            </div>
+            <textarea
+                id={primary_textarea_id(lane_key)}
+                aria-label={format!("Message for {lane}")}
+                data-primary-composer-target-id={lane.to_string()}
+                rows="4"
+                value={draft.body.clone()}
+                placeholder={composer_placeholder(standing, pending)}
+                {oninput}
+                {onkeydown}
+                {onpaste}
+            ></textarea>
+            {render_attachments(lane_key, draft, drafts)}
+            if let Some(issue) = &draft.issue {
+                <p class="composer-issue" role="status">{issue.clone()}</p>
+            }
+            if !markdown.is_empty() {
+                <div class="composer-markdown markdown-body" aria-label="Markdown preview">
+                    {render_markdown(&markdown)}
+                </div>
+            }
+            {render_image_picker(lane, lane_key, draft, drafts)}
+        </div>
+    }
+}
+
+fn render_composer_heading(standing: &Standing, mode: &UseStateHandle<LineageMode>) -> Html {
+    let activity = standing
+        .headline
+        .as_deref()
+        .or(standing.handle.as_deref())
+        .unwrap_or(&standing.disposition);
+    let open = mode.clone();
+    html! {
+        <header class="composer-shard-heading">
+            <span class="composer-shard-age">{
+                standing
+                    .held
+                    .map(watchband::elapsed_label)
+                    .unwrap_or_else(|| "now".to_owned())
+            }</span>
+            <strong title={activity.to_owned()}>{standing.label.clone()}</strong>
+            <button
+                type="button"
+                aria-label={format!("Details for {}", standing.label)}
+                onclick={Callback::from(move |_| open.set(LineageMode::Info))}
+            >{"☰"}</button>
+        </header>
+    }
+}
+
+fn render_image_picker(
+    lane: CanonicalUuid,
+    lane_key: &str,
+    draft: &ComposerDraft,
+    drafts: &UseReducerHandle<ComposerDrafts>,
+) -> Html {
+    let input_id = format!("mosaic-images-{lane}");
+    let onchange = choose_images(lane_key.to_owned(), drafts.clone());
+    html! {
+        <div class="mosaic-composer-actions">
+            <input
+                id={input_id.clone()}
+                class="visually-hidden"
+                type="file"
+                accept="image/*"
+                multiple=true
+                {onchange}
+            />
+            <label class="image-picker" for={input_id}>{"Images"}</label>
+            <span>{format!("{}/{}", draft.attachments.len(), MAX_ATTACHMENTS)}</span>
+        </div>
     }
 }
 
@@ -1346,11 +1390,6 @@ fn read_image(drafts: UseReducerHandle<ComposerDrafts>, lane_key: String, file: 
     if reader.read_as_data_url(&file).is_ok() {
         onload.forget();
     }
-}
-
-/// Delegate preview composition to the same target-neutral model sends use.
-fn compose_markdown(draft: &ComposerDraft) -> String {
-    crate::composer_drafts::compose(draft)
 }
 
 fn render_markdown(markdown: &str) -> Html {
