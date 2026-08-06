@@ -52,6 +52,7 @@ fn assistant(record: &Object, locus: Locus) -> Events {
                 call_id: string(block, "id")?.to_owned(),
                 moment: ToolMoment::Call {
                     name: string(block, "name")?.to_owned(),
+                    arguments: arguments(block),
                 },
                 locus,
             })),
@@ -171,6 +172,19 @@ fn result(record: &Object, locus: Locus) -> Events {
         message: messages.join("\n"),
         locus,
     })])
+}
+
+/// The vendor call payload as JSON, or an empty object when it carries none.
+///
+/// A `tool_use` block whose `input` is absent, or is a bare scalar, is still a
+/// call an operator can read by name, so a missing payload is not version
+/// drift; it is an empty argument list, which is what the predecessor records
+/// for the same block.
+fn arguments(block: &Object) -> String {
+    block
+        .get("input")
+        .filter(|input| input.is_object())
+        .map_or_else(|| "{}".to_owned(), ToString::to_string)
 }
 
 fn drift(discriminator: &str) -> ResidueKind {
