@@ -170,14 +170,42 @@ fn assert_full_battery(output: &std::process::Output, selected: &BatteryArmResul
 }
 
 #[test]
-fn command_usage_names_the_single_gate_arm_surface() {
+fn command_help_enumerates_every_single_gate_arm_spelling() {
     let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .arg("help")
         .output()
-        .expect("launch xtask usage");
+        .expect("launch xtask help");
+
+    assert!(output.status.success(), "{}", streams(&output));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("cargo xtask <help|verify|gate ARM|"),
+        "{}",
+        streams(&output)
+    );
+    for gate_id in GateId::ALL {
+        assert!(
+            stdout
+                .lines()
+                .any(|line| line == format!("  {}", gate_id.as_str())),
+            "help omits {}:\n{}",
+            gate_id.as_str(),
+            streams(&output)
+        );
+    }
+}
+
+#[test]
+fn unknown_gate_arm_points_to_the_canonical_inventory() {
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["gate", "not-a-gate"])
+        .output()
+        .expect("launch unknown gate arm");
 
     assert_eq!(output.status.code(), Some(2), "{}", streams(&output));
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("cargo xtask <verify|gate ARM|"),
+        String::from_utf8_lossy(&output.stderr)
+            .contains("run `cargo xtask help` for accepted gate arms"),
         "{}",
         streams(&output)
     );

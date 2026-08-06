@@ -1,6 +1,5 @@
 //! Predecessor-style lane composer rendered inside the Agents surface.
 
-use pulldown_cmark::{CowStr, Event as MarkdownEvent, Options, Parser, Tag};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{ClipboardEvent, DragEvent, File, FileList, FileReader, HtmlInputElement};
@@ -10,6 +9,7 @@ use crate::composer_drafts::{ComposerDraft, compose};
 use crate::watchband::{self, Standing};
 
 mod controls;
+mod markdown;
 mod state;
 
 pub(super) use controls::{LineageControlAction, LineageControls};
@@ -813,7 +813,7 @@ fn render_composer_body(
             }
             if !markdown.is_empty() {
                 <div class="composer-markdown markdown-body" aria-label="Markdown preview">
-                    {render_markdown(&markdown)}
+                    {markdown::render(&markdown)}
                 </div>
             }
             {render_image_picker(lane, lane_key, draft, drafts)}
@@ -1091,7 +1091,7 @@ fn render_agent_message_card(
             data-rows={card.rows.to_string()}
             {ondragstart}
         >
-            <div class="message-body markdown-body">{render_markdown(&message.text)}</div>
+            <div class="message-body markdown-body">{markdown::render(&message.text)}</div>
             <footer class="message-meta">
                 <span class="message-key">{"agent"}</span>
                 <span class="message-age" title={locus.clone()}>{locus}</span>
@@ -1162,7 +1162,7 @@ fn render_directive_card(
             data-rows={card.rows.to_string()}
             {ondragstart}
         >
-            <div class="message-body markdown-body">{render_markdown(&directive.text)}</div>
+            <div class="message-body markdown-body">{markdown::render(&directive.text)}</div>
             if !unlinked_attachments.is_empty() {
                 <div class="message-attachments">
                     {for unlinked_attachments.into_iter().map(|attachment| html! {
@@ -1415,73 +1415,5 @@ fn read_image(drafts: UseReducerHandle<ComposerDrafts>, lane_key: String, file: 
     reader.set_onload(Some(onload.as_ref().unchecked_ref()));
     if reader.read_as_data_url(&file).is_ok() {
         onload.forget();
-    }
-}
-
-fn render_markdown(markdown: &str) -> Html {
-    let options = Options::ENABLE_TABLES
-        | Options::ENABLE_FOOTNOTES
-        | Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_TASKLISTS
-        | Options::ENABLE_SMART_PUNCTUATION
-        | Options::ENABLE_MATH
-        | Options::ENABLE_GFM;
-    let events = Parser::new_ext(markdown, options).map(sanitize_markdown_event);
-    let mut output = String::new();
-    pulldown_cmark::html::push_html(&mut output, events);
-    Html::from_html_unchecked(AttrValue::from(output))
-}
-
-fn sanitize_markdown_event(event: MarkdownEvent<'_>) -> MarkdownEvent<'_> {
-    match event {
-        MarkdownEvent::Start(tag) => MarkdownEvent::Start(sanitize_markdown_tag(tag)),
-        MarkdownEvent::Html(raw) | MarkdownEvent::InlineHtml(raw) => MarkdownEvent::Text(raw),
-        other => other,
-    }
-}
-
-fn sanitize_markdown_tag(tag: Tag<'_>) -> Tag<'_> {
-    match tag {
-        Tag::Link {
-            link_type,
-            dest_url,
-            title,
-            id,
-        } => Tag::Link {
-            link_type,
-            dest_url: sanitize_markdown_url(dest_url, false),
-            title,
-            id,
-        },
-        Tag::Image {
-            link_type,
-            dest_url,
-            title,
-            id,
-        } => Tag::Image {
-            link_type,
-            dest_url: sanitize_markdown_url(dest_url, true),
-            title,
-            id,
-        },
-        other => other,
-    }
-}
-
-fn sanitize_markdown_url(url: CowStr<'_>, image: bool) -> CowStr<'_> {
-    let candidate = url.trim().to_ascii_lowercase();
-    let safe_scheme = candidate.starts_with("https://")
-        || candidate.starts_with("http://")
-        || candidate.starts_with("mailto:")
-        || (image && candidate.starts_with("data:image/"));
-    let relative = !candidate.starts_with("//")
-        && !candidate
-            .split(['/', '#', '?'])
-            .next()
-            .is_some_and(|head| head.contains(':'));
-    if safe_scheme || relative {
-        url
-    } else {
-        CowStr::Borrowed("")
     }
 }

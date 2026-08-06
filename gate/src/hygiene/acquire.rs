@@ -8,8 +8,10 @@ use wire::Digest;
 use super::analyze::is_python_path;
 use super::{
     COMPILED_DOCUMENT, COMPILED_LAYER, CURRENT_RELEASE, HYGIENE_ARMS, HygieneAnalysisError,
-    HygieneConfiguration, HygieneProvenance, HygieneReport, SuppressedPath, analyze_hygiene,
+    HygieneConfiguration, HygieneMeasurement, HygieneProvenance, HygieneReport, SuppressedPath,
+    analyze_hygiene, analyze_hygiene_arm,
 };
+use crate::GateId;
 use crate::input::Contract;
 use crate::jurisdiction::{Admission, Ignore, Jurisdiction, Rule, Shape};
 use crate::tree::SelectedTree;
@@ -106,6 +108,18 @@ pub fn acquire_hygiene(
         .clone()
         .with_suppressions(source.suppressed().to_vec())?;
     analyze_hygiene(source.jurisdiction(), &configuration)
+}
+
+/// Acquire exactly one hygiene measurement from the shared captured source.
+pub(crate) fn acquire_hygiene_arm(
+    source: &HygieneSource<'_>,
+    configuration: &HygieneConfiguration,
+    gate_id: GateId,
+) -> Result<HygieneMeasurement, HygieneAnalysisError> {
+    let configuration = configuration
+        .clone()
+        .with_suppressions(source.suppressed().to_vec())?;
+    analyze_hygiene_arm(source.jurisdiction(), &configuration, gate_id)
 }
 
 /// Everything the walk withheld from measurement, paired with the rule that

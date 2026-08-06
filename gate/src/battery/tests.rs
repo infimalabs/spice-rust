@@ -48,6 +48,7 @@ mod manifest;
 mod merge_parents;
 mod minting;
 mod report;
+mod single_arm;
 
 fn fixture_baseline(floors: &str) -> Digest {
     Digest::compute(Domain::GateBaseline, floors.as_bytes())

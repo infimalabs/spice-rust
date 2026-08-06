@@ -24,6 +24,8 @@ use serde::{Deserialize, Serialize};
 use wire::{Digest, Phase, TaskHandle};
 
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) use acquire::acquire_core_arm;
+#[cfg(not(target_arch = "wasm32"))]
 pub use acquire::{ActorCapture, ClaimCapture, CoreSource, acquire_core};
 #[cfg(not(target_arch = "wasm32"))]
 pub use config_keys::{CONFIG_KEY_DECLARATIONS, ConfigKeyDeclaration};
@@ -32,6 +34,8 @@ pub use declaration::{
     PredecessorObservation, core_declarations,
 };
 pub use evaluate::evaluate_core;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use evaluate::evaluate_core_arm;
 
 use crate::GateId;
 use crate::state::BoundDecision;
@@ -690,7 +694,7 @@ impl CoreArmReport {
             self.observation.clone(),
         )
         .map_err(|error| CoreReportDecodeError::Inconsistent(error.to_string()))?;
-        if evaluate::evaluate_arm(&input) != *self {
+        if evaluate::evaluate_core_arm(&input) != *self {
             return Err(CoreReportDecodeError::Inconsistent(format!(
                 "{} standing or diagnostic disagrees with its observation",
                 self.id

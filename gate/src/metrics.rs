@@ -18,9 +18,9 @@ mod policy_binding;
 mod state_binding;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use acquire::acquire_metrics_with_bounds;
-#[cfg(not(target_arch = "wasm32"))]
 pub use acquire::{MetricAcquisitionError, MetricSource, acquire_metrics};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use acquire::{acquire_metric_arm_with_bounds, acquire_metrics_with_bounds};
 #[cfg(not(target_arch = "wasm32"))]
 pub use baseline::{BaselineCapture, CommittedTexts};
 pub use declaration::{

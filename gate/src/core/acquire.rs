@@ -163,9 +163,10 @@ impl ActorCapture {
 /// One captured Git source and everything acquisition is permitted to read.
 ///
 /// Capture computes the immutable tree identity once and, in the same moment,
-/// takes both Git-declared observations from the repository the tree was
-/// materialized from. Every arm therefore binds to the same digest, and
-/// [`CoreInputs`] cannot be assembled from a moving tree or a moving repository.
+/// takes either both Git-declared observations for a complete run or the one a
+/// selected arm requires. Every acquired arm therefore binds to the same
+/// digest, and [`CoreInputs`] cannot be assembled from a moving tree or a
+/// moving repository.
 ///
 /// The durable latches are copied in for the same reason: a bounded arm decides
 /// against the ledger this run publishes as its state authority, and reading
@@ -206,10 +207,36 @@ impl<'a> CoreSource<'a> {
         actor: ActorCapture,
         latches: &[LatchEntry],
     ) -> Result<Self, CoreInputError> {
+        Self::capture_inner(tree, contract, claim, actor, latches, None)
+    }
+
+    /// Capture only the live Git observation required by one selected arm.
+    pub(crate) fn capture_arm(
+        tree: &'a SelectedTree,
+        contract: &Contract,
+        claim: ClaimCapture,
+        actor: ActorCapture,
+        latches: &[LatchEntry],
+        gate_id: GateId,
+    ) -> Result<Self, CoreInputError> {
+        Self::capture_inner(tree, contract, claim, actor, latches, Some(gate_id))
+    }
+
+    fn capture_inner(
+        tree: &'a SelectedTree,
+        contract: &Contract,
+        claim: ClaimCapture,
+        actor: ActorCapture,
+        latches: &[LatchEntry],
+        gate_id: Option<GateId>,
+    ) -> Result<Self, CoreInputError> {
         // Taken before the walk because it is the only subject here that can
         // still move: the selected tree was sealed at materialization, while
         // the repository stays live and writable underneath the run.
-        let git = GitObservations::capture(tree.repository(), contract.bounds());
+        let git = gate_id.map_or_else(
+            || GitObservations::capture(tree.repository(), contract.bounds()),
+            |gate_id| GitObservations::capture_arm(tree.repository(), contract.bounds(), gate_id),
+        );
         let jurisdiction = Jurisdiction::walk(tree.root(), contract.policy().ignore())
             .map_err(|error| CoreInputError::new(format!("core source jurisdiction: {error}")))?;
         let digest = jurisdiction
@@ -265,15 +292,23 @@ impl<'a> CoreSource<'a> {
 /// be measured crosses saying so.
 #[derive(Debug)]
 struct GitObservations {
-    merge_integrity: CoreObservation,
-    staging: CoreObservation,
+    merge_integrity: Option<CoreObservation>,
+    staging: Option<CoreObservation>,
 }
 
 impl GitObservations {
     fn capture(repository: &Path, bounds: &Bounds) -> Self {
         Self {
-            merge_integrity: merge_integrity(repository, bounds),
-            staging: staging(repository, bounds),
+            merge_integrity: Some(merge_integrity(repository, bounds)),
+            staging: Some(staging(repository, bounds)),
+        }
+    }
+
+    fn capture_arm(repository: &Path, bounds: &Bounds, gate_id: GateId) -> Self {
+        Self {
+            merge_integrity: (gate_id == GateId::MergeIntegrity)
+                .then(|| merge_integrity(repository, bounds)),
+            staging: (gate_id == GateId::Staging).then(|| staging(repository, bounds)),
         }
     }
 }
@@ -307,28 +342,84 @@ pub fn acquire_core(
             declaration.id(),
             source.digest.clone(),
             provenance,
-            observe(declaration, source, contract, &configuration, &mut bounds)?,
+            observe(
+                declaration,
+                source,
+                contract,
+                Some(&configuration),
+                &mut bounds,
+            )?,
         )?);
     }
     CoreInputs::new(arms).map(|inputs| inputs.with_bounds(bounds))
+}
+
+/// Acquire exactly one core arm and the elastic bounds that arm decided.
+pub(crate) fn acquire_core_arm(
+    source: &CoreSource<'_>,
+    contract: &Contract,
+    gate_id: GateId,
+) -> Result<(CoreArmInput, Vec<BoundDecision>), CoreInputError> {
+    let declaration = core_declarations()
+        .iter()
+        .find(|declaration| declaration.id() == gate_id)
+        .ok_or_else(|| CoreInputError::new(format!("{gate_id} is not a compiled core arm")))?;
+    let configuration = matches!(
+        gate_id,
+        GateId::ConfigFalseDisable | GateId::ConfigTrackedTrust
+    )
+    .then(|| ConfigurationInventorySource::capture(source))
+    .transpose()?;
+    let predecessor = declaration.predecessor();
+    let provenance = CoreProvenance::new(
+        predecessor.release(),
+        predecessor.source(),
+        predecessor.observation(),
+    )?;
+    let mut bounds = Vec::new();
+    let observation = observe(
+        declaration,
+        source,
+        contract,
+        configuration.as_ref(),
+        &mut bounds,
+    )?;
+    CoreArmInput::new(gate_id, source.digest.clone(), provenance, observation)
+        .map(|input| (input, bounds))
 }
 
 fn observe(
     declaration: &CoreArmDeclaration,
     source: &CoreSource<'_>,
     contract: &Contract,
-    configuration: &ConfigurationInventorySource,
+    configuration: Option<&ConfigurationInventorySource>,
     bounds: &mut Vec<BoundDecision>,
 ) -> Result<CoreObservation, CoreInputError> {
     Ok(match declaration.id() {
-        GateId::MergeIntegrity => source.git.merge_integrity.clone(),
+        GateId::MergeIntegrity => source.git.merge_integrity.clone().ok_or_else(|| {
+            CoreInputError::new("merge-integrity acquisition omitted its Git observation")
+        })?,
         GateId::PlanPhase => plan_phase(&source.claim),
         GateId::RepoShape => return repo_shape(source, contract),
-        GateId::Staging => source.git.staging.clone(),
+        GateId::Staging => source.git.staging.clone().ok_or_else(|| {
+            CoreInputError::new("staging acquisition omitted its Git observation")
+        })?,
         GateId::ConfigKeyValidity => return config_keys(contract),
         GateId::RepoDocs => return repo_docs(source, contract, bounds),
-        GateId::ConfigFalseDisable => return configuration.false_disable(),
-        GateId::ConfigTrackedTrust => return configuration.tracked_trust(),
+        GateId::ConfigFalseDisable => {
+            return configuration
+                .ok_or_else(|| {
+                    CoreInputError::new("false-disable acquisition omitted its configuration")
+                })?
+                .false_disable();
+        }
+        GateId::ConfigTrackedTrust => {
+            return configuration
+                .ok_or_else(|| {
+                    CoreInputError::new("tracked-trust acquisition omitted its configuration")
+                })?
+                .tracked_trust();
+        }
         id => unreachable!("{id} is not a compiled core declaration"),
     })
 }

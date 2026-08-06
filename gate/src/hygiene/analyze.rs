@@ -343,6 +343,56 @@ pub(crate) fn analyze_hygiene(
     }
 }
 
+/// Execute exactly one compiled hygiene arm over one admitted captured tree.
+pub(crate) fn analyze_hygiene_arm(
+    jurisdiction: &Jurisdiction,
+    configuration: &HygieneConfiguration,
+    gate_id: GateId,
+) -> Result<HygieneMeasurement, HygieneAnalysisError> {
+    if !HYGIENE_ARMS.iter().any(|arm| arm.id == gate_id) {
+        return Err(HygieneAnalysisError::Measurement(
+            HygieneError::ForeignGate(gate_id),
+        ));
+    }
+    let started = Instant::now();
+    let snapshot = match jurisdiction.snapshot() {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            return failed_measurement(
+                configuration,
+                gate_id,
+                "selected-tree-capture",
+                &format!("selected tree capture failed: {error}"),
+            )
+            .map_err(HygieneAnalysisError::Measurement);
+        }
+    };
+    let measurement =
+        AnalyzerRun::execute_arm_at(snapshot.jurisdiction(), configuration, started, gate_id)
+            .map_err(HygieneAnalysisError::Measurement)?;
+    match snapshot.verify() {
+        Ok(None) if elapsed_ms(started) > configuration.deadline_ms => {
+            timeout_measurement(configuration, gate_id, elapsed_ms(started))
+                .map_err(HygieneAnalysisError::Measurement)
+        }
+        Ok(None) => Ok(measurement),
+        Ok(Some(change)) => failed_measurement(
+            configuration,
+            gate_id,
+            "selected-tree-verification",
+            &format!("captured tree changed at {}", change.path),
+        )
+        .map_err(HygieneAnalysisError::Measurement),
+        Err(error) => failed_measurement(
+            configuration,
+            gate_id,
+            "selected-tree-verification",
+            &format!("captured tree verification failed: {error}"),
+        )
+        .map_err(HygieneAnalysisError::Measurement),
+    }
+}
+
 fn timeout_report(
     configuration: &HygieneConfiguration,
     elapsed_ms: u64,
@@ -365,6 +415,25 @@ fn timeout_report(
     }))
 }
 
+fn timeout_measurement(
+    configuration: &HygieneConfiguration,
+    gate_id: GateId,
+    elapsed_ms: u64,
+) -> Result<HygieneMeasurement, HygieneError> {
+    let observation = exclusion_observation(configuration, gate_id).unwrap_or(HygieneObservation {
+        gate_id,
+        outcome: HygieneOutcome::Timeout,
+        reason: "native hygiene deadline expired".to_owned(),
+        evidence: vec![AnalysisEvidence::Deadline {
+            limit_ms: configuration.deadline_ms,
+            elapsed_ms,
+            state: EvidenceState::TimedOut,
+        }],
+        findings: Vec::new(),
+    });
+    measure_hygiene_arm(observation)
+}
+
 fn failed_report(
     configuration: &HygieneConfiguration,
     stage: &str,
@@ -385,6 +454,25 @@ fn failed_report(
             findings: Vec::new(),
         }
     }))
+}
+
+fn failed_measurement(
+    configuration: &HygieneConfiguration,
+    gate_id: GateId,
+    stage: &str,
+    reason: &str,
+) -> Result<HygieneMeasurement, HygieneError> {
+    let observation = exclusion_observation(configuration, gate_id).unwrap_or(HygieneObservation {
+        gate_id,
+        outcome: HygieneOutcome::Failed,
+        reason: one_line(reason),
+        evidence: vec![AnalysisEvidence::Measurement {
+            state: EvidenceState::Failed,
+            stage: stage.to_owned(),
+        }],
+        findings: Vec::new(),
+    });
+    measure_hygiene_arm(observation)
 }
 
 fn exclusion_observation(
@@ -493,6 +581,20 @@ impl<'a> AnalyzerRun<'a> {
         Self::execute_with_at(jurisdiction, configuration, &NativeExecution, started)
     }
 
+    fn execute_arm_at(
+        jurisdiction: &'a Jurisdiction,
+        configuration: &'a HygieneConfiguration,
+        started: Instant,
+        gate_id: GateId,
+    ) -> Result<HygieneMeasurement, HygieneError> {
+        let run = Self::prepare(jurisdiction, configuration, &NativeExecution, started);
+        let declaration = HYGIENE_ARMS
+            .into_iter()
+            .find(|declaration| declaration.id == gate_id)
+            .ok_or(HygieneError::ForeignGate(gate_id))?;
+        measure_hygiene_arm(run.observe(declaration))
+    }
+
     #[cfg(test)]
     fn execute_with(
         jurisdiction: &'a Jurisdiction,
@@ -508,13 +610,24 @@ impl<'a> AnalyzerRun<'a> {
         boundary: &'a dyn ExecutionBoundary,
         started: Instant,
     ) -> Result<HygieneReport, HygieneError> {
+        let run = Self::prepare(jurisdiction, configuration, boundary, started);
+        let observations = HYGIENE_ARMS.map(|arm| run.observe(arm));
+        measure_hygiene(observations)
+    }
+
+    fn prepare(
+        jurisdiction: &'a Jurisdiction,
+        configuration: &'a HygieneConfiguration,
+        boundary: &'a dyn ExecutionBoundary,
+        started: Instant,
+    ) -> Self {
         let project_markers = jurisdiction
             .measurable()
             .filter(|entry| matches!(entry.path(), "pyproject.toml" | "spice.toml"))
             .map(|entry| entry.path().to_owned())
             .collect();
         let (selected_files, corpus, terminal) = Corpus::load(jurisdiction, configuration, started);
-        let run = Self {
+        Self {
             configuration,
             boundary,
             started,
@@ -522,9 +635,7 @@ impl<'a> AnalyzerRun<'a> {
             selected_files,
             corpus,
             terminal,
-        };
-        let observations = HYGIENE_ARMS.map(|arm| run.observe(arm));
-        measure_hygiene(observations)
+        }
     }
 
     fn observe(&self, declaration: HygieneDeclaration) -> HygieneObservation {
