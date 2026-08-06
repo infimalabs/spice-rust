@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { assertComposerShards } from "./composer-shards.mjs";
 import { assertCanvas } from "./canvas-readiness.mjs";
-import { captureReferenceControls } from "./control-reference.mjs";
+import { assertAgentRenewalRequest, captureReferenceControls } from "./control-reference.mjs";
+import { assertReferenceControlStack } from "./control-stack.mjs";
 import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
 import {
   assertEndpointProbeClosesWithoutResponse,
@@ -229,6 +230,7 @@ async function assertAgentConversation(page, fixture, worktrees) {
   await console.getByRole("button", { name: "Drain", exact: true }).waitFor();
   await lifetime.fill("0");
   await console.getByRole("button", { name: "Steer", exact: true }).waitFor();
+  await assertReferenceControlStack(page, console, artifacts);
   const messages = [
     "browser direction survives streaming",
     "## Gate contract\n\n- green on the integrated tip\n- exact checks retained",
@@ -821,30 +823,7 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
   await waitForPage(page, "Narrate dispatches speech", TRANSITION_MS,
     () => window.__speechLog.some((row) => row.action === "speak"));
 
-  const renewalRequest = "Renew your current task lease now.";
-  const renew = primarySurface.locator(".agent-renew-request:not(:disabled)").first();
-  await renew.waitFor();
-  assert.equal(
-    (await renew.innerText()).replaceAll("\n", " "),
-    "Renew this agent request renewal",
-    "the operator card names both the action and its renewal request",
-  );
-  const renewalLane = await renew.evaluate(
-    (button) => button.closest(".team-agent")?.dataset.agentLane,
-  );
-  assert.ok(renewalLane, "the renewal control retains its exact agent lane");
-  await renew.click();
-  await primarySurface
-    .locator(`.mosaic-message-card[data-agent-lane="${renewalLane}"]`)
-    .filter({ hasText: renewalRequest })
-    .waitFor({ timeout: 10_000 });
-  const renewalInbox = await reply(fixture, ["inbox", renewalLane]);
-  assert.ok(
-    renewalInbox.body.lanes[0].pending.some(
-      (directive) => directive.text === renewalRequest,
-    ),
-    "Renew this agent routes a residency-witnessed renewal request through the resident",
-  );
+  await assertAgentRenewalRequest(primarySurface, fixture);
 
   const policyMessage = "drain lifetime is task policy, not occupant teardown";
   await primarySurface.locator(".team-agent").first().getByRole("textbox").fill(policyMessage);

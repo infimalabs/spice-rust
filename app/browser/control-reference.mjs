@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 
-import { TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
+import { reply, TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
 
 const darkPalette = {
   quiet: "rgb(138, 169, 232)",
   drain: "rgb(230, 180, 78)",
   green: "rgb(115, 199, 159)",
-  drainInk: "rgb(21, 18, 10)",
+  // One ink prints every submit state, the way the predecessor's `.primary`
+  // reads a single `--button-accent-fg` and lets only the fill follow the
+  // state accent. A maxed-only ink would be a second place to keep in step.
+  pageInk: "rgb(11, 15, 12)",
 };
 
 async function selectLifetime(page, lineage, input, value, label) {
@@ -52,7 +55,21 @@ function measureReference(surface) {
   const rail = rect(".team-mode-rail");
   const composer = rect(".team-composer");
   const controls = rect(".team-composer-controls");
+  // The armed and maxed sliders carry the state accent blended 70% into the
+  // resting line, the way the predecessor mixes it, so the hue role has to be
+  // read back through the same mix rather than through the raw token.
+  const probe = document.createElement("span");
+  surface.append(probe);
+  const mix = (token) => {
+    probe.style.color = `color-mix(in srgb, var(${token}) 70%, var(--line))`;
+    const resolved = getComputedStyle(probe).color;
+    probe.style.color = "";
+    return resolved;
+  };
+  const stateBorder = { quiet: mix("--accent-2"), drain: mix("--warning") };
+  probe.remove();
   return {
+    stateBorder,
     surface: {
       width: surface.getBoundingClientRect().width,
       clientWidth: surface.clientWidth,
@@ -120,18 +137,24 @@ function assertReferenceGeometry(geometry) {
     "the details control remains circular",
   );
 
+  // The reference fixes the stack absolutely, not as a share of the composer:
+  // three identical 112x36 pills, measured off the capture at its 2x ratio and
+  // matched by the predecessor's own declarations (a 96px track inside 4px 7px
+  // padding and a 1px border, under one 36px item-height token). Sizes derived
+  // from the composer instead would move whenever the shard grid does.
   const controlShare = geometry.controls.width / geometry.composer.width;
   assert.ok(
-    controlShare >= 0.12 && controlShare <= 0.15,
-    `the control stack occupies 12–15% of the composer, observed ${controlShare}`,
+    controlShare <= 0.15,
+    `the control stack never dominates the composer, observed ${controlShare}`,
   );
-  assert.ok(geometry.speech.height >= 54, "Quiet uses a tall rounded range capsule");
-  assert.ok(geometry.lifetime.height >= 54, "Drain uses a tall rounded range capsule");
-  assert.ok(geometry.send.height >= 50, "the Drain action is visually substantial");
-  assert.equal(geometry.speech.border, darkPalette.quiet, "Quiet uses cool periwinkle");
-  assert.equal(geometry.lifetime.border, darkPalette.drain, "Drain uses amber/gold");
+  assert.equal(Math.round(geometry.controls.width), 112, "the stack keeps the reference pill width");
+  assert.equal(Math.round(geometry.speech.height), 36, "Quiet uses the reference range capsule");
+  assert.equal(Math.round(geometry.lifetime.height), 36, "Drain uses the reference range capsule");
+  assert.equal(Math.round(geometry.send.height), 36, "the Drain action shares one item height");
+  assert.equal(geometry.speech.border, geometry.stateBorder.quiet, "Quiet uses cool periwinkle");
+  assert.equal(geometry.lifetime.border, geometry.stateBorder.drain, "Drain uses amber/gold");
   assert.equal(geometry.send.background, darkPalette.drain, "Drain submit is filled amber");
-  assert.equal(geometry.send.color, darkPalette.drainInk, "Drain submit keeps high-contrast ink");
+  assert.equal(geometry.send.color, darkPalette.pageInk, "Drain submit keeps high-contrast ink");
   assert.deepEqual(
     geometry.labels.map(({ text }) => text),
     ["Quiet", "Drain"],
@@ -203,6 +226,36 @@ async function assertReportedTaskChip(surface) {
   assert.ok(geometry.borderRadius >= geometry.height / 2 - 1, "the task marker is a chip");
   assert.equal(geometry.border, darkPalette.green, "the task chip uses the live green accent");
   assert.ok(geometry.scrollWidth <= geometry.clientWidth + 1, "the reported handle is not clipped");
+}
+
+/// The operator agent card carries its own control: renewing this agent has to
+/// name both the action and the request it sends, stay on the exact agent lane
+/// it was drawn for, and reach the resident rather than only the message list.
+export async function assertAgentRenewalRequest(surface, fixture) {
+  const renewalRequest = "Renew your current task lease now.";
+  const renew = surface.locator(".agent-renew-request:not(:disabled)").first();
+  await renew.waitFor();
+  assert.equal(
+    (await renew.innerText()).replaceAll("\n", " "),
+    "Renew this agent request renewal",
+    "the operator card names both the action and its renewal request",
+  );
+  const renewalLane = await renew.evaluate(
+    (button) => button.closest(".team-agent")?.dataset.agentLane,
+  );
+  assert.ok(renewalLane, "the renewal control retains its exact agent lane");
+  await renew.click();
+  await surface
+    .locator(`.mosaic-message-card[data-agent-lane="${renewalLane}"]`)
+    .filter({ hasText: renewalRequest })
+    .waitFor({ timeout: 10_000 });
+  const renewalInbox = await reply(fixture, ["inbox", renewalLane]);
+  assert.ok(
+    renewalInbox.body.lanes[0].pending.some(
+      (directive) => directive.text === renewalRequest,
+    ),
+    "Renew this agent routes a residency-witnessed renewal request through the resident",
+  );
 }
 
 export async function captureReferenceControls(page, team, artifactPath) {
