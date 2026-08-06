@@ -56,6 +56,7 @@ const SUCCESSOR: &str = "/worktrees/successor";
 fn occupied_row(fixture: &Fixture) -> wire::LaneResidency {
     wire::LaneResidency {
         lane: fixture.lane,
+        lineage_id: fixture.lane,
         worktree: PREDECESSOR.into(),
         life: "drive".into(),
         vendor: "claude".parse().expect("fixture vendor"),
@@ -611,6 +612,7 @@ fn import_refuses_a_worktree_already_bound_to_another_lane() {
     let row = vacant_row(&fixture);
     let neighbour = wire::LaneResidency {
         lane: uuid(9),
+        lineage_id: uuid(9),
         worktree: SUCCESSOR.into(),
         ..vacant_row(&fixture)
     };

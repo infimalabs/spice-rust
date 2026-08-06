@@ -36,6 +36,7 @@ const VACANT: &str = "vacant";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Seat {
     lane: CanonicalUuid,
+    lineage_id: CanonicalUuid,
     capability: CanonicalUuid,
     worktree: String,
     life: String,
@@ -50,6 +51,12 @@ impl Seat {
     #[must_use]
     pub const fn lane(&self) -> CanonicalUuid {
         self.lane
+    }
+
+    /// The Canvas lineage whose lane contains this seat.
+    #[must_use]
+    pub const fn lineage_id(&self) -> CanonicalUuid {
+        self.lineage_id
     }
 
     /// The capability minted with the lane.
@@ -105,6 +112,7 @@ impl Seat {
     pub fn residency(&self) -> LaneResidency {
         LaneResidency {
             lane: self.lane,
+            lineage_id: self.lineage_id,
             worktree: self.worktree.clone(),
             life: self.life.clone(),
             vendor: self.vendor.clone(),
@@ -126,7 +134,7 @@ pub enum Seating<'a> {
     Session(&'a LaneSessionDeclared),
     /// An occupant became live under the lane.
     Started(&'a LaneStarted),
-    /// A vacant team seat moved to another linked worktree.
+    /// A vacant lineage seat moved to another linked worktree.
     Imported(&'a LaneImported),
     /// The occupant ended.
     Exited(&'a LaneExited),
@@ -400,6 +408,7 @@ impl Table {
             fact.lane,
             Seat {
                 lane: fact.lane,
+                lineage_id: fact.lineage_id,
                 capability: fact.capability,
                 worktree: fact.worktree.clone(),
                 life: fact.life.clone(),
@@ -649,6 +658,7 @@ mod tests {
     fn seated() -> LaneSeated {
         LaneSeated {
             lane: uuid(1),
+            lineage_id: uuid(1),
             capability: uuid(2),
             worktree: "/worktrees/lane-a".to_owned(),
             life: "drive".to_owned(),
@@ -1037,6 +1047,7 @@ mod tests {
         assert_eq!(head.lanes.len(), 1);
         let row = &head.lanes[0];
         assert_eq!(row.lane, uuid(1));
+        assert_eq!(row.lineage_id, uuid(1));
         assert_eq!(row.occupant, Some(uuid(3)));
         assert_eq!(row.lineage, vec![uuid(3)]);
         assert_eq!(row.capabilities, vec![uuid(2)]);

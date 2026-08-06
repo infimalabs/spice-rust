@@ -51,6 +51,26 @@ const axisPanes = new Map([
   ]],
 ]);
 
+async function buildResident() {
+  try {
+    await execute("cargo", ["xtask", "app"], {
+      cwd: root,
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    await execute("cargo", ["build", "-p", "spice", "--bin", "spice"], {
+      cwd: root,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+  } catch (error) {
+    const stdout = error?.stdout ?? "<none>";
+    const stderr = error?.stderr ?? "<none>";
+    throw new Error(
+      `canvas spec could not build its resident: stdout=${stdout} stderr=${stderr}`,
+      { cause: error },
+    );
+  }
+}
+
 function waitForDiscovery(child, canvas, timeout = 30_000) {
   return new Promise((resolveDiscovery, rejectDiscovery) => {
     let settled = false;
@@ -161,12 +181,15 @@ async function reply(fixture, args) {
 
 async function configureFixture(fixture, linkedRoot) {
   await execute("git", ["init", "--quiet"], { cwd: fixture });
+  await mkdir(join(fixture, "dist"), { recursive: true });
   await cp(join(root, "dist/stage-app"), join(fixture, "dist/stage-app"), { recursive: true });
   const vendor = join(fixture, "fake-claude");
   await writeFile(vendor, [
     "#!/bin/sh",
     "trap 'exit 0' TERM INT",
+    "name=${PWD##*/}",
     `printf '%s\\n' '${sessionRecord}'`,
+    concatAgentRecord(),
     "while :; do sleep 1; done",
     "",
   ].join("\n"));
@@ -209,6 +232,15 @@ async function configureFixture(fixture, linkedRoot) {
     worktrees.push(await realpath(worktree));
   }
   return worktrees;
+}
+
+function concatAgentRecord() {
+  const prefix = "{\"type\":\"assistant\",\"message\":{\"type\":\"message\","
+    + "\"role\":\"assistant\",\"content\":[{\"type\":\"text\","
+    + "\"text\":\"Canvas message from ";
+  const suffix = "\"}],\"usage\":{\"input_tokens\":1,\"cache_read_input_tokens\":0,"
+    + "\"cache_creation_input_tokens\":0,\"output_tokens\":1}}}";
+  return `printf '%s%s%s\\n' '${prefix}' "$name" '${suffix}'`;
 }
 
 async function journalExtent(fixture) {
@@ -399,22 +431,52 @@ async function assertAgentConversation(page, fixture, worktrees) {
   await refusal.waitFor({ state: "detached", timeout: 10_000 });
   await console.locator(".team-detail-card").nth(0).waitFor({ timeout: 15_000 });
 
-  for (const [index, worktree] of worktrees.slice(1).entries()) {
-    await console.getByLabel("Worktree").fill(worktree);
-    await console.getByLabel("Vendor").fill("claude");
-    await console.getByLabel("Life").fill("steer");
-    await console.getByRole("button", { name: "Seat agent" }).click();
-    await console.locator(".team-detail-card").nth(index + 1).waitFor({ timeout: 15_000 });
+  const firstSnapshot = await reply(fixture, ["lane"]);
+  const host = firstSnapshot.body.lanes.find((lane) => lane.worktree === worktrees[0]);
+  assert.ok(host, "the Canvas seat control creates the lineage host");
+  for (const worktree of worktrees.slice(1)) {
+    await reply(fixture, [
+      "lane", "add", worktree,
+      "--lineage", host.lineage_id,
+      "--life", "Steer",
+      "--vendor", "claude",
+    ]);
   }
+  await page.reload({ waitUntil: "networkidle" });
+  await chooseCanvasView(page, "Mosaic");
+  await console.getByRole("tab", { name: /^Info/ }).click();
+  await console.locator(".team-detail-card").nth(3).waitFor({ timeout: 15_000 });
 
   const lanes = await reply(fixture, ["lane"]);
   const seated = worktrees.map((worktree) => lanes.body.lanes.find((lane) => lane.worktree === worktree));
-  assert.ok(seated.every(Boolean), "the Canvas seat control creates all four linked-worktree lanes");
+  assert.ok(seated.every(Boolean), "one lineage admits all four linked worktrees");
+  assert.ok(
+    seated.every((lane) => lane.lineage_id === host.lineage_id),
+    "every independently steerable member retains the shared lineage identity",
+  );
   assert.ok(seated.every((lane) => lane.vendor === "claude"));
   assert.ok(seated.every((lane) => lane.life === "steer"), "the team shares one lifetime");
 
   await console.getByRole("tab", { name: /^Compose/ }).click();
   await console.locator(".team-agent").nth(3).waitFor();
+  assert.equal(await console.locator(".team-surface").count(), 1, "one lineage renders one surface");
+  assert.equal(
+    await console.locator(".team-activity-grid").count(),
+    1,
+    "all lineage members share exactly one packed activity plane",
+  );
+  const authored = console.locator('[data-card-kind="agent-message"]');
+  await authored.nth(3).waitFor({ timeout: 10_000 });
+  const producerIds = new Set(await authored.evaluateAll((cards) =>
+    cards.map((card) => card.getAttribute("data-producer-target-id")),
+  ));
+  const producerNames = new Set(await authored.locator(".message-author").allTextContents());
+  assert.ok(producerIds.size > 1, "the packed plane contains more than one producing agent");
+  assert.ok(producerNames.size > 1, "each authored card footer names its producing agent");
+  const accessibility = await console.locator(".team-activity-grid").ariaSnapshot();
+  for (const name of producerNames) {
+    assert.match(accessibility, new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
   assert.equal(await console.getByRole("button", { name: "Steer", exact: true }).count(), 1);
   const lifetime = console.locator('.team-lifetime input[type="range"]');
   await lifetime.fill("2");
@@ -1015,6 +1077,7 @@ async function assertSpeechVariants(browser, endpoint) {
   await variants.close();
 }
 
+await buildResident();
 const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browser-")));
 const linkedRoot = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-lanes-")));
 await mkdir(artifacts, { recursive: true });

@@ -36,18 +36,21 @@ struct EnvironmentPolicy {
 /// verify, and the hooks fixture proves it by exporting exactly those three and
 /// asserting the child sees none of them. The agent shadow owns three more Git
 /// configuration references, and the hygiene acquisition fixture fixes
-/// `TMPDIR` at private writable scratch. Those references oblige the ledger to
-/// account all seven names. They are named here rather than added to
+/// `TMPDIR` at private writable scratch. The browser build also injects its
+/// source identity without making that build-time stamp a runtime Doctor
+/// variable. Those references oblige the ledger to account all eight names.
+/// They are named here rather than added to
 /// [`SpiceVariable`], because Doctor reports the variables Spice owns and a row
 /// for one of these would claim ownership Spice does not have.
 const FOREIGN_TRACKED_NAMES: &[&str] = &[
-    "GIT_CONFIG_COUNT",  // env-policy: allow
-    "GIT_CONFIG_SYSTEM", // env-policy: allow
-    "GIT_DIR",           // env-policy: allow
-    "GIT_EDITOR",        // env-policy: allow
-    "GIT_INDEX_FILE",    // env-policy: allow
-    "GIT_WORK_TREE",     // env-policy: allow
-    "TMPDIR",            // env-policy: allow
+    "GIT_CONFIG_COUNT",          // env-policy: allow
+    "GIT_CONFIG_SYSTEM",         // env-policy: allow
+    "GIT_DIR",                   // env-policy: allow
+    "GIT_EDITOR",                // env-policy: allow
+    "GIT_INDEX_FILE",            // env-policy: allow
+    "GIT_WORK_TREE",             // env-policy: allow
+    "SPICE_APP_SOURCE_IDENTITY", // env-policy: allow
+    "TMPDIR",                    // env-policy: allow
 ];
 
 /// The tracked vocabulary is Doctor's rows plus the names Spice does not own.

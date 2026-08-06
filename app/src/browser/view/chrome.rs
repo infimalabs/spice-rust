@@ -307,9 +307,9 @@ pub(in crate::browser) fn render_ticker(surface: &SurfaceData) -> Html {
 
 /// Who the card is addressed to, and the colour that says so.
 ///
-/// A pending directive carries no author of its own: the operator wrote every
-/// one of them. What distinguishes cards is the lane they are waiting on, so
-/// that is what the accent and the footer name.
+/// For assistant prose this is the immutable producing worktree. A pending
+/// direction carries no agent author, so its correspondent is the member the
+/// operator addressed.
 #[derive(Clone, PartialEq)]
 pub(in crate::browser) struct Correspondent {
     pub(in crate::browser) name: String,
