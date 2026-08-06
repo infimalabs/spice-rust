@@ -2,6 +2,41 @@ import assert from "node:assert/strict";
 
 import { TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
 
+/// Production resolves one destination per primary shard, in one order
+/// (`primary_stream_link` in app/src/browser/watchband.rs): the last rendered
+/// card owned by that exact lane, and only when the lane has rendered no card
+/// at all the explicitly named lineage-stream default. Both branches are read
+/// back off the live DOM rather than spelled out here, because a hand-written
+/// anchor id is precisely what went stale when that resolver landed.
+async function primaryDestination(team, lane) {
+  const link = team.locator(
+    `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-link`,
+  );
+  const href = await link.getAttribute("href");
+  const label = await link.getAttribute("aria-label");
+  const rendered = await team
+    .locator(`.team-activity-grid .mosaic-message-card[data-agent-lane="${lane}"]`)
+    .evaluateAll((cards) => cards.map((card) => card.id));
+  if (rendered.length === 0) {
+    const stream = await team.locator(".team-activity-grid").getAttribute("id");
+    assert.match(stream, /^lineage-stream-/, "the no-card default names the lineage stream");
+    assert.equal(href, `#${stream}`, `${lane} renders no card and takes the lineage default`);
+    assert.equal(label, "Jump to lineage activity", `${lane} announces the lineage default`);
+    return { link, href, rendered };
+  }
+  assert.equal(
+    href,
+    `#${rendered.at(-1)}`,
+    `${lane} links to the latest card it owns rather than merely one of them`,
+  );
+  assert.match(
+    label,
+    /^Jump to latest .+ activity$/,
+    `${lane} announces its own latest activity, not the lineage default`,
+  );
+  return { link, href, rendered };
+}
+
 /// A draft shard shows the operator what they typed and nothing built from it:
 /// no live Markdown render, no preview pane, no rendered quote. Counting zero
 /// previews only means something once the shards are known to be there, so the
@@ -134,36 +169,49 @@ export async function assertComposerShards({
 
   const primarySources = [];
   for (const lane of [seeded.lane, seeded.quoteLane]) {
-    const primaryLink = team.locator(
-      `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-link`,
-    );
-    const primaryHref = await primaryLink.getAttribute("href");
+    const { link, href, rendered } = await primaryDestination(team, lane);
+    assert.ok(rendered.length > 1, `${lane} owns several cards, so "latest" is a real choice`);
     assert.match(
-      primaryHref,
+      href,
       /^#message-(?:agent|directive)-/,
       "a primary shard with activity links to a real source card",
     );
-    const primarySource = page.locator(primaryHref);
-    await primarySource.waitFor({ timeout: TRANSITION_MS });
+    const primarySource = page.locator(href);
+    // Counted rather than waited for, so a destination nothing renders names
+    // this link here instead of expiring as an anonymous locator timeout.
+    assert.equal(
+      await primarySource.count(),
+      1,
+      `the ${lane} primary deep link resolves to exactly one rendered card`,
+    );
     assert.equal(
       await primarySource.getAttribute("data-agent-lane"),
       lane,
       "the primary shard target belongs to that exact agent",
     );
-    await primaryLink.click();
-    assert.equal(await page.evaluate(() => window.location.hash), primaryHref);
+    await link.click();
+    assert.equal(await page.evaluate(() => window.location.hash), href);
     assert.equal(
       await primarySource.evaluate((card) => card.matches(":target")),
       true,
       "clicking the primary deep link targets its resident stream card",
     );
-    primarySources.push(primaryHref);
+    primarySources.push(href);
   }
   assert.notEqual(
     primarySources[0],
     primarySources[1],
     "two agents in one lineage have distinct primary stream destinations",
   );
+  // The two lanes above are the ones with seeded conversation. Sweeping the
+  // rest holds every seated agent to the same resolver, so an agent that has
+  // rendered no card of its own is held to the lineage default here rather
+  // than going unmeasured.
+  const seatedLanes = await team
+    .locator(".team-agent")
+    .evaluateAll((agents) => agents.map((agent) => agent.dataset.agentLane));
+  assert.ok(seatedLanes.length > 2, "the lineage seats more agents than the two proven above");
+  for (const lane of seatedLanes) await primaryDestination(team, lane);
 
   await nestedCard.click();
   let previewShard = quoteLane
