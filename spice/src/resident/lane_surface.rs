@@ -11,8 +11,8 @@ use lane::occupant::{Occupant, OccupantWait, Seats};
 use sill::WaitOutcome;
 use spice::repository::Repository;
 use wire::intent::{
-    CommandAnswer, LaneAction, LaneAnswer, LaneChangeAnswer, LaneRecall, LaneSeat, LaneState,
-    LineageConfigure, LineageLife, RecallAnswer, RecallEntry, RecallProvenance,
+    CommandAnswer, LaneAction, LaneAnswer, LaneArrange, LaneChangeAnswer, LaneRecall, LaneSeat,
+    LaneState, LineageConfigure, LineageLife, RecallAnswer, RecallEntry, RecallProvenance,
 };
 use wire::{
     Actor, CanonicalUuid, Command, Fault, FaultClass, Outcome, Producer, Refusal, Reply,
@@ -247,6 +247,126 @@ pub(super) fn seat(
             compensate_seat(paths, seats, runtime, request.lane, prepared.capability);
             typed_outcome(outcome)
         }
+    }
+}
+
+/// Place one existing member immediately before another existing member.
+///
+/// The target row supplies the destination lineage. Moving the row itself keeps
+/// its lane, occupant, session, worktree, and composer identity unchanged. The
+/// residency head's vector is the durable order read back by Canvas.
+pub(super) fn arrange(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &Seats,
+    command: &wire::AdmittedCommand,
+    request: &LaneArrange,
+) -> Outcome<CommandAnswer> {
+    if request.lane == request.before {
+        return lane_refusal(
+            "lane::arrange-self",
+            Some("a different target lane".to_owned()),
+            Some(request.lane.to_string()),
+            "drop the primary composer on another seated member",
+        );
+    }
+    let observed = match current_residency(bus, epoch) {
+        Ok(head) => head,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let Some(source_index) = observed
+        .body()
+        .lanes
+        .iter()
+        .position(|row| row.lane == request.lane)
+    else {
+        return lane_refusal(
+            "lane::arrange-source-missing",
+            Some("one current seated member".to_owned()),
+            Some(request.lane.to_string()),
+            "read lane state and retry with a current source member",
+        );
+    };
+    let Some(target) = observed
+        .body()
+        .lanes
+        .iter()
+        .find(|row| row.lane == request.before)
+    else {
+        return lane_refusal(
+            "lane::arrange-target-missing",
+            Some("one current seated member".to_owned()),
+            Some(request.before.to_string()),
+            "read lane state and retry with a current target member",
+        );
+    };
+    let target_lineage = target.lineage_id;
+    let from_lineage = observed.body().lanes[source_index].lineage_id;
+    let mut next = observed.body().clone();
+    let mut source = next.lanes.remove(source_index);
+    let Some(target_index) = next.lanes.iter().position(|row| row.lane == request.before) else {
+        return typed_store_fault(
+            "lane::arrange-target-lost",
+            "the target member disappeared while arranging one residency snapshot",
+        );
+    };
+    source.lineage_id = target_lineage;
+    next.lanes.insert(target_index, source);
+    if from_lineage != target_lineage
+        && !next.lanes.iter().any(|row| row.lineage_id == from_lineage)
+    {
+        next.subscriptions
+            .retain(|subscription| subscription.lineage_id != from_lineage);
+    }
+    let lane_answer = match answer(&next, None, seats) {
+        Ok(answer) => answer,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let mut write = match write(
+        command.actor().clone(),
+        epoch,
+        Producer::ResidentRecognition,
+    ) {
+        Ok(write) => write,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    guard_residency(&mut write, &observed);
+    let fact = match write.fact(
+        wire::body::LaneArranged {
+            lane: request.lane,
+            from_lineage_id: from_lineage,
+            lineage_id: target_lineage,
+            before: request.before,
+        },
+        FactCause::Existing(observed.position()),
+    ) {
+        Ok(fact) => fact,
+        Err(error) => return typed_store_fault("lane::arrange-fact-invalid", &error.to_string()),
+    };
+    write.residency_head(fact, move |_| next);
+    if let Err(error) = write.command_result(
+        Command {
+            v: wire::WireVersion::CURRENT,
+            id: command.id(),
+            epoch: command.epoch(),
+            kind: command.kind(),
+            expected: command.expected().to_vec(),
+            body: *request,
+        },
+        epoch,
+        lane_answer.clone(),
+    ) {
+        return typed_store_fault("lane::arrange-receipt-invalid", &error.to_string());
+    }
+    match commit(bus, write) {
+        Ok(committed) => Outcome::Reply(Reply {
+            position: ReplyPosition::Committed(SeqRange {
+                first: seq(committed.first()),
+                last: seq(committed.last()),
+            }),
+            body: CommandAnswer::Lane(Box::new(lane_answer)),
+        }),
+        Err(outcome) => typed_outcome(outcome),
     }
 }
 

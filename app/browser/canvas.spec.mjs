@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { assertComposerShards, assertNoDraftPreview } from "./composer-shards.mjs";
 import { assertComposerImageIndicators } from "./composer-image-indicators.mjs";
 import { assertCanvas } from "./canvas-readiness.mjs";
+import { assertPrimaryComposerDragging } from "./composer-dragging.mjs";
 import { assertAgentRenewalRequest, captureReferenceControls } from "./control-reference.mjs";
 import { assertReferenceControlStack } from "./control-stack.mjs";
 import { assertTeamMenu } from "./team-menu.mjs";
@@ -943,6 +944,14 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
   assert.ok(woken?.occupant, "watchband Drain leaves the member eligible for a normal wake");
   assert.equal(woken.disposition, "occupied");
   assert.equal(woken.life, primarySeatLives.get(woken.lane));
+  await assertPrimaryComposerDragging(
+    page,
+    fixture,
+    console,
+    primary.lineage_id,
+    secondary.lineage_id,
+    join(artifacts, "canvas-primary-composer-dragging.png"),
+  );
   await page.screenshot({
     path: join(artifacts, "canvas-light-watchband-teams.png"),
     fullPage: true,

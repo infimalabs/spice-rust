@@ -88,10 +88,8 @@
   border-radius: 9px;
   background: var(--mosaic-card);
   box-shadow: var(--shadow);
-  cursor: grab;
 }
 
-.mosaic-message-card:active { cursor: grabbing; }
 .mosaic-message-card footer {
   display: flex;
   align-items: center;
@@ -527,6 +525,8 @@
   background: var(--panel);
 }
 .composer-shard--primary { order: 0; }
+.composer-shard--primary[draggable="true"] { cursor: grab; }
+.composer-shard--primary[draggable="true"]:active { cursor: grabbing; }
 .composer-shard--quote {
   order: 1;
   min-height: 112px;

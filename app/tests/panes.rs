@@ -660,6 +660,7 @@ fn the_grant_pane_presents_exactly_the_commands_wire_gives_operator_authority() 
             CommandKind::TrustRevoke,
             CommandKind::LaneRead,
             CommandKind::LaneSeat,
+            CommandKind::LaneArrange,
             CommandKind::LaneState,
             CommandKind::LineageConfigure,
             CommandKind::ReleasePublish,
@@ -685,7 +686,7 @@ fn every_command_states_an_authority_and_most_need_no_operator() {
         }
     }
 
-    assert_eq!(operator, 14);
+    assert_eq!(operator, 15);
     assert_eq!(connected, 30);
     assert_eq!(
         CommandKind::TaskOopsAdd.law().authority,
@@ -694,7 +695,7 @@ fn every_command_states_an_authority_and_most_need_no_operator() {
     );
     assert_eq!(
         CommandKind::ALL.len(),
-        44,
+        45,
         "a command joined or left the registry; the counts above are the claim \
          to re-make, not the number to bump"
     );
