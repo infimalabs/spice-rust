@@ -39,12 +39,9 @@ impl ProcessState {
     /// this bit cannot tell an unread kernel from a running process. The signal
     /// and reap paths in `crate::spawn` no longer take it; they read
     /// [`process_group_state`] and decide for themselves. What still collapses
-    /// does so on purpose, and not for one shared reason. `crate::surface::owner`
-    /// wants it, because an unreadable probe must not license reclaiming a lock.
-    /// `crate::spawn::Running::execution_group_terminal` is undecided under
-    /// SPAWN-1kKZ11FN, where the collapse is what keeps a group nobody could
-    /// read from going unkilled, and choosing otherwise there is a different
-    /// question from the one the post-signal consumers answered.
+    /// does so on purpose: `crate::surface::owner` wants it because an unreadable
+    /// probe must not license reclaiming a lock. The pre-signal spawn path reads
+    /// all three answers directly and applies its bounded re-probe rule instead.
     pub(crate) fn observed_terminal(self) -> bool {
         matches!(self, Self::Terminal)
     }

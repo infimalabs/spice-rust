@@ -2,8 +2,9 @@ use super::capture::{CaptureWorker, FailureContext, start_capture};
 use super::guardian::{group_probe_state, group_state};
 use super::launch::spawn_inner_refusing_descriptor_setup;
 use super::{
-    Completion, ProcessCompletion, ProcessState, WaitError, WaitStep, platform, resolve_signal,
-    resolve_signal_against, spawn, spawn_observed, wait_for_exit_notice,
+    Completion, ProcessCompletion, ProcessState, WaitError, WaitStep,
+    execution_group_terminal_against, platform, resolve_signal, resolve_signal_against, spawn,
+    spawn_observed, wait_for_exit_notice,
 };
 use crate::lock::{Acquisition, LockFile, LockName, tests::unique_lock_path};
 use crate::observe::{
@@ -1008,6 +1009,55 @@ fn an_unreadable_group_never_reports_a_descendant_that_survived() {
         !survived,
         "a member the kernel described as running stopped counting as a survivor"
     );
+}
+
+/// A transiently unreadable pre-kill probe gets one chance to observe the end.
+///
+/// The initial unreadable answer is the old boolean collapse point. The second
+/// answer makes an already-ended group observable, so returning false on the
+/// first answer would unnecessarily enter both termination waits.
+#[test]
+fn an_unreadable_pre_kill_probe_rechecks_an_already_ended_group() {
+    let mut answers = [
+        process_state::ProcessState::Indeterminate,
+        process_state::ProcessState::Terminal,
+    ]
+    .into_iter();
+
+    assert!(
+        execution_group_terminal_against(true, || {
+            answers.next().expect("the bounded probe has an answer")
+        }),
+        "the first unreadable answer skipped the re-probe and entered both termination waits"
+    );
+    assert_eq!(
+        answers.next(),
+        None,
+        "the pre-kill decision exceeded its one-re-probe bound"
+    );
+}
+
+/// Re-probing unreadability never turns silence or an observed survivor into an
+/// end that would skip termination.
+#[test]
+fn an_unreadable_pre_kill_probe_never_settles_a_group_not_observed_terminal() {
+    for second in [
+        process_state::ProcessState::Live,
+        process_state::ProcessState::Indeterminate,
+    ] {
+        let mut answers = [process_state::ProcessState::Indeterminate, second].into_iter();
+        assert!(
+            !execution_group_terminal_against(true, || {
+                answers.next().expect("the bounded probe has an answer")
+            }),
+            "an unreadable group skipped termination without an observed end"
+        );
+        assert_eq!(
+            answers.next(),
+            None,
+            "the pre-kill decision exceeded its one-re-probe bound"
+        );
+    }
 }
 
 /// A number that was never a process identity did not observe a live group.
