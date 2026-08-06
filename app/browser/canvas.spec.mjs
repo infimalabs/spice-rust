@@ -162,11 +162,19 @@ async function reply(fixture, args) {
 /// regression in that change. One directory read before the copy turns a
 /// debugging session into a refusal naming the command that fixes it.
 async function configureFixture(fixture) {
+  // The stage is a generation store now: one atomic pointer names a complete
+  // immutable generation, so the wasm lives under that generation rather than
+  // beside the pointer. The precondition reads the same pointer the resident
+  // reads, so it refuses on exactly what the resident would refuse on.
   const stage = join(root, "dist/stage-local");
-  const staged = await readdir(stage).catch(() => []);
+  const pointer = await readFile(join(stage, "current"), "utf8").catch(() => "");
+  const generation = pointer.trim();
+  const staged = generation
+    ? await readdir(join(stage, "generations", generation)).catch(() => [])
+    : [];
   assert.ok(
     staged.includes("app_bg.wasm"),
-    `${stage} carries no app wasm: run cargo xtask local-app to build the stage this spec serves`,
+    `${stage} publishes no complete app generation: run cargo xtask local-app to build the stage this spec serves`,
   );
   await cp(stage, join(fixture, "dist/stage-local"), { recursive: true });
   const vendor = join(fixture, "fake-claude");
@@ -391,10 +399,6 @@ async function assertAgentConversation(page, fixture) {
   assert.equal(await tab.getAttribute("data-lane"), seated.lane);
 
   const message = "browser direction survives streaming";
-  // Addressed by role and exact name, not by label substring: once a card is on
-  // the feed its actions are labelled "Speak/Quote/Copy this message", so a
-  // substring match resolves to four elements and the fill fails on ambiguity
-  // rather than on anything the test is about.
   await composeField(console).fill(message);
   await console.getByRole("button", { name: "Send direction" }).click();
   const outgoing = console.locator(".message.outgoing").filter({ hasText: message });
@@ -415,8 +419,14 @@ async function assertAgentConversation(page, fixture) {
   assert.equal(inbox.body.lanes.length, 1);
   assert.equal(inbox.body.lanes[0].pending.length, 1);
   assert.equal(inbox.body.lanes[0].pending[0].text, message);
+  // The card's key is the server's key for that queued direction, which is what
+  // makes the card a view of the inbox rather than an echo of what was typed.
+  assert.equal(
+    await outgoing.locator(".message-key").innerText(),
+    inbox.body.lanes[0].pending[0].key,
+  );
   // The strip is read while exactly one direction is queued, before the packing
-  // check floods the feed: its whole claim is that the tile carries the pending
+  // check floods the feed: its whole claim is that the card carries the pending
   // count and the latest text, and both are only checkable against a known one.
   await assertLaneStrip(page, fixture, seated, message);
   await assertMosaicPacking(page, console);
@@ -497,6 +507,19 @@ async function assertMosaicPacking(page, console) {
   await cards.nth(targetCards - 1).waitFor({ timeout: 15_000 });
   assert.equal(await cards.count(), targetCards);
   assert.equal(await cards.first().getAttribute("data-state"), "frozen");
+  const keys = await cards.locator(".message-key").allTextContents();
+  assert.deepEqual(keys, [...keys].sort(), "Canvas journal order agrees with steering key order");
+  assert.deepEqual(
+    await cards.evaluateAll((elements) => elements.map((element) => element.dataset.key)),
+    keys,
+    "each packed card binds its visible key to its machine-readable identity",
+  );
+  const ages = cards.locator(".message-age");
+  assert.ok(
+    (await ages.allTextContents()).every((age) => age.endsWith(" left")),
+    "spatially packed keys carry the age that orders them",
+  );
+  assert.equal(await ages.count(), targetCards);
 
   const placements = await cards.evaluateAll((elements) => elements.map((element) => {
     const box = element.getBoundingClientRect();
@@ -568,11 +591,13 @@ async function assertAuthoritySurface(page, seeded) {
 }
 
 async function assertMosaicComposer(page, fixture, seeded) {
-  // Not an exact name: the pill carries a badge with the count of directions
-  // waiting across every lane, so its accessible name is "Mosaic 5" by the time
-  // anything has been sent. The heading below is the exact one -- it is the pane
-  // itself rather than the control, so it is what proves the click landed.
-  await page.getByRole("button", { name: "Mosaic" }).click();
+  // Anchored rather than exact: the pill carries a badge with the count of
+  // directions waiting across every lane, so its accessible name is "Mosaic 5"
+  // by the time anything has been sent. Anchoring still keeps it off any later
+  // control that merely ends in the word. The heading below is the exact one --
+  // it is the pane rather than the control, so it is what proves the click
+  // landed.
+  await page.getByRole("button", { name: /^Mosaic/ }).click();
   await page.getByRole("heading", { name: "Mosaic", exact: true }).waitFor();
   const lane = page.locator(`[data-lane-id="${seeded.lane}"]`);
   await lane.getByText("browser direction survives streaming", { exact: true }).waitFor();

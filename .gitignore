@@ -18,3 +18,4 @@
 # gate that walks the filesystem rather than the tracked set counts it as an
 # input to the build.
 /.playwright-mcp/
+/dist/.stage-local-build-*/

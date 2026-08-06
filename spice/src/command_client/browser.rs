@@ -2,15 +2,20 @@
 
 use super::*;
 
-/// Open the browser surface named by the current owner-only discovery file.
-///
-/// This deliberately shares [`DiscoveryRead`] with resident commands. Canvas
-/// acquisition therefore has one file-identity, ownership, mode, wire-shape,
-/// and loopback-origin admission path rather than a browser-specific reader.
+/// Admit the discovered surface and hand its endpoint to the platform browser.
 pub(crate) fn open_canvas(discovery_path: &Path) -> Outcome<wire::CanvasOpen> {
     open_canvas_with(discovery_path, || {}, system_browser)
 }
 
+/// Admit the browser surface named by the current owner-only discovery file,
+/// and hand its endpoint to `launch`.
+///
+/// This deliberately shares [`DiscoveryRead`] with resident commands. Canvas
+/// acquisition therefore has one file-identity, ownership, mode, wire-shape,
+/// and loopback-origin admission path rather than a browser-specific reader.
+/// The resident announcing its own freshly published discovery goes through
+/// here too, so the endpoint an operator is told to open is one that already
+/// passed the admission a client would apply to it.
 pub(crate) fn open_canvas_with(
     discovery_path: &Path,
     before_current_check: impl FnOnce(),
@@ -43,7 +48,7 @@ pub(crate) fn open_canvas_with(
     })
 }
 
-fn system_browser(endpoint: &str) -> Result<(), String> {
+pub(crate) fn system_browser(endpoint: &str) -> Result<(), String> {
     let mut command = browser_command(endpoint)?;
     let status = command
         .stdin(Stdio::null())

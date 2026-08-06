@@ -123,24 +123,57 @@ fn speech() -> crate::SpeechConfig {
     crate::SpeechConfig::default()
 }
 
+const FIXTURE_GENERATION: &str = "3333333333333333333333333333333333333333333333333333333333333333";
+
+fn seed_app_generation(root: &std::path::Path, label: &str) -> std::path::PathBuf {
+    let stage = root.join(crate::LOCAL_STAGE);
+    let generation = stage
+        .join(crate::LOCAL_STAGE_GENERATIONS)
+        .join(FIXTURE_GENERATION);
+    std::fs::create_dir_all(&generation).expect("fixture app generation");
+    for asset in APP.assets() {
+        let bytes = if asset.path() == "/" {
+            format!(
+                "{label} {}{INLINE_MODULE_OPEN}\nconsole.log({label:?});\n{INLINE_MODULE_CLOSE}",
+                asset.file()
+            )
+        } else {
+            format!("{label} {}", asset.file())
+        };
+        std::fs::write(generation.join(asset.file()), bytes).expect("fixture app asset");
+    }
+    std::fs::write(
+        stage.join(crate::LOCAL_STAGE_CURRENT),
+        format!("{FIXTURE_GENERATION}\n"),
+    )
+    .expect("fixture app pointer");
+    generation
+}
+
 /// One complete lane-built app shared by tests that do not inspect its bytes.
 fn app() -> crate::AppSource {
     static ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     let root = ROOT.get_or_init(|| {
         let root =
             std::env::temp_dir().join(format!("spice-canvas-test-app-{}", std::process::id()));
-        let stage = root.join(crate::LOCAL_STAGE);
-        std::fs::create_dir_all(&stage).expect("fixture app stage");
-        for asset in APP.assets() {
-            std::fs::write(
-                stage.join(asset.file()),
-                format!("test app {}", asset.file()),
-            )
-            .expect("fixture app asset");
-        }
+        seed_app_generation(&root, "test app");
         root
     });
     crate::AppSource::resolve(root).expect("fixture app resolves")
+}
+
+#[test]
+fn app_policy_hashes_the_exact_inline_loader_bytes() {
+    let policy =
+        app_content_security_policy(b"<!doctype html><script type=\"module\">alert(1)</script>")
+            .expect("one inline module loader produces a policy");
+
+    assert!(
+        policy
+            .to_str()
+            .expect("policy is ASCII")
+            .contains("'sha256-bhHHL3z2vDgxUt0W3dWQOrprscmda2Y5pLsLg4GF+pI='")
+    );
 }
 
 async fn websocket(address: SocketAddr) -> ClientSocket {
@@ -762,9 +795,17 @@ async fn live_server_serves_the_lane_app_and_refuses_another_host() {
             .windows(b"img-src 'self' data:".len())
             .any(|window| window == b"img-src 'self' data:")
     );
-    assert_eq!(&admitted[split..], b"test app canvas-app.html");
+    assert!(admitted[split..].starts_with(b"test app canvas-app.html"));
 
-    let script = request(address, &address.to_string(), "/app.module").await;
+    let script = request(
+        address,
+        &address.to_string(),
+        &format!(
+            "{}/{FIXTURE_GENERATION}/app.module",
+            crate::APP_GENERATION_ROUTE
+        ),
+    )
+    .await;
     assert!(script.starts_with(b"HTTP/1.1 200 OK\r\n"));
     assert!(
         script
@@ -782,7 +823,7 @@ async fn live_server_serves_the_lane_app_and_refuses_another_host() {
     assert!(task.await.expect_err("aborted server task").is_cancelled());
 }
 
-/// A worktree holding a complete development stage, and that stage's path.
+/// A worktree holding a complete local stage, and that stage's path.
 ///
 /// The bytes name their own file so a route served from the wrong one is
 /// visible in the assertion.
@@ -794,16 +835,8 @@ fn local_worktree() -> (std::path::PathBuf, std::path::PathBuf) {
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
-    let stage = root.join(crate::LOCAL_STAGE);
-    std::fs::create_dir_all(&stage).expect("fixture stage");
-    for asset in APP.assets() {
-        std::fs::write(
-            stage.join(asset.file()),
-            format!("locally built {}", asset.file()),
-        )
-        .expect("fixture asset");
-    }
-    (root, stage)
+    let generation = seed_app_generation(&root, "locally built");
+    (root, generation)
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -831,7 +864,7 @@ async fn live_server_serves_a_local_stage_and_refuses_when_it_goes_away() {
         .expect("response carries headers")
         + 4;
     assert!(served.starts_with(b"HTTP/1.1 200 OK\r\n"));
-    assert_eq!(&served[split..], b"locally built canvas-app.html");
+    assert!(served[split..].starts_with(b"locally built canvas-app.html"));
 
     // A stage that stops answering mid-flight is reported as this endpoint's
     // own failure, not as the app the operator asked to stop serving.

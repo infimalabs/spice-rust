@@ -794,6 +794,48 @@ mod tests {
         );
     }
 
+    /// A key from the retired base-62 mint is durable, so replay must pass it.
+    ///
+    /// The envelopes are shaped after a real pair out of the resident's own
+    /// journal, where the pre-codec fact sits ahead of a current one. Replay
+    /// propagates a refusal rather than skipping the fact, so a grammar that
+    /// turns the first key away does not lose one directive, it loses that one
+    /// and every fact behind it.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_retired_alphabet_key_replays_and_does_not_bury_the_facts_behind_it() {
+        let facts = [
+            fact_bytes(1, "YTVtQvOX", "sent before the moment codec landed"),
+            fact_bytes(2, "1kJK6N3R", "sent after it"),
+        ]
+        .iter()
+        .map(|text| wire::decode(text.as_bytes()).expect("registered steer::sent envelope"))
+        .collect();
+        let snapshot = journal::FactSnapshot::from_facts(facts).expect("fixture snapshot");
+
+        let ledger = Ledger::from_snapshot(&snapshot).expect("replay admits the retired key");
+
+        let pending = ledger.pending(lane());
+        assert_eq!(pending.len(), 2, "a fact behind the retired key was lost");
+        assert_eq!(pending[0].key().as_str(), "YTVtQvOX");
+        assert_eq!(pending[1].key().as_str(), "1kJK6N3R");
+    }
+
+    /// One `steer::sent` envelope as the journal stores it.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn fact_bytes(seq: u64, key: &str, text: &str) -> String {
+        format!(
+            concat!(
+                r#"{{"v":1,"seq":{},"at":"2026-08-06T03:00:0{}.000Z","actor":"operator","#,
+                r#""origin":"resident:e2e9f1f2-19b2-4ddc-83fa-340b02dee2c4","#,
+                r#""fact":{{"kind":"steer::sent","#,
+                r#""directive":"a0ae31a7-eb68-463a-b3c0-272bfeaaa5d{}","#,
+                r#""expires":"{}","key":"{}","lane":"{}","text":"{}"}}}}"#
+            ),
+            seq, seq, seq, EXPIRES, key, LANE, text
+        )
+    }
+
     /// A ladder is one directive said again, so the lane is asked once.
     #[test]
     fn a_resend_climbs_one_rung_and_leaves_the_lineage_pending_once() {

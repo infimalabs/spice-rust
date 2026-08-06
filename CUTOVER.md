@@ -178,19 +178,25 @@ cd "$CUTOVER_REPO"
 "$CUTOVER_BIN" --json board
 ```
 
-The Canvas web app is built natively into ignored `dist/stage-local`, and `up`
-serves only those lane-local assets. From terminal B, open the app:
+The Canvas web app is built natively into ignored `dist/stage-local`; one atomic
+pointer selects a complete immutable generation, and `up` serves only those
+lane-local assets. There is no separate opener command: the start already
+running in terminal A announces the exact URL on its standard error:
 
-```sh
-.spice/bin/spice --json canvas | tee "$CUTOVER_EVIDENCE/canvas.json"
+```
+canvas endpoint: http://127.0.0.1:8765
 ```
 
-`canvas` launches the default browser and prints a reply whose `body.endpoint`
-is the exact URL, shaped `http://127.0.0.1:<port>`. The port is selected
-ephemerally on every resident start and the listener is IPv4 loopback-only, so
-the endpoint is reachable only on the resident host. Explicit host and port
-selection, including remote access, is tracked by `BIND-1kKQTXP1` and is not a
-capability of this release.
+The resident prints that line only after reading back the discovery file it
+just published and admitting it, so the URL named there has already passed the
+same ownership, loopback-origin, and generation checks a client applies. Open
+it in a browser, or start with `up --open` to have the resident open the
+default browser itself.
+
+`127.0.0.1:8765` is the default address; `--host` and `--port` bind a different
+one, and `--port 0` takes any free port. The listener is IPv4 loopback unless
+`--host` names another address of this machine, so by default the app is
+reachable only on the resident host.
 
 The board must contain no task rows. Create only wanted work with `task add` or
 preview and apply a native task document; every resulting handle is new. Seat

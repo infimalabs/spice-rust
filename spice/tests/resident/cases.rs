@@ -1211,12 +1211,19 @@ fn resident_process_refuses_a_local_app_stage_that_cannot_supply_the_whole_app()
     let fixture = Fixture::new("app-source");
     let stage = fixture.root.join(canvas::LOCAL_STAGE);
     fs::remove_dir_all(&stage).expect("remove complete fixture app");
-    fs::create_dir_all(&stage).expect("fixture stage");
+    let identity = "5555555555555555555555555555555555555555555555555555555555555555";
+    let generation = stage.join(canvas::LOCAL_STAGE_GENERATIONS).join(identity);
+    fs::create_dir_all(&generation).expect("fixture generation");
     fs::write(
-        stage.join("canvas-app.html"),
+        generation.join("canvas-app.html"),
         b"locally built canvas-app.html",
     )
     .expect("fixture asset");
+    fs::write(
+        stage.join(canvas::LOCAL_STAGE_CURRENT),
+        format!("{identity}\n"),
+    )
+    .expect("fixture pointer");
 
     let mut resident = RunningResident::spawn(&fixture);
     // Bounded rather than a bare wait: a resident that never resolved this
@@ -1265,13 +1272,39 @@ fn resident_text_startup_names_the_exact_lane_app_source() {
     let stage = local.root.join(canvas::LOCAL_STAGE);
     let mut resident = RunningResident::spawn_text(&local);
     resident.assert_ready(&local);
+    let published = local.discovery().endpoint;
     let down = invoke(&local, "down");
     assert!(down.status.success(), "local resident down failed");
     let output = resident.wait();
     assert!(output.status.success(), "local resident failed");
     let stage = fs::canonicalize(&stage).expect("local app stage canonicalizes");
+    let announcement = String::from_utf8(output.stderr).expect("local announcement is UTF-8");
+    // A text start announces what it serves, then where it is served. The
+    // endpoint line is the one an operator acts on now that no separate command
+    // prints it, so it is held to two separate claims.
+    let (announced_source, announced_endpoint) =
+        announcement.split_once('\n').unwrap_or_else(|| {
+            panic!("startup announces a source line then an endpoint: {announcement:?}")
+        });
     assert_eq!(
-        String::from_utf8(output.stderr).expect("local announcement is UTF-8"),
-        format!("canvas app source: lane app at {}\n", stage.display())
+        announced_source,
+        format!("canvas app source: lane app at {}", stage.display())
+    );
+    // It is the endpoint that was published, not one formatted alongside it, so
+    // an operator dialling the announcement reaches the surface a client would.
+    assert_eq!(
+        announced_endpoint,
+        format!("canvas endpoint: {published}\n")
+    );
+    // And that published endpoint names the port the kernel handed out. Both
+    // sides of the equality above are the resident's own, so on its own it
+    // would still hold if the resident published the address it asked for:
+    // this fixture starts with `--port 0`, which is unreachable.
+    let port = published
+        .strip_prefix("http://127.0.0.1:")
+        .unwrap_or_else(|| panic!("the resident publishes a loopback endpoint: {published:?}"));
+    assert!(
+        port.parse::<u16>().is_ok_and(|port| port != 0),
+        "the announced endpoint must name the bound port, not the requested one: {port:?}"
     );
 }

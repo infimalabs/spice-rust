@@ -20,6 +20,8 @@ use ::axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, ETAG, HOST, ORIGIN};
 use ::axum::http::{HeaderMap, HeaderValue, StatusCode};
 use ::axum::response::{IntoResponse, Response};
 use ::axum::routing::{get, post};
+use base64::Engine as _;
+use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, Notify, Semaphore, mpsc, oneshot, watch};
 use tokio::time::timeout;
@@ -42,6 +44,9 @@ const SPEECH_TEXT_BYTES: usize = 32 * 1_024;
 const SPEECH_AUDIO_BYTES: u64 = 16 * 1_024 * 1_024;
 const SPEECH_DIAGNOSTIC_BYTES: u64 = 8 * 1_024;
 const SPEECH_RUNTIME: Duration = Duration::from_secs(30);
+const INLINE_MODULE_OPEN: &str = "<script type=\"module\">";
+const INLINE_MODULE_CLOSE: &str = "</script>";
+const DEFAULT_SCRIPT_HASH: &str = "B50SC8VLF+K2T0Re7VCfyZ3PqVhYIkg+OlhW+7PQyTU=";
 
 /// Closed capability-to-principal map for one resident generation.
 #[derive(Clone, Default)]
@@ -687,6 +692,16 @@ async fn app(
     };
     let content_type = asset.content_type();
     let digest = asset.digest();
+    let app_policy = if content_type == "text/html; charset=utf-8" {
+        match app_content_security_policy(asset.bytes()) {
+            Ok(policy) => Some(policy),
+            Err(message) => {
+                return (StatusCode::SERVICE_UNAVAILABLE, message).into_response();
+            }
+        }
+    } else {
+        None
+    };
     let mut response = Response::new(Body::from(asset.into_bytes()));
     response
         .headers_mut()
@@ -700,6 +715,11 @@ async fn app(
         .headers_mut()
         .insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     install_browser_headers(&mut response);
+    if let Some(policy) = app_policy {
+        response
+            .headers_mut()
+            .insert("content-security-policy", policy);
+    }
     response
 }
 
@@ -897,17 +917,41 @@ fn speech_error(status: StatusCode, message: &'static str) -> Response {
     response
 }
 
+fn app_content_security_policy(html: &[u8]) -> Result<HeaderValue, &'static str> {
+    let html = std::str::from_utf8(html)
+        .map_err(|_| "canvas app unavailable: canvas-app.html was not UTF-8")?;
+    let (before, rest) = html
+        .split_once(INLINE_MODULE_OPEN)
+        .ok_or("canvas app unavailable: canvas-app.html did not carry one inline module loader")?;
+    let (script, after) = rest
+        .split_once(INLINE_MODULE_CLOSE)
+        .ok_or("canvas app unavailable: canvas-app.html did not close its inline module loader")?;
+    if before.contains(INLINE_MODULE_CLOSE)
+        || after.contains(INLINE_MODULE_OPEN)
+        || after.contains(INLINE_MODULE_CLOSE)
+    {
+        return Err(
+            "canvas app unavailable: canvas-app.html carried multiple inline module loaders",
+        );
+    }
+    let hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(script.as_bytes()));
+    HeaderValue::from_str(&browser_content_security_policy(&hash))
+        .map_err(|_| "canvas app unavailable: its content security policy was not one HTTP value")
+}
+
+fn browser_content_security_policy(script_hash: &str) -> String {
+    format!(
+        "default-src 'self'; connect-src 'self' ws:; img-src 'self' data:; object-src 'none'; \
+         script-src 'self' 'wasm-unsafe-eval' 'sha256-{script_hash}'; style-src 'self'; \
+         media-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'"
+    )
+}
+
 fn install_browser_headers(response: &mut Response) {
     response.headers_mut().insert(
         "content-security-policy",
-        HeaderValue::from_static(
-            "default-src 'self'; connect-src 'self' ws:; img-src 'self' data:; object-src 'none'; \
-             script-src 'self' 'wasm-unsafe-eval' \
-             'sha256-B50SC8VLF+K2T0Re7VCfyZ3PqVhYIkg+OlhW+7PQyTU='; style-src 'self'; \
-             media-src 'self' blob:; \
-             base-uri 'none'; \
-             frame-ancestors 'none'",
-        ),
+        HeaderValue::from_str(&browser_content_security_policy(DEFAULT_SCRIPT_HASH))
+            .expect("the default browser policy is one static HTTP value"),
     );
     response
         .headers_mut()

@@ -144,7 +144,6 @@ const CASES: &[Case] = &[
     case("journal verify", &["journal", "verify"]),
     case("fold", &["fold"]),
     case("thread", &["thread", "1"]),
-    case("canvas", &["canvas"]),
     case("release publish", &["release", "publish"]),
     Case {
         path: "run",
@@ -161,6 +160,24 @@ const CASES: &[Case] = &[
         expected: ExpectedOutcome::TaskMigration,
     },
 ];
+
+/// Every path a case list registers more than once, in the order the repeats fall.
+///
+/// A merge that folds two edits of the case array can keep both copies of an
+/// entry, and the panic is the only thing the next lane reads. How far the
+/// distinct set fell short of the list is a subtraction they then have to solve;
+/// the paths themselves are the answer, so those are what this hands back. Every
+/// repeat is collected rather than the first, because one fold can duplicate
+/// more than one entry and a lane that fixes only the named one comes straight
+/// back.
+fn repeated_paths(cases: &[Case]) -> Vec<&'static str> {
+    let mut seen = BTreeSet::new();
+    cases
+        .iter()
+        .filter(|case| !seen.insert(case.path))
+        .map(|case| case.path)
+        .collect()
+}
 
 const fn case(path: &'static str, arguments: &'static [&'static str]) -> Case {
     Case {
@@ -198,22 +215,11 @@ impl Drop for Scratch {
 #[test]
 fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
     let registered = landed_contract_paths();
-    // The way this array acquires a repeat is a merge fold keeping both sides of
-    // an entry neither side moved, so the panic is read by whoever pulled the
-    // baseline rather than by whoever wrote the duplicate. Two counts tell that
-    // reader a leaf is doubled but not which one, and the array is long enough
-    // that finding it means scripting over the source; naming it here is the
-    // difference between a one-line deletion and a detour.
-    let mut seen = BTreeSet::new();
-    let repeated = CASES
-        .iter()
-        .filter(|case| !seen.insert(case.path))
-        .map(|case| case.path)
-        .collect::<Vec<_>>();
+    let repeated = repeated_paths(CASES);
     assert!(
         repeated.is_empty(),
         "process case repeated: {}",
-        repeated.join(", "),
+        repeated.join(", ")
     );
     let exercised = CASES
         .iter()
@@ -249,6 +255,33 @@ fn every_registered_leaf_reaches_process_dispatch_in_text_and_json() {
             });
         }
     }
+}
+
+#[test]
+fn a_repeated_case_is_named_rather_than_counted() {
+    // The defect this guards is a merge folding two edits of the array and
+    // keeping both copies of an entry, so the fixture duplicates two different
+    // paths rather than one: a count only says how many entries went missing,
+    // and a refusal that stops at the first repeat sends the next lane back for
+    // the second. Both duplicates have to come out by name, in the order a
+    // reader scanning down the array would meet them.
+    let folded = [
+        case("task status", &["task", "status"]),
+        case("task next", &["task", "next"]),
+        case("task status", &["task", "status"]),
+        case("task add", &["task", "add", "readiness task"]),
+        case("task next", &["task", "next"]),
+    ];
+    assert_eq!(repeated_paths(&folded), ["task status", "task next"]);
+
+    // The shipped array reaches the same refusal here in milliseconds, where the
+    // dispatch test only reaches it after standing up a scratch root.
+    let shipped = repeated_paths(CASES);
+    assert!(
+        shipped.is_empty(),
+        "process case repeated: {}",
+        shipped.join(", ")
+    );
 }
 
 fn write_task_export(root: &Path) {
