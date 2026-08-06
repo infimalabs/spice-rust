@@ -57,6 +57,15 @@ impl Fixture {
         self.expect(&["rev-parse", "HEAD"])
     }
 
+    /// Publish the current tip through the same configuration `apply` reads.
+    fn publish_current_tip(&self) {
+        let tip = self.head();
+        let origin = self.path().to_str().expect("scratch path is UTF-8");
+        self.expect(&["remote", "add", "origin", origin]);
+        self.expect(&["config", "branch.main.merge", "refs/heads/main"]);
+        self.expect(&["update-ref", "refs/remotes/origin/main", &tip]);
+    }
+
     /// Refuse the branch update the way the real guard refuses it, recording
     /// what git handed the hook so the fixture reads the real transaction
     /// rather than one it composed for itself.
@@ -97,7 +106,7 @@ impl Fixture {
 
     /// Run a command the hook above will refuse, and read the damage from
     /// the transaction git actually queued for the branch.
-    fn refused(&self, arguments: &[&str]) -> WorktreeDamage {
+    fn refused_queue(&self, arguments: &[&str]) -> String {
         let before = self.head();
         let output = git(&self.0, arguments).expect("git launches");
         assert!(
@@ -111,14 +120,25 @@ impl Fixture {
             "a refused update must leave HEAD where it was"
         );
 
-        let recorded =
-            fs::read_to_string(self.0.join("transaction")).expect("the hook recorded a queue");
+        fs::read_to_string(self.0.join("transaction")).expect("the hook recorded a queue")
+    }
+
+    fn refused(&self, arguments: &[&str]) -> WorktreeDamage {
+        let recorded = self.refused_queue(arguments);
         let updates = parse_updates(&recorded).expect("the recorded queue parses");
         let update = updates
             .iter()
             .rfind(|update| update.reference == "refs/heads/main")
             .expect("the refused queue named the branch");
         worktree_damage(self.path(), update).expect("damage is read")
+    }
+
+    /// Re-run the native guard against the queue and state a real refused Git
+    /// operation left behind.
+    fn applied_refusal(&self, arguments: &[&str]) -> ReferenceTransactionError {
+        let recorded = self.refused_queue(arguments);
+        apply(self.path(), OsStr::new(PREPARED), &recorded)
+            .expect_err("the native guard refuses the recorded branch update")
     }
 
     /// The lock reference deletion takes in the common directory, which every
@@ -285,23 +305,26 @@ fn refusal(damage: WorktreeDamage) -> String {
     .to_string()
 }
 
-/// The guard cannot protect the tree, so a refusal that arrived after the
-/// tree was written owes the reader the state it was left in and the way
-/// out. All three halves are load-bearing text.
+/// The guard cannot prove which command produced a matching tree, so this arm
+/// names the observable state without prescribing destructive recovery.
 #[test]
-fn a_rewritten_worktree_is_named_along_with_the_recovery() {
+fn a_rewritten_worktree_is_named_without_prescribing_destructive_recovery() {
     let message = refusal(WorktreeDamage::Rewritten);
     assert!(
         message.contains("HEAD was not moved"),
         "refusal must say the reference stayed put: {message}"
     );
     assert!(
-        message.contains("index and worktree"),
-        "refusal must report that the rewind already wrote the tree: {message}"
+        message.contains("index and worktree match"),
+        "refusal must report the matching tree state: {message}"
     );
     assert!(
-        message.contains("git reset --hard HEAD"),
-        "refusal must name the recovery this guard admits: {message}"
+        !message.contains("git reset --hard HEAD"),
+        "an ambiguous tree state prescribed destructive recovery: {message}"
+    );
+    assert!(
+        message.contains("Inspect `git status`"),
+        "an ambiguous tree state did not name a safe next observation: {message}"
     );
 }
 
@@ -382,6 +405,92 @@ fn a_refused_soft_or_mixed_rewind_reports_an_untouched_worktree() {
     }
 }
 
+/// The damage arm is selected by `apply`, not merely by direct unit calls.
+#[test]
+fn apply_reports_the_rewritten_arm_for_a_refused_hard_rewind() {
+    let fixture = Fixture::history("apply-hard");
+    fixture.publish_current_tip();
+    fixture.refuse_reference_updates();
+
+    let error = fixture.applied_refusal(&["reset", "--hard", "HEAD~2"]);
+    assert!(
+        matches!(
+            &error,
+            ReferenceTransactionError::ProtectedHistory {
+                damage: WorktreeDamage::Rewritten,
+                ..
+            }
+        ),
+        "apply selected the wrong damage arm: {error:?}"
+    );
+    let message = error.to_string();
+    assert!(
+        message.contains("index and worktree match the refused rewind target"),
+        "the apply refusal did not render the rewritten arm: {message}"
+    );
+}
+
+/// A genuine refusal that did not write the tree reaches the opposite arm
+/// through the same `apply` entry point.
+#[test]
+fn apply_reports_the_untouched_arm_for_a_refused_amend() {
+    let fixture = Fixture::history("apply-amend");
+    fixture.publish_current_tip();
+    fs::write(fixture.path().join("file.txt"), "staged\n").expect("amended content is written");
+    fixture.expect(&["add", "file.txt"]);
+    fixture.refuse_reference_updates();
+
+    let error = fixture.applied_refusal(&["commit", "--amend", "-m", "amended"]);
+    assert!(
+        matches!(
+            &error,
+            ReferenceTransactionError::ProtectedHistory {
+                damage: WorktreeDamage::Untouched,
+                ..
+            }
+        ),
+        "apply selected the wrong damage arm: {error:?}"
+    );
+    let message = error.to_string();
+    assert!(
+        message.contains("did not write the working tree"),
+        "the apply refusal did not render the untouched arm: {message}"
+    );
+}
+
+/// A soft rewind can satisfy the rewritten discriminator without writing the
+/// index or worktree. That ambiguous state must never prescribe reset --hard.
+#[test]
+fn a_matching_soft_rewind_never_prescribes_destructive_recovery() {
+    let fixture = Fixture::history("matching-soft");
+    fixture.publish_current_tip();
+    fs::write(fixture.path().join("file.txt"), "one\n")
+        .expect("the existing tree is made to match the rewind target");
+    fixture.expect(&["add", "file.txt"]);
+    fixture.refuse_reference_updates();
+
+    let error = fixture.applied_refusal(&["reset", "--soft", "HEAD~2"]);
+    assert!(
+        matches!(
+            &error,
+            ReferenceTransactionError::ProtectedHistory {
+                damage: WorktreeDamage::Rewritten,
+                ..
+            }
+        ),
+        "the matching-content bound was not reached: {error:?}"
+    );
+    let message = error.to_string();
+    assert!(
+        !message.contains("git reset --hard HEAD"),
+        "a soft rewind that wrote neither index nor tree prescribed destructive recovery: {message}"
+    );
+    assert!(
+        message.contains("soft or mixed rewind can look identical"),
+        "the refusal hid why its damage classification is ambiguous: {message}"
+    );
+}
+
 /// The guard runs inside a lock every worktree shares, so a queue it cannot
 /// possibly refuse has to be answered without launching anything.
 ///
@@ -424,10 +533,7 @@ fn a_queue_naming_no_branch_is_answered_without_launching_git() {
 fn a_queue_abandoning_published_history_is_still_refused() {
     let fixture = Fixture::history("published");
     let tip = fixture.head();
-    let origin = fixture.path().to_str().expect("scratch path is UTF-8");
-    fixture.expect(&["remote", "add", "origin", origin]);
-    fixture.expect(&["config", "branch.main.merge", "refs/heads/main"]);
-    fixture.expect(&["update-ref", "refs/remotes/origin/main", &tip]);
+    fixture.publish_current_tip();
     let base = fixture.expect(&["rev-parse", "HEAD~2"]);
 
     let error = apply(
