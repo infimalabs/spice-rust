@@ -26,18 +26,22 @@ pub(crate) fn compose(body: &str, quotes: &[String]) -> String {
 }
 
 /// Normalize line endings, then prefix every line as one Markdown block quote.
+///
+/// The trim happens to the source and never to the joined result. Trimming the
+/// result takes the space off the marker on a final blank line, leaving `>`
+/// alone, and [`render`] reads a line that is not `> ` as prose: the whole
+/// quote reaches the reader as literal markers instead of a blockquote.
 pub(crate) fn block_quote(raw: &str) -> String {
     let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
-    if normalized.trim().is_empty() {
+    let trimmed = normalized.trim();
+    if trimmed.is_empty() {
         return String::new();
     }
-    normalized
+    trimmed
         .lines()
         .map(|line| format!("> {line}"))
         .collect::<Vec<_>>()
         .join("\n")
-        .trim()
-        .to_owned()
 }
 
 /// Parse the exact blank-line boundary [`compose`] emits into render blocks.
@@ -99,5 +103,29 @@ mod tests {
                 Block::Quote("quoted\nlines".to_owned()),
             ]
         );
+    }
+
+    /// Quoted message text routinely ends on a blank line, and the blank line is
+    /// the one the marker can lose. Trimming the joined result rather than the
+    /// source left `>` alone on the last line, which is not the `> ` the
+    /// renderer classifies on, so the reader saw the markers as prose. Asserting
+    /// the composed text and the rendered block together is what catches it:
+    /// either half alone passes while the two disagree.
+    #[test]
+    fn a_quote_that_ends_on_a_blank_line_still_renders_as_a_quote() {
+        let markdown = compose("", &quotes(&["first\n\n"]));
+
+        assert_eq!(markdown, "> first");
+        assert_eq!(render(&markdown), [Block::Quote("first".to_owned())]);
+    }
+
+    /// The marker is `> ` and not `>`. A body line that opens on a bare angle
+    /// bracket is prose the author typed, and classifying it as a quote would
+    /// strip a second character the line never spent on a marker.
+    #[test]
+    fn a_body_line_opening_on_a_bare_angle_bracket_stays_prose() {
+        let markdown = compose(">note", &[]);
+
+        assert_eq!(render(&markdown), [Block::Paragraph(">note".to_owned())]);
     }
 }
