@@ -335,22 +335,15 @@ pub(super) fn references_in(
         return found;
     }
 
-    let statements = statement_spans(&lines);
     for concatenation in rust_concatenations(text) {
         let start = concatenation.start;
-        let end = concatenation.end;
+        let scope_start = concatenation.scope_start;
+        let scope_end = concatenation.scope_end;
         let name = concatenation.name;
         if !is_inferred_reference(&name) {
             continue;
         }
-        let (scope_start, scope_end) = statements
-            .iter()
-            .find(|(statement_start, statement_end)| {
-                *statement_start <= start as usize && start as usize <= *statement_end
-            })
-            .copied()
-            .unwrap_or((start as usize, end as usize));
-        let exempt = lines[scope_start - 1..scope_end]
+        let exempt = lines[scope_start as usize - 1..scope_end as usize]
             .iter()
             .flat_map(|line| literal_exemptions(line))
             .any(|literal| literal == name);
@@ -364,7 +357,8 @@ pub(super) fn references_in(
 /// One literal-only Rust concatenation recovered from the syntax tree.
 struct RustConcatenation {
     start: u32,
-    end: u32,
+    scope_start: u32,
+    scope_end: u32,
     name: String,
 }
 
@@ -442,12 +436,36 @@ fn rust_concatenations(text: &str) -> Vec<RustConcatenation> {
         let Ok(start) = u32::try_from(node.start_position().row + 1) else {
             continue;
         };
-        let Ok(end) = u32::try_from(node.end_position().row + 1) else {
+        let scope = rust_syntax_scope(node);
+        let Ok(scope_start) = u32::try_from(scope.start_position().row + 1) else {
             continue;
         };
-        found.push(RustConcatenation { start, end, name });
+        let Ok(scope_end) = u32::try_from(scope.end_position().row + 1) else {
+            continue;
+        };
+        found.push(RustConcatenation {
+            start,
+            scope_start,
+            scope_end,
+            name,
+        });
     }
     found
+}
+
+/// The executable syntax unit containing one macro invocation.
+fn rust_syntax_scope(mut node: tree_sitter::Node<'_>) -> tree_sitter::Node<'_> {
+    let invocation = node;
+    while let Some(parent) = node.parent() {
+        node = parent;
+        if matches!(
+            node.kind(),
+            "let_declaration" | "expression_statement" | "const_item" | "static_item"
+        ) {
+            return node;
+        }
+    }
+    invocation
 }
 
 /// One parser bound to the packaged Rust grammar.
