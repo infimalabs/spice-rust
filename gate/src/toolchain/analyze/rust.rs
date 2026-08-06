@@ -494,6 +494,55 @@ mod tests {
         fs::remove_file(&lock_path).expect("remove the reclaimed fixture lock");
     }
 
+    /// A teardown that cannot remove the build root reports instead of losing it.
+    ///
+    /// `release` returning a reason is only half a guarantee; the other half is
+    /// that the arm folds that reason into its report. So this drives the whole
+    /// arm rather than calling `release` directly, and the failure is real: the
+    /// stub seals a directory inside the build root, and removing a sealed
+    /// directory's contents requires reading it, so `remove_dir_all` fails for a
+    /// reason the operating system supplies rather than one the test invents.
+    #[test]
+    fn a_build_root_that_cannot_be_removed_is_reported_by_the_arm() {
+        let fixture = RustFixture::new("unremovable-build-root");
+        fixture.source(REMOVED_PLANT);
+        let root = build_root_path(&fixture.root).expect("the fixture tree names a build root");
+        let cargo = fixture.sealing_cargo("cargo-seals");
+
+        let analysis = fixture.analyze_with(
+            cargo.to_str().expect("the fixture stub path is text"),
+            &rust_bounds(),
+            None,
+        );
+
+        // Unseal before any assertion can panic: a sealed directory would
+        // outlive this test and defeat the fixture's own teardown.
+        fs::set_permissions(
+            root.join("cargo-target/sealed"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .expect("unseal the planted directory");
+        assert_eq!(
+            analysis.outcome,
+            ArmOutcome::ParseFailure,
+            "{}",
+            analysis.reason
+        );
+        assert!(
+            analysis.reason.contains(&root.display().to_string())
+                && analysis.reason.contains("could not be removed"),
+            "the report names the build root and what happened to it: {}",
+            analysis.reason
+        );
+        assert!(root.is_dir(), "the build root really did survive the run");
+        let lock_path = build_root_lock(&root)
+            .expect("the build root names a lock")
+            .path()
+            .to_path_buf();
+        fs::remove_dir_all(&root).expect("remove the sealed fixture root");
+        fs::remove_file(&lock_path).expect("remove the sealed fixture lock");
+    }
+
     /// A workspace the real compiler is run over.
     struct RustFixture {
         root: PathBuf,
@@ -540,6 +589,27 @@ mod tests {
                 &programs,
                 wait,
             )
+        }
+
+        /// A Cargo that seals a directory inside the build root, then succeeds.
+        ///
+        /// It writes into `CARGO_TARGET_DIR`, so the sealed directory lands
+        /// where the arm's own teardown must walk, and it exits zero so the
+        /// analysis reaches that teardown with nothing else to report.
+        fn sealing_cargo(&self, label: &str) -> PathBuf {
+            let path = self.root.join(label);
+            fs::write(
+                &path,
+                "#!/bin/sh\n\
+                 /bin/mkdir -p \"$CARGO_TARGET_DIR/sealed\" || exit 61\n\
+                 printf artefact > \"$CARGO_TARGET_DIR/sealed/held\" || exit 62\n\
+                 /bin/chmod 000 \"$CARGO_TARGET_DIR/sealed\" || exit 63\n\
+                 exit 0\n",
+            )
+            .expect("write sealing Cargo");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+                .expect("make sealing Cargo executable");
+            path
         }
 
         fn sleeping_cargo(&self, label: &str) -> PathBuf {

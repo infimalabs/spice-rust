@@ -2,6 +2,7 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt as _;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::thread;
     use std::time::Duration;
 
     use crate::toolchain::{
@@ -183,9 +184,156 @@ mod tests {
                 .join("target/xtask-app-build/proof")
                 .is_file()
         );
-        let mut workspace_name = fixture.root.file_name().unwrap().to_os_string();
-        workspace_name.push(".spice-canvas-analysis");
-        assert!(!fixture.root.with_file_name(workspace_name).exists());
+        assert!(!CanvasFixture::workspace_root(&fixture.root).exists());
+    }
+
+    /// Two canvas analyses of one repository run at once and share its build root.
+    ///
+    /// The claim is that the shared root is safe, so the two analyses have to
+    /// genuinely overlap rather than be asserted not to. Each stub announces
+    /// itself into the shared `CARGO_TARGET_DIR` and then meets the other
+    /// through a pair of named pipes: opening one for writing finishes only once
+    /// the other side opens it for reading, so neither stub gets past the
+    /// rendezvous unless both are running. Should either analysis refuse before
+    /// reaching its stub, the rendezvous never completes and the bounded runtime
+    /// ends the arm rather than leaving the suite stopped.
+    ///
+    /// What real Cargo does under that overlap was measured rather than stubbed,
+    /// because it is Cargo's behaviour and not this crate's: two `cargo check`
+    /// runs sharing one `CARGO_TARGET_DIR` and `CARGO_BUILD_BUILD_DIR`, the
+    /// first held inside a build script, made the second report `Blocking
+    /// waiting for file lock on build directory` and then finish, both exiting
+    /// zero. Cargo serializes the shared root; it does not corrupt it.
+    #[test]
+    fn two_canvas_analyses_at_once_share_one_repository_build_root() {
+        let fixture = CanvasFixture::new("shared-build-root", true);
+        let second_tree = fixture.second_tree("second-tree");
+        let reached = fixture.base.join("first-reached");
+        let released = fixture.base.join("second-reached");
+        make_pipe(&reached);
+        make_pipe(&released);
+
+        let first_cargo = fixture.script(
+            "cargo-first",
+            &format!(
+                concat!(
+                    "printf first > \"$CARGO_TARGET_DIR/first\"\n",
+                    "printf x > '{}'\n",
+                    "cat '{}' > /dev/null\n",
+                    "exit 0",
+                ),
+                reached.display(),
+                released.display(),
+            ),
+        );
+        let second_cargo = fixture.script(
+            "cargo-second",
+            &format!(
+                concat!(
+                    "printf second > \"$CARGO_TARGET_DIR/second\"\n",
+                    "cat '{}' > /dev/null\n",
+                    "printf x > '{}'\n",
+                    "exit 0",
+                ),
+                reached.display(),
+                released.display(),
+            ),
+        );
+        let trunk = fixture.script("trunk", "exit 0");
+        let bounds = canvas_bounds(Duration::from_secs(30));
+
+        let (first, second) = thread::scope(|scope| {
+            let other = scope.spawn(|| {
+                fixture.analyze_tree(&second_tree, &second_cargo, &trunk, &bounds)
+            });
+            let mine = fixture.analyze(&first_cargo, &trunk, &bounds);
+            (mine, other.join().expect("the second analysis does not panic"))
+        });
+
+        assert_eq!(first.outcome, ArmOutcome::Passed, "{}", first.reason);
+        assert_eq!(second.outcome, ArmOutcome::Passed, "{}", second.reason);
+        let shared = fixture.output.join("target/xtask-app");
+        assert!(
+            shared.join("first").is_file() && shared.join("second").is_file(),
+            "both overlapping analyses compiled into {}",
+            shared.display(),
+        );
+        assert!(
+            shared.is_dir() && fixture.output.join("target/xtask-app-build").is_dir(),
+            "the shared pair outlives the analyses that used it",
+        );
+        assert!(!CanvasFixture::workspace_root(&fixture.root).exists());
+        assert!(!CanvasFixture::workspace_root(&second_tree).exists());
+    }
+
+    /// A workspace an earlier analysis left behind refuses by name, untouched.
+    ///
+    /// Removing it instead would be the more convenient answer and is the wrong
+    /// one: an existing workspace is equally the mark of an analysis running
+    /// right now, and reclaiming it would delete the directory a live run is
+    /// writing into. The planted contents are asserted to survive so that a
+    /// later change to reclaim the root cannot pass this test quietly.
+    #[test]
+    fn a_canvas_workspace_left_behind_refuses_by_name_and_is_not_reclaimed() {
+        let fixture = CanvasFixture::new("stale-workspace", true);
+        let stale = CanvasFixture::workspace_root(&fixture.root);
+        fs::create_dir(&stale).expect("plant a workspace an earlier analysis left behind");
+        fs::write(stale.join("evidence"), "a live analysis owns this")
+            .expect("write planted workspace contents");
+        let cargo = fixture.script("cargo", "exit 0");
+        let trunk = fixture.script("trunk", "exit 0");
+
+        let analysis = fixture.analyze(&cargo, &trunk, &canvas_exit_bounds());
+
+        assert_eq!(analysis.outcome, ArmOutcome::ParseFailure);
+        assert!(
+            analysis.reason.contains(&stale.display().to_string())
+                && analysis.reason.contains("is already held")
+                && analysis.reason.contains("remove that directory"),
+            "the refusal names the path and what to do about it: {}",
+            analysis.reason,
+        );
+        assert!(
+            fixture.log_lines().is_empty(),
+            "neither tool ran: {:?}",
+            fixture.log_lines(),
+        );
+        assert!(
+            stale.join("evidence").is_file(),
+            "a workspace this analysis did not create is left where it was",
+        );
+    }
+
+    /// A workspace that cannot be removed is reported, not dropped on the floor.
+    ///
+    /// The stub makes the directory holding the workspace read-only while the
+    /// analysis is between creating that workspace and removing it, so the
+    /// removal fails for the one reason a real one would: the entry cannot be
+    /// unlinked from its parent. The report outranks the clean analysis because
+    /// the workspace it left behind is what the previous test refuses.
+    #[test]
+    fn a_canvas_workspace_that_cannot_be_removed_is_reported_not_discarded() {
+        let fixture = CanvasFixture::new("held-workspace", true);
+        let cargo = fixture.script(
+            "cargo",
+            &format!("/bin/chmod 555 '{}'\nexit 0", fixture.base.display()),
+        );
+        let trunk = fixture.script("trunk", "exit 0");
+
+        let analysis = fixture.analyze(&cargo, &trunk, &canvas_exit_bounds());
+
+        fs::set_permissions(&fixture.base, fs::Permissions::from_mode(0o755))
+            .expect("restore the fixture directory before anything can panic");
+
+        assert_eq!(analysis.outcome, ArmOutcome::ParseFailure, "{}", analysis.reason);
+        let workspace = CanvasFixture::workspace_root(&fixture.root);
+        assert!(
+            analysis.reason.contains(&workspace.display().to_string())
+                && analysis.reason.contains("could not be removed"),
+            "the report names the workspace and what happened to it: {}",
+            analysis.reason,
+        );
+        assert!(workspace.is_dir(), "the workspace really did survive the run");
     }
 
     #[test]
@@ -528,7 +676,17 @@ mod tests {
         }
     }
 
+    /// One repository holding its selected trees, so a run owns everything it makes.
+    ///
+    /// The selected tree is nested rather than placed straight in the temporary
+    /// directory because the workspace the arm creates is a *sibling* of the
+    /// selected tree. A tree at the top of `/tmp` puts that sibling there too,
+    /// where nothing in this fixture can reach it: an analysis killed mid-run
+    /// would leave it behind for good, and no test could make its removal fail
+    /// without making `/tmp` itself unwritable. Nesting puts the sibling inside
+    /// `base`, which this fixture creates, reaches and removes.
     struct CanvasFixture {
+        base: PathBuf,
         root: PathBuf,
         output: PathBuf,
         log: PathBuf,
@@ -537,18 +695,16 @@ mod tests {
     impl CanvasFixture {
         fn new(label: &str, applicable: bool) -> Self {
             let sequence = NEXT_CANVAS_FIXTURE.fetch_add(1, Ordering::Relaxed);
-            let root = std::env::temp_dir().join(format!(
+            let base = std::env::temp_dir().join(format!(
                 "gate-canvas-{label}-{}-{sequence}",
                 std::process::id()
             ));
-            if root.exists() {
-                fs::remove_dir_all(&root).expect("remove stale canvas fixture");
+            if base.exists() {
+                fs::remove_dir_all(&base).expect("remove stale canvas fixture");
             }
-            let output = root.with_extension("output");
-            if output.exists() {
-                fs::remove_dir_all(&output).expect("remove stale canvas output fixture");
-            }
-            fs::create_dir(&output).expect("create canvas output fixture");
+            let root = base.join("tree");
+            let output = base.join("repository");
+            fs::create_dir_all(&output).expect("create canvas output fixture");
             fs::create_dir_all(root.join("app/src")).expect("create canvas fixture tree");
             fs::write(root.join("app/src/lib.rs"), "pub fn canvas() {}\n")
                 .expect("write canvas source");
@@ -559,7 +715,32 @@ mod tests {
                     .expect("write canvas entrypoint");
             }
             let log = root.join("calls.log");
-            Self { root, output, log }
+            Self {
+                base,
+                root,
+                output,
+                log,
+            }
+        }
+
+        /// The sibling directory the arm creates for the tree it is handed.
+        fn workspace_root(tree: &Path) -> PathBuf {
+            let mut name = tree.file_name().expect("selected tree is named").to_os_string();
+            name.push(".spice-canvas-analysis");
+            tree.with_file_name(name)
+        }
+
+        /// A second selected tree in the same repository, analyzable on its own.
+        fn second_tree(&self, name: &str) -> PathBuf {
+            let tree = self.base.join(name);
+            fs::create_dir_all(tree.join("app/src")).expect("create second canvas tree");
+            fs::write(tree.join("app/src/lib.rs"), "pub fn canvas() {}\n")
+                .expect("write second canvas source");
+            fs::write(tree.join("Cargo.toml"), "[workspace]\n")
+                .expect("write second workspace manifest");
+            fs::write(tree.join("app/index.html"), "<main></main>\n")
+                .expect("write second canvas entrypoint");
+            tree
         }
 
         fn script(&self, name: &str, body: &str) -> PathBuf {
@@ -579,13 +760,23 @@ mod tests {
         }
 
         fn analyze(&self, cargo: &Path, trunk: &Path, bounds: &Bounds) -> Analysis {
+            self.analyze_tree(&self.root, cargo, trunk, bounds)
+        }
+
+        fn analyze_tree(
+            &self,
+            tree: &Path,
+            cargo: &Path,
+            trunk: &Path,
+            bounds: &Bounds,
+        ) -> Analysis {
             let programs = BTreeMap::from([
                 (CARGO, cargo.to_str().expect("UTF-8 cargo stub")),
                 (TRUNK, trunk.to_str().expect("UTF-8 trunk stub")),
             ]);
             canvas_web_typecheck(
                 declaration(GateId::CanvasWebTypecheck).expect("canvas arm is declared"),
-                &self.root,
+                tree,
                 &self.output,
                 bounds,
                 &programs,
@@ -607,8 +798,7 @@ mod tests {
 
     impl Drop for CanvasFixture {
         fn drop(&mut self) {
-            fs::remove_dir_all(&self.root).expect("remove canvas fixture");
-            fs::remove_dir_all(&self.output).expect("remove canvas output fixture");
+            fs::remove_dir_all(&self.base).expect("remove canvas fixture");
         }
     }
 
@@ -622,6 +812,20 @@ mod tests {
     /// leaving the blocking wait on the child's exit as the only way these fixtures end.
     fn canvas_exit_bounds() -> Bounds {
         canvas_bounds(Duration::MAX)
+    }
+
+    /// A named pipe two stubs meet at.
+    ///
+    /// The meeting is what makes overlap a fact rather than a hope: opening one
+    /// end finishes only once the other end is open, so both stubs are provably
+    /// running at the same moment without either one measuring a clock a loaded
+    /// lane could outrun.
+    fn make_pipe(path: &Path) {
+        let status = std::process::Command::new("/usr/bin/mkfifo")
+            .arg(path)
+            .status()
+            .expect("run mkfifo");
+        assert!(status.success(), "mkfifo {} said {status}", path.display());
     }
 
     fn canvas_bounds(runtime: Duration) -> Bounds {

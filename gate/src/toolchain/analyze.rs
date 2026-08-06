@@ -22,6 +22,7 @@
 //! unnamed, and that argument reads better beside itself than interleaved with
 //! arms that share none of it.
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs;
@@ -902,12 +903,35 @@ pub(super) fn formatters(
 }
 
 /// Run the declared canvas checks in order and stop at the first non-clean one.
+///
+/// The analysis is run against a cell its workspace reports a failed removal
+/// into, and that report outranks whatever the analysis concluded. A workspace
+/// left on disk refuses every later canvas analysis of the same tree, so an arm
+/// that passed while leaking one would report a clean tree and then be unable to
+/// measure it again; the refusal here is the same refusal, delivered on the run
+/// that caused it instead of the next one.
 pub(super) fn canvas_web_typecheck(
     declaration: ToolchainDeclaration,
     root: &Path,
     repository: &Path,
     bounds: &Bounds,
     programs: &BTreeMap<&str, &str>,
+) -> Analysis {
+    let removal = Cell::new(None);
+    let analysis = canvas_analysis(declaration, root, repository, bounds, programs, &removal);
+    match removal.take() {
+        Some(report) => Analysis::terminal(ArmOutcome::ParseFailure, report),
+        None => analysis,
+    }
+}
+
+fn canvas_analysis(
+    declaration: ToolchainDeclaration,
+    root: &Path,
+    repository: &Path,
+    bounds: &Bounds,
+    programs: &BTreeMap<&str, &str>,
+    removal: &Cell<Option<String>>,
 ) -> Analysis {
     if !root.join("Cargo.toml").is_file() || !root.join("app/index.html").is_file() {
         return Analysis::not_applicable(declaration);
@@ -924,11 +948,15 @@ pub(super) fn canvas_web_typecheck(
             format!("{} declares no {TRUNK} program", declaration.id.as_str()),
         );
     };
-    let workspace = match CanvasWorkspace::create(root, repository) {
+    let workspace = match CanvasWorkspace::create(root, removal) {
         Ok(workspace) => workspace,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
-    let environment = match canvas_environment(cargo, trunk, &workspace) {
+    let outputs = match CanvasOutputs::create(&workspace, root, repository) {
+        Ok(outputs) => outputs,
+        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+    };
+    let environment = match canvas_environment(cargo, trunk, &outputs) {
         Ok(environment) => environment,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
@@ -972,7 +1000,7 @@ pub(super) fn canvas_web_typecheck(
 fn canvas_environment(
     cargo: &str,
     trunk: &str,
-    workspace: &CanvasWorkspace,
+    outputs: &CanvasOutputs,
 ) -> Result<Environment, String> {
     let path = tool_search_path("canvas", &[cargo, trunk, "/usr/bin/cc", "/bin/sh"])?;
     Environment::new([
@@ -980,15 +1008,15 @@ fn canvas_environment(
         (HOME_DIRECTORY, COMPILED_HOME_DIRECTORY.into()),
         (
             CARGO_TARGET_DIRECTORY,
-            workspace.cargo_target.as_os_str().to_owned(),
+            outputs.cargo_target.as_os_str().to_owned(),
         ),
         (
             CARGO_BUILD_DIRECTORY,
-            workspace.cargo_build.as_os_str().to_owned(),
+            outputs.cargo_build.as_os_str().to_owned(),
         ),
         (
             TRUNK_DISTRIBUTION_DIRECTORY,
-            workspace.trunk_dist.as_os_str().to_owned(),
+            outputs.trunk_dist.as_os_str().to_owned(),
         ),
     ])
     .map_err(|error| format!("canvas tool environment was refused: {error}"))
@@ -1020,56 +1048,113 @@ fn tool_search_path(label: &str, programs: &[&str]) -> Result<std::ffi::OsString
         .map_err(|error| format!("{label} tool search path is invalid: {error}"))
 }
 
-/// Writable output roots for tools examining one immutable selected tree.
-struct CanvasWorkspace {
+/// A sibling directory one analysis holds for the length of its run.
+///
+/// The name is derived from the selected tree and carries no token this
+/// invocation minted, so `fs::create_dir` refusing with `AlreadyExists` is the
+/// whole of the exclusion: one analysis per selected tree, decided by the
+/// filesystem rather than by anything this process remembers. A root that
+/// outlives the analysis that made it therefore refuses every later analysis of
+/// that tree, which is exactly why [`Drop`] must not discard a failed removal.
+/// The refusal an operator eventually meets and the report they get when the
+/// removal first fails name the same path on purpose: one is the warning, the
+/// other is the consequence.
+///
+/// Removing a root this analysis did not create is never attempted. A root that
+/// exists may belong to an analysis running right now, and reclaiming it would
+/// delete the directory a live run is writing into; the refusal says what was
+/// found and leaves the decision to remove it with the operator.
+struct CanvasWorkspace<'a> {
     root: PathBuf,
-    cargo_target: PathBuf,
-    cargo_build: PathBuf,
-    trunk_dist: PathBuf,
+    removal: &'a Cell<Option<String>>,
 }
 
-impl CanvasWorkspace {
-    fn create(selected: &Path, repository: &Path) -> Result<Self, String> {
+impl<'a> CanvasWorkspace<'a> {
+    fn create(selected: &Path, removal: &'a Cell<Option<String>>) -> Result<Self, String> {
         let Some(name) = selected.file_name() else {
             return Err(format!(
-                "canvas selected tree {:?} has no name for an analysis workspace",
-                selected
+                "canvas selected tree {selected:?} has no name for an analysis workspace"
             ));
         };
         let mut workspace_name = name.to_os_string();
         workspace_name.push(".spice-canvas-analysis");
         let root = selected.with_file_name(workspace_name);
-        fs::create_dir(&root).map_err(|error| {
-            format!(
+        match fs::create_dir(&root) {
+            Ok(()) => Ok(Self { root, removal }),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Err(format!(
+                "canvas analysis workspace {} is already held, either by an analysis of this \
+                 tree running now or by one that ended before it could remove it; remove that \
+                 directory to let this analysis run",
+                root.display()
+            )),
+            Err(error) => Err(format!(
                 "canvas analysis workspace {} could not be created: {error}",
                 root.display()
-            )
-        })?;
+            )),
+        }
+    }
+
+    fn path(&self) -> &Path {
+        &self.root
+    }
+}
+
+impl Drop for CanvasWorkspace<'_> {
+    fn drop(&mut self) {
+        if let Err(error) = fs::remove_dir_all(&self.root) {
+            self.removal.set(Some(format!(
+                "canvas analysis workspace {} could not be removed: {error}; every later canvas \
+                 analysis of this tree refuses until it is gone",
+                self.root.display(),
+            )));
+        }
+    }
+}
+
+/// Writable output roots for tools examining one immutable selected tree.
+///
+/// The Cargo pair is deliberately not inside [`CanvasWorkspace`]: it is a
+/// fixed repository path that every canvas analysis of this repository shares,
+/// so the compiled artifacts survive the run that produced them. `input.rs`
+/// records what that warmth is worth -- five cold samples of the `trunk build`
+/// this arm runs took 15.0 to 24.9 seconds against the 2.6 to 2.9 they take
+/// warm -- and a root minted per invocation would pay the cold price every time
+/// while stranding the previous one.
+///
+/// Sharing it is safe because Cargo already arbitrates it. Two of these
+/// analyses run at once against one repository were measured taking the same
+/// pair: the second reported `Blocking waiting for file lock on build
+/// directory` and then completed, both exiting zero. What must not be shared is
+/// the generated output, and that is the part living under the owned root.
+struct CanvasOutputs {
+    cargo_target: PathBuf,
+    cargo_build: PathBuf,
+    trunk_dist: PathBuf,
+}
+
+impl CanvasOutputs {
+    fn create(
+        workspace: &CanvasWorkspace<'_>,
+        selected: &Path,
+        repository: &Path,
+    ) -> Result<Self, String> {
         let cargo_target = repository.join("target/xtask-app");
         let cargo_build = repository.join("target/xtask-app-build");
-        let trunk_dist = root.join("trunk-dist");
+        let trunk_dist = workspace.path().join("trunk-dist");
         if let Err(error) = fs::create_dir_all(&cargo_target)
             .and_then(|()| fs::create_dir_all(&cargo_build))
             .and_then(|()| fs::create_dir(&trunk_dist))
         {
-            let _ = fs::remove_dir_all(&root);
             return Err(format!(
                 "canvas analysis output directories for {} could not be created: {error}",
                 selected.display()
             ));
         }
         Ok(Self {
-            root,
             cargo_target,
             cargo_build,
             trunk_dist,
         })
-    }
-}
-
-impl Drop for CanvasWorkspace {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
     }
 }
 
