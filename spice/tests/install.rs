@@ -200,7 +200,7 @@ fn arbitrary_duplicate_reordered_and_mismatched_records_are_inert() {
 }
 
 #[test]
-fn same_byte_installed_file_and_parent_replacement_refuse_unapply_inertly() {
+fn same_byte_installed_file_replacement_unapplies_while_parent_replacement_refuses_inertly() {
     let replaced_file = applied("installed-file-generation");
     let repository = replaced_file.repository();
     let entry = replaced_file.join(".spice/hooks/entry.sh");
@@ -208,12 +208,11 @@ fn same_byte_installed_file_and_parent_replacement_refuse_unapply_inertly() {
     fs::write(&replacement, fs::read(&entry).unwrap()).unwrap();
     fs::set_permissions(&replacement, fs::Permissions::from_mode(0o755)).unwrap();
     fs::rename(replacement, entry).unwrap();
-    let before = replaced_file.snapshot();
-    assert!(matches!(
-        unapply(&repository),
-        Err(InstallError::Drift { .. })
-    ));
-    assert_eq!(replaced_file.snapshot(), before);
+    assert_eq!(
+        unapply(&repository).unwrap().status(),
+        InstallStatus::Uninstalled
+    );
+    assert!(!replaced_file.join(".spice/hooks/entry.sh").exists());
 
     let replaced_parent = applied("installed-parent-generation");
     let repository = replaced_parent.repository();

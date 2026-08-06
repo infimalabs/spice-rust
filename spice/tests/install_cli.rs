@@ -3,7 +3,7 @@
 use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -369,6 +369,34 @@ fn unapply_restores_exact_prior_images_and_keeps_the_namespaced_receipt() {
         fs::read(fixture.root.join(".git/info/exclude")).unwrap(),
         fixture.exclude_bytes
     );
+    fixture.assert_state_unchanged();
+}
+
+#[test]
+fn same_image_atomic_rewrite_still_plans_and_unapplies() {
+    let fixture = Fixture::new("same-image-rewrite");
+    let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
+    let digest = preview.digest().clone();
+    assert_eq!(
+        fixture
+            .invoke(&["install", &format!("--apply={digest}")])
+            .code,
+        Some(0)
+    );
+    let entry = fixture.root.join(".spice/hooks/entry.sh");
+    let replacement = fixture.root.join("replacement-entry");
+    fs::write(&replacement, fs::read(&entry).unwrap()).expect("write replacement entry hook");
+    fs::set_permissions(&replacement, fs::Permissions::from_mode(0o755))
+        .expect("set replacement entry hook mode");
+    fs::rename(replacement, &entry).expect("atomically rewrite installed entry hook");
+
+    let replanned: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
+    assert_eq!(replanned.digest(), &digest);
+    let unapply = fixture.invoke(&["--json", "install", "--unapply"]);
+    let unapplied: InstallReceipt = reply_body(unapply);
+
+    assert_eq!(unapplied.status(), InstallStatus::Uninstalled);
+    assert!(!entry.exists());
     fixture.assert_state_unchanged();
 }
 
