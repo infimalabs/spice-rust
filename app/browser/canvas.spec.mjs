@@ -429,7 +429,12 @@ async function assertAgentConversation(page, fixture, worktrees) {
   }
   const remainingQuietWindow = Math.max(0, 61_000 - (Date.now() - firstSeatedAt));
   await new Promise((resolveWait) => setTimeout(resolveWait, remainingQuietWindow));
-  return { lane: seated[0].lane, quoteLane: seated[3].lane };
+  return {
+    lane: seated[0].lane,
+    quoteLane: seated[3].lane,
+    agentName: agentNames[0],
+    activityHeadline: messages[0],
+  };
 }
 
 function elapsedLabel(millis) {

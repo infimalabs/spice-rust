@@ -18,6 +18,24 @@ export async function assertComposerShards({
     .getByRole("button", { name: "Quote this message" });
   const quoteStack = quoteLane.locator(".agent-composer-stack");
   const quotePrimary = quoteStack.locator(".composer-shard--primary");
+  const primaryHeading = team.locator(
+    `.team-agent[data-agent-lane="${seeded.lane}"] .composer-shard--primary .composer-shard-heading strong`,
+  );
+  assert.equal(
+    await primaryHeading.innerText(),
+    seeded.activityHeadline,
+    "the primary shard heading shows the agent's current activity headline",
+  );
+  assert.notEqual(
+    await primaryHeading.innerText(),
+    seeded.agentName,
+    "the visible activity headline cannot silently revert to the agent name",
+  );
+  assert.equal(
+    await primaryHeading.getAttribute("title"),
+    seeded.agentName,
+    "the primary shard keeps the agent name discoverable from its activity heading",
+  );
   assert.equal(
     await quoteStack.locator(".composer-shard").count(),
     1,
