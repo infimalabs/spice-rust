@@ -280,6 +280,7 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
       "key": "1kJJP87B",
       "text": "drain the queue",
       "preview": "drain the queue",
+      "authored": "2026-08-01T06:07:19.000Z",
       "expires": "2026-08-01T07:07:19.000Z"
     }]
   }]

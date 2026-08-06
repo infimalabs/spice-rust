@@ -437,7 +437,19 @@ async function assertAgentConversation(page, fixture, worktrees) {
     inbox.body.lanes[0].pending[0].key,
   );
   await assertQueuedRosterPip(page, console, seated[0]);
-  assert.match(await outgoing.locator(".message-age").innerText(), / left$/);
+  const age = outgoing.locator(".message-age");
+  const authoredAt = Date.parse(inbox.body.lanes[0].pending[0].authored);
+  const expectedBeforeRead = elapsedLabel(Date.now() - authoredAt);
+  const renderedAge = await age.innerText();
+  const expectedAfterRead = elapsedLabel(Date.now() - authoredAt);
+  assert.ok(
+    [expectedBeforeRead, expectedAfterRead].includes(renderedAge),
+    `the card shows authored age: ${JSON.stringify({ renderedAge, expectedBeforeRead, expectedAfterRead })}`,
+  );
+  assert.equal(
+    await age.getAttribute("title"),
+    `authored ${inbox.body.lanes[0].pending[0].authored}; expires ${inbox.body.lanes[0].pending[0].expires}`,
+  );
   assert.equal(await outgoing.locator(".message-actions button").count(), 3);
 
   for (const mode of ["Filters", "Metrics", "Info"]) {
@@ -456,6 +468,16 @@ async function assertAgentConversation(page, fixture, worktrees) {
   const remainingQuietWindow = Math.max(0, 61_000 - (Date.now() - firstSeatedAt));
   await new Promise((resolveWait) => setTimeout(resolveWait, remainingQuietWindow));
   return { lane: seated[0].lane, quoteLane: seated[3].lane };
+}
+
+
+function elapsedLabel(millis) {
+  const seconds = Math.trunc(millis / 1_000);
+  if (seconds <= 0) return "now";
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3_600) return `${Math.trunc(seconds / 60)}m`;
+  if (seconds < 86_400) return `${Math.trunc(seconds / 3_600)}h`;
+  return `${Math.trunc(seconds / 86_400)}d`;
 }
 
 

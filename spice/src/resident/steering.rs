@@ -189,7 +189,7 @@ pub(super) fn inbox(
                 .ledger
                 .pending(lane.lane)
                 .into_iter()
-                .map(pending_directive)
+                .map(|directive| pending_directive(&snapshot.facts, directive))
                 .collect(),
         });
     }
@@ -792,7 +792,10 @@ fn snapshot(bus: &Bus) -> Result<SteeringSnapshot, Outcome<CommandAnswer>> {
     })
 }
 
-fn pending_directive(directive: &steer::Directive) -> PendingDirective {
+fn pending_directive(
+    facts: &journal::FactSnapshot,
+    directive: &steer::Directive,
+) -> PendingDirective {
     PendingDirective {
         directive: directive.directive(),
         key: directive.key().to_string(),
@@ -800,6 +803,7 @@ fn pending_directive(directive: &steer::Directive) -> PendingDirective {
         preview: directive_preview(directive.text()),
         control: directive.control().map(str::to_owned),
         attachments: directive.attachments().to_vec(),
+        authored: directive_creation(facts, directive.directive()).at,
         expires: directive.expires(),
     }
 }
@@ -1014,16 +1018,24 @@ fn directive_cause(
     snapshot: &journal::FactSnapshot,
     directive: CanonicalUuid,
 ) -> (wire::Origin, Seq) {
+    let envelope = directive_creation(snapshot, directive);
+    (envelope.origin.clone(), envelope.seq)
+}
+
+fn directive_creation(
+    snapshot: &journal::FactSnapshot,
+    directive: CanonicalUuid,
+) -> &wire::Envelope<wire::AnyFact> {
     snapshot
         .facts()
         .iter()
         .find_map(|envelope| match envelope.fact.kind() {
             wire::FactKind::SteerSent => steering_body::<wire::body::SteerSent>(envelope)
                 .filter(|body| body.directive == directive)
-                .map(|_| (envelope.origin.clone(), envelope.seq)),
+                .map(|_| envelope),
             wire::FactKind::SteerResent => steering_body::<wire::body::SteerResent>(envelope)
                 .filter(|body| body.directive == directive)
-                .map(|_| (envelope.origin.clone(), envelope.seq)),
+                .map(|_| envelope),
             _ => None,
         })
         .expect("a reduced directive has one creating fact")
