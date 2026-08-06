@@ -24,6 +24,13 @@
 //! command nor intent, so the operator has to inspect the retained state before
 //! deciding what, if anything, to restore.
 //!
+//! The operational errors cannot finish that state inspection. They therefore
+//! report only that the index and worktree may have changed, tell the operator
+//! to inspect them after correcting the operational cause, and name
+//! `git reset --hard HEAD` only for a command the operator establishes was a
+//! destructive rewind. That recovery leaves the reference where it already is,
+//! so `abandoned_upstream_commits` finds nothing to protect.
+//!
 //! That damage is not what every refused command leaves behind, so the refusal
 //! reads the state rather than assuming the worst of it. A refused
 //! `commit --amend` never wrote the working tree at all, and telling its
@@ -74,6 +81,13 @@ const ASCII_ZERO: u8 = 0x30;
 const REMOTE_PREFIX: &str = "refs/remotes/";
 const LOCAL_PREFIX: &str = "refs/heads/";
 const ORIGIN_HEAD: &str = "refs/remotes/origin/HEAD";
+const OPERATIONAL_RECOVERY: &str = concat!(
+    ". This error aborts the reference transaction, so HEAD is not moved, but ",
+    "this hook runs after the command's tree operations: the index and worktree ",
+    "may already have changed. After correcting this operational failure, ",
+    "inspect them and, if this was a destructive rewind, restore the kept ",
+    "commit with `git reset --hard HEAD`."
+);
 
 /// Refuse a queued update that would abandon published history on this branch.
 ///
@@ -414,23 +428,30 @@ impl fmt::Display for ReferenceTransactionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MalformedInput { line } => {
-                write!(formatter, "malformed reference-transaction line {line}")
+                write!(formatter, "malformed reference-transaction line {line}")?;
+                formatter.write_str(OPERATIONAL_RECOVERY)
             }
             Self::GitLaunch {
                 repository,
                 arguments,
                 source,
-            } => write!(
-                formatter,
-                "reference-transaction could not run git -C {} {}: {source}",
-                repository.display(),
-                arguments.join(" ")
-            ),
-            Self::NonUtf8Output { arguments } => write!(
-                formatter,
-                "reference-transaction git output was not UTF-8: git {}",
-                arguments.join(" ")
-            ),
+            } => {
+                write!(
+                    formatter,
+                    "reference-transaction could not run git -C {} {}: {source}",
+                    repository.display(),
+                    arguments.join(" ")
+                )?;
+                formatter.write_str(OPERATIONAL_RECOVERY)
+            }
+            Self::NonUtf8Output { arguments } => {
+                write!(
+                    formatter,
+                    "reference-transaction git output was not UTF-8: git {}",
+                    arguments.join(" ")
+                )?;
+                formatter.write_str(OPERATIONAL_RECOVERY)
+            }
             Self::ProtectedHistory {
                 reference,
                 commits,
