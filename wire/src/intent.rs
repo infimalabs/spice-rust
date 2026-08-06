@@ -438,6 +438,20 @@ pub struct LineageConfigure {
     pub manual_projects: Option<Vec<String>>,
 }
 
+/// Place one seated lane immediately before another seated lane.
+///
+/// The target lane supplies both the durable insertion point and the target
+/// lineage. Naming one target instead of a client-computed index keeps the
+/// command meaningful when UUID order and visual order differ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaneArrange {
+    /// Existing member whose primary composer moves.
+    pub lane: CanonicalUuid,
+    /// Existing member the moved lane is placed immediately before.
+    pub before: CanonicalUuid,
+}
+
 /// Change a seated lane's state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

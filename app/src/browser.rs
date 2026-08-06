@@ -14,8 +14,8 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use wire::body::DirectiveAttachment;
 use wire::intent::{
-    BoardRead, ConsentPolicy, ConsentRead, LaneRead, LaneSeat, LineageConfigure, LineageLife,
-    SteerInbox, SteerSend, TaskAnswer, TaskNote,
+    BoardRead, ConsentPolicy, ConsentRead, LaneArrange, LaneRead, LaneSeat, LineageConfigure,
+    LineageLife, SteerInbox, SteerSend, TaskAnswer, TaskNote,
 };
 use wire::{
     Answer, CanonicalUuid, CommandKind, Response, StreamRequest, TaskHandle, WireVersion, Witness,
@@ -132,6 +132,10 @@ enum ClientAction {
         worktree: String,
         life: String,
         vendor: wire::Name,
+    },
+    ArrangeLane {
+        lane: CanonicalUuid,
+        before: CanonicalUuid,
     },
     ConfigureLineage {
         lineage: CanonicalUuid,
@@ -731,6 +735,18 @@ async fn dispatch_action(
                 CommandKind::LaneSeat,
                 vec![],
                 body,
+            )
+            .await
+        }
+        ClientAction::ArrangeLane { lane, before } => {
+            send_typed(
+                principal,
+                writer,
+                pending,
+                PendingKind::Lanes,
+                CommandKind::LaneArrange,
+                vec![],
+                LaneArrange { lane, before },
             )
             .await
         }

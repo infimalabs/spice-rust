@@ -573,6 +573,19 @@ pub struct LineageConfigured {
     pub manual_projects: Vec<String>,
 }
 
+/// One seated member moved to a durable position, possibly in another lineage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaneArranged {
+    /// Stable member identity that moved.
+    pub lane: CanonicalUuid,
+    /// Lineage the member occupied before the move.
+    pub from_lineage_id: CanonicalUuid,
+    /// Lineage owned by the target member after the move.
+    pub lineage_id: CanonicalUuid,
+    /// Stable member identity immediately following the moved member.
+    pub before: CanonicalUuid,
+}
+
 /// Exact model and effort supplied to one vendor launch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

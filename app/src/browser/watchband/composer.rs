@@ -88,13 +88,6 @@ pub(super) fn render_agent_message_card(
     order: u64,
     layout: &CardLayout,
 ) -> Html {
-    let drag_text = message.text.clone();
-    let ondragstart = Callback::from(move |event: DragEvent| {
-        if let Some(transfer) = event.data_transfer() {
-            let _ = transfer.set_data("text/plain", &drag_text);
-            transfer.set_effect_allowed("copy");
-        }
-    });
     let lane_key = quote_lane.to_string();
     let quote_key = lane_key.clone();
     let quote_drafts = drafts.clone();
@@ -139,7 +132,6 @@ pub(super) fn render_agent_message_card(
             )}
             id={source_id}
             class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
-            draggable="true"
             aria-label={format!("Agent message from {producer}")}
             data-card-kind="agent-message"
             data-agent-lane={member.lane.to_string()}
@@ -158,7 +150,6 @@ pub(super) fn render_agent_message_card(
             data-measured-heights={layout.measured_heights.clone()}
             data-candidate-spans={layout.candidate_spans.clone()}
             data-measure-span={layout.measure_span.to_string()}
-            {ondragstart}
         >
             <div class="message-body markdown-body">{render_markdown(&message.text)}</div>
             <footer class="message-meta">
@@ -193,13 +184,6 @@ pub(super) fn render_directive_card(
     order: u64,
     layout: &CardLayout,
 ) -> Html {
-    let drag_text = directive.text.clone();
-    let ondragstart = Callback::from(move |event: DragEvent| {
-        if let Some(transfer) = event.data_transfer() {
-            let _ = transfer.set_data("text/plain", &drag_text);
-            transfer.set_effect_allowed("copy");
-        }
-    });
     let quote_key = lane_key.to_owned();
     let quote_drafts = drafts.clone();
     let quote_preview = directive.preview.clone();
@@ -238,7 +222,6 @@ pub(super) fn render_directive_card(
             key={directive.directive.to_string()}
             id={source_id}
             class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
-            draggable="true"
             data-directive={directive.directive.to_string()}
             data-card-kind="directive"
             data-agent-lane={lane.to_string()}
@@ -256,7 +239,6 @@ pub(super) fn render_directive_card(
             data-measured-heights={layout.measured_heights.clone()}
             data-candidate-spans={layout.candidate_spans.clone()}
             data-measure-span={layout.measure_span.to_string()}
-            {ondragstart}
         >
             <div class="message-body markdown-body">{render_markdown(&directive.text)}</div>
             if !unlinked_attachments.is_empty() {

@@ -27,6 +27,7 @@ pub(super) use state::ComposerDrafts;
 const MAX_ATTACHMENTS: usize = 8;
 const MAX_ATTACHMENT_BYTES: f64 = 8.0 * 1_024.0 * 1_024.0;
 const RENEWAL_REQUEST: &str = "Renew your current task lease now.";
+const LANE_DRAG_MIME: &str = "application/x-spice-lane";
 
 /// The four one-click views of one live team.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,6 +81,7 @@ pub(super) fn render_lineage(
     let standings = watchband::standings(&lanes.lanes, waiting, tasks, js_sys::Date::now() as i64);
     let can_send = runtime.offers(CommandKind::SteerSend);
     let can_configure = runtime.offers(CommandKind::LineageConfigure);
+    let can_arrange = runtime.offers(CommandKind::LaneArrange);
     if lanes.lanes.is_empty() {
         let empty_lineage = crate::runtime::LaneRow {
             lane: lanes.epoch,
@@ -126,6 +128,7 @@ pub(super) fn render_lineage(
                                     &lineage_standings,
                                     lanes.epoch,
                                     can_send,
+                                    can_arrange,
                                     sender,
                                     drafts,
                                     lineage_controls,
@@ -241,6 +244,7 @@ fn render_compose(
     standings: &[Standing],
     epoch: CanonicalUuid,
     can_send: bool,
+    can_arrange: bool,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
     lineage_controls: &UseReducerHandle<LineageControls>,
@@ -275,6 +279,7 @@ fn render_compose(
                             epoch,
                             standing.pending,
                             can_send,
+                            can_arrange,
                             sender,
                             drafts,
                             stream,
@@ -531,6 +536,94 @@ fn latest_agent_prose(cards: &[ActivityCard], lane: CanonicalUuid) -> String {
         .unwrap_or_else(|| "No agent prose yet".to_owned())
 }
 
+fn renewal_callback(
+    lane: CanonicalUuid,
+    occupant: Option<CanonicalUuid>,
+    epoch: CanonicalUuid,
+    sender: &SenderHandle,
+) -> Callback<MouseEvent> {
+    let sender = sender.clone();
+    Callback::from(move |_| {
+        if let Some(occupant) = occupant {
+            let _sent = send_action(
+                &sender,
+                ClientAction::Steer {
+                    lane,
+                    occupant,
+                    epoch,
+                    message: RENEWAL_REQUEST.to_owned(),
+                    attachments: Vec::new(),
+                    resolve: None,
+                },
+            );
+        }
+    })
+}
+
+fn copy_dragover() -> Callback<DragEvent> {
+    Callback::from(move |event: DragEvent| {
+        event.prevent_default();
+        if let Some(transfer) = event.data_transfer() {
+            transfer.set_drop_effect("copy");
+        }
+    })
+}
+
+struct PrimaryComposerDragging {
+    enabled: bool,
+    start: Callback<DragEvent>,
+    over: Callback<DragEvent>,
+    drop: Callback<DragEvent>,
+}
+
+fn primary_composer_dragging(
+    lane: CanonicalUuid,
+    enabled: bool,
+    sender: &SenderHandle,
+) -> PrimaryComposerDragging {
+    let start = Callback::from(move |event: DragEvent| {
+        event.stop_propagation();
+        if let Some(transfer) = event.data_transfer() {
+            let _ = transfer.set_data(LANE_DRAG_MIME, &lane.to_string());
+            transfer.set_effect_allowed("move");
+        }
+    });
+    let over = Callback::from(move |event: DragEvent| {
+        event.prevent_default();
+        event.stop_propagation();
+        if let Some(transfer) = event.data_transfer() {
+            transfer.set_drop_effect("move");
+        }
+    });
+    let sender = sender.clone();
+    let drop = Callback::from(move |event: DragEvent| {
+        event.prevent_default();
+        event.stop_propagation();
+        let source = event
+            .data_transfer()
+            .and_then(|transfer| transfer.get_data(LANE_DRAG_MIME).ok())
+            .and_then(|source| source.parse::<CanonicalUuid>().ok());
+        let Some(source) = source else {
+            return;
+        };
+        if enabled && source != lane {
+            let _sent = send_action(
+                &sender,
+                ClientAction::ArrangeLane {
+                    lane: source,
+                    before: lane,
+                },
+            );
+        }
+    });
+    PrimaryComposerDragging {
+        enabled,
+        start,
+        over,
+        drop,
+    }
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "one member composer needs its standing and shared lineage interaction handles"
@@ -541,6 +634,7 @@ fn render_agent_composer(
     epoch: CanonicalUuid,
     pending: usize,
     can_send: bool,
+    can_arrange: bool,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
     stream: ComposerStreamLink,
@@ -552,24 +646,7 @@ fn render_agent_composer(
     let occupant = member.occupant;
     let send_enabled = can_send && occupant.is_some();
     let renew_enabled = send_enabled;
-    let renew = {
-        let sender = sender.clone();
-        Callback::from(move |_| {
-            if let Some(occupant) = occupant {
-                let _sent = send_action(
-                    &sender,
-                    ClientAction::Steer {
-                        lane: lane_id,
-                        occupant,
-                        epoch,
-                        message: RENEWAL_REQUEST.to_owned(),
-                        attachments: Vec::new(),
-                        resolve: None,
-                    },
-                );
-            }
-        })
-    };
+    let renew = renewal_callback(lane_id, occupant, epoch, sender);
     let onkeydown = keyboard_submit(
         lane_id,
         occupant,
@@ -578,12 +655,7 @@ fn render_agent_composer(
         sender.clone(),
         drafts.clone(),
     );
-    let ondragover = Callback::from(move |event: DragEvent| {
-        event.prevent_default();
-        if let Some(transfer) = event.data_transfer() {
-            transfer.set_drop_effect("copy");
-        }
-    });
+    let ondragover = copy_dragover();
     let ondrop = drop_on_lane(
         lane_id,
         occupant,
@@ -592,6 +664,7 @@ fn render_agent_composer(
         sender.clone(),
         drafts.clone(),
     );
+    let dragging = primary_composer_dragging(lane_id, can_arrange, sender);
     html! {
         <section
             key={lane_key.clone()}
@@ -622,6 +695,7 @@ fn render_agent_composer(
                     renew,
                     stream,
                     prose,
+                    dragging,
                 )}
                 {render_quote_shards(&lane_key, &draft, drafts, onkeydown)}
             </div>
@@ -645,6 +719,7 @@ fn render_composer_body(
     renew: Callback<MouseEvent>,
     stream: ComposerStreamLink,
     prose: String,
+    dragging: PrimaryComposerDragging,
 ) -> Html {
     let oninput = update_body(lane_key.to_owned(), drafts.clone());
     let onpaste = paste_images(lane_key.to_owned(), drafts.clone());
@@ -653,6 +728,11 @@ fn render_composer_body(
             class="mosaic-composer composer-shard composer-shard--primary"
             data-shard-kind="primary"
             data-shard-target-id={lane.to_string()}
+            data-primary-composer-draggable={dragging.enabled.to_string()}
+            draggable={dragging.enabled.to_string()}
+            ondragstart={dragging.start}
+            ondragover={dragging.over}
+            ondrop={dragging.drop}
         >
             {render_composer_heading(
                 lane,
