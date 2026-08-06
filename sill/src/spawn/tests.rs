@@ -43,25 +43,66 @@ impl RecordObserver for ForwardObserver {
     }
 }
 
+type RecordedDrain = Vec<(Vec<u8>, RecordBoundary)>;
+type DrainResult = Result<RecordedDrain, ObservationFailure>;
+
+/// Sixty-four times the observation queue and more than 160 times each
+/// capture limit: enough to exercise sustained draining without spending
+/// twelve thousand shell iterations on no additional bound.
+const DRAIN_RECORD_COUNT: usize = 4_096;
+const DRAIN_COMPLETION_LIMIT: Duration = Duration::from_secs(10);
+
+#[derive(Debug)]
+struct DrainObserver {
+    records: Mutex<RecordedDrain>,
+    drained: mpsc::SyncSender<DrainResult>,
+}
+
+impl RecordObserver for DrainObserver {
+    fn observe(&self, record: ObservedRecord<'_>) -> Result<(), ObserveError> {
+        let boundary = record.boundary();
+        let mut records = self
+            .records
+            .lock()
+            .map_err(|error| ObserveError::new(error.to_string()))?;
+        records.push((record.bytes().to_vec(), boundary));
+        if boundary == RecordBoundary::Terminal {
+            let drained = std::mem::take(&mut *records);
+            drop(records);
+            self.drained
+                .send(Ok(drained))
+                .map_err(|error| ObserveError::new(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn failed(&self, failure: &ObservationFailure) {
+        let _result = self.drained.send(Err(failure.clone()));
+    }
+}
+
 #[test]
 fn selected_records_and_opaque_diagnostics_drain_before_wait() {
-    let (records, received) = mpsc::channel();
-    let (failures, failed) = mpsc::channel();
-    let observer = Arc::new(ForwardObserver { records, failures });
+    let (drained, completed) = mpsc::sync_channel(1);
+    let observer = Arc::new(DrainObserver {
+        records: Mutex::new(Vec::with_capacity(DRAIN_RECORD_COUNT + 1)),
+        drained,
+    });
+    let script = format!(
+        concat!(
+            "i=0; ",
+            "while [ $i -lt {} ]; do ",
+            "printf 'record-%05d-abcdefghijklmnopqrstuvwxyz\\n' \"$i\"; ",
+            "printf 'diagnostic-%05d-abcdefghijklmnopqrstuvwxyz\\n' \"$i\" >&2; ",
+            "i=$((i + 1)); ",
+            "done; ",
+            "printf 'terminal-record'",
+        ),
+        DRAIN_RECORD_COUNT
+    );
     let mut spec = test_spec(
         "/bin/sh",
-        [
-            "-c",
-            concat!(
-                "i=0; ",
-                "while [ $i -lt 12000 ]; do ",
-                "printf 'record-%05d-abcdefghijklmnopqrstuvwxyz\\n' \"$i\"; ",
-                "printf 'diagnostic-%05d-abcdefghijklmnopqrstuvwxyz\\n' \"$i\" >&2; ",
-                "i=$((i + 1)); ",
-                "done; ",
-                "printf 'terminal-record'",
-            ),
-        ],
+        ["-c", script.as_str()],
         Environment::empty(),
         Cancellation::Never,
         Duration::from_secs(10),
@@ -76,27 +117,22 @@ fn selected_records_and_opaque_diagnostics_drain_before_wait() {
         Observation::new(OutputStream::Stdout, 128, 64, observer).expect("bounded observation");
     let running = spawn_observed(spec, observation).expect("observed child launches");
 
-    for index in 0..12000 {
-        let (bytes, boundary) = received
-            .recv_timeout(Duration::from_secs(10))
-            .expect("records drain while Running is only held");
-        assert_eq!(boundary, RecordBoundary::Complete);
+    let records = completed
+        .recv_timeout(DRAIN_COMPLETION_LIMIT)
+        .expect("the selected stream answers as one terminal event while Running is only held")
+        .expect("selected-stream observation failed before its terminal record");
+    assert_eq!(records.len(), DRAIN_RECORD_COUNT + 1);
+    for (index, (bytes, boundary)) in records[..DRAIN_RECORD_COUNT].iter().enumerate() {
+        assert_eq!(*boundary, RecordBoundary::Complete);
         assert_eq!(
-            bytes,
+            bytes.as_slice(),
             format!("record-{index:05}-abcdefghijklmnopqrstuvwxyz\n").as_bytes()
         );
     }
     assert_eq!(
-        received
-            .recv_timeout(Duration::from_secs(2))
-            .expect("terminal record drains"),
-        (b"terminal-record".to_vec(), RecordBoundary::Terminal)
+        records.last(),
+        Some(&(b"terminal-record".to_vec(), RecordBoundary::Terminal))
     );
-    assert!(
-        failed.try_recv().is_err(),
-        "observation failed unexpectedly"
-    );
-
     let outcome = running
         .wait()
         .expect("child is reaped after all records arrive");
