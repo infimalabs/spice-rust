@@ -1,6 +1,6 @@
 //! Predictive warnings for acceptance surfaces shared by live claims.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use wire::{CanonicalUuid, ClaimDisposition, TaskHandle};
 
@@ -21,13 +21,15 @@ pub struct ClaimOverlap {
 ///
 /// Project names are deliberately absent from this decision. A project is a
 /// scheduling route, not evidence that two tasks touch the same product or
-/// code surface.
+/// code surface. A code-shaped acceptance term identifies itself; an ordinary
+/// word must also occur in either authored title before it can name a surface.
 #[must_use]
 pub fn claim_overlaps(selected: &Entry, entries: &[Entry]) -> Vec<ClaimOverlap> {
-    let selected_surface = acceptance_surface(selected);
-    if selected_surface.is_empty() {
+    let selected_acceptance = acceptance_terms(selected);
+    if selected_acceptance.is_empty() {
         return Vec::new();
     }
+    let selected_title = title_terms(selected);
     let mut overlaps = entries
         .iter()
         .filter_map(|entry| {
@@ -37,9 +39,18 @@ pub fn claim_overlaps(selected: &Entry, entries: &[Entry]) -> Vec<ClaimOverlap> 
             if entry.statement().handle == selected.statement().handle {
                 return None;
             }
-            let surface = selected_surface
-                .intersection(&acceptance_surface(entry))
-                .cloned()
+            let entry_acceptance = acceptance_terms(entry);
+            let entry_title = title_terms(entry);
+            let surface = selected_acceptance
+                .iter()
+                .filter_map(|(term, selected_explicit)| {
+                    let entry_explicit = entry_acceptance.get(term)?;
+                    (*selected_explicit
+                        || *entry_explicit
+                        || selected_title.contains(term)
+                        || entry_title.contains(term))
+                    .then(|| term.clone())
+                })
                 .collect::<Vec<_>>();
             (!surface.is_empty()).then(|| ClaimOverlap {
                 task: entry.statement().handle.clone(),
@@ -56,13 +67,29 @@ pub fn claim_overlaps(selected: &Entry, entries: &[Entry]) -> Vec<ClaimOverlap> 
     overlaps
 }
 
-fn acceptance_surface(entry: &Entry) -> BTreeSet<String> {
+fn acceptance_terms(entry: &Entry) -> BTreeMap<String, bool> {
     entry
         .statement()
         .acceptance
         .iter()
         .flat_map(|criterion| criterion.split(surface_separator))
         .filter_map(surface_term)
+        .fold(BTreeMap::new(), |mut terms, (term, explicit)| {
+            terms
+                .entry(term)
+                .and_modify(|prior| *prior |= explicit)
+                .or_insert(explicit);
+            terms
+        })
+}
+
+fn title_terms(entry: &Entry) -> BTreeSet<String> {
+    entry
+        .statement()
+        .title
+        .split(surface_separator)
+        .filter_map(surface_term)
+        .map(|(term, _)| term)
         .collect()
 }
 
@@ -70,7 +97,7 @@ fn surface_separator(character: char) -> bool {
     !(character.is_ascii_alphanumeric() || matches!(character, '/' | '_' | '.' | ':' | '-'))
 }
 
-fn surface_term(raw: &str) -> Option<String> {
+fn surface_term(raw: &str) -> Option<(String, bool)> {
     let raw = raw.trim_matches(|character: char| !character.is_ascii_alphanumeric());
     if raw.len() < 3 {
         return None;
@@ -87,8 +114,7 @@ fn surface_term(raw: &str) -> Option<String> {
         .windows(2)
         .any(|pair| pair[0].is_ascii_lowercase() && pair[1].is_ascii_uppercase());
     let acronym = raw.len() >= 3 && raw.bytes().all(|byte| byte.is_ascii_uppercase());
-    let code_shaped = punctuated || camel || acronym;
-    (code_shaped || normalized.len() >= 6).then_some(normalized)
+    Some((normalized, punctuated || camel || acronym))
 }
 
 // These words describe completion mechanics or generic task relationships,
