@@ -153,19 +153,19 @@ async function reply(fixture, args) {
 
 /// Serve the app this lane built, when it built one.
 ///
-/// The resident prefers a worktree's development stage over its embedded bytes,
-/// and this fixture is a worktree of its own -- so without this copy the spec
+/// The resident prefers a worktree's local stage over its embedded bytes, and
+/// this fixture is a worktree of its own -- so without this copy the spec
 /// always checks the committed bundle no matter what the app sources say. That
 /// is a trap rather than a stricter check: the committed stage is reproducible
 /// only inside the sealed image, so a lane that changes the browser and runs
 /// this spec would watch it pass or fail on bytes its change never reached.
-/// Copying the development stage in reproduces the same precedence the operator
-/// gets from `spice up` in this worktree.
-async function stageDevelopmentApp(fixture) {
-  const source = join(root, "dist/stage-dev");
+/// Copying the local stage in reproduces the same precedence the operator gets
+/// from `spice up` in this worktree.
+async function stageLocalApp(fixture) {
+  const source = join(root, "dist/stage-local");
   const staged = await readdir(source).catch(() => null);
   if (!staged) return false;
-  const destination = join(fixture, "dist/stage-dev");
+  const destination = join(fixture, "dist/stage-local");
   await mkdir(destination, { recursive: true });
   for (const name of staged) {
     await writeFile(join(destination, name), await readFile(join(source, name)));
@@ -185,8 +185,8 @@ async function stageDevelopmentApp(fixture) {
 /// code to render, and it reads exactly like a regression in the change that
 /// actually fixed it. Comparing one served asset against the file it must have
 /// come from turns a whole debugging session into a refusal naming the command.
-async function assertServedApp(endpoint, development) {
-  const expected = join(root, development ? "dist/stage-dev" : "dist/stage", "app_bg.wasm");
+async function assertServedApp(endpoint, local) {
+  const expected = join(root, local ? "dist/stage-local" : "dist/stage", "app_bg.wasm");
   const response = await fetch(new URL("/app_bg.wasm", endpoint));
   assert.equal(response.status, 200, "the resident serves the app it was asked for");
   const served = Buffer.from(await response.arrayBuffer());
@@ -277,6 +277,9 @@ function monitorPage(page) {
   const requestFailures = [];
   let expectedNetworkInterruption = false;
   page.on("pageerror", (error) => pageErrors.push(error.stack ?? error.toString()));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(`console: ${message.text()}`);
+  });
   page.on("requestfailed", (request) => {
     if (!expectedNetworkInterruption) {
       requestFailures.push(`${request.url()} ${request.failure()?.errorText ?? "unknown failure"}`);
@@ -375,9 +378,23 @@ async function assertAgentConversation(page, fixture) {
   await page.getByRole("button", { name: "Mosaic" }).click();
   await console.getByRole("heading", { name: "Agents", exact: true }).waitFor();
   await console.getByLabel("Worktree").fill(fixture);
-  await console.getByLabel("Vendor").fill("claude");
   await console.getByLabel("Life").fill("steer");
+
+  // A refused submission has to say why. The vendor field is free text with no
+  // datalist, so a proper name typed the way it is written everywhere else is
+  // the trip an operator actually takes, and it used to send no request and
+  // print nothing: the button read as dead. This is the only refusal reachable
+  // by clicking, because the compose button disables itself while the message
+  // is empty or no agent is seated.
+  const refusal = console.locator(".form-refusal");
+  await console.getByLabel("Vendor").fill("My Agent");
   await console.getByRole("button", { name: "Seat agent" }).click();
+  await refusal.waitFor({ timeout: 10_000 });
+  assert.match(await refusal.innerText(), /Vendor must be one lower-case word/);
+
+  await console.getByLabel("Vendor").fill("Claude");
+  await console.getByRole("button", { name: "Seat agent" }).click();
+  await refusal.waitFor({ state: "detached", timeout: 10_000 });
 
   const tab = console.locator(".agent-tab");
   try {
@@ -408,8 +425,12 @@ async function assertAgentConversation(page, fixture) {
   assert.equal(inbox.body.lanes.length, 1);
   assert.equal(inbox.body.lanes[0].pending.length, 1);
   assert.equal(inbox.body.lanes[0].pending[0].text, message);
-  await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
+  // The strip is read while exactly one direction is queued, before the packing
+  // check floods the feed: its whole claim is that the tile carries the pending
+  // count and the latest text, and both are only checkable against a known one.
   await assertLaneStrip(page, fixture, seated, message);
+  await assertMosaicPacking(page, console);
+  await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
   return seated.lane;
 }
 
@@ -443,6 +464,62 @@ async function assertLaneStrip(page, fixture, seated, message) {
   assert.equal(await compose.getAttribute("placeholder"), `Steer ${fixture}`);
   assert.equal(await compose.isDisabled(), false, "an occupied lane accepts direction");
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-strip.png"), fullPage: true });
+}
+
+async function assertMosaicPacking(page, console) {
+  const feed = console.locator(".mosaic-feed");
+  const laneCount = Number(await feed.getAttribute("data-lanes"));
+  assert.ok(laneCount >= 1 && laneCount <= 6, "geometry exposes a legal base-lane count");
+  const targetCards = laneCount * 2 + 1;
+  for (let index = 1; index < targetCards; index += 1) {
+    await console.getByLabel("Message").fill(`mosaic placement ${index}`);
+    await console.getByRole("button", { name: "Send direction" }).click();
+  }
+  const cards = console.locator(".mosaic-card");
+  await cards.nth(targetCards - 1).waitFor({ timeout: 15_000 });
+  assert.equal(await cards.count(), targetCards);
+  assert.equal(await cards.first().getAttribute("data-state"), "frozen");
+
+  const placements = await cards.evaluateAll((elements) => elements.map((element) => {
+    const box = element.getBoundingClientRect();
+    return {
+      track: Number(element.dataset.track),
+      span: Number(element.dataset.span),
+      base: Number(element.dataset.base),
+      row: Number(element.dataset.row),
+      rows: Number(element.dataset.rows),
+      gridColumnStart: Number(getComputedStyle(element).gridColumnStart),
+      gridRowStart: Number(getComputedStyle(element).gridRowStart),
+      left: box.left,
+      right: box.right,
+      top: box.top,
+      bottom: box.bottom,
+    };
+  }));
+  assert.ok(placements.every((card) => card.span >= 2 && card.track + card.span <= 12));
+  assert.ok(placements.every((card) => card.rows >= 2));
+  assert.ok(placements.every((card) => card.gridColumnStart === card.track + 1));
+  assert.ok(placements.every((card) => card.gridRowStart === card.row));
+  for (let left = 0; left < placements.length; left += 1) {
+    for (let right = left + 1; right < placements.length; right += 1) {
+      const a = placements[left];
+      const b = placements[right];
+      const separated = a.right <= b.left + 1 || b.right <= a.left + 1
+        || a.bottom <= b.top + 1 || b.bottom <= a.top + 1;
+      assert.ok(separated, `mosaic cards ${left} and ${right} do not overlap`);
+    }
+  }
+
+  await feed.evaluate((element) => element.scrollTo(0, element.scrollHeight));
+  const before = await feed.evaluate((element) => element.scrollTop);
+  await console.getByLabel("Message").fill("mosaic scroll compensation");
+  await console.getByRole("button", { name: "Send direction" }).click();
+  await cards.nth(targetCards).waitFor({ timeout: 10_000 });
+  const after = await feed.evaluate((element) => element.scrollTop);
+  assert.ok(after >= before, "incremental placement preserves a scrolled viewport");
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await cards.nth(targetCards).waitFor();
 }
 
 async function assertAuthoritySurface(page, seeded) {
@@ -787,18 +864,18 @@ const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browse
 await mkdir(join(fixture, ".git"));
 await mkdir(artifacts, { recursive: true });
 await configureFixture(fixture);
-const development = await stageDevelopmentApp(fixture);
+const local = await stageLocalApp(fixture);
 process.stderr.write(
-  development
-    ? "canvas spec: serving dist/stage-dev, the app this worktree built\n"
-    : "canvas spec: serving the embedded app; run cargo xtask dev-app to check local sources\n",
+  local
+    ? "canvas spec: serving dist/stage-local, the app this worktree built\n"
+    : "canvas spec: serving the embedded app; run cargo xtask local-app to check local sources\n",
 );
 
 let resident;
 let browser;
 try {
   resident = await startResident(fixture);
-  await assertServedApp(resident.discovery.endpoint, development);
+  await assertServedApp(resident.discovery.endpoint, local);
   const seeded = await seedAuthority(fixture);
   browser = await chromium.launch({ headless: true });
 

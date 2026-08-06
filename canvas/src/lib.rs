@@ -14,7 +14,7 @@ pub mod thread;
 pub mod view;
 
 pub use asset::{
-    AppSource, AppSourceError, DEV_STAGE, Discovery, EMBEDDED_APP, EmbeddedApp, EmbeddedAsset,
+    AppSource, AppSourceError, Discovery, EMBEDDED_APP, EmbeddedApp, EmbeddedAsset, LOCAL_STAGE,
     PublishError, ServedAsset,
 };
 pub use config::{Config, ConfigError};

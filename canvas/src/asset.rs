@@ -35,7 +35,7 @@ static APP_ASSETS: [EmbeddedAsset; 4] = [
 /// no other environment can reproduce those bytes. This directory is the
 /// untracked neighbour that any host may write, so a lane can see an app edit
 /// without a round trip through that image.
-pub const DEV_STAGE: &str = "dist/stage-dev";
+pub const LOCAL_STAGE: &str = "dist/stage-local";
 
 /// One exact browser asset compiled into the native canvas.
 #[derive(Clone, Copy)]
@@ -173,7 +173,7 @@ pub enum AppSource {
 impl AppSource {
     /// Decide which app a canvas rooted at `worktree` serves.
     ///
-    /// A worktree with no [`DEV_STAGE`] directory serves the embedded bytes,
+    /// A worktree with no [`LOCAL_STAGE`] directory serves the embedded bytes,
     /// which is every release and every lane that has not built one. A
     /// directory that exists is taken to be what the operator meant, so one
     /// that cannot serve the whole app refuses here rather than answering some
@@ -185,7 +185,7 @@ impl AppSource {
     /// Returns [`AppSourceError::Incomplete`] naming every missing file when
     /// the directory exists without the full app.
     pub fn resolve(worktree: &Path) -> Result<Self, AppSourceError> {
-        let directory = worktree.join(DEV_STAGE);
+        let directory = worktree.join(LOCAL_STAGE);
         if !directory.is_dir() {
             return Ok(Self::Embedded);
         }
@@ -229,6 +229,17 @@ impl AppSource {
             bytes,
             content_type: asset.content_type(),
         }))
+    }
+}
+
+impl fmt::Display for AppSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Embedded => formatter.write_str("compiled app"),
+            Self::Directory(directory) => {
+                write!(formatter, "local app at {}", directory.display())
+            }
+        }
     }
 }
 
@@ -293,7 +304,7 @@ impl fmt::Display for AppSourceError {
         match self {
             Self::Incomplete { directory, missing } => write!(
                 formatter,
-                "the local app stage {} is missing {}; build it with cargo xtask dev-app \
+                "the local app stage {} is missing {}; build it with cargo xtask local-app \
                  or remove the directory to serve the compiled app",
                 directory.display(),
                 missing.join(", ")
@@ -482,7 +493,7 @@ mod tests {
 
     /// Fill that worktree's development stage with exactly the named files.
     fn staged(root: &Path, files: &[(&str, Vec<u8>)]) -> PathBuf {
-        let stage = root.join(DEV_STAGE);
+        let stage = root.join(LOCAL_STAGE);
         fs::create_dir_all(&stage).expect("fixture stage");
         for (file, bytes) in files {
             fs::write(stage.join(file), bytes).expect("fixture asset");
@@ -512,6 +523,7 @@ mod tests {
         let source = AppSource::resolve(&root).expect("an absent stage resolves");
 
         assert_eq!(source, AppSource::Embedded);
+        assert_eq!(source.to_string(), "compiled app");
         let served = source
             .served("/")
             .expect("compiled bytes are always readable")
@@ -536,6 +548,10 @@ mod tests {
         let source = AppSource::resolve(&root).expect("a complete stage resolves");
 
         assert_eq!(source, AppSource::Directory(stage.clone()));
+        assert_eq!(
+            source.to_string(),
+            format!("local app at {}", stage.display())
+        );
         let served = source
             .served("/")
             .expect("staged files are readable")
@@ -588,7 +604,7 @@ mod tests {
             "the refusal does not name what is missing: {message}"
         );
         assert!(
-            message.contains("cargo xtask dev-app"),
+            message.contains("cargo xtask local-app"),
             "the refusal does not say how to build the stage: {message}"
         );
         fs::remove_dir_all(root).expect("fixture cleanup");

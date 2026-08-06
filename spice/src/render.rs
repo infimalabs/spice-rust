@@ -13,10 +13,11 @@
 //! rendering, and a caller who redirected one stream would receive different
 //! bytes depending on a flag that was supposed to change only their shape.
 //!
-//! Mixed output is unrepresentable rather than merely avoided: rendering
-//! yields one [`Rendering`], which owns exactly one stream and exactly one
-//! document. There is no second stream for a stray sentence to reach and no
-//! second document to append to the first.
+//! Mixed outcome output is unrepresentable rather than merely avoided:
+//! rendering yields one [`Rendering`], which owns exactly one stream and
+//! exactly one document. A long-running text command may receive an explicit
+//! progress sink from the binary rim before that outcome exists; machine mode
+//! supplies no such sink, so its eventual document remains singular.
 
 use std::io::{self, Write};
 

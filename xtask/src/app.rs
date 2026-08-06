@@ -163,7 +163,7 @@ fn admit_staging_environment(
 /// The committed stage is reproducible bytes owned by one environment, so a
 /// lane that changed the app cannot see its own change without a round trip
 /// through the sealed image. This writes a second stage instead, at
-/// [`spice::canvas::DEV_STAGE`], which the resident serves in place of the
+/// [`spice::canvas::LOCAL_STAGE`], which the resident serves in place of the
 /// embedded bytes whenever it exists; it is never committed and never
 /// compared. Every host may run it, because nothing downstream reproduces
 /// what it emits.
@@ -177,12 +177,12 @@ fn admit_staging_environment(
 /// Returns an unreadable workspace root, a development stage that cannot be
 /// removed, a missing Cargo home, Trunk execution failure, or a refused
 /// generated stage.
-pub fn dev_app(
+pub fn local_app(
     environment: &ReleaseEnvironment,
     output: &mut impl Write,
 ) -> Result<(), AppBuildError> {
     let root = workspace_root()?;
-    let stage = root.join(spice::canvas::DEV_STAGE);
+    let stage = root.join(spice::canvas::LOCAL_STAGE);
     if stage.exists() {
         fs::remove_dir_all(&stage).map_err(|source| AppBuildError::Io {
             path: stage.clone(),
