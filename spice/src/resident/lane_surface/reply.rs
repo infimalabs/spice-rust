@@ -56,8 +56,16 @@ fn answer_at(
                 worktree: row.worktree.clone(),
                 life: row.life.clone(),
                 vendor: row.vendor.clone(),
-                model: row.session.as_ref().map(|session| session.model.clone()),
-                effort: row.session.as_ref().map(|session| session.effort.clone()),
+                model: row
+                    .session
+                    .as_ref()
+                    .and_then(|session| session.launch.as_ref())
+                    .map(|launch| launch.model.clone()),
+                effort: row
+                    .session
+                    .as_ref()
+                    .and_then(|session| session.launch.as_ref())
+                    .map(|launch| launch.effort.clone()),
                 occupant: row.occupant,
                 lineage: row.lineage.clone(),
                 session: row.session.as_ref().map(|session| session.identity.clone()),
@@ -368,8 +376,7 @@ mod tests {
                 occupant: uuid(2),
                 worktree: "/worktrees/main-a".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),
-                model: "sonnet".to_owned(),
-                effort: "high".to_owned(),
+                launch: Some(wire::body::LaneLaunchIdentity::new("sonnet", "high")),
                 epoch: uuid(4),
                 stream: "stdout".to_owned(),
                 identity: "private-session".to_owned(),
@@ -469,6 +476,28 @@ mod tests {
         assert!(!encoded.contains(&capability));
         assert!(!encoded.contains("capabilities"));
         assert!(encoded.contains("private-session"));
+    }
+
+    #[test]
+    fn lane_reads_expose_one_unrecorded_launch_state_without_inventing_either_half() {
+        let mut row = occupied();
+        row.session.as_mut().expect("fixture session").launch = None;
+        let head = wire::ResidencyHead {
+            epoch: uuid(4),
+            state: ResidentState::Seated,
+            lanes: vec![row],
+            subscriptions: subscriptions(),
+        };
+        let observed = Monotonic::now();
+
+        let answer = answer_at(&head, None, observed, |_| {
+            Some(lane::occupant::Activity::new(uuid(2), observed))
+        })
+        .expect("unrecorded launch projects");
+
+        assert_eq!(answer.lanes[0].model, None);
+        assert_eq!(answer.lanes[0].effort, None);
+        assert_eq!(answer.lanes[0].session.as_deref(), Some("private-session"));
     }
 
     #[test]

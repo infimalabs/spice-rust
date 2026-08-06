@@ -573,8 +573,47 @@ pub struct LineageConfigured {
     pub manual_projects: Vec<String>,
 }
 
+/// Exact model and effort supplied to one vendor launch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaneLaunchIdentity {
+    /// Concrete model supplied to the vendor launch.
+    pub model: String,
+    /// Reasoning effort supplied to the vendor launch.
+    pub effort: String,
+}
+
+impl LaneLaunchIdentity {
+    /// Build one complete recorded launch identity.
+    pub fn new(model: impl Into<String>, effort: impl Into<String>) -> Self {
+        Self {
+            model: model.into(),
+            effort: effort.into(),
+        }
+    }
+
+    pub(crate) fn from_parts(
+        model: Option<String>,
+        effort: Option<String>,
+    ) -> Result<Option<Self>, &'static str> {
+        match (model, effort) {
+            (Some(model), Some(effort)) => Ok(Some(Self::new(model, effort))),
+            (None, None) => Ok(None),
+            (Some(_), None) => Err("lane launch identity is missing effort"),
+            (None, Some(_)) => Err("lane launch identity is missing model"),
+        }
+    }
+
+    pub(crate) fn into_parts(identity: Option<Self>) -> (Option<String>, Option<String>) {
+        identity.map_or((None, None), |identity| {
+            (Some(identity.model), Some(identity.effort))
+        })
+    }
+}
+
 /// A selected vendor record declared the exact resumable lane session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "LaneSessionDeclaredWire", into = "LaneSessionDeclaredWire")]
 pub struct LaneSessionDeclared {
     /// Lane whose session was declared.
     pub lane: CanonicalUuid,
@@ -584,10 +623,13 @@ pub struct LaneSessionDeclared {
     pub worktree: String,
     /// Vendor dialect that admitted the declaration.
     pub vendor: Name,
-    /// Concrete model supplied to this occupant's vendor launch.
-    pub model: String,
-    /// Reasoning effort supplied to this occupant's vendor launch.
-    pub effort: String,
+    /// Launch identity, absent when the declaration predates its recording.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub launch: Option<LaneLaunchIdentity>,
     /// Resident generation that observed the declaration.
     pub epoch: CanonicalUuid,
     /// Selected child stream carrying records.
@@ -600,6 +642,73 @@ pub struct LaneSessionDeclared {
     pub offset: u64,
     /// Number of declaration bytes.
     pub length: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LaneSessionDeclaredWire {
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    worktree: String,
+    vendor: Name,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    model: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    effort: Option<String>,
+    epoch: CanonicalUuid,
+    stream: String,
+    identity: String,
+    member: u64,
+    offset: u64,
+    length: u64,
+}
+
+impl TryFrom<LaneSessionDeclaredWire> for LaneSessionDeclared {
+    type Error = &'static str;
+
+    fn try_from(wire: LaneSessionDeclaredWire) -> Result<Self, Self::Error> {
+        Ok(Self {
+            lane: wire.lane,
+            occupant: wire.occupant,
+            worktree: wire.worktree,
+            vendor: wire.vendor,
+            launch: LaneLaunchIdentity::from_parts(wire.model, wire.effort)?,
+            epoch: wire.epoch,
+            stream: wire.stream,
+            identity: wire.identity,
+            member: wire.member,
+            offset: wire.offset,
+            length: wire.length,
+        })
+    }
+}
+
+impl From<LaneSessionDeclared> for LaneSessionDeclaredWire {
+    fn from(declaration: LaneSessionDeclared) -> Self {
+        let (model, effort) = LaneLaunchIdentity::into_parts(declaration.launch);
+        Self {
+            lane: declaration.lane,
+            occupant: declaration.occupant,
+            worktree: declaration.worktree,
+            vendor: declaration.vendor,
+            model,
+            effort,
+            epoch: declaration.epoch,
+            stream: declaration.stream,
+            identity: declaration.identity,
+            member: declaration.member,
+            offset: declaration.offset,
+            length: declaration.length,
+        }
+    }
 }
 
 /// An occupant became live under the lane.
