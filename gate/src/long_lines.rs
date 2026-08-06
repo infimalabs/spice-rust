@@ -96,7 +96,7 @@ pub(crate) fn scan_jurisdiction(
             })?;
         let source = String::from_utf8_lossy(&bytes).into_owned();
         inputs.push(LongLineInput {
-            baseline: baselines.baseline(&path, &source).map(str::to_owned),
+            baseline: baselines.baseline(&path, &bytes).map(str::to_owned),
             path,
             source,
         });
