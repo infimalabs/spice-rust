@@ -587,7 +587,7 @@ const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["up"],
-        "up",
+        "up [--host HOST] [--port PORT]",
         Local,
         Resident,
         [JournalMigrated, TrustPended, UpSeated],
