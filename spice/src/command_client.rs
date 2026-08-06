@@ -28,9 +28,7 @@ mod typed;
 
 #[cfg(test)]
 use browser::browser_command;
-pub(crate) use browser::open_canvas;
-#[cfg(test)]
-pub(crate) use browser::open_canvas_with;
+pub(crate) use browser::{open_canvas, open_canvas_with, system_browser};
 pub(crate) use steering::execute_steering;
 pub(crate) use typed::execute_typed;
 #[cfg(test)]

@@ -22,16 +22,21 @@ Start Spice with:
 ```
 
 That resident also serves the Canvas web app, whose HTML, JavaScript,
-stylesheet, and WASM are embedded in the same binary. Open it with:
+stylesheet, and WASM are embedded in the same binary. There is no separate
+command to open it: the start above announces the exact URL on its standard
+error, and adding `--open` has the resident open the default browser too.
 
-```sh
-.spice/bin/spice canvas
+```
+canvas endpoint: http://127.0.0.1:8765
 ```
 
-The command launches the default browser and its reply names the exact
-`endpoint`, shaped `http://127.0.0.1:<port>`. The resident selects that port
-ephemerally at every start and listens on IPv4 loopback only, so the app is
-reachable only from the host running it.
+That URL is announced only after the resident reads back the discovery file it
+just published and admits it, so it has already passed the same ownership,
+loopback-origin, and generation checks a client applies. `127.0.0.1:8765` is
+the default; `--host` and `--port` bind a different address, and `--port 0`
+takes any free port. The listener is IPv4 loopback unless `--host` names
+another address of this machine, so by default the app is reachable only from
+the host running it.
 
 The one-time predecessor shutdown and empty-authority start are specified in
 [CUTOVER.md](CUTOVER.md).
