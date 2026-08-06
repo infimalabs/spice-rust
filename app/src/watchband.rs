@@ -14,9 +14,9 @@
 //! a task. A field the reference design shows and the wire does not carry is
 //! therefore absent here rather than approximated.
 
-use wire::CanonicalUuid;
 use wire::head::ClaimDisposition;
 use wire::intent::{BoardTask, LaneInbox};
+use wire::{CanonicalUuid, TaskHandle};
 
 use crate::runtime::LaneRow;
 
@@ -51,6 +51,14 @@ pub struct Standing {
     pub label: String,
     /// Vendor driving the lane.
     pub vendor: String,
+    /// Concrete model supplied to the occupant's vendor launch.
+    pub model: Option<String>,
+    /// Reasoning effort supplied to the occupant's vendor launch.
+    pub effort: Option<String>,
+    /// Current supervised occupant, which is the Canvas agent thread.
+    pub thread: Option<CanonicalUuid>,
+    /// Exact resumable vendor session identity.
+    pub session: Option<String>,
     /// Lifecycle the lane was seated under.
     pub life: String,
     /// Current lane disposition.
@@ -71,6 +79,40 @@ pub struct Standing {
     pub renewed: Option<i64>,
     /// Accent slot this lane keeps across redraws.
     pub accent: usize,
+}
+
+/// Complete driver and session detail shown by a standing's hover title.
+///
+/// A launch recorded before model and effort became durable names that state
+/// explicitly. It does not borrow the vendor, session, or another lane as a
+/// plausible-looking substitute.
+#[must_use]
+pub fn standing_title(standing: &Standing) -> String {
+    let vendor = match standing.vendor.as_str() {
+        "claude" => "Claude driver",
+        "codex" => "Codex driver",
+        "openai" => "OpenAI driver",
+        _ => "Agent driver",
+    };
+    let mut parts = vec![vendor.to_owned()];
+    parts.push(format!(
+        "model: {}",
+        standing.model.as_deref().unwrap_or("unrecorded")
+    ));
+    parts.push(format!(
+        "effort: {}",
+        standing.effort.as_deref().unwrap_or("unrecorded")
+    ));
+    parts.push(format!(
+        "thread: {}",
+        standing
+            .thread
+            .map_or_else(|| "unbound".to_owned(), |thread| thread.to_string())
+    ));
+    if let Some(session) = &standing.session {
+        parts.push(format!("session: {session}"));
+    }
+    parts.join("; ")
 }
 
 /// Join the lane table, the inbox and the board into one row per lane.
@@ -101,6 +143,10 @@ pub fn standings(
                     .clone()
                     .unwrap_or_else(|| leaf(&member.worktree).to_owned()),
                 vendor: member.vendor.to_string(),
+                model: member.model.clone(),
+                effort: member.effort.clone(),
+                thread: member.occupant,
+                session: member.session.clone(),
                 life: member.life.clone(),
                 disposition: member.disposition.clone(),
                 liveness: member.liveness,
@@ -204,6 +250,27 @@ pub fn elapsed_label(millis: i64) -> String {
 #[must_use]
 pub fn badge(count: usize) -> Option<String> {
     (count > 0).then(|| count.to_string())
+}
+
+/// Canonical task handles an authored message reports, in first-report order.
+///
+/// Markdown punctuation is a boundary rather than part of a handle, so prose
+/// may name one in backticks, parentheses, or at the end of a sentence. The
+/// wire parser remains the authority for the handle grammar, and repeated
+/// mentions produce one chip rather than turning emphasis into a count.
+#[must_use]
+pub fn reported_tasks(text: &str) -> Vec<TaskHandle> {
+    let mut tasks = Vec::new();
+    for token in
+        text.split(|character: char| !character.is_ascii_alphanumeric() && character != '-')
+    {
+        if let Ok(task) = token.parse::<TaskHandle>()
+            && !tasks.contains(&task)
+        {
+            tasks.push(task);
+        }
+    }
+    tasks
 }
 
 /// Fold authored text onto one line, spelling the breaks it had.

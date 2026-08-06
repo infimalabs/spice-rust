@@ -14,47 +14,9 @@
   line-height: 1.42;
 }
 
-.composer-quote-stack { display: grid; gap: 5px; }
+.composer-quote-stack { display: contents; }
 
-.composer-quote-band {
-  display: grid;
-  flex: 0 0 92px;
-  grid-template-rows: 28px minmax(0, 1fr);
-  min-height: 92px;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--line));
-  border-radius: 6px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: .76rem;
-}
-
-.composer-quote-band header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 22px;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 4px 2px 7px;
-  border-bottom: 1px solid color-mix(in srgb, var(--accent) 52%, var(--line));
-}
-.composer-quote-band header span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.composer-quote-band textarea {
-  width: 100%;
-  min-height: 0;
-  padding: 6px 7px;
-  border: 0;
-  border-radius: 0;
-  background: color-mix(in srgb, var(--accent) 5%, var(--panel));
-  color: var(--ink);
-  font-size: .68rem;
-  resize: none;
-}
-
-.composer-quote-band button,
+.composer-shard--quote .composer-shard-heading > button,
 .composer-attachment-chip button,
 .mosaic-message-card footer button {
   display: grid;
@@ -220,7 +182,7 @@
   display: flex;
   flex: 1 1 auto;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
   overflow-x: auto;
 }
@@ -231,22 +193,23 @@
   align-items: center;
   gap: 4px;
   min-height: 23px;
-  padding: 1px 7px;
+  padding: 2px 10px;
   border: 1px solid var(--accent);
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 4%, transparent);
   color: var(--accent);
-  font: 500 .62rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 500 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .task-pill.active { opacity: .78; }
 .task-pill.dormant { border-color: var(--muted); color: var(--muted); }
 .task-pill.system { border-style: dashed; border-color: var(--warning); color: var(--warning); }
 .task-pill-count {
-  padding: 1px 5px;
+  padding: 0 5px;
   border-radius: 999px;
   background: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page) 24%, transparent);
   color: var(--page);
-  font-size: .55rem;
+  font-size: 9px;
 }
 .task-pill.dormant .task-pill-count { background: var(--muted); }
 .task-pill.system .task-pill-count { background: var(--warning); }
@@ -328,25 +291,25 @@
 
 .team-toolbar {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 30px;
+  grid-template-columns: 24px minmax(0, 1fr) 30px;
   align-items: center;
-  gap: 7px;
-  min-height: 42px;
-  padding: 5px 7px;
+  gap: 8px;
+  min-height: 44px;
+  padding: 5px 10px;
   border-bottom: 1px solid var(--line);
   background: var(--page);
 }
 
 .team-lights {
   display: grid;
-  grid-template-columns: repeat(2, 8px);
-  gap: 3px;
+  grid-template-columns: repeat(2, 9px);
+  gap: 4px 5px;
   justify-content: center;
 }
 
 .team-light {
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   background: var(--accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
@@ -359,7 +322,7 @@
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 2px;
-  padding: 3px;
+  padding: 4px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: color-mix(in srgb, var(--page) 82%, var(--panel));
@@ -369,17 +332,18 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
-  min-height: 28px;
-  padding: 0 7px;
+  min-height: 0;
+  padding: 4px 8px;
   border: 0;
   border-radius: 999px;
   background: transparent;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .72rem;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
 }
 .team-mode.selected {
   background: var(--panel);
@@ -387,12 +351,14 @@
   box-shadow: inset 0 0 0 1px var(--line);
 }
 .team-mode-badge {
-  min-width: 16px;
-  padding: 0 4px;
+  min-width: 19px;
+  padding: 0 5px;
   border-radius: 999px;
   background: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page) 24%, transparent);
   color: var(--page);
-  font-size: .54rem;
+  font-size: 9px;
+  font-weight: 700;
 }
 
 .team-menu {
@@ -405,7 +371,7 @@
   border-radius: 50%;
   background: var(--panel);
   color: var(--muted);
-  font-size: .8rem;
+  font-size: 1rem;
 }
 
 .team-surface .ticker {
@@ -424,12 +390,15 @@
   overflow-y: auto;
 }
 
+/* The control column sizes itself from the pills rather than a pinned track, so
+   the reference widths and the narrow-viewport ones both land without a second
+   place to keep in step. */
 .team-composer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 76px;
-  gap: 6px;
-  min-height: 116px;
-  padding: 6px 6px 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  min-height: 184px;
+  padding: 8px 8px 0;
 }
 
 .team-surface .team-agents {
@@ -442,12 +411,10 @@
 .team-surface .team-agent {
   display: flex;
   min-width: 0;
-  max-height: 190px;
+  max-height: 218px;
   flex-direction: column;
   align-self: stretch;
-  gap: 5px;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
   border-color: var(--line);
   border-radius: 8px;
   background: var(--panel);
@@ -455,6 +422,30 @@
 }
 .team-surface .team-agent:focus-within { border-color: var(--accent); }
 .team-surface .team-agent--vacant { opacity: .72; }
+
+.agent-composer-stack {
+  display: grid;
+  gap: 5px;
+  max-height: 218px;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+}
+.composer-shard {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+}
+.composer-shard--primary { order: 0; }
+.composer-shard--quote {
+  order: 1;
+  min-height: 112px;
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
+  background: color-mix(in srgb, var(--accent) 5%, var(--panel));
+}
 
 .composer-shard-heading {
   display: grid;
@@ -475,11 +466,18 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.composer-shard-age {
+.composer-shard-link {
   color: var(--accent);
   text-decoration: underline;
+  text-underline-offset: 2px;
 }
-.composer-shard-heading button {
+.composer-shard-age {
+  color: var(--accent);
+}
+.composer-shard-heading > button,
+.agent-action-menu > summary {
+  display: grid;
+  place-items: center;
   width: 22px;
   min-width: 22px;
   height: 22px;
@@ -488,6 +486,40 @@
   border-radius: 50%;
   color: var(--muted);
   font-size: .55rem;
+}
+.agent-action-menu { position: relative; }
+.agent-action-menu > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.agent-action-menu > summary::-webkit-details-marker { display: none; }
+.agent-action-menu[open] > summary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.agent-action-drawer {
+  position: absolute;
+  z-index: 4;
+  top: calc(100% + 4px);
+  right: 0;
+  display: grid;
+  width: max-content;
+  min-width: 132px;
+  gap: 4px;
+  padding: 5px;
+  border: 1px solid color-mix(in srgb, var(--identity, var(--accent)) 58%, var(--line));
+  border-radius: 7px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.agent-action-drawer button {
+  width: 100%;
+  min-height: 25px;
+  padding: 4px 6px;
+  border-radius: 5px;
+  color: var(--ink);
+  font: .58rem/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: left;
 }
 .composer-shard-standing {
   display: flex;
@@ -498,14 +530,41 @@
   font-size: .52rem;
 }
 
+.agent-renew-request {
+  display: grid;
+  gap: 2px;
+  min-height: 34px;
+  padding: 5px 7px;
+  border-color: color-mix(in srgb, var(--identity, var(--accent)) 58%, var(--line));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--identity, var(--accent)) 8%, var(--panel));
+  color: var(--ink);
+  text-align: left;
+}
+.agent-renew-request strong {
+  overflow: hidden;
+  font: 600 .65rem/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-renew-request span {
+  color: var(--muted);
+  font: .56rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.agent-renew-request:disabled { opacity: .46; }
+
 .team-surface .mosaic-composer {
   gap: 5px;
-  height: 100%;
+  height: auto;
   padding: 7px;
   background: color-mix(in srgb, var(--accent) 2%, var(--panel));
 }
+.team-surface .composer-shard--quote textarea {
+  min-height: 68px;
+  resize: none;
+}
 .team-surface .mosaic-composer textarea {
-  min-height: 62px;
+  min-height: 76px;
   padding: 7px 8px;
   font-size: .72rem;
   line-height: 1.35;
@@ -514,7 +573,13 @@
 .team-surface .image-picker { min-height: 25px; padding: 4px 6px; font-size: .62rem; }
 .team-surface .composer-markdown { padding: 6px 7px; font-size: .68rem; }
 
+/* The lineage control stack is sized against the Python Spice reference, which
+   fixes every item to one height and one width so the two sliders and the send
+   button read as a single column of equal pills. */
 .team-composer-controls {
+  --team-control-item-height: 36px;
+  --team-control-track-width: 96px;
+  align-items: stretch;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -523,8 +588,12 @@
 .team-slider {
   --control-state-accent: var(--accent);
   display: grid;
-  gap: 1px;
-  padding: 4px 3px;
+  grid-template-rows: auto auto;
+  gap: 0;
+  flex: 0 0 var(--team-control-item-height);
+  height: var(--team-control-item-height);
+  min-height: var(--team-control-item-height);
+  padding: 4px 7px;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -532,8 +601,9 @@
   cursor: ew-resize;
 }
 .team-slider input {
-  width: 68px;
-  height: 15px;
+  width: var(--team-control-track-width);
+  min-width: 0;
+  height: 16px;
   margin: 0;
   padding: 0;
   border: 0;
@@ -541,10 +611,12 @@
   accent-color: var(--control-state-accent);
   cursor: ew-resize;
 }
+.team-slider:has(input:disabled) { opacity: .5; cursor: not-allowed; }
+.team-slider input:disabled { cursor: not-allowed; }
 .team-slider span {
   overflow: hidden;
   color: var(--muted);
-  font: .58rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 11px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
   text-align: center;
   text-overflow: ellipsis;
   text-transform: lowercase;
@@ -555,30 +627,45 @@
 .team-send.maxed { --control-state-accent: var(--warning); }
 .team-slider.armed,
 .team-slider.maxed {
-  border-color: var(--control-state-accent);
-  background: color-mix(in srgb, var(--control-state-accent) 13%, var(--panel));
+  border-color: color-mix(in srgb, var(--control-state-accent) 70%, var(--line));
+  background: color-mix(in srgb, var(--control-state-accent) 18%, var(--panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--control-state-accent) 22%, transparent);
 }
 .team-slider.armed span,
 .team-slider.maxed span { color: var(--control-state-accent); }
 .team-send {
-  min-width: 0;
-  min-height: 34px;
-  padding: 0 5px;
+  min-width: 6ch;
+  flex: 0 0 var(--team-control-item-height);
+  height: var(--team-control-item-height);
+  min-height: var(--team-control-item-height);
+  padding: 5px 16px;
   border-radius: 999px;
-  border-color: var(--control-state-accent, var(--accent));
+  border-color: color-mix(in srgb, var(--control-state-accent, var(--accent)) 72%, var(--line));
   background: var(--control-state-accent, var(--accent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page) 22%, transparent);
   color: var(--page);
-  font: 650 .65rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 1rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .team-control-issue {
-  width: 76px;
+  width: calc(var(--team-control-track-width) + 16px);
   margin: 0;
   color: var(--danger);
   font: .55rem/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow-wrap: anywhere;
 }
+/* The reference narrows the same stack rather than letting it crowd the agent
+   cards once the viewport can no longer afford the full-width pills. */
+@media (max-width: 720px) {
+  .team-composer-controls {
+    --team-control-item-height: 34px;
+    --team-control-track-width: 68px;
+  }
+  .team-slider { padding: 3px 5px; }
+  .team-send { padding: 5px 8px; }
+}
 
 .team-activity-grid {
+  position: relative;
   display: block;
   padding: 7px;
   border-top: 1px solid var(--line);
@@ -633,6 +720,11 @@
   font-size: .7rem;
   box-shadow: none;
 }
+.team-surface .mosaic-message-card:target {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  scroll-margin-block: 8px;
+}
 .team-surface .mosaic-message-card p { line-height: 1.35; }
 .team-surface .mosaic-message-card .message-meta {
   display: grid;
@@ -642,6 +734,28 @@
   margin-top: 0;
   padding-top: 4px;
   font-size: .57rem;
+}
+.team-surface .message-classifiers {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+.team-surface .message-task-chip {
+  display: inline-flex;
+  max-width: 24ch;
+  min-height: 17px;
+  align-items: center;
+  padding: 1px 5px;
+  overflow: hidden;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  color: var(--accent);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .team-surface .message-actions { display: flex; gap: 3px; margin-left: auto; }
 .team-surface .mosaic-message-card footer .card-action {

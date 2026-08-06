@@ -478,6 +478,7 @@ impl Table {
             occupant: fact.occupant,
             worktree: fact.worktree.clone(),
             vendor: fact.vendor.clone(),
+            launch: fact.launch.clone(),
             epoch: fact.epoch,
             stream: fact.stream.clone(),
             identity: fact.identity.clone(),
@@ -654,8 +655,8 @@ impl Table {
 mod tests {
     use super::{Refusal, Seating, Table};
     use journal::crossing::body::{
-        LaneDrained, LaneExited, LaneImported, LaneRenewed, LaneSeated, LaneSessionDeclared,
-        LaneStarted,
+        LaneDrained, LaneExited, LaneImported, LaneLaunchIdentity, LaneRenewed, LaneSeated,
+        LaneSessionDeclared, LaneStarted,
     };
     use journal::crossing::{CanonicalUuid, ResidentState};
 
@@ -700,6 +701,7 @@ mod tests {
             occupant,
             worktree: "/worktrees/lane-a".to_owned(),
             vendor: "claude".parse().expect("fixture vendor"),
+            launch: Some(LaneLaunchIdentity::new("sonnet", "high")),
             epoch: uuid(0),
             stream: "stdout".to_owned(),
             identity: "session-a".to_owned(),
@@ -707,6 +709,38 @@ mod tests {
             offset: 0,
             length: 42,
         }
+    }
+
+    #[test]
+    fn a_pre_extension_declaration_replays_through_the_current_lane_fold() {
+        let declaration: LaneSessionDeclared = wire::decode(
+            br#"{
+            "lane":"018f82d4-6f59-7d06-92e3-bce913116301",
+            "occupant":"018f82d4-6f59-7d06-92e3-bce913116303",
+            "worktree":"/worktrees/lane-a",
+            "vendor":"claude",
+            "epoch":"018f82d4-6f59-7d06-92e3-bce913116300",
+            "stream":"stdout",
+            "identity":"session-a",
+            "member":0,
+            "offset":0,
+            "length":42
+        }"#,
+        )
+        .expect("the literal pre-extension declaration decodes");
+        let mut table = table();
+
+        table
+            .absorb(Seating::Session(&declaration))
+            .expect("the unrecorded launch state enters the normal fold");
+        table
+            .absorb(Seating::Started(&started(uuid(3))))
+            .expect("the declaration still authorizes its occupant");
+
+        let seat = table.seat(uuid(1)).expect("the replayed seat exists");
+        assert!(seat.occupied());
+        assert_eq!(seat.session().expect("session authority").launch, None);
+        assert_eq!(seat.residency().session.expect("head session").launch, None);
     }
 
     fn start(table: &mut Table, occupant: CanonicalUuid) {

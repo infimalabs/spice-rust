@@ -1,7 +1,7 @@
 use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
-    ACCENTS, FIELD_BUDGET, SHORT_LEN, accent, badge, elapsed_label, leaf, one_line, short,
-    standings, ticker_line, truncate,
+    ACCENTS, FIELD_BUDGET, SHORT_LEN, accent, badge, elapsed_label, leaf, one_line, reported_tasks,
+    short, standing_title, standings, ticker_line, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -53,7 +53,10 @@ fn member(id: &str, worktree: &str) -> LaneMember {
         worktree: worktree.to_owned(),
         life: "docker".to_owned(),
         vendor: "codex".parse().expect("the fixture spells a vendor name"),
+        model: Some("gpt-5.2-codex".to_owned()),
+        effort: Some("high".to_owned()),
         occupant: Some(uuid(OCCUPANT)),
+        session: Some("session-fixture".to_owned()),
         disposition: "seated".to_owned(),
         liveness: wire::intent::LaneLiveness::Running,
         // A seat that has run: `bound` records that a resumable session was once
@@ -160,6 +163,10 @@ fn a_standing_joins_the_lane_table_the_inbox_and_the_board() {
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].worktree, "main-c");
     assert_eq!(rows[0].vendor, "codex");
+    assert_eq!(rows[0].model.as_deref(), Some("gpt-5.2-codex"));
+    assert_eq!(rows[0].effort.as_deref(), Some("high"));
+    assert_eq!(rows[0].thread, Some(uuid(OCCUPANT)));
+    assert_eq!(rows[0].session.as_deref(), Some("session-fixture"));
     assert_eq!(rows[0].life, "docker");
     assert_eq!(rows[0].disposition, "seated");
     assert_eq!(rows[0].liveness, wire::intent::LaneLiveness::Running);
@@ -341,6 +348,30 @@ fn configured_agent_names_distinguish_two_lanes_that_share_one_worktree() {
 }
 
 #[test]
+fn a_standing_title_names_recorded_and_unrecorded_launches_without_substitution() {
+    let mut standing = standings(&[lane(LANE_A, "/fleet/one/spice-rust-a")], &[], &[], at(0))
+        .pop()
+        .expect("fixture standing");
+    assert_eq!(
+        standing_title(&standing),
+        format!(
+            "Codex driver; model: gpt-5.2-codex; effort: high; thread: {OCCUPANT}; \
+             session: session-fixture"
+        )
+    );
+
+    standing.model = None;
+    standing.effort = None;
+    assert_eq!(
+        standing_title(&standing),
+        format!(
+            "Codex driver; model: unrecorded; effort: unrecorded; thread: {OCCUPANT}; \
+             session: session-fixture"
+        )
+    );
+}
+
+#[test]
 fn elapsed_names_one_unit_at_each_boundary() {
     assert_eq!(elapsed_label(-5_000), "now");
     assert_eq!(elapsed_label(999), "now");
@@ -358,6 +389,19 @@ fn a_pill_wears_no_badge_at_zero() {
     assert_eq!(badge(0), None);
     assert_eq!(badge(4).as_deref(), Some("4"));
     assert_eq!(badge(27).as_deref(), Some("27"));
+}
+
+#[test]
+fn authored_prose_reports_each_canonical_task_once_through_markdown_punctuation() {
+    let tasks = reported_tasks(
+        "Settled `CONTROL-1kKbC3j4`; follow APP-a1 (CONTROL-1kKbC3j4 again). \
+         lower-a1 TASK- TASK-a-b and ordinary-hyphenated-prose are not handles.",
+    );
+
+    assert_eq!(
+        tasks.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        ["CONTROL-1kKbC3j4", "APP-a1"],
+    );
 }
 
 #[test]

@@ -1,7 +1,17 @@
 #!/usr/bin/env sh
 
+# Git runs this hook inside the reference transaction, while the repository
+# global packed-refs lock every worktree contends for is held, so whatever it
+# does is paid under that lock. It therefore execs an already-built executable
+# and never a build system: a build system here rebuilds under the lock the
+# first time anything the guard depends on changes, and the build directory is
+# content-keyed, so every edit re-enters that cold path. The entry point is the
+# copy explicit hook activation publishes beside these hooks, which is a stable
+# name for an executable that otherwise only exists under that directory.
+
 set -eu
 
 root=$(git rev-parse --show-toplevel)
+common=$(git rev-parse --path-format=absolute --git-common-dir)
 cd "$root" # env-policy: allow
-exec cargo xtask reference-transaction "$1"
+exec "$common/.spice-install/bin/xtask" reference-transaction "$1"

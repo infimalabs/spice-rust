@@ -56,8 +56,19 @@ fn answer_at(
                 worktree: row.worktree.clone(),
                 life: row.life.clone(),
                 vendor: row.vendor.clone(),
+                model: row
+                    .session
+                    .as_ref()
+                    .and_then(|session| session.launch.as_ref())
+                    .map(|launch| launch.model.clone()),
+                effort: row
+                    .session
+                    .as_ref()
+                    .and_then(|session| session.launch.as_ref())
+                    .map(|launch| launch.effort.clone()),
                 occupant: row.occupant,
                 lineage: row.lineage.clone(),
+                session: row.session.as_ref().map(|session| session.identity.clone()),
                 bound: row.session.is_some(),
                 disposition: row.disposition.clone(),
                 liveness,
@@ -365,6 +376,7 @@ mod tests {
                 occupant: uuid(2),
                 worktree: "/worktrees/main-a".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),
+                launch: Some(wire::body::LaneLaunchIdentity::new("sonnet", "high")),
                 epoch: uuid(4),
                 stream: "stdout".to_owned(),
                 identity: "private-session".to_owned(),
@@ -440,7 +452,7 @@ mod tests {
     }
 
     #[test]
-    fn lane_reads_expose_session_presence_without_capability_or_session_authority() {
+    fn lane_reads_expose_display_identity_without_capabilities() {
         let row = occupied();
         let capability = row.capabilities[0].to_string();
         let head = wire::ResidencyHead {
@@ -458,10 +470,34 @@ mod tests {
             .expect("wire encoding is UTF-8");
 
         assert!(answer.lanes[0].bound);
+        assert_eq!(answer.lanes[0].model.as_deref(), Some("sonnet"));
+        assert_eq!(answer.lanes[0].effort.as_deref(), Some("high"));
+        assert_eq!(answer.lanes[0].session.as_deref(), Some("private-session"));
         assert!(!encoded.contains(&capability));
-        assert!(!encoded.contains("private-session"));
         assert!(!encoded.contains("capabilities"));
-        assert!(!encoded.contains("session"));
+        assert!(encoded.contains("private-session"));
+    }
+
+    #[test]
+    fn lane_reads_expose_one_unrecorded_launch_state_without_inventing_either_half() {
+        let mut row = occupied();
+        row.session.as_mut().expect("fixture session").launch = None;
+        let head = wire::ResidencyHead {
+            epoch: uuid(4),
+            state: ResidentState::Seated,
+            lanes: vec![row],
+            subscriptions: subscriptions(),
+        };
+        let observed = Monotonic::now();
+
+        let answer = answer_at(&head, None, observed, |_| {
+            Some(lane::occupant::Activity::new(uuid(2), observed))
+        })
+        .expect("unrecorded launch projects");
+
+        assert_eq!(answer.lanes[0].model, None);
+        assert_eq!(answer.lanes[0].effort, None);
+        assert_eq!(answer.lanes[0].session.as_deref(), Some("private-session"));
     }
 
     #[test]

@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::body::LaneLaunchIdentity;
 use crate::envelope::{Actor, Origin, Seq};
 use crate::ident::{CanonicalUuid, Digest, Instant};
 use crate::witness::{Phase, TaskHandle};
@@ -246,7 +247,7 @@ pub struct TapeLocus {
 
 /// Current resumable session authority for one lane.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "LaneSessionWire", into = "LaneSessionWire")]
 pub struct LaneSession {
     /// Lane whose successor may resume this session.
     pub lane: CanonicalUuid,
@@ -256,6 +257,13 @@ pub struct LaneSession {
     pub worktree: String,
     /// Vendor dialect that admitted the declaration.
     pub vendor: crate::Name,
+    /// Launch identity, absent when the declaration predates its recording.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub launch: Option<LaneLaunchIdentity>,
     /// Resident generation that observed the declaration.
     pub epoch: CanonicalUuid,
     /// Selected child stream carrying the declaration.
@@ -264,6 +272,67 @@ pub struct LaneSession {
     pub identity: String,
     /// Durable bytes that declared the identity.
     pub locus: TapeLocus,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LaneSessionWire {
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    worktree: String,
+    vendor: crate::Name,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    model: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    effort: Option<String>,
+    epoch: CanonicalUuid,
+    stream: String,
+    identity: String,
+    locus: TapeLocus,
+}
+
+impl TryFrom<LaneSessionWire> for LaneSession {
+    type Error = &'static str;
+
+    fn try_from(wire: LaneSessionWire) -> Result<Self, Self::Error> {
+        Ok(Self {
+            lane: wire.lane,
+            occupant: wire.occupant,
+            worktree: wire.worktree,
+            vendor: wire.vendor,
+            launch: LaneLaunchIdentity::from_parts(wire.model, wire.effort)?,
+            epoch: wire.epoch,
+            stream: wire.stream,
+            identity: wire.identity,
+            locus: wire.locus,
+        })
+    }
+}
+
+impl From<LaneSession> for LaneSessionWire {
+    fn from(session: LaneSession) -> Self {
+        let (model, effort) = LaneLaunchIdentity::into_parts(session.launch);
+        Self {
+            lane: session.lane,
+            occupant: session.occupant,
+            worktree: session.worktree,
+            vendor: session.vendor,
+            model,
+            effort,
+            epoch: session.epoch,
+            stream: session.stream,
+            identity: session.identity,
+            locus: session.locus,
+        }
+    }
 }
 
 /// One lane's current place in the resident generation.

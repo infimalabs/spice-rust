@@ -15,6 +15,7 @@ fn verifier_process_reaches_one_rust_battery_without_forbidden_programs() {
     let fixture = Fixture::new();
     let programs = fixture.root.join("programs");
     fs::create_dir(&programs).expect("create process fixture directory");
+    install_unset_hooks_git(&programs);
     let forbidden_marker = fixture.root.join("forbidden-program-invoked");
     for program in ["python", "python3", "taskwarrior", "task"] {
         executable(
@@ -217,6 +218,7 @@ fn zero_exit_browser_process_without_a_receipt_refuses_before_workspace_tests() 
     let fixture = Fixture::new();
     let programs = fixture.root.join("programs");
     fs::create_dir(&programs).expect("create process fixture directory");
+    install_unset_hooks_git(&programs);
     let cargo_log = fixture.root.join("cargo-actions");
     executable(
         &programs.join("cargo"),
@@ -431,6 +433,19 @@ fn executable(path: &Path, text: &str) {
     fs::write(path, text).expect("write process fixture executable");
     fs::set_permissions(path, fs::Permissions::from_mode(0o755))
         .expect("make process fixture executable");
+}
+
+fn install_unset_hooks_git(programs: &Path) {
+    executable(
+        &programs.join("git"),
+        concat!(
+            "#!/bin/sh\n",
+            "if [ \"$*\" = \"config --get core.hooksPath\" ]; then\n",
+            "  exit 1\n",
+            "fi\n",
+            "exit 98\n",
+        ),
+    );
 }
 
 fn git(root: &Path, arguments: &[&str]) {

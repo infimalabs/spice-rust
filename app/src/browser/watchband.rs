@@ -14,9 +14,9 @@ mod mosaic_view;
 mod state;
 
 use composer::{
-    choose_images, drop_on_lane, keyboard_submit, paste_images, primary_textarea_id,
-    render_agent_message_card, render_attachments, render_directive_card, render_markdown,
-    render_quote_bands, update_body,
+    agent_message_source_id, choose_images, directive_source_id, drop_on_lane, focus_after_render,
+    keyboard_submit, paste_images, primary_textarea_id, render_agent_message_card,
+    render_attachments, render_directive_card, render_markdown, render_quote_shards, update_body,
 };
 pub(super) use controls::{LineageControlAction, LineageControls};
 use controls::{LineageLife, LineageSpeech, render_lineage_controls};
@@ -26,6 +26,7 @@ pub(super) use state::ComposerDrafts;
 
 const MAX_ATTACHMENTS: usize = 8;
 const MAX_ATTACHMENT_BYTES: f64 = 8.0 * 1_024.0 * 1_024.0;
+const RENEWAL_REQUEST: &str = "Renew your current task lease now.";
 
 /// The four one-click views of one live team.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,7 +128,6 @@ pub(super) fn render_lineage(
                                     can_send,
                                     sender,
                                     drafts,
-                                    mode,
                                     lineage_controls,
                                     can_configure,
                                     controls,
@@ -243,7 +243,6 @@ fn render_compose(
     can_send: bool,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
-    mode: &UseStateHandle<LineageMode>,
     lineage_controls: &UseReducerHandle<LineageControls>,
     can_configure: bool,
     controls: &view::AgentControls,
@@ -262,11 +261,13 @@ fn render_compose(
                     .get(&member.lane.to_string())
                     .is_some_and(|draft| !compose(draft).trim().is_empty())
         });
+    let cards = activity_cards(runtime, lineage);
     html! {
         <div class="team-compose">
             <form class="team-composer" onsubmit={submit.clone()}>
                 <div class="team-agents">
                     {for lineage.members.iter().zip(standings.iter()).map(|(member, standing)| {
+                        let stream = primary_stream_link(&cards, lineage, member.lane, standing);
                         render_agent_composer(
                             member,
                             standing,
@@ -275,7 +276,7 @@ fn render_compose(
                             can_send,
                             sender,
                             drafts,
-                            mode,
+                            stream,
                         )
                     })}
                 </div>
@@ -290,20 +291,20 @@ fn render_compose(
                 )}
             </form>
             {view::chrome::render_ticker(surface)}
-            {render_activity(runtime, lineage, drafts, controls, control.speech, control.life)}
+            {render_activity(
+                lineage,
+                &cards,
+                drafts,
+                controls,
+                control.speech,
+                control.life,
+            )}
         </div>
     }
 }
 
-fn render_activity(
-    runtime: &CanvasRuntime,
-    lineage: &crate::runtime::LaneRow,
-    drafts: &UseReducerHandle<ComposerDrafts>,
-    controls: &view::AgentControls,
-    speech: LineageSpeech,
-    life: LineageLife,
-) -> Html {
-    let cards = runtime
+fn activity_cards(runtime: &CanvasRuntime, lineage: &crate::runtime::LaneRow) -> Vec<ActivityCard> {
+    runtime
         .messages()
         .iter()
         .filter_map(|message| {
@@ -325,7 +326,17 @@ fn render_activity(
                 .cloned()
                 .map(move |directive| ActivityCard::Directive { lane, directive })
         }))
-        .collect::<Vec<_>>();
+        .collect()
+}
+
+fn render_activity(
+    lineage: &crate::runtime::LaneRow,
+    cards: &[ActivityCard],
+    drafts: &UseReducerHandle<ComposerDrafts>,
+    controls: &view::AgentControls,
+    speech: LineageSpeech,
+    life: LineageLife,
+) -> Html {
     let empty = cards.is_empty();
     let speak = if speech == LineageSpeech::Quiet {
         Callback::from(|_: String| {})
@@ -334,6 +345,7 @@ fn render_activity(
     };
     html! {
         <div
+            id={format!("lineage-stream-{}", lineage.lane)}
             class="team-activity-grid"
             aria-live="polite"
             aria-label="Live agent activity"
@@ -347,7 +359,7 @@ fn render_activity(
                 lane={lineage.lane}
                 {life}
                 members={lineage.members.len()}
-                {cards}
+                cards={cards.to_vec()}
                 drafts={drafts.clone()}
                 {speak}
                 {speech}
@@ -413,7 +425,7 @@ fn render_agent_details(
         <article
             class="team-detail-card"
             data-accent={standing.accent.to_string()}
-            title={standing_title(standing)}
+            title={watchband::standing_title(standing)}
         >
             <header>
                 <span class="agent-presence"></span>
@@ -471,6 +483,39 @@ fn render_agent_details(
     }
 }
 
+struct ComposerStreamLink {
+    target: String,
+    label: String,
+}
+
+fn primary_stream_link(
+    cards: &[ActivityCard],
+    lineage: &crate::runtime::LaneRow,
+    lane: CanonicalUuid,
+    standing: &Standing,
+) -> ComposerStreamLink {
+    let source = cards.iter().rev().find_map(|card| match card {
+        ActivityCard::Agent {
+            member, message, ..
+        } if member.lane == lane => Some(agent_message_source_id(message)),
+        ActivityCard::Directive {
+            lane: card_lane,
+            directive,
+        } if *card_lane == lane => Some(directive_source_id(directive)),
+        ActivityCard::Agent { .. } | ActivityCard::Directive { .. } => None,
+    });
+    source.map_or_else(
+        || ComposerStreamLink {
+            target: format!("lineage-stream-{}", lineage.lane),
+            label: "Jump to lineage activity".to_owned(),
+        },
+        |target| ComposerStreamLink {
+            target,
+            label: format!("Jump to latest {} activity", standing.label),
+        },
+    )
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "one member composer needs its standing and shared lineage interaction handles"
@@ -483,13 +528,32 @@ fn render_agent_composer(
     can_send: bool,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
-    mode: &UseStateHandle<LineageMode>,
+    stream: ComposerStreamLink,
 ) -> Html {
     let lane_id = member.lane;
     let lane_key = lane_id.to_string();
     let draft = drafts.get(&lane_key).cloned().unwrap_or_default();
     let occupant = member.occupant;
     let send_enabled = can_send && occupant.is_some();
+    let renew_enabled = send_enabled;
+    let renew = {
+        let sender = sender.clone();
+        Callback::from(move |_| {
+            if let Some(occupant) = occupant {
+                let _sent = send_action(
+                    &sender,
+                    ClientAction::Steer {
+                        lane: lane_id,
+                        occupant,
+                        epoch,
+                        message: RENEWAL_REQUEST.to_owned(),
+                        attachments: Vec::new(),
+                        resolve: None,
+                    },
+                );
+            }
+        })
+    };
     let onkeydown = keyboard_submit(
         lane_id,
         occupant,
@@ -517,26 +581,32 @@ fn render_agent_composer(
             key={lane_key.clone()}
             class={classes!(
                 "team-agent",
-                "composer-shard",
                 (!send_enabled).then_some("team-agent--vacant"),
             )}
             data-agent-lane={lane_id.to_string()}
-            data-shard-target-id={lane_id.to_string()}
-            title={standing_title(standing)}
+            title={watchband::standing_title(standing)}
             {ondragover}
             {ondrop}
         >
-            {render_quote_bands(&lane_key, &draft, drafts, onkeydown.clone())}
-            {render_composer_body(
-                lane_id,
-                &lane_key,
-                &draft,
-                standing,
-                pending,
-                drafts,
-                mode,
-                onkeydown,
-            )}
+            <div
+                class="agent-composer-stack"
+                data-agent-composer-stack={lane_id.to_string()}
+                data-has-quote-shards={(!draft.quotes.is_empty()).to_string()}
+            >
+                {render_composer_body(
+                    lane_id,
+                    &lane_key,
+                    &draft,
+                    standing,
+                    pending,
+                    drafts,
+                    onkeydown.clone(),
+                    renew_enabled,
+                    renew,
+                    stream,
+                )}
+                {render_quote_shards(&lane_key, &draft, drafts, onkeydown)}
+            </div>
         </section>
     }
 }
@@ -552,19 +622,42 @@ fn render_composer_body(
     standing: &Standing,
     pending: usize,
     drafts: &UseReducerHandle<ComposerDrafts>,
-    mode: &UseStateHandle<LineageMode>,
     onkeydown: Callback<KeyboardEvent>,
+    renew_enabled: bool,
+    renew: Callback<MouseEvent>,
+    stream: ComposerStreamLink,
 ) -> Html {
     let markdown = compose(draft);
     let oninput = update_body(lane_key.to_owned(), drafts.clone());
     let onpaste = paste_images(lane_key.to_owned(), drafts.clone());
     html! {
-        <div class="mosaic-composer">
-            {render_composer_heading(standing, mode)}
+        <div
+            class="mosaic-composer composer-shard composer-shard--primary"
+            data-shard-kind="primary"
+            data-shard-target-id={lane.to_string()}
+        >
+            {render_composer_heading(
+                lane,
+                lane_key,
+                standing,
+                renew_enabled,
+                renew.clone(),
+                stream,
+            )}
             <div class="composer-shard-standing">
                 <span>{format!("{pending} pending")}</span>
                 <span>{standing.liveness.as_str()}</span>
             </div>
+            <button
+                class="agent-renew-request"
+                type="button"
+                disabled={!renew_enabled}
+                title="Ask this agent to renew its current task lease"
+                onclick={renew}
+            >
+                <strong>{"Renew this agent"}</strong>
+                <span>{"request renewal"}</span>
+            </button>
             <textarea
                 id={primary_textarea_id(lane_key)}
                 aria-label={format!("Message for {lane}")}
@@ -590,27 +683,48 @@ fn render_composer_body(
     }
 }
 
-fn render_composer_heading(standing: &Standing, mode: &UseStateHandle<LineageMode>) -> Html {
+fn render_composer_heading(
+    lane: CanonicalUuid,
+    lane_key: &str,
+    standing: &Standing,
+    renew_enabled: bool,
+    renew: Callback<MouseEvent>,
+    stream: ComposerStreamLink,
+) -> Html {
     let activity = standing
         .headline
         .as_deref()
         .or(standing.handle.as_deref())
         .unwrap_or(&standing.disposition);
-    let open = mode.clone();
+    let focus_lane = lane_key.to_owned();
+    let focus = Callback::from(move |_| {
+        focus_after_render(primary_textarea_id(&focus_lane));
+    });
     html! {
         <header class="composer-shard-heading">
-            <span class="composer-shard-age">{
+            <a
+                class="composer-shard-link composer-shard-age"
+                href={format!("#{}", stream.target)}
+                aria-label={stream.label}
+            >{
                 standing
                     .held
                     .map(watchband::elapsed_label)
                     .unwrap_or_else(|| "now".to_owned())
-            }</span>
+            }</a>
             <strong title={activity.to_owned()}>{standing.label.clone()}</strong>
-            <button
-                type="button"
-                aria-label={format!("Details for {}", standing.label)}
-                onclick={Callback::from(move |_| open.set(LineageMode::Info))}
-            >{"☰"}</button>
+            <details class="agent-action-menu">
+                <summary aria-label={format!("Actions for {}", standing.label)}>{"☰"}</summary>
+                <div
+                    class="agent-action-drawer"
+                    data-agent-drawer-target-id={lane.to_string()}
+                >
+                    <button type="button" onclick={focus}>{"Focus message editor"}</button>
+                    <button type="button" disabled={!renew_enabled} onclick={renew}>
+                        {"Renew this agent"}
+                    </button>
+                </div>
+            </details>
         </header>
     }
 }
@@ -655,16 +769,6 @@ fn composer_placeholder(standing: &Standing, pending: usize) -> String {
         });
     }
     lines.join("\n")
-}
-
-fn standing_title(standing: &Standing) -> String {
-    format!(
-        "{}\n{}\n{} pending\n{}",
-        standing.label,
-        standing.worktree,
-        standing.pending,
-        standing.liveness.as_str(),
-    )
 }
 
 fn submit_lineage_callback(

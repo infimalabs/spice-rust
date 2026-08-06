@@ -6,10 +6,17 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright";
+import { assertComposerShards } from "./composer-shards.mjs";
+import { assertCanvas } from "./canvas-readiness.mjs";
+import { assertAgentRenewalRequest, captureReferenceControls } from "./control-reference.mjs";
+import { assertReferenceControlStack } from "./control-stack.mjs";
 import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
 import {
+  assertEndpointProbeClosesWithoutResponse,
   assertEndpointProbeStates,
+  assertGenerationOnline,
   assertHeldTaskCount,
+  assertOfflineObserved,
   assertLineageLifeIsolation,
   assertResidentLossObserved,
   assertResidentRestart,
@@ -28,11 +35,18 @@ import {
   seedAuthority,
   startResident,
   stopResident,
+  CONNECT_MS,
+  RECONNECT_MS,
+  TRANSITION_MS,
+  waitForLocator as waitForElement,
+  waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
 const artifacts = join(root, "artifacts/canvas");
+// Seating crosses external process creation; page reloads and renders do not.
+const AGENT_SEAT_MS = 15_000;
 const coverageReceiptFlag = "--spice-coverage-receipt";
 const coverageReceipt = "BROWSER-1kKSWhZk browser coverage complete\n";
 const coverageArguments = process.argv.slice(2);
@@ -50,15 +64,12 @@ if (coverageArguments.length > 0) {
 }
 const agentNames = ["Ava", "Bex", "Cy", "Dee"];
 const teamLaneIds = [
-  "00000000-0000-4000-8000-000000000000",
-  "00000000-0000-4000-8000-000000000001",
-  "00000000-0000-4000-8000-000000000002",
-  "00000000-0000-4000-8000-000000000003",
+  "00000000-0000-4000-8000-000000000000", "00000000-0000-4000-8000-000000000001",
+  "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003",
 ];
 const staleEpoch = "018f9999-9999-7444-8888-999999999999";
 const nestedQuoteMessage = [
-  "> > The final review found no alternate execution path.",
-  "> >",
+  "> > The final review found no alternate execution path.", "> >",
   "> > `cargo xtask verify` is green.",
   ">",
   "> Why it matters: nested context remains visible.",
@@ -94,105 +105,6 @@ const tallMosaicMessage = [
   "- the short path remains one read",
   "- the tall path remains two reads",
 ].join("\n");
-
-const axisPanes = new Map([
-  ["Magnitude", ["Effort", "Pressure", "Residue", "Consent Volume"]],
-  ["Flow", ["Tasks", "Claims", "Deferrals", "Reviews"]],
-  ["Topology", ["Lanes", "Worktrees", "Lineage", "Occupancy", "Residents"]],
-  ["Chronology", [
-    "Compaction",
-    "Queues",
-    "Directives",
-    "Consent Disposition",
-    "Trust",
-    "Commands",
-    "Recovery",
-  ]],
-]);
-
-
-async function assertCanvas(page, scheme) {
-  try {
-    await page.waitForFunction(() => /cursor \d+/.test(
-      document.querySelector(".bar-meta")?.textContent ?? "",
-    ), null, { timeout: 10_000 });
-  } catch (error) {
-    const body = await page.locator("body").innerText().catch(() => "<body unavailable>");
-    throw new Error(`canvas did not come online; body=${JSON.stringify(body)}`, { cause: error });
-  }
-  await page.waitForFunction(() => document.querySelector("#app")?.childElementCount > 0);
-  await assert.doesNotReject(() => page.locator(".canvas-menu > summary:visible, .brand-name:visible").waitFor());
-  assert.ok(
-    await page.locator('[data-pane="agent-console"]').count() <= 1,
-    "the active view never mounts duplicate lineage consoles",
-  );
-  assert.equal(
-    await page.locator("button.axis-button", { hasText: /^Mosaic/ }).count(),
-    0,
-    "the internal packing name is not a user-facing view",
-  );
-  assert.equal(
-    await page.locator("button.axis-button", { hasText: /^Agents/ }).count(),
-    1,
-    "one Agents entry reaches the one conversation surface",
-  );
-  await page.waitForFunction(() => {
-    const cursor = document.querySelector(".bar-meta")?.textContent ?? "";
-    return /cursor \d+/.test(cursor);
-  });
-
-  const pixels = await page.evaluate(() => {
-    const root = document.querySelector("#app");
-    const canvas = document.querySelector(".content");
-    const rootStyle = root ? getComputedStyle(root) : null;
-    const canvasBox = canvas?.getBoundingClientRect();
-    const workspaceBox = document.querySelector(".workspace")?.getBoundingClientRect();
-    const barBox = document.querySelector(".commandbar")?.getBoundingClientRect();
-    return {
-      appChildren: root?.childElementCount ?? 0,
-      bodyWidth: document.body.scrollWidth,
-      viewportWidth: window.innerWidth,
-      canvasHeight: Math.round(canvasBox?.height ?? 0),
-      ink: rootStyle?.color ?? "",
-      background: getComputedStyle(document.body).backgroundColor,
-      barOverlap: (barBox?.bottom ?? 0) > (workspaceBox?.top ?? 0) + 1,
-      overflowingControls: [...document.querySelectorAll("button, .pane-chip")]
-        .filter((element) => {
-          const style = getComputedStyle(element);
-          return style.display !== "none" && style.visibility !== "hidden";
-        })
-        .filter((element) => element.scrollWidth > element.clientWidth + 1)
-        .map((element) => element.textContent?.trim() ?? element.className),
-    };
-  });
-  assert.ok(pixels.appChildren > 0, "Wasm mounted a nonblank app");
-  assert.ok(pixels.canvasHeight > 300, "primary canvas has visible content");
-  assert.ok(pixels.bodyWidth <= pixels.viewportWidth, "page has no viewport overflow");
-  assert.notEqual(pixels.ink, pixels.background, "foreground and background pixels differ");
-  assert.equal(pixels.barOverlap, false, "the workspace starts below the command bar");
-  assert.deepEqual(pixels.overflowingControls, [], "controls and pane labels fit their bounds");
-
-  for (const [axis, panes] of axisPanes) {
-    await chooseCanvasView(page, axis);
-    await page.getByRole("heading", { name: axis, exact: true }).waitFor();
-    assert.deepEqual(
-      await page.locator(".pane-chip").allTextContents(),
-      panes,
-      `${axis} renders its complete declared pane registry`,
-    );
-  }
-  await page.keyboard.press("Tab");
-  assert.ok(await page.locator(":focus-visible").count(), "keyboard focus remains visible");
-  if ((page.viewportSize()?.width ?? 1000) <= 560) {
-    await chooseCanvasView(page, "Flow");
-    await page.locator(".workspace").evaluate((element) => element.scrollTo(0, element.scrollHeight));
-    assert.ok(await page.getByRole("button", { name: "Add note" }).isVisible());
-    await page.locator(".workspace").evaluate((element) => element.scrollTo(0, 0));
-  }
-  await chooseCanvasView(page, "Agents");
-  await page.locator('[data-pane="agent-console"]').waitFor();
-  await page.screenshot({ path: join(artifacts, `canvas-${scheme}.png`), fullPage: true });
-}
 
 async function assignTeamLaneIds(page) {
   await page.evaluate((laneIds) => {
@@ -249,7 +161,8 @@ async function assertAgentConversation(page, fixture, worktrees) {
   await console.getByLabel("Vendor").fill("Claude");
   await console.getByRole("button", { name: "Seat agent" }).click();
   await refusal.waitFor({ state: "detached", timeout: 10_000 });
-  await console.locator(".team-detail-card").nth(0).waitFor({ timeout: 15_000 });
+  await waitForElement(page, "first external agent seat renders", AGENT_SEAT_MS,
+    console.locator(".team-detail-card").nth(0));
   const firstSeatedAt = Date.now();
 
   const firstSnapshot = await reply(fixture, ["lane"]);
@@ -262,30 +175,31 @@ async function assertAgentConversation(page, fixture, worktrees) {
     await console.getByLabel("Life").fill("steer");
     await console.getByLabel("Vendor").fill("Claude");
     await console.getByRole("button", { name: "Seat agent" }).click();
-    await console.locator(".team-detail-card").nth(index + 1).waitFor({ timeout: 15_000 });
+    await waitForElement(page, "next external agent seat renders", AGENT_SEAT_MS,
+      console.locator(".team-detail-card").nth(index + 1));
   }
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Agents");
   await console.getByRole("tab", { name: /^Info/ }).click();
-  await console.locator(".team-detail-card").nth(3).waitFor({ timeout: 15_000 });
+  await waitForElement(page, "seated agents render after reload", CONNECT_MS,
+    console.locator(".team-detail-card").nth(3));
 
   const lanes = await reply(fixture, ["lane"]);
   const seated = teamWorktrees.map(
     (worktree) => lanes.body.lanes.find((lane) => lane.worktree === worktree),
   );
   assert.ok(seated.every(Boolean), "one lineage admits all four linked worktrees");
-  assert.deepEqual(
-    seated.map((lane) => lane.lane),
-    teamLaneIds,
-    "the fixture owns four deterministic and non-colliding accent slots",
-  );
-  assert.ok(
-    seated.every((lane) => lane.lineage_id === host.lineage_id),
-    "every independently steerable member retains the shared lineage identity",
-  );
+  assert.deepEqual(seated.map((lane) => lane.lane), teamLaneIds, "four fixed lane identities render");
+  assert.ok(seated.every((lane) => lane.lineage_id === host.lineage_id), "one lineage renders");
   assert.deepEqual(seated.map((lane) => lane.name), agentNames);
   assert.ok(seated.every((lane) => lane.vendor === "claude"));
   assert.ok(seated.every((lane) => lane.life === "steer"), "the team shares one lifetime");
+  assert.equal(
+    await console.locator(".team-detail-card").first().getAttribute("title"),
+    `Claude driver; model: sonnet; effort: high; thread: ${seated[0].occupant}; `
+      + "session: 018f7777-7777-7444-8888-999999999999",
+    "the agent card tooltip carries the admitted launch and session identity",
+  );
 
   await console.getByRole("tab", { name: /^Compose/ }).click();
   await console.locator(".team-agent").nth(3).waitFor();
@@ -314,6 +228,7 @@ async function assertAgentConversation(page, fixture, worktrees) {
   await console.getByRole("button", { name: "Drain", exact: true }).waitFor();
   await lifetime.fill("0");
   await console.getByRole("button", { name: "Steer", exact: true }).waitFor();
+  await assertReferenceControlStack(page, console, artifacts);
   const messages = [
     "browser direction survives streaming",
     "## Gate contract\n\n- green on the integrated tip\n- exact checks retained",
@@ -439,7 +354,7 @@ async function assertAgentConversation(page, fixture, worktrees) {
     .locator(`.mosaic-message-card[data-agent-lane="${seated[0].lane}"]`)
     .filter({ hasText: "mosaic scroll compensation probe" });
   await compensationCard.waitFor({ timeout: 10_000 });
-  await page.waitForFunction((before) => {
+  await waitForPage(page, "mosaic rows extend for the streamed card", TRANSITION_MS, (before) => {
     const element = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
     const maxRow = Number(element?.dataset.maxRow);
     return maxRow > before.maxRow;
@@ -519,7 +434,6 @@ async function assertAgentConversation(page, fixture, worktrees) {
   return { lane: seated[0].lane, quoteLane: seated[3].lane };
 }
 
-
 function elapsedLabel(millis) {
   const seconds = Math.trunc(millis / 1_000);
   if (seconds <= 0) return "now";
@@ -528,7 +442,6 @@ function elapsedLabel(millis) {
   if (seconds < 86_400) return `${Math.trunc(seconds / 3_600)}h`;
   return `${Math.trunc(seconds / 86_400)}d`;
 }
-
 
 async function assertFourAgentDensity(console) {
   const geometry = await console.evaluate((surface) => ({
@@ -655,7 +568,7 @@ async function assertMosaicLattice(page, requireBothReadPaths) {
 }
 
 async function waitForMosaicReady(page) {
-  await page.waitForFunction(() => {
+  await waitForPage(page, "mosaic measurements settle", TRANSITION_MS, () => {
     const planes = [...document.querySelectorAll(
       '[data-pane="agent-console"] .lane-mosaic-plane',
     )];
@@ -708,7 +621,7 @@ async function assertQueuedRosterPip(page, console, member) {
   const teamPip = console.locator(
     `.team-light[data-lane-light-target-id="${member.lane}"]`,
   );
-  await page.waitForFunction((lane) => (
+  await waitForPage(page, "team roster shows queued", TRANSITION_MS, (lane) => (
     document.querySelector(`.team-light[data-lane-light-target-id="${lane}"]`)
       ?.getAttribute("data-lane-status") === "queued"
   ), member.lane);
@@ -724,7 +637,7 @@ async function assertQueuedRosterPip(page, console, member) {
   await chooseCanvasView(page, "Flow");
   const brandPip = page.locator(`.brand-dot[data-agent-lane="${member.lane}"]`);
   assert.equal(await brandPip.count(), 1, "the queued member retains exactly one brand pip");
-  await page.waitForFunction((lane) => (
+  await waitForPage(page, "brand roster shows queued", TRANSITION_MS, (lane) => (
     document.querySelector(`.brand-dot[data-agent-lane="${lane}"]`)
       ?.getAttribute("data-agent-status") === "queued"
   ), member.lane);
@@ -762,7 +675,8 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
   await chooseCanvasView(page, "Agents");
   const console = page.locator('[data-pane="agent-console"]');
   await console.getByRole("tab", { name: /^Compose/ }).first().click();
-  await console.locator(".team-surface").nth(1).waitFor({ timeout: 15_000 });
+  await waitForElement(page, "second team renders after reload", CONNECT_MS,
+    console.locator(".team-surface").nth(1));
 
   const lanes = await reply(fixture, ["lane"]);
   const secondary = lanes.body.lanes.find((lane) => lane.worktree === worktrees[4]);
@@ -831,7 +745,10 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
     };
   }, staleEpoch);
   await primaryLife.fill("2");
-  await page.waitForFunction(
+  await waitForPage(
+    page,
+    "rejected lifetime command settles",
+    TRANSITION_MS,
     (lineage) => document
       .querySelector(`.team-surface[data-lineage-id="${lineage}"] .team-composer-controls`)
       ?.dataset.lifetimePending === "false",
@@ -844,7 +761,10 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
   assert.match(await primarySurface.locator(".team-control-issue").innerText(), /lineage::missing/);
 
   await primaryLife.fill("2");
-  await page.waitForFunction(
+  await waitForPage(
+    page,
+    "accepted lifetime command settles",
+    TRANSITION_MS,
     (lineage) => document
       .querySelector(`.team-surface[data-lineage-id="${lineage}"] .team-composer-controls`)
       ?.dataset.lifetimePending === "false",
@@ -897,7 +817,10 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
     "Quiet suppresses manual speech for only its team",
   );
   await secondarySurface.getByLabel("Speak this message").first().click();
-  await page.waitForFunction(() => window.__speechLog.some((row) => row.action === "speak"));
+  await waitForPage(page, "Narrate dispatches speech", TRANSITION_MS,
+    () => window.__speechLog.some((row) => row.action === "speak"));
+
+  await assertAgentRenewalRequest(primarySurface, fixture);
 
   const policyMessage = "drain lifetime is task policy, not occupant teardown";
   await primarySurface.locator(".team-agent").first().getByRole("textbox").fill(policyMessage);
@@ -944,7 +867,8 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
     false,
     "the author of the second member's retained cards is seated in no lane",
   );
-  await page.waitForFunction(({ lineage, lane }) => {
+  await waitForPage(page, "departed author cards retain their lane", TRANSITION_MS,
+    ({ lineage, lane }) => {
     const cards = [...document.querySelectorAll(
       `.team-surface[data-lineage-id="${lineage}"] `
         + `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
@@ -1019,10 +943,11 @@ async function captureReferenceViewport(page) {
   );
   assert.equal(pixels.bodyWidth, 1000, "the reference viewport has no horizontal overflow");
   assert.equal(pixels.background, "rgb(11, 15, 12)", "the captured surface uses the dark palette");
-  await page.screenshot({
-    path: join(artifacts, "canvas-reference-four-agent-dark.png"),
-    fullPage: false,
-  });
+  await captureReferenceControls(
+    page,
+    team,
+    join(artifacts, "canvas-reference-four-agent-dark.png"),
+  );
 }
 
 async function assertAuthoritySurface(page, seeded) {
@@ -1064,64 +989,23 @@ async function assertMosaicComposer(page, fixture, seeded) {
   );
   await activity.filter({ hasText: "browser direction survives streaming" }).waitFor();
 
-  const nestedCard = quoteActivity
-    .filter({ hasText: nestedQuotePreview })
-    .getByRole("button", { name: "Quote this message" });
-  await nestedCard.click();
-  let previewBand = quoteLane
-    .locator(".composer-quote-band")
-    .filter({ hasText: nestedQuotePreview });
-  await previewBand.waitFor();
-  let previewLabel = await previewBand.locator("header span").innerText();
-  assert.equal(previewLabel, nestedQuotePreview);
-  assert.doesNotMatch(previewLabel, /[<>]/, "the producer preview contains no quote marker");
-  assert.equal(
-    await previewBand.getAttribute("title"),
+  await assertComposerShards({
+    page,
+    team,
+    quoteLane,
+    quoteActivity,
+    seeded,
+    nestedQuotePreview,
     nestedQuoteMessage,
-    "the complete nested message remains reachable from the band",
-  );
-  await nestedCard.click();
-  assert.equal(
-    await quoteLane.locator(".composer-quote-band").count(),
-    1,
-    "quoting the same message identity reveals its existing band",
-  );
-  const repeatedQuoteId = await previewBand.getByRole("textbox").getAttribute("id");
-  await page.waitForFunction(
-    (id) => document.activeElement?.id === id,
-    repeatedQuoteId,
-  );
-  assert.equal(
-    await previewBand
-      .getByRole("textbox")
-      .evaluate((textarea) => document.activeElement === textarea),
-    true,
-    "repeated quote identity focuses the existing reply",
-  );
-
-  await quoteActivity
-    .filter({ hasText: "Borrowed context has no authored preview." })
-    .getByRole("button", { name: "Quote this message" })
-    .click();
-  assert.equal(
-    await quoteLane.locator(".composer-quote-band").count(),
-    2,
-    "two distinct messages retain two simultaneous quote bands",
-  );
-  previewBand = quoteLane.locator(".composer-quote-band").first();
-  await previewBand.waitFor();
-  previewLabel = await previewBand.locator("header span").innerText();
-  assert.equal(previewLabel, "quoted message", "an absent preview has a visible placeholder");
-  assert.ok(previewLabel.trim(), "the absent-preview band is not blank");
-  assert.doesNotMatch(previewLabel, /[<>]/);
-  assert.equal(await previewBand.getAttribute("title"), entirelyQuotedMessage);
+    entirelyQuotedMessage,
+  });
 
   await activity
     .filter({ hasText: "browser direction survives streaming" })
     .getByRole("button", { name: "Quote this message" })
     .click();
-  const composer = lane.locator(".mosaic-composer");
-  const quotedComposer = lane.locator(".composer-quote-band");
+  const composer = lane.locator(".composer-shard--primary");
+  const quotedComposer = lane.locator(".composer-shard--quote");
   await quotedComposer.waitFor();
   await composer.getByLabel("Markdown preview").waitFor();
   assert.equal(
@@ -1162,7 +1046,7 @@ async function assertMosaicComposer(page, fixture, seeded) {
     "quote keyboard submission returns focus to that target's primary composer",
   );
   assert.equal(
-    await quoteLane.locator(".composer-quote-band").count(),
+    await quoteLane.locator(".composer-shard--quote").count(),
     2,
     "target keyboard submission leaves sibling target drafts unchanged",
   );
@@ -1290,7 +1174,7 @@ async function assertStaleGeneration(browser, endpoint, currentEpoch) {
   });
   await page.goto(endpoint, { waitUntil: "domcontentloaded" });
   await chooseCanvasView(page, "Chronology");
-  await page.waitForSelector(".status.offline", { timeout: 10_000 });
+  await assertOfflineObserved(page, "refusing a stale generation");
   const fault = page.locator(".event.fault");
   await fault.waitFor();
   assert.match(await fault.innerText(), /Canvas connection reset/);
@@ -1315,7 +1199,7 @@ async function assertSameGenerationResume(
     if (!socket) throw new Error("canvas WebSocket was not captured");
     socket.close(4000, "fixture reconnect");
   });
-  await page.waitForSelector(".status.offline", { timeout: 10_000 });
+  await assertOfflineObserved(page, "the fixture closes its socket");
   assert.match(await page.locator(".status-copy").innerText(), /Reconnecting/);
   await chooseCanvasView(page, "Chronology");
   await page.locator(".event.fault").waitFor();
@@ -1324,15 +1208,14 @@ async function assertSameGenerationResume(
   const advanced = await journalExtent(fixture);
   assert.ok(advanced.facts > beforeExtent.facts, "offline command advances resident authority");
 
-  await page.waitForSelector(".status.online", { timeout: 15_000 });
-  await page.waitForFunction((expected) => document.querySelector(".status-copy")?.textContent?.includes(expected), epoch);
+  await assertGenerationOnline(page, epoch, "the socket is reopened", RECONNECT_MS);
   monitor.expectNetworkInterruption(false);
   await assertPackedHistory(page, advanced);
   const after = await page.locator('[data-pane="commands"] .event strong').allTextContents();
   assert.ok(after.length > before.length, "same-generation resume appends missed facts");
 }
 
-
+await assertEndpointProbeClosesWithoutResponse();
 await assertEndpointProbeStates();
 await buildResident();
 const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browser-")));
