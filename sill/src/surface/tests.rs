@@ -12,7 +12,7 @@ use super::owner::{
     write_owner, write_owner_with,
 };
 use super::process_state::{
-    process_group_absent, process_group_terminal, process_terminal, process_zombie,
+    ProcessState, process_group_absent, process_group_terminal, process_terminal, process_zombie,
 };
 use super::{
     Contention, LockAttempt, LockAvailability, LockSurfaceError, LockTargetKind, LockTopology,
@@ -538,7 +538,7 @@ fn unreaped_zombie_process_and_group_are_terminal() {
         0
     );
 
-    assert!(process_zombie(pid));
+    assert_eq!(process_zombie(pid), ProcessState::Terminal);
     assert!(process_terminal(pid));
     // The group's only remaining member is that zombie, and signal zero
     // still resolves the group while it goes unreaped, so a terminal answer
