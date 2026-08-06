@@ -19,8 +19,11 @@ use wire::{
 };
 use yew::prelude::*;
 
-use crate::{Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective};
+use crate::{
+    Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective, Surface,
+};
 
+mod mosaic;
 mod view;
 
 use view::render_canvas;
@@ -133,7 +136,7 @@ struct ResponseIdentity {
 fn canvas_app() -> Html {
     let connection = use_state(|| Connection::Starting);
     let surface = use_state(SurfaceData::default);
-    let axis = use_state(|| Axis::Flow);
+    let axis = use_state(|| Surface::View(Axis::Flow));
     let note_task = use_state(String::new);
     let note_text = use_state(String::new);
     let sender = use_mut_ref(|| None::<UnboundedSender<ClientAction>>);

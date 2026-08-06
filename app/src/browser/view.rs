@@ -5,7 +5,7 @@ use super::*;
 pub(super) fn render_canvas(
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
-    axis: &UseStateHandle<Axis>,
+    axis: &UseStateHandle<Surface>,
     sender: &SenderHandle,
     note_task: &UseStateHandle<String>,
     note_text: &UseStateHandle<String>,
@@ -41,7 +41,11 @@ pub(super) fn render_canvas(
     }
 }
 
-pub(super) fn render_rail(axis: &UseStateHandle<Axis>, active_axis: Axis, cursor: &str) -> Html {
+pub(super) fn render_rail(
+    axis: &UseStateHandle<Surface>,
+    active_axis: Surface,
+    cursor: &str,
+) -> Html {
     html! {
         <aside class="rail">
             <div class="brand">
@@ -49,12 +53,15 @@ pub(super) fn render_rail(axis: &UseStateHandle<Axis>, active_axis: Axis, cursor
                 <span class="brand-name">{"Spice Canvas"}</span>
             </div>
             <nav class="axis-nav" aria-label="Canvas axes">
-                {for Axis::ALL.iter().copied().map(|candidate| {
+                {for Surface::all().map(|candidate| {
                     let axis = axis.clone();
                     let selected = candidate == active_axis;
                     html! {
                         <button
-                            class="axis-button"
+                            class={classes!(
+                                "axis-button",
+                                matches!(candidate, Surface::Mosaic).then_some("axis-button-mosaic"),
+                            )}
                             aria-current={selected.then_some("page")}
                             title={candidate.question()}
                             onclick={Callback::from(move |_| axis.set(candidate))}
@@ -73,7 +80,7 @@ pub(super) fn render_rail(axis: &UseStateHandle<Axis>, active_axis: Axis, cursor
 pub(super) fn render_workspace(
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
-    active_axis: Axis,
+    active_axis: Surface,
     sender: &SenderHandle,
     note_task: &UseStateHandle<String>,
     note_text: &UseStateHandle<String>,
@@ -193,7 +200,7 @@ pub(super) fn speech_control(
 }
 
 pub(super) fn render_axis(
-    axis: Axis,
+    axis: Surface,
     surface: &SurfaceData,
     connection: &Connection,
     sender: &SenderHandle,
@@ -202,10 +209,11 @@ pub(super) fn render_axis(
     submit_note: Callback<SubmitEvent>,
 ) -> Html {
     match axis {
-        Axis::Magnitude => render_magnitude(surface),
-        Axis::Flow => render_flow(surface, note_task, note_text, submit_note),
-        Axis::Topology => render_topology(surface),
-        Axis::Chronology => render_chronology(surface, sender, connection),
+        Surface::View(Axis::Magnitude) => render_magnitude(surface),
+        Surface::View(Axis::Flow) => render_flow(surface, note_task, note_text, submit_note),
+        Surface::View(Axis::Topology) => render_topology(surface),
+        Surface::View(Axis::Chronology) => render_chronology(surface, sender, connection),
+        Surface::Mosaic => super::mosaic::render_mosaic(surface, connection),
     }
 }
 
