@@ -26,10 +26,21 @@ pub(crate) struct DirectObserver {
 impl DirectObserver {
     /// Register before the caller reads its state, closing the setup race.
     pub(crate) fn arm(watched: &Path, what: &str) -> Self {
+        Self::try_arm(watched).unwrap_or_else(|error| {
+            panic!("{what} observer arms on {}: {error}", watched.display())
+        })
+    }
+
+    /// Try to register without deciding whether a missing path is expected.
+    ///
+    /// Most callers should use [`Self::arm`]. The fallible boundary exists for
+    /// directory snapshots whose incidental entries may be unlinked before
+    /// each entry can be armed.
+    pub(crate) fn try_arm(watched: &Path) -> io::Result<Self> {
         #[cfg(target_os = "linux")]
-        let observer = linux_observer(watched, what);
+        let observer = linux_observer(watched);
         #[cfg(target_os = "macos")]
-        let observer = macos_observer(watched, what);
+        let observer = macos_observer(watched);
         observer
     }
 
@@ -55,20 +66,21 @@ impl Drop for DirectObserver {
 }
 
 #[cfg(target_os = "linux")]
-fn linux_observer(watched: &Path, what: &str) -> DirectObserver {
+fn linux_observer(watched: &Path) -> io::Result<DirectObserver> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
 
+    let path = CString::new(watched.as_os_str().as_bytes()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "watched path has an interior nul",
+        )
+    })?;
     // SAFETY: inotify_init1 creates an owned notification descriptor.
     let descriptor = unsafe { libc::inotify_init1(libc::IN_CLOEXEC) };
-    assert_ne!(
-        descriptor,
-        -1,
-        "{what} observer starts: {}",
-        io::Error::last_os_error()
-    );
-    let path =
-        CString::new(watched.as_os_str().as_bytes()).expect("watched path has no interior nul");
+    if descriptor == -1 {
+        return Err(io::Error::last_os_error());
+    }
     let mask = libc::IN_ATTRIB
         | libc::IN_CLOSE_WRITE
         | libc::IN_CREATE
@@ -84,9 +96,9 @@ fn linux_observer(watched: &Path, what: &str) -> DirectObserver {
         let error = io::Error::last_os_error();
         // SAFETY: initialization above returned this owned descriptor.
         unsafe { libc::close(descriptor) };
-        panic!("{what} observer arms on {}: {error}", watched.display());
+        return Err(error);
     }
-    DirectObserver { descriptor }
+    Ok(DirectObserver { descriptor })
 }
 
 #[cfg(target_os = "linux")]
@@ -106,28 +118,28 @@ fn wait_linux(descriptor: libc::c_int) -> io::Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-fn macos_observer(watched: &Path, what: &str) -> DirectObserver {
+fn macos_observer(watched: &Path) -> io::Result<DirectObserver> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
 
-    let path =
-        CString::new(watched.as_os_str().as_bytes()).expect("watched path has no interior nul");
+    let path = CString::new(watched.as_os_str().as_bytes()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "watched path has an interior nul",
+        )
+    })?;
     // SAFETY: the path remains valid for this call.
     let watched_descriptor = unsafe { libc::open(path.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
-    assert_ne!(
-        watched_descriptor,
-        -1,
-        "{what} observer arms on {}: {}",
-        watched.display(),
-        io::Error::last_os_error()
-    );
+    if watched_descriptor == -1 {
+        return Err(io::Error::last_os_error());
+    }
     // SAFETY: kqueue creates an owned file-event descriptor.
     let descriptor = unsafe { libc::kqueue() };
     if descriptor == -1 {
         let error = io::Error::last_os_error();
         // SAFETY: the open call above returned this owned descriptor.
         unsafe { libc::close(watched_descriptor) };
-        panic!("{what} observer starts: {error}");
+        return Err(error);
     }
     let change = libc::kevent {
         ident: watched_descriptor as libc::uintptr_t,
@@ -161,12 +173,12 @@ fn macos_observer(watched: &Path, what: &str) -> DirectObserver {
             libc::close(descriptor);
             libc::close(watched_descriptor);
         }
-        panic!("{what} observer arms on {}: {error}", watched.display());
+        return Err(error);
     }
-    DirectObserver {
+    Ok(DirectObserver {
         descriptor,
         watched: watched_descriptor,
-    }
+    })
 }
 
 #[cfg(target_os = "macos")]
