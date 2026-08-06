@@ -158,6 +158,47 @@ fn admit_staging_environment(
     Ok(())
 }
 
+/// Compile the browser app into the worktree's development stage.
+///
+/// The committed stage is reproducible bytes owned by one environment, so a
+/// lane that changed the app cannot see its own change without a round trip
+/// through the sealed image. This writes a second stage instead, at
+/// [`spice::canvas::DEV_STAGE`], which the resident serves in place of the
+/// embedded bytes whenever it exists; it is never committed and never
+/// compared. Every host may run it, because nothing downstream reproduces
+/// what it emits.
+///
+/// The directory is removed first rather than built over: [`finalize_stage`]
+/// refuses a stage that already carries `app.module`, so a second run would
+/// otherwise fail on the artifact its own first run left behind.
+///
+/// # Errors
+///
+/// Returns an unreadable workspace root, a development stage that cannot be
+/// removed, a missing Cargo home, Trunk execution failure, or a refused
+/// generated stage.
+pub fn dev_app(
+    environment: &ReleaseEnvironment,
+    output: &mut impl Write,
+) -> Result<(), AppBuildError> {
+    let root = workspace_root()?;
+    let stage = root.join(spice::canvas::DEV_STAGE);
+    if stage.exists() {
+        fs::remove_dir_all(&stage).map_err(|source| AppBuildError::Io {
+            path: stage.clone(),
+            source,
+        })?;
+    }
+    run_trunk(&root, environment, &stage, output)?;
+    writeln!(
+        output,
+        "[app] {} is now served by the next `spice up` in this worktree; \
+         delete it to go back to the embedded app",
+        stage.display()
+    )
+    .map_err(AppBuildError::Output)
+}
+
 /// Rebuild the browser app outside the committed stage and compare it back.
 ///
 /// Every host first asks whether the stage was built from the sources now in

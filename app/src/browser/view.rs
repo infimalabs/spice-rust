@@ -2,13 +2,25 @@
 
 use super::*;
 
+#[derive(Clone)]
+pub(super) struct AgentControls {
+    pub(super) selected_lane: UseStateHandle<String>,
+    pub(super) seat_worktree: UseStateHandle<String>,
+    pub(super) seat_vendor: UseStateHandle<String>,
+    pub(super) seat_life: UseStateHandle<String>,
+    pub(super) steer_text: UseStateHandle<String>,
+    pub(super) submit_seat: Callback<SubmitEvent>,
+    pub(super) submit_steer: Callback<SubmitEvent>,
+}
+
 pub(super) struct CanvasRender<'a> {
     pub connection: &'a UseStateHandle<Connection>,
     pub surface: &'a UseStateHandle<SurfaceData>,
     pub axis: &'a UseStateHandle<Axis>,
-    pub workspace_view: &'a UseStateHandle<WorkspaceView>,
+    pub mosaic: &'a UseStateHandle<bool>,
     pub composer_drafts: &'a UseReducerHandle<ComposerDrafts>,
     pub sender: &'a SenderHandle,
+    pub agents: &'a AgentControls,
     pub note_task: &'a UseStateHandle<String>,
     pub note_text: &'a UseStateHandle<String>,
     pub submit_note: Callback<SubmitEvent>,
@@ -27,29 +39,50 @@ pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
         .unwrap_or_else(|| "-".to_owned());
     html! {
         <div class="shell">
-            {render_rail(render.axis, active_axis, &cursor)}
+            {render_rail(render.axis, render.mosaic, active_axis, &cursor)}
             {render_workspace(&render, active_axis)}
         </div>
     }
 }
 
-pub(super) fn render_rail(axis: &UseStateHandle<Axis>, active_axis: Axis, cursor: &str) -> Html {
+pub(super) fn render_rail(
+    axis: &UseStateHandle<Axis>,
+    mosaic: &UseStateHandle<bool>,
+    active_axis: Axis,
+    cursor: &str,
+) -> Html {
     html! {
         <aside class="rail">
             <div class="brand">
                 <span class="brand-mark">{"SP"}</span>
                 <span class="brand-name">{"Spice Canvas"}</span>
             </div>
-            <nav class="axis-nav" aria-label="Canvas axes">
+            <nav class="axis-nav" aria-label="Canvas views">
+                <button
+                    class="axis-button"
+                    aria-current={(**mosaic).then_some("page")}
+                    title="Converse with seated agents"
+                    onclick={{
+                        let mosaic = mosaic.clone();
+                        Callback::from(move |_| mosaic.set(true))
+                    }}
+                >
+                    <span class="axis-glyph mosaic-glyph"></span>
+                    <span class="axis-label">{"Mosaic"}</span>
+                </button>
                 {for Axis::ALL.iter().copied().map(|candidate| {
                     let axis = axis.clone();
-                    let selected = candidate == active_axis;
+                    let mosaic = mosaic.clone();
+                    let selected = !*mosaic && candidate == active_axis;
                     html! {
                         <button
                             class="axis-button"
                             aria-current={selected.then_some("page")}
                             title={candidate.question()}
-                            onclick={Callback::from(move |_| axis.set(candidate))}
+                            onclick={Callback::from(move |_| {
+                                axis.set(candidate);
+                                mosaic.set(false);
+                            })}
                         >
                             <span class="axis-glyph"></span>
                             <span class="axis-label">{title(candidate.as_str())}</span>
@@ -63,28 +96,10 @@ pub(super) fn render_rail(axis: &UseStateHandle<Axis>, active_axis: Axis, cursor
 }
 
 pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> Html {
-    let runtime = (**render.surface).as_ref();
-    let task_count = runtime
-        .and_then(CanvasRuntime::board)
-        .map_or(0, |board| board.tasks.len());
-    let active_tasks = runtime
-        .and_then(CanvasRuntime::board)
-        .map_or(0, |board| board.active_public_tasks().count());
-    let lane_count = runtime
-        .and_then(CanvasRuntime::lanes)
-        .map_or(0, |lanes| lanes.lanes.len());
-    let pending_count = runtime
-        .and_then(CanvasRuntime::consent)
-        .map_or(0, |consent| consent.pending.len());
-    let cursor = runtime
-        .and_then(CanvasRuntime::resume)
-        .map(|cursor| cursor.seq.to_string())
-        .unwrap_or_else(|| "-".to_owned());
     html! {
         <div class="workspace">
             <header class="topbar">
                 <div class="mobile-brand">{"Spice Canvas"}</div>
-                {render_workspace_tabs(render.workspace_view)}
                 <div class={render.connection.class()}>
                     <span class="status-dot"></span>
                     <span class="status-copy">{render.connection.label()}</span>
@@ -103,71 +118,266 @@ pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> 
                 </div>
             </header>
             <main class="content">
-                if **render.workspace_view == WorkspaceView::Mosaic {
+                if **render.mosaic {
+                    {render_agent_console(render.surface, render.agents)}
                     {composer::render_mosaic(
                         render.surface,
                         render.sender,
                         render.composer_drafts,
                     )}
                 } else {
-                    <>
-                    <div class="page-heading">
-                        <div>
-                            <h1>{title(active_axis.as_str())}</h1>
-                            <p>{active_axis.question()}</p>
-                        </div>
-                    </div>
-                    <section class="metrics" aria-label="Current resident metrics">
-                        {metric("Tasks", task_count.to_string(), format!("{active_tasks} active"))}
-                        {metric(
-                            "Lanes",
-                            lane_count.to_string(),
-                            resident_state(render.surface),
-                        )}
-                        {metric(
-                            "Consent",
-                            pending_count.to_string(),
-                            "pending decisions".to_owned(),
-                        )}
-                        {metric("Journal", cursor, "admitted stream cursor".to_owned())}
-                    </section>
-                    <div class="pane-strip" aria-label="Panes on this axis">
-                        {for active_axis.panes().map(|pane| html! {
-                            <span class="pane-chip">{title(pane.as_str())}</span>
-                        })}
-                    </div>
-                    {render_axis(
-                        active_axis,
-                        render.surface,
-                        render.connection,
-                        render.sender,
-                        render.note_task,
-                        render.note_text,
-                        render.submit_note.clone(),
-                    )}
-                    </>
+                    {render_analytics(render, active_axis)}
                 }
             </main>
         </div>
     }
 }
 
-fn render_workspace_tabs(workspace_view: &UseStateHandle<WorkspaceView>) -> Html {
-    let canvas_view = workspace_view.clone();
-    let mosaic_view = workspace_view.clone();
+fn render_analytics(render: &CanvasRender<'_>, active_axis: Axis) -> Html {
+    let runtime = (**render.surface).as_ref();
+    let task_count = runtime
+        .and_then(CanvasRuntime::board)
+        .map_or(0, |board| board.tasks.len());
+    let active_tasks = runtime
+        .and_then(CanvasRuntime::board)
+        .map_or(0, |board| board.active_public_tasks().count());
+    let lane_count = runtime
+        .and_then(CanvasRuntime::lanes)
+        .map_or(0, |lanes| lanes.lanes.len());
+    let pending_count = runtime
+        .and_then(CanvasRuntime::consent)
+        .map_or(0, |consent| consent.pending.len());
+    let cursor = runtime
+        .and_then(CanvasRuntime::resume)
+        .map(|cursor| cursor.seq.to_string())
+        .unwrap_or_else(|| "-".to_owned());
     html! {
-        <nav class="workspace-tabs" aria-label="Workspace views">
-            <button
-                type="button"
-                aria-current={(**workspace_view == WorkspaceView::Canvas).then_some("page")}
-                onclick={Callback::from(move |_| canvas_view.set(WorkspaceView::Canvas))}
-            >{"Canvas"}</button>
-            <button
-                type="button"
-                aria-current={(**workspace_view == WorkspaceView::Mosaic).then_some("page")}
-                onclick={Callback::from(move |_| mosaic_view.set(WorkspaceView::Mosaic))}
-            >{"Mosaic"}</button>
-        </nav>
+        <>
+            <div class="page-heading">
+                <div>
+                    <h1>{title(active_axis.as_str())}</h1>
+                    <p>{active_axis.question()}</p>
+                </div>
+            </div>
+            <section class="metrics" aria-label="Current resident metrics">
+                {metric("Tasks", task_count.to_string(), format!("{active_tasks} active"))}
+                {metric("Lanes", lane_count.to_string(), resident_state(render.surface))}
+                {metric(
+                    "Consent",
+                    pending_count.to_string(),
+                    "pending decisions".to_owned(),
+                )}
+                {metric("Journal", cursor, "admitted stream cursor".to_owned())}
+            </section>
+            <div class="pane-strip" aria-label="Panes on this axis">
+                {for active_axis.panes().map(|pane| html! {
+                    <span class="pane-chip">{title(pane.as_str())}</span>
+                })}
+            </div>
+            {render_axis(
+                active_axis,
+                render.surface,
+                render.connection,
+                render.sender,
+                render.note_task,
+                render.note_text,
+                render.submit_note.clone(),
+            )}
+        </>
+    }
+}
+
+/// The operator's primary surface: current lanes, one selected conversation,
+/// and the controls that create or direct an agent without leaving Canvas.
+pub(super) fn render_agent_console(surface: &SurfaceData, controls: &AgentControls) -> Html {
+    let runtime = surface.as_ref();
+    let lanes = runtime
+        .and_then(CanvasRuntime::lanes)
+        .map(|lanes| lanes.lanes.as_slice())
+        .unwrap_or(&[]);
+    let selected = selected_agent(lanes, &controls.selected_lane);
+    let pending = selected_inbox(runtime, selected);
+
+    html! {
+        <section class="agent-console" data-pane="agent-console">
+            <div class="agent-console-heading">
+                <div>
+                    <span class="eyebrow">{"Live workspace"}</span>
+                    <h1>{"Agents"}</h1>
+                    <p>{"Seat a lane, send direction, and keep its inbox in view."}</p>
+                </div>
+                <span class="agent-count">{format!("{} active", lanes.len())}</span>
+            </div>
+            {render_agent_tabs(lanes, selected, controls)}
+            <div class="agent-stage">
+                {render_conversation(runtime, selected, pending, controls)}
+                {render_seat_panel(runtime, controls)}
+            </div>
+        </section>
+    }
+}
+
+fn selected_agent<'a>(
+    lanes: &'a [crate::runtime::LaneRow],
+    requested: &str,
+) -> Option<&'a crate::runtime::LaneRow> {
+    requested
+        .parse::<CanonicalUuid>()
+        .ok()
+        .and_then(|requested| lanes.iter().find(|lane| lane.lane == requested))
+        .or_else(|| lanes.first())
+}
+
+fn selected_inbox<'a>(
+    runtime: Option<&'a CanvasRuntime>,
+    selected: Option<&crate::runtime::LaneRow>,
+) -> &'a [wire::intent::PendingDirective] {
+    selected
+        .and_then(|selected| {
+            runtime
+                .and_then(CanvasRuntime::inbox)
+                .and_then(|inbox| inbox.lanes.iter().find(|lane| lane.lane == selected.lane))
+        })
+        .map(|lane| lane.pending.as_slice())
+        .unwrap_or(&[])
+}
+
+fn render_agent_tabs(
+    lanes: &[crate::runtime::LaneRow],
+    selected: Option<&crate::runtime::LaneRow>,
+    controls: &AgentControls,
+) -> Html {
+    html! {
+        <div class="agent-tabs" role="tablist" aria-label="Seated agents">
+            if lanes.is_empty() {
+                <span class="agent-tab-empty">{"No agents seated"}</span>
+            } else {
+                {for lanes.iter().map(|lane| {
+                    let lane_id = lane.lane.to_string();
+                    let selected_now = selected.is_some_and(|selected| selected.lane == lane.lane);
+                    let choose = controls.selected_lane.clone();
+                    let label = format!("Open {} lane {}", lane.vendor, short(&lane_id));
+                    html! {
+                        <button
+                            class={classes!("agent-tab", selected_now.then_some("selected"))}
+                            type="button" role="tab"
+                            aria-selected={selected_now.to_string()} aria-label={label}
+                            data-lane={lane_id.clone()}
+                            onclick={Callback::from(move |_| choose.set(lane_id.clone()))}
+                        >
+                            <span class="agent-presence"></span>
+                            <span>{lane.vendor.to_string()}</span>
+                            <span class="mono">{short(&lane.lane.to_string())}</span>
+                        </button>
+                    }
+                })}
+            }
+        </div>
+    }
+}
+
+fn render_conversation(
+    runtime: Option<&CanvasRuntime>,
+    selected: Option<&crate::runtime::LaneRow>,
+    pending: &[wire::intent::PendingDirective],
+    controls: &AgentControls,
+) -> Html {
+    let can_steer = selected.is_some_and(|lane| lane.occupant.is_some())
+        && runtime.is_some_and(|runtime| runtime.offers(CommandKind::SteerSend));
+    html! {
+        <section class="conversation" aria-label="Selected agent conversation">
+            {render_conversation_heading(selected)}
+            {render_inbox(pending)}
+            <form class="agent-compose" onsubmit={controls.submit_steer.clone()}>
+                <label for="agent-message">{"Message"}</label>
+                <textarea
+                    id="agent-message" placeholder="Send direction to the selected agent…"
+                    value={(*controls.steer_text).clone()} disabled={!can_steer}
+                    oninput={state_from_textarea(controls.steer_text.clone())}
+                ></textarea>
+                <button
+                    type="submit"
+                    disabled={!can_steer || controls.steer_text.trim().is_empty()}
+                >{"Send direction"}</button>
+            </form>
+        </section>
+    }
+}
+
+fn render_conversation_heading(selected: Option<&crate::runtime::LaneRow>) -> Html {
+    html! {
+        <div class="conversation-heading">
+            <div>
+                <h2>{selected.map_or_else(|| "Conversation".to_owned(), |lane| {
+                    format!("{} / {}", lane.vendor, short(&lane.lane.to_string()))
+                })}</h2>
+                <p>{selected.map_or_else(|| "Seat an agent to begin.".to_owned(), |lane| {
+                    format!("{} / {} / {}", lane.disposition, lane.life, lane.worktree)
+                })}</p>
+            </div>
+            if let Some(lane) = selected {
+                <span class={classes!("tag", lane.occupant.is_some().then_some("active"))}>
+                    {if lane.occupant.is_some() { "online" } else { "vacant" }}
+                </span>
+            }
+        </div>
+    }
+}
+
+fn render_inbox(pending: &[wire::intent::PendingDirective]) -> Html {
+    html! {
+        <div class="conversation-feed" aria-live="polite">
+            if pending.is_empty() {
+                <div class="conversation-empty">
+                    <strong>{"Inbox clear"}</strong>
+                    <p>{"Pending direction and acknowledgement state appear here."}</p>
+                </div>
+            } else {
+                {for pending.iter().map(|directive| html! {
+                    <article class="message outgoing">
+                        <div class="message-meta">
+                            <strong>{"You"}</strong>
+                            <span>{format!("{} / pending", directive.key)}</span>
+                        </div>
+                        <p>{directive.text.clone()}</p>
+                    </article>
+                })}
+            }
+        </div>
+    }
+}
+
+fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &AgentControls) -> Html {
+    let can_seat = runtime.is_some_and(|runtime| runtime.offers(CommandKind::LaneSeat));
+    let ready = can_seat
+        && !controls.seat_worktree.trim().is_empty()
+        && !controls.seat_vendor.trim().is_empty()
+        && !controls.seat_life.trim().is_empty();
+    html! {
+        <aside class="seat-panel">
+            <div class="seat-panel-heading">
+                <span class="eyebrow">{"Add agent"}</span>
+                <h2>{"Seat a lane"}</h2>
+                <p>{"Use an existing worktree in this repository."}</p>
+            </div>
+            <form class="seat-form" onsubmit={controls.submit_seat.clone()}>
+                <label for="seat-worktree">{"Worktree"}</label>
+                <input id="seat-worktree" type="text" placeholder="/absolute/path/to/worktree"
+                    value={(*controls.seat_worktree).clone()}
+                    oninput={state_from_input(controls.seat_worktree.clone())} />
+                <label for="seat-vendor">{"Vendor"}</label>
+                <input id="seat-vendor" type="text" value={(*controls.seat_vendor).clone()}
+                    oninput={state_from_input(controls.seat_vendor.clone())} />
+                <label for="seat-life">{"Life"}</label>
+                <input id="seat-life" type="text" list="lane-lives"
+                    value={(*controls.seat_life).clone()}
+                    oninput={state_from_input(controls.seat_life.clone())} />
+                <datalist id="lane-lives">
+                    <option value="steer" /><option value="drive" /><option value="drain" />
+                </datalist>
+                <button type="submit" disabled={!ready}>{"Seat agent"}</button>
+            </form>
+        </aside>
     }
 }
 

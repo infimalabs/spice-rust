@@ -159,6 +159,7 @@ fn every_landed_task_mutation_leaf_uses_one_current_command_kind() {
         (&["board", "graph"][..], CommandKind::BoardGraph),
         (&["board", "handout"][..], CommandKind::BoardHandout),
         (&["task", "next"][..], CommandKind::ClaimWin),
+        (&["task", "status"][..], CommandKind::BoardRead),
         (&["task", "reclaim"][..], CommandKind::ClaimRenew),
         (&["task", "capture"][..], CommandKind::ClaimWin),
         (&["task", "add"][..], CommandKind::TaskAdd),
@@ -337,7 +338,7 @@ fn canvas_opens_the_exact_origin_and_never_crosses_the_capability() {
 }
 
 #[test]
-fn canvas_refuses_missing_malformed_and_nonloopback_discovery_without_launching() {
+fn canvas_refuses_missing_malformed_and_unresolved_discovery_without_launching() {
     let fixture = Fixture::new("canvas-refusals");
     let mut launches = 0_u8;
     let missing = open_canvas_with(
@@ -374,14 +375,17 @@ fn canvas_refuses_missing_malformed_and_nonloopback_discovery_without_launching(
     };
     assert_eq!(malformed.reason, "canvas::discovery-malformed");
 
+    // A name is not a socket. The address a client dials has to be the one the
+    // resident published, not whatever a resolver answers with at the moment
+    // the client asks, so an endpoint that needs resolving is refused unread.
     canvas::Discovery {
-        endpoint: "http://192.0.2.1:48123".to_owned(),
+        endpoint: "http://canvas.example:48123".to_owned(),
         capability: uuid(3),
         epoch: uuid(4),
     }
     .publish(&fixture.canvas)
-    .expect("nonloopback fixture publishes");
-    let nonloopback = open_canvas_with(
+    .expect("unresolved fixture publishes");
+    let unresolved = open_canvas_with(
         &fixture.canvas,
         || {},
         |_| {
@@ -389,11 +393,46 @@ fn canvas_refuses_missing_malformed_and_nonloopback_discovery_without_launching(
             Ok(())
         },
     );
-    let Outcome::Fault(nonloopback) = nonloopback else {
-        panic!("nonloopback discovery must fault");
+    let Outcome::Fault(unresolved) = unresolved else {
+        panic!("named-host discovery must fault");
     };
-    assert_eq!(nonloopback.reason, "canvas::endpoint-not-loopback");
+    assert_eq!(unresolved.reason, "canvas::endpoint-invalid");
     assert_eq!(launches, 0, "no refused discovery reached the launcher");
+}
+
+/// A surface the operator bound off loopback is still opened, not refused.
+///
+/// The client once required a loopback endpoint, which would now refuse the
+/// exact address `spice up --host` was told to bind: the resident would be
+/// running and reachable while every local command declined to dial it. The
+/// endpoint has to be one literal socket, and past that the client's business
+/// is whether the discovery is current, not which interface it names.
+#[test]
+fn canvas_opens_a_discovery_naming_an_address_the_operator_bound() {
+    let fixture = Fixture::new("canvas-routable");
+    let mut opened = None;
+    canvas::Discovery {
+        endpoint: "http://192.0.2.1:48123".to_owned(),
+        capability: uuid(3),
+        epoch: uuid(4),
+    }
+    .publish(&fixture.canvas)
+    .expect("routable fixture publishes");
+
+    let outcome = open_canvas_with(
+        &fixture.canvas,
+        || {},
+        |endpoint| {
+            opened = Some(endpoint.to_owned());
+            Ok(())
+        },
+    );
+
+    assert!(
+        matches!(outcome, Outcome::Reply(_)),
+        "a routable discovery opens: {outcome:?}"
+    );
+    assert_eq!(opened.as_deref(), Some("http://192.0.2.1:48123"));
 }
 
 #[test]

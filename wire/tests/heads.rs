@@ -11,6 +11,19 @@ const TASK: &str = r#"{
   "handle": "WIRE-aBcD",
   "uuid": "018f82d4-6f59-7d06-92e3-bce913116301",
   "title": "Bind authority heads",
+  "description": "Keep complete task context on the current statement",
+  "acceptance": ["Every authored field survives the head round trip"],
+  "project": "wire",
+  "tags": ["genesis", "wire"],
+  "dependencies": ["WIRE-ZyX9"],
+  "provenance": "task:WIRE-ZyX9",
+  "revision": 41
+}"#;
+
+const TASK_WITHOUT_AUTHORED_CONTEXT: &str = r#"{
+  "handle": "WIRE-aBcD",
+  "uuid": "018f82d4-6f59-7d06-92e3-bce913116301",
+  "title": "Bind authority heads",
   "project": "wire",
   "tags": ["genesis", "wire"],
   "dependencies": ["WIRE-ZyX9"],
@@ -109,7 +122,9 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
     assert_fields::<TaskHead>(
         TASK,
         &[
+            "acceptance",
             "dependencies",
+            "description",
             "handle",
             "project",
             "provenance",
@@ -160,6 +175,14 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
             "worktree",
         ],
     );
+}
+
+#[test]
+fn a_pre_context_task_head_normalizes_into_the_current_empty_context() {
+    let head: TaskHead = serde_json::from_str(TASK_WITHOUT_AUTHORED_CONTEXT)
+        .expect("the pre-context head has one explicit normalization");
+    assert_eq!(head.description, None);
+    assert_eq!(head.acceptance, Vec::<String>::new());
 }
 
 #[test]

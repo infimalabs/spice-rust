@@ -46,11 +46,21 @@ fn planning_is_canonical_digest_bound_and_side_effect_free() {
     );
     assert_eq!(fs::read(scratch.exclude()).unwrap(), b"# local ignore\n");
     assert!(!record_path(&repository).unwrap().exists());
-    assert!(!scratch.join(GIT_PRE_COMMIT_PATH).exists());
-    assert!(!scratch.join(GIT_COMMIT_MESSAGE_PATH).exists());
-    assert!(!scratch.join(GIT_REFERENCE_TRANSACTION_PATH).exists());
-    assert!(!scratch.join(ENTRY_PATH).exists());
-    assert!(!scratch.join(SKILL_PATH).exists());
+    assert!(!repository.common_dir().join(GIT_PRE_COMMIT_PATH).exists());
+    assert!(
+        !repository
+            .common_dir()
+            .join(GIT_COMMIT_MESSAGE_PATH)
+            .exists()
+    );
+    assert!(
+        !repository
+            .common_dir()
+            .join(GIT_REFERENCE_TRANSACTION_PATH)
+            .exists()
+    );
+    assert!(!repository.common_dir().join(ENTRY_PATH).exists());
+    assert!(!repository.common_dir().join(SKILL_PATH).exists());
 }
 
 #[test]
@@ -71,33 +81,42 @@ fn apply_is_idempotent_and_unapply_is_exact() {
     assert_eq!(first, repeated);
     assert_eq!(installed_images, images(&repository, repeated.plan()));
     assert_eq!(
-        fs::read_to_string(scratch.join(GIT_PRE_COMMIT_PATH)).unwrap(),
+        fs::read_to_string(repository.common_dir().join(GIT_PRE_COMMIT_PATH)).unwrap(),
         GIT_PRE_COMMIT
     );
     assert_eq!(
-        fs::read_to_string(scratch.join(GIT_COMMIT_MESSAGE_PATH)).unwrap(),
+        fs::read_to_string(repository.common_dir().join(GIT_COMMIT_MESSAGE_PATH)).unwrap(),
         GIT_COMMIT_MESSAGE
     );
     assert_eq!(
-        fs::read_to_string(scratch.join(GIT_REFERENCE_TRANSACTION_PATH)).unwrap(),
+        fs::read_to_string(repository.common_dir().join(GIT_REFERENCE_TRANSACTION_PATH)).unwrap(),
         GIT_REFERENCE_TRANSACTION
     );
-    assert_eq!(mode(&scratch.join(GIT_PRE_COMMIT_PATH)), EXECUTABLE_MODE);
     assert_eq!(
-        mode(&scratch.join(GIT_COMMIT_MESSAGE_PATH)),
+        mode(&repository.common_dir().join(GIT_PRE_COMMIT_PATH)),
         EXECUTABLE_MODE
     );
     assert_eq!(
-        mode(&scratch.join(GIT_REFERENCE_TRANSACTION_PATH)),
+        mode(&repository.common_dir().join(GIT_COMMIT_MESSAGE_PATH)),
         EXECUTABLE_MODE
     );
-    assert_eq!(run(&scratch.join(BINARY_PATH)), b"spice-appliance\n");
+    assert_eq!(
+        mode(&repository.common_dir().join(GIT_REFERENCE_TRANSACTION_PATH)),
+        EXECUTABLE_MODE
+    );
+    assert_eq!(
+        run(&repository.common_dir().join(BINARY_PATH)),
+        b"spice-appliance\n"
+    );
     assert!(
         fs::read_to_string(scratch.exclude())
             .unwrap()
             .contains(EXCLUDE_BLOCK)
     );
-    assert_eq!(fs::read_to_string(scratch.join(SKILL_PATH)).unwrap(), SKILL);
+    assert_eq!(
+        fs::read_to_string(repository.common_dir().join(SKILL_PATH)).unwrap(),
+        SKILL
+    );
     assert_eq!(
         record_path(&repository).unwrap(),
         repository
@@ -183,11 +202,11 @@ fn an_uninstalled_prior_build_receipt_is_superseded_by_a_current_digest_bound_in
     assert_eq!(installed.status(), InstallStatus::Complete);
     assert_eq!(installed.digest(), &current_digest);
     assert_eq!(
-        fs::read(scratch.join(SKILL_PATH)).unwrap(),
+        fs::read(repository.common_dir().join(SKILL_PATH)).unwrap(),
         SKILL.as_bytes()
     );
     assert_eq!(
-        fs::read(scratch.join(BINARY_PATH)).unwrap(),
+        fs::read(repository.common_dir().join(BINARY_PATH)).unwrap(),
         b"current build binary\n"
     );
 
@@ -293,7 +312,7 @@ fn stale_plan_refuses_before_record_or_target_mutation() {
         b"operator changed this\n"
     );
     assert!(!record_path(&repository).unwrap().exists());
-    assert!(!scratch.join(ENTRY_PATH).exists());
+    assert!(!repository.common_dir().join(ENTRY_PATH).exists());
 }
 
 #[test]
@@ -307,12 +326,17 @@ fn changed_optional_binary_refuses_the_planned_digest() {
     let error = apply(&repository, Some(&binary), &stale).unwrap_err();
     assert!(matches!(error, InstallError::DigestMismatch { .. }));
     assert!(!record_path(&repository).unwrap().exists());
-    assert!(!scratch.join(BINARY_PATH).exists());
+    assert!(!repository.common_dir().join(BINARY_PATH).exists());
 }
 
 #[test]
 fn generated_guidance_and_install_errors_name_spice() {
-    assert_eq!(SKILL.matches(".spice/bin/spice up").count(), 1);
+    assert_eq!(
+        SKILL
+            .matches("--git-common-dir)/.spice-install/bin/spice up")
+            .count(),
+        1
+    );
     assert!(!SKILL.contains("spice-rust"));
     assert!(!SKILL.contains("Rust"));
 
@@ -399,7 +423,11 @@ fn operator_drift_refuses_unapply_before_any_reversal() {
     let planned = plan(&repository, None).unwrap();
     apply(&repository, None, &planned.digest().unwrap()).unwrap();
     let generated = images(&repository, &planned);
-    fs::write(scratch.join(ENTRY_PATH), b"operator-owned replacement\n").unwrap();
+    fs::write(
+        repository.common_dir().join(ENTRY_PATH),
+        b"operator-owned replacement\n",
+    )
+    .unwrap();
 
     let error = unapply(&repository).unwrap_err();
     assert!(matches!(
@@ -430,7 +458,7 @@ fn malformed_record_and_divergent_exclusions_refuse_without_mutation() {
     .unwrap();
     let error = plan(&repository, None).unwrap_err();
     assert!(matches!(error, InstallError::Decode(_)));
-    assert!(!malformed.join(ENTRY_PATH).exists());
+    assert!(!repository.common_dir().join(ENTRY_PATH).exists());
 
     let divergent = Scratch::new("divergent");
     let repository = divergent.repository();
@@ -470,7 +498,7 @@ fn legacy_record_names_its_owning_release_and_refuses_without_mutation() {
         assert!(error.to_string().contains(owner));
         assert_eq!(fs::read(scratch.exclude()).unwrap(), before_exclude);
         assert!(!record_path(&repository).unwrap().exists());
-        assert!(!scratch.join(ENTRY_PATH).exists());
+        assert!(!repository.common_dir().join(ENTRY_PATH).exists());
     }
 }
 
@@ -484,11 +512,15 @@ fn prior_current_path_record_names_its_owning_release_before_mutation() {
         let installed = images(&repository, &planned);
         let mut record = read_record(&repository).unwrap().unwrap().record;
         record.version = version;
-        fs::write(
-            record_path(&repository).unwrap(),
-            wire::encode(&record).unwrap(),
-        )
-        .unwrap();
+        let mut bytes = wire::encode(&record).unwrap();
+        if version == 4 {
+            let mut document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            let worktree = serde_json::to_value(repository.worktree_root()).unwrap();
+            document["repository"]["worktree"] = worktree.clone();
+            document["plan"]["repository"]["worktree"] = worktree;
+            bytes = serde_json::to_vec(&document).unwrap();
+        }
+        fs::write(record_path(&repository).unwrap(), bytes).unwrap();
 
         let error = plan(&repository, None).unwrap_err();
         assert!(matches!(
@@ -528,9 +560,9 @@ fn planning_binds_internal_symlinked_install_parents_and_refuses_escape() {
 
     let scratch = Scratch::new("symlink");
     let repository = scratch.repository();
-    let outside = scratch.join("outside");
+    let outside = repository.common_dir().join("outside");
     fs::create_dir(&outside).unwrap();
-    symlink(&outside, scratch.join(".agents")).unwrap();
+    symlink(&outside, repository.common_dir().join(".spice-install")).unwrap();
 
     let planned = plan(&repository, None).unwrap();
     let skill = planned
@@ -538,9 +570,9 @@ fn planning_binds_internal_symlinked_install_parents_and_refuses_escape() {
         .iter()
         .find(|operation| operation.asset() == Asset::Skill)
         .unwrap();
-    assert_eq!(skill.destination, "outside/skills/spice/SKILL.md");
+    assert_eq!(skill.destination, "outside/agents/skills/spice/SKILL.md");
     apply(&repository, None, &planned.digest().unwrap()).unwrap();
-    assert!(outside.join("skills/spice/SKILL.md").is_file());
+    assert!(outside.join("agents/skills/spice/SKILL.md").is_file());
     unapply(&repository).unwrap();
 
     let escaped = Scratch::new("symlink-escape");
@@ -548,7 +580,7 @@ fn planning_binds_internal_symlinked_install_parents_and_refuses_escape() {
     let external = escaped.0.with_extension("external");
     fs::create_dir(&external).unwrap();
     let canonical_external = fs::canonicalize(&external).unwrap();
-    symlink(&external, escaped.join(".agents")).unwrap();
+    symlink(&external, repository.common_dir().join(".spice-install")).unwrap();
     let error = plan(&repository, None).unwrap_err();
     assert!(matches!(
         error,

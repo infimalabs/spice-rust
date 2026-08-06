@@ -20,7 +20,7 @@ pub(crate) fn open_canvas_with(
         Ok(discovery) => discovery,
         Err(outcome) => return rebody(outcome),
     };
-    if let Err(outcome) = loopback_endpoint(&discovery.value.endpoint) {
+    if let Err(outcome) = dialable_endpoint(&discovery.value.endpoint) {
         return rebody(outcome);
     }
     before_current_check();

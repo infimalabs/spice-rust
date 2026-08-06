@@ -148,7 +148,7 @@ fn main() {
     deliver_target_refusal(contract.path, form);
     #[cfg(not(target_arch = "wasm32"))]
     let outcome = match contract.path {
-        ["up"] => resident::up(),
+        ["up"] => resident::up(leaf),
         ["down"] => resident::down(contract),
         _ => not_landed(contract),
     };
@@ -272,6 +272,7 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         ["board"]
         | ["board", "graph"]
         | ["board", "handout"]
+        | ["task", "status"]
         | ["task", "next"]
         | ["task", "reclaim"]
         | ["task", "add"]

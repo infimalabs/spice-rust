@@ -108,12 +108,16 @@ fn launch_plan(
         .display()
         .to_string();
     let environment = launch_environment(repository)?;
+    let prompt = format!(
+        "[$spice](<{}>)",
+        spice::install::installed_skill(repository).display()
+    );
     spice::agent_launch::compose(
         resolved.root(),
         spice::agent_launch::Inputs {
             worktree: repository.worktree_root().to_path_buf(),
             vendor: name.clone(),
-            prompt: "[$spice](.agents/skills/spice/SKILL.md)".to_owned(),
+            prompt,
             executable,
             environment,
             lane,

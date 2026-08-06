@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 import { unwatchFile, watchFile } from "node:fs";
-import { chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,12 +37,14 @@ const axisPanes = new Map([
   ]],
 ]);
 
-function waitForDiscovery(child, canvas, timeout = 10_000) {
+function waitForDiscovery(child, canvas, timeout = 30_000) {
   return new Promise((resolveDiscovery, rejectDiscovery) => {
     let settled = false;
     let lastError;
-    const discoveryChanged = () => readPublishedDiscovery();
-    watchFile(canvas, { interval: 100 }, discoveryChanged);
+    const published = (current, previous) => {
+      if (current.ino !== previous.ino || current.size !== previous.size) readPublishedDiscovery();
+    };
+    watchFile(canvas, { interval: 50 }, published);
     const deadline = setTimeout(() => {
       finish(new Error("timed out waiting for resident canvas discovery", { cause: lastError }));
     }, timeout);
@@ -54,7 +56,7 @@ function waitForDiscovery(child, canvas, timeout = 10_000) {
       if (settled) return;
       settled = true;
       clearTimeout(deadline);
-      unwatchFile(canvas, discoveryChanged);
+      unwatchFile(canvas, published);
       child.off("exit", residentExit);
       if (error) rejectDiscovery(error);
       else resolveDiscovery(discovery);
@@ -84,7 +86,7 @@ function waitForDiscovery(child, canvas, timeout = 10_000) {
 async function startResident(fixture) {
   const canvas = join(fixture, ".git/.spice/canvas");
   await mkdir(dirname(canvas), { recursive: true });
-  const child = spawn(binary, ["--json", "up"], {
+  const child = spawn(binary, ["--json", "up", "--port", "0"], {
     cwd: fixture,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -99,16 +101,20 @@ async function startResident(fixture) {
     const discovery = await waitForDiscovery(child, canvas);
     return { child, discovery };
   } catch (error) {
+    let residue;
+    try {
+      residue = await readdir(fixture, { recursive: true });
+    } catch (readError) {
+      residue = [`<unreadable: ${readError}>`];
+    }
     if (child.exitCode === null) {
       const exited = once(child, "exit");
       child.kill("SIGKILL");
       await exited;
     }
-    const output = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n");
-    throw new Error(
-      output ? `${error.message}\nresident output:\n${output}` : error.message,
-      { cause: error },
-    );
+    throw new Error(`resident did not publish discovery: stdout=${stdout || "<none>"} stderr=${stderr || "<none>"} files=${JSON.stringify(residue)}`, {
+      cause: error,
+    });
   }
 }
 
@@ -163,14 +169,14 @@ async function configureFixture(fixture) {
     'lease = "30s"',
     'vendor = "claude"',
     "",
+    "[tasks]",
+    'stems = ["app", "canvas"]',
+    "",
     "[vendor.claude]",
     `binary = ${JSON.stringify(vendor)}`,
     "",
     "[canvas.pack]",
     "rows = 2",
-    "",
-    "[tasks]",
-    'stems = ["app", "canvas"]',
     "",
   ].join("\n"));
 }
@@ -190,9 +196,6 @@ async function seedAuthority(fixture) {
   assert.equal(pending.body.standing, "pended");
   await reply(fixture, ["trust", "grant", digest]);
 
-  const lane = await reply(fixture, ["lane", "add", "--vendor", "claude"]);
-  await reply(fixture, ["steer", lane.body.lane, "browser direction survives streaming"]);
-
   const first = await reply(fixture, [
     "task",
     "add",
@@ -209,11 +212,8 @@ async function seedAuthority(fixture) {
   ]);
   await reply(fixture, ["task", "note", first.body.task, "first causal observation"]);
   await reply(fixture, ["task", "note", first.body.task, "second causal observation"]);
-  await reply(fixture, ["lane", "drain", lane.body.lane]);
-  await reply(fixture, ["lane", "wake", lane.body.lane]);
 
   return {
-    lane: lane.body.lane,
     task: first.body.task,
     extent: await journalExtent(fixture),
   };
@@ -257,10 +257,10 @@ async function assertCanvas(page, scheme) {
   }
   await page.waitForFunction(() => document.querySelector("#app")?.childElementCount > 0);
   await assert.doesNotReject(() => page.locator(".brand-name:visible, .mobile-brand:visible").waitFor());
-  await assert.doesNotReject(() => page.getByRole("heading", { name: "Flow", exact: true }).waitFor());
+  await assert.doesNotReject(() => page.getByRole("heading", { name: "Agents", exact: true }).waitFor());
   await page.waitForFunction(() => {
-    const text = document.body.innerText;
-    return text.includes("seated") && /JOURNAL\s+\d+/.test(text);
+    const cursor = document.querySelector(".rail-meta")?.textContent ?? "";
+    return /cursor \d+/.test(cursor);
   });
 
   const pixels = await page.evaluate(() => {
@@ -312,7 +312,51 @@ async function assertCanvas(page, scheme) {
     assert.ok(await page.getByRole("button", { name: "Add note" }).isVisible());
     await page.locator(".workspace").evaluate((element) => element.scrollTo(0, 0));
   }
+  await page.getByRole("button", { name: "Mosaic" }).click();
+  await page.getByRole("heading", { name: "Agents", exact: true }).waitFor();
   await page.screenshot({ path: join(artifacts, `canvas-${scheme}.png`), fullPage: true });
+}
+
+async function assertAgentConversation(page, fixture) {
+  const console = page.locator('[data-pane="agent-console"]');
+  await page.getByRole("button", { name: "Mosaic" }).click();
+  await console.getByRole("heading", { name: "Agents", exact: true }).waitFor();
+  await console.getByLabel("Worktree").fill(fixture);
+  await console.getByLabel("Vendor").fill("claude");
+  await console.getByLabel("Life").fill("steer");
+  await console.getByRole("button", { name: "Seat agent" }).click();
+
+  const tab = console.locator(".agent-tab");
+  try {
+    await tab.waitFor({ timeout: 15_000 });
+  } catch (error) {
+    await page.getByRole("button", { name: "Chronology" }).click();
+    const rendered = await page.locator("body").innerText();
+    const lanes = await invoke(fixture, ["lane"]);
+    throw new Error(`Canvas seat did not create a lane: lanes=${JSON.stringify(lanes)} body=${JSON.stringify(rendered)}`, {
+      cause: error,
+    });
+  }
+  const lanes = await reply(fixture, ["lane"]);
+  const seated = lanes.body.lanes.find((lane) => lane.worktree === fixture);
+  assert.ok(seated, "the Canvas seat control creates a lane in the requested worktree");
+  assert.equal(seated.vendor, "claude");
+  assert.equal(seated.life, "steer");
+  assert.equal(await tab.getAttribute("data-lane"), seated.lane);
+
+  const message = "browser direction survives streaming";
+  await console.getByLabel("Message").fill(message);
+  await console.getByRole("button", { name: "Send direction" }).click();
+  const outgoing = console.locator(".message.outgoing").filter({ hasText: message });
+  await outgoing.waitFor({ timeout: 10_000 });
+  assert.match(await outgoing.innerText(), /pending/);
+
+  const inbox = await reply(fixture, ["inbox", seated.lane]);
+  assert.equal(inbox.body.lanes.length, 1);
+  assert.equal(inbox.body.lanes[0].pending.length, 1);
+  assert.equal(inbox.body.lanes[0].pending[0].text, message);
+  await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
+  return seated.lane;
 }
 
 async function assertAuthoritySurface(page, seeded) {
@@ -366,11 +410,14 @@ async function assertMosaicComposer(page, fixture, seeded) {
   ]);
   await composer.getByRole("img", { name: "pixel.png" }).waitFor();
   await composer.getByRole("img", { name: "pixel-copy.png" }).waitFor();
+  await page.screenshot({
+    path: join(artifacts, "canvas-light-mosaic-composer.png"),
+    fullPage: true,
+  });
   await composer.getByRole("button", { name: "Send" }).click();
-
-  await page.getByRole("button", { name: "Canvas", exact: true }).click();
-  await page.getByRole("button", { name: "Chronology" }).click();
-  await page.getByText(/Direction sent as/).waitFor({ timeout: 10_000 });
+  await lane.locator(".mosaic-message-card").filter({ hasText: "canvas quote reply" }).waitFor({
+    timeout: 10_000,
+  });
   const quoted = await reply(fixture, ["inbox", seeded.lane]);
   const quotedDirective = quoted.body.lanes[0].pending.find(
     (directive) => directive.text.includes("canvas quote reply"),
@@ -387,8 +434,6 @@ async function assertMosaicComposer(page, fixture, seeded) {
     assert.match(attachment.data_url, /^data:image\/png;base64,/);
   }
 
-  const sentCount = await page.getByText(/Direction sent as/).count();
-  await page.getByRole("button", { name: "Mosaic", exact: true }).click();
   await lane.evaluate((target) => {
     const transfer = new DataTransfer();
     transfer.setData("text/plain", "dragged card direction");
@@ -398,11 +443,9 @@ async function assertMosaicComposer(page, fixture, seeded) {
       dataTransfer: transfer,
     }));
   });
-  await page.getByRole("button", { name: "Canvas", exact: true }).click();
-  await page.getByRole("button", { name: "Chronology" }).click();
-  await page.waitForFunction((count) => [...document.querySelectorAll(".event strong")]
-    .filter((element) => element.textContent?.includes("Direction sent as")).length > count,
-  sentCount);
+  await lane.locator(".mosaic-message-card").filter({ hasText: "dragged card direction" }).waitFor({
+    timeout: 10_000,
+  });
   const dropped = await reply(fixture, ["inbox", seeded.lane]);
   assert.ok(
     dropped.body.lanes[0].pending.some(
@@ -694,6 +737,7 @@ async function assertSpeechVariants(browser, endpoint) {
   });
   await external.goto(endpoint, { waitUntil: "networkidle" });
   await external.waitForSelector(".status.online");
+  await external.getByRole("button", { name: "Flow" }).click();
   const externalButton = external.locator(".speech-button");
   await externalButton.click();
   await external.locator('.speech-button[data-state="playing"]').waitFor();
@@ -745,6 +789,8 @@ try {
   lightPage.on("console", (message) => process.stderr.write(`browser console: ${message.text()}\n`));
   await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
   await assertCanvas(lightPage, "light");
+  seeded.lane = await assertAgentConversation(lightPage, fixture);
+  seeded.extent = await journalExtent(fixture);
   await assertAuthoritySurface(lightPage, seeded);
   await assertMosaicComposer(lightPage, fixture, seeded);
   await assertPackedHistory(lightPage, await journalExtent(fixture), true);
