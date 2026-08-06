@@ -8,9 +8,14 @@ import {
   describeConnection,
   monitorPage,
 } from "./canvas-fixture.mjs";
+import { HANDSHAKE_TIMEOUT_MS, RECONNECT_DELAY_MS } from "./client-deadlines.mjs";
 
-const handshakeTimeoutMilliseconds = 5_000;
-const reconnectDelayMilliseconds = 1_200;
+// The rendered reason quotes the client's deadline back, so this pattern is the
+// one assertion here that fails if the app and its own constant disagree.
+const renderedHandshakeReason = new RegExp(
+  `canvas connection handshake timed out after ${HANDSHAKE_TIMEOUT_MS} ms`,
+);
+
 const dispatchToleranceMilliseconds = 250;
 const renderedToleranceMilliseconds = 2_000;
 // This watchdog only rejects an absent callback; it never advances the fixture.
@@ -89,7 +94,7 @@ export async function assertHandshakeTimeout(browser, residentEndpoint) {
     const status = page.locator(".status.offline");
     const statusOutcome = status
       .waitFor({
-        timeout: handshakeTimeoutMilliseconds + renderedToleranceMilliseconds,
+        timeout: HANDSHAKE_TIMEOUT_MS + renderedToleranceMilliseconds,
       })
       .then(() => null, (error) => error);
     const [closed, second] = await Promise.all([firstClosed, secondRequest]);
@@ -97,13 +102,13 @@ export async function assertHandshakeTimeout(browser, residentEndpoint) {
     assert.equal(state.maximumOpen, 1, "retry never accumulates stalled bootstrap requests");
     assert.ok(
       closed.closed - first.opened >=
-        handshakeTimeoutMilliseconds - dispatchToleranceMilliseconds,
+        HANDSHAKE_TIMEOUT_MS - dispatchToleranceMilliseconds,
       "the abort was not an inverted or prematurely short handshake deadline",
     );
     assert.ok(
       second.opened - first.opened >=
-        handshakeTimeoutMilliseconds +
-          reconnectDelayMilliseconds -
+        HANDSHAKE_TIMEOUT_MS +
+          RECONNECT_DELAY_MS -
           dispatchToleranceMilliseconds,
       "the retry includes the production reconnect interval after the deadline",
     );
@@ -112,7 +117,7 @@ export async function assertHandshakeTimeout(browser, residentEndpoint) {
     const renderedLabel = await status.locator(".status-copy").innerText();
     assert.match(
       renderedLabel,
-      /canvas connection handshake timed out after 5000 ms/,
+      renderedHandshakeReason,
       "rendered Offline state names the bounded handshake",
     );
     const described = await describeConnection(page);
@@ -120,7 +125,7 @@ export async function assertHandshakeTimeout(browser, residentEndpoint) {
     assert.match(described.classes, /\boffline\b/, "describeConnection sees Offline");
     assert.match(
       described.label,
-      /canvas connection handshake timed out after 5000 ms/,
+      renderedHandshakeReason,
       "describeConnection carries the same timeout reason",
     );
 

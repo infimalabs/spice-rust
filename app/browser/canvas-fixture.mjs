@@ -21,6 +21,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { HANDSHAKE_TIMEOUT_MS, RECONNECT_DELAY_MS } from "./client-deadlines.mjs";
 import { assertTiledWorkspace } from "./tiled-workspace.mjs";
 
 const execute = promisify(execFile);
@@ -359,33 +360,40 @@ export function monitorPage(page) {
 /// earlier ten seconds bounded nothing that was ever slow.
 export const TRANSITION_MS = 2_000;
 
+/// Slack allowed on top of a client deadline for the render that follows it.
+///
+/// The bounds below are sums rather than numbers so that no wait can end up
+/// stricter than the deadline the client keeps for itself, however that deadline
+/// moves. This is the only part of them that is picked rather than read, and the
+/// measurements say it is never spent.
+const RENDER_SLACK_MS = 1_000;
+
 /// Bound for a wait on the page connecting, which it has not been handed yet.
 ///
 /// Coming online is not the same class as the transitions above and must not
 /// borrow their bound. `TRANSITION_MS` is justified by the page already holding
 /// the input, so the only cost left is a render; a connection instead has to
-/// complete a handshake the client itself puts a deadline on, at
-/// `CONNECTION_HANDSHAKE_TIMEOUT_MILLIS` of 5000ms in `app/src/browser.rs:42`.
-/// A test bound under that would expire before the client's own deadline, so a
-/// red would mean the suite is stricter than the contract rather than that
-/// anything is broken. Six seconds is that deadline plus a second of render, and
-/// the measurement says the slack is never spent: 25 cycles at load average 8 to
-/// 9 put a cold connect after `networkidle` at 1ms minimum, 2ms median and 3ms
-/// maximum, because the socket is already up by the time that wait arms.
-export const CONNECT_MS = 6_000;
+/// complete a handshake the client itself puts a deadline on. A test bound under
+/// that deadline would expire before the client gave up, so its red would mean
+/// the suite is stricter than the contract rather than that anything is broken --
+/// which is why this is the deadline itself plus a render, read from the client
+/// rather than copied out of it. The measurement says the slack is never spent:
+/// 25 cycles at load average 8 to 9 put a cold connect after `networkidle` at 1ms
+/// minimum, 2ms median and 3ms maximum, because the socket is already up by the
+/// time that wait arms.
+export const CONNECT_MS = HANDSHAKE_TIMEOUT_MS + RENDER_SLACK_MS;
 
 /// Bound for a wait on the page reconnecting after its socket closed.
 ///
-/// This one has a floor written into the client. `app/src/browser.rs:505` sleeps
-/// `RECONNECT_DELAY_MILLIS`, a flat 1200ms in `app/src/browser.rs:43` with no
-/// backoff, before every retry, so no reconnect can be observed sooner and any
-/// bound near the offline flip's 2ms would fail every single time. The
+/// This one has a floor written into the client, which sleeps `RECONNECT_DELAY_MS`
+/// before every retry with no backoff, so no reconnect can be observed sooner and
+/// any bound near the offline flip's 2ms would fail every single time. The
 /// measurement lands exactly where that predicts and barely varies: 1283ms
 /// minimum, 1287ms median and 1290ms maximum over 25 cycles, the flat 1200ms
-/// delay plus 83ms to 90ms of real handshake. Eight seconds
-/// is the delay plus one whole handshake attempt at its own 5000ms deadline plus
-/// slack, which is the longest a single successful retry can take.
-export const RECONNECT_MS = 8_000;
+/// delay plus 83ms to 90ms of real handshake. The sum is the longest a single
+/// successful retry can take: the delay, one whole handshake attempt at its own
+/// deadline, and the render.
+export const RECONNECT_MS = RECONNECT_DELAY_MS + HANDSHAKE_TIMEOUT_MS + RENDER_SLACK_MS;
 
 export async function chooseCanvasView(page, name) {
   const button = page.getByRole("button", { name: new RegExp(`^${name}(?:\\s|$)`) });
@@ -767,6 +775,25 @@ export async function assertOfflineObserved(page, cause, context = {}) {
   );
 }
 
+/// Refuse a wait whose bound was never named, instead of taking the worst one.
+///
+/// Playwright reads a missing `timeout` as its own 30000ms default, so omitting
+/// the argument does not fail -- it silently selects the largest bound in the
+/// file, which is the exact default these helpers exist to abolish. A helper
+/// whose whole point is that the bound is stated at the call site cannot leave
+/// the bound optional in practice, so an unnamed one is an error here rather
+/// than a default there. Zero is refused with it, and not for tidiness:
+/// Playwright reads a zero timeout as no timeout at all, so the one value that
+/// looks like the strictest possible bound is the only one weaker than the
+/// default it replaces.
+function requireBound(bound, helper) {
+  if (!Number.isFinite(bound) || bound <= 0) {
+    throw new TypeError(
+      `${helper} needs a positive bound: pass CONNECT_MS for a cold connect, RECONNECT_MS for a live one`,
+    );
+  }
+}
+
 /// Wait for the canvas to report online, on the bound its class was measured at.
 ///
 /// The bound is an argument rather than a default because the two classes are
@@ -776,6 +803,7 @@ export async function assertOfflineObserved(page, cause, context = {}) {
 /// `RECONNECT_MS` at the call site is the whole point: it says which transition
 /// the site believes it is waiting on, and that belief is now checkable.
 export async function assertOnlineObserved(page, cause, bound, context = {}) {
+  requireBound(bound, "assertOnlineObserved");
   await observedWait(
     page,
     `canvas reports online after ${cause}`,
@@ -792,7 +820,14 @@ export async function assertOnlineObserved(page, cause, bound, context = {}) {
 /// sites need both, and neither is meaningful without the other -- a page that is
 /// online but still showing the old epoch has not resumed, and an epoch that
 /// appears without the status coming online is not a connection.
+///
+/// The adoption wait takes the same bound as the connection wait rather than
+/// `TRANSITION_MS`: the generation is published over the socket the wait above
+/// just watched come up, so it is the same class of transition and not the
+/// already-delivered one. `waitForFunction` carries its timeout in a third
+/// argument, which is easy to leave off and worth 30000ms when it is.
 export async function assertGenerationOnline(page, epoch, cause, bound, context = {}) {
+  requireBound(bound, "assertGenerationOnline");
   await assertOnlineObserved(page, cause, bound, context);
   await observedWait(
     page,
@@ -801,6 +836,7 @@ export async function assertGenerationOnline(page, epoch, cause, bound, context 
       page.waitForFunction(
         (expected) => document.querySelector(".status-copy")?.textContent?.includes(expected),
         epoch,
+        { timeout: bound },
       ),
     context,
   );
