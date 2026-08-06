@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright";
+import { captureReferenceControls } from "./control-reference.mjs";
 import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
 import {
   assertEndpointProbeClosesWithoutResponse,
@@ -1019,10 +1020,11 @@ async function captureReferenceViewport(page) {
   );
   assert.equal(pixels.bodyWidth, 1000, "the reference viewport has no horizontal overflow");
   assert.equal(pixels.background, "rgb(11, 15, 12)", "the captured surface uses the dark palette");
-  await page.screenshot({
-    path: join(artifacts, "canvas-reference-four-agent-dark.png"),
-    fullPage: false,
-  });
+  await captureReferenceControls(
+    page,
+    team,
+    join(artifacts, "canvas-reference-four-agent-dark.png"),
+  );
 }
 
 async function assertAuthoritySurface(page, seeded) {
