@@ -9,10 +9,34 @@ pub(super) struct AgentControls {
     pub(super) seat_vendor: UseStateHandle<String>,
     pub(super) seat_life: UseStateHandle<String>,
     pub(super) steer_text: UseStateHandle<String>,
+    pub(super) seat_notice: UseStateHandle<Notice>,
+    pub(super) steer_notice: UseStateHandle<Notice>,
     pub(super) submit_seat: Callback<SubmitEvent>,
     pub(super) submit_steer: Callback<SubmitEvent>,
 }
 
+/// Render the reason the last submission was refused, or nothing.
+///
+/// The node is absent rather than empty while a submission stands. `role`
+/// `alert` is an assertive live region, so an element that were always present
+/// would be re-announced empty on every keystroke; leaving it out until there
+/// is a sentence makes the announcement coincide with the refusal.
+fn render_notice(notice: &Notice) -> Html {
+    if !notice.is_some() {
+        return Html::default();
+    }
+    html! {
+        <p class="form-refusal" role="alert">{notice.to_string()}</p>
+    }
+}
+
+// Both render entry points thread the whole surface through as loose handles.
+// Grouping them would only move the same count behind a struct built at the
+// one call site each has, which is what `AgentControls` already does for the
+// part of it that is a form. Neither is red on the native target, where the
+// wasm-only browser module is not compiled, so the lint went unseen until the
+// wasm target was linted rather than merely checked.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn render_canvas(
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
@@ -106,6 +130,7 @@ pub(super) fn render_rail(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn render_workspace(
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
@@ -327,6 +352,7 @@ fn render_conversation(
                     type="submit"
                     disabled={!can_steer || controls.steer_text.trim().is_empty()}
                 >{"Send direction"}</button>
+                {render_notice(&controls.steer_notice)}
             </form>
         </section>
     }
@@ -561,6 +587,7 @@ fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &AgentControls) 
                     <option value="steer" /><option value="drive" /><option value="drain" />
                 </datalist>
                 <button type="submit" disabled={!ready}>{"Seat agent"}</button>
+                {render_notice(&controls.seat_notice)}
             </form>
         </aside>
     }
