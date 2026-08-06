@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 import { unwatchFile, watchFile } from "node:fs";
-import { chmod, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -146,6 +146,7 @@ async function reply(fixture, args) {
 }
 
 async function configureFixture(fixture) {
+  await cp(join(root, "dist/stage-dev"), join(fixture, "dist/stage-dev"), { recursive: true });
   const vendor = join(fixture, "fake-claude");
   await writeFile(vendor, [
     "#!/bin/sh",

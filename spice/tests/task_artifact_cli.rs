@@ -10,6 +10,8 @@ use wire::{JournalBackup, JournalRestore, Outcome, TaskHandle};
 
 #[path = "support/readiness.rs"]
 mod readiness;
+#[path = "support/staged_app.rs"]
+mod staged_app;
 
 use readiness::Readiness;
 
@@ -28,6 +30,7 @@ impl Fixture {
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(root.join(".git")).expect("create repository fixture");
+        staged_app::seed(&root);
         fs::write(root.join("spice.toml"), "[tasks]\nstems = [\"rim\"]\n")
             .expect("write task project policy");
         let bundle = root.join("artifact-backup");

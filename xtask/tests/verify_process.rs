@@ -62,13 +62,12 @@ fn verifier_process_reaches_one_rust_battery_without_forbidden_programs() {
         fs::read_to_string(&cargo_log)
             .expect("read verifier Cargo actions")
             .lines()
-            .take(6)
+            .take(5)
             .collect::<Vec<_>>(),
         [
             "fmt --all -- --check",
             "clippy --locked --workspace --all-targets -- -D warnings",
             "check --locked --workspace --target wasm32-unknown-unknown",
-            "xtask check-app",
             "test --locked --workspace --all-targets",
             "test --locked --workspace --doc",
         ]
