@@ -474,6 +474,12 @@ mod tests {
         .expect("fixture generation publishes");
     }
 
+    fn fail_partial_build(stage: &Path) -> Result<(), AppBuildError> {
+        fs::create_dir_all(stage).expect("create partial build");
+        fs::write(stage.join("canvas-app.html"), b"partial build").expect("write partial build");
+        Err(AppBuildError::Exit(Some(42)))
+    }
+
     #[test]
     fn app_build_command_owns_cache_and_wrapper_inputs() {
         let command = trunk_command(
@@ -660,6 +666,49 @@ mod tests {
         assert!(
             !fresh.join(spice::canvas::LOCAL_STAGE).exists(),
             "a failed first build published a visible stage"
+        );
+        fs::remove_dir_all(root).expect("remove fixture");
+        fs::remove_dir_all(fresh).expect("remove fresh fixture");
+    }
+
+    #[test]
+    fn a_failed_build_preserves_the_prior_pointer_or_first_build_absence() {
+        let root = fixture("lane-app-build-failure");
+        publish_fixture(&root, "first");
+        let source = spice::canvas::AppSource::resolve(&root).expect("first generation resolves");
+        let first = source
+            .current_generation()
+            .expect("first generation is current")
+            .identity()
+            .clone();
+
+        let error = dev_app_at(&root, &mut Vec::new(), |stage, _| fail_partial_build(stage))
+            .expect_err("failed rebuild refuses");
+        assert!(matches!(error, AppBuildError::Exit(Some(42))));
+        assert_eq!(
+            source
+                .current_generation()
+                .expect("failed rebuild preserves current")
+                .identity(),
+            &first
+        );
+
+        let fresh = fixture("lane-app-first-build-failure");
+        let error = dev_app_at(&fresh, &mut Vec::new(), |stage, _| {
+            fail_partial_build(stage)
+        })
+        .expect_err("failed first build refuses");
+        assert!(matches!(error, AppBuildError::Exit(Some(42))));
+        assert!(
+            !fresh.join(spice::canvas::DEV_STAGE).exists(),
+            "a failed first build published a visible stage"
+        );
+        assert!(
+            fs::read_dir(fresh.join("dist"))
+                .expect("read build parent")
+                .next()
+                .is_none(),
+            "a failed first build left a partial temporary"
         );
         fs::remove_dir_all(root).expect("remove fixture");
         fs::remove_dir_all(fresh).expect("remove fresh fixture");
