@@ -354,6 +354,25 @@ mod tests {
         );
         assert!(references_in(Some("rs"), None, &exempted).is_empty());
 
+        let unrelated_marker = format!(
+            concat!(
+                "let value = std::env::var(concat!(\n",
+                "    \"{prefix}\", /* an unmatched ( is comment prose */\n",
+                "    \"{suffix}\",\n",
+                "));\n",
+                "let fixture = \"{name}\"; // {marker} {name}\n",
+            ),
+            prefix = PREFIX,
+            suffix = SUFFIX,
+            marker = ENV_NAME_LITERAL_MARKER,
+            name = NAME,
+        );
+        assert_eq!(
+            references_in(Some("rs"), None, &unrelated_marker),
+            BTreeSet::from([(1, NAME.to_owned())]),
+            "a marker in a later statement cannot exempt a concat through comment punctuation",
+        );
+
         let examples = format!(
             concat!(
                 "let joined = concat!(\"A\", \"B\"); ",
