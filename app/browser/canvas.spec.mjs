@@ -362,16 +362,20 @@ async function assertAgentConversation(page, fixture) {
   assert.equal(await tab.getAttribute("data-lane"), seated.lane);
 
   const message = "browser direction survives streaming";
-  await console.getByLabel("Message").fill(message);
+  await console.getByRole("textbox", { name: "Message", exact: true }).fill(message);
   await console.getByRole("button", { name: "Send direction" }).click();
   const outgoing = console.locator(".message.outgoing").filter({ hasText: message });
   await outgoing.waitFor({ timeout: 10_000 });
-  assert.match(await outgoing.innerText(), /pending/);
 
   const inbox = await reply(fixture, ["inbox", seated.lane]);
   assert.equal(inbox.body.lanes.length, 1);
   assert.equal(inbox.body.lanes[0].pending.length, 1);
   assert.equal(inbox.body.lanes[0].pending[0].text, message);
+  assert.equal(
+    await outgoing.locator(".message-key").innerText(),
+    inbox.body.lanes[0].pending[0].key,
+  );
+  assert.match(await outgoing.locator(".message-age").innerText(), / left$/);
   await assertMosaicPacking(page, console);
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
   return seated.lane;
@@ -383,13 +387,23 @@ async function assertMosaicPacking(page, console) {
   assert.ok(laneCount >= 1 && laneCount <= 6, "geometry exposes a legal base-lane count");
   const targetCards = laneCount * 2 + 1;
   for (let index = 1; index < targetCards; index += 1) {
-    await console.getByLabel("Message").fill(`mosaic placement ${index}`);
+    await console
+      .getByRole("textbox", { name: "Message", exact: true })
+      .fill(`mosaic placement ${index}`);
     await console.getByRole("button", { name: "Send direction" }).click();
   }
   const cards = console.locator(".mosaic-card");
   await cards.nth(targetCards - 1).waitFor({ timeout: 15_000 });
   assert.equal(await cards.count(), targetCards);
   assert.equal(await cards.first().getAttribute("data-state"), "frozen");
+  const keys = await cards.locator(".message-key").allTextContents();
+  assert.deepEqual(keys, [...keys].sort(), "Canvas journal order agrees with steering key order");
+  const ages = cards.locator(".message-age");
+  assert.ok(
+    (await ages.allTextContents()).every((age) => age.endsWith(" left")),
+    "spatially packed keys carry the age that orders them",
+  );
+  assert.equal(await ages.count(), targetCards);
 
   const placements = await cards.evaluateAll((elements) => elements.map((element) => {
     const box = element.getBoundingClientRect();
@@ -423,7 +437,9 @@ async function assertMosaicPacking(page, console) {
 
   await feed.evaluate((element) => element.scrollTo(0, element.scrollHeight));
   const before = await feed.evaluate((element) => element.scrollTop);
-  await console.getByLabel("Message").fill("mosaic scroll compensation");
+  await console
+    .getByRole("textbox", { name: "Message", exact: true })
+    .fill("mosaic scroll compensation");
   await console.getByRole("button", { name: "Send direction" }).click();
   await cards.nth(targetCards).waitFor({ timeout: 10_000 });
   const after = await feed.evaluate((element) => element.scrollTop);
@@ -461,7 +477,7 @@ async function assertAuthoritySurface(page, seeded) {
 }
 
 async function assertMosaicComposer(page, fixture, seeded) {
-  await page.getByRole("button", { name: "Mosaic", exact: true }).click();
+  await page.getByRole("button", { name: /^Mosaic/ }).click();
   await page.getByRole("heading", { name: "Mosaic", exact: true }).waitFor();
   const lane = page.locator(`[data-lane-id="${seeded.lane}"]`);
   await lane.getByText("browser direction survives streaming", { exact: true }).waitFor();
