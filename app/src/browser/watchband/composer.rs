@@ -1,4 +1,4 @@
-//! Browser callbacks, activity cards, attachments, and safe Markdown for the lane composer.
+//! Browser callbacks, activity cards, attachments, and safe Markdown for lane messages.
 
 use pulldown_cmark::{CowStr, Event as MarkdownEvent, Options, Parser, Tag};
 use web_sys::{ClipboardEvent, DragEvent, File, FileList, FileReader, HtmlInputElement};
@@ -526,7 +526,9 @@ fn read_image(drafts: UseReducerHandle<ComposerDrafts>, lane_key: String, file: 
     }
 }
 
-pub(super) fn render_markdown(markdown: &str) -> Html {
+/// Render received text. Drafts are never rendered: a composer shard shows the
+/// operator what they typed, so the built Markdown is only ever the message sent.
+fn render_markdown(markdown: &str) -> Html {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_STRIKETHROUGH

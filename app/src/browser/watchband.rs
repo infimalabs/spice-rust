@@ -16,7 +16,7 @@ mod state;
 use composer::{
     agent_message_source_id, choose_images, directive_source_id, drop_on_lane, focus_after_render,
     keyboard_submit, paste_images, primary_textarea_id, render_agent_message_card,
-    render_attachments, render_directive_card, render_markdown, render_quote_shards, update_body,
+    render_attachments, render_directive_card, render_quote_shards, update_body,
 };
 pub(super) use controls::{LineageControlAction, LineageControls};
 use controls::{LineageLife, LineageSpeech, render_lineage_controls};
@@ -627,7 +627,6 @@ fn render_composer_body(
     renew: Callback<MouseEvent>,
     stream: ComposerStreamLink,
 ) -> Html {
-    let markdown = compose(draft);
     let oninput = update_body(lane_key.to_owned(), drafts.clone());
     let onpaste = paste_images(lane_key.to_owned(), drafts.clone());
     html! {
@@ -672,11 +671,6 @@ fn render_composer_body(
             {render_attachments(lane_key, draft, drafts)}
             if let Some(issue) = &draft.issue {
                 <p class="composer-issue" role="status">{issue.clone()}</p>
-            }
-            if !markdown.is_empty() {
-                <div class="composer-markdown markdown-body" aria-label="Markdown preview">
-                    {render_markdown(&markdown)}
-                </div>
             }
             {render_image_picker(lane, lane_key, draft, drafts)}
         </div>

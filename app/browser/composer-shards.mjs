@@ -2,6 +2,38 @@ import assert from "node:assert/strict";
 
 import { TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
 
+/// A draft shard shows the operator what they typed and nothing built from it:
+/// no live Markdown render, no preview pane, no rendered quote. Counting zero
+/// previews only means something once the shards are known to be there, so the
+/// expected shard count and each editable draft are anchored first -- over a
+/// surface that failed to render, every count would be zero and pass.
+export async function assertNoDraftPreview(scope, expectedShards) {
+  const shards = scope.locator(".composer-shard");
+  assert.equal(
+    await shards.count(),
+    expectedShards,
+    "the draft shards under test are present before their previews are counted",
+  );
+  for (let index = 0; index < expectedShards; index += 1) {
+    const shard = shards.nth(index);
+    assert.equal(
+      await shard.getByRole("textbox").count(),
+      1,
+      `draft shard ${index} still edits its draft`,
+    );
+    assert.equal(
+      await shard.getByLabel("Markdown preview").count(),
+      0,
+      `draft shard ${index} carries no Markdown preview`,
+    );
+    assert.equal(
+      await shard.locator(".composer-markdown, .markdown-body, blockquote").count(),
+      0,
+      `draft shard ${index} renders no built Markdown`,
+    );
+  }
+}
+
 /** Exercise the quote-created shard, source-link, drawer, and scroll contract. */
 export async function assertComposerShards({
   page,
@@ -206,6 +238,7 @@ export async function assertComposerShards({
     stackOverflow.scrollHeight > stackOverflow.clientHeight,
     `multiple draft shards overflow the bounded agent stack: ${JSON.stringify(stackOverflow)}`,
   );
+  await assertNoDraftPreview(quoteStack, 3);
 
   previewShard = quoteLane.locator(".composer-shard--quote").first();
   await previewShard.waitFor();

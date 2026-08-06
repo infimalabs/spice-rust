@@ -51,15 +51,6 @@
 
 .composer-issue { margin: 0; color: var(--danger); font-size: .76rem; }
 
-.composer-markdown {
-  display: grid;
-  gap: 8px;
-  padding: 9px 11px;
-  border-left: 3px solid var(--accent);
-  border-radius: 0 5px 5px 0;
-  background: var(--panel-muted);
-  font-size: .8rem;
-}
 .markdown-body { min-width: 0; overflow-wrap: anywhere; }
 .markdown-body > :first-child { margin-top: 0; }
 .markdown-body > :last-child { margin-bottom: 0; }
@@ -571,7 +562,6 @@
 }
 .team-surface .mosaic-composer-actions { gap: 5px; font-size: .62rem; }
 .team-surface .image-picker { min-height: 25px; padding: 4px 6px; font-size: .62rem; }
-.team-surface .composer-markdown { padding: 6px 7px; font-size: .68rem; }
 
 /* The lineage control stack is sized against the Python Spice reference, which
    fixes every item to one height and one width so the two sliders and the send
