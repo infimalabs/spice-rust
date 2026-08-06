@@ -42,6 +42,8 @@ pub enum GateId {
     LocalPaths,
     #[serde(rename = "taste")]
     Taste,
+    #[serde(rename = "rust-typecheck")]
+    RustTypecheck,
     #[serde(rename = "canvas-web-typecheck")]
     CanvasWebTypecheck,
     #[serde(rename = "javascript-unused")]
@@ -76,7 +78,7 @@ pub enum GateId {
 
 impl GateId {
     /// Every compiled identity in predecessor battery order.
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 27] = [
         Self::MergeIntegrity,
         Self::PlanPhase,
         Self::RepoShape,
@@ -88,6 +90,7 @@ impl GateId {
         Self::Formatters,
         Self::LocalPaths,
         Self::Taste,
+        Self::RustTypecheck,
         Self::CanvasWebTypecheck,
         Self::JavascriptUnused,
         Self::CsharpUnusedCandidates,
@@ -120,6 +123,7 @@ impl GateId {
             Self::Formatters => "formatters",
             Self::LocalPaths => "local-paths",
             Self::Taste => "taste",
+            Self::RustTypecheck => "rust-typecheck",
             Self::CanvasWebTypecheck => "canvas-web-typecheck",
             Self::JavascriptUnused => "javascript-unused",
             Self::CsharpUnusedCandidates => "csharp-unused-candidates",
@@ -165,14 +169,14 @@ impl GateId {
 
     /// Whether release 0.31.0's standard battery declared this identity at all.
     ///
-    /// The battery kept every arm the release ran, so this answered true for
-    /// every identity until this workspace grew one the release never had.
-    /// Nothing downstream may attribute a predecessor arm to an identity that
-    /// answers false, which is what keeps a migration refusal from citing a
-    /// step that never existed.
+    /// The battery kept every arm the release ran, so this answers true for
+    /// every identity except the ones this workspace grew past it. Nothing
+    /// downstream may attribute a predecessor arm to an identity that answers
+    /// false, which is what keeps a migration refusal from citing a step that
+    /// never existed.
     #[must_use]
     pub const fn predecessor_declared(self) -> bool {
-        !matches!(self, Self::CsharpUnusedCandidates)
+        !matches!(self, Self::CsharpUnusedCandidates | Self::RustTypecheck)
     }
 
     #[cfg(test)]
@@ -194,7 +198,7 @@ enum PredecessorStandardArm {
 // except where the pairing says the battery declared nothing. A gate this
 // workspace grew past the predecessor has no argv to normalize away from, and
 // naming that outright keeps the refusal from inventing a step that never ran.
-const PREDECESSOR_STANDARD_ARMS: [(GateId, PredecessorStandardArm); 26] = [
+const PREDECESSOR_STANDARD_ARMS: [(GateId, PredecessorStandardArm); 27] = [
     (
         GateId::MergeIntegrity,
         PredecessorStandardArm::InternalBuiltin,
@@ -218,6 +222,10 @@ const PREDECESSOR_STANDARD_ARMS: [(GateId, PredecessorStandardArm); 26] = [
     (GateId::Formatters, PredecessorStandardArm::InternalBuiltin),
     (GateId::LocalPaths, PredecessorStandardArm::InternalBuiltin),
     (GateId::Taste, PredecessorStandardArm::InternalBuiltin),
+    (
+        GateId::RustTypecheck,
+        PredecessorStandardArm::AbsentFromBattery,
+    ),
     (
         GateId::CanvasWebTypecheck,
         PredecessorStandardArm::InternalBuiltin,

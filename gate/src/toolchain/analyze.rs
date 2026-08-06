@@ -41,8 +41,10 @@ use crate::measure::Bounds;
 use crate::structural::{StructuralPattern, scan_javascript_symbols};
 
 mod csharp;
+mod rust;
 
 pub(super) use csharp::csharp_unused;
+pub(super) use rust::rust_typecheck;
 
 /// What one compiled analysis observed about one arm.
 ///
@@ -260,7 +262,7 @@ const TRUNK_BUILD_ARGUMENTS: &[&str] = &[
 ];
 
 #[derive(Clone, Copy)]
-struct CanvasInvocation<'a> {
+struct CompileInvocation<'a> {
     name: &'static str,
     program: &'a str,
     arguments: &'static [&'static str],
@@ -902,13 +904,13 @@ pub(super) fn canvas_web_typecheck(
 
     let app = root.join("app");
     let invocations = [
-        CanvasInvocation {
+        CompileInvocation {
             name: "cargo wasm32 check",
             program: cargo,
             arguments: CARGO_WASM_ARGUMENTS,
             cwd: root,
         },
-        CanvasInvocation {
+        CompileInvocation {
             name: "trunk canvas build",
             program: trunk,
             arguments: TRUNK_BUILD_ARGUMENTS,
@@ -916,9 +918,14 @@ pub(super) fn canvas_web_typecheck(
         },
     ];
     for invocation in invocations {
-        if let Err(analysis) =
-            run_canvas_analysis(declaration.id, root, invocation, bounds, &environment)
-        {
+        if let Err(analysis) = run_compile_analysis(
+            declaration.id,
+            root,
+            invocation,
+            bounds,
+            &environment,
+            |code, message| FindingDetail::CanvasWebOutput { code, message },
+        ) {
             return analysis;
         }
     }
@@ -931,14 +938,15 @@ pub(super) fn canvas_web_typecheck(
     )
 }
 
-fn run_canvas_analysis(
+fn run_compile_analysis(
     id: GateId,
     root: &Path,
-    invocation: CanvasInvocation<'_>,
+    invocation: CompileInvocation<'_>,
     bounds: &Bounds,
     environment: &Environment,
+    detail: fn(String, String) -> FindingDetail,
 ) -> Result<(), Analysis> {
-    let CanvasInvocation {
+    let CompileInvocation {
         name,
         program,
         arguments,
@@ -981,7 +989,7 @@ fn run_canvas_analysis(
     };
     let printed = complete_output(name, &outcome)
         .map_err(|reason| Analysis::terminal(ArmOutcome::ParseFailure, reason))?;
-    let findings = canvas_findings(root, cwd, &printed);
+    let findings = compile_findings(root, cwd, &printed, detail);
     if !findings.is_empty() {
         return Err(Analysis {
             outcome: ArmOutcome::Findings,
@@ -1137,7 +1145,17 @@ fn complete_output(name: &str, outcome: &sill::WaitOutcome) -> Result<String, St
     Ok(printed)
 }
 
-fn canvas_findings(root: &Path, cwd: &Path, printed: &str) -> Vec<ArmFinding> {
+/// Every located `rustc` diagnostic in one program's output.
+///
+/// The parse is the compiler's own, so both compile arms share it; they differ
+/// only in the [`FindingDetail`] they publish, which is what keeps
+/// [`FindingDetail::gate`] able to answer which arm a finding came from.
+fn compile_findings(
+    root: &Path,
+    cwd: &Path,
+    printed: &str,
+    detail: fn(String, String) -> FindingDetail,
+) -> Vec<ArmFinding> {
     let mut pending: Option<(String, String)> = None;
     let mut findings = BTreeSet::new();
     for raw in printed.lines() {
@@ -1159,7 +1177,7 @@ fn canvas_findings(root: &Path, cwd: &Path, printed: &str) -> Vec<ArmFinding> {
             path: Some(path),
             line: Some(line),
             column: Some(column),
-            detail: FindingDetail::CanvasWebOutput { code, message },
+            detail: detail(code, message),
         });
     }
     findings.into_iter().collect()
