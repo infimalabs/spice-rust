@@ -58,28 +58,48 @@ fn a_cargo_build_lock_distinguishes_an_active_root_from_an_idle_one() {
 /// lock is held and once after release, and Cargo's own trace must say it ran.
 /// It leaves the witness in both states, establishing that it neither honours
 /// nor violates this marker: it never visits the build root.
+///
+/// The negative only means that if the collector was told about the root it
+/// spared. It was: every invocation here is configured with the same
+/// `build.build-dir` the witness and the marker live in, and that root is
+/// Cargo's own creation rather than a directory the fixture made up. The
+/// collector runs under a different *profile*, which is what keeps it from
+/// blocking on the marker this fixture holds -- `.cargo-build-lock` is per
+/// profile, so a release-profile collector and a held dev-profile marker share
+/// a root without contending. Measured: holding `debug` lets a `--release`
+/// invocation finish in 0.16s, while holding `release` blocks the same
+/// invocation past 20s, so the separation is real and so is the lock.
 #[test]
 fn cargo_gc_visits_neither_a_held_nor_an_idle_build_directory() {
     let scratch = Scratch::new("collector");
     let fixture = CargoFixture::new(&scratch);
-    let witness = fixture.build.join("collector-witness");
-    fs::create_dir_all(witness.parent().expect("witness has a parent"))
-        .expect("create collector build root");
-    fs::write(&witness, b"build directory is outside Cargo home").expect("write collector witness");
-    fs::create_dir_all(fixture.lock_path().parent().expect("lock has a profile"))
-        .expect("create Cargo profile directory");
     fixture.prime_gc();
+    fixture.assert_collector_root();
+
+    let witness = fixture.build.join("collector-witness");
+    fs::write(&witness, b"build directory is outside Cargo home").expect("write collector witness");
 
     let held = acquired(fixture.lock().try_acquire().expect("hold Cargo lock"));
+    assert_eq!(
+        fixture.lock().availability().expect("probe held marker"),
+        Availability::Held,
+        "the collector ran against an idle root, so a held root was never tested"
+    );
     fixture.run_gc();
     assert!(witness.is_file(), "Cargo gc removed a held build directory");
 
     drop(held);
+    assert_eq!(
+        fixture.lock().availability().expect("probe idle marker"),
+        Availability::Available,
+        "the marker stayed held, so an idle root was never tested"
+    );
     fixture.run_gc();
     assert!(
         witness.is_file(),
         "Cargo gc removed an idle build directory"
     );
+    fixture.assert_collector_root();
 }
 
 fn acquired(acquisition: Acquisition) -> Possession {
@@ -115,8 +135,6 @@ struct CargoFixture {
     workspace: PathBuf,
     target: PathBuf,
     build: PathBuf,
-    collector_target: PathBuf,
-    collector_build: PathBuf,
     ready: PathBuf,
     release: PathBuf,
 }
@@ -127,8 +145,6 @@ impl CargoFixture {
         let workspace = scratch.join("workspace");
         let target = scratch.join("target");
         let build = scratch.join("build");
-        let collector_target = scratch.join("collector-target");
-        let collector_build = scratch.join("collector-build");
         let ready = scratch.join("build-ready");
         let release = scratch.join("build-release");
         fs::create_dir_all(workspace.join("src")).expect("create Cargo fixture source");
@@ -167,8 +183,6 @@ impl CargoFixture {
             workspace,
             target,
             build,
-            collector_target,
-            collector_build,
             ready,
             release,
         }
@@ -176,6 +190,38 @@ impl CargoFixture {
 
     fn lock_path(&self) -> PathBuf {
         self.build.join("debug").join(LOCK_NAME)
+    }
+
+    /// The marker the collector's own profile takes, which is what lets the
+    /// collector share a build root with a held marker without blocking on it.
+    fn collector_lock_path(&self) -> PathBuf {
+        self.build.join("release").join(LOCK_NAME)
+    }
+
+    /// Prove the observed root is the one Cargo was configured with and built
+    /// into, rather than any directory that merely happens to sit nearby.
+    ///
+    /// An arbitrary unconfigured sibling satisfies none of these: Cargo tags
+    /// only roots it creates, and the two profile markers exist only because
+    /// this fixture's own invocations were told to build here.
+    fn assert_collector_root(&self) {
+        assert!(
+            self.build.join("CACHEDIR.TAG").is_file(),
+            "the observed root is not a Cargo-created build directory"
+        );
+        assert!(
+            self.lock_path().is_file(),
+            "the observed root holds no dev-profile marker for this fixture to take"
+        );
+        assert!(
+            self.collector_lock_path().is_file(),
+            "the collector never built into the observed root"
+        );
+        assert_ne!(
+            self.lock_path(),
+            self.collector_lock_path(),
+            "the collector would block on the very marker this fixture holds"
+        );
     }
 
     fn lock(&self) -> LockFile {
@@ -202,12 +248,19 @@ impl CargoFixture {
         }
     }
 
+    /// Build both profiles into the one root every collector run observes, so
+    /// the witness sits in a genuine Cargo build directory and both profile
+    /// markers are Cargo's own files rather than ones the fixture invented.
     fn prime_gc(&self) {
         fs::write(&self.release, b"release").expect("release collector build script");
         let output = self
             .collector_command()
-            .arg("build")
-            .arg("--quiet")
+            .output()
+            .expect("prime the fixture's dev profile");
+        assert_success(&output, "prime the fixture's dev profile");
+        let output = self
+            .collector_command()
+            .arg("--release")
             .output()
             .expect("prime installed Cargo collector");
         assert_success(&output, "prime installed Cargo collector");
@@ -219,8 +272,7 @@ impl CargoFixture {
         thread::sleep(Duration::from_millis(1_100));
         let output = self
             .collector_command()
-            .arg("build")
-            .arg("--quiet")
+            .arg("--release")
             .env("CARGO_CACHE_AUTO_CLEAN_FREQUENCY", "always")
             .env("CARGO_LOG", "gc=trace")
             .output()
@@ -247,11 +299,16 @@ impl CargoFixture {
         command
     }
 
+    /// A Cargo invocation configured with the build root under observation.
+    ///
+    /// Deliberately *not* given a separate `build.build-dir`: a collector run
+    /// pointed somewhere else proves nothing about the root whose survival is
+    /// asserted, which is the defect this fixture was rebuilt to close.
     fn collector_command(&self) -> Command {
         let mut command = self.cargo_command();
         command
-            .env("CARGO_TARGET_DIR", &self.collector_target)
-            .env("CARGO_BUILD_BUILD_DIR", &self.collector_build)
+            .arg("build")
+            .arg("--quiet")
             .env("BUILD_LOCK_READY", &self.ready)
             .env("BUILD_LOCK_RELEASE", &self.release);
         command
