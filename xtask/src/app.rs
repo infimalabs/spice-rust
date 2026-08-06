@@ -682,7 +682,7 @@ mod tests {
             .identity()
             .clone();
 
-        let error = dev_app_at(&root, &mut Vec::new(), |stage, _| fail_partial_build(stage))
+        let error = local_app_at(&root, &mut Vec::new(), |stage, _| fail_partial_build(stage))
             .expect_err("failed rebuild refuses");
         assert!(matches!(error, AppBuildError::Exit(Some(42))));
         assert_eq!(
@@ -694,13 +694,13 @@ mod tests {
         );
 
         let fresh = fixture("lane-app-first-build-failure");
-        let error = dev_app_at(&fresh, &mut Vec::new(), |stage, _| {
+        let error = local_app_at(&fresh, &mut Vec::new(), |stage, _| {
             fail_partial_build(stage)
         })
         .expect_err("failed first build refuses");
         assert!(matches!(error, AppBuildError::Exit(Some(42))));
         assert!(
-            !fresh.join(spice::canvas::DEV_STAGE).exists(),
+            !fresh.join(spice::canvas::LOCAL_STAGE).exists(),
             "a failed first build published a visible stage"
         );
         assert!(
