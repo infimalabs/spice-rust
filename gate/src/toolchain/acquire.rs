@@ -351,8 +351,14 @@ fn examine(
                 bounds,
                 &resolved_programs(declaration, tools),
             ),
-            GateId::LocalPaths => analyze::local_paths(declaration, source.root, source.changes()),
-            GateId::Taste => analyze::taste(declaration, source.root, source.changes()),
+            GateId::LocalPaths => {
+                let changes = source.chargeable_changes();
+                analyze::local_paths(declaration, source.root, &changes)
+            }
+            GateId::Taste => {
+                let changes = source.chargeable_changes();
+                analyze::taste(declaration, source.root, &changes)
+            }
             GateId::JavascriptUnused => analyze::javascript_unused(declaration, source.root),
             GateId::CsharpUnusedCandidates => analyze::csharp_unused(declaration, source.root),
             GateId::EnvPolicy => {

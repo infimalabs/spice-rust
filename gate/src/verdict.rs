@@ -746,7 +746,7 @@ impl Contract {
     pub fn adjudicate(&self, root: &Path) -> Result<CurrentRun, RunError> {
         #[cfg(not(target_arch = "wasm32"))]
         let run = {
-            let baselines = CommittedTexts::read(root, &[".rs".to_owned()])
+            let baselines = CommittedTexts::read(root, &[".rs".to_owned()], &[])
                 .map_err(RunError::CommittedBaseline)?;
             Run::adjudicate_with_inputs(
                 self.policy(),

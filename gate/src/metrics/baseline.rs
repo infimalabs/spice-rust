@@ -29,12 +29,13 @@
 //! runs would compare against a commit the report never names, and two paths in
 //! one arm could be compared against two different commits.
 //!
-//! Only the selected source classes are read. The whole committed tree is
-//! walked either way, but a repository's committed prose, fixtures, and images
-//! are never a baseline, and holding them would grow the retained capture
-//! without any measurement being able to reach them.
+//! Only selected source classes and exact rim-change paths are read. The whole
+//! committed tree is walked either way, but unrelated prose, fixtures, and
+//! images are never retained. Suffix classes serve arms whose jurisdiction has
+//! one; exact paths serve arms such as local-paths that select every changed
+//! regular file and therefore cannot name extensionless inputs as a class.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
@@ -60,10 +61,27 @@ pub enum BaselineCapture {
 }
 
 impl BaselineCapture {
-    /// Read every selected committed text, or retain why none could be read.
+    /// Read every class-selected committed text, or retain why none could be read.
     #[must_use]
     pub fn capture(repository: &Path, suffixes: &[String]) -> Self {
-        match CommittedTexts::read(repository, suffixes) {
+        Self::capture_with_paths(repository, suffixes, &[])
+    }
+
+    /// Read every class-selected or explicitly selected committed text.
+    ///
+    /// `suffixes` names durable source classes used by structural and
+    /// class-bound toolchain arms. `paths` is the exact rim snapshot used by
+    /// every-change arms: retaining those names is what lets an extensionless
+    /// file prove merge authorship without broadening capture to every blob in
+    /// every parent. Both selectors must come from the same repository capture
+    /// instant as the tree whose current bytes will be compared.
+    #[must_use]
+    pub(crate) fn capture_with_paths(
+        repository: &Path,
+        suffixes: &[String],
+        paths: &[String],
+    ) -> Self {
+        match CommittedTexts::read(repository, suffixes, paths) {
             Ok(baselines) => Self::Reached(baselines),
             Err(error) => Self::Unreachable(error.to_string()),
         }
@@ -171,8 +189,13 @@ impl CommittedTexts {
     /// commit rather than refused. An unborn `HEAD` is a real repository state,
     /// and every selected path then honestly has no committed bytes behind it.
     /// An unborn `HEAD` also cannot be mid-merge, so no `MERGE_HEAD` is sought.
-    pub(crate) fn read(repository: &Path, suffixes: &[String]) -> Result<Self, TreeError> {
+    pub(crate) fn read(
+        repository: &Path,
+        suffixes: &[String],
+        paths: &[String],
+    ) -> Result<Self, TreeError> {
         let repo = open_repository(repository)?;
+        let paths = paths.iter().map(String::as_str).collect::<BTreeSet<_>>();
         let head = repo.head().map_err(|source| TreeError::Repository {
             path: repository.to_path_buf(),
             evidence: source.to_string(),
@@ -191,12 +214,12 @@ impl CommittedTexts {
                     evidence: format!("cannot resolve the pending merge base: {source}"),
                 })?
                 .detach();
-            Some(parent_texts(&repo, base, "merge base", suffixes)?)
+            Some(parent_texts(&repo, base, "merge base", suffixes, &paths)?)
         };
-        let mut parents = vec![parent_texts(&repo, commit_id, "HEAD", suffixes)?];
+        let mut parents = vec![parent_texts(&repo, commit_id, "HEAD", suffixes, &paths)?];
         for (index, merging) in merging.into_iter().enumerate() {
             let revision = format!("MERGE_HEAD line {}", index + 1);
-            parents.push(parent_texts(&repo, merging, &revision, suffixes)?);
+            parents.push(parent_texts(&repo, merging, &revision, suffixes, &paths)?);
         }
         Ok(Self {
             commit: Some(commit_id.to_string()),
@@ -243,6 +266,7 @@ fn parent_texts(
     commit_id: gix::ObjectId,
     revision: &str,
     suffixes: &[String],
+    paths: &BTreeSet<&str>,
 ) -> Result<BTreeMap<String, CommittedText>, TreeError> {
     let mut texts = BTreeMap::new();
     collect(
@@ -250,6 +274,7 @@ fn parent_texts(
         commit_tree(repo, commit_id, revision)?,
         "",
         suffixes,
+        paths,
         &mut texts,
     )?;
     Ok(texts)
@@ -311,6 +336,7 @@ fn collect(
     tree_id: gix::ObjectId,
     prefix: &str,
     suffixes: &[String],
+    paths: &BTreeSet<&str>,
     texts: &mut BTreeMap<String, CommittedText>,
 ) -> Result<(), TreeError> {
     let label = if prefix.is_empty() { "." } else { prefix };
@@ -344,8 +370,10 @@ fn collect(
         };
         let mode = mode.value();
         if mode == TREE_MODE {
-            collect(repo, id, &path, suffixes, texts)?;
-        } else if BLOB_MODES.contains(&mode) && selects(&path, suffixes) {
+            collect(repo, id, &path, suffixes, paths, texts)?;
+        } else if BLOB_MODES.contains(&mode)
+            && (selects(&path, suffixes) || paths.contains(path.as_str()))
+        {
             let text = blob_text(repo, id, &path)?;
             texts.insert(path, text);
         }
