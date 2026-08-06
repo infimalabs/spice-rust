@@ -609,7 +609,7 @@ mod tests {
             "Canvas lacks the mosaic lane interface",
             "board.alpha",
             Some("todo"),
-            &["The watchband mosaic uses per-lane cards"],
+            &["The watchband mosaic uses per-lane cards and stays stable"],
         );
         let overlapping = add_project_with_acceptance(
             &bus,
@@ -629,7 +629,7 @@ mod tests {
             "Audit unrelated board output",
             "board.gamma",
             Some("todo"),
-            &["Export signed ledger receipts for audit"],
+            &["Export signed ledger receipts for audit and keep output stable"],
         );
 
         let first_answer = capture_for(&bus, epoch, &seats[0], &first);
