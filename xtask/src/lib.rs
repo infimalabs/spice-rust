@@ -22,7 +22,7 @@ pub use app::{AppBuildError, app};
 pub use commit_message::{CommitMessageError, WRAP_LIMIT as COMMIT_MESSAGE_WRAP_LIMIT};
 pub use hooks::{HookActivationError, activate_hooks};
 pub use proof_image::{ProofImageError, build_proof_image, load_proof_image};
-pub use reference_transaction::ReferenceTransactionError;
+pub use reference_transaction::{ReferenceTransactionError, WorktreeDamage};
 pub use release::{CommandRecord, ReleaseEnvironment, TargetBuild, TargetBuildError, stage_target};
 
 /// Apply the repository's native commit-message law to one Git message file.
