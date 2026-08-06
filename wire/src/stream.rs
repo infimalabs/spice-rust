@@ -37,6 +37,15 @@ pub struct MessageLocus {
 /// This is a Canvas view over tape evidence, not an authoritative fact. The
 /// lane says where the transcript belongs, the author is the exact occupant
 /// that emitted it, and the locus lets consumers deduplicate reconnects.
+///
+/// Prose outlives the seat that produced it, so [`Self::author`] names an
+/// occupant that need not still be seated anywhere, and a consumer routing a
+/// reply may not assume otherwise. When exactly one current member is occupied
+/// by the author, a reply follows that member in whichever lane it now occupies.
+/// With zero matches the reply belongs to [`Self::lane`], the lane this message
+/// was carried in; multiple matches are ambiguous and resolve there as well.
+/// Neither case may select another member by row order, so no unrelated occupant
+/// is handed direction it did not earn.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentMessage {
