@@ -470,7 +470,13 @@ impl Running {
             stderr,
             outputs_drained,
         };
-        if guardian::group_absent(self.pid)
+        // The guardian is joined here only for a group observed to have gone.
+        // [`guardian::Guardian::wait`] blocks until the guardian's own poll sees
+        // that absence, so joining on an answer that never established it would
+        // park this caller on exactly the question the probe failed to settle.
+        // A live or unreadable answer leaves the guardian to the detached reaper
+        // it already owns, which collects it whenever the group does end.
+        if guardian::group_state(self.pid) == process_state::ProcessState::Terminal
             && let Some(guardian) = self.guardian.take()
         {
             guardian

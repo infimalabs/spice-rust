@@ -1,4 +1,5 @@
 use super::capture::{CaptureWorker, FailureContext, start_capture};
+use super::guardian::{group_probe_state, group_state};
 use super::launch::spawn_inner_refusing_descriptor_setup;
 use super::{
     Completion, ProcessCompletion, ProcessState, WaitError, WaitStep, platform, resolve_signal,
@@ -1006,5 +1007,75 @@ fn an_unreadable_group_never_reports_a_descendant_that_survived() {
     assert!(
         !survived,
         "a member the kernel described as running stopped counting as a survivor"
+    );
+}
+
+/// A number that was never a process identity did not observe a live group.
+///
+/// The conversion is the whole subject: `group_state` takes a `u32` because
+/// that is what the standard library reports a child's identity as, and the
+/// kernel call underneath takes a signed `pid_t` half that size. An identity
+/// above that half used to leave the probe answering "still present" without
+/// having asked the kernel anything, which is a claim its one consumer acts on.
+#[test]
+fn a_group_identity_that_cannot_be_a_pid_is_unreadable_rather_than_present() {
+    let unfit = u32::try_from(libc::pid_t::MAX).expect("pid_t fits a u32") + 1;
+
+    assert_eq!(
+        group_state(unfit),
+        process_state::ProcessState::Indeterminate,
+        "an identity that never reached the kernel was reported as an observation"
+    );
+}
+
+/// A group the kernel does resolve is still reported present.
+///
+/// This test's own process group is used because its presence needs no
+/// arranging and cannot race: the test is running in it. It is what keeps the
+/// unreadable answer above from being reachable by a probe that simply never
+/// says `Live`, and it drives the real `kill` rather than the classifier, so
+/// the wiring from `group_state` to the kernel is covered too.
+#[test]
+fn a_group_the_kernel_resolves_is_reported_live() {
+    // SAFETY: `getpgrp` has no preconditions and returns this process's group.
+    let group = unsafe { libc::getpgrp() };
+    let group = u32::try_from(group).expect("this process's group is a positive identity");
+
+    assert_eq!(
+        group_state(group),
+        process_state::ProcessState::Live,
+        "the group this test is running in was not observed to be present"
+    );
+}
+
+/// Every answer signal zero can give is classified, and only one is absence.
+///
+/// The errno arms are unreachable through the kernel on demand -- EPERM needs a
+/// group this process may not signal, and the residual arm needs `kill` to fail
+/// for a reason signal zero cannot produce -- so the classifier takes the errno
+/// as a parameter and each arm is driven here. EPERM is asserted `Live` rather
+/// than unreadable on purpose: the kernel resolved the group and refused only
+/// the delivery, so it observed a member.
+#[test]
+fn each_group_probe_answer_is_classified_and_only_esrch_is_absence() {
+    assert_eq!(
+        group_probe_state(0, libc::ESRCH),
+        process_state::ProcessState::Live,
+        "a delivered probe read a stale errno instead of its own result"
+    );
+    assert_eq!(
+        group_probe_state(-1, libc::ESRCH),
+        process_state::ProcessState::Terminal,
+        "the kernel saying it knows no such group is an observed absence"
+    );
+    assert_eq!(
+        group_probe_state(-1, libc::EPERM),
+        process_state::ProcessState::Live,
+        "a group resolved and refused was not read as an observed member"
+    );
+    assert_eq!(
+        group_probe_state(-1, libc::EINVAL),
+        process_state::ProcessState::Indeterminate,
+        "a refusal that established nothing was folded into presence"
     );
 }
