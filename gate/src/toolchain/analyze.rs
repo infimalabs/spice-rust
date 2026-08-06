@@ -465,16 +465,18 @@ fn env_policy_with(
 /// Account every environment name the complete selected tree references.
 ///
 /// A name the tree references and the profile does not declare is unaccounted
-/// and carries every locus that references it. A name the profile declares and
-/// the tree never references is stale and carries none, because there is no
-/// place to point at. Both directions are reported, so the ledger cannot drift
-/// in either one without saying so.
+/// and carries every authored locus that references it. Inherited merge-parent
+/// loci do not charge the pending commit. A name the profile declares and the
+/// complete tree never references is stale and carries none, because there is
+/// no place to point at. Both directions are reported, so the ledger cannot
+/// drift in either one without saying so.
 pub(super) fn env_name_ledger(
     declaration: ToolchainDeclaration,
     root: &Path,
     declared_names: &[String],
+    chargeable: impl Fn(&str) -> bool,
 ) -> Analysis {
-    env_name_ledger_with(declaration, root, declared_names, read_source)
+    env_name_ledger_with(declaration, root, declared_names, read_source, chargeable)
 }
 
 fn env_name_ledger_with(
@@ -482,6 +484,7 @@ fn env_name_ledger_with(
     root: &Path,
     declared_names: &[String],
     read_source: SourceReader,
+    chargeable: impl Fn(&str) -> bool,
 ) -> Analysis {
     let sources = match env_sources(root) {
         Ok(sources) => sources,
@@ -509,10 +512,26 @@ fn env_name_ledger_with(
     }
 
     let declared: BTreeSet<&str> = declared_names.iter().map(String::as_str).collect();
+    let referenced_paths: BTreeSet<&str> = referenced
+        .iter()
+        .filter(|(name, _)| !declared.contains(name.as_str()))
+        .flat_map(|(_, loci)| loci.iter().map(|locus| locus.path.as_str()))
+        .collect();
+    let chargeable_paths: BTreeSet<&str> = referenced_paths
+        .into_iter()
+        .filter(|path| chargeable(path))
+        .collect();
     let mut findings: Vec<ArmFinding> = referenced
         .iter()
         .filter(|(name, _)| !declared.contains(name.as_str()))
-        .map(|(name, loci)| ledger(EnvironmentLedgerKind::Unaccounted, name, loci.clone()))
+        .filter_map(|(name, loci)| {
+            let loci = loci
+                .iter()
+                .filter(|locus| chargeable_paths.contains(locus.path.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            (!loci.is_empty()).then(|| ledger(EnvironmentLedgerKind::Unaccounted, name, loci))
+        })
         .collect();
     findings.extend(
         declared

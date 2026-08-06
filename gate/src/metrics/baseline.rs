@@ -48,8 +48,9 @@ const BLOB_MODES: [u16; 2] = [0o100644, 0o100755];
 /// The committed baseline a metric capture reached, or why it did not.
 ///
 /// Carried as evidence rather than as a capture failure, so a repository whose
-/// committed state cannot be read still produces a battery: the magic arm
-/// reports the input it lacks, and the other three arms are unaffected by it.
+/// committed state cannot be read still produces a battery. Arms that require
+/// a committed comparison report the input they lack; authorship exemptions
+/// are conservatively denied and their arms measure the current bytes in full.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BaselineCapture {
     /// The selected committed blobs read from the pending commit's ancestry.
@@ -65,6 +66,20 @@ impl BaselineCapture {
         match CommittedTexts::read(repository, suffixes) {
             Ok(baselines) => Self::Reached(baselines),
             Err(error) => Self::Unreachable(error.to_string()),
+        }
+    }
+
+    /// Whether a pending merge inherited one current file verbatim.
+    ///
+    /// An unreachable committed tree cannot prove inheritance and therefore
+    /// grants no exemption. Keeping that conservative answer here gives every
+    /// arm one authorship predicate instead of letting each reinterpret a
+    /// missing baseline differently.
+    #[must_use]
+    pub fn merge_inherits(&self, path: &str, current: &[u8]) -> bool {
+        match self {
+            Self::Reached(baselines) => baselines.merge_inherits(path, current),
+            Self::Unreachable(_) => false,
         }
     }
 }
