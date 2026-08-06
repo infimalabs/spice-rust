@@ -129,7 +129,13 @@ fn supervise_git(
                 // a short-lived hook child is most likely still being torn down,
                 // so it is given a bound to empty before the command faults --
                 // the same shape the termination path uses before it escalates.
-                match process.settle(DESCENDANT_EXIT_GRACE) {
+                // Git has exited, so an unreadable kernel answer is not
+                // evidence of a survivor. Only an observed group keeps this
+                // post-exit grace open.
+                match process.settle(
+                    DESCENDANT_EXIT_GRACE,
+                    GroupProbeSite::GitExited,
+                ) {
                     Ok(false) => {
                         let error = Error::fault(
                             "git::descendant-survived",
@@ -235,6 +241,24 @@ struct GitProcess {
     child: std::process::Child,
     pid: u32,
     status: Option<std::process::ExitStatus>,
+    #[cfg(unix)]
+    group_probe: Box<dyn FnMut(GroupProbeSite, rustix::process::Pid) -> GroupPresence>,
+}
+
+/// What the kernel actually established about Git's process group.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GroupPresence {
+    Present,
+    Absent,
+    Indeterminate,
+}
+
+/// The evidence rule at one of the three process-group observation sites.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GroupProbeSite {
+    GitExited,
+    TermSentBeforeKill,
+    KillSent,
 }
 
 impl GitProcess {
@@ -244,7 +268,21 @@ impl GitProcess {
             child,
             pid,
             status: None,
+            #[cfg(unix)]
+            group_probe: Box::new(|_, group| {
+                classify_group_probe(rustix::process::test_kill_process_group(group))
+            }),
         }
+    }
+
+    #[cfg(all(test, unix))]
+    fn with_group_probe(
+        child: std::process::Child,
+        probe: impl FnMut(GroupProbeSite, rustix::process::Pid) -> GroupPresence + 'static,
+    ) -> Self {
+        let mut process = Self::new(child);
+        process.group_probe = Box::new(probe);
+        process
     }
 
     fn poll_exit(&mut self) -> Result<Option<std::process::ExitStatus>, Error> {
@@ -258,11 +296,21 @@ impl GitProcess {
 
     fn terminate(&mut self) -> Result<(), Error> {
         self.signal_group(false)?;
-        if self.settle(PROCESS_GROUP_GRACE)? {
+        // After TERM but before KILL, only observed absence may suppress
+        // escalation. Each unreadable observation is re-read once immediately;
+        // continued uncertainty spends the remaining grace and proceeds to
+        // KILL rather than claiming cleanup already finished.
+        if self.settle(
+            PROCESS_GROUP_GRACE,
+            GroupProbeSite::TermSentBeforeKill,
+        )? {
             return Ok(());
         }
         self.signal_group(true)?;
-        if self.settle(PROCESS_GROUP_REAP_LIMIT)? {
+        // KILL has already been sent, so an unreadable answer is not evidence
+        // of a survivor. Only a group positively observed here can hold the
+        // post-KILL reap open until its deadline.
+        if self.settle(PROCESS_GROUP_REAP_LIMIT, GroupProbeSite::KillSent)? {
             Ok(())
         } else {
             Err(Error::fault(
@@ -276,11 +324,19 @@ impl GitProcess {
         }
     }
 
-    fn settle(&mut self, limit: Duration) -> Result<bool, Error> {
+    fn settle(
+        &mut self,
+        limit: Duration,
+        probe_site: GroupProbeSite,
+    ) -> Result<bool, Error> {
         let started = Instant::now();
         loop {
             let exited = self.poll_exit()?.is_some();
-            if exited && !self.group_present()? {
+            if exited
+                && group_is_settled_against(probe_site, || {
+                    self.group_present(probe_site)
+                })?
+            {
                 return Ok(true);
             }
             if started.elapsed() >= limit {
@@ -323,15 +379,12 @@ impl GitProcess {
     }
 
     #[cfg(unix)]
-    fn group_present(&self) -> Result<bool, Error> {
-        match rustix::process::test_kill_process_group(self.process_group()?) {
-            Ok(()) | Err(rustix::io::Errno::PERM) => Ok(true),
-            Err(rustix::io::Errno::SRCH) => Ok(false),
-            Err(error) => Err(Error::fault(
-                "git::process-group-probe-failed",
-                error.to_string(),
-            )),
-        }
+    fn group_present(
+        &mut self,
+        probe_site: GroupProbeSite,
+    ) -> Result<GroupPresence, Error> {
+        let group = self.process_group()?;
+        Ok((self.group_probe)(probe_site, group))
     }
 
     #[cfg(unix)]
@@ -345,8 +398,52 @@ impl GitProcess {
     }
 
     #[cfg(not(unix))]
-    fn group_present(&self) -> Result<bool, Error> {
-        Ok(self.status.is_none())
+    fn group_present(
+        &mut self,
+        _probe_site: GroupProbeSite,
+    ) -> Result<GroupPresence, Error> {
+        Ok(if self.status.is_none() {
+            GroupPresence::Present
+        } else {
+            GroupPresence::Absent
+        })
+    }
+}
+
+/// Apply the evidence rule for a process-group probe at one consumer site.
+///
+/// The pre-KILL consumer cannot let an unreadable answer skip escalation, but
+/// one immediate re-read lets transient unreadability expose an already-absent
+/// group without spending the whole grace. The two post-exit consumers have
+/// already observed Git's exit or delivered KILL, so only positive presence is
+/// evidence that their settling work remains unfinished.
+fn group_is_settled_against(
+    probe_site: GroupProbeSite,
+    mut observe: impl FnMut() -> Result<GroupPresence, Error>,
+) -> Result<bool, Error> {
+    let presence = observe()?;
+    match probe_site {
+        GroupProbeSite::TermSentBeforeKill => match presence {
+            GroupPresence::Absent => Ok(true),
+            GroupPresence::Present => Ok(false),
+            GroupPresence::Indeterminate => {
+                Ok(matches!(observe()?, GroupPresence::Absent))
+            }
+        },
+        GroupProbeSite::GitExited | GroupProbeSite::KillSent => {
+            Ok(!matches!(presence, GroupPresence::Present))
+        }
+    }
+}
+
+#[cfg(unix)]
+fn classify_group_probe(
+    result: Result<(), rustix::io::Errno>,
+) -> GroupPresence {
+    match result {
+        Ok(()) | Err(rustix::io::Errno::PERM) => GroupPresence::Present,
+        Err(rustix::io::Errno::SRCH) => GroupPresence::Absent,
+        Err(_) => GroupPresence::Indeterminate,
     }
 }
 
