@@ -64,6 +64,7 @@ function measureHeading(heading) {
       strip: strip && {
         clientWidth: strip.clientWidth,
         scrollWidth: strip.scrollWidth,
+        display: getComputedStyle(strip).display,
         overflowX: getComputedStyle(strip).overflowX,
         rows: new Set(
           [...strip.querySelectorAll(".composer-shard-image-indicator")].map((thumb) =>
@@ -95,6 +96,13 @@ export async function assertComposerImageIndicators(page, composer, names) {
     await composer.innerText(),
     /\d\s*\/\s*8/,
     "no attachment count control survives in the composer",
+  );
+  // Hiding the empty strip costs the heading a grid column, which slides the
+  // hamburger left until the first image lands. Named here so that regression
+  // reports its own cause rather than the displacement it produces below.
+  assert.ok(
+    bare.strip && bare.strip.display !== "none",
+    `an empty indicator strip still holds its heading column: ${JSON.stringify(bare.strip)}`,
   );
 
   await pasteImages(composer, [...names, ...FILLER]);
