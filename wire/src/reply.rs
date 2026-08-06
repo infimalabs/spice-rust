@@ -142,7 +142,7 @@ pub struct Reply<B> {
 /// Compiled identities reported by the daemonless `version` leaf.
 ///
 /// These four values are one machine document rather than independent prose:
-/// the native artifact and embedded app identify what was built, while the
+/// the native artifact and lane-built app identify what is running, while the
 /// wire and journal versions identify the only crossing and authority schemas
 /// that build admits.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

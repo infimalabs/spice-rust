@@ -68,6 +68,7 @@ pub struct GateReport {
     version: u64,
     standing: Standing,
     findings: Vec<Finding>,
+    long_lines: Vec<LongLineFinding>,
     measurements: Vec<ReportMeasurement>,
     #[serde(
         default,
@@ -84,12 +85,14 @@ impl GateReport {
     pub fn current(run: &CurrentRun) -> Self {
         let standing = run.receipt().standing();
         let findings = run.receipt().findings().to_vec();
-        let tightening = gate_tightening(standing, &findings)
+        let long_lines = run.receipt().long_lines().to_vec();
+        let tightening = gate_tightening(standing, &findings, &long_lines)
             .expect("a current receipt carries a standing derived from its findings");
         Self {
             version: GATE_REPORT_VERSION,
             standing,
             findings,
+            long_lines,
             measurements: run
                 .measurements()
                 .iter()
@@ -116,6 +119,12 @@ impl GateReport {
     #[must_use]
     pub fn findings(&self) -> &[Finding] {
         &self.findings
+    }
+
+    /// Newly introduced over-limit Rust lines in path and locus order.
+    #[must_use]
+    pub fn long_lines(&self) -> &[LongLineFinding] {
+        &self.long_lines
     }
 
     /// Every completed measurement in metric order.
@@ -146,6 +155,17 @@ impl GateReport {
         );
         for finding in &self.findings {
             let _ = writeln!(rendered, "finding {} {}", finding.metric, finding.movement);
+        }
+        for finding in &self.long_lines {
+            let _ = writeln!(
+                rendered,
+                "finding rust.long-lines {}:{} bytes {} file-debt {}->{}",
+                quoted(finding.path()),
+                finding.line(),
+                finding.bytes(),
+                finding.baseline_debt(),
+                finding.current_debt(),
+            );
         }
         for measurement in &self.measurements {
             let _ = writeln!(
@@ -224,6 +244,14 @@ impl GateReport {
                 "ordered findings disagree with the complete verdict",
             ));
         }
+        if self.long_lines != self.verdict.long_lines() {
+            return Err(ReportDecodeError::inconsistent(
+                "gate report",
+                "ordered rust.long-lines findings disagree with the complete verdict",
+            ));
+        }
+        validate_long_lines(&self.long_lines)
+            .map_err(|evidence| ReportDecodeError::inconsistent("gate report", evidence))?;
         require_strict_names(
             "gate report",
             "measurement metrics",
@@ -243,13 +271,15 @@ impl GateReport {
             .iter()
             .map(ReportMeasurement::measurement)
             .collect();
-        if measurement_digest(&measurements) != *self.verdict.measurement() {
+        if run_evidence_digest(&measurements, self.verdict.head(), &self.long_lines)
+            != *self.verdict.measurement()
+        {
             return Err(ReportDecodeError::inconsistent(
                 "gate report",
                 "measurements disagree with the verdict measurement identity",
             ));
         }
-        let tightening = gate_tightening(self.standing, &self.findings)
+        let tightening = gate_tightening(self.standing, &self.findings, &self.long_lines)
             .map_err(|evidence| ReportDecodeError::inconsistent("gate report", evidence))?;
         if self.tightening != tightening {
             return Err(ReportDecodeError::inconsistent(
@@ -322,8 +352,11 @@ fn validate_gate_findings(
 fn gate_tightening(
     standing: Standing,
     findings: &[Finding],
+    long_lines: &[LongLineFinding],
 ) -> Result<Option<Vec<ReportFloor>>, &'static str> {
-    let derived = if findings.iter().all(|finding| finding.movement.passes()) {
+    let derived = if long_lines.is_empty()
+        && findings.iter().all(|finding| finding.movement.passes())
+    {
         Standing::Clean
     } else {
         Standing::Refused

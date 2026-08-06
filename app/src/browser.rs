@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
+use wire::body::DirectiveAttachment;
 use wire::intent::{
     BoardRead, ConsentPolicy, ConsentRead, LaneRead, LaneSeat, SteerInbox, SteerSend, TaskAnswer,
     TaskNote,
@@ -24,9 +25,11 @@ use yew::prelude::*;
 use crate::compose::{self, Notice};
 use crate::{Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective};
 
+mod composer;
 mod view;
 
-use view::render_canvas;
+use composer::ComposerDrafts;
+use view::{CanvasRender, render_canvas};
 
 type SenderHandle = Rc<RefCell<Option<UnboundedSender<ClientAction>>>>;
 type SocketWriter = futures_util::stream::SplitSink<WebSocket, Message>;
@@ -110,11 +113,6 @@ enum ClientAction {
         life: String,
         vendor: wire::Name,
     },
-    Steer {
-        lane: CanonicalUuid,
-        occupant: CanonicalUuid,
-        message: String,
-    },
     Note {
         task: TaskHandle,
         note: String,
@@ -123,6 +121,13 @@ enum ClientAction {
         request: CanonicalUuid,
         rule: wire::Name,
         answer: Answer,
+    },
+    Steer {
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        epoch: CanonicalUuid,
+        message: String,
+        attachments: Vec<DirectiveAttachment>,
     },
 }
 
@@ -150,6 +155,7 @@ fn canvas_app() -> Html {
     let surface = use_state(SurfaceData::default);
     let axis = use_state(|| Axis::Topology);
     let mosaic = use_state(|| true);
+    let composer_drafts = use_reducer(ComposerDrafts::default);
     let note_task = use_state(String::new);
     let note_text = use_state(String::new);
     let sender = use_mut_ref(|| None::<UnboundedSender<ClientAction>>);
@@ -211,21 +217,22 @@ fn canvas_app() -> Html {
         speech_controller.clone(),
     );
 
-    render_canvas(
-        &connection,
-        &surface,
-        &axis,
-        &mosaic,
-        &sender,
-        &agents,
-        &note_task,
-        &note_text,
+    render_canvas(CanvasRender {
+        connection: &connection,
+        surface: &surface,
+        axis: &axis,
+        mosaic: &mosaic,
+        composer_drafts: &composer_drafts,
+        sender: &sender,
+        agents: &agents,
+        note_task: &note_task,
+        note_text: &note_text,
         submit_note,
         refresh,
-        &speech,
-        &speech_status,
+        speech: &speech,
+        speech_status: &speech_status,
         toggle_speech,
-    )
+    })
 }
 
 #[hook]
@@ -303,14 +310,16 @@ fn steer_submit(
         let selected = selected_lane.parse::<CanonicalUuid>().ok();
         let seated = selected_occupant(&surface, selected);
         match compose::steer(&message, seated) {
-            Ok(((lane, occupant), text)) => {
+            Ok(((lane, occupant, epoch), text)) => {
                 notice.set(Notice::none());
                 send_action(
                     &sender,
                     ClientAction::Steer {
                         lane,
                         occupant,
+                        epoch,
                         message: text,
+                        attachments: Vec::new(),
                     },
                 );
                 message.set(String::new());
@@ -323,7 +332,7 @@ fn steer_submit(
 fn selected_occupant(
     surface: &SurfaceData,
     selected: Option<CanonicalUuid>,
-) -> Option<(CanonicalUuid, CanonicalUuid)> {
+) -> Option<(CanonicalUuid, CanonicalUuid, CanonicalUuid)> {
     surface
         .as_ref()
         .and_then(CanvasRuntime::lanes)
@@ -331,8 +340,11 @@ fn selected_occupant(
             selected
                 .and_then(|selected| lanes.lanes.iter().find(|row| row.lane == selected))
                 .or_else(|| lanes.lanes.first())
+                .and_then(|row| {
+                    row.occupant
+                        .map(|occupant| (row.lane, occupant, lanes.epoch))
+                })
         })
-        .and_then(|row| row.occupant.map(|occupant| (row.lane, occupant)))
 }
 
 fn speech_toggle(
@@ -634,32 +646,6 @@ async fn dispatch_action(
             )
             .await
         }
-        ClientAction::Steer {
-            lane,
-            occupant,
-            message,
-        } => {
-            let body = SteerSend {
-                lane,
-                message,
-                attachments: vec![],
-            };
-            let expected = vec![Witness::Residency {
-                lane,
-                occupant,
-                epoch: principal.epoch(),
-            }];
-            send_typed(
-                principal,
-                writer,
-                pending,
-                PendingKind::SteerSend,
-                CommandKind::SteerSend,
-                expected,
-                body,
-            )
-            .await
-        }
         ClientAction::Note { task, note } => {
             let body = TaskNote {
                 task: task.clone(),
@@ -696,6 +682,34 @@ async fn dispatch_action(
                 pending,
                 PendingKind::ConsentDecision,
                 CommandKind::ConsentDecide,
+                expected,
+                body,
+            )
+            .await
+        }
+        ClientAction::Steer {
+            lane,
+            occupant,
+            epoch,
+            message,
+            attachments,
+        } => {
+            let body = SteerSend {
+                lane,
+                message,
+                attachments,
+            };
+            let expected = vec![Witness::Residency {
+                lane,
+                occupant,
+                epoch,
+            }];
+            send_typed(
+                principal,
+                writer,
+                pending,
+                PendingKind::SteerSend,
+                CommandKind::SteerSend,
                 expected,
                 body,
             )

@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use super::baseline::{BaselineCapture, MagicBaselines, selects};
+use super::baseline::{BaselineCapture, CommittedTexts, selects};
 use super::{
     ArmDeclaration, ComplexityRoutine, EvidenceError, EvidenceState, MetricEvidence, MetricId,
     MetricKey, MetricMeasurement, MetricStateBinding, ParseError, ParserEvidence, ParserId,
@@ -775,7 +775,7 @@ fn not_applicable_magic() -> Result<Vec<MetricEvidence>, MetricAcquisitionError>
 /// count would be a property of the file's size rather than of any change to it.
 /// The fold lets a measurement outrank inapplicability, so the paths that do
 /// have a baseline still speak for the arm.
-fn magic_state(source: &MetricSource<'_>, path: &str, baselines: &MagicBaselines) -> EvidenceState {
+fn magic_state(source: &MetricSource<'_>, path: &str, baselines: &CommittedTexts) -> EvidenceState {
     if let Err(unreadable) = admit_magic_source(path) {
         return unreadable.into_evidence_state();
     }

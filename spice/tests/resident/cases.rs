@@ -1209,7 +1209,8 @@ fn down_releases_before_reply_and_linked_worktrees_use_common_state() {
 #[test]
 fn resident_process_refuses_a_local_app_stage_that_cannot_supply_the_whole_app() {
     let fixture = Fixture::new("app-source");
-    let stage = fixture.root.join(canvas::LOCAL_STAGE);
+    let stage = fixture.root.join(canvas::DEV_STAGE);
+    fs::remove_dir_all(&stage).expect("remove complete fixture app");
     fs::create_dir_all(&stage).expect("fixture stage");
     fs::write(
         stage.join("canvas-app.html"),
@@ -1249,7 +1250,7 @@ fn resident_process_refuses_a_local_app_stage_that_cannot_supply_the_whole_app()
         );
     }
     assert!(
-        detail.contains("cargo xtask local-app"),
+        detail.contains("cargo xtask dev-app"),
         "the refusal does not say how to build the stage: {detail}"
     );
     assert!(
@@ -1259,22 +1260,9 @@ fn resident_process_refuses_a_local_app_stage_that_cannot_supply_the_whole_app()
 }
 
 #[test]
-fn resident_text_startup_names_the_compiled_or_exact_local_app_source() {
-    let compiled = Fixture::new("compiled-app-announcement");
-    let mut resident = RunningResident::spawn_text(&compiled);
-    resident.assert_ready(&compiled);
-    let down = invoke(&compiled, "down");
-    assert!(down.status.success(), "compiled resident down failed");
-    let output = resident.wait();
-    assert!(output.status.success(), "compiled resident failed");
-    assert_announcement(&output.stderr, "compiled app");
-
+fn resident_text_startup_names_the_exact_lane_app_source() {
     let local = Fixture::new("local-app-announcement");
-    let stage = local.root.join(canvas::LOCAL_STAGE);
-    fs::create_dir_all(&stage).expect("local app stage");
-    for asset in canvas::EMBEDDED_APP.assets() {
-        fs::write(stage.join(asset.file()), asset.bytes()).expect("local app asset");
-    }
+    let stage = local.root.join(canvas::DEV_STAGE);
     let mut resident = RunningResident::spawn_text(&local);
     resident.assert_ready(&local);
     let down = invoke(&local, "down");
@@ -1282,23 +1270,21 @@ fn resident_text_startup_names_the_compiled_or_exact_local_app_source() {
     let output = resident.wait();
     assert!(output.status.success(), "local resident failed");
     let stage = fs::canonicalize(&stage).expect("local app stage canonicalizes");
-    assert_announcement(&output.stderr, &format!("local app at {}", stage.display()));
-}
-
-/// A text start announces what it serves, then where it is served.
-///
-/// The endpoint line is the one an operator acts on now that no separate
-/// command prints it, so it is checked against the port the kernel actually
-/// handed out. These fixtures ask for port 0, so an endpoint formatted from
-/// the requested address rather than read back out of published discovery
-/// would announce `:0` and be unreachable.
-fn assert_announcement(stderr: &[u8], source: &str) {
-    let announcement = String::from_utf8(stderr.to_vec()).expect("announcement is UTF-8");
+    let announcement = String::from_utf8(output.stderr).expect("local announcement is UTF-8");
+    // A text start announces what it serves, then where it is served. The
+    // endpoint line is the one an operator acts on now that no separate command
+    // prints it, so it is checked against the port the kernel actually handed
+    // out: this fixture asks for port 0, so an endpoint formatted from the
+    // requested address rather than read back out of published discovery would
+    // announce `:0` and be unreachable.
     let (announced_source, announced_endpoint) =
         announcement.split_once('\n').unwrap_or_else(|| {
             panic!("startup announces a source line then an endpoint: {announcement:?}")
         });
-    assert_eq!(announced_source, format!("canvas app source: {source}"));
+    assert_eq!(
+        announced_source,
+        format!("canvas app source: lane app at {}", stage.display())
+    );
     let port = announced_endpoint
         .strip_prefix("canvas endpoint: http://127.0.0.1:")
         .and_then(|rest| rest.strip_suffix('\n'))

@@ -10,6 +10,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 use std::process::Command;
 
+use crate::long_lines::{LongLineFinding, validate as validate_long_lines};
 use crate::{Contract, Metric};
 
 use crate::kill::{
@@ -17,13 +18,13 @@ use crate::kill::{
     MutationToolIdentity, OutcomeEvidence, PINNED_CARGO_MUTANTS, ProcessCompletion,
     ProcessEvidence, StreamEvidence, SurvivorRate,
 };
-use crate::measure::{Measurement, measurement_digest};
+use crate::measure::Measurement;
 use crate::ratchet::{Finding, Movement};
-use crate::verdict::{CurrentRun, Standing, Verdict};
+use crate::verdict::{CurrentRun, Standing, Verdict, run_evidence_digest};
 use serde::{Deserialize, Serialize};
 
 /// The one ordinary gate report schema this build emits and admits.
-pub const GATE_REPORT_VERSION: u64 = 1;
+pub const GATE_REPORT_VERSION: u64 = 2;
 /// The one mutation gate report schema this build emits and admits.
 pub const KILL_REPORT_VERSION: u64 = 2;
 

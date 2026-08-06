@@ -164,6 +164,7 @@ In terminal A, keep the foreground resident attached:
 
 ```sh
 cd "$CUTOVER_REPO"
+cargo xtask dev-app
 "$CUTOVER_BIN" up
 ```
 
@@ -177,10 +178,10 @@ cd "$CUTOVER_REPO"
 "$CUTOVER_BIN" --json board
 ```
 
-The Canvas web app is part of this appliance: its HTML, JavaScript, stylesheet,
-and WASM are embedded in the native binary, and `up` serves those assets from
-the resident. There is no separate opener command. The start already running in
-terminal A announces the exact URL on its standard error:
+The Canvas web app is built natively into ignored `dist/stage-dev`, and `up`
+serves only those lane-local assets. There is no separate opener command: the
+start already running in terminal A announces the exact URL on its standard
+error:
 
 ```
 canvas endpoint: http://127.0.0.1:8765

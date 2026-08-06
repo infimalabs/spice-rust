@@ -132,7 +132,9 @@ fn prepare() -> Result<Prepared, Box<Outcome<ReleasePlan>>> {
             &error.to_string(),
         ))
     })?;
-    let release = admit_stage(&repository.worktree_root().join("dist/stage"))
+    let app = app_digest(repository.worktree_root())
+        .map_err(|error| Box::new(refusal::<ReleasePlan>("release::app-stage-refused", &error)))?;
+    let release = admit_stage(&repository.worktree_root().join("dist/stage"), &app)
         .map_err(|error| Box::new(refusal::<ReleasePlan>("release::manifest-refused", &error)))?;
     let state_paths = repository
         .admit_state()
@@ -247,7 +249,13 @@ mod tests {
     }
 }
 
-pub(crate) fn admit_stage(root: &Path) -> Result<AdmittedRelease, ReleaseError> {
+pub(crate) fn app_digest(worktree: &Path) -> Result<Digest, String> {
+    canvas::AppSource::resolve(worktree)
+        .and_then(|source| source.digest())
+        .map_err(|error| error.to_string())
+}
+
+pub(crate) fn admit_stage(root: &Path, app: &Digest) -> Result<AdmittedRelease, ReleaseError> {
     let executable = std::env::current_exe().map_err(ReleaseError::CurrentExecutable)?;
     let bytes = fs::read(&executable).map_err(|source| ReleaseError::ReadExecutable {
         path: executable,
@@ -255,8 +263,8 @@ pub(crate) fn admit_stage(root: &Path) -> Result<AdmittedRelease, ReleaseError> 
     })?;
     let native = Digest::compute(Domain::DistArtifact, &bytes);
     let target = proof::compiled_target().map_err(ReleaseError::UnsupportedHost)?;
-    let published = proof::admit_manifest(root, &canvas::EMBEDDED_APP.digest(), target, &native)
-        .map_err(ReleaseError::Manifest)?;
+    let published =
+        proof::admit_manifest(root, app, target, &native).map_err(ReleaseError::Manifest)?;
     let key = Digest::compute(Domain::DistReleasePlan, &published.bytes);
     let targets = published
         .manifest

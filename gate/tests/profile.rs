@@ -6,10 +6,9 @@ use gate::{CampStanding, Contract, LONG_LINE_LIMIT, Standing};
 
 mod support;
 
-use support::Tree;
+use support::{Tree, git_commit, git_repository};
 
-const BASELINE: &str = "version = 1\n\n[[floor]]\nname = \"rust.long-lines\"\nvalue = 10\n\n\
-     [[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n";
+const BASELINE: &str = "version = 1\n\n[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n";
 const LOCI: [&str; 4] = [
     "gate/src/camp.rs",
     "gate/src/input.rs",
@@ -52,13 +51,14 @@ fn production_contract_distinguishes_clean_and_camped_complete_populations() {
 }
 
 fn profile_tree(label: &str, lengths: [usize; 4]) -> Tree {
-    let tree = Tree::new(label);
+    let tree = git_repository(label);
     tree.write("spice.toml", gate::NARROWEST_FILE_CLASSES);
     tree.write("baseline.toml", BASELINE);
     for (path, length) in LOCI.into_iter().zip(lengths) {
         assert!(length <= LONG_LINE_LIMIT + 6);
         tree.write(path, &("x".repeat(length) + "\n"));
     }
+    git_commit(&tree, "profile fixture");
     tree
 }
 
