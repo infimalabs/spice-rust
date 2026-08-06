@@ -15,9 +15,12 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use wire::Digest;
+
 use crate::release::ReleaseEnvironment;
 use crate::stage_sources::{
-    STAGE_INSTRUCTIONS, STAGE_SOURCE_LISTING, compare_stage_sources, record_stage_sources,
+    STAGE_INSTRUCTIONS, STAGE_SOURCE_LISTING, capture_stage_sources, compare_stage_sources,
+    record_stage_sources,
 };
 use crate::toolchain;
 
@@ -106,6 +109,26 @@ const APP_FILES: [&str; 4] = ["app.module", "app_bg.wasm", "canvas-app.html", "s
 const RELEASE_STAGE_DIRECTORIES: [&str; 2] = ["objects", "targets"];
 const GENERATED_MODULE_REFERENCES: usize = 2;
 
+/// Why one app compilation is running.
+///
+/// Staging and checking deliberately never share a Cargo target directory. A
+/// verifier that reused the staging cache could reproduce the same substituted
+/// artifact and call it equal without compiling the sources independently.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AppBuildRole {
+    Stage,
+    Check,
+}
+
+impl AppBuildRole {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Stage => "stage",
+            Self::Check => "check",
+        }
+    }
+}
+
 /// Compile the browser app with the pinned Trunk adapter and replace the
 /// committed stage with exactly those generated assets.
 ///
@@ -126,9 +149,17 @@ pub fn stage_app(
 ) -> Result<(), AppBuildError> {
     let root = workspace_root()?;
     admit_staging_environment(&root, environment)?;
+    let sources = capture_stage_sources(&root)?;
     let stage = root.join("dist/stage");
-    run_trunk(&root, environment, &stage, output)?;
-    record_stage_sources(&root)
+    run_trunk(
+        &root,
+        environment,
+        &stage,
+        AppBuildRole::Stage,
+        sources.identity(),
+        output,
+    )?;
+    record_stage_sources(&root, &sources)
 }
 
 /// Whether this build may write the stage: the release first, then the tuple.
@@ -180,7 +211,7 @@ pub fn check_app(
     output: &mut impl Write,
 ) -> Result<(), AppBuildError> {
     let root = workspace_root()?;
-    compare_stage_sources(&root)?;
+    let sources = compare_stage_sources(&root)?;
     let host = observed_toolchain(&root, environment)?.host().to_owned();
     let temporary = environment
         .build_root(&root)
@@ -191,7 +222,15 @@ pub fn check_app(
             source,
         })?;
     }
-    let result = run_trunk(&root, environment, &temporary, output).and_then(|()| {
+    let result = run_trunk(
+        &root,
+        environment,
+        &temporary,
+        AppBuildRole::Check,
+        sources.identity(),
+        output,
+    )
+    .and_then(|()| {
         let stage = root.join("dist/stage");
         compare_stage_inventory(&stage, &temporary)?;
         if owns_the_stage(&host) {
@@ -215,31 +254,60 @@ fn run_trunk(
     root: &Path,
     environment: &ReleaseEnvironment,
     stage: &Path,
+    role: AppBuildRole,
+    source_identity: &Digest,
     output: &mut impl Write,
 ) -> Result<(), AppBuildError> {
     let build_root = environment.build_root(root);
     let cargo_home = environment
         .cargo_home()
         .ok_or(AppBuildError::MissingCargoHome)?;
-    prepare_app_build(&build_root)?;
+    prepare_app_build(&build_root, role, source_identity)?;
     writeln!(output, "[app] trunk 0.21.14 -> {}", stage.display())
         .map_err(AppBuildError::Output)?;
     let rustflags = remapped_rustflags(root, &cargo_home)?;
-    let status = trunk_command(root, &build_root, &cargo_home, stage, rustflags)
-        .status()
-        .map_err(AppBuildError::Launch)?;
+    let status = trunk_command(
+        root,
+        &build_root,
+        &cargo_home,
+        stage,
+        rustflags,
+        role,
+        source_identity,
+    )
+    .status()
+    .map_err(AppBuildError::Launch)?;
     if !status.success() {
         return Err(AppBuildError::Exit(status.code()));
     }
     finalize_stage(stage)
 }
 
-fn app_build_directory(build_root: &Path) -> PathBuf {
-    build_root.join("xtask-app-build")
+fn app_build_namespace(role: AppBuildRole, source_identity: &Digest) -> String {
+    format!("xtask-app-{}-{source_identity}", role.label())
 }
 
-fn prepare_app_build(build_root: &Path) -> Result<(), AppBuildError> {
-    let build = app_build_directory(build_root);
+fn app_build_directory(build_root: &Path, role: AppBuildRole, source_identity: &Digest) -> PathBuf {
+    build_root.join(format!(
+        "{}-build",
+        app_build_namespace(role, source_identity)
+    ))
+}
+
+fn app_target_directory(
+    build_root: &Path,
+    role: AppBuildRole,
+    source_identity: &Digest,
+) -> PathBuf {
+    build_root.join(app_build_namespace(role, source_identity))
+}
+
+fn prepare_app_build(
+    build_root: &Path,
+    role: AppBuildRole,
+    source_identity: &Digest,
+) -> Result<(), AppBuildError> {
+    let build = app_build_directory(build_root, role, source_identity);
     fs::create_dir_all(&build).map_err(|source| AppBuildError::Io {
         path: build,
         source,
@@ -274,9 +342,11 @@ fn trunk_command(
     cargo_home: &OsStr,
     stage: &Path,
     rustflags: String,
+    role: AppBuildRole,
+    source_identity: &Digest,
 ) -> Command {
-    let target = build_root.join("xtask-app");
-    let build = app_build_directory(build_root);
+    let target = app_target_directory(build_root, role, source_identity);
+    let build = app_build_directory(build_root, role, source_identity);
     let mut command = Command::new("trunk");
     command
         .current_dir(root.join("app"))
@@ -461,6 +531,7 @@ pub enum AppBuildError {
     SourceInput(PathBuf),
     UnreadableSourceIndex(String),
     UntrackedSourceInput(String),
+    SourcesChangedDuringBuild(Vec<String>),
     StaleStage(Vec<String>),
 }
 
@@ -522,6 +593,12 @@ impl fmt::Display for AppBuildError {
                 "the staged app build input {input} names no tracked file, so the recorded \
                  stage identity would leave out sources the stage was built from"
             ),
+            Self::SourcesChangedDuringBuild(paths) => write!(
+                formatter,
+                "the staged app sources changed while they were being compiled: {}; the \
+                 generated stage was not paired with a source record from another instant",
+                paths.join(", ")
+            ),
             Self::StaleStage(paths) => write!(
                 formatter,
                 "the committed app stage was not built from the sources now in the tree: \
@@ -543,6 +620,8 @@ impl std::error::Error for AppBuildError {}
 mod tests {
     use std::collections::BTreeMap;
 
+    use wire::Domain;
+
     use super::*;
 
     /// The build root here is deliberately outside the workspace, which is how
@@ -554,12 +633,15 @@ mod tests {
         let root = Path::new("/workspace");
         let build_root = Path::new("/cargo-target");
         let stage = Path::new("/stage");
+        let sources = Digest::compute(Domain::DistInventory, b"fixture sources");
         let command = trunk_command(
             root,
             build_root,
             OsStr::new("/cargo-home"),
             stage,
             "remapped-flags".to_owned(),
+            AppBuildRole::Stage,
+            &sources,
         );
         let environment = command
             .get_envs()
@@ -576,7 +658,7 @@ mod tests {
             BTreeMap::from([
                 (
                     "CARGO_BUILD_BUILD_DIR".to_owned(),
-                    Some("/cargo-target/xtask-app-build".to_owned()),
+                    Some(format!("/cargo-target/xtask-app-stage-{sources}-build")),
                 ),
                 (
                     "CARGO_ENCODED_RUSTFLAGS".to_owned(),
@@ -586,7 +668,7 @@ mod tests {
                 ("CARGO_INCREMENTAL".to_owned(), Some("0".to_owned())),
                 (
                     "CARGO_TARGET_DIR".to_owned(),
-                    Some("/cargo-target/xtask-app".to_owned()),
+                    Some(format!("/cargo-target/xtask-app-stage-{sources}")),
                 ),
                 ("NO_COLOR".to_owned(), Some("true".to_owned())),
                 ("RUSTC_WORKSPACE_WRAPPER".to_owned(), Some(String::new())),
@@ -624,14 +706,98 @@ mod tests {
             fs::remove_dir_all(&root).expect("remove stale app-build fixture");
         }
 
-        prepare_app_build(&root).expect("prepare the app-build directory");
+        let sources = Digest::compute(Domain::DistInventory, b"fixture sources");
+        prepare_app_build(&root, AppBuildRole::Check, &sources)
+            .expect("prepare the app-build directory");
 
-        let build = app_build_directory(&root);
+        let build = app_build_directory(&root, AppBuildRole::Check, &sources);
         assert!(
             build.is_dir(),
             "the dedicated Cargo build directory is absent"
         );
         fs::remove_dir_all(root).expect("remove app-build fixture");
+    }
+
+    /// Two staging lanes may share the writable volume, but not an app target.
+    ///
+    /// Both workers write the same artifact name at the same time. If the
+    /// source identity leaves the namespace, the paths collapse and at least
+    /// one lane reads its peer's bytes. The checker is held apart as well: it
+    /// must independently compile the sources or it can agree with the exact
+    /// substituted artifact staging consumed.
+    #[test]
+    fn concurrent_source_inventories_and_the_checker_use_disjoint_app_targets() {
+        use std::sync::{Arc, Barrier};
+
+        let root = std::env::temp_dir().join(format!(
+            "spice-xtask-app-concurrent-targets-{}",
+            std::process::id()
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("remove stale app-target fixture");
+        }
+        fs::create_dir_all(&root).expect("create app-target fixture");
+        let lane_a = Digest::compute(Domain::DistInventory, b"lane A sources");
+        let lane_b = Digest::compute(Domain::DistInventory, b"lane B sources");
+        let barrier = Arc::new(Barrier::new(2));
+        let workers = [
+            (&lane_a, b"lane A wasm".as_slice()),
+            (&lane_b, b"lane B wasm"),
+        ]
+        .into_iter()
+        .map(|(sources, bytes)| {
+            let target = app_target_directory(&root, AppBuildRole::Stage, sources);
+            let barrier = Arc::clone(&barrier);
+            let bytes = bytes.to_vec();
+            std::thread::spawn(move || {
+                fs::create_dir_all(&target).expect("create lane target");
+                barrier.wait();
+                fs::write(target.join("app_bg.wasm"), &bytes).expect("write lane artifact");
+                (target, bytes)
+            })
+        })
+        .collect::<Vec<_>>();
+        let built = workers
+            .into_iter()
+            .map(|worker| worker.join().expect("lane worker joins"))
+            .collect::<Vec<_>>();
+
+        assert_ne!(built[0].0, built[1].0, "different sources shared a target");
+        for (target, expected) in &built {
+            assert_eq!(
+                fs::read(target.join("app_bg.wasm")).expect("read lane artifact"),
+                *expected,
+                "a concurrent lane replaced its peer's compiled app",
+            );
+        }
+        let check = app_target_directory(&root, AppBuildRole::Check, &lane_a);
+        assert_ne!(
+            check, built[0].0,
+            "check-app reused the staging target it is meant to verify"
+        );
+        assert!(
+            !check.exists(),
+            "the independent checker inherited the staged artifact"
+        );
+        fs::remove_dir_all(root).expect("remove app-target fixture");
+    }
+
+    /// The copy-paste staging command must allocate a target volume for this
+    /// lane alone. Source-bound directories defend custom invocations too, but
+    /// the documented happy path should retain one lane's cache without
+    /// handing that state to unrelated lanes.
+    #[test]
+    fn documented_staging_uses_a_lane_distinct_target_volume() {
+        let procedure = include_str!("../../dist/proof-image/README.md");
+
+        assert!(
+            procedure.contains("src=spice-stage-target-$(basename \"$PWD\")"),
+            "the staging procedure does not name its target volume after the lane checkout"
+        );
+        assert!(
+            !procedure.contains("spice-stage-target:/cargo-target"),
+            "the staging procedure still names one target volume shared by every lane"
+        );
     }
 
     /// A `rustc` in `directory` that answers with one chosen report.

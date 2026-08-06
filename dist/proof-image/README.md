@@ -72,10 +72,21 @@ nothing under the workspace:
 
 ```sh
 docker run --rm --platform linux/amd64 --network none \
-  -v "$PWD:/workspace" -v spice-stage-target:/cargo-target \
+  -v "$PWD:/workspace" \
+  --mount "type=volume,src=spice-stage-target-$(basename "$PWD"),dst=/cargo-target" \
   -e CARGO_HOME=/usr/local/cargo -e CARGO_TARGET_DIR=/cargo-target \
   "$(cat dist/proof-image/identity.txt)" cargo xtask stage-app
 ```
+
+The target volume is named after the checkout directory. Give each throwaway
+clone below a lane-distinct `<name>`; that keeps concurrent lanes apart while
+letting repeated restages in one lane reuse Cargo's cache. Do not replace it
+with one fleet-wide name: two lanes compiling different source inventories at
+`/workspace` would otherwise address the same Cargo artifact names
+concurrently. The app builder also namespaces its Cargo targets by source
+inventory and keeps `stage-app` and `check-app` in separate targets, so a
+custom invocation cannot make the check agree merely by handing both commands
+the same substituted artifact.
 
 The run records what it compiled by asking `git` inside that mount, so stage
 from a checkout whose repository is under `$PWD`. A linked worktree's `.git`

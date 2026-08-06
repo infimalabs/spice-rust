@@ -383,7 +383,7 @@ fn same_image_atomic_rewrite_still_plans_and_unapplies() {
             .code,
         Some(0)
     );
-    let entry = fixture.root.join(".spice/hooks/entry.sh");
+    let entry = fixture.root.join(".git/.spice-install/hooks/entry.sh");
     let replacement = fixture.root.join("replacement-entry");
     fs::write(&replacement, fs::read(&entry).unwrap()).expect("write replacement entry hook");
     fs::set_permissions(&replacement, fs::Permissions::from_mode(0o755))

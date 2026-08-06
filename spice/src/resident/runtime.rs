@@ -228,7 +228,9 @@ fn listen_refusal(reason: &str, expected: &str, observed: &str) -> Outcome<()> {
         witness: Some("requested-listen-address".to_owned()),
         expected: Some(expected.to_owned()),
         observed: Some(observed.to_owned()),
-        remedy: format!("name an address this machine can listen on, or omit the flag for {DEFAULT_LISTEN}"),
+        remedy: format!(
+            "name an address this machine can listen on, or omit the flag for {DEFAULT_LISTEN}"
+        ),
     })
 }
 
