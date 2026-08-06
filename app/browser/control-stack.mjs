@@ -202,6 +202,58 @@ const expectations = new Map([
   ]],
 ]);
 
+/// Below 720px the reference narrows the same stack rather than letting it
+/// crowd the agent cards, and it narrows every item together: a 68px track
+/// inside 3px 5px padding and a 1px border is 80 wide, under a 34px item
+/// height. Without this the fallback would be the one block of the reference
+/// treatment nothing could red.
+const narrowItemWidth = 80;
+const narrowItemHeight = 34;
+
+async function assertNarrowStack(page, controls, viewport) {
+  await page.setViewportSize({ width: 680, height: viewport.height });
+  try {
+    await controls
+      .locator(".team-speech")
+      .evaluate(
+        (node, expected) =>
+          new Promise((settle, fail) => {
+            const deadline = Date.now() + 10_000;
+            const poll = () => {
+              const measured = Math.round(node.getBoundingClientRect().width);
+              if (measured === expected) return settle();
+              if (Date.now() > deadline) {
+                return fail(new Error(`narrow speech slider stalled at ${measured}px`));
+              }
+              requestAnimationFrame(poll);
+            };
+            poll();
+          }),
+        narrowItemWidth,
+      );
+    const stack = await controls.evaluate(describeStack);
+    const items = [stack.speech, stack.lifetime, stack.send];
+    const named = ["speech slider", "lifetime slider", "send button"];
+    for (const [index, item] of items.entries()) {
+      assert.equal(item.width, narrowItemWidth, `narrow ${named[index]} keeps the fallback width`);
+      assert.equal(
+        item.height,
+        narrowItemHeight,
+        `narrow ${named[index]} keeps the fallback height`,
+      );
+    }
+    for (let index = 1; index < items.length; index += 1) {
+      assert.equal(
+        items[index].top - items[index - 1].bottom,
+        referenceGap,
+        `narrow ${named[index]} keeps the reference gap below ${named[index - 1]}`,
+      );
+    }
+  } finally {
+    await page.setViewportSize(viewport);
+  }
+}
+
 /// Capture the lineage control stack at the reference's own states and refuse
 /// any material drift from the Python Spice reference image.
 ///
@@ -211,7 +263,8 @@ const expectations = new Map([
 /// enabled, the way the reference shows it, and the draft is withdrawn again so
 /// the surrounding conversation flow resumes untouched.
 export async function assertReferenceControlStack(page, console_, artifacts) {
-  const width = page.viewportSize()?.width ?? 0;
+  const viewport = page.viewportSize();
+  const width = viewport?.width ?? 0;
   assert.ok(width > 720, "the reference control stack is measured above the narrow breakpoint");
   const controls = console_.locator(".team-composer-controls").first();
   await controls.waitFor({ timeout: 15_000 });
@@ -237,6 +290,7 @@ export async function assertReferenceControlStack(page, console_, artifacts) {
     for (const expected of expectations.get(state.name)) assertReferenceState(stack, expected);
   }
 
+  await assertNarrowStack(page, controls, viewport);
   await speech.fill("1");
   await lifetime.fill("0");
   await console_.getByRole("button", { name: "Steer", exact: true }).waitFor();
