@@ -229,6 +229,7 @@ pub(super) fn render_mosaic_card(
         <article
             class={classes!("message", "outgoing", "mosaic-card", state)}
             data-state={state}
+            data-key={directive.key.clone()}
             data-accent={correspondent.accent.to_string()}
             data-track={card.track.to_string()}
             data-span={card.span.to_string()}

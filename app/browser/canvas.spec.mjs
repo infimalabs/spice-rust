@@ -398,6 +398,11 @@ async function assertMosaicPacking(page, console) {
   assert.equal(await cards.first().getAttribute("data-state"), "frozen");
   const keys = await cards.locator(".message-key").allTextContents();
   assert.deepEqual(keys, [...keys].sort(), "Canvas journal order agrees with steering key order");
+  assert.deepEqual(
+    await cards.evaluateAll((elements) => elements.map((element) => element.dataset.key)),
+    keys,
+    "each packed card binds its visible key to its machine-readable identity",
+  );
   const ages = cards.locator(".message-age");
   assert.ok(
     (await ages.allTextContents()).every((age) => age.endsWith(" left")),
