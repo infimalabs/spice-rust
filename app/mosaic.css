@@ -316,7 +316,7 @@
      can carry any number of sibling lineage surfaces. */
   flex: var(--lineage-weight, 4) 1 0;
   width: auto;
-  min-width: min(20em, 100%);
+  min-width: 0;
   max-width: 100%;
   min-height: calc(100vh - 40px);
   overflow: hidden;

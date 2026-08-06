@@ -498,6 +498,21 @@ pub struct ClaimAnswer {
     pub task: TaskHandle,
     /// Actor holding it after the transaction.
     pub holder: Actor,
+    /// Non-blocking overlap warnings discovered from the claim-time board.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<ClaimWarning>,
+}
+
+/// One active claim whose acceptance names the same implementation surface.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimWarning {
+    /// Other in-flight task.
+    pub task: TaskHandle,
+    /// Lane holding the other claim.
+    pub lane: CanonicalUuid,
+    /// Exact normalized acceptance terms shared by both tasks.
+    pub surface: Vec<String>,
 }
 
 /// The answer a document application returns.

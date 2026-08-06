@@ -18,10 +18,13 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { assertTiledWorkspace } from "./tiled-workspace.mjs";
+
 const execute = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
 const binary = join(root, "target/debug/spice");
+const artifacts = join(root, "artifacts/canvas");
 const sessionRecord = JSON.stringify({
   type: "system",
   subtype: "init",
@@ -335,7 +338,7 @@ export async function assertLineageLifeIsolation(browser) {
   let resident;
   let context;
   try {
-    const worktrees = await configureFixture(fixture, linkedRoot, 7);
+    const worktrees = await configureFixture(fixture, linkedRoot, 8);
     resident = await startResident(fixture);
     const pending = await reply(fixture, ["trust"]);
     await reply(fixture, ["trust", "grant", pending.body.digest]);
@@ -345,8 +348,8 @@ export async function assertLineageLifeIsolation(browser) {
     ]);
     const firstSnapshot = await reply(fixture, ["lane"]);
     const host = firstSnapshot.body.lanes.find((lane) => lane.worktree === worktrees[0]);
-    assert.ok(host, "the six-member Drain lineage has a host");
-    for (const worktree of worktrees.slice(1, 6)) {
+    assert.ok(host, "the four-member Drain lineage has a host");
+    for (const worktree of worktrees.slice(1, 4)) {
       await reply(fixture, [
         "lane", "add", worktree,
         "--lineage", host.lineage_id,
@@ -355,22 +358,35 @@ export async function assertLineageLifeIsolation(browser) {
       ]);
     }
     await reply(fixture, [
-      "lane", "add", worktrees[6], "--life", "Drive", "--vendor", "claude",
+      "lane", "add", worktrees[4], "--life", "Drive", "--vendor", "claude",
     ]);
+    const secondSnapshot = await reply(fixture, ["lane"]);
+    const drive = secondSnapshot.body.lanes.find((lane) => lane.worktree === worktrees[4]);
+    assert.ok(drive, "the four-member Drive lineage has a host");
+    for (const worktree of worktrees.slice(5)) {
+      await reply(fixture, [
+        "lane", "add", worktree,
+        "--lineage", drive.lineage_id,
+        "--life", "Drive",
+        "--vendor", "claude",
+      ]);
+    }
     const snapshot = await reply(fixture, ["lane"]);
     const drainMembers = snapshot.body.lanes.filter(
       (lane) => lane.lineage_id === host.lineage_id,
     );
-    const drive = snapshot.body.lanes.find((lane) => lane.worktree === worktrees[6]);
-    assert.equal(drainMembers.length, 6, "one admitted lineage contains six members");
+    const driveMembers = snapshot.body.lanes.filter(
+      (lane) => lane.lineage_id === drive.lineage_id,
+    );
+    assert.equal(drainMembers.length, 4, "one admitted lineage contains four members");
     assert.ok(drainMembers.every((lane) => lane.life === "drain"));
-    assert.ok(drive, "the one-member Drive lineage is admitted");
+    assert.equal(driveMembers.length, 4, "the sibling lineage contains four members");
+    assert.ok(driveMembers.every((lane) => lane.life === "drive"));
     assert.notEqual(drive.lineage_id, host.lineage_id);
-    assert.equal(drive.life, "drive");
 
     context = await browser.newContext({
-      colorScheme: "light",
-      viewport: { width: 1440, height: 900 },
+      colorScheme: "dark",
+      viewport: { width: 1000, height: 568 },
     });
     const page = await context.newPage();
     const monitor = monitorPage(page);
@@ -395,7 +411,7 @@ export async function assertLineageLifeIsolation(browser) {
       .locator(".mosaic-message-card")
       .filter({ hasText: "drain lineage accessibility" })
       .waitFor({ timeout: 10_000 });
-    await driveSurface.getByRole("textbox").fill("drive lineage accessibility");
+    await driveSurface.getByRole("textbox").first().fill("drive lineage accessibility");
     await driveSurface.getByRole("button", { name: "Drive", exact: true }).click();
     const drivePlane = driveSurface.locator(".lane-mosaic-plane");
     await drivePlane
@@ -405,8 +421,13 @@ export async function assertLineageLifeIsolation(browser) {
 
     const planes = console.locator(".lane-mosaic-plane");
     assert.equal(await planes.count(), 2, "two admitted lineages own exactly two packed planes");
-    assert.match(await drainPlane.ariaSnapshot(), /Drain policy, 6 members/);
-    assert.match(await drivePlane.ariaSnapshot(), /Drive policy, 1 member/);
+    assert.match(await drainPlane.ariaSnapshot(), /Drain policy, 4 members/);
+    assert.match(await drivePlane.ariaSnapshot(), /Drive policy, 4 members/);
+    await assertTiledWorkspace(
+      page,
+      console,
+      join(artifacts, "canvas-tiled-workspace-dark.png"),
+    );
 
     await drainSurface.locator('.team-lifetime input[type="range"]').fill("0");
     await drainSurface.getByRole("button", { name: "Steer", exact: true }).waitFor();

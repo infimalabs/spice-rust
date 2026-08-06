@@ -443,6 +443,38 @@ fn every_answer_re_encodes_unchanged() {
 }
 
 #[test]
+fn a_claim_overlap_is_visible_while_the_legacy_empty_shape_stays_stable() {
+    let body = r#"{
+  "task": "FIDELIT-1kKRSfyV",
+  "holder": "operator",
+  "warnings": [{
+    "task": "MOSAIC-1kKQTw1V",
+    "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+    "surface": ["mosaic", "watchband"]
+  }]
+}"#;
+    let answer = AnswerShape::Claim
+        .decode(body.as_bytes())
+        .expect("claim warning decodes");
+    let CommandAnswer::Claim(claim) = &answer else {
+        panic!("claim binding returned another answer: {answer:?}");
+    };
+    assert_eq!(claim.warnings.len(), 1);
+    assert_eq!(claim.warnings[0].task.as_str(), "MOSAIC-1kKQTw1V");
+    assert_eq!(
+        claim.warnings[0].lane.to_string(),
+        "018f82d4-6f59-7d06-92e3-bce9131163c2"
+    );
+    assert_eq!(claim.warnings[0].surface, ["mosaic", "watchband"]);
+
+    let spelled: serde_json::Value = serde_json::from_str(body).expect("fixture JSON");
+    assert_eq!(
+        serde_json::to_value(answer).expect("warning answer encodes"),
+        spelled
+    );
+}
+
+#[test]
 fn the_answer_union_reports_the_shape_it_carries() {
     let answer = CommandAnswer::Taste(wire::intent::TasteAnswer {
         name: "polling".parse().expect("a name"),

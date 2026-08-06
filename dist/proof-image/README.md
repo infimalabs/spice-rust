@@ -26,6 +26,45 @@ configuration must name an absolute Docker or Podman executable as
 battery runs. Replay uses a read-only workspace, empty temporary caches, and a
 disabled network boundary.
 
+## Container invocation inventory
+
+Container execution is a release-proof exception, not a development
+prerequisite. The tracked repository has three real execution surfaces:
+
+- `build.sh` invokes Docker to `buildx build` the exact `linux/amd64` image,
+  inspect its immutable identity, run its pinned-tool self-check with networking
+  disabled, and save the admitted image as a recovery archive. Native Darwin
+  tools cannot replace this boundary: its product is the Linux appliance whose
+  architecture, filesystem, tool closure, and OCI identity the proof contract
+  records.
+- `load.sh` invokes Docker only to load that archive and inspect the restored
+  identity. This is recovery for the same distribution artifact, not a build or
+  validation path; rebuilding when the archive exists is slower and creates a
+  second opportunity for identity drift.
+- `proof/src/container.rs` invokes the absolute Docker or Podman executable
+  selected by `proof.container`. It probes the runtime, inspects the pinned
+  image, and uses `run`, `exec`, and `rm` for the
+  `x86_64-unknown-linux-musl` proof battery. That OCI boundary supplies the
+  read-only workspace, network namespace, fresh anonymous cache mounts, exact
+  platform, and one attested scratch owner that native host execution cannot
+  claim to reproduce. The Darwin target instead requires the
+  [sealed native runner](../proof-runner/README.md) and never consults
+  `proof.container`.
+
+Every other tracked Docker or Podman spelling does not invoke a real container
+runtime: configuration and error prose, comments describing the boundary, UI
+fixture data, or a test fixture that writes a temporary shell program standing
+in for a runtime. Those tests do not contact a daemon. Adding another real
+invocation requires adding its constraint or native replacement to this
+inventory.
+
+The native default is deliberately broader than the exceptions. The
+interactive app uses `cargo xtask app`; `npm run test:canvas` exercises it in a
+real browser; `cargo xtask verify` runs local validation; and ordinary
+workspace tests use host tooling. None loads, builds, or runs the proof image.
+On Darwin, `dist/proof-runner/build.sh` also seals and exercises the target
+proof runner natively.
+
 ## Cleaning up
 
 Reclaim only what this lane owns, and reclaim the throwaway part rather than

@@ -540,6 +540,14 @@ fn claim_win(
     let answer = wire::intent::ClaimAnswer {
         task: task.clone(),
         holder: command.actor().clone(),
+        warnings: board::claim_overlaps(selected, &snapshot.entries)
+            .into_iter()
+            .map(|overlap| wire::intent::ClaimWarning {
+                task: overlap.task,
+                lane: overlap.lane,
+                surface: overlap.surface,
+            })
+            .collect(),
     };
     if let Err(error) = write.command_result(
         request(command, win.clone()),

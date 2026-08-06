@@ -309,6 +309,7 @@ fn build_write(
             intent::ClaimAnswer {
                 task: winner.clone(),
                 holder: request.actor,
+                warnings: Vec::new(),
             },
         )
         .map_err(WinError::Build)?;

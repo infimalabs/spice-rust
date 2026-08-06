@@ -155,6 +155,23 @@ mod tests {
         project: &str,
         flow: Option<&str>,
     ) -> TaskHandle {
+        add_project_with_acceptance(bus, epoch, actor, task, title, project, flow, &[])
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "task fixtures retain the command's authored fields"
+    )]
+    fn add_project_with_acceptance(
+        bus: &Bus,
+        epoch: CanonicalUuid,
+        actor: Actor,
+        task: &str,
+        title: &str,
+        project: &str,
+        flow: Option<&str>,
+        acceptance: &[&str],
+    ) -> TaskHandle {
         let task = task.parse::<TaskHandle>().expect("fixture task handle");
         assert_committed(issue(
             bus,
@@ -166,7 +183,7 @@ mod tests {
                 title: title.to_owned(),
                 project: Some(project.to_owned()),
                 description: None,
-                acceptance: Vec::new(),
+                acceptance: acceptance.iter().map(|item| (*item).to_owned()).collect(),
                 origin: None,
                 flow: flow.map(str::to_owned),
                 depends: Vec::new(),
@@ -579,6 +596,88 @@ mod tests {
             ClaimDisposition::Active,
         );
         clean(&root, bus);
+    }
+
+    #[test]
+    fn claims_warn_on_shared_acceptance_surface_not_shared_project_stem() {
+        let (root, bus, epoch, seats) = fixture("claim-overlap", 3);
+        let first = add_project_with_acceptance(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "MOSAIC-1kKQTw1V",
+            "Canvas lacks the mosaic lane interface",
+            "board.alpha",
+            Some("todo"),
+            &["The watchband mosaic uses per-lane cards"],
+        );
+        let overlapping = add_project_with_acceptance(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "FIDELIT-1kKRSfyV",
+            "Rebuild the lane watchband and message mosaic",
+            "rim.beta",
+            Some("todo"),
+            &["The mosaic watchband keeps focused-agent state visible"],
+        );
+        let same_stem = add_project_with_acceptance(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "MOSAIC-1kKQTw1W",
+            "Audit unrelated board output",
+            "board.gamma",
+            Some("todo"),
+            &["Export signed ledger receipts for audit"],
+        );
+
+        let first_answer = capture_for(&bus, epoch, &seats[0], &first);
+        assert!(first_answer.warnings.is_empty());
+
+        let overlap_answer = capture_for(&bus, epoch, &seats[1], &overlapping);
+        assert_eq!(
+            overlap_answer.warnings,
+            [wire::intent::ClaimWarning {
+                task: first,
+                lane: seats[0].lane,
+                surface: vec!["mosaic".to_owned(), "watchband".to_owned()],
+            }]
+        );
+
+        let same_stem_answer = capture_for(&bus, epoch, &seats[2], &same_stem);
+        assert!(same_stem_answer.warnings.is_empty());
+        clean(&root, bus);
+    }
+
+    fn capture_for(
+        bus: &Bus,
+        epoch: CanonicalUuid,
+        seat: &Seat,
+        task: &TaskHandle,
+    ) -> wire::intent::ClaimAnswer {
+        let lane = Actor::Lane(seat.lane);
+        let available = board(bus, epoch, lane.clone());
+        let heads = at(&available, task);
+        let rule: Name = "capture".parse().expect("capture rule");
+        let answer = assert_committed(issue(
+            bus,
+            epoch,
+            lane,
+            CommandKind::ClaimWin,
+            vec![
+                statement_witness(heads),
+                workflow_witness(heads),
+                claim_witness(heads),
+                Witness::Eligibility { rule: rule.clone() },
+                residency(&available, seat),
+            ],
+            &ClaimWin { rule },
+        ));
+        let CommandAnswer::Claim(answer) = answer else {
+            panic!("claim win returned another answer shape: {answer:?}");
+        };
+        answer
     }
 
     #[test]

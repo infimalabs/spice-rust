@@ -395,7 +395,11 @@ fn build_write(request: Request, observed: Observation) -> Result<JournalWrite, 
                 body: request.intent,
             },
             request.epoch,
-            intent::ClaimAnswer { task, holder },
+            intent::ClaimAnswer {
+                task,
+                holder,
+                warnings: Vec::new(),
+            },
         )
         .map_err(RenewError::Build)?;
     Ok(write)
