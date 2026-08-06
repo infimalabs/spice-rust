@@ -352,7 +352,21 @@ async function assertReportedTaskChip(surface) {
 /// it was drawn for, and reach the resident rather than only the message list.
 export async function assertAgentRenewalRequest(surface, fixture) {
   const renewalRequest = "Renew your current task lease now.";
-  const renew = surface.locator(".agent-renew-request:not(:disabled)").first();
+  const menu = surface
+    .locator(
+      ".composer-shard--primary .agent-action-menu:has(.agent-renew-request:not(:disabled))",
+    )
+    .first();
+  await menu.waitFor();
+  assert.equal(
+    await menu.getAttribute("open"),
+    null,
+    "agent renewal starts inside a closed drawer",
+  );
+  const trigger = menu.locator(":scope > summary");
+  const renew = menu.locator(".agent-renew-request:not(:disabled)");
+  assert.equal(await renew.isVisible(), false, "renewal is hidden while its drawer is closed");
+  await trigger.click();
   await renew.waitFor();
   assert.equal(
     (await renew.innerText()).replaceAll("\n", " "),
@@ -375,6 +389,8 @@ export async function assertAgentRenewalRequest(surface, fixture) {
     ),
     "Renew this agent routes a residency-witnessed renewal request through the resident",
   );
+  if (await menu.getAttribute("open") !== null) await trigger.click();
+  assert.equal(await renew.isVisible(), false, "renewal hides again when its drawer closes");
 }
 
 export async function captureReferenceControls(page, team, artifactPath) {

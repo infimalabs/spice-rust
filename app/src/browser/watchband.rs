@@ -598,22 +598,12 @@ fn render_composer_body(
                 lane_key,
                 standing,
                 renew_enabled,
-                renew.clone(),
+                renew,
             )}
             <div class="composer-shard-standing">
                 <span>{format!("{pending} pending")}</span>
                 <span>{standing.liveness.as_str()}</span>
             </div>
-            <button
-                class="agent-renew-request"
-                type="button"
-                disabled={!renew_enabled}
-                title="Ask this agent to renew its current task lease"
-                onclick={renew}
-            >
-                <strong>{"Renew this agent"}</strong>
-                <span>{"request renewal"}</span>
-            </button>
             <textarea
                 id={primary_textarea_id(lane_key)}
                 aria-label={format!("Message for {lane}")}
@@ -676,8 +666,15 @@ fn render_composer_heading(
                     data-agent-drawer-target-id={lane.to_string()}
                 >
                     <button type="button" onclick={focus}>{"Focus message editor"}</button>
-                    <button type="button" disabled={!renew_enabled} onclick={renew}>
-                        {"Renew this agent"}
+                    <button
+                        class="agent-renew-request"
+                        type="button"
+                        disabled={!renew_enabled}
+                        title="Ask this agent to renew its current task lease"
+                        onclick={renew}
+                    >
+                        <strong>{"Renew this agent"}</strong>
+                        <span>{"request renewal"}</span>
                     </button>
                 </div>
             </details>
