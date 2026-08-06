@@ -7,15 +7,72 @@ use crate::watchband;
 
 const MEMBER_MIME: &str = "application/x-spice-lineage-member";
 
-pub(super) fn render(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html {
+pub(super) fn render(
+    mosaic: bool,
+    active_axis: Axis,
+    axis_count: usize,
+    runtime: Option<&CanvasRuntime>,
+    sender: &SenderHandle,
+) -> Html {
+    if !mosaic {
+        return render_axis(active_axis, axis_count);
+    }
+    render_agents(runtime, sender)
+}
+
+fn render_axis(axis: Axis, count: usize) -> Html {
+    let (noun, context) = match axis {
+        Axis::Magnitude => (
+            "rules",
+            "Magnitude summarizes current policy, consent budgets, and trust standing.",
+        ),
+        Axis::Flow => (
+            "active tasks",
+            "Flow follows ready, active, deferred, and completed work across projects.",
+        ),
+        Axis::Topology => (
+            "lineages",
+            "Topology connects resident teams, seats, capabilities, and current ownership.",
+        ),
+        Axis::Chronology => (
+            "events",
+            "Chronology follows facts, command outcomes, and their causal thread.",
+        ),
+    };
+    html! {
+        <div class="canvas-menu-page" data-menu-page={axis.as_str()}>
+            <section class="canvas-menu-section canvas-menu-global">
+                <h2>{"Global"}</h2>
+                <div class="canvas-menu-setting">
+                    <strong>{"Fast mode"}</strong>
+                    <span>{"off"}</span>
+                </div>
+            </section>
+            <section class="canvas-menu-section canvas-menu-context">
+                <h2>{title(axis.as_str())}</h2>
+                <div class="canvas-menu-setting">
+                    <strong>{axis.question()}</strong>
+                    <span>{format!("{count} {noun}")}</span>
+                </div>
+                <p class="canvas-menu-context-copy">{context}</p>
+            </section>
+        </div>
+    }
+}
+
+fn render_agents(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html {
     let Some(runtime) = runtime else {
         return html! {
-            <div class="canvas-menu-page"><p>{"Waiting for resident teams…"}</p></div>
+            <div class="canvas-menu-page" data-menu-page="agents">
+                <p>{"Waiting for resident teams…"}</p>
+            </div>
         };
     };
     let Some(lanes) = runtime.lanes() else {
         return html! {
-            <div class="canvas-menu-page"><p>{"Waiting for lane state…"}</p></div>
+            <div class="canvas-menu-page" data-menu-page="agents">
+                <p>{"Waiting for lane state…"}</p>
+            </div>
         };
     };
     let waiting = runtime

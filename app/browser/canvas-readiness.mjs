@@ -38,8 +38,10 @@ export async function assertCanvas(page, scheme) {
     const body = await page.locator("body").innerText().catch(() => "<body unavailable>");
     throw new Error(`canvas did not come online; body=${JSON.stringify(body)}`, { cause: error });
   }
-  await assert.doesNotReject(
-    () => page.locator(".canvas-menu > summary:visible, .brand-name:visible").waitFor(),
+  assert.equal(
+    await page.locator(".canvas-menu > summary:visible").count(),
+    1,
+    "every Canvas page exposes one primary Spice menu",
   );
   assert.ok(
     await page.locator('[data-pane="agent-console"]').count() <= 1,
