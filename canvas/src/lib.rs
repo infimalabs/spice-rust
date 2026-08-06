@@ -13,6 +13,9 @@ pub mod stream;
 pub mod thread;
 pub mod view;
 
-pub use asset::{Discovery, EMBEDDED_APP, EmbeddedApp, EmbeddedAsset, PublishError};
+pub use asset::{
+    AppSource, AppSourceError, DEV_STAGE, Discovery, EMBEDDED_APP, EmbeddedApp, EmbeddedAsset,
+    PublishError, ServedAsset,
+};
 pub use config::{Config, ConfigError};
 pub use speech::{SpeechBackend, SpeechConfig, SpeechConfigError};

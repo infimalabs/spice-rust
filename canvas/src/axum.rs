@@ -29,7 +29,7 @@ use tokio::sync::{Mutex, Notify, Semaphore, mpsc, oneshot, watch};
 use tokio::time::timeout;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 
-use crate::{Discovery, EMBEDDED_APP};
+use crate::Discovery;
 
 const SESSION_DRAIN_GRACE: Duration = Duration::from_secs(1);
 const SPEECH_REQUEST_BYTES: usize = 64 * 1_024;
@@ -208,6 +208,7 @@ struct SurfaceState {
     origin: String,
     epoch: wire::CanonicalUuid,
     capabilities: Capabilities,
+    app: crate::AppSource,
     speech: crate::SpeechConfig,
     speech_slot: Semaphore,
     admission: Mutex<Admission>,
@@ -486,19 +487,28 @@ pub struct Server {
 }
 
 impl Server {
-    /// Bind an ephemeral IPv4 loopback port.
+    /// Bind an ephemeral IPv4 loopback port, serving the compiled app.
     pub async fn bind(
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
         speech: crate::SpeechConfig,
     ) -> Result<(Self, Control), std::io::Error> {
-        Self::bind_with_capacity(epoch, capabilities, speech, None, 64).await
+        Self::bind_with_capacity(
+            epoch,
+            capabilities,
+            crate::AppSource::Embedded,
+            speech,
+            None,
+            64,
+        )
+        .await
     }
 
     /// Bind the command socket and Bus-backed canvas stream to one generation.
     pub async fn bind_streaming(
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
+        app: crate::AppSource,
         speech: crate::SpeechConfig,
         bus: bus::BusReader,
         rows: usize,
@@ -506,6 +516,7 @@ impl Server {
         Self::bind_with_capacity(
             epoch,
             capabilities,
+            app,
             speech,
             Some(crate::stream::Source::new(bus, epoch, rows)),
             64,
@@ -516,6 +527,7 @@ impl Server {
     async fn bind_with_capacity(
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
+        app: crate::AppSource,
         speech: crate::SpeechConfig,
         stream: Option<crate::stream::Source>,
         capacity: usize,
@@ -540,6 +552,7 @@ impl Server {
                     origin,
                     epoch,
                     capabilities,
+                    app,
                     speech,
                     speech_slot: Semaphore::new(1),
                     admission: Mutex::new(Admission::Open),
@@ -613,16 +626,32 @@ async fn app(
     if admit_headers(&state, &headers, false).is_err() {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let Some(asset) = EMBEDDED_APP.asset(uri.path()) else {
-        return StatusCode::NOT_FOUND.into_response();
+    let asset = match state.app.served(uri.path()) {
+        Ok(Some(asset)) => asset,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        // The source was whole when this generation started, so a read that
+        // fails now is the local stage being rebuilt or removed underneath the
+        // resident, which is a served answer nobody should cache.
+        Err(error) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("canvas app unavailable: {error}"),
+            )
+                .into_response();
+        }
     };
-    let mut response = Response::new(Body::from(asset.bytes()));
+    let content_type = asset.content_type();
+    let digest = asset.digest();
+    let mut response = Response::new(match asset.into_bytes() {
+        std::borrow::Cow::Borrowed(bytes) => Body::from(bytes),
+        std::borrow::Cow::Owned(bytes) => Body::from(bytes),
+    });
     response
         .headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static(asset.content_type()));
+        .insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
     response.headers_mut().insert(
         ETAG,
-        HeaderValue::from_str(&format!("\"{}\"", asset.digest()))
+        HeaderValue::from_str(&format!("\"{digest}\""))
             .expect("a canonical digest is an admitted ETag"),
     );
     response
