@@ -6,30 +6,32 @@ use std::error::Error;
 use std::fmt;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::task::{Context, Poll};
 use std::time::Duration;
 
 use ::axum::Router;
 use ::axum::body::Body;
 use ::axum::extract::DefaultBodyLimit;
-use ::axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use ::axum::extract::{Json, OriginalUri, RawQuery, State};
 use ::axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, ETAG, HOST, ORIGIN};
 use ::axum::http::{HeaderMap, HeaderValue, StatusCode};
 use ::axum::response::{IntoResponse, Response};
 use ::axum::routing::{get, post};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, Notify, Semaphore, mpsc, oneshot, watch};
 use tokio::time::timeout;
-use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
+use tokio_util::sync::CancellationToken;
 
 use crate::Discovery;
+
+mod listener;
+mod socket;
+
+use listener::ClosingListener;
+use socket::{admit_headers, is_dark, reachable_as, socket};
 
 /// The listener a caller that names no address gets: reachable from this
 /// machine alone, on whatever port the kernel has free.
@@ -447,88 +449,6 @@ impl Drop for SessionGuard {
     }
 }
 
-#[derive(Debug)]
-struct ClosingListener {
-    listener: tokio::net::TcpListener,
-    connections: CancellationToken,
-}
-
-impl ::axum::serve::Listener for ClosingListener {
-    type Io = ClosingStream;
-    type Addr = SocketAddr;
-
-    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
-        let (stream, address) = ::axum::serve::Listener::accept(&mut self.listener).await;
-        (
-            ClosingStream {
-                stream,
-                cancelled: Box::pin(self.connections.clone().cancelled_owned()),
-            },
-            address,
-        )
-    }
-
-    fn local_addr(&self) -> std::io::Result<Self::Addr> {
-        self.listener.local_addr()
-    }
-}
-
-#[derive(Debug)]
-struct ClosingStream {
-    stream: TcpStream,
-    cancelled: Pin<Box<WaitForCancellationFutureOwned>>,
-}
-
-impl AsyncRead for ClosingStream {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        context: &mut Context<'_>,
-        buffer: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        if self.cancelled.as_mut().poll(context).is_ready() {
-            return Poll::Ready(Ok(()));
-        }
-        Pin::new(&mut self.stream).poll_read(context, buffer)
-    }
-}
-
-impl AsyncWrite for ClosingStream {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        context: &mut Context<'_>,
-        buffer: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        if self.cancelled.as_mut().poll(context).is_ready() {
-            return Poll::Ready(Err(connection_closed()));
-        }
-        Pin::new(&mut self.stream).poll_write(context, buffer)
-    }
-
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        context: &mut Context<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        if self.cancelled.as_mut().poll(context).is_ready() {
-            return Poll::Ready(Err(connection_closed()));
-        }
-        Pin::new(&mut self.stream).poll_flush(context)
-    }
-
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        context: &mut Context<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.stream).poll_shutdown(context)
-    }
-}
-
-fn connection_closed() -> std::io::Error {
-    std::io::Error::new(
-        std::io::ErrorKind::BrokenPipe,
-        "canvas connection closed with the resident",
-    )
-}
-
 /// One command received from an authenticated operator or lane session.
 #[derive(Debug)]
 pub struct ControlRequest {
@@ -600,17 +520,18 @@ pub struct Server {
 }
 
 impl Server {
-    /// Bind an ephemeral IPv4 loopback port, serving the compiled app.
+    /// Bind an ephemeral IPv4 loopback port with one resolved lane app.
     pub async fn bind(
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
+        app: crate::AppSource,
         speech: crate::SpeechConfig,
     ) -> Result<(Self, Control), std::io::Error> {
         Self::bind_with_capacity(
             Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
             epoch,
             capabilities,
-            crate::AppSource::Embedded,
+            app,
             speech,
             None,
             64,
@@ -669,10 +590,7 @@ impl Server {
         let (admission_observed, _) = watch::channel(None);
         Ok((
             Self {
-                listener: ClosingListener {
-                    listener,
-                    connections: connections.clone(),
-                },
+                listener: ClosingListener::new(listener, connections.clone()),
                 state: Arc::new(SurfaceState {
                     authority,
                     access,
@@ -699,7 +617,7 @@ impl Server {
 
     /// Bound address, which is what was asked for with the port resolved.
     pub fn local_addr(&self) -> Result<SocketAddr, std::io::Error> {
-        self.listener.listener.local_addr()
+        self.listener.bound_address()
     }
 
     /// Discovery document for the registered operator capability.
@@ -714,7 +632,7 @@ impl Server {
         })
     }
 
-    /// Serve the embedded app and current-wire socket until the task is cancelled.
+    /// Serve the lane-built app and current-wire socket until the task is cancelled.
     pub async fn up(self) -> Result<(), std::io::Error> {
         self.up_until(std::future::pending()).await
     }
@@ -769,10 +687,7 @@ async fn app(
     };
     let content_type = asset.content_type();
     let digest = asset.digest();
-    let mut response = Response::new(match asset.into_bytes() {
-        std::borrow::Cow::Borrowed(bytes) => Body::from(bytes),
-        std::borrow::Cow::Owned(bytes) => Body::from(bytes),
-    });
+    let mut response = Response::new(Body::from(asset.into_bytes()));
     response
         .headers_mut()
         .insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
@@ -1001,552 +916,6 @@ fn install_browser_headers(response: &mut Response) {
         "x-content-type-options",
         HeaderValue::from_static("nosniff"),
     );
-}
-
-async fn socket(
-    State(state): State<Arc<SurfaceState>>,
-    RawQuery(query): RawQuery,
-    headers: HeaderMap,
-    upgrade: WebSocketUpgrade,
-) -> Response {
-    if !state
-        .access
-        .admits_socket(query.as_deref(), &state.capabilities)
-    {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-    if admit_headers(&state, &headers, true).is_err() {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    if !state.opens_session().await {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    }
-    upgrade
-        .on_upgrade(move |socket| socket_session(socket, state))
-        .into_response()
-}
-
-/// Which names a bound listener answers to, and the endpoint it publishes.
-///
-/// A wildcard bind has no address of its own to publish: the operator reaches
-/// it by whatever route their network produces, and only the port is known
-/// here. Loopback is published instead, because it is the one address this
-/// machine can always dial itself, and every local client does.
-fn reachable_as(bound: SocketAddr) -> (Authority, String) {
-    if bound.ip().is_unspecified() {
-        let local = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), bound.port());
-        return (
-            Authority::AnyHostAt(bound.port()),
-            format!("http://{local}"),
-        );
-    }
-    (
-        Authority::Only(bound.to_string()),
-        format!("http://{bound}"),
-    )
-}
-
-/// Admit a request by the endpoint it names, answering with that endpoint.
-///
-/// The origin is checked against the admitted `Host` rather than against the
-/// published one. For a specific bind those are the same string, since only one
-/// `Host` is admitted at all. For a wildcard bind they are not, and this is the
-/// check that still holds: a browser sends the origin it loaded the page from,
-/// so requiring it to match the host it is now addressing keeps another site
-/// from driving this surface, whichever of the machine's addresses was used.
-fn admit_headers<'headers>(
-    state: &SurfaceState,
-    headers: &'headers HeaderMap,
-    origin_required: bool,
-) -> Result<&'headers str, ()> {
-    let Some(host) = headers.get(HOST).and_then(|value| value.to_str().ok()) else {
-        return Err(());
-    };
-    if !state.authority.admits(host) {
-        return Err(());
-    }
-    let same_origin = format!("http://{host}");
-    let origin = headers.get(ORIGIN).and_then(|value| value.to_str().ok());
-    if origin_required && origin != Some(same_origin.as_str()) {
-        return Err(());
-    }
-    if origin.is_some_and(|origin| origin != same_origin) {
-        return Err(());
-    }
-    Ok(host)
-}
-
-async fn socket_session(mut socket: WebSocket, state: Arc<SurfaceState>) {
-    let _session = SessionGuard::enter(&state);
-    let mut closed = state.closed.subscribe();
-    let Some((accepted, capability)) = open_session(&mut socket, &state, &mut closed).await else {
-        return;
-    };
-    send_encoded(&mut socket, &accepted).await;
-    let mut subscription = None;
-    let mut broadcasts = state.stream.as_ref().map(crate::stream::Source::subscribe);
-    loop {
-        tokio::select! {
-            biased;
-            changed = closed.changed() => {
-                if changed.is_err() || *closed.borrow() {
-                    if let Some(frame) = subscription
-                        .as_ref()
-                        .and_then(crate::stream::Subscription::closing)
-                    {
-                        send_encoded(&mut socket, &frame).await;
-                    }
-                    return;
-                }
-            }
-            notice = async {
-                broadcasts
-                    .as_mut()
-                    .expect("enabled branch has a Bus broadcast")
-                    .recv()
-                    .await
-            }, if broadcasts.is_some()
-                && subscription
-                    .as_ref()
-                    .is_some_and(crate::stream::Subscription::is_live) => {
-                if matches!(
-                    route_broadcast(
-                        &mut socket,
-                        &state,
-                        &accepted,
-                        capability,
-                        subscription.as_mut().expect("live branch has a subscription"),
-                        notice,
-                    )
-                    .await,
-                    SessionFlow::Close
-                ) {
-                    return;
-                }
-            }
-            message = socket.recv() => {
-                let Some(Ok(message)) = message else {
-                    return;
-                };
-                let bytes = match message {
-                    Message::Binary(bytes) => bytes.to_vec(),
-                    Message::Text(text) => text.as_bytes().to_vec(),
-                    Message::Ping(_) | Message::Pong(_) => continue,
-                    Message::Close(_) => return,
-                };
-                let flow = if is_stream_request(&bytes) {
-                    route_stream(
-                        &mut socket,
-                        &state,
-                        &accepted,
-                        capability,
-                        &bytes,
-                        &mut subscription,
-                    )
-                    .await
-                } else {
-                    route_command(&mut socket, &state, &accepted, &bytes).await
-                };
-                if matches!(flow, SessionFlow::Close) {
-                    return;
-                }
-            }
-        }
-    }
-}
-
-async fn route_broadcast(
-    socket: &mut WebSocket,
-    state: &SurfaceState,
-    accepted: &wire::Accepted,
-    capability: wire::CanonicalUuid,
-    subscription: &mut crate::stream::Subscription,
-    notice: Result<bus::JournalCommit, tokio::sync::broadcast::error::RecvError>,
-) -> SessionFlow {
-    if !state.capabilities.matches(capability, &accepted.actor) {
-        send_replaced(socket, state.epoch, Some(subscription.id())).await;
-        return SessionFlow::Close;
-    }
-    match notice {
-        Ok(commit) => {
-            send_broadcast_update(socket, state, accepted, capability, subscription, commit).await
-        }
-        Err(tokio::sync::broadcast::error::RecvError::Lagged(dropped)) => {
-            let frame = subscription
-                .overflow(dropped)
-                .unwrap_or_else(|failure| failure.frame(state.epoch, Some(subscription.id())));
-            send_encoded(socket, &frame).await;
-            SessionFlow::Close
-        }
-        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-            let frame = stream_fault(
-                state.epoch,
-                Some(subscription.id()),
-                wire::FaultClass::Environment,
-                "stream::broadcast-closed",
-                "resident Bus cursor broadcast closed",
-            );
-            send_encoded(socket, &frame).await;
-            SessionFlow::Close
-        }
-    }
-}
-
-async fn send_broadcast_update(
-    socket: &mut WebSocket,
-    state: &SurfaceState,
-    accepted: &wire::Accepted,
-    capability: wire::CanonicalUuid,
-    subscription: &mut crate::stream::Subscription,
-    commit: bus::JournalCommit,
-) -> SessionFlow {
-    let frames = match subscription.advance(
-        state.stream.as_ref().expect("broadcast has a source"),
-        commit,
-    ) {
-        Ok(frames) => frames,
-        Err(failure) => {
-            let frame = failure.frame(state.epoch, Some(subscription.id()));
-            send_encoded(socket, &frame).await;
-            return SessionFlow::Close;
-        }
-    };
-    if !state.capabilities.matches(capability, &accepted.actor) {
-        send_replaced(socket, state.epoch, Some(subscription.id())).await;
-        return SessionFlow::Close;
-    }
-    for frame in frames {
-        if !send_encoded(socket, &frame).await {
-            return SessionFlow::Close;
-        }
-    }
-    SessionFlow::Continue
-}
-
-async fn open_session(
-    socket: &mut WebSocket,
-    state: &SurfaceState,
-    closed: &mut watch::Receiver<bool>,
-) -> Option<(wire::Accepted, wire::CanonicalUuid)> {
-    let message = receive_message(socket, closed).await?;
-    let bytes = match message {
-        Message::Binary(bytes) => bytes.to_vec(),
-        Message::Text(text) => text.as_bytes().to_vec(),
-        Message::Close(_) | Message::Ping(_) | Message::Pong(_) => return None,
-    };
-    match wire::decode::<wire::Hello>(&bytes) {
-        Ok(hello) => match state.capabilities.admit(&hello, state.epoch) {
-            Ok(accepted) => Some((accepted, hello.capability)),
-            Err(OpeningError::Refused(refusal)) => {
-                send_encoded(socket, &refusal).await;
-                None
-            }
-            Err(OpeningError::Fault(fault)) => {
-                send_encoded(socket, &fault).await;
-                None
-            }
-        },
-        Err(error) => {
-            send_encoded(
-                socket,
-                &wire::Fault {
-                    class: wire::FaultClass::Protocol,
-                    reason: "hello::undecodable".to_owned(),
-                    detail: error.to_string(),
-                },
-            )
-            .await;
-            None
-        }
-    }
-}
-
-async fn receive_message(
-    socket: &mut WebSocket,
-    closed: &mut watch::Receiver<bool>,
-) -> Option<Message> {
-    loop {
-        if *closed.borrow() {
-            return None;
-        }
-        let message = tokio::select! {
-            changed = closed.changed() => {
-                changed.ok()?;
-                continue;
-            }
-            message = socket.recv() => message,
-        };
-        let Some(Ok(message)) = message else {
-            return None;
-        };
-        if *closed.borrow() {
-            return None;
-        }
-        return Some(message);
-    }
-}
-
-#[derive(Clone, Copy)]
-enum SessionFlow {
-    Continue,
-    Close,
-}
-
-fn is_stream_request(bytes: &[u8]) -> bool {
-    wire::decode::<serde_json::Value>(bytes)
-        .ok()
-        .and_then(|value| {
-            value
-                .as_object()
-                .and_then(|object| object.get("stream"))
-                .cloned()
-        })
-        .is_some()
-}
-
-async fn route_stream(
-    socket: &mut WebSocket,
-    state: &SurfaceState,
-    accepted: &wire::Accepted,
-    capability: wire::CanonicalUuid,
-    bytes: &[u8],
-    subscription: &mut Option<crate::stream::Subscription>,
-) -> SessionFlow {
-    if !state.capabilities.matches(capability, &accepted.actor) {
-        send_replaced(
-            socket,
-            state.epoch,
-            subscription.as_ref().map(crate::stream::Subscription::id),
-        )
-        .await;
-        return SessionFlow::Close;
-    }
-    let request = match wire::decode::<wire::StreamRequest>(bytes) {
-        Ok(request) => request,
-        Err(error) => {
-            let frame = stream_fault(
-                state.epoch,
-                None,
-                wire::FaultClass::Protocol,
-                "stream::undecodable",
-                &error.to_string(),
-            );
-            send_encoded(socket, &frame).await;
-            return SessionFlow::Continue;
-        }
-    };
-    let Some(source) = state.stream.as_ref() else {
-        let frame = stream_fault(
-            state.epoch,
-            Some(request.id()),
-            wire::FaultClass::Environment,
-            "stream::unavailable",
-            "this canvas socket has no resident Bus stream",
-        );
-        send_encoded(socket, &frame).await;
-        return SessionFlow::Continue;
-    };
-
-    let result = match &request {
-        wire::StreamRequest::Subscribe { .. } => {
-            if subscription.is_some() {
-                Err(crate::stream::Failure::Refusal(wire::Refusal {
-                    reason: "stream::already-subscribed".to_owned(),
-                    witness: Some("session".to_owned()),
-                    expected: Some("one subscription".to_owned()),
-                    observed: Some("a second subscription".to_owned()),
-                    remedy: "open another authenticated socket for another subscription".to_owned(),
-                }))
-            } else {
-                match source.begin(accepted, &request) {
-                    Ok((opened, frames)) => {
-                        if !state.capabilities.matches(capability, &accepted.actor) {
-                            send_replaced(socket, state.epoch, Some(request.id())).await;
-                            return SessionFlow::Close;
-                        }
-                        for frame in frames {
-                            if !send_encoded(socket, &frame).await {
-                                return SessionFlow::Close;
-                            }
-                        }
-                        *subscription = Some(opened);
-                        return SessionFlow::Continue;
-                    }
-                    Err(failure) => Err(failure),
-                }
-            }
-        }
-        wire::StreamRequest::Continue { .. } => match subscription.as_mut() {
-            Some(subscription) => subscription.continue_page(&request),
-            None => Err(crate::stream::Failure::Refusal(wire::Refusal {
-                reason: "stream::subscription-required".to_owned(),
-                witness: Some("session".to_owned()),
-                expected: Some("an active subscription".to_owned()),
-                observed: Some("no subscription".to_owned()),
-                remedy: "subscribe before continuing a packed view".to_owned(),
-            })),
-        },
-        wire::StreamRequest::Thread { .. } => source.thread(accepted, &request),
-    };
-    if !state.capabilities.matches(capability, &accepted.actor) {
-        send_replaced(socket, state.epoch, Some(request.id())).await;
-        return SessionFlow::Close;
-    }
-    match result {
-        Ok(frame) => {
-            if send_encoded(socket, &frame).await {
-                SessionFlow::Continue
-            } else {
-                SessionFlow::Close
-            }
-        }
-        Err(failure) => {
-            let frame = failure.frame(state.epoch, Some(request.id()));
-            send_encoded(socket, &frame).await;
-            SessionFlow::Continue
-        }
-    }
-}
-
-async fn send_replaced(
-    socket: &mut WebSocket,
-    epoch: wire::CanonicalUuid,
-    id: Option<wire::CanonicalUuid>,
-) {
-    let frame = stream_fault(
-        epoch,
-        id,
-        wire::FaultClass::Protocol,
-        "stream::capability-replaced",
-        "the capability that authenticated this stream is no longer current",
-    );
-    send_encoded(socket, &frame).await;
-}
-
-fn stream_fault(
-    epoch: wire::CanonicalUuid,
-    id: Option<wire::CanonicalUuid>,
-    class: wire::FaultClass,
-    reason: &str,
-    detail: &str,
-) -> wire::StreamFrame {
-    wire::StreamFrame::Fault {
-        v: wire::WireVersion::CURRENT,
-        epoch,
-        id,
-        fault: wire::Fault {
-            class,
-            reason: reason.to_owned(),
-            detail: detail.to_owned(),
-        },
-    }
-}
-
-async fn route_command(
-    socket: &mut WebSocket,
-    state: &SurfaceState,
-    accepted: &wire::Accepted,
-    bytes: &[u8],
-) -> SessionFlow {
-    let crossing = match wire::decode::<wire::Command<serde_json::Value>>(bytes) {
-        Ok(command) => command,
-        Err(error) => {
-            send_encoded(socket, &undecodable_command(error)).await;
-            return SessionFlow::Continue;
-        }
-    };
-    let id = crossing.id;
-    let command = match crossing.admit(accepted) {
-        Ok(command) => command,
-        Err(rejection) => {
-            send_encoded(
-                socket,
-                &wire::Response {
-                    v: wire::WireVersion::CURRENT,
-                    id,
-                    epoch: state.epoch,
-                    outcome: rejection.outcome(),
-                },
-            )
-            .await;
-            return SessionFlow::Continue;
-        }
-    };
-    let dark = is_dark(&command);
-    let response = command.clone();
-    let pending = match state.enqueue(command).await {
-        Ok(pending) => pending,
-        Err(EnqueueError::NotAdmitting) if *state.closed.borrow() => {
-            return SessionFlow::Close;
-        }
-        Err(EnqueueError::NotAdmitting) => {
-            send_encoded(socket, &response.response(closing_refusal())).await;
-            return SessionFlow::Continue;
-        }
-        Err(EnqueueError::ControlClosed) => {
-            send_encoded(socket, &response.response(closing_refusal())).await;
-            return SessionFlow::Close;
-        }
-    };
-    let PendingResponse { returned, sent } = pending;
-    let mut closed = state.closed.subscribe();
-    let returned = tokio::select! {
-        biased;
-        changed = closed.changed() => {
-            let _ = changed;
-            return SessionFlow::Close;
-        },
-        _ = state.connections.cancelled() => return SessionFlow::Close,
-        returned = returned => returned,
-    };
-    let Ok(outcome) = returned else {
-        return SessionFlow::Close;
-    };
-    let reached_dark = dark && matches!(outcome, wire::Outcome::Reply(_));
-    send_encoded(socket, &response.response(outcome)).await;
-    let _ = sent.send(());
-    if dark && !reached_dark {
-        state.reopen_after_dark_refusal().await;
-    }
-    if reached_dark {
-        SessionFlow::Close
-    } else {
-        SessionFlow::Continue
-    }
-}
-
-fn undecodable_command(error: serde_json::Error) -> wire::Fault {
-    wire::Fault {
-        class: wire::FaultClass::Protocol,
-        reason: "command::undecodable".to_owned(),
-        detail: error.to_string(),
-    }
-}
-
-fn is_dark(command: &wire::AdmittedCommand) -> bool {
-    matches!(
-        command.body(),
-        wire::intent::Intent::UpChange(wire::intent::UpChange {
-            state: wire::ResidentState::Dark
-        })
-    )
-}
-
-fn closing_refusal() -> wire::Outcome<wire::intent::CommandAnswer> {
-    wire::Outcome::Refusal(wire::Refusal {
-        reason: "resident::not-admitting".to_owned(),
-        witness: Some("resident-state".to_owned()),
-        expected: Some("seated".to_owned()),
-        observed: Some("quiescing".to_owned()),
-        remedy: "wait for shutdown to finish and reconnect to the next resident epoch".to_owned(),
-    })
-}
-
-async fn send_encoded<T: serde::Serialize>(socket: &mut WebSocket, value: &T) -> bool {
-    let Ok(bytes) = wire::encode(value) else {
-        return false;
-    };
-    socket.send(Message::Binary(bytes.into())).await.is_ok()
 }
 
 #[cfg(test)]
