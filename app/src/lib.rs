@@ -25,6 +25,7 @@
 //! with, a head-direct answer is held as [`Answer::HeadDirect`] with nowhere
 //! to keep them, and that difference survives every floor above.
 
+pub mod mosaic;
 pub mod pane;
 pub mod runtime;
 pub mod socket;
@@ -36,6 +37,7 @@ mod browser;
 #[cfg(target_arch = "wasm32")]
 mod speech;
 
+pub use mosaic::{Candidate, Candidates, Card, Insertion};
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
 pub use runtime::{
     BoardView, CanvasRuntime, FactRow, LaneView, RuntimeEvent, StreamDirective, StreamTerminal,
