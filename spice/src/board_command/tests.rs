@@ -201,6 +201,28 @@ mod tests {
     }
 
     #[test]
+    fn native_task_handles_use_the_predecessor_stamp_alphabet() {
+        const PREDECESSOR_ALPHABET: &[u8; 52] =
+            b"0123456789BCDFGHJKLMNPQRSTVWXYZbcdfghjklmnpqrstvwxyz";
+
+        for (value, expected) in PREDECESSOR_ALPHABET.iter().copied().enumerate() {
+            let handle = mint_handle_at(Some("task.identity"), "ignored", value as i64);
+            let (_, stamp) = handle
+                .as_str()
+                .split_once('-')
+                .expect("native handle carries a stem and stamp");
+            assert_eq!(stamp.len(), steer::Key::WIDTH);
+            assert!(
+                stamp
+                    .bytes()
+                    .all(|byte| PREDECESSOR_ALPHABET.contains(&byte)),
+                "{stamp:?} is outside the predecessor task alphabet"
+            );
+            assert_eq!(stamp.as_bytes()[steer::Key::WIDTH - 1], expected);
+        }
+    }
+
+    #[test]
     fn task_status_counts_one_snapshot_and_task_add_retains_authored_context() {
         let (root, bus, epoch, _) = fixture("task-bootstrap", 1);
         let task = "CLI-context01"

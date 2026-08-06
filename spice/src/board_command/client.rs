@@ -1150,6 +1150,14 @@ fn progress_witnesses(
 }
 
 fn mint_handle(project: Option<&str>, title: &str) -> TaskHandle {
+    mint_handle_at(
+        project,
+        title,
+        jiff::Timestamp::now().as_millisecond(),
+    )
+}
+
+fn mint_handle_at(project: Option<&str>, title: &str, epoch_millis: i64) -> TaskHandle {
     let stem = project
         .and_then(|project| project.rsplit('.').next())
         .map(stem)
@@ -1160,8 +1168,9 @@ fn mint_handle(project: Option<&str>, title: &str) -> TaskHandle {
     } else {
         stem
     };
-    let key = uuid::Uuid::new_v4().simple().to_string();
-    format!("{stem}-{}", &key[..8])
+    let key = steer::Key::for_millis(epoch_millis)
+        .expect("the current epoch millisecond fits the task stamp codec");
+    format!("{stem}-{key}")
         .parse()
         .expect("generated handle uses admitted ASCII components")
 }
