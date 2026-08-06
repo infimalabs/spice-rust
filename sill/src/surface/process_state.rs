@@ -32,15 +32,19 @@ pub(crate) enum ProcessState {
 }
 
 impl ProcessState {
-    /// Collapse to the single bit today's consumers still take.
+    /// Collapse to the single bit the remaining consumers take.
     ///
     /// Only [`ProcessState::Terminal`] is an observed end. `Live` and
-    /// `Indeterminate` both answer "not observed terminal", which is exactly
-    /// what the bare `bool` probes returned before the third answer had a name,
-    /// so adopting the enum changes no consumer's behavior. Deciding what each
-    /// consumer should instead do when the answer is `Indeterminate` is
-    /// SPAWN-1kKYfJw2; keeping the collapse in one named place is what gives
-    /// that task a single edit rather than a hunt through the call sites.
+    /// `Indeterminate` both answer "not observed terminal", so whoever takes
+    /// this bit cannot tell an unread kernel from a running process. The signal
+    /// and reap paths in `crate::spawn` no longer take it; they read
+    /// [`process_group_state`] and decide for themselves. What still collapses
+    /// does so on purpose, and not for one shared reason. `crate::surface::owner`
+    /// wants it, because an unreadable probe must not license reclaiming a lock.
+    /// `crate::spawn::Running::execution_group_terminal` is undecided under
+    /// SPAWN-1kKZ11FN, where the collapse is what keeps a group nobody could
+    /// read from going unkilled, and choosing otherwise there is a different
+    /// question from the one the post-signal consumers answered.
     pub(crate) fn observed_terminal(self) -> bool {
         matches!(self, Self::Terminal)
     }
@@ -77,8 +81,22 @@ pub(super) fn process_zombie(pid: u32) -> ProcessState {
     platform::process_zombie(pid)
 }
 
+/// What a probe managed to observe about a child's whole process group.
+///
+/// [`process_group_absent`] is a positive observation in its own right: the
+/// kernel no longer knows the group identity, which settles the question without
+/// reading a single member. Only when the group still resolves does the platform
+/// scan answer, and its [`ProcessState::Indeterminate`] reaches the caller intact
+/// instead of being collapsed into the same `false` a live member produces.
+pub(crate) fn process_group_state(pid: u32) -> ProcessState {
+    if process_group_absent(pid) {
+        return ProcessState::Terminal;
+    }
+    platform::process_group_members_terminal(pid)
+}
+
 pub(crate) fn process_group_terminal(pid: u32) -> bool {
-    process_group_absent(pid) || platform::process_group_members_terminal(pid).observed_terminal()
+    process_group_state(pid).observed_terminal()
 }
 
 pub(super) fn process_group_absent(pid: u32) -> bool {

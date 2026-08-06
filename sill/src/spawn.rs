@@ -5,7 +5,7 @@ use crate::observe::{Observation, ObservationFailure};
 use crate::spec::ProcessGroup;
 use crate::spec::Spec;
 #[cfg(unix)]
-use crate::surface::process_state::process_group_terminal;
+use crate::surface::process_state::{self, process_group_terminal};
 use std::error::Error;
 use std::fmt;
 #[cfg(unix)]
@@ -732,7 +732,13 @@ fn abort_process(context: &FailureContext) -> Result<(), IoFailure> {
         kind: io::ErrorKind::Other,
         detail: error.to_string(),
     })?;
-    if wait_for_exit_notice(context.pid, context.group, &context.process, context.grace)? {
+    if wait_for_exit_notice(
+        context.pid,
+        context.group,
+        &context.process,
+        context.grace,
+        process_state::process_group_state,
+    )? {
         reap_process(context.pid, &context.process).map_err(IoFailure::capture)?;
         return Ok(());
     }
@@ -747,7 +753,13 @@ fn abort_process(context: &FailureContext) -> Result<(), IoFailure> {
         kind: io::ErrorKind::Other,
         detail: error.to_string(),
     })?;
-    if wait_for_exit_notice(context.pid, context.group, &context.process, context.reap)? {
+    if wait_for_exit_notice(
+        context.pid,
+        context.group,
+        &context.process,
+        context.reap,
+        process_state::process_group_state,
+    )? {
         reap_process(context.pid, &context.process).map_err(IoFailure::capture)?;
         return Ok(());
     }
@@ -761,12 +773,24 @@ fn abort_process(context: &FailureContext) -> Result<(), IoFailure> {
     })
 }
 
+/// Wait for the child's exit notice, and for the group it leads to settle.
+///
+/// The group half reads the same evidence rule the signal path uses: only a
+/// member the kernel described as running keeps this waiting. An unreadable
+/// probe is not a survivor, so it no longer holds the wait open until the
+/// deadline expires and reports a descendant that was never observed to exist.
+/// Both paths can share that rule because both are reached only after the
+/// signal was already delivered, so forgiving an unread kernel ends a wait and
+/// never skips a kill. [`Running::execution_group_terminal`] reads the same
+/// probe before the kill rather than after and therefore keeps the older
+/// collapse; that is a separate decision, open under SPAWN-1kKZ11FN.
 #[cfg(unix)]
 fn wait_for_exit_notice(
     pid: u32,
     group: ProcessGroup,
     process: &ProcessState,
     duration: Duration,
+    observe: impl Fn(u32) -> process_state::ProcessState,
 ) -> Result<bool, IoFailure> {
     let started = Instant::now();
     let mut completion = process.completion.lock().map_err(|_| IoFailure {
@@ -780,7 +804,10 @@ fn wait_for_exit_notice(
         }
         let child_exited =
             completion.status.is_some() || matches!(completion.notice.as_ref(), Some(Ok(())));
-        if child_exited && (group != ProcessGroup::New || process_group_terminal(pid)) {
+        if child_exited
+            && (group != ProcessGroup::New
+                || !matches!(observe(pid), process_state::ProcessState::Live))
+        {
             return Ok(true);
         }
 
@@ -869,6 +896,18 @@ fn signal_pid(pid: u32, group: ProcessGroup, signal: i32, owner: &str) -> Result
 /// permission. The refusal arrives already collected because the errno it
 /// carries survives only until the next call, and the group must be probed
 /// after it rather than before.
+///
+/// An unreadable probe is forgiven rather than re-probed, and that is a choice
+/// about evidence rather than about patience. Only a member the kernel described
+/// as running is a reason to call EPERM a permission fault; when the probe could
+/// not read the kernel at all it has established nothing, and treating that
+/// silence as a live member is what turned an ordinary teardown into a fault
+/// under load. A bounded re-probe was rejected because the answer is unreadable
+/// precisely when the machine is too busy to answer, so retrying spends the
+/// teardown's remaining time to arrive at the same silence. The asymmetry
+/// settles it: forgiving a genuine permission failure loses one report on a path
+/// that is already tearing the child down, while faulting on an unread kernel
+/// fails callers that did nothing wrong.
 #[cfg(unix)]
 fn resolve_signal(
     refusal: Option<io::Error>,
@@ -876,12 +915,28 @@ fn resolve_signal(
     group: ProcessGroup,
     owner: &str,
 ) -> Result<(), WaitError> {
+    resolve_signal_against(refusal, group, owner, || {
+        process_state::process_group_state(pid)
+    })
+}
+
+/// The decision itself, separated so a fixture can hand it an answer the kernel
+/// cannot be made to give on demand.
+#[cfg(unix)]
+fn resolve_signal_against(
+    refusal: Option<io::Error>,
+    group: ProcessGroup,
+    owner: &str,
+    observe: impl FnOnce() -> process_state::ProcessState,
+) -> Result<(), WaitError> {
     let Some(source) = refusal else {
         return Ok(());
     };
     let forgiven = match source.raw_os_error() {
         Some(platform::ESRCH) => true,
-        Some(platform::EPERM) => group == ProcessGroup::New && process_group_terminal(pid),
+        Some(platform::EPERM) => {
+            group == ProcessGroup::New && !matches!(observe(), process_state::ProcessState::Live)
+        }
         _ => false,
     };
     if forgiven {
