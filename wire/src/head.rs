@@ -309,6 +309,20 @@ pub struct LaneResidency {
     pub disposition: String,
 }
 
+/// Durable task-subscription policy owned by one Canvas lineage.
+///
+/// This policy controls which tasks a team may draw. It is deliberately
+/// separate from [`LaneResidency::life`], which controls whether an individual
+/// seat may be occupied again after its current process exits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LineageSubscription {
+    /// Stable Canvas lineage identifying the subscribed team.
+    pub lineage_id: CanonicalUuid,
+    /// Authoritative task-selection policy for the entire lineage.
+    pub policy: crate::intent::LineageLife,
+}
+
 /// Current resident and lane state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -319,6 +333,13 @@ pub struct ResidencyHead {
     pub state: ResidentState,
     /// Current lanes, occupants, lineage, capabilities, and dispositions.
     pub lanes: Vec<LaneResidency>,
+    /// One durable task-subscription policy per Canvas lineage.
+    ///
+    /// Absence is admitted only for journal heads written before this field
+    /// existed; resident reads derive that legacy lineage's initial policy
+    /// until its next seating or configuration transaction persists it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subscriptions: Vec<LineageSubscription>,
 }
 
 /// Current journal and wake positions.

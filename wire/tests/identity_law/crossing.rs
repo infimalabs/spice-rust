@@ -484,6 +484,19 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
         disposition: "empty".to_owned(),
     };
     law(covered, "LaneResidency", &[occupied.clone(), empty.clone()]);
+    let drive = LineageSubscription {
+        lineage_id: first_uuid,
+        policy: wire::intent::LineageLife::Drive,
+    };
+    let steer = LineageSubscription {
+        lineage_id: second_uuid,
+        policy: wire::intent::LineageLife::Steer,
+    };
+    law(
+        covered,
+        "LineageSubscription",
+        &[drive, steer],
+    );
     law(
         covered,
         "ResidencyHead",
@@ -492,11 +505,13 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
                 epoch: first_uuid,
                 state: ResidentState::Seated,
                 lanes: vec![occupied],
+                subscriptions: vec![drive],
             },
             ResidencyHead {
                 epoch: second_uuid,
                 state: ResidentState::Dark,
                 lanes: vec![empty],
+                subscriptions: vec![steer],
             },
         ],
     );

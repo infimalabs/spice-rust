@@ -544,6 +544,73 @@ struct StartupCommit {
     last: u64,
 }
 
+/// Preserve current typed subscriptions or migrate one legacy all-lane head.
+///
+/// Legacy heads are recognizable because their subscription table is wholly
+/// absent and therefore decodes empty. Once any typed row exists, the table is
+/// current and must match the lane lineages exactly; partial or duplicate
+/// authority is refused instead of repaired through a second path.
+pub(super) fn startup_subscriptions(
+    lanes: &[wire::LaneResidency],
+    stored: Vec<wire::LineageSubscription>,
+) -> CommandResult<Vec<wire::LineageSubscription>> {
+    let lineage_ids = lanes
+        .iter()
+        .map(|row| row.lineage_id)
+        .collect::<std::collections::BTreeSet<_>>();
+    if stored.is_empty() {
+        return lineage_ids
+            .into_iter()
+            .map(|lineage_id| {
+                let row = lanes
+                    .iter()
+                    .find(|row| row.lineage_id == lineage_id)
+                    .expect("a collected lineage has one lane row");
+                if lanes
+                    .iter()
+                    .filter(|candidate| candidate.lineage_id == lineage_id)
+                    .any(|candidate| candidate.life != row.life)
+                {
+                    return Err(store_fault(
+                        "lineage::subscription-ambiguous",
+                        concat!(
+                            "a legacy lineage has mixed lane lives and no authoritative ",
+                            "task-subscription policy"
+                        ),
+                    ));
+                }
+                let policy = wire::intent::LineageLife::from_wire(&row.life).ok_or_else(|| {
+                    store_fault(
+                        "lineage::subscription-invalid",
+                        "a legacy lineage lane has no closed task-subscription policy",
+                    )
+                })?;
+                Ok(wire::LineageSubscription { lineage_id, policy })
+            })
+            .collect();
+    }
+
+    let mut indexed = std::collections::BTreeMap::new();
+    for subscription in stored {
+        if indexed
+            .insert(subscription.lineage_id, subscription)
+            .is_some()
+        {
+            return Err(store_fault(
+                "lineage::subscription-ambiguous",
+                "one lineage has more than one durable task-subscription policy",
+            ));
+        }
+    }
+    if indexed.keys().copied().collect::<std::collections::BTreeSet<_>>() != lineage_ids {
+        return Err(store_fault(
+            "lineage::subscription-misaligned",
+            "the durable task-subscription table does not match the resident lineages",
+        ));
+    }
+    Ok(indexed.into_values().collect())
+}
+
 fn commit_startup(
     bus: &Bus,
     repository: &Repository,
@@ -565,11 +632,18 @@ fn commit_startup_with<F>(
 where
     F: FnOnce(),
 {
-    let lanes = bus
+    let (lanes, subscriptions) = bus
         .residency_head()
         .map_err(|error| store_fault("resident::head-unreadable", &error.to_string()))?
-        .map(|head| head.into_body().lanes)
-        .unwrap_or_default();
+        .map_or_else(
+            || Ok((Vec::new(), Vec::new())),
+            |head| {
+                let head = head.into_body();
+                let subscriptions =
+                    startup_subscriptions(&head.lanes, head.subscriptions)?;
+                Ok((head.lanes, subscriptions))
+            },
+        )?;
     let mut first = None;
     let mut cause = FactCause::Root;
     if let Some(migration) = migration {
@@ -641,6 +715,7 @@ where
         epoch,
         state: ResidentState::Seated,
         lanes,
+        subscriptions,
     });
     let committed = commit(bus, write)?;
     Ok(StartupCommit {

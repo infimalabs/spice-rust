@@ -556,15 +556,15 @@ pub struct LaneSeated {
     pub vendor: Name,
 }
 
-/// One Canvas lineage adopted a shared task-subscription life.
+/// One Canvas lineage adopted a task-subscription policy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LineageConfigured {
     /// Stable Canvas lineage identifying the configured group.
     pub lineage_id: CanonicalUuid,
-    /// Prior life shared by every member before this transaction.
-    pub from: String,
-    /// Authoritative life shared by every member after this transaction.
-    pub life: String,
+    /// Prior task-subscription policy before this transaction.
+    pub from: crate::intent::LineageLife,
+    /// Authoritative task-subscription policy after this transaction.
+    pub life: crate::intent::LineageLife,
 }
 
 /// A selected vendor record declared the exact resumable lane session.
