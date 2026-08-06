@@ -26,18 +26,18 @@ const STEERING_TOKEN: &str = "1kJHh5bb";
 const CLAUDE_MODEL: &str = "claude-opus-5";
 const CODEX_MODEL: &str = "gpt-5-codex";
 const MCP_COMMAND: &str = "npx";
-const MCP_ARGS: [&str; 2] = ["@playwright/mcp@latest", "--isolated"];
+const MCP_ARGS: [&str; 3] = ["@playwright/mcp@latest", "--isolated", "--headless"];
 
 /// The `--mcp-config` document, spelled out rather than rebuilt from the code
 /// under test, so a change to either one has to be stated here to pass.
-const CLAUDE_MCP_CONFIG: &str = r#"{"mcpServers":{"playwright":{"command":"npx","args":["@playwright/mcp@latest","--isolated"]}}}"#;
+const CLAUDE_MCP_CONFIG: &str = r#"{"mcpServers":{"playwright":{"command":"npx","args":["@playwright/mcp@latest","--isolated","--headless"]}}}"#;
 const CLAUDE_SETTINGS: &str = r#"{"hooks":{"PostToolUse":[{"hooks":[{"command":"/usr/bin/spice agent post-tool-hook --repo-root /worktree","statusMessage":"Checking spice steering","timeout":30,"type":"command"}],"matcher":"*"}]},"permissions":{"deny":["Task","Agent","TaskCreate","TaskGet","TaskList","TaskUpdate","TaskOutput","TaskStop","Monitor"]}}"#;
 const CLAUDE_SETTINGS_WITHOUT_ATTRIBUTION: &str = r#"{"attribution":{"commit":"","sessionUrl":false},"hooks":{"PostToolUse":[{"hooks":[{"command":"/usr/bin/spice agent post-tool-hook --repo-root /worktree","statusMessage":"Checking spice steering","timeout":30,"type":"command"}],"matcher":"*"}]},"permissions":{"deny":["Task","Agent","TaskCreate","TaskGet","TaskList","TaskUpdate","TaskOutput","TaskStop","Monitor"]}}"#;
 
 const CODEX_HOOK_OVERRIDE: &str = r#"hooks.PostToolUse=[{matcher="^(Bash|apply_patch|Edit|Write|mcp__.*)$",hooks=[{type="command",command="/usr/bin/spice agent post-tool-hook --repo-root /worktree",timeout=30,statusMessage="Checking spice steering"}]}]"#;
 const CODEX_MCP_COMMAND_OVERRIDE: &str = r#"mcp_servers.playwright.command="npx""#;
 const CODEX_MCP_ARGS_OVERRIDE: &str =
-    r#"mcp_servers.playwright.args=["@playwright/mcp@latest","--isolated"]"#;
+    r#"mcp_servers.playwright.args=["@playwright/mcp@latest","--isolated","--headless"]"#;
 
 #[test]
 fn claude_carries_every_launch_knob_and_the_system_prompt_it_re_grounds_in() {

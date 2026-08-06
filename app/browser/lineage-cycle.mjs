@@ -33,7 +33,7 @@ import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { chromium } from "playwright";
+import { launchBrowser } from "./headless-launch.mjs";
 import {
   buildResident,
   chooseCanvasView,
@@ -74,7 +74,7 @@ try {
   ]);
   const extent = await journalExtent(fixture);
   baseline = (await reply(fixture, ["thread", String(extent.cursor)])).body;
-  browser = await chromium.launch({ headless: true });
+  browser = await launchBrowser();
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   if (frameDelayMs > 0) {
