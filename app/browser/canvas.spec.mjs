@@ -391,6 +391,13 @@ async function assertMosaicPacking(page, console) {
   await cards.nth(targetCards - 1).waitFor({ timeout: 15_000 });
   assert.equal(await cards.count(), targetCards);
   assert.equal(await cards.first().getAttribute("data-state"), "frozen");
+  const cardMetadata = await cards.locator(".message-meta span").allTextContents();
+  const keys = cardMetadata.map((metadata) => metadata.split("/")[0].trim());
+  assert.deepEqual(keys, [...keys].sort(), "Canvas journal order agrees with steering key order");
+  assert.ok(
+    cardMetadata.every((metadata) => / \/ \d{4}-\d{2}-\d{2}T/.test(metadata)),
+    "spatially packed keys carry the timestamp that orders them",
+  );
 
   const placements = await cards.evaluateAll((elements) => elements.map((element) => {
     const box = element.getBoundingClientRect();

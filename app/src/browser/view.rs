@@ -435,7 +435,7 @@ fn render_mosaic_card(
         >
             <div class="message-meta">
                 <strong>{"You"}</strong>
-                <span>{format!("{} / pending", directive.key)}</span>
+                <span>{format!("{} / {} / pending", directive.key, directive.expires)}</span>
             </div>
             <p>{directive.text.clone()}</p>
             {render_attachments(&directive.attachments)}
