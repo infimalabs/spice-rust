@@ -92,24 +92,40 @@ export async function assertComposerShards({
   // Located by the class the heading wears rather than as a strong under the
   // header: the renew control lives in this header's drawer and carries a
   // strong of its own, so a descendant tag match resolves to two elements.
-  const primaryHeading = primaryShard.locator(".composer-shard-prose");
-  // Every lane's agent names itself by its own worktree basename, so this
-  // expectation differs from the quote lane's below and the pair of them fails
-  // if one lane's standing is rendered into another lane's heading.
-  assert.equal(
-    await primaryHeading.innerText(),
-    seeded.primaryProse,
-    "COMPOSE-1kKbxl51: the primary heading leads with this lane's own newest agent prose",
-  );
-  assert.notEqual(
-    await primaryHeading.innerText(),
-    seeded.agentName,
-    "the visible heading cannot silently revert to the agent name",
+  const primaryHeadings = team.locator(
+    ".team-agent .composer-shard--primary .composer-shard-heading > .composer-shard-prose",
   );
   assert.equal(
-    await primaryHeading.getAttribute("title"),
-    seeded.primaryProse,
-    "COMPOSE-1kKbxl51: the complete seeded-lane prose survives one-line truncation",
+    await primaryHeadings.count(),
+    seeded.primaryHeadings.length,
+    "every seated lane exposes one primary prose heading",
+  );
+  // Every lane's agent names itself by its own worktree basename, so each
+  // expectation below is a different string and the sweep fails if one lane's
+  // standing is rendered into another lane's heading.
+  const observedHeadings = [];
+  for (const expected of seeded.primaryHeadings) {
+    const heading = team.locator(
+      `.team-agent[data-agent-lane="${expected.lane}"] `
+        + ".composer-shard--primary .composer-shard-heading > .composer-shard-prose",
+    );
+    const prose = await heading.innerText();
+    assert.equal(
+      prose,
+      expected.prose,
+      `COMPOSE-1kKbxl51: the ${expected.lane} primary heading keeps its latest exact-lane prose`,
+    );
+    assert.equal(
+      await heading.getAttribute("title"),
+      expected.prose,
+      `COMPOSE-1kKbxl51: the ${expected.lane} primary heading title keeps its complete prose`,
+    );
+    observedHeadings.push(prose);
+  }
+  assert.equal(
+    new Set(observedHeadings).size,
+    seeded.primaryHeadings.length,
+    "primary prose headings remain pairwise distinct across seated lanes",
   );
   // The agent name is required to stay discoverable from this heading rather
   // than dropped, and it still is -- not as the heading text, which the
