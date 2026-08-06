@@ -56,6 +56,7 @@ const SUCCESSOR: &str = "/worktrees/successor";
 fn occupied_row(fixture: &Fixture) -> wire::LaneResidency {
     wire::LaneResidency {
         lane: fixture.lane,
+        name: Some("Ava".to_owned()),
         worktree: PREDECESSOR.into(),
         life: "drive".into(),
         vendor: "claude".parse().expect("fixture vendor"),

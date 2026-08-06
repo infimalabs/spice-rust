@@ -45,7 +45,7 @@ pub struct Standing {
     pub name: String,
     /// Worktree the lane runs in.
     pub worktree: String,
-    /// The part of that path which tells this lane from its neighbours.
+    /// Configured agent name, or the explicit worktree-leaf presentation rule.
     pub label: String,
     /// Vendor driving the lane.
     pub vendor: String,
@@ -53,6 +53,8 @@ pub struct Standing {
     pub life: String,
     /// Current lane disposition.
     pub disposition: String,
+    /// Current supervised live/quiet projection.
+    pub liveness: wire::intent::LaneLiveness,
     /// Directives waiting for the lane.
     pub pending: usize,
     /// Producer-supplied preview of the newest waiting directive.
@@ -90,10 +92,14 @@ pub fn standings(
                 lane: lane.lane,
                 name: short(lane.lane),
                 worktree: lane.worktree.clone(),
-                label: leaf(&lane.worktree).to_owned(),
+                label: lane
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| leaf(&lane.worktree).to_owned()),
                 vendor: lane.vendor.to_string(),
                 life: lane.life.clone(),
                 disposition: lane.disposition.clone(),
+                liveness: lane.liveness,
                 pending: waiting.map_or(0, |row| row.pending.len()),
                 headline: waiting
                     .and_then(|row| row.pending.last())

@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::io;
-use std::time::Duration;
+use std::time::{Duration, Instant as Monotonic};
 
 use journal::crossing::CanonicalUuid;
 use sill::{
@@ -27,6 +27,36 @@ pub struct Occupant {
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     running: Running,
+}
+
+/// Latest liveness baseline for one supervised occupant.
+///
+/// Seating establishes the first baseline; each admitted selected record moves
+/// it forward for the exact same occupant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Activity {
+    occupant: CanonicalUuid,
+    at: Monotonic,
+}
+
+impl Activity {
+    /// Build one activity observation at its admitted monotonic instant.
+    #[must_use]
+    pub const fn new(occupant: CanonicalUuid, at: Monotonic) -> Self {
+        Self { occupant, at }
+    }
+
+    /// Occupant whose selected record was admitted.
+    #[must_use]
+    pub const fn occupant(self) -> CanonicalUuid {
+        self.occupant
+    }
+
+    /// Monotonic admission instant.
+    #[must_use]
+    pub const fn at(self) -> Monotonic {
+        self.at
+    }
 }
 
 impl Occupant {
@@ -200,6 +230,7 @@ impl Error for SeatError {
 #[derive(Debug, Default)]
 pub struct Seats {
     occupied: BTreeMap<CanonicalUuid, Occupant>,
+    activity: BTreeMap<CanonicalUuid, Activity>,
 }
 
 impl Seats {
@@ -208,6 +239,7 @@ impl Seats {
     pub const fn new() -> Self {
         Self {
             occupied: BTreeMap::new(),
+            activity: BTreeMap::new(),
         }
     }
 
@@ -221,6 +253,32 @@ impl Seats {
     #[must_use]
     pub fn occupied(&self, lane: CanonicalUuid) -> bool {
         self.occupied.contains_key(&lane)
+    }
+
+    /// Latest seating or selected-record activity for the supervised occupant.
+    #[must_use]
+    pub fn activity(&self, lane: CanonicalUuid) -> Option<Activity> {
+        self.activity.get(&lane).copied()
+    }
+
+    /// Advance activity with one selected record from the exact supervised occupant.
+    ///
+    /// Returns `false` for a stale report naming a vacant or succeeded seat.
+    pub fn observe_activity(
+        &mut self,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        at: Monotonic,
+    ) -> bool {
+        if !self
+            .occupied
+            .get(&lane)
+            .is_some_and(|sitting| sitting.occupant == occupant)
+        {
+            return false;
+        }
+        self.activity.insert(lane, Activity::new(occupant, at));
+        true
     }
 
     /// Every occupied lane, ordered by lane.
@@ -296,15 +354,19 @@ impl Seats {
             return Err(SeatError::InheritedGroup { lane });
         }
         let running = open(spec).map_err(SeatError::Door)?;
-        Ok(self.occupied.entry(lane).or_insert(Occupant {
+        let occupant = self.occupied.entry(lane).or_insert(Occupant {
             lane,
             occupant,
             running,
-        }))
+        });
+        self.activity
+            .insert(lane, Activity::new(occupant.occupant, Monotonic::now()));
+        Ok(occupant)
     }
 
     /// Releases a seat, handing back the group so it can be waited on.
     pub fn vacate(&mut self, lane: CanonicalUuid) -> Option<Occupant> {
+        self.activity.remove(&lane);
         self.occupied.remove(&lane)
     }
 }

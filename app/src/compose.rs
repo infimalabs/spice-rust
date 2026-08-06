@@ -52,6 +52,8 @@ pub enum Refusal {
 /// The seat fields a request carries once the form input is accepted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Seat {
+    /// Optional operator-facing identity, distinct from the worktree path.
+    pub name: Option<String>,
     /// Absolute path of the worktree the agent runs in.
     pub worktree: String,
     /// Life the seated agent takes, spelled as the lane crate spells it.
@@ -83,7 +85,11 @@ pub struct Note {
 ///
 /// Returns [`Refusal::Missing`] for any blank field, and [`Refusal::Vendor`]
 /// when the vendor is written but does not spell a name even folded.
-pub fn seat(worktree: &str, vendor: &str, life: &str) -> Result<Seat, Refusal> {
+pub fn seat(name: &str, worktree: &str, vendor: &str, life: &str) -> Result<Seat, Refusal> {
+    let name = match name.trim() {
+        "" => None,
+        configured => Some(configured.to_owned()),
+    };
     let worktree = worktree.trim().to_owned();
     if worktree.is_empty() {
         return Err(Refusal::Missing {
@@ -112,6 +118,7 @@ pub fn seat(worktree: &str, vendor: &str, life: &str) -> Result<Seat, Refusal> {
         });
     }
     Ok(Seat {
+        name,
         worktree,
         life,
         vendor,

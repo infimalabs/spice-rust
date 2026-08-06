@@ -491,6 +491,7 @@ mod tests {
             state: ResidentState::Seated,
             lanes: vec![LaneResidency {
                 lane,
+                name: None,
                 worktree: "/fixture".to_owned(),
                 life: "drive".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),

@@ -301,12 +301,14 @@ fn stream_fact_body(fact: &AnyFact) -> serde_json::Map<String, serde_json::Value
     let crate::body::LaneSeated {
         lane,
         capability: _,
+        name,
         worktree,
         life,
         vendor,
     } = durable;
     let visible = StreamLaneSeated {
         lane,
+        name,
         worktree,
         life,
         vendor,
@@ -357,6 +359,12 @@ impl<'de> Deserialize<'de> for StreamFactBody {
 #[serde(deny_unknown_fields)]
 struct StreamLaneSeated {
     lane: CanonicalUuid,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    name: Option<String>,
     worktree: String,
     life: String,
     vendor: Name,

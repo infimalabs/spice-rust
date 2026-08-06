@@ -325,6 +325,7 @@ fn seed_occupied_lane(
     let mut next = current.body().clone();
     next.lanes.push(wire::LaneResidency {
         lane,
+        name: None,
         worktree: worktree.clone(),
         life: "drive".to_owned(),
         vendor: "claude".parse().expect("fixture vendor"),
@@ -349,6 +350,7 @@ fn seed_occupied_lane(
             wire::body::LaneSeated {
                 lane,
                 capability,
+                name: None,
                 worktree,
                 life: "drive".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),

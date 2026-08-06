@@ -104,6 +104,7 @@ fn lane_seated_stream_fact_is_strict_and_credential_free() {
         fact: Fact::new(wire::body::LaneSeated {
             lane,
             capability,
+            name: Some("Ava".to_owned()),
             worktree: "/tmp/lane".to_owned(),
             life: "drive".to_owned(),
             vendor: "claude".parse().expect("vendor"),
@@ -137,4 +138,5 @@ fn lane_seated_stream_fact_is_strict_and_credential_free() {
     };
     assert_eq!(packed.rows[0].kind(), wire::FactKind::LaneSeated);
     assert!(!packed.rows[0].body().contains_key("capability"));
+    assert_eq!(packed.rows[0].body()["name"], "Ava");
 }

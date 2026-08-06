@@ -481,6 +481,14 @@
   color: var(--muted);
   font-size: .55rem;
 }
+.composer-shard-standing {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .52rem;
+}
 
 .team-surface .mosaic-composer {
   gap: 5px;

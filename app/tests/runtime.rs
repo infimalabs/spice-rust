@@ -187,11 +187,10 @@ fn board_response(
         .expect("board response is admitted")
 }
 
-/// One admitted lane roster, one row per `(lane, occupant, session)` triple.
+/// One admitted safe lane roster, one row per `(lane, occupant, bound)` triple.
 ///
-/// The session body is the resident's real one rather than a placeholder,
-/// because `bound` is derived from its presence and a shape the wire refuses
-/// would prove the mapping against a row that never crosses.
+/// Session authority and capabilities are intentionally not part of this DTO;
+/// only the explicit `bound` projection crosses into the Canvas.
 fn lane_response(rows: &[(&str, Option<&str>, bool)]) -> String {
     let lanes = rows
         .iter()
@@ -202,23 +201,12 @@ fn lane_response(rows: &[(&str, Option<&str>, bool)]) -> String {
                 "life": "steer",
                 "vendor": "claude",
                 "lineage": [],
-                "capabilities": [],
+                "bound": bound,
                 "disposition": if occupant.is_some() { "occupied" } else { "vacant" },
+                "liveness": if occupant.is_some() { "running" } else { "vacant" },
             });
             if let Some(occupant) = occupant {
                 row["occupant"] = serde_json::json!(occupant);
-            }
-            if *bound {
-                row["session"] = serde_json::json!({
-                    "lane": lane,
-                    "occupant": OPERATOR,
-                    "worktree": format!("/tmp/worktree-{}", &lane[..8]),
-                    "vendor": "claude",
-                    "epoch": EPOCH,
-                    "stream": "stdout",
-                    "identity": "018f7777-7777-7444-8888-999999999999",
-                    "locus": {"member": 0, "offset": 0, "length": 12},
-                });
             }
             row
         })
@@ -866,11 +854,13 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
 
     assert_eq!(LaneStatus::Queued.label(), "steering queued");
     assert_eq!(LaneStatus::Running.label(), "agent running");
+    assert_eq!(LaneStatus::RunningStale.label(), "agent running-stale");
     assert_eq!(LaneStatus::Bound.label(), "agent bound");
     assert_eq!(LaneStatus::Unbound.label(), "agent unbound");
 
     let mut strip = vec![
         LaneStatus::Unbound,
+        LaneStatus::RunningStale,
         LaneStatus::Running,
         LaneStatus::Bound,
         LaneStatus::Queued,
@@ -881,6 +871,7 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
         vec![
             LaneStatus::Queued,
             LaneStatus::Running,
+            LaneStatus::RunningStale,
             LaneStatus::Bound,
             LaneStatus::Unbound,
         ],

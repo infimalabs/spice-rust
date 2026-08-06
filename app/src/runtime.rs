@@ -6,7 +6,7 @@
 
 use wire::intent::{
     BoardAnswer, BoardTask, ConsentPolicyAnswer, ConsentQueueAnswer, DirectiveAnswer, InboxAnswer,
-    LaneAnswer, LaneChangeAnswer,
+    LaneAnswer, LaneChangeAnswer, LaneLiveness,
 };
 use wire::{
     Accepted, Actor, AgentMessage, CanonicalUuid, CommandKind, FactKind, Origin, Outcome, Packed,
@@ -123,11 +123,14 @@ pub struct LaneView {
 #[derive(Clone, PartialEq, Eq)]
 pub struct LaneRow {
     pub lane: CanonicalUuid,
+    pub name: Option<String>,
     pub worktree: String,
     pub life: String,
     pub vendor: wire::Name,
     pub occupant: Option<CanonicalUuid>,
     pub disposition: String,
+    /// Dynamic supervised live/quiet projection supplied by the resident.
+    pub liveness: LaneLiveness,
     /// Whether a resumable session was ever declared for this seat.
     ///
     /// The session record itself is authority the canvas has no use for, so
@@ -141,17 +144,18 @@ pub struct LaneRow {
 /// Ported from the predecessor 0.31.0 UI, `spice/serve/static/app.lanes.js`:
 /// `targetChoiceStatus` derives it, `targetChoiceStatusLabel` names it, and the
 /// `targetChoiceStatusValues` list is the rank. That list carries nine states
-/// where this wire can distinguish four — the six liveness gradations between
-/// `running` and `unstarted` are read there from an agent process this canvas
-/// never sees — so the ported ladder keeps the predecessor's order and its
-/// exact wording for the four it can answer, rather than inventing labels for
-/// states the resident does not report.
+/// where this wire now distinguishes five: the resident projects recent and
+/// quiet supervised occupants as `running` and `running-stale`, while richer
+/// vendor phases remain absent. The ladder keeps the predecessor's order and
+/// names only states the resident actually reports.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum LaneStatus {
     /// Direction is queued for this lane; the operator is being waited on.
     Queued,
     /// An occupant is live in the seat.
     Running,
+    /// An occupant remains supervised but has been quiet for the stale horizon.
+    RunningStale,
     /// The seat has a declared session but nobody in it.
     Bound,
     /// The seat has never been occupied.
@@ -165,6 +169,7 @@ impl LaneStatus {
         match self {
             Self::Queued => "steering queued",
             Self::Running => "agent running",
+            Self::RunningStale => "agent running-stale",
             Self::Bound => "agent bound",
             Self::Unbound => "agent unbound",
         }
@@ -181,12 +186,13 @@ impl LaneRow {
     pub const fn status(&self, pending: usize) -> LaneStatus {
         if pending > 0 {
             LaneStatus::Queued
-        } else if self.occupant.is_some() {
-            LaneStatus::Running
-        } else if self.bound {
-            LaneStatus::Bound
         } else {
-            LaneStatus::Unbound
+            match self.liveness {
+                LaneLiveness::Running => LaneStatus::Running,
+                LaneLiveness::RunningStale => LaneStatus::RunningStale,
+                LaneLiveness::Vacant if self.bound => LaneStatus::Bound,
+                LaneLiveness::Vacant => LaneStatus::Unbound,
+            }
         }
     }
 }
@@ -201,12 +207,14 @@ impl From<&LaneAnswer> for LaneView {
                 .iter()
                 .map(|lane| LaneRow {
                     lane: lane.lane,
+                    name: lane.name.clone(),
                     worktree: lane.worktree.clone(),
                     life: lane.life.clone(),
                     vendor: lane.vendor.clone(),
                     occupant: lane.occupant,
                     disposition: lane.disposition.clone(),
-                    bound: lane.session.is_some(),
+                    liveness: lane.liveness,
+                    bound: lane.bound,
                 })
                 .collect(),
         }

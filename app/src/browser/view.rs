@@ -6,6 +6,7 @@ pub(super) mod chrome;
 
 #[derive(Clone)]
 pub(super) struct AgentControls {
+    pub(super) seat_name: UseStateHandle<String>,
     pub(super) seat_worktree: UseStateHandle<String>,
     pub(super) seat_vendor: UseStateHandle<String>,
     pub(super) seat_life: UseStateHandle<String>,
@@ -182,6 +183,10 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
                 <p>{"Add one agent member from an existing worktree in this repository."}</p>
             </div>
             <form class="seat-form" onsubmit={controls.submit_seat.clone()}>
+                <label for="seat-name">{"Name"}</label>
+                <input id="seat-name" type="text" placeholder="Ava"
+                    value={(*controls.seat_name).clone()}
+                    oninput={state_from_input(controls.seat_name.clone())} />
                 <label for="seat-worktree">{"Worktree"}</label>
                 <input id="seat-worktree" type="text" placeholder="/absolute/path/to/worktree"
                     value={(*controls.seat_worktree).clone()}

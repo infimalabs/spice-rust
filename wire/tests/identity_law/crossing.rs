@@ -446,6 +446,7 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
 
     let occupied = LaneResidency {
         lane: first_uuid,
+        name: Some("Ava".to_owned()),
         worktree: "/worktrees/lane-a".to_owned(),
         life: "drive".to_owned(),
         vendor: "claude".parse().expect("fixture vendor"),
@@ -470,6 +471,7 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
     };
     let empty = LaneResidency {
         lane: second_uuid,
+        name: None,
         worktree: "/worktrees/lane-b".to_owned(),
         life: "steer".to_owned(),
         vendor: "codex".parse().expect("fixture vendor"),
@@ -804,6 +806,7 @@ fn stream_lane_seated(position: u64, cause: Option<u64>) -> StreamFact {
         fact: Fact::new(body::LaneSeated {
             lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163d8"),
             capability: uuid("018f82d4-6f59-7d06-92e3-bce9131163d9"),
+            name: Some("Ava".to_owned()),
             worktree: "/tmp/lane".to_owned(),
             life: "drive".to_owned(),
             vendor: "claude".parse().expect("vendor"),

@@ -272,6 +272,13 @@ pub struct LaneSession {
 pub struct LaneResidency {
     /// Lane identity.
     pub lane: CanonicalUuid,
+    /// Operator-configured agent display name, absent on pre-field seats.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub name: Option<String>,
     /// Canonical worktree permanently bound to the lane.
     pub worktree: String,
     /// Closed lane-life spelling governing re-seating.

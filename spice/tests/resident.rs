@@ -901,6 +901,7 @@ fn seed_lane(fixture: &Fixture, lane: wire::CanonicalUuid, capability: wire::Can
     let mut next = current.body().clone();
     next.lanes.push(wire::LaneResidency {
         lane,
+        name: None,
         worktree: fixture.root.display().to_string(),
         life: "drive".to_owned(),
         vendor: "claude".parse().expect("fixture vendor"),
@@ -925,6 +926,7 @@ fn seed_lane(fixture: &Fixture, lane: wire::CanonicalUuid, capability: wire::Can
             wire::body::LaneSeated {
                 lane,
                 capability,
+                name: None,
                 worktree: fixture.root.display().to_string(),
                 life: "drive".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),

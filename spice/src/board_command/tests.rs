@@ -47,6 +47,7 @@ mod tests {
             .enumerate()
             .map(|(index, seat)| wire::LaneResidency {
                 lane: seat.lane,
+                name: None,
                 worktree: "/fixture".to_owned(),
                 life: "drive".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),

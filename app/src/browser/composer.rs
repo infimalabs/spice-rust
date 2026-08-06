@@ -463,7 +463,11 @@ fn render_agent_details(
         .clone()
         .unwrap_or_else(|| "clear".to_owned());
     html! {
-        <article class="team-detail-card" data-accent={standing.accent.to_string()}>
+        <article
+            class="team-detail-card"
+            data-accent={standing.accent.to_string()}
+            title={standing_title(standing)}
+        >
             <header>
                 <span class="agent-presence"></span>
                 <strong>{standing.label.clone()}</strong>
@@ -489,7 +493,10 @@ fn render_agent_details(
                         <div><dt>{"Pending"}</dt><dd>{standing.pending}</dd></div>
                         <div><dt>{"Claim age"}</dt><dd>{held}</dd></div>
                         <div><dt>{"Renewed"}</dt><dd>{renewed}</dd></div>
-                        <div><dt>{"Liveness"}</dt><dd>{standing.disposition.clone()}</dd></div>
+                        <div>
+                            <dt>{"Liveness"}</dt>
+                            <dd>{standing.liveness.as_str()}</dd>
+                        </div>
                     </dl>
                 },
                 LineageMode::Info => html! {
@@ -497,6 +504,14 @@ fn render_agent_details(
                         <div><dt>{"Agent channel"}</dt><dd>{standing.lane.to_string()}</dd></div>
                         <div><dt>{"Occupant"}</dt><dd>{occupant}</dd></div>
                         <div><dt>{"Worktree"}</dt><dd>{standing.worktree.clone()}</dd></div>
+                        <div>
+                            <dt>{"Pending"}</dt>
+                            <dd>{format!("{} pending", standing.pending)}</dd>
+                        </div>
+                        <div>
+                            <dt>{"Liveness"}</dt>
+                            <dd>{standing.liveness.as_str()}</dd>
+                        </div>
                         <div>
                             <dt>{"Vendor / life"}</dt>
                             <dd>{format!("{} / {}", standing.vendor, standing.life)}</dd>
@@ -555,6 +570,7 @@ fn render_agent_composer(
         <section
             class={classes!("team-agent", (!send_enabled).then_some("team-agent--vacant"))}
             data-agent-lane={lane_id.to_string()}
+            title={standing_title(standing)}
             {ondragover}
             {ondrop}
         >
@@ -567,13 +583,17 @@ fn render_agent_composer(
                             .map(watchband::elapsed_label)
                             .unwrap_or_else(|| "now".to_owned())
                     }</span>
-                    <strong title={activity.to_owned()}>{watchband::truncate(activity, 14)}</strong>
+                    <strong title={activity.to_owned()}>{standing.label.clone()}</strong>
                     <button
                         type="button"
                         aria-label={format!("Details for {}", standing.label)}
                         onclick={Callback::from(move |_| open.set(LineageMode::Info))}
                     >{"☰"}</button>
                 </header>
+                    <div class="composer-shard-standing">
+                        <span>{format!("{} pending", pending)}</span>
+                        <span>{standing.liveness.as_str()}</span>
+                    </div>
                     <textarea
                         aria-label={format!("Message for {lane_id}")}
                         rows="4"
@@ -656,7 +676,7 @@ fn composer_placeholder(standing: &Standing, pending: usize) -> String {
             standing.vendor,
             watchband::truncate(&standing.label, 8)
         ),
-        format!("{pending} pending, {}", standing.disposition),
+        format!("{pending} pending, {}", standing.liveness.as_str()),
     ];
     if let Some(handle) = &standing.handle {
         lines.push(match &standing.phase {
@@ -665,6 +685,16 @@ fn composer_placeholder(standing: &Standing, pending: usize) -> String {
         });
     }
     lines.join("\n")
+}
+
+fn standing_title(standing: &Standing) -> String {
+    format!(
+        "{}\n{}\n{} pending\n{}",
+        standing.label,
+        standing.worktree,
+        standing.pending,
+        standing.liveness.as_str(),
+    )
 }
 
 fn submit_lineage_callback(

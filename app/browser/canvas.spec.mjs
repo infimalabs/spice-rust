@@ -20,6 +20,21 @@ const sessionRecord = JSON.stringify({
   subtype: "init",
   session_id: "018f7777-7777-7444-8888-999999999999",
 });
+const activityRecord = JSON.stringify({
+  type: "assistant",
+  message: {
+    type: "message",
+    role: "assistant",
+    content: [{ type: "text", text: "periodic live witness" }],
+    usage: {
+      input_tokens: 1,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+      output_tokens: 1,
+    },
+  },
+});
+const agentNames = ["Ava", "Bex", "Cy", "Dee"];
 const staleEpoch = "018f9999-9999-7444-8888-999999999999";
 const nestedQuoteMessage = [
   "> > The final review found no alternate execution path.",
@@ -167,7 +182,12 @@ async function configureFixture(fixture, linkedRoot) {
     "#!/bin/sh",
     "trap 'exit 0' TERM INT",
     `printf '%s\\n' '${sessionRecord}'`,
-    "while :; do sleep 1; done",
+    'case "$PWD" in',
+    "  *lane-2)",
+    `    while :; do sleep 20; printf '%s\\n' '${activityRecord}'; done`,
+    "    ;;",
+    "  *) while :; do sleep 1; done ;;",
+    "esac",
     "",
   ].join("\n"));
   await chmod(vendor, 0o700);
@@ -379,6 +399,7 @@ async function assertAgentConversation(page, fixture, worktrees) {
   await chooseCanvasView(page, "Mosaic");
   await console.waitFor();
   await console.getByRole("tab", { name: /^Info/ }).click();
+  await console.getByLabel("Name").fill(agentNames[0]);
   await console.getByLabel("Worktree").fill(worktrees[0]);
   await console.getByLabel("Life").fill("steer");
 
@@ -398,8 +419,10 @@ async function assertAgentConversation(page, fixture, worktrees) {
   await console.getByRole("button", { name: "Seat agent" }).click();
   await refusal.waitFor({ state: "detached", timeout: 10_000 });
   await console.locator(".team-detail-card").nth(0).waitFor({ timeout: 15_000 });
+  const firstSeatedAt = Date.now();
 
   for (const [index, worktree] of worktrees.slice(1).entries()) {
+    await console.getByLabel("Name").fill(agentNames[index + 1]);
     await console.getByLabel("Worktree").fill(worktree);
     await console.getByLabel("Vendor").fill("claude");
     await console.getByLabel("Life").fill("steer");
@@ -410,6 +433,7 @@ async function assertAgentConversation(page, fixture, worktrees) {
   const lanes = await reply(fixture, ["lane"]);
   const seated = worktrees.map((worktree) => lanes.body.lanes.find((lane) => lane.worktree === worktree));
   assert.ok(seated.every(Boolean), "the Canvas seat control creates all four linked-worktree lanes");
+  assert.deepEqual(seated.map((lane) => lane.name), agentNames);
   assert.ok(seated.every((lane) => lane.vendor === "claude"));
   assert.ok(seated.every((lane) => lane.life === "steer"), "the team shares one lifetime");
 
@@ -486,6 +510,12 @@ async function assertAgentConversation(page, fixture, worktrees) {
   await console.getByRole("tab", { name: /^Compose/ }).click();
   await assertFourAgentDensity(console);
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
+  const clearedInbox = await reply(fixture, ["inbox", seated[2].lane]);
+  for (const pending of clearedInbox.body.lanes[0].pending) {
+    await reply(fixture, ["steer", "cancel", pending.directive]);
+  }
+  const remainingQuietWindow = Math.max(0, 61_000 - (Date.now() - firstSeatedAt));
+  await new Promise((resolveWait) => setTimeout(resolveWait, remainingQuietWindow));
   return { lane: seated[0].lane, quoteLane: seated[3].lane };
 }
 
@@ -522,6 +552,17 @@ async function assertFourAgentDensity(console) {
 async function captureReferenceViewport(page) {
   await chooseCanvasView(page, "Mosaic");
   const team = page.locator('[data-pane="agent-console"]');
+  await team.getByRole("tab", { name: /^Info/ }).click();
+  for (const name of agentNames) {
+    await team.getByText(name, { exact: true }).waitFor();
+  }
+  await team.getByText("0 pending", { exact: true }).waitFor();
+  await team.getByText("running", { exact: true }).first().waitFor();
+  await team.getByText("running-stale", { exact: true }).first().waitFor();
+  await page.screenshot({
+    path: join(artifacts, "canvas-reference-agent-details-dark.png"),
+    fullPage: false,
+  });
   await team.getByRole("tab", { name: /^Compose/ }).click();
   await team.locator(".mosaic-message-card").nth(3).waitFor({ timeout: 10_000 });
   assert.equal(

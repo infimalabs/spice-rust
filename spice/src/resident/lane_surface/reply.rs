@@ -25,22 +25,88 @@ pub(super) fn command_result<B: serde::Serialize>(
         .map_err(|error| store_fault("lane::receipt-invalid", &error.to_string()))
 }
 
-pub(super) fn answer(head: &wire::ResidencyHead, selected: Option<CanonicalUuid>) -> LaneAnswer {
+const QUIET_HORIZON: Duration = Duration::from_secs(60);
+
+pub(super) fn answer(
+    head: &wire::ResidencyHead,
+    selected: Option<CanonicalUuid>,
+    seats: &Seats,
+) -> CommandResult<LaneAnswer> {
+    answer_at(head, selected, Monotonic::now(), |lane| {
+        seats.activity(lane)
+    })
+}
+
+fn answer_at(
+    head: &wire::ResidencyHead,
+    selected: Option<CanonicalUuid>,
+    now: Monotonic,
+    activity: impl Fn(CanonicalUuid) -> Option<lane::occupant::Activity>,
+) -> CommandResult<LaneAnswer> {
     let lanes = head
         .lanes
         .iter()
         .filter(|row| selected.is_none_or(|lane| row.lane == lane))
-        .cloned()
-        .map(|mut row| {
-            row.capabilities.clear();
-            row
+        .map(|row| {
+            let liveness = liveness(row, activity(row.lane), now)?;
+            Ok(wire::intent::LaneAnswerRow {
+                lane: row.lane,
+                name: row.name.clone(),
+                worktree: row.worktree.clone(),
+                life: row.life.clone(),
+                vendor: row.vendor.clone(),
+                occupant: row.occupant,
+                lineage: row.lineage.clone(),
+                bound: row.session.is_some(),
+                disposition: row.disposition.clone(),
+                liveness,
+            })
         })
-        .collect();
-    LaneAnswer {
+        .collect::<CommandResult<Vec<_>>>()?;
+    Ok(LaneAnswer {
         epoch: head.epoch,
         state: head.state,
         lanes,
+    })
+}
+
+fn liveness(
+    row: &wire::LaneResidency,
+    activity: Option<lane::occupant::Activity>,
+    now: Monotonic,
+) -> CommandResult<wire::intent::LaneLiveness> {
+    let Some(occupant) = row.occupant else {
+        if activity.is_some() {
+            return Err(store_fault(
+                "lane::liveness-occupied",
+                "a durable vacant lane still has supervised activity",
+            ));
+        }
+        return Ok(wire::intent::LaneLiveness::Vacant);
+    };
+    let observed = activity.ok_or_else(|| {
+        store_fault(
+            "lane::liveness-unobserved",
+            "a durable occupied lane has no supervised activity observation",
+        )
+    })?;
+    if observed.occupant() != occupant {
+        return Err(store_fault(
+            "lane::liveness-occupant-moved",
+            "the supervised activity occupant differs from durable residency",
+        ));
     }
+    let quiet = now.checked_duration_since(observed.at()).ok_or_else(|| {
+        store_fault(
+            "lane::liveness-clock-regressed",
+            "the activity observation lies after the read clock",
+        )
+    })?;
+    Ok(if quiet < QUIET_HORIZON {
+        wire::intent::LaneLiveness::Running
+    } else {
+        wire::intent::LaneLiveness::RunningStale
+    })
 }
 
 pub(super) fn relevant(fact: &wire::Envelope<wire::AnyFact>, lane: CanonicalUuid) -> bool {
@@ -239,4 +305,123 @@ pub(super) fn typed_environment_fault(reason: &str, detail: &str) -> Outcome<Com
         reason: reason.to_owned(),
         detail: detail.to_owned(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn uuid(last: u8) -> CanonicalUuid {
+        format!("018f82d4-6f59-7d06-92e3-bce9131163{last:02}")
+            .parse()
+            .expect("fixture uuid")
+    }
+
+    fn occupied() -> wire::LaneResidency {
+        wire::LaneResidency {
+            lane: uuid(1),
+            name: Some("Ava".to_owned()),
+            worktree: "/worktrees/main-a".to_owned(),
+            life: "drive".to_owned(),
+            vendor: "claude".parse().expect("fixture vendor"),
+            occupant: Some(uuid(2)),
+            lineage: vec![uuid(2)],
+            capabilities: vec![uuid(3)],
+            session: Some(wire::LaneSession {
+                lane: uuid(1),
+                occupant: uuid(2),
+                worktree: "/worktrees/main-a".to_owned(),
+                vendor: "claude".parse().expect("fixture vendor"),
+                epoch: uuid(4),
+                stream: "stdout".to_owned(),
+                identity: "private-session".to_owned(),
+                locus: wire::TapeLocus {
+                    member: 1,
+                    offset: 2,
+                    length: 3,
+                },
+            }),
+            disposition: "occupied".to_owned(),
+        }
+    }
+
+    #[test]
+    fn the_same_occupied_lane_turns_quiet_at_the_exact_sixty_second_boundary() {
+        let row = occupied();
+        let head = wire::ResidencyHead {
+            epoch: uuid(4),
+            state: ResidentState::Seated,
+            lanes: vec![row.clone()],
+        };
+        let unchanged = head.clone();
+        let observed = Monotonic::now();
+        let activity = lane::occupant::Activity::new(uuid(2), observed);
+
+        let recent = answer_at(
+            &head,
+            None,
+            observed + Duration::from_millis(59_999),
+            |_| Some(activity),
+        )
+        .expect("recent activity projects");
+        let quiet = answer_at(&head, None, observed + Duration::from_secs(60), |_| {
+            Some(activity)
+        })
+        .expect("boundary activity projects");
+
+        assert_eq!(
+            recent.lanes[0].liveness,
+            wire::intent::LaneLiveness::Running
+        );
+        assert_eq!(
+            quiet.lanes[0].liveness,
+            wire::intent::LaneLiveness::RunningStale
+        );
+        assert_eq!(recent.lanes[0].name.as_deref(), Some("Ava"));
+        assert_eq!(recent.lanes[0].life, "drive");
+        assert_eq!(recent.lanes[0].disposition, "occupied");
+        assert_eq!(
+            head, unchanged,
+            "clock projection mutated durable lifecycle state"
+        );
+    }
+
+    #[test]
+    fn lane_reads_expose_session_presence_without_capability_or_session_authority() {
+        let row = occupied();
+        let capability = row.capabilities[0].to_string();
+        let head = wire::ResidencyHead {
+            epoch: uuid(4),
+            state: ResidentState::Seated,
+            lanes: vec![row],
+        };
+        let observed = Monotonic::now();
+        let answer = answer_at(&head, None, observed, |_| {
+            Some(lane::occupant::Activity::new(uuid(2), observed))
+        })
+        .expect("supervised lane projects");
+        let encoded = String::from_utf8(wire::encode(&answer).expect("answer encodes"))
+            .expect("wire encoding is UTF-8");
+
+        assert!(answer.lanes[0].bound);
+        assert!(!encoded.contains(&capability));
+        assert!(!encoded.contains("private-session"));
+        assert!(!encoded.contains("capabilities"));
+        assert!(!encoded.contains("session"));
+    }
+
+    #[test]
+    fn a_durable_occupant_without_the_same_supervised_observation_faults() {
+        let head = wire::ResidencyHead {
+            epoch: uuid(4),
+            state: ResidentState::Seated,
+            lanes: vec![occupied()],
+        };
+        let error = answer_at(&head, None, Monotonic::now(), |_| None)
+            .expect_err("unobserved occupancy must fail loudly");
+        let Outcome::Fault(fault) = error else {
+            panic!("unobserved occupancy must be a fault")
+        };
+        assert_eq!(fault.reason, "lane::liveness-unobserved");
+    }
 }

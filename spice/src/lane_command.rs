@@ -96,6 +96,10 @@ fn add(
     };
     let body = LaneSeat {
         lane: new_uuid(),
+        name: matches
+            .get_one::<String>("name")
+            .map(|name| name.trim().to_owned())
+            .filter(|name| !name.is_empty()),
         worktree: worktree.worktree_root().display().to_string(),
         life,
         vendor,

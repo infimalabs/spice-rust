@@ -301,7 +301,27 @@ const ANSWERS: &[(AnswerShape, &str)] = &[
         r#"{
   "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
   "state": "seated",
-  "lanes": []
+  "lanes": [{
+    "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+    "name": "Ava",
+    "worktree": "/worktrees/lane-a",
+    "life": "drive",
+    "vendor": "claude",
+    "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c5",
+    "lineage": ["018f82d4-6f59-7d06-92e3-bce9131163c5"],
+    "bound": true,
+    "disposition": "occupied",
+    "liveness": "running"
+  }, {
+    "lane": "018f82d4-6f59-7d06-92e3-bce9131163c6",
+    "worktree": "/worktrees/lane-b",
+    "life": "steer",
+    "vendor": "codex",
+    "lineage": [],
+    "bound": false,
+    "disposition": "vacant",
+    "liveness": "vacant"
+  }]
 }"#,
     ),
     (

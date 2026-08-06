@@ -17,6 +17,7 @@ pub(super) fn propose_seat(
     let mut next = observed.body().clone();
     next.lanes.push(wire::LaneResidency {
         lane: request.lane,
+        name: request.name.clone(),
         worktree: request.worktree.clone(),
         life: request.life.clone(),
         vendor: request.vendor.clone(),
@@ -38,6 +39,7 @@ pub(super) fn propose_seat(
             wire::body::LaneSeated {
                 lane: request.lane,
                 capability,
+                name: request.name.clone(),
                 worktree: request.worktree.clone(),
                 life: request.life.clone(),
                 vendor: request.vendor.clone(),

@@ -528,6 +528,7 @@ mod tests {
             state: ResidentState::Seated,
             lanes: vec![LaneResidency {
                 lane: uuid(20),
+                name: None,
                 worktree: "/worktrees/lane-a".to_owned(),
                 life: "drive".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),
