@@ -852,11 +852,13 @@ async function assertMosaicComposer(page, fixture, seeded) {
   );
   await activity.filter({ hasText: "browser direction survives streaming" }).waitFor();
 
-  await quoteActivity
+  const nestedCard = quoteActivity
     .filter({ hasText: nestedQuotePreview })
-    .getByRole("button", { name: "Quote this message" })
-    .click();
-  let previewBand = quoteLane.locator(".composer-quote-band");
+    .getByRole("button", { name: "Quote this message" });
+  await nestedCard.click();
+  let previewBand = quoteLane
+    .locator(".composer-quote-band")
+    .filter({ hasText: nestedQuotePreview });
   await previewBand.waitFor();
   let previewLabel = await previewBand.locator("header span").innerText();
   assert.equal(previewLabel, nestedQuotePreview);
@@ -866,22 +868,41 @@ async function assertMosaicComposer(page, fixture, seeded) {
     nestedQuoteMessage,
     "the complete nested message remains reachable from the band",
   );
-  await previewBand.getByRole("button", { name: "Remove quoted composer" }).click();
-  await previewBand.waitFor({ state: "detached" });
+  await nestedCard.click();
+  assert.equal(
+    await quoteLane.locator(".composer-quote-band").count(),
+    1,
+    "quoting the same message identity reveals its existing band",
+  );
+  const repeatedQuoteId = await previewBand.getByRole("textbox").getAttribute("id");
+  await page.waitForFunction(
+    (id) => document.activeElement?.id === id,
+    repeatedQuoteId,
+  );
+  assert.equal(
+    await previewBand
+      .getByRole("textbox")
+      .evaluate((textarea) => document.activeElement === textarea),
+    true,
+    "repeated quote identity focuses the existing reply",
+  );
 
   await quoteActivity
     .filter({ hasText: "Borrowed context has no authored preview." })
     .getByRole("button", { name: "Quote this message" })
     .click();
-  previewBand = quoteLane.locator(".composer-quote-band");
+  assert.equal(
+    await quoteLane.locator(".composer-quote-band").count(),
+    2,
+    "two distinct messages retain two simultaneous quote bands",
+  );
+  previewBand = quoteLane.locator(".composer-quote-band").first();
   await previewBand.waitFor();
   previewLabel = await previewBand.locator("header span").innerText();
   assert.equal(previewLabel, "quoted message", "an absent preview has a visible placeholder");
   assert.ok(previewLabel.trim(), "the absent-preview band is not blank");
   assert.doesNotMatch(previewLabel, /[<>]/);
   assert.equal(await previewBand.getAttribute("title"), entirelyQuotedMessage);
-  await previewBand.getByRole("button", { name: "Remove quoted composer" }).click();
-  await previewBand.waitFor({ state: "detached" });
 
   await activity
     .filter({ hasText: "browser direction survives streaming" })
@@ -917,10 +938,22 @@ async function assertMosaicComposer(page, fixture, seeded) {
     path: join(artifacts, "canvas-light-mosaic-composer.png"),
     fullPage: true,
   });
-  await team.getByRole("button", { name: "Steer", exact: true }).click();
+  await quotedComposer.getByRole("textbox").press("Control+Enter");
   await activity.filter({ hasText: "canvas quote reply" }).waitFor({
     timeout: 10_000,
   });
+  assert.equal(
+    await lane
+      .locator("textarea[data-primary-composer-target-id]")
+      .evaluate((textarea) => document.activeElement === textarea),
+    true,
+    "quote keyboard submission returns focus to that target's primary composer",
+  );
+  assert.equal(
+    await quoteLane.locator(".composer-quote-band").count(),
+    2,
+    "target keyboard submission leaves sibling target drafts unchanged",
+  );
   assert.equal(
     await activity.filter({ hasText: "canvas quote reply" }).locator(".message-body img").count(),
     2,

@@ -144,6 +144,8 @@ enum ClientAction {
         epoch: CanonicalUuid,
         message: String,
         attachments: Vec<DirectiveAttachment>,
+        /// Composer sends restore through this receipt; non-draft sends omit it.
+        resolve: Option<Callback<bool>>,
     },
 }
 
@@ -161,7 +163,10 @@ enum PendingKind {
     /// is the send: by the time the answer lands the selection may have moved,
     /// so reading it back off the surface would attribute the receipt to
     /// whichever lane the operator is looking at now.
-    Steer(CanonicalUuid),
+    Steer {
+        lane: CanonicalUuid,
+        resolve: Option<Callback<bool>>,
+    },
     Note(TaskHandle),
     ConsentDecision,
 }
@@ -224,7 +229,9 @@ fn canvas_app() -> Html {
 
     let refresh = {
         let sender = sender.clone();
-        Callback::from(move |_| send_action(&sender, ClientAction::Refresh))
+        Callback::from(move |_| {
+            send_action(&sender, ClientAction::Refresh);
+        })
     };
     let submit_note = {
         let sender = sender.clone();
@@ -690,6 +697,7 @@ async fn dispatch_action(
             epoch,
             message,
             attachments,
+            resolve,
         } => {
             let body = SteerSend {
                 lane,
@@ -705,7 +713,7 @@ async fn dispatch_action(
                 principal,
                 writer,
                 pending,
-                PendingKind::Steer(lane),
+                PendingKind::Steer { lane, resolve },
                 CommandKind::SteerSend,
                 expected,
                 body,
@@ -1016,10 +1024,14 @@ fn handle_incoming(
             runtime.apply_lane_change(&admitted);
             true
         }
-        PendingKind::Steer(lane) => {
+        PendingKind::Steer { lane, resolve } => {
             let admitted: crate::Admitted<Response<wire::intent::DirectiveAnswer>> =
                 admit_response(session, bytes)?;
+            let accepted = matches!(&admitted.get().outcome, wire::Outcome::Reply(_));
             runtime.apply_steer(&admitted, lane);
+            if let Some(resolve) = resolve {
+                resolve.emit(accepted);
+            }
             true
         }
         PendingKind::Note(task) => {
@@ -1094,10 +1106,11 @@ fn binary_message(message: Message) -> Result<Vec<u8>, String> {
     }
 }
 
-fn send_action(sender: &SenderHandle, action: ClientAction) {
-    if let Some(sender) = sender.borrow_mut().as_mut() {
-        let _ = sender.unbounded_send(action);
-    }
+fn send_action(sender: &SenderHandle, action: ClientAction) -> bool {
+    sender
+        .borrow_mut()
+        .as_mut()
+        .is_some_and(|sender| sender.unbounded_send(action).is_ok())
 }
 
 fn metric(label: &'static str, value: String, detail: String) -> Html {
