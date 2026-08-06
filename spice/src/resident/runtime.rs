@@ -23,12 +23,12 @@ struct SurfaceConfig {
 }
 
 struct SurfaceLaunch<'a> {
-    listen: SocketAddr,
+    binding: CanvasBinding,
     /// Whether the operator asked this start to also open the app.
     ///
-    /// Discovery is announced either way. This only decides whether the
-    /// endpoint additionally reaches the platform browser, so the two differ
-    /// by who dials the address rather than by which address is published.
+    /// Discovery is announced either way, so this is not part of the binding:
+    /// it decides who dials the published address, not which address gets
+    /// published or what admits a caller to it.
     open: bool,
     announcement: &'a mut dyn io::Write,
 }
@@ -200,16 +200,46 @@ const DEFAULT_LISTEN: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOS
 pub(crate) const EPHEMERAL_LOOPBACK: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
 
+/// Bounds on an operator-supplied bearer token for a non-loopback bind.
+///
+/// Stated rather than inlined so the refusal text and the check cannot come to
+/// name two different lengths.
+const MIN_AUTH_TOKEN_BYTES: usize = 16;
+const MAX_AUTH_TOKEN_BYTES: usize = 256;
+
+pub(crate) struct CanvasBinding {
+    listen: SocketAddr,
+    access: canvas::axum::Access,
+}
+
+impl CanvasBinding {
+    pub(crate) fn local(listen: SocketAddr) -> Self {
+        Self {
+            listen,
+            access: canvas::axum::Access::local(),
+        }
+    }
+}
+
 pub(crate) fn up(leaf: &clap::ArgMatches, announcement: &mut dyn io::Write) -> Outcome<()> {
     let listen = match requested_listen(leaf) {
         Ok(listen) => listen,
+        Err(outcome) => return outcome,
+    };
+    let access = match requested_access(leaf, listen) {
+        Ok(access) => access,
         Err(outcome) => return outcome,
     };
     let current = match std::env::current_dir() {
         Ok(current) => current,
         Err(error) => return environment_fault("resident::cwd-unavailable", &error.to_string()),
     };
-    up_from_with(&current, listen, leaf.get_flag("open"), announcement)
+    up_from_with(
+        &current,
+        CanvasBinding { listen, access },
+        leaf.get_flag("open"),
+        announcement,
+    )
 }
 
 /// The address `--host` and `--port` asked for, each defaulted on its own.
@@ -233,23 +263,75 @@ fn requested_listen(leaf: &clap::ArgMatches) -> CommandResult<SocketAddr> {
     Ok(SocketAddr::new(host, port))
 }
 
+fn requested_access(
+    leaf: &clap::ArgMatches,
+    listen: SocketAddr,
+) -> CommandResult<canvas::axum::Access> {
+    let token = leaf.get_one::<String>("auth-token").cloned();
+    if let Some(token) = token.as_deref()
+        && (token.len() < MIN_AUTH_TOKEN_BYTES
+            || token.len() > MAX_AUTH_TOKEN_BYTES
+            || !token.bytes().all(is_token_byte))
+    {
+        return Err(access_refusal(
+            "resident::auth-token-invalid",
+            None,
+            &format!(
+                "use {MIN_AUTH_TOKEN_BYTES} to {MAX_AUTH_TOKEN_BYTES} URL-safe \
+                 characters: letters, digits, hyphen, period, underscore, or tilde"
+            ),
+        ));
+    }
+    if !listen.ip().is_loopback() && !leaf.get_flag("allow-insecure-bind") {
+        return Err(access_refusal(
+            "resident::insecure-bind-consent-required",
+            Some(&listen.to_string()),
+            "add --allow-insecure-bind only when this network exposure is intended",
+        ));
+    }
+    if !listen.ip().is_loopback() && token.is_none() {
+        return Err(access_refusal(
+            "resident::auth-token-required",
+            Some(&listen.to_string()),
+            "add --auth-token TOKEN and open the remote URL with #TOKEN",
+        ));
+    }
+    Ok(token.map_or_else(canvas::axum::Access::local, canvas::axum::Access::authenticated))
+}
+
+const fn is_token_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
+}
+
+fn access_refusal(reason: &str, observed: Option<&str>, remedy: &str) -> Outcome<()> {
+    Outcome::Refusal(Refusal {
+        reason: reason.to_owned(),
+        witness: Some("requested-canvas-access".to_owned()),
+        expected: Some("loopback, or an explicitly consented authenticated bind".to_owned()),
+        observed: observed.map(str::to_owned),
+        remedy: remedy.to_owned(),
+    })
+}
+
 fn listen_refusal(reason: &str, expected: &str, observed: &str) -> Outcome<()> {
     Outcome::Refusal(Refusal {
         reason: reason.to_owned(),
         witness: Some("requested-listen-address".to_owned()),
         expected: Some(expected.to_owned()),
         observed: Some(observed.to_owned()),
-        remedy: format!("name an address this machine can listen on, or omit the flag for {DEFAULT_LISTEN}"),
+        remedy: format!(
+            "name an address this machine can listen on, or omit the flag for {DEFAULT_LISTEN}"
+        ),
     })
 }
 
-pub(crate) fn up_from(current: &Path, listen: SocketAddr) -> Outcome<()> {
-    up_from_with(current, listen, false, &mut io::sink())
+pub(crate) fn up_from(current: &Path, binding: CanvasBinding) -> Outcome<()> {
+    up_from_with(current, binding, false, &mut io::sink())
 }
 
 fn up_from_with(
     current: &Path,
-    listen: SocketAddr,
+    binding: CanvasBinding,
     open: bool,
     announcement: &mut dyn io::Write,
 ) -> Outcome<()> {
@@ -316,7 +398,7 @@ fn up_from_with(
             &startup_surface.config,
             &mut seats,
             SurfaceLaunch {
-                listen,
+                binding,
                 open,
                 announcement,
             },
@@ -578,8 +660,14 @@ async fn run_surface(
     let app = canvas::AppSource::resolve(&paths.worktree)
         .map_err(|error| environment_fault("canvas::app-source-invalid", &error.to_string()))?;
     let app_description = app.to_string();
+    let SurfaceLaunch {
+        binding,
+        open,
+        announcement,
+    } = launch;
+    let listen = binding.listen;
     let (server, control) = canvas::axum::Server::bind_streaming(
-        launch.listen,
+        canvas::axum::Binding::new(listen, binding.access),
         epoch,
         capabilities.clone(),
         app,
@@ -594,7 +682,7 @@ async fn run_surface(
     .map_err(|error| {
         environment_fault(
             "canvas::bind-failed",
-            &format!("listening on {} failed: {error}", launch.listen),
+            &format!("listening on {listen} failed: {error}"),
         )
     })?;
     let discovery = server
@@ -613,15 +701,15 @@ async fn run_surface(
     let server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;
     }));
-    let _ = writeln!(launch.announcement, "canvas app source: {app_description}");
+    let _ = writeln!(announcement, "canvas app source: {app_description}");
     announce_canvas(
         &paths.canvas,
-        launch.open,
+        open,
         || {},
         crate::command_client::system_browser,
-        launch.announcement,
+        announcement,
     );
-    let _ = launch.announcement.flush();
+    let _ = announcement.flush();
     let capture::Channels {
         reporter,
         records,

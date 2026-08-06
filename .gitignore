@@ -8,7 +8,7 @@
 /dist/stage/objects/
 /dist/stage/targets/
 
-# Locally built browser app; `cargo xtask dev-app` writes it and the resident
+# Locally built browser app; `cargo xtask local-app` writes it and the resident
 # serves it in place of the compiled bytes. Never committed: only the sealed
 # image may write the reproducible stage beside it.
-/dist/stage-dev/
+/dist/stage-local/

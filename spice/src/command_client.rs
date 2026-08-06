@@ -567,7 +567,12 @@ fn open_session(
         }
     };
     discovery.verify_current()?;
-    let mut request = match format!("ws://{authority}/socket").into_client_request() {
+    let mut request = match format!(
+        "ws://{authority}/socket?auth={}",
+        discovery.value.capability
+    )
+    .into_client_request()
+    {
         Ok(request) => request,
         Err(_) => {
             return Err(protocol_fault(

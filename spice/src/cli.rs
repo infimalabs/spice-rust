@@ -587,7 +587,7 @@ const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["up"],
-        "up [--host HOST] [--port PORT] [--open]",
+        "up [--host HOST] [--port PORT] [--allow-insecure-bind] [--auth-token TOKEN] [--open]",
         Local,
         Resident,
         [JournalMigrated, TrustPended, UpSeated],
@@ -675,7 +675,8 @@ const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "add"],
-        "task add TITLE [--project PROJECT] [--description DESCRIPTION] [--acceptance ACCEPTANCE...] [--origin ORIGIN]",
+        "task add TITLE [--project PROJECT] [--description DESCRIPTION] \
+         [--acceptance ACCEPTANCE...] [--origin ORIGIN]",
         OperatorOrLane,
         Command,
         [TaskAdded],
