@@ -948,11 +948,10 @@ fn canvas_analysis(
             format!("{} declares no {TRUNK} program", declaration.id.as_str()),
         );
     };
-    let workspace =
-        match AnalysisWorkspace::create(root, "canvas", ".spice-canvas-analysis", removal) {
-            Ok(workspace) => workspace,
-            Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
-        };
+    let workspace = match CanvasWorkspace::create(root, removal) {
+        Ok(workspace) => workspace,
+        Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
+    };
     let outputs = match CanvasOutputs::create(&workspace, root, repository) {
         Ok(outputs) => outputs,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
@@ -1065,41 +1064,31 @@ fn tool_search_path(label: &str, programs: &[&str]) -> Result<std::ffi::OsString
 /// exists may belong to an analysis running right now, and reclaiming it would
 /// delete the directory a live run is writing into; the refusal says what was
 /// found and leaves the decision to remove it with the operator.
-struct AnalysisWorkspace<'a> {
-    label: &'static str,
+struct CanvasWorkspace<'a> {
     root: PathBuf,
     removal: &'a Cell<Option<String>>,
 }
 
-impl<'a> AnalysisWorkspace<'a> {
-    fn create(
-        selected: &Path,
-        label: &'static str,
-        suffix: &str,
-        removal: &'a Cell<Option<String>>,
-    ) -> Result<Self, String> {
+impl<'a> CanvasWorkspace<'a> {
+    fn create(selected: &Path, removal: &'a Cell<Option<String>>) -> Result<Self, String> {
         let Some(name) = selected.file_name() else {
             return Err(format!(
-                "{label} selected tree {selected:?} has no name for an analysis workspace"
+                "canvas selected tree {selected:?} has no name for an analysis workspace"
             ));
         };
         let mut workspace_name = name.to_os_string();
-        workspace_name.push(suffix);
+        workspace_name.push(".spice-canvas-analysis");
         let root = selected.with_file_name(workspace_name);
         match fs::create_dir(&root) {
-            Ok(()) => Ok(Self {
-                label,
-                root,
-                removal,
-            }),
+            Ok(()) => Ok(Self { root, removal }),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Err(format!(
-                "{label} analysis workspace {} is already held, either by an analysis of this \
+                "canvas analysis workspace {} is already held, either by an analysis of this \
                  tree running now or by one that ended before it could remove it; remove that \
                  directory to let this analysis run",
                 root.display()
             )),
             Err(error) => Err(format!(
-                "{label} analysis workspace {} could not be created: {error}",
+                "canvas analysis workspace {} could not be created: {error}",
                 root.display()
             )),
         }
@@ -1110,15 +1099,13 @@ impl<'a> AnalysisWorkspace<'a> {
     }
 }
 
-impl Drop for AnalysisWorkspace<'_> {
+impl Drop for CanvasWorkspace<'_> {
     fn drop(&mut self) {
         if let Err(error) = fs::remove_dir_all(&self.root) {
             self.removal.set(Some(format!(
-                "{} analysis workspace {} could not be removed: {error}; every later {} analysis \
-                 of this tree refuses until it is gone",
-                self.label,
+                "canvas analysis workspace {} could not be removed: {error}; every later canvas \
+                 analysis of this tree refuses until it is gone",
                 self.root.display(),
-                self.label,
             )));
         }
     }
@@ -1126,7 +1113,7 @@ impl Drop for AnalysisWorkspace<'_> {
 
 /// Writable output roots for tools examining one immutable selected tree.
 ///
-/// The Cargo pair is deliberately not inside [`AnalysisWorkspace`]: it is a
+/// The Cargo pair is deliberately not inside [`CanvasWorkspace`]: it is a
 /// fixed repository path that every canvas analysis of this repository shares,
 /// so the compiled artifacts survive the run that produced them. `input.rs`
 /// records what that warmth is worth -- five cold samples of the `trunk build`
@@ -1147,7 +1134,7 @@ struct CanvasOutputs {
 
 impl CanvasOutputs {
     fn create(
-        workspace: &AnalysisWorkspace<'_>,
+        workspace: &CanvasWorkspace<'_>,
         selected: &Path,
         repository: &Path,
     ) -> Result<Self, String> {

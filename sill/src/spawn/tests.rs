@@ -1,6 +1,9 @@
 use super::capture::{CaptureWorker, FailureContext, start_capture};
 use super::launch::spawn_inner_refusing_descriptor_setup;
-use super::{Completion, WaitError, WaitStep, platform, resolve_signal, spawn, spawn_observed};
+use super::{
+    Completion, ProcessCompletion, ProcessState, WaitError, WaitStep, platform, resolve_signal,
+    resolve_signal_against, spawn, spawn_observed, wait_for_exit_notice,
+};
 use crate::lock::{Acquisition, LockFile, LockName, tests::unique_lock_path};
 use crate::observe::{
     Observation, ObservationFailure, ObserveError, ObservedRecord, OutputStream, RecordBoundary,
@@ -10,6 +13,7 @@ use crate::spec::{
     Argv, Cancellation, CancellationToken, Deadlines, Environment, Output, ProcessGroup, Redaction,
     RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
 };
+use crate::surface::process_state;
 use std::fs;
 use std::io::{self, Read};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
@@ -904,4 +908,103 @@ where
         redaction: Redaction::All,
         grace: Duration::from_millis(10),
     }
+}
+
+/// A group answer the kernel refuses to give is not a live member.
+///
+/// All three answers are injected because none can be staged on demand: an
+/// EPERM refusal arriving while the very same group is unreadable is precisely
+/// the load-dependent coincidence that made this fault undiagnosable in the
+/// field. The live answer is asserted beside the other two so the forgiveness
+/// cannot be reached by a rule that simply forgives everything.
+#[test]
+fn an_unreadable_group_is_forgiven_while_a_live_member_still_faults() {
+    let refused = || Some(io::Error::from_raw_os_error(platform::EPERM));
+
+    assert!(
+        resolve_signal_against(refused(), ProcessGroup::New, "owner", || {
+            process_state::ProcessState::Indeterminate
+        })
+        .is_ok(),
+        "an unreadable probe was read as a live member and failed an ordinary teardown"
+    );
+    assert!(
+        resolve_signal_against(refused(), ProcessGroup::New, "owner", || {
+            process_state::ProcessState::Terminal
+        })
+        .is_ok(),
+        "a group observed to have ended stopped being forgiven"
+    );
+
+    let fault = resolve_signal_against(refused(), ProcessGroup::New, "owner", || {
+        process_state::ProcessState::Live
+    })
+    .expect_err("a positively live member keeps EPERM a permission fault");
+    match fault {
+        WaitError::Io {
+            owner,
+            operation,
+            source,
+        } => {
+            assert_eq!(owner, "owner");
+            assert_eq!(operation, "signalling child process group");
+            assert_eq!(source.raw_os_error(), Some(platform::EPERM));
+        }
+        WaitError::ReapDeadlineExceeded { .. } => panic!("a refused signal is not a reap deadline"),
+    }
+}
+
+/// The reap path holds its wait open for an observed survivor and nothing else.
+///
+/// The unreadable case is given a deadline far longer than the group poll, so a
+/// probe that went back to waiting would have to spend all of it before
+/// answering; returning settled is only reachable by deciding on the first
+/// answer. The live case keeps the deadline short because it is expected to run
+/// the wait out, and it is what proves the settled assertion is not vacuous.
+#[test]
+fn an_unreadable_group_never_reports_a_descendant_that_survived() {
+    let exited = || ProcessState {
+        completion: Mutex::new(ProcessCompletion {
+            notice: Some(Ok(())),
+            ..ProcessCompletion::default()
+        }),
+        exited: Condvar::new(),
+    };
+    let probed = Mutex::new(Vec::new());
+
+    let process = exited();
+    let settled = wait_for_exit_notice(
+        4242,
+        ProcessGroup::New,
+        &process,
+        Duration::from_secs(5),
+        |pid| {
+            probed.lock().expect("probe log is not poisoned").push(pid);
+            process_state::ProcessState::Indeterminate
+        },
+    )
+    .expect("an unreadable group is not an observation failure");
+    assert!(
+        settled,
+        "an unreadable group held the reap open until its deadline expired"
+    );
+    assert_eq!(
+        &*probed.lock().expect("probe log is not poisoned"),
+        &[4242],
+        "the group probe was aimed at a process other than the child"
+    );
+
+    let process = exited();
+    let survived = wait_for_exit_notice(
+        4242,
+        ProcessGroup::New,
+        &process,
+        Duration::from_millis(30),
+        |_| process_state::ProcessState::Live,
+    )
+    .expect("a live group is not an observation failure");
+    assert!(
+        !survived,
+        "a member the kernel described as running stopped counting as a survivor"
+    );
 }
