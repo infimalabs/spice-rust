@@ -119,6 +119,13 @@ fn seed_is_deterministic_quoted_and_reopenable_without_touching_parent_state() {
         CANNED_TRANSCRIPT.len()
     );
     assert_eq!(kinds.last(), Some(&wire::FactKind::LaneSeated));
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|kind| **kind == wire::FactKind::LaneSeated)
+            .count(),
+        DEMO_LANES.len()
+    );
     for pair in facts.facts()[..=CANNED_TRANSCRIPT.len()].windows(2) {
         assert_eq!(pair[1].cause, Some(pair[0].seq));
     }
@@ -424,13 +431,20 @@ fn assert_board(board: &BoardAnswer) {
 }
 
 fn assert_lanes(lanes: &LaneAnswer) {
-    let lane = lanes
-        .lanes
-        .iter()
-        .find(|lane| lane.lane == uuid(DEMO_LANE))
-        .expect("demo lane is visible");
-    assert_eq!(lane.disposition, "vacant");
-    assert_eq!(lane.worktree, lanes.lanes[0].worktree);
+    assert_eq!(lanes.lanes.len(), DEMO_LANES.len());
+    for seed in DEMO_LANES {
+        let lane = lanes
+            .lanes
+            .iter()
+            .find(|lane| lane.lane == uuid(seed.lane))
+            .expect("each simulated demo lane is visible");
+        assert_eq!(lane.lineage_id, uuid(DEMO_LANE));
+        assert_eq!(lane.vendor.as_str(), crate::resident::SIMULATED_VENDOR);
+        assert_eq!(lane.disposition, crate::resident::SIMULATED_DISPOSITION);
+        assert_eq!(lane.occupant, Some(uuid(seed.occupant)));
+        assert_eq!(lane.liveness, wire::intent::LaneLiveness::Running);
+        assert_eq!(lane.worktree, lanes.lanes[0].worktree);
+    }
 }
 
 fn issue<B: Serialize>(

@@ -340,6 +340,7 @@ fn unowned_evidence(
         .body()
         .lanes
         .iter()
+        .filter(|lane| !super::is_simulated_lane(lane))
         .filter_map(|lane| lane.occupant.map(|occupant| (lane.lane, occupant)))
         .filter(|(lane, occupant)| !occupants.contains(*lane, *occupant))
         .filter(|(lane, _)| !pending.iter().any(|evidence| evidence.lane() == *lane))
@@ -450,7 +451,7 @@ fn commit_transition(
         .body()
         .lanes
         .iter()
-        .filter(|lane| lane.occupant.is_some())
+        .filter(|lane| lane.occupant.is_some() && !super::is_simulated_lane(lane))
         .count();
     let occupants = u32::try_from(occupants)
         .map_err(|error| store_fault("resident::occupant-overflow", &error.to_string()))?;
