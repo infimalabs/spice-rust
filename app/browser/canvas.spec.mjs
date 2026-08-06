@@ -899,6 +899,31 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
   await secondarySurface.getByLabel("Speak this message").first().click();
   await page.waitForFunction(() => window.__speechLog.some((row) => row.action === "speak"));
 
+  const renewalRequest = "Renew your current task lease now.";
+  const renew = primarySurface.locator(".agent-renew-request:not(:disabled)").first();
+  await renew.waitFor();
+  assert.equal(
+    (await renew.innerText()).replaceAll("\n", " "),
+    "Renew this agent request renewal",
+    "the operator card names both the action and its renewal request",
+  );
+  const renewalLane = await renew.evaluate(
+    (button) => button.closest(".team-agent")?.dataset.agentLane,
+  );
+  assert.ok(renewalLane, "the renewal control retains its exact agent lane");
+  await renew.click();
+  await primarySurface
+    .locator(`.mosaic-message-card[data-agent-lane="${renewalLane}"]`)
+    .filter({ hasText: renewalRequest })
+    .waitFor({ timeout: 10_000 });
+  const renewalInbox = await reply(fixture, ["inbox", renewalLane]);
+  assert.ok(
+    renewalInbox.body.lanes[0].pending.some(
+      (directive) => directive.text === renewalRequest,
+    ),
+    "Renew this agent routes a residency-witnessed renewal request through the resident",
+  );
+
   const policyMessage = "drain lifetime is task policy, not occupant teardown";
   await primarySurface.locator(".team-agent").first().getByRole("textbox").fill(policyMessage);
   await primarySurface.getByRole("button", { name: "Drain", exact: true }).click();
