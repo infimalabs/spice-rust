@@ -118,6 +118,11 @@ impl Pipeline {
 
     /// Build and publish one target. The payload pointer is always last.
     ///
+    /// Pin verification is a release-path check, not a hot-path one, and it is
+    /// ordered first deliberately: it compares the observed pins against the
+    /// required ones in memory, with no I/O, so the cost of catching drift is
+    /// nothing next to the build it refuses to start.
+    ///
     /// # Errors
     ///
     /// Refuses pin drift before calling the builder, names the failed build

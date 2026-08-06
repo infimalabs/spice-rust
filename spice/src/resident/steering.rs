@@ -8,9 +8,7 @@ use journal::{FactCause, GuardError, JournalGuard, JournalWrite};
 use steer::Standing as _;
 use steer::{Miss, Outcome as ScanOutcome};
 use wire::body::TranscriptLocus;
-use wire::intent::{
-    AgentMessage, CommandAnswer, DirectiveAnswer, InboxAnswer, LaneInbox, PendingDirective,
-};
+use wire::intent::{CommandAnswer, DirectiveAnswer, InboxAnswer, LaneInbox, PendingDirective};
 use wire::{
     Actor, CanonicalUuid, Command, Disposition, Fault, FaultClass, Instant, Outcome, Producer,
     Refusal, Reply, ReplyPosition, ResidencyHead, Seq, SeqRange, Witness,
@@ -191,7 +189,6 @@ pub(super) fn inbox(
                 .into_iter()
                 .map(pending_directive)
                 .collect(),
-            messages: agent_messages(&snapshot.facts, lane.lane),
         });
     }
     if let Some(selected) = selected
@@ -208,27 +205,6 @@ pub(super) fn inbox(
         position: ReplyPosition::Snapshot(snapshot.position),
         body: CommandAnswer::Inbox(InboxAnswer { epoch, lanes }),
     })
-}
-
-fn agent_messages(snapshot: &journal::FactSnapshot, lane: CanonicalUuid) -> Vec<AgentMessage> {
-    snapshot
-        .facts()
-        .iter()
-        .filter(|envelope| envelope.fact.kind() == wire::FactKind::LaneProse)
-        .filter_map(|envelope| {
-            let body = steering_body::<wire::body::LaneProse>(envelope)
-                .expect("validated lane::prose fact decodes through its registered DTO");
-            (body.lane == lane).then_some(AgentMessage {
-                seq: envelope.seq,
-                at: envelope.at,
-                producer: body.lane,
-                occupant: body.occupant,
-                worktree: body.worktree,
-                text: body.text,
-                phase: body.phase,
-            })
-        })
-        .collect()
 }
 
 pub(super) fn send(

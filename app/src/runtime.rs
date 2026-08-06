@@ -9,8 +9,8 @@ use wire::intent::{
     LaneAnswer, LaneChangeAnswer,
 };
 use wire::{
-    Accepted, Actor, CanonicalUuid, CommandKind, FactKind, Origin, Outcome, Packed, Response, Seq,
-    StreamCursor, StreamFrame, TrustView, ViewSubject,
+    Accepted, Actor, AgentMessage, CanonicalUuid, CommandKind, FactKind, Origin, Outcome, Packed,
+    Response, Seq, StreamCursor, StreamFrame, TrustView, ViewSubject,
 };
 
 use crate::pane::{GrantPane, Principal, ReadPane, SteerPane};
@@ -350,6 +350,8 @@ pub struct CanvasRuntime {
     policy: ScopedValue<ConsentPolicyAnswer>,
     fact_pages: Vec<BrowserState<FactRow>>,
     trust_pages: Vec<BrowserState<TrustView>>,
+    messages: Vec<AgentMessage>,
+    message_limit: usize,
     thread_pages: Vec<BrowserState<FactRow>>,
     facts: BrowserState<FactRow>,
     thread: BrowserState<FactRow>,
@@ -374,6 +376,8 @@ impl CanvasRuntime {
             policy: ScopedValue::new(accepted),
             fact_pages: Vec::new(),
             trust_pages: Vec::new(),
+            messages: Vec::new(),
+            message_limit: 0,
             thread_pages: Vec::new(),
             facts: BrowserState::new(accepted),
             thread: BrowserState::new(accepted),
@@ -421,6 +425,7 @@ impl CanvasRuntime {
         let mut subjects = vec![ViewSubject::Facts];
         if GrantPane::over(&self.principal).is_some() {
             subjects.push(ViewSubject::Trust);
+            subjects.push(ViewSubject::Messages);
         }
         subjects
     }
@@ -502,6 +507,12 @@ impl CanvasRuntime {
             .collect()
     }
 
+    /// Newest retained agent-authored transcript messages in creation order.
+    #[must_use]
+    pub fn messages(&self) -> &[AgentMessage] {
+        &self.messages
+    }
+
     #[must_use]
     pub fn thread_pages(&self) -> Vec<ReadPane<'_, FactRow>> {
         self.thread_pages
@@ -522,58 +533,23 @@ impl CanvasRuntime {
         }
         let epoch = self.principal.epoch();
         match admitted.get() {
-            StreamFrame::Facts { packed, .. } => {
-                let page = project_page(packed);
-                self.observe_fact_rows(admitted, &packed.rows, false);
-                self.fact_pages.push(self.page(admitted, page));
-                self.resume = Some(StreamCursor {
-                    epoch,
-                    seq: packed
-                        .overflow
-                        .and_then(|_| packed.rows.last().map(wire::StreamFact::seq))
-                        .unwrap_or(packed.horizon),
-                });
-                let mut directives = continuation(ViewSubject::Facts, epoch, packed);
-                if packed.overflow.is_none()
-                    && let Some(last) = packed.rows.last()
-                {
-                    directives.push(self.begin_thread(epoch, last.seq()));
-                }
-                directives
-            }
+            StreamFrame::Facts { packed, .. } => self.apply_fact_page(admitted, packed, epoch),
             StreamFrame::Trust { packed, .. } => {
                 self.trust_pages.push(self.page(admitted, packed.clone()));
                 continuation(ViewSubject::Trust, epoch, packed)
             }
-            StreamFrame::Thread { packed, .. } => {
-                let Some(first) = packed.rows.first().map(wire::StreamFact::seq) else {
-                    return Vec::new();
-                };
-                if self.thread_next != Some(first) {
-                    return Vec::new();
+            StreamFrame::Messages {
+                limit, messages, ..
+            } => {
+                self.message_limit = *limit as usize;
+                self.messages = messages.clone();
+                if self.messages.len() > self.message_limit {
+                    let excess = self.messages.len() - self.message_limit;
+                    self.messages.drain(..excess);
                 }
-                if self.thread_start.is_none() {
-                    self.thread_start = Some(first);
-                }
-                self.observe_fact_rows(admitted, &packed.rows, true);
-                self.thread_pages
-                    .push(self.page(admitted, project_page(packed)));
-                match packed.overflow {
-                    None => {
-                        self.thread_next = None;
-                        Vec::new()
-                    }
-                    Some(overflow) => {
-                        self.thread_next = Some(overflow.continuation);
-                        vec![StreamDirective::Thread {
-                            cursor: StreamCursor {
-                                epoch,
-                                seq: overflow.continuation,
-                            },
-                        }]
-                    }
-                }
+                Vec::new()
             }
+            StreamFrame::Thread { packed, .. } => self.apply_thread_page(admitted, packed, epoch),
             StreamFrame::Fact { fact, .. } => {
                 self.observe_fact_rows(admitted, std::slice::from_ref(fact), false);
                 let packed = Packed {
@@ -587,6 +563,10 @@ impl CanvasRuntime {
                     seq: fact.seq(),
                 });
                 vec![self.begin_thread(epoch, fact.seq())]
+            }
+            StreamFrame::Message { message, .. } => {
+                self.observe_message(message);
+                Vec::new()
             }
             StreamFrame::Refusal { refusal, .. } => {
                 self.push_event("refusal", refusal.reason.clone(), refusal.remedy.clone());
@@ -618,6 +598,66 @@ impl CanvasRuntime {
                     format!("resume after {}", after.seq),
                 );
                 vec![StreamDirective::Reconnect]
+            }
+        }
+    }
+
+    fn apply_fact_page(
+        &mut self,
+        admitted: &Admitted<StreamFrame>,
+        packed: &Packed<wire::StreamFact>,
+        epoch: CanonicalUuid,
+    ) -> Vec<StreamDirective> {
+        let page = project_page(packed);
+        self.observe_fact_rows(admitted, &packed.rows, false);
+        self.fact_pages.push(self.page(admitted, page));
+        self.resume = Some(StreamCursor {
+            epoch,
+            seq: packed
+                .overflow
+                .and_then(|_| packed.rows.last().map(wire::StreamFact::seq))
+                .unwrap_or(packed.horizon),
+        });
+        let mut directives = continuation(ViewSubject::Facts, epoch, packed);
+        if packed.overflow.is_none()
+            && let Some(last) = packed.rows.last()
+        {
+            directives.push(self.begin_thread(epoch, last.seq()));
+        }
+        directives
+    }
+
+    fn apply_thread_page(
+        &mut self,
+        admitted: &Admitted<StreamFrame>,
+        packed: &Packed<wire::StreamFact>,
+        epoch: CanonicalUuid,
+    ) -> Vec<StreamDirective> {
+        let Some(first) = packed.rows.first().map(wire::StreamFact::seq) else {
+            return Vec::new();
+        };
+        if self.thread_next != Some(first) {
+            return Vec::new();
+        }
+        if self.thread_start.is_none() {
+            self.thread_start = Some(first);
+        }
+        self.observe_fact_rows(admitted, &packed.rows, true);
+        self.thread_pages
+            .push(self.page(admitted, project_page(packed)));
+        match packed.overflow {
+            None => {
+                self.thread_next = None;
+                Vec::new()
+            }
+            Some(overflow) => {
+                self.thread_next = Some(overflow.continuation);
+                vec![StreamDirective::Thread {
+                    cursor: StreamCursor {
+                        epoch,
+                        seq: overflow.continuation,
+                    },
+                }]
             }
         }
     }
@@ -773,6 +813,21 @@ impl CanvasRuntime {
         };
         for row in rows {
             state.observe_stream(admitted, row.seq(), row.origin().clone(), row.cause());
+        }
+    }
+
+    fn observe_message(&mut self, message: &AgentMessage) {
+        let duplicate = self
+            .messages
+            .iter()
+            .any(|existing| existing.lane == message.lane && existing.locus == message.locus);
+        if duplicate {
+            return;
+        }
+        self.messages.push(message.clone());
+        if self.messages.len() > self.message_limit {
+            let excess = self.messages.len() - self.message_limit;
+            self.messages.drain(..excess);
         }
     }
 

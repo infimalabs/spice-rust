@@ -1,4 +1,4 @@
-//! Native, lane-local compilation of the browser app.
+//! Native, worktree-local compilation of the browser app.
 
 use std::ffi::OsStr;
 use std::fmt;
@@ -11,19 +11,26 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::release::ReleaseEnvironment;
 use wire::{Digest, Domain};
 
+mod source;
+
 /// The target the browser app is compiled for.
 pub(crate) const WASM_TARGET: &str = "wasm32-unknown-unknown";
 
 const REMAPPED_CARGO_HOME: &str = "/cargo-home";
 const GENERATED_MODULE_REFERENCES: usize = 2;
-const GENERATED_REFERENCES: [(&str, usize); 3] =
-    [("/app.module", 2), ("/app_bg.wasm", 2), ("/style.css", 1)];
+const GENERATED_REFERENCES: [(&str, usize); 5] = [
+    ("/app.module", 2),
+    ("/app_bg.wasm", 2),
+    ("/style.css", 1),
+    ("/mosaic.css", 1),
+    ("/responsive.css", 1),
+];
 static NEXT_BUILD: AtomicU64 = AtomicU64::new(0);
 
 /// Run `cargo xtask app` to compile the browser app into the one stage
 /// this worktree's resident serves.
 ///
-/// The stage is ignored by Git and rebuilt by each lane. Compilation and
+/// The stage is ignored by Git and rebuilt by each worktree. Compilation and
 /// finalization happen outside the served path; one atomic pointer switch
 /// publishes the complete immutable generation, so failure preserves the
 /// previously active generation.
@@ -34,15 +41,23 @@ static NEXT_BUILD: AtomicU64 = AtomicU64::new(0);
 /// missing Cargo home, Trunk execution failure, or a refused generated stage.
 pub fn app(environment: &ReleaseEnvironment, output: &mut impl Write) -> Result<(), AppBuildError> {
     let root = workspace_root()?;
-    app_at(&root, output, |stage, output| {
-        run_trunk(&root, environment, stage, output)
-    })
+    let sources = source::SourceSnapshot::capture(&root)?;
+    let source_identity = sources.identity().clone();
+    app_at(
+        &root,
+        &source_identity,
+        output,
+        |stage, output| run_trunk(&root, environment, stage, &source_identity, output),
+        || sources.verify_unchanged(&root),
+    )
 }
 
 fn app_at<W: Write>(
     root: &Path,
+    source_identity: &Digest,
     output: &mut W,
     build: impl FnOnce(&Path, &mut W) -> Result<(), AppBuildError>,
+    verify_sources: impl FnOnce() -> Result<(), AppBuildError>,
 ) -> Result<(), AppBuildError> {
     let stage = root.join(spice::canvas::APP_STAGE);
     let temporary = root.join("dist").join(format!(
@@ -58,12 +73,14 @@ fn app_at<W: Write>(
     }
     let result = (|| {
         build(&temporary, output)?;
-        let identity = finalize_stage(&temporary)?;
+        verify_sources()?;
+        let identity = finalize_stage(&temporary, source_identity)?;
         publish_generation(&stage, &temporary, &identity)?;
         writeln!(
             output,
-            "[app] {} generation {identity} is ready for `spice up` in this worktree",
-            stage.display()
+            "[app] {} generation {identity} from sources {source_identity} is ready for `spice up` \
+             in this worktree",
+            stage.display(),
         )
         .map_err(AppBuildError::Output)
     })();
@@ -152,31 +169,64 @@ fn run_trunk(
     root: &Path,
     environment: &ReleaseEnvironment,
     stage: &Path,
+    source_identity: &Digest,
     output: &mut impl Write,
 ) -> Result<(), AppBuildError> {
     let build_root = environment.build_root(root);
+    let worktree_identity = worktree_identity(root)?;
     let cargo_home = environment
         .cargo_home()
         .ok_or(AppBuildError::MissingCargoHome)?;
-    prepare_app_build(&build_root)?;
+    prepare_app_build(&build_root, &worktree_identity, source_identity)?;
     writeln!(output, "[app] trunk 0.21.14 -> {}", stage.display())
         .map_err(AppBuildError::Output)?;
     let rustflags = remapped_rustflags(root, &cargo_home)?;
-    let status = trunk_command(root, &build_root, &cargo_home, stage, rustflags)
-        .status()
-        .map_err(AppBuildError::Launch)?;
+    let status = trunk_command(
+        root,
+        &build_root,
+        &cargo_home,
+        stage,
+        rustflags,
+        &worktree_identity,
+        source_identity,
+    )
+    .status()
+    .map_err(AppBuildError::Launch)?;
     if !status.success() {
         return Err(AppBuildError::Exit(status.code()));
     }
     Ok(())
 }
 
-fn app_build_directory(build_root: &Path) -> PathBuf {
-    build_root.join("xtask-app-build")
+fn app_build_namespace(worktree_identity: &Digest, source_identity: &Digest) -> String {
+    format!("xtask-app-{worktree_identity}-{source_identity}")
 }
 
-fn prepare_app_build(build_root: &Path) -> Result<(), AppBuildError> {
-    let build = app_build_directory(build_root);
+fn app_build_directory(
+    build_root: &Path,
+    worktree_identity: &Digest,
+    source_identity: &Digest,
+) -> PathBuf {
+    build_root.join(format!(
+        "{}-build",
+        app_build_namespace(worktree_identity, source_identity)
+    ))
+}
+
+fn app_target_directory(
+    build_root: &Path,
+    worktree_identity: &Digest,
+    source_identity: &Digest,
+) -> PathBuf {
+    build_root.join(app_build_namespace(worktree_identity, source_identity))
+}
+
+fn prepare_app_build(
+    build_root: &Path,
+    worktree_identity: &Digest,
+    source_identity: &Digest,
+) -> Result<(), AppBuildError> {
+    let build = app_build_directory(build_root, worktree_identity, source_identity);
     fs::create_dir_all(&build).map_err(|source| AppBuildError::Io {
         path: build,
         source,
@@ -189,9 +239,11 @@ fn trunk_command(
     cargo_home: &OsStr,
     stage: &Path,
     rustflags: String,
+    worktree_identity: &Digest,
+    source_identity: &Digest,
 ) -> Command {
-    let target = build_root.join("xtask-app");
-    let build = app_build_directory(build_root);
+    let target = app_target_directory(build_root, worktree_identity, source_identity);
+    let build = app_build_directory(build_root, worktree_identity, source_identity);
     let mut command = Command::new("trunk");
     command
         .current_dir(root.join("app"))
@@ -203,6 +255,7 @@ fn trunk_command(
         .env("NO_COLOR", "true")
         .env("RUSTC_WORKSPACE_WRAPPER", "")
         .env("RUSTC_WRAPPER", "")
+        .env("SPICE_APP_SOURCE_IDENTITY", source_identity.as_str()) // env-policy: allow
         .args([
             "build",
             "index.html",
@@ -217,7 +270,8 @@ fn trunk_command(
     command
 }
 
-fn finalize_stage(stage: &Path) -> Result<Digest, AppBuildError> {
+fn finalize_stage(stage: &Path, source_identity: &Digest) -> Result<Digest, AppBuildError> {
+    validate_wasm_source(stage, source_identity)?;
     let generated = stage.join("app.js");
     let module = stage.join("app.module");
     if module.exists() {
@@ -278,6 +332,20 @@ fn finalize_stage(stage: &Path) -> Result<Digest, AppBuildError> {
     })?;
     validate_inventory(stage)?;
     Ok(identity)
+}
+
+fn validate_wasm_source(stage: &Path, source_identity: &Digest) -> Result<(), AppBuildError> {
+    let wasm = read_regular(&stage.join("app_bg.wasm"))?;
+    if wasm
+        .windows(source_identity.as_str().len())
+        .any(|window| window == source_identity.as_str().as_bytes())
+    {
+        return Ok(());
+    }
+    Err(AppBuildError::GeneratedStage(format!(
+        "app_bg.wasm does not carry source identity {source_identity}; refusing a complete but \
+         foreign generation"
+    )))
 }
 
 fn validate_qualified_references(html: &str, identity: &Digest) -> Result<(), AppBuildError> {
@@ -384,6 +452,17 @@ fn remapped_rustflags(root: &Path, cargo_home: &OsStr) -> Result<String, AppBuil
     .join("\u{1f}"))
 }
 
+fn worktree_identity(root: &Path) -> Result<Digest, AppBuildError> {
+    let canonical = fs::canonicalize(root).map_err(|source| AppBuildError::Io {
+        path: root.to_path_buf(),
+        source,
+    })?;
+    let spelling = canonical
+        .to_str()
+        .ok_or_else(|| AppBuildError::NonUtf8(canonical.clone()))?;
+    Ok(Digest::compute(Domain::DistInventory, spelling.as_bytes()))
+}
+
 fn workspace_root() -> Result<PathBuf, AppBuildError> {
     std::env::current_dir().map_err(|source| AppBuildError::Io {
         path: PathBuf::from("."),
@@ -399,6 +478,7 @@ pub enum AppBuildError {
     Io { path: PathBuf, source: io::Error },
     NonUtf8(PathBuf),
     MissingCargoHome,
+    SourceIdentity(String),
     GeneratedStage(String),
     Atomic(atomic::Error),
 }
@@ -415,6 +495,9 @@ impl fmt::Display for AppBuildError {
             Self::MissingCargoHome => formatter.write_str(
                 "the app build needs CARGO_HOME or HOME to locate the crates it compiles",
             ),
+            Self::SourceIdentity(reason) => {
+                write!(formatter, "app source identity refused: {reason}")
+            }
             Self::GeneratedStage(reason) => {
                 write!(formatter, "generated app stage refused: {reason}")
             }
@@ -442,11 +525,23 @@ mod tests {
         root
     }
 
-    fn write_raw_generation(stage: &Path, label: &str, valid: bool) {
+    fn fixture_source() -> Digest {
+        Digest::compute(Domain::DistInventory, b"fixture app sources")
+    }
+
+    fn write_raw_generation(stage: &Path, label: &str, source_identity: &Digest, valid: bool) {
         fs::create_dir_all(stage).expect("create raw generation");
         fs::write(stage.join("app.js"), format!("module {label}")).expect("write generated module");
-        fs::write(stage.join("app_bg.wasm"), format!("wasm {label}")).expect("write wasm");
+        fs::write(
+            stage.join("app_bg.wasm"),
+            format!("wasm {source_identity} {label}"),
+        )
+        .expect("write wasm");
         fs::write(stage.join("style.css"), format!("style {label}")).expect("write stylesheet");
+        fs::write(stage.join("mosaic.css"), format!("mosaic {label}"))
+            .expect("write Mosaic stylesheet");
+        fs::write(stage.join("responsive.css"), format!("responsive {label}"))
+            .expect("write responsive stylesheet");
         let second_wasm = if valid {
             "<link href=\"/app_bg.wasm\">"
         } else {
@@ -455,7 +550,8 @@ mod tests {
         fs::write(
             stage.join("canvas-app.html"),
             format!(
-                "<link href=\"/style.css\"><script src=\"/app.js\"></script>\
+                "<link href=\"/style.css\"><link href=\"/mosaic.css\">\
+                 <link href=\"/responsive.css\"><script src=\"/app.js\"></script>\
                  <link href=\"/app.js\"><link href=\"/app_bg.wasm\">{second_wasm}\
                  <main>{label}</main>"
             ),
@@ -464,10 +560,17 @@ mod tests {
     }
 
     fn publish_fixture(root: &Path, label: &str) {
-        app_at(root, &mut Vec::new(), |stage, _| {
-            write_raw_generation(stage, label, true);
-            Ok(())
-        })
+        let sources = fixture_source();
+        app_at(
+            root,
+            &sources,
+            &mut Vec::new(),
+            |stage, _| {
+                write_raw_generation(stage, label, &sources, true);
+                Ok(())
+            },
+            || Ok(()),
+        )
         .expect("fixture generation publishes");
     }
 
@@ -479,12 +582,16 @@ mod tests {
 
     #[test]
     fn app_build_command_owns_cache_and_wrapper_inputs() {
+        let worktree = Digest::compute(Domain::DistInventory, b"fixture worktree");
+        let sources = fixture_source();
         let command = trunk_command(
             Path::new("/workspace"),
             Path::new("/cargo-target"),
             OsStr::new("/cargo-home"),
             Path::new("/stage"),
             "remapped-flags".to_owned(),
+            &worktree,
+            &sources,
         );
         let environment = command
             .get_envs()
@@ -495,7 +602,23 @@ mod tests {
                 )
             })
             .collect::<BTreeMap<_, _>>();
-        assert_eq!(environment.len(), 8);
+        assert_eq!(environment.len(), 9);
+        assert_eq!(
+            environment.get("CARGO_TARGET_DIR"),
+            Some(&Some(format!(
+                "/cargo-target/xtask-app-{worktree}-{sources}"
+            )))
+        );
+        assert_eq!(
+            environment.get("CARGO_BUILD_BUILD_DIR"),
+            Some(&Some(format!(
+                "/cargo-target/xtask-app-{worktree}-{sources}-build"
+            )))
+        );
+        assert_eq!(
+            environment.get("SPICE_APP_SOURCE_IDENTITY"), // env-policy: allow
+            Some(&Some(sources.to_string()))
+        );
         assert_eq!(command.get_current_dir(), Some(Path::new("/workspace/app")));
         assert_eq!(command.get_program(), "trunk");
         assert_eq!(
@@ -517,12 +640,97 @@ mod tests {
         );
     }
 
+    /// A shared ambient target is only an outer allocation. Each worktree gets
+    /// a distinct inner target even when both build the exact same sources.
     #[test]
-    fn finalization_produces_the_closed_lane_stage_inventory() {
-        let root = fixture("lane-app-finalize");
-        write_raw_generation(&root, "first", true);
+    fn concurrent_worktrees_use_distinct_children_of_one_outer_target() {
+        use std::sync::{Arc, Barrier};
 
-        let identity = finalize_stage(&root).expect("generated stage finalizes");
+        let outer = fixture("shared-app-target");
+        let worktree_a = outer.join("worktree-a");
+        let worktree_b = outer.join("worktree-b");
+        fs::create_dir(&worktree_a).expect("create first worktree fixture");
+        fs::create_dir(&worktree_b).expect("create second worktree fixture");
+        let worktrees = [
+            worktree_identity(&worktree_a).expect("identify first worktree"),
+            worktree_identity(&worktree_b).expect("identify second worktree"),
+        ];
+        let sources = fixture_source();
+        let barrier = Arc::new(Barrier::new(2));
+        let workers = worktrees
+            .into_iter()
+            .zip([b"worktree A wasm".as_slice(), b"worktree B wasm".as_slice()])
+            .map(|(worktree, bytes)| {
+                let target = app_target_directory(&outer, &worktree, &sources);
+                let barrier = Arc::clone(&barrier);
+                let bytes = bytes.to_vec();
+                std::thread::spawn(move || {
+                    fs::create_dir_all(&target).expect("create inner app target");
+                    barrier.wait();
+                    fs::write(target.join("app_bg.wasm"), &bytes).expect("write worktree artifact");
+                    (target, bytes)
+                })
+            })
+            .collect::<Vec<_>>();
+        let built = workers
+            .into_iter()
+            .map(|worker| worker.join().expect("worktree build joins"))
+            .collect::<Vec<_>>();
+
+        assert_ne!(
+            built[0].0, built[1].0,
+            "two worktrees shared an inner target"
+        );
+        for (target, expected) in &built {
+            assert_eq!(
+                fs::read(target.join("app_bg.wasm")).expect("read worktree artifact"),
+                *expected,
+                "one concurrent worktree consumed its peer's artifact"
+            );
+        }
+        fs::remove_dir_all(outer).expect("remove shared-target fixture");
+    }
+
+    /// A closed inventory is not provenance. Foreign Wasm paired with this
+    /// worktree's shell and stylesheet must fail before a pointer is written.
+    #[test]
+    fn foreign_wasm_with_right_css_cannot_publish() {
+        let root = fixture("foreign-wasm");
+        let expected = fixture_source();
+        let foreign = Digest::compute(Domain::DistInventory, b"peer worktree sources");
+
+        let error = app_at(
+            &root,
+            &expected,
+            &mut Vec::new(),
+            |stage, _| {
+                write_raw_generation(stage, "right-css", &foreign, true);
+                Ok(())
+            },
+            || Ok(()),
+        )
+        .expect_err("foreign Wasm must not publish");
+
+        assert!(
+            error
+                .to_string()
+                .contains("complete but foreign generation"),
+            "the contamination refusal did not name the foreign generation: {error}"
+        );
+        assert!(
+            !root.join(spice::canvas::APP_STAGE).exists(),
+            "foreign Wasm published a current generation"
+        );
+        fs::remove_dir_all(root).expect("remove contamination fixture");
+    }
+
+    #[test]
+    fn finalization_produces_the_closed_worktree_stage_inventory() {
+        let root = fixture("worktree-app-finalize");
+        let sources = fixture_source();
+        write_raw_generation(&root, "first", &sources, true);
+
+        let identity = finalize_stage(&root, &sources).expect("generated stage finalizes");
 
         let mut names = fs::read_dir(&root)
             .expect("read stage")
@@ -531,8 +739,15 @@ mod tests {
         names.sort();
         assert_eq!(
             names,
-            ["app.module", "app_bg.wasm", "canvas-app.html", "style.css"]
-                .map(std::ffi::OsString::from)
+            [
+                "app.module",
+                "app_bg.wasm",
+                "canvas-app.html",
+                "mosaic.css",
+                "responsive.css",
+                "style.css"
+            ]
+            .map(std::ffi::OsString::from)
         );
         let shell = fs::read_to_string(root.join("canvas-app.html")).expect("read shell");
         for asset in spice::canvas::APP
@@ -555,7 +770,7 @@ mod tests {
 
     #[test]
     fn publication_switches_only_after_an_event_releases_the_complete_generation() {
-        let root = fixture("lane-app-event");
+        let root = fixture("worktree-app-event");
         publish_fixture(&root, "first");
         let source = spice::canvas::AppSource::resolve(&root).expect("first generation resolves");
         let first = source
@@ -570,13 +785,20 @@ mod tests {
 
         std::thread::scope(|scope| {
             let build_root = root.clone();
+            let sources = fixture_source();
             let build = scope.spawn(move || {
-                app_at(&build_root, &mut Vec::new(), |stage, _| {
-                    started_tx.send(()).expect("announce build barrier");
-                    release_rx.recv().expect("release build barrier");
-                    write_raw_generation(stage, "second", true);
-                    Ok(())
-                })
+                app_at(
+                    &build_root,
+                    &sources,
+                    &mut Vec::new(),
+                    |stage, _| {
+                        started_tx.send(()).expect("announce build barrier");
+                        release_rx.recv().expect("release build barrier");
+                        write_raw_generation(stage, "second", &sources, true);
+                        Ok(())
+                    },
+                    || Ok(()),
+                )
             });
 
             started_rx.recv().expect("build reaches its event barrier");
@@ -631,7 +853,7 @@ mod tests {
 
     #[test]
     fn a_failed_finalization_preserves_the_prior_pointer_or_first_build_absence() {
-        let root = fixture("lane-app-failure");
+        let root = fixture("worktree-app-failure");
         publish_fixture(&root, "first");
         let source = spice::canvas::AppSource::resolve(&root).expect("first generation resolves");
         let first = source
@@ -639,11 +861,18 @@ mod tests {
             .expect("first generation is current")
             .identity()
             .clone();
+        let sources = fixture_source();
 
-        let error = app_at(&root, &mut Vec::new(), |stage, _| {
-            write_raw_generation(stage, "broken", false);
-            Ok(())
-        })
+        let error = app_at(
+            &root,
+            &sources,
+            &mut Vec::new(),
+            |stage, _| {
+                write_raw_generation(stage, "broken", &sources, false);
+                Ok(())
+            },
+            || Ok(()),
+        )
         .expect_err("invalid finalization refuses");
         assert!(error.to_string().contains("app_bg.wasm"));
         assert_eq!(
@@ -654,11 +883,17 @@ mod tests {
             &first
         );
 
-        let fresh = fixture("lane-app-first-failure");
-        app_at(&fresh, &mut Vec::new(), |stage, _| {
-            write_raw_generation(stage, "broken", false);
-            Ok(())
-        })
+        let fresh = fixture("worktree-app-first-failure");
+        app_at(
+            &fresh,
+            &sources,
+            &mut Vec::new(),
+            |stage, _| {
+                write_raw_generation(stage, "broken", &sources, false);
+                Ok(())
+            },
+            || Ok(()),
+        )
         .expect_err("first invalid finalization refuses");
         assert!(
             !fresh.join(spice::canvas::APP_STAGE).exists(),
@@ -670,7 +905,7 @@ mod tests {
 
     #[test]
     fn a_failed_build_preserves_the_prior_pointer_or_first_build_absence() {
-        let root = fixture("lane-app-build-failure");
+        let root = fixture("worktree-app-build-failure");
         publish_fixture(&root, "first");
         let source = spice::canvas::AppSource::resolve(&root).expect("first generation resolves");
         let first = source
@@ -678,9 +913,16 @@ mod tests {
             .expect("first generation is current")
             .identity()
             .clone();
+        let sources = fixture_source();
 
-        let error = app_at(&root, &mut Vec::new(), |stage, _| fail_partial_build(stage))
-            .expect_err("failed rebuild refuses");
+        let error = app_at(
+            &root,
+            &sources,
+            &mut Vec::new(),
+            |stage, _| fail_partial_build(stage),
+            || Ok(()),
+        )
+        .expect_err("failed rebuild refuses");
         assert!(matches!(error, AppBuildError::Exit(Some(42))));
         assert_eq!(
             source
@@ -690,10 +932,14 @@ mod tests {
             &first
         );
 
-        let fresh = fixture("lane-app-first-build-failure");
-        let error = app_at(&fresh, &mut Vec::new(), |stage, _| {
-            fail_partial_build(stage)
-        })
+        let fresh = fixture("worktree-app-first-build-failure");
+        let error = app_at(
+            &fresh,
+            &sources,
+            &mut Vec::new(),
+            |stage, _| fail_partial_build(stage),
+            || Ok(()),
+        )
         .expect_err("failed first build refuses");
         assert!(matches!(error, AppBuildError::Exit(Some(42))));
         assert!(

@@ -661,6 +661,7 @@ fn announcing_the_canvas_names_the_admitted_endpoint_without_dialling_it() {
     let (root, path, discovery) = published_discovery("announce-endpoint", 48231);
     let mut dialled = None;
     let mut announced = Vec::new();
+    let mut diagnostics = Vec::new();
 
     announce_canvas(
         &path,
@@ -671,11 +672,17 @@ fn announcing_the_canvas_names_the_admitted_endpoint_without_dialling_it() {
             Ok(())
         },
         &mut announced,
+        &mut diagnostics,
     );
 
     assert_eq!(
         String::from_utf8(announced).expect("announcement is text"),
         format!("canvas endpoint: {}\n", discovery.endpoint)
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "an admitted endpoint is not a diagnostic: {}",
+        String::from_utf8_lossy(&diagnostics)
     );
     assert_eq!(dialled, None, "a plain start must not open a browser");
     fs::remove_dir_all(&root).expect("announcement fixture cleanup");
@@ -687,6 +694,7 @@ fn opening_at_start_dials_exactly_the_endpoint_that_was_announced() {
     let (root, path, discovery) = published_discovery("announce-open", 48232);
     let mut dialled = None;
     let mut announced = Vec::new();
+    let mut diagnostics = Vec::new();
 
     announce_canvas(
         &path,
@@ -697,12 +705,18 @@ fn opening_at_start_dials_exactly_the_endpoint_that_was_announced() {
             Ok(())
         },
         &mut announced,
+        &mut diagnostics,
     );
 
     assert_eq!(dialled.as_deref(), Some(discovery.endpoint.as_str()));
     assert_eq!(
         String::from_utf8(announced).expect("announcement is text"),
         format!("canvas endpoint: {}\n", discovery.endpoint)
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "an opened endpoint is not a diagnostic: {}",
+        String::from_utf8_lossy(&diagnostics)
     );
     fs::remove_dir_all(&root).expect("announcement fixture cleanup");
 }
@@ -714,6 +728,10 @@ fn opening_at_start_dials_exactly_the_endpoint_that_was_announced() {
 /// between the read and the identity recheck is the exact race that check
 /// exists for, and it must reach the announcement as a refusal rather than as
 /// a URL belonging to the generation that just lost.
+///
+/// It must also reach a different stream. Since the endpoint moved to stdout so
+/// a shell can capture it, anything else written there is read as an address,
+/// and this is the one case that produces something else.
 #[test]
 fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
     let (root, path, discovery) = published_discovery("announce-stale", 48233);
@@ -724,6 +742,7 @@ fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
     };
     let mut dialled = None;
     let mut announced = Vec::new();
+    let mut diagnostics = Vec::new();
 
     announce_canvas(
         &path,
@@ -738,12 +757,113 @@ fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
             Ok(())
         },
         &mut announced,
+        &mut diagnostics,
     );
 
     assert_eq!(
-        String::from_utf8(announced).expect("announcement is text"),
+        String::from_utf8(diagnostics).expect("diagnostic is text"),
         "canvas unavailable: canvas::discovery-replaced\n"
     );
+    assert!(
+        announced.is_empty(),
+        "a refusal reason is not an endpoint, and a shell reading the endpoint \
+         stream would dial it: {}",
+        String::from_utf8_lossy(&announced)
+    );
     assert_eq!(dialled, None, "a stale generation must not be dialled");
+    fs::remove_dir_all(&root).expect("announcement fixture cleanup");
+}
+
+#[test]
+fn durable_capture_projects_only_prose_with_occupant_and_event_identity() {
+    let bus = Bus::start(journal::Journal::in_memory().expect("message authority opens"))
+        .expect("message bus starts");
+    let source = canvas::stream::Source::new(bus.reader(), test_uuid(9), 8);
+    let publisher = source.message_publisher();
+    let mut updates = source.subscribe_messages();
+    let locus = listen::Locus::new(4, 120, 48);
+    let record = lane::capture::CaptureRecord {
+        lane: test_uuid(5),
+        occupant: test_uuid(6),
+        stream: vendor::RecordStream::Stdout,
+        boundary: sill::RecordBoundary::Complete,
+        locus,
+        declaration: None,
+        decoded: listen::Decoded::Events(vec![
+            listen::Event::Reasoning(listen::Reasoning {
+                content: listen::ReasoningContent::Opaque,
+                locus,
+            }),
+            listen::Event::Prose(listen::Prose {
+                text: "agent-authored answer".to_owned(),
+                phase: None,
+                locus,
+            }),
+        ]),
+    };
+
+    publish_agent_messages(&publisher, &record).expect("capture projects");
+
+    let message = updates.try_recv().expect("prose publishes once");
+    assert_eq!(message.lane, record.lane);
+    assert_eq!(message.author, record.occupant);
+    assert_eq!(message.text, "agent-authored answer");
+    assert_eq!(
+        message.locus,
+        wire::MessageLocus {
+            member: 4,
+            offset: 120,
+            length: 48,
+            event: 1,
+        }
+    );
+    assert!(matches!(
+        updates.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+    drop(source);
+    bus.shutdown().expect("message bus stops");
+}
+
+/// A generation that was never published is a diagnostic, not a silent start.
+///
+/// This is the operator's first start, before anything has been published, and
+/// it reaches the announcement through `DiscoveryRead::open` rather than the
+/// identity recheck the replaced-generation case above exercises.
+///
+/// Both arrive as *faults*: the announcement boundary accepts only a typed
+/// endpoint or fault, so no unreachable refusal arm can intercept this route.
+#[test]
+fn announcing_the_canvas_without_a_generation_names_no_endpoint() {
+    let root = fixture("announce-missing");
+    fs::create_dir_all(&root).expect("announcement fixture root");
+    let path = root.join("canvas");
+    let mut dialled = None;
+    let mut announced = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    announce_canvas(
+        &path,
+        true,
+        || {},
+        |endpoint| {
+            dialled = Some(endpoint.to_owned());
+            Ok(())
+        },
+        &mut announced,
+        &mut diagnostics,
+    );
+
+    let diagnostic = String::from_utf8(diagnostics).expect("diagnostic is text");
+    assert!(
+        diagnostic.starts_with("canvas unavailable: "),
+        "a missing generation must be reported: {diagnostic}"
+    );
+    assert!(
+        announced.is_empty(),
+        "a shell capturing the endpoint stream would dial this: {}",
+        String::from_utf8_lossy(&announced)
+    );
+    assert_eq!(dialled, None, "a missing generation must not be dialled");
     fs::remove_dir_all(&root).expect("announcement fixture cleanup");
 }

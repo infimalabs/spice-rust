@@ -270,6 +270,8 @@ impl Session {
                 (*v, *epoch)
             }
             StreamFrame::Trust { v, epoch, .. }
+            | StreamFrame::Messages { v, epoch, .. }
+            | StreamFrame::Message { v, epoch, .. }
             | StreamFrame::Refusal { v, epoch, .. }
             | StreamFrame::Fault { v, epoch, .. } => (*v, *epoch),
             StreamFrame::Overflow {

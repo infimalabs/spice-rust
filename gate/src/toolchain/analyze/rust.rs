@@ -8,14 +8,15 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use super::{
     Analysis, CARGO, CARGO_BUILD_DIRECTORY, CARGO_TARGET_DIRECTORY, COMPILED_HOME_DIRECTORY,
-    CompileInvocation, HOME_DIRECTORY, run_compile_analysis, tool_search_path,
+    CompileInvocation, HOME_DIRECTORY, run_compile_analysis_with_wait, tool_search_path,
 };
 use crate::measure::Bounds;
-use crate::toolchain::{ArmOutcome, FindingDetail, ToolchainDeclaration};
-use sill::Environment;
+use crate::toolchain::{ArmOutcome, ArmTiming, FindingDetail, ToolchainDeclaration};
+use sill::{Environment, WaitPolicy};
 
 /// The native analysis, kept in its declaration order.
 ///
@@ -37,9 +38,18 @@ pub(super) const CARGO_CHECK_ARGUMENTS: &[&str] =
 pub(in crate::toolchain) fn rust_typecheck(
     declaration: ToolchainDeclaration,
     root: &Path,
-    repository: &Path,
     bounds: &Bounds,
     programs: &BTreeMap<&str, &str>,
+) -> Analysis {
+    rust_typecheck_with_wait(declaration, root, bounds, programs, None)
+}
+
+fn rust_typecheck_with_wait(
+    declaration: ToolchainDeclaration,
+    root: &Path,
+    bounds: &Bounds,
+    programs: &BTreeMap<&str, &str>,
+    wait: Option<WaitPolicy>,
 ) -> Analysis {
     if !root.join("Cargo.toml").is_file() {
         return Analysis::not_applicable(declaration);
@@ -50,7 +60,7 @@ pub(in crate::toolchain) fn rust_typecheck(
             format!("{} declares no {CARGO} program", declaration.id.as_str()),
         );
     };
-    let workspace = match RustWorkspace::create(repository) {
+    let workspace = match RustWorkspace::create(root) {
         Ok(workspace) => workspace,
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
@@ -65,23 +75,54 @@ pub(in crate::toolchain) fn rust_typecheck(
         arguments: CARGO_CHECK_ARGUMENTS,
         cwd: root,
     };
-    if let Err(analysis) = run_compile_analysis(
+    let result = run_compile_analysis_with_wait(
         declaration.id,
         root,
         invocation,
         bounds,
         &environment,
         |code, message| FindingDetail::RustTypeOutput { code, message },
-    ) {
-        return analysis;
+        wait,
+    );
+    match result {
+        Err(failure) => {
+            let (analysis, elapsed) = failure.into_parts();
+            match elapsed {
+                Some(elapsed) => analysis.timed(timing(elapsed, bounds)),
+                None => analysis,
+            }
+        }
+        Ok(elapsed) => Analysis::terminal(
+            ArmOutcome::Passed,
+            format!(
+                "{} completed its declared native analysis",
+                declaration.id.as_str()
+            ),
+        )
+        .timed(timing(elapsed, bounds)),
     }
-    Analysis::terminal(
-        ArmOutcome::Passed,
-        format!(
-            "{} completed its declared native analysis",
-            declaration.id.as_str()
-        ),
+}
+
+fn timing(elapsed: Duration, bounds: &Bounds) -> ArmTiming {
+    ArmTiming {
+        elapsed_ms: milliseconds(elapsed),
+        observation_bound_ms: observation_bound_ms(bounds),
+    }
+}
+
+fn observation_bound_ms(bounds: &Bounds) -> u64 {
+    let deadlines = bounds.deadlines();
+    milliseconds(
+        deadlines
+            .runtime()
+            .saturating_add(deadlines.output_drain())
+            .saturating_add(deadlines.reap())
+            .saturating_add(bounds.grace()),
     )
+}
+
+fn milliseconds(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 /// Build directories the native check owns, kept off the lane's own `target`.
@@ -91,26 +132,49 @@ pub(in crate::toolchain) fn rust_typecheck(
 /// occupant is already running, so the arm gets its own pair exactly as the
 /// canvas arm does.
 struct RustWorkspace {
+    root: PathBuf,
     cargo_target: PathBuf,
     cargo_build: PathBuf,
 }
 
 impl RustWorkspace {
-    fn create(repository: &Path) -> Result<Self, String> {
-        let cargo_target = repository.join("target/gate-rust-typecheck");
-        let cargo_build = repository.join("target/gate-rust-typecheck-build");
-        fs::create_dir_all(&cargo_target)
-            .and_then(|()| fs::create_dir_all(&cargo_build))
-            .map_err(|error| {
-                format!(
-                    "native typecheck output directories under {} could not be created: {error}",
-                    repository.display()
-                )
-            })?;
+    fn create(selected: &Path) -> Result<Self, String> {
+        let Some(name) = selected.file_name() else {
+            return Err(format!(
+                "rust selected tree {selected:?} has no name for an analysis workspace"
+            ));
+        };
+        let mut workspace_name = name.to_os_string();
+        workspace_name.push(".spice-rust-analysis");
+        let root = selected.with_file_name(workspace_name);
+        fs::create_dir(&root).map_err(|error| {
+            format!(
+                "rust analysis workspace {} could not be created: {error}",
+                root.display()
+            )
+        })?;
+        let cargo_target = root.join("cargo-target");
+        let cargo_build = root.join("cargo-build");
+        if let Err(error) =
+            fs::create_dir(&cargo_target).and_then(|()| fs::create_dir(&cargo_build))
+        {
+            let _ = fs::remove_dir_all(&root);
+            return Err(format!(
+                "rust analysis output directories for {} could not be created: {error}",
+                selected.display()
+            ));
+        }
         Ok(Self {
+            root,
             cargo_target,
             cargo_build,
         })
+    }
+}
+
+impl Drop for RustWorkspace {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
     }
 }
 
@@ -134,11 +198,12 @@ fn rust_environment(cargo: &str, workspace: &RustWorkspace) -> Result<Environmen
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt as _;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::Duration;
+    use std::thread;
 
     use crate::toolchain::{ArmFinding, GateId, declaration};
-    use sill::Deadlines;
+    use sill::{Cancellation, CancellationToken, Deadlines, RestartDisposition, WaitPolicy};
 
     static NEXT_RUST_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -218,10 +283,9 @@ mod tests {
     /// The one-based column the planted call's first character occupies.
     const PLANTED_COLUMN: u32 = 17;
 
-    /// A workspace the real compiler is run over, and the output it writes to.
+    /// A workspace the real compiler is run over.
     struct RustFixture {
         root: PathBuf,
-        output: PathBuf,
     }
 
     impl RustFixture {
@@ -234,15 +298,10 @@ mod tests {
             if root.exists() {
                 fs::remove_dir_all(&root).expect("remove stale native fixture");
             }
-            let output = root.with_extension("output");
-            if output.exists() {
-                fs::remove_dir_all(&output).expect("remove stale native output fixture");
-            }
-            fs::create_dir(&output).expect("create native output fixture");
             fs::create_dir_all(root.join("src")).expect("create native fixture tree");
             fs::write(root.join("Cargo.toml"), FIXTURE_MANIFEST).expect("write fixture manifest");
             fs::write(root.join("Cargo.lock"), FIXTURE_LOCK).expect("write fixture lock");
-            Self { root, output }
+            Self { root }
         }
 
         fn source(&self, contents: &str) {
@@ -258,21 +317,32 @@ mod tests {
         /// reference the vocabulary gate cannot see.
         fn analyze(&self) -> Analysis {
             let cargo = env!("CARGO");
+            self.analyze_with(cargo, &rust_bounds(), None)
+        }
+
+        fn analyze_with(&self, cargo: &str, bounds: &Bounds, wait: Option<WaitPolicy>) -> Analysis {
             let programs = BTreeMap::from([(CARGO, cargo)]);
-            rust_typecheck(
+            rust_typecheck_with_wait(
                 declaration(GateId::RustTypecheck).expect("native arm is declared"),
                 &self.root,
-                &self.output,
-                &rust_bounds(),
+                bounds,
                 &programs,
+                wait,
             )
+        }
+
+        fn sleeping_cargo(&self, label: &str) -> PathBuf {
+            let path = self.root.join(label);
+            fs::write(&path, "#!/bin/sh\n/bin/sleep 5\n").expect("write sleeping Cargo");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+                .expect("make sleeping Cargo executable");
+            path
         }
     }
 
     impl Drop for RustFixture {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.root).expect("remove native fixture");
-            fs::remove_dir_all(&self.output).expect("remove native output fixture");
         }
     }
 
@@ -283,14 +353,14 @@ mod tests {
     /// what the compiler said whenever the lane is loaded enough for a real
     /// build to outrun the number.
     fn rust_bounds() -> Bounds {
+        rust_bounds_with_runtime(Duration::MAX)
+    }
+
+    fn rust_bounds_with_runtime(runtime: Duration) -> Bounds {
         Bounds::new(
             "native analyzer test",
-            Deadlines::new(
-                Duration::MAX,
-                Duration::from_secs(1),
-                Duration::from_secs(1),
-            )
-            .expect("valid native deadlines"),
+            Deadlines::new(runtime, Duration::from_secs(1), Duration::from_secs(1))
+                .expect("valid native deadlines"),
             Duration::from_millis(25),
             64 * 1024,
         )
@@ -327,6 +397,10 @@ mod tests {
         let refusal = fixture.analyze();
 
         assert_eq!(refusal.outcome, ArmOutcome::Findings);
+        let refusal_timing = refusal
+            .timing
+            .expect("the compiler refusal reports wall time");
+        assert!(refusal_timing.elapsed_ms <= refusal_timing.observation_bound_ms);
         let [finding] = refusal.findings.as_slice() else {
             panic!(
                 "the planted reference is one located diagnostic, not {}",
@@ -349,6 +423,62 @@ mod tests {
         let cleared = fixture.analyze();
 
         assert_eq!(cleared.outcome, ArmOutcome::Passed);
+        let cleared_timing = cleared
+            .timing
+            .expect("the successful compiler run reports wall time");
+        assert!(cleared_timing.elapsed_ms <= cleared_timing.observation_bound_ms);
         assert_eq!(cleared.findings, Vec::<ArmFinding>::new());
+    }
+
+    #[test]
+    fn native_check_timeout_retains_bounded_process_time() {
+        let fixture = RustFixture::new("timeout");
+        fixture.source(REMOVED_PLANT);
+        let cargo = fixture.sleeping_cargo("cargo-timeout");
+        let bounds = rust_bounds_with_runtime(Duration::from_millis(25));
+
+        let analysis = fixture.analyze_with(
+            cargo.to_str().expect("sleeping Cargo path is UTF-8"),
+            &bounds,
+            None,
+        );
+
+        assert_eq!(analysis.outcome, ArmOutcome::Timeout);
+        let timing = analysis.timing.expect("a timed-out compiler reports time");
+        assert!(timing.elapsed_ms > 0);
+        assert!(timing.elapsed_ms <= timing.observation_bound_ms);
+    }
+
+    #[test]
+    fn native_check_cancellation_is_distinct_and_retains_bounded_process_time() {
+        let fixture = RustFixture::new("cancelled");
+        fixture.source(REMOVED_PLANT);
+        let cargo = fixture.sleeping_cargo("cargo-cancelled");
+        let token = CancellationToken::new();
+        let cancel = token.clone();
+        let canceller = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            cancel.cancel();
+        });
+        let wait = WaitPolicy::new(
+            "cancelled native analyzer test",
+            Cancellation::Token(token),
+            RestartDisposition::Never,
+        )
+        .expect("valid cancellation policy");
+
+        let analysis = fixture.analyze_with(
+            cargo.to_str().expect("sleeping Cargo path is UTF-8"),
+            &rust_bounds(),
+            Some(wait),
+        );
+        canceller
+            .join()
+            .expect("cancellation thread does not panic");
+
+        assert_eq!(analysis.outcome, ArmOutcome::Cancelled);
+        let timing = analysis.timing.expect("a cancelled compiler reports time");
+        assert!(timing.elapsed_ms > 0);
+        assert!(timing.elapsed_ms <= timing.observation_bound_ms);
     }
 }

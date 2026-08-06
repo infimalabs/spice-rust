@@ -408,6 +408,37 @@ exit 0
         }
     }
 
+    /// A prune is the usual reason the image is gone, and it takes the image
+    /// from every lane at once. The refusal therefore has to carry the whole
+    /// recovery, not just the loader: a lane told only to run `load.sh` still
+    /// has to guess which archive, and the guess it makes under time pressure
+    /// is `build.sh`, which is the emulated build this refusal exists to avoid.
+    #[test]
+    fn a_pruned_image_names_the_loader_and_the_archive_it_takes() {
+        let sealed = format!("registry.example/proof@sha256:{}", "4".repeat(64));
+        let fixture = Fixture::with_runtime(EMPTY_STORE_RUNTIME);
+        let error = Container::new(
+            OciRuntime::attest(&fixture.runtime, limits()).expect("fixture runtime"),
+            sealed,
+            &fixture.workspace,
+            limits(),
+        )
+        .expect_err("an empty image store is not sealed");
+
+        let refusal = error.to_string();
+        for named in [
+            "dist/proof-image/load.sh",
+            "target/proof-image/spice-proof-image.tar",
+            "dist/proof-image/build.sh",
+            "prune",
+        ] {
+            assert!(
+                refusal.contains(named),
+                "the refusal did not name {named}: {refusal}",
+            );
+        }
+    }
+
     #[test]
     fn an_executable_that_ignores_the_oci_contract_cannot_produce_a_replay_verdict() {
         let fixture = Fixture::new();

@@ -36,6 +36,8 @@
 //! to keep them, and that difference survives every floor above.
 
 pub mod compose;
+#[cfg(test)]
+mod composer_markdown;
 pub mod mosaic;
 pub mod pane;
 pub mod runtime;

@@ -159,11 +159,13 @@ fn main() {
 #[cfg(not(target_arch = "wasm32"))]
 fn resident_up(leaf: &clap::ArgMatches, form: Form) -> Outcome<()> {
     // A foreground resident has useful startup state before it has a terminal
-    // outcome. Human mode receives that progress on stderr; JSON mode keeps
-    // stdout and stderr reserved for its one eventual machine document.
+    // outcome. Human mode keeps diagnostics on stderr and publishes the bound
+    // endpoint on stdout, where a shell can read it while the resident remains
+    // alive. JSON mode keeps both streams reserved for its one eventual machine
+    // document.
     match form {
-        Form::Text => resident::up(leaf, &mut io::stderr().lock()),
-        Form::Json => resident::up(leaf, &mut io::sink()),
+        Form::Text => resident::up(leaf, &mut io::stderr().lock(), &mut io::stdout().lock()),
+        Form::Json => resident::up(leaf, &mut io::sink(), &mut io::sink()),
     }
 }
 

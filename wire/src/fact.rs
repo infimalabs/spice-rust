@@ -220,8 +220,6 @@ vocabulary! {
     LaneExited = "lane::exited" by ResidentRecognition;
     /// The occupant crossed a context compaction boundary.
     LaneCompacted = "lane::compacted" by ResidentRecognition;
-    /// The resident preserved one assistant-authored prose event.
-    LaneProse = "lane::prose" by ResidentRecognition;
     /// A successor occupant was seated with its ancestor named.
     LaneRenewed = "lane::renewed" by ResidentRecognition;
     /// A graceful occupant end completed.

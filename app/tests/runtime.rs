@@ -278,7 +278,11 @@ fn operator_and_lane_stream_authority_come_from_the_admitted_principal() {
     let operator = CanvasRuntime::new(&operator);
     assert_eq!(
         operator.subjects(),
-        vec![ViewSubject::Facts, ViewSubject::Trust]
+        vec![
+            ViewSubject::Facts,
+            ViewSubject::Trust,
+            ViewSubject::Messages,
+        ]
     );
     assert!(operator.grants());
     assert!(operator.offers(CommandKind::ConsentDecide));
@@ -290,6 +294,81 @@ fn operator_and_lane_stream_authority_come_from_the_admitted_principal() {
     assert!(!lane.grants());
     assert!(lane.offers(CommandKind::TaskNote));
     assert!(!lane.offers(CommandKind::ConsentDecide));
+}
+
+#[test]
+fn message_snapshot_and_live_push_retain_distinct_authors_by_tape_identity() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let first = serde_json::json!({
+        "lane": LANE,
+        "author": LANE_CAPABILITY,
+        "locus": {"member": 1, "offset": 10, "length": 20, "event": 0},
+        "text": "first author",
+    });
+    let second = serde_json::json!({
+        "lane": LANE,
+        "author": SECRET_LANE_CAPABILITY,
+        "locus": {"member": 1, "offset": 30, "length": 20, "event": 0},
+        "text": "second author",
+    });
+    let snapshot = serde_json::to_vec(&serde_json::json!({
+        "stream": "messages",
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "limit": 2,
+        "messages": [first.clone(), second.clone()],
+    }))
+    .expect("message snapshot serializes");
+    assert!(
+        runtime
+            .apply_stream(&admitted_stream(&session, &snapshot))
+            .is_empty()
+    );
+    assert_eq!(
+        runtime
+            .messages()
+            .iter()
+            .map(|message| message.author)
+            .collect::<Vec<_>>(),
+        [uuid(LANE_CAPABILITY), uuid(SECRET_LANE_CAPABILITY)]
+    );
+
+    let duplicate = serde_json::to_vec(&serde_json::json!({
+        "stream": "message",
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "message": second,
+    }))
+    .expect("duplicate message serializes");
+    runtime.apply_stream(&admitted_stream(&session, &duplicate));
+    assert_eq!(runtime.messages().len(), 2);
+
+    let newest = serde_json::to_vec(&serde_json::json!({
+        "stream": "message",
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "message": {
+            "lane": LANE,
+            "author": THIRD_LANE,
+            "locus": {"member": 1, "offset": 50, "length": 20, "event": 0},
+            "text": "third author",
+        },
+    }))
+    .expect("live message serializes");
+    runtime.apply_stream(&admitted_stream(&session, &newest));
+    assert_eq!(
+        runtime
+            .messages()
+            .iter()
+            .map(|message| message.author)
+            .collect::<Vec<_>>(),
+        [uuid(SECRET_LANE_CAPABILITY), uuid(THIRD_LANE)]
+    );
 }
 
 #[test]

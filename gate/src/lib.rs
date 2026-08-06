@@ -142,7 +142,7 @@ pub use structural::{
     StructuralCapture, StructuralMatch, StructuralPattern, StructuralScanError, scan_structural,
 };
 pub use toolchain::{
-    ArmFinding, ArmMeasurement, ArmObservation, ArmOutcome, ConfigurationSource,
+    ArmFinding, ArmMeasurement, ArmObservation, ArmOutcome, ArmTiming, ConfigurationSource,
     CsharpUnusedStatus, EnvironmentLedgerKind, FindingDetail, JavascriptUnusedStatus,
     LOCAL_PATH_MARKER, MeasurementEngine, MigrationRefusal as ToolchainMigrationRefusal,
     PACKAGED_ENV_INCLUDES, PACKAGED_ENV_PROFILE, PACKAGED_JAVASCRIPT_EXEMPTIONS,

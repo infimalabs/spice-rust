@@ -28,7 +28,9 @@ mod typed;
 
 #[cfg(test)]
 use browser::browser_command;
-pub(crate) use browser::{open_canvas, open_canvas_with, system_browser};
+#[cfg(test)]
+pub(crate) use browser::open_canvas_with;
+pub(crate) use browser::{open_canvas, open_canvas_result_with, system_browser};
 pub(crate) use steering::execute_steering;
 pub(crate) use typed::execute_typed;
 #[cfg(test)]
@@ -211,12 +213,21 @@ struct DiscoveryRead {
 
 impl DiscoveryRead {
     fn open(path: &Path) -> ClientResult<Self> {
-        Self::open_with(path, || {})
+        Self::open_fault(path).map_err(Outcome::Fault)
     }
 
+    #[cfg(test)]
     fn open_with(path: &Path, before_open: impl FnOnce()) -> ClientResult<Self> {
+        Self::open_fault_with(path, before_open).map_err(Outcome::Fault)
+    }
+
+    fn open_fault(path: &Path) -> Result<Self, Fault> {
+        Self::open_fault_with(path, || {})
+    }
+
+    fn open_fault_with(path: &Path, before_open: impl FnOnce()) -> Result<Self, Fault> {
         let parent = path.parent().ok_or_else(|| {
-            environment_fault(
+            environment_fault_value(
                 "canvas::discovery-unavailable",
                 "canvas discovery has no repository runtime parent",
             )
@@ -226,7 +237,7 @@ impl DiscoveryRead {
         let before = secure_metadata(path, DiscoveryKind::File)?;
         let file_identity = FileIdentity::from_metadata(&before);
         if file_identity.len > MAX_DISCOVERY_BYTES {
-            return Err(protocol_fault(
+            return Err(protocol_fault_value(
                 "canvas::discovery-malformed",
                 "canvas discovery exceeds the current bounded document size",
             ));
@@ -247,7 +258,7 @@ impl DiscoveryRead {
             return Err(discovery_replaced());
         }
         let value = wire::decode(&bytes).map_err(|_| {
-            protocol_fault(
+            protocol_fault_value(
                 "canvas::discovery-malformed",
                 "canvas discovery does not match the current wire shape",
             )
@@ -259,11 +270,15 @@ impl DiscoveryRead {
             file_identity,
             value,
         };
-        read.verify_current()?;
+        read.verify_current_fault()?;
         Ok(read)
     }
 
     fn verify_current(&self) -> ClientResult<()> {
+        self.verify_current_fault().map_err(Outcome::Fault)
+    }
+
+    fn verify_current_fault(&self) -> Result<(), Fault> {
         let parent = secure_metadata(&self.parent, DiscoveryKind::Runtime)?;
         let file = secure_metadata(&self.path, DiscoveryKind::File)?;
         if !self
@@ -339,33 +354,33 @@ impl FileIdentity {
     }
 }
 
-fn secure_metadata(path: &Path, kind: DiscoveryKind) -> ClientResult<Metadata> {
+fn secure_metadata(path: &Path, kind: DiscoveryKind) -> Result<Metadata, Fault> {
     let metadata = fs::symlink_metadata(path).map_err(discovery_unavailable)?;
     require_secure(&metadata, kind)?;
     Ok(metadata)
 }
 
 #[cfg(unix)]
-fn require_secure(metadata: &Metadata, kind: DiscoveryKind) -> ClientResult<()> {
+fn require_secure(metadata: &Metadata, kind: DiscoveryKind) -> Result<(), Fault> {
     let shape_matches = match kind {
         DiscoveryKind::Runtime => metadata.file_type().is_dir(),
         DiscoveryKind::File => metadata.file_type().is_file(),
     };
     if !shape_matches {
-        return Err(environment_fault(
+        return Err(environment_fault_value(
             "canvas::discovery-insecure",
             "canvas discovery path is not a real repository-owned file",
         ));
     }
     let owner = rustix::process::geteuid().as_raw();
     if metadata.uid() != owner {
-        return Err(environment_fault(
+        return Err(environment_fault_value(
             "canvas::discovery-non-owner",
             "canvas discovery path is not owned by the effective user",
         ));
     }
     if matches!(kind, DiscoveryKind::File) && metadata.mode() & 0o077 != 0 {
-        return Err(environment_fault(
+        return Err(environment_fault_value(
             "canvas::discovery-insecure",
             "canvas discovery is readable or writable by group or other",
         ));
@@ -374,13 +389,13 @@ fn require_secure(metadata: &Metadata, kind: DiscoveryKind) -> ClientResult<()> 
 }
 
 #[cfg(not(unix))]
-fn require_secure(metadata: &Metadata, kind: DiscoveryKind) -> ClientResult<()> {
+fn require_secure(metadata: &Metadata, kind: DiscoveryKind) -> Result<(), Fault> {
     let shape_matches = match kind {
         DiscoveryKind::Runtime => metadata.file_type().is_dir(),
         DiscoveryKind::File => metadata.file_type().is_file(),
     };
     if !shape_matches {
-        return Err(environment_fault(
+        return Err(environment_fault_value(
             "canvas::discovery-insecure",
             "canvas discovery path is not a real repository-owned file",
         ));
@@ -388,7 +403,7 @@ fn require_secure(metadata: &Metadata, kind: DiscoveryKind) -> ClientResult<()> 
     Ok(())
 }
 
-fn open_discovery(path: &Path) -> ClientResult<File> {
+fn open_discovery(path: &Path) -> Result<File, Fault> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -555,7 +570,8 @@ fn open_session(
     discovery: DiscoveryRead,
     timeout: Duration,
 ) -> ClientResult<AuthenticatedSession> {
-    let (authority, address) = dialable_endpoint(&discovery.value.endpoint)?;
+    let (authority, address) =
+        dialable_endpoint(&discovery.value.endpoint).map_err(Outcome::Fault)?;
     discovery.verify_current()?;
     let stream = match DeadlineStream::connect(&address, timeout) {
         Ok(stream) => stream,
@@ -647,15 +663,15 @@ fn ambient_lane_identity() -> ClientResult<Option<CanonicalUuid>> {
     })
 }
 
-fn endpoint_authority(endpoint: &str) -> ClientResult<&str> {
+fn endpoint_authority(endpoint: &str) -> Result<&str, Fault> {
     let Some(authority) = endpoint.strip_prefix("http://") else {
-        return Err(protocol_fault(
+        return Err(protocol_fault_value(
             "canvas::endpoint-invalid",
             "canvas endpoint is not the current HTTP origin",
         ));
     };
     if authority.is_empty() || authority.contains(['/', '?', '#', '@']) {
-        return Err(protocol_fault(
+        return Err(protocol_fault_value(
             "canvas::endpoint-invalid",
             "canvas endpoint contains more than one socket authority",
         ));
@@ -671,11 +687,11 @@ fn endpoint_authority(endpoint: &str) -> ClientResult<&str> {
 /// running and healthy. What the endpoint must still be is one literal socket
 /// authority, which is what keeps a corrupted document from steering a client
 /// at a name it resolves somewhere else.
-fn dialable_endpoint(endpoint: &str) -> ClientResult<(&str, SocketAddr)> {
+fn dialable_endpoint(endpoint: &str) -> Result<(&str, SocketAddr), Fault> {
     let authority = endpoint_authority(endpoint)?;
     match authority.parse::<SocketAddr>() {
         Ok(address) => Ok((authority, address)),
-        Err(_) => Err(protocol_fault(
+        Err(_) => Err(protocol_fault_value(
             "canvas::endpoint-invalid",
             "canvas discovery does not name one socket authority",
         )),
@@ -893,12 +909,12 @@ fn receive(socket: &mut WebSocket<DeadlineStream>) -> ClientResult<Vec<u8>> {
     }
 }
 
-fn discovery_unavailable(error: io::Error) -> Outcome<CommandAnswer> {
-    environment_fault("canvas::discovery-unavailable", &error.to_string())
+fn discovery_unavailable(error: io::Error) -> Fault {
+    environment_fault_value("canvas::discovery-unavailable", &error.to_string())
 }
 
-fn discovery_replaced() -> Outcome<CommandAnswer> {
-    environment_fault(
+fn discovery_replaced() -> Fault {
+    environment_fault_value(
         "canvas::discovery-replaced",
         "canvas discovery changed identity while the current generation was acquired",
     )
@@ -926,19 +942,27 @@ fn steering_refusal(
 }
 
 fn protocol_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
-    Outcome::Fault(Fault {
+    Outcome::Fault(protocol_fault_value(reason, detail))
+}
+
+fn protocol_fault_value(reason: &str, detail: &str) -> Fault {
+    Fault {
         class: FaultClass::Protocol,
         reason: reason.to_owned(),
         detail: detail.to_owned(),
-    })
+    }
 }
 
 fn environment_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
-    Outcome::Fault(Fault {
+    Outcome::Fault(environment_fault_value(reason, detail))
+}
+
+fn environment_fault_value(reason: &str, detail: &str) -> Fault {
+    Fault {
         class: FaultClass::Environment,
         reason: reason.to_owned(),
         detail: detail.to_owned(),
-    })
+    }
 }
 
 #[cfg(test)]

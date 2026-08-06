@@ -1,6 +1,6 @@
 //! Compiled declarations and typed measurements for the toolchain arm family.
 //!
-//! These eight arms occupy one closed interval in the canonical battery.  A
+//! These ten arms occupy one closed interval in the canonical battery. A
 //! declaration fixes tree jurisdiction, configuration provenance, measurement
 //! ownership, and every external executable/version contract. A later runner
 //! contributes observations only; this module never claims that normalization
@@ -16,9 +16,10 @@ use crate::manifest::GateId;
 
 /// The only report schema emitted by this compiled arm family.
 ///
-/// Version 3 adds the [`ToolEvidence::Unprobed`] discovery, which a version-2
-/// reader cannot decode, so the schema is renamed rather than widened silently.
-pub const TOOLCHAIN_REPORT_VERSION: u64 = 3;
+/// Version 4 adds [`ArmTiming`] and the timed [`ArmOutcome::Cancelled`] state,
+/// which a version-3 reader cannot retain, so the schema is renamed rather than
+/// widened silently.
+pub const TOOLCHAIN_REPORT_VERSION: u64 = 4;
 
 /// A compiled source of configuration admitted by one arm.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -447,6 +448,8 @@ pub enum ArmOutcome {
     Excluded,
     /// Bounded analysis exceeded its compiled deadline.
     Timeout,
+    /// Bounded analysis was cancelled after its process started.
+    Cancelled,
     /// Analysis output or selected source could not be parsed.
     ParseFailure,
     /// A direct analysis process returned an unexplained nonzero completion.
@@ -473,6 +476,20 @@ impl ArmOutcome {
     }
 }
 
+/// Measured wall time for one bounded external analysis.
+///
+/// The complete observation bound includes runtime, output drain, reap, and
+/// termination grace. Retaining it beside the elapsed value lets measurement
+/// reject evidence that claims the bounded wait outlived its own contract.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArmTiming {
+    /// Milliseconds observed around the blocking process invocation.
+    pub elapsed_ms: u64,
+    /// Maximum milliseconds the complete bounded wait may consume.
+    pub observation_bound_ms: u64,
+}
+
 /// Raw runner observation to be measured against the compiled declaration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArmObservation {
@@ -488,6 +505,8 @@ pub struct ArmObservation {
     pub findings: Vec<ArmFinding>,
     /// Nonzero completion code, present only for `NonzeroAnalysis`.
     pub exit_code: Option<i32>,
+    /// Wall time of the analysis process, when one was invoked.
+    pub timing: Option<ArmTiming>,
 }
 
 /// Canonical retained measurement of one arm.
@@ -521,6 +540,9 @@ pub struct ArmMeasurement {
     pub findings: Vec<ArmFinding>,
     /// Nonzero completion code when that state was observed.
     pub exit_code: Option<i32>,
+    /// Bounded wall time of the analysis process, when one was invoked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timing: Option<ArmTiming>,
 }
 
 impl ArmMeasurement {
@@ -534,6 +556,7 @@ impl ArmMeasurement {
             tools: self.tools.clone(),
             findings: self.findings.clone(),
             exit_code: self.exit_code,
+            timing: self.timing,
         };
         let expected = measure_arm(declaration, observed)?;
         if expected != *self {
@@ -546,7 +569,7 @@ impl ArmMeasurement {
     }
 }
 
-/// Canonical ordered report for the complete eight-arm family.
+/// Canonical ordered report for the complete ten-arm family.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ToolchainReport {
     /// Current report schema.
@@ -581,6 +604,8 @@ pub enum ToolchainError {
     InvalidFindings { gate: GateId, evidence: String },
     /// Completion code did not match the outcome.
     InvalidExitCode(GateId),
+    /// Process timing was absent, unbounded, or belonged to another arm.
+    InvalidTiming { gate: GateId, evidence: String },
     /// Tool evidence did not match the declaration or outcome.
     InvalidToolEvidence { gate: GateId, evidence: String },
 }
@@ -613,6 +638,13 @@ impl fmt::Display for ToolchainError {
                 write!(
                     formatter,
                     "{} has an outcome-inconsistent exit code",
+                    gate.as_str()
+                )
+            }
+            Self::InvalidTiming { gate, evidence } => {
+                write!(
+                    formatter,
+                    "{} process timing is invalid: {evidence}",
                     gate.as_str()
                 )
             }
@@ -679,6 +711,7 @@ fn measure_arm(
         return Err(ToolchainError::InvalidReason(gate));
     }
     validate_exit_code(gate, observation.outcome, observation.exit_code)?;
+    validate_timing(gate, observation.outcome, observation.timing)?;
     normalize_findings(&mut observation.findings);
     validate_findings(gate, observation.outcome, &observation.findings)?;
     order_and_validate_tools(declaration, &observation.outcome, &mut observation.tools)?;
@@ -711,6 +744,7 @@ fn measure_arm(
         tools: observation.tools,
         findings: observation.findings,
         exit_code: observation.exit_code,
+        timing: observation.timing,
     })
 }
 
@@ -731,6 +765,46 @@ fn validate_exit_code(
         Ok(())
     } else {
         Err(ToolchainError::InvalidExitCode(gate))
+    }
+}
+
+fn validate_timing(
+    gate: GateId,
+    outcome: ArmOutcome,
+    timing: Option<ArmTiming>,
+) -> Result<(), ToolchainError> {
+    let invoked = matches!(
+        outcome,
+        ArmOutcome::Passed
+            | ArmOutcome::Findings
+            | ArmOutcome::Timeout
+            | ArmOutcome::Cancelled
+            | ArmOutcome::NonzeroAnalysis
+    );
+    let valid = match (gate, timing) {
+        (GateId::RustTypecheck, Some(timing)) => {
+            timing.observation_bound_ms > 0
+                && timing.elapsed_ms <= timing.observation_bound_ms
+                && !matches!(
+                    outcome,
+                    ArmOutcome::ToolUnavailable
+                        | ArmOutcome::UnsupportedVersion
+                        | ArmOutcome::NotApplicable
+                        | ArmOutcome::Excluded
+                )
+        }
+        (GateId::RustTypecheck, None) => !invoked,
+        (_, None) => true,
+        (_, Some(_)) => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(ToolchainError::InvalidTiming {
+            gate,
+            evidence: "only an invoked rust-typecheck carries elapsed time within its bound"
+                .to_owned(),
+        })
     }
 }
 
@@ -1032,6 +1106,7 @@ fn validate_external_tool_outcome(
         ArmOutcome::Passed
         | ArmOutcome::Findings
         | ArmOutcome::Timeout
+        | ArmOutcome::Cancelled
         | ArmOutcome::ParseFailure
         | ArmOutcome::NonzeroAnalysis => {
             require_all_identified(gate, declared, evidence)?;

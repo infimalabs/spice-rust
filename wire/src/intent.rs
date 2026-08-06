@@ -483,31 +483,6 @@ pub struct PendingDirective {
     pub expires: Instant,
 }
 
-/// One durable assistant-authored message returned by an inbox read.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AgentMessage {
-    /// Journal position that uniquely identifies and orders the message.
-    pub seq: Seq,
-    /// Instant at which the resident committed the decoded prose.
-    pub at: Instant,
-    /// Independently steerable member that produced the message.
-    pub producer: CanonicalUuid,
-    /// Exact occupant that authored the message.
-    pub occupant: CanonicalUuid,
-    /// Canonical worktree occupied when the message was authored.
-    pub worktree: String,
-    /// Assistant-authored text.
-    pub text: String,
-    /// Vendor phase when its current dialect reports one.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub phase: Option<String>,
-}
-
 /// Pending direction for one lane at a resident snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -523,8 +498,6 @@ pub struct LaneInbox {
     pub occupant: Option<CanonicalUuid>,
     /// Pending directives in journal order.
     pub pending: Vec<PendingDirective>,
-    /// Durable assistant prose in journal order.
-    pub messages: Vec<AgentMessage>,
 }
 
 /// Snapshot-positioned steering inbox answer.

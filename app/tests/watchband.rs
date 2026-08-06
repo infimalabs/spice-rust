@@ -74,7 +74,6 @@ fn inbox(id: &str, texts: &[&str]) -> LaneInbox {
         "lane": id,
         "occupant": OCCUPANT,
         "pending": pending,
-        "messages": [],
     }))
     .expect("the fixture spells a lane inbox")
 }

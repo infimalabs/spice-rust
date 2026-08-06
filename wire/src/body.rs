@@ -634,34 +634,6 @@ pub struct LaneCompacted {
     pub length: u64,
 }
 
-/// The resident preserved one assistant-authored prose event.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LaneProse {
-    /// Independently steerable member whose occupant authored the prose.
-    pub lane: CanonicalUuid,
-    /// Exact occupant that authored the prose.
-    pub occupant: CanonicalUuid,
-    /// Canonical worktree occupied when the prose was authored.
-    pub worktree: String,
-    /// Selected child stream carrying the prose record.
-    pub stream: String,
-    /// Assistant-authored text decoded from the preserved record.
-    pub text: String,
-    /// Vendor phase when its current dialect reports one.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub phase: Option<String>,
-    /// Durable tape member holding the prose record.
-    pub member: u64,
-    /// Prose-record offset within the member.
-    pub offset: u64,
-    /// Number of bytes in the prose record.
-    pub length: u64,
-}
-
 /// A successor occupant was seated with its ancestor named.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneRenewed {
