@@ -14,7 +14,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use app::{Axis, Pane, Surface};
+use app::{Axis, Pane};
 
 /// Every axis, gathered by exhaustive descent rather than by reading `ALL`.
 ///
@@ -198,84 +198,4 @@ fn every_axis_spells_itself_once_and_states_its_own_question() {
             axis.as_str()
         );
     }
-}
-
-/// Every surface, gathered by exhaustive descent rather than by reading `all`.
-///
-/// `Surface::all()` is a chain rather than a table, so it cannot audit itself
-/// either: a variant added beside the axes and left out of the chain would go
-/// unrendered with nothing failing. The `match` below is exhaustive over
-/// [`Surface`], so that omission is `E0004` here first.
-fn descend_surfaces() -> Vec<Surface> {
-    std::iter::successors(
-        Some(Surface::View(Axis::Magnitude)),
-        |surface| match surface {
-            Surface::View(axis) => Some(match axis {
-                Axis::Magnitude => Surface::View(Axis::Flow),
-                Axis::Flow => Surface::View(Axis::Topology),
-                Axis::Topology => Surface::View(Axis::Chronology),
-                Axis::Chronology => Surface::Mosaic,
-            }),
-            Surface::Mosaic => None,
-        },
-    )
-    .collect()
-}
-
-#[test]
-fn the_surface_registry_lists_every_surface_that_exists() {
-    assert_eq!(descend_surfaces(), Surface::all().collect::<Vec<_>>());
-}
-
-#[test]
-fn every_axis_reaches_the_rail_as_its_own_surface() {
-    let offered: BTreeSet<Axis> = Surface::all()
-        .filter_map(|surface| match surface {
-            Surface::View(axis) => Some(axis),
-            Surface::Mosaic => None,
-        })
-        .collect();
-    for axis in descend_axes() {
-        assert!(
-            offered.contains(&axis),
-            "the {} axis exists but the rail does not offer it",
-            axis.as_str()
-        );
-    }
-}
-
-#[test]
-fn every_surface_spells_itself_distinctly() {
-    let mut spellings: BTreeMap<&str, Vec<Surface>> = BTreeMap::new();
-    for surface in descend_surfaces() {
-        spellings.entry(surface.as_str()).or_default().push(surface);
-    }
-    for (spelling, claimants) in spellings {
-        assert!(
-            claimants.len() == 1,
-            "{} surfaces share the spelling {spelling}: {claimants:?}",
-            claimants.len()
-        );
-    }
-}
-
-#[test]
-fn an_axis_surface_carries_exactly_the_panes_of_its_axis() {
-    for axis in descend_axes() {
-        assert_eq!(
-            Surface::View(axis).panes().collect::<Vec<_>>(),
-            axis.panes().collect::<Vec<_>>(),
-            "the {} surface disagrees with its own axis about which panes stand on it",
-            axis.as_str()
-        );
-    }
-}
-
-#[test]
-fn the_mosaic_carries_no_pane() {
-    assert_eq!(
-        Surface::Mosaic.panes().count(),
-        0,
-        "the mosaic is not an axis, so no derived pane may claim to stand on it"
-    );
 }

@@ -21,6 +21,79 @@ fn fixture(name: &str) -> PathBuf {
     ))
 }
 
+fn listen_for(argv: &[&str]) -> CommandResult<SocketAddr> {
+    let matches = spice::cli::command()
+        .try_get_matches_from(argv)
+        .expect("declared up operands parse");
+    requested_listen(spice::cli::selected_matches(&matches))
+}
+
+fn listen_refusal_for(argv: &[&str]) -> String {
+    match listen_for(argv) {
+        Ok(listen) => panic!("{argv:?} must not bind {listen}"),
+        Err(Outcome::Refusal(refusal)) => refusal.reason,
+        Err(other) => panic!("{argv:?} must refuse rather than fault: {other:?}"),
+    }
+}
+
+/// The surface listens on exactly what the operator named, or on one fixed
+/// default it can be told about in advance.
+///
+/// Both halves are load-bearing. An operator reaching this surface from another
+/// machine has to be able to say which address it answers on, and an operator
+/// who says nothing has to get the same URL back after a restart: an ephemeral
+/// port would hand them a new address every time, which no bookmark, open tab,
+/// or written-down instruction survives.
+#[test]
+fn the_listen_address_is_what_was_asked_for_or_one_stable_default() {
+    assert_eq!(listen_for(&["spice", "up"]), Ok(DEFAULT_LISTEN));
+    assert_ne!(
+        DEFAULT_LISTEN.port(),
+        0,
+        "an ephemeral default port changes the URL on every restart"
+    );
+
+    assert_eq!(
+        listen_for(&["spice", "up", "--host", "0.0.0.0"]),
+        Ok(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            DEFAULT_LISTEN.port()
+        )),
+        "a named host keeps the default port"
+    );
+    assert_eq!(
+        listen_for(&["spice", "up", "--port", "9000"]),
+        Ok(SocketAddr::new(DEFAULT_LISTEN.ip(), 9000)),
+        "a named port keeps the default host"
+    );
+    assert_eq!(
+        listen_for(&["spice", "up", "--host", "10.0.0.5", "--port", "9000"]),
+        Ok("10.0.0.5:9000".parse().expect("fixture address")),
+        "both named is bound verbatim"
+    );
+}
+
+/// An address this machine cannot listen on is named rather than approximated.
+///
+/// Resolving a host name here would bind whatever the resolver answered with,
+/// which is not what the operator asked for and not something they could check
+/// afterwards, so a name is refused instead of guessed at.
+#[test]
+fn an_unbindable_listen_request_is_refused_by_name() {
+    assert_eq!(
+        listen_refusal_for(&["spice", "up", "--host", "canvas.example"]),
+        "resident::host-invalid"
+    );
+    assert_eq!(
+        listen_refusal_for(&["spice", "up", "--port", "70000"]),
+        "resident::port-invalid"
+    );
+    assert_eq!(
+        listen_refusal_for(&["spice", "up", "--port", "http"]),
+        "resident::port-invalid"
+    );
+}
+
 #[test]
 fn runtime_paths_follow_the_repository_common_directory() {
     let root = fixture("main");

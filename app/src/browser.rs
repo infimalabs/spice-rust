@@ -9,21 +9,20 @@ use gloo_net::websocket::futures::WebSocket;
 use gloo_net::websocket::{Message, WebSocketError};
 use gloo_timers::future::TimeoutFuture;
 use serde::{Deserialize, Serialize};
+use wasm_bindgen::JsCast as _;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use wire::intent::{
-    BoardRead, ConsentPolicy, ConsentRead, LaneRead, SteerInbox, TaskAnswer, TaskNote,
+    BoardRead, ConsentPolicy, ConsentRead, LaneRead, LaneSeat, SteerInbox, SteerSend, TaskAnswer,
+    TaskNote,
 };
 use wire::{
     Answer, CanonicalUuid, CommandKind, Response, StreamRequest, TaskHandle, WireVersion, Witness,
 };
 use yew::prelude::*;
 
-use crate::{
-    Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective, Surface,
-};
+use crate::{Axis, CanvasRuntime, ChainEnd, Principal, Session, SteerPane, StreamDirective};
 
-mod mosaic;
 mod view;
 
 use view::render_canvas;
@@ -105,6 +104,16 @@ type SurfaceData = Option<CanvasRuntime>;
 #[derive(Clone)]
 enum ClientAction {
     Refresh,
+    Seat {
+        worktree: String,
+        life: String,
+        vendor: wire::Name,
+    },
+    Steer {
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        message: String,
+    },
     Note {
         task: TaskHandle,
         note: String,
@@ -123,6 +132,8 @@ enum PendingKind {
     Inbox,
     Consent,
     Policy,
+    LaneSeat,
+    SteerSend,
     Note(TaskHandle),
     ConsentDecision,
 }
@@ -136,10 +147,12 @@ struct ResponseIdentity {
 fn canvas_app() -> Html {
     let connection = use_state(|| Connection::Starting);
     let surface = use_state(SurfaceData::default);
-    let axis = use_state(|| Surface::View(Axis::Flow));
+    let axis = use_state(|| Axis::Topology);
+    let mosaic = use_state(|| true);
     let note_task = use_state(String::new);
     let note_text = use_state(String::new);
     let sender = use_mut_ref(|| None::<UnboundedSender<ClientAction>>);
+    let agents = use_agent_controls(sender.clone(), surface.clone());
     let speech = use_state(|| wire::SpeechPlayback::Disabled {});
     let speech_status = use_state(SpeechStatus::default);
     let speech_controller = use_mut_ref(crate::speech::Controller::default);
@@ -201,7 +214,9 @@ fn canvas_app() -> Html {
         &connection,
         &surface,
         &axis,
+        &mosaic,
         &sender,
+        &agents,
         &note_task,
         &note_text,
         submit_note,
@@ -210,6 +225,102 @@ fn canvas_app() -> Html {
         &speech_status,
         toggle_speech,
     )
+}
+
+#[hook]
+fn use_agent_controls(
+    sender: SenderHandle,
+    surface: UseStateHandle<SurfaceData>,
+) -> view::AgentControls {
+    let selected_lane = use_state(String::new);
+    let seat_worktree = use_state(String::new);
+    let seat_vendor = use_state(|| "codex".to_owned());
+    let seat_life = use_state(|| "steer".to_owned());
+    let steer_text = use_state(String::new);
+    view::AgentControls {
+        submit_seat: seat_submit(
+            sender.clone(),
+            seat_worktree.clone(),
+            seat_vendor.clone(),
+            seat_life.clone(),
+        ),
+        submit_steer: steer_submit(sender, surface, selected_lane.clone(), steer_text.clone()),
+        selected_lane,
+        seat_worktree,
+        seat_vendor,
+        seat_life,
+        steer_text,
+    }
+}
+
+fn seat_submit(
+    sender: SenderHandle,
+    worktree: UseStateHandle<String>,
+    vendor: UseStateHandle<String>,
+    life: UseStateHandle<String>,
+) -> Callback<SubmitEvent> {
+    Callback::from(move |event: SubmitEvent| {
+        event.prevent_default();
+        let worktree = worktree.trim().to_owned();
+        let life = life.trim().to_ascii_lowercase();
+        let Ok(vendor) = vendor.trim().parse::<wire::Name>() else {
+            return;
+        };
+        if worktree.is_empty() || life.is_empty() {
+            return;
+        }
+        send_action(
+            &sender,
+            ClientAction::Seat {
+                worktree,
+                life,
+                vendor,
+            },
+        );
+    })
+}
+
+fn steer_submit(
+    sender: SenderHandle,
+    surface: UseStateHandle<SurfaceData>,
+    selected_lane: UseStateHandle<String>,
+    message: UseStateHandle<String>,
+) -> Callback<SubmitEvent> {
+    Callback::from(move |event: SubmitEvent| {
+        event.prevent_default();
+        let text = message.trim().to_owned();
+        let selected = selected_lane.parse::<CanonicalUuid>().ok();
+        let Some((lane, occupant)) = selected_occupant(&surface, selected) else {
+            return;
+        };
+        if text.is_empty() {
+            return;
+        }
+        send_action(
+            &sender,
+            ClientAction::Steer {
+                lane,
+                occupant,
+                message: text,
+            },
+        );
+        message.set(String::new());
+    })
+}
+
+fn selected_occupant(
+    surface: &SurfaceData,
+    selected: Option<CanonicalUuid>,
+) -> Option<(CanonicalUuid, CanonicalUuid)> {
+    surface
+        .as_ref()
+        .and_then(CanvasRuntime::lanes)
+        .and_then(|lanes| {
+            selected
+                .and_then(|selected| lanes.lanes.iter().find(|row| row.lane == selected))
+                .or_else(|| lanes.lanes.first())
+        })
+        .and_then(|row| row.occupant.map(|occupant| (row.lane, occupant)))
 }
 
 fn speech_toggle(
@@ -376,8 +487,12 @@ async fn run_connection(
                     .ok_or_else(|| "resident closed the socket".to_owned())?
                     .map_err(websocket_error)?;
                 let bytes = binary_message(frame)?;
-                let directives = handle_incoming(&session, surface, data, &mut pending, &bytes)?;
+                let (directives, refresh) =
+                    handle_incoming(&session, surface, data, &mut pending, &bytes)?;
                 relay_directives(&principal, &mut writer, directives).await?;
+                if refresh {
+                    send_refresh(&principal, &mut writer, &mut pending).await?;
+                }
             },
             action = action => {
                 let action = action.ok_or_else(|| "canvas command channel closed".to_owned())?;
@@ -479,6 +594,54 @@ async fn dispatch_action(
 ) -> Result<(), String> {
     match action {
         ClientAction::Refresh => send_refresh(principal, writer, pending).await,
+        ClientAction::Seat {
+            worktree,
+            life,
+            vendor,
+        } => {
+            let body = LaneSeat {
+                lane: random_uuid()?,
+                worktree,
+                life,
+                vendor,
+            };
+            send_typed(
+                principal,
+                writer,
+                pending,
+                PendingKind::LaneSeat,
+                CommandKind::LaneSeat,
+                vec![],
+                body,
+            )
+            .await
+        }
+        ClientAction::Steer {
+            lane,
+            occupant,
+            message,
+        } => {
+            let body = SteerSend {
+                lane,
+                message,
+                attachments: vec![],
+            };
+            let expected = vec![Witness::Residency {
+                lane,
+                occupant,
+                epoch: principal.epoch(),
+            }];
+            send_typed(
+                principal,
+                writer,
+                pending,
+                PendingKind::SteerSend,
+                CommandKind::SteerSend,
+                expected,
+                body,
+            )
+            .await
+        }
         ClientAction::Note { task, note } => {
             let body = TaskNote {
                 task: task.clone(),
@@ -754,7 +917,7 @@ fn handle_incoming(
     data: &Rc<RefCell<SurfaceData>>,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     bytes: &[u8],
-) -> Result<Vec<StreamDirective>, String> {
+) -> Result<(Vec<StreamDirective>, bool), String> {
     let crossing: serde_json::Value = wire::decode(bytes).map_err(|error| error.to_string())?;
     if crossing.get("stream").is_some() {
         let admitted = session
@@ -766,7 +929,7 @@ fn handle_incoming(
             .ok_or_else(|| "stream frame arrived before runtime acceptance".to_owned())?
             .apply_stream(&admitted);
         surface.set(data.borrow().clone());
-        return Ok(directives);
+        return Ok((directives, false));
     }
 
     let identity: ResponseIdentity = wire::decode(bytes).map_err(|error| error.to_string())?;
@@ -777,24 +940,53 @@ fn handle_incoming(
     let runtime = data
         .as_mut()
         .ok_or_else(|| "response arrived before runtime acceptance".to_owned())?;
-    match kind {
-        PendingKind::Board => runtime.apply_board(&admit_response(session, bytes)?),
-        PendingKind::Lanes => runtime.apply_lanes(&admit_response(session, bytes)?),
-        PendingKind::Inbox => runtime.apply_inbox(&admit_response(session, bytes)?),
-        PendingKind::Consent => runtime.apply_consent(&admit_response(session, bytes)?),
-        PendingKind::Policy => runtime.apply_policy(&admit_response(session, bytes)?),
+    let refresh = match kind {
+        PendingKind::Board => {
+            runtime.apply_board(&admit_response(session, bytes)?);
+            false
+        }
+        PendingKind::Lanes => {
+            runtime.apply_lanes(&admit_response(session, bytes)?);
+            false
+        }
+        PendingKind::Inbox => {
+            runtime.apply_inbox(&admit_response(session, bytes)?);
+            false
+        }
+        PendingKind::Consent => {
+            runtime.apply_consent(&admit_response(session, bytes)?);
+            false
+        }
+        PendingKind::Policy => {
+            runtime.apply_policy(&admit_response(session, bytes)?);
+            false
+        }
+        PendingKind::LaneSeat => {
+            let admitted: crate::Admitted<Response<wire::intent::LaneChangeAnswer>> =
+                admit_response(session, bytes)?;
+            runtime.apply_lane_change(&admitted);
+            true
+        }
+        PendingKind::SteerSend => {
+            let admitted: crate::Admitted<Response<wire::intent::DirectiveAnswer>> =
+                admit_response(session, bytes)?;
+            runtime.apply_steer(&admitted);
+            true
+        }
         PendingKind::Note(task) => {
             let admitted: crate::Admitted<Response<TaskAnswer>> = admit_response(session, bytes)?;
             runtime.apply_note(&admitted, &task.to_string());
+            false
         }
         PendingKind::ConsentDecision => {
             let admitted: crate::Admitted<Response<wire::intent::ConsentAnswer>> =
                 admit_response(session, bytes)?;
             runtime.apply_decision(&admitted);
+            false
         }
-    }
+    };
     surface.set(data.clone());
-    Ok(Vec::new())
+    Ok((Vec::new(), refresh))
 }
 
 fn admit_response<T: for<'de> Deserialize<'de>>(

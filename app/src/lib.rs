@@ -37,11 +37,10 @@ mod browser;
 #[cfg(target_arch = "wasm32")]
 mod speech;
 
-pub use mosaic::{Candidate, Candidates, Card, Insertion};
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
 pub use runtime::{
     BoardView, CanvasRuntime, FactRow, LaneView, RuntimeEvent, StreamDirective, StreamTerminal,
 };
 pub use socket::{Admitted, Session};
 pub use state::{Answer, Applied, BrowserState, CAUSAL_HEADERS, CausalLink, ChainEnd, ChainWalk};
-pub use view::{Axis, Pane, Surface};
+pub use view::{Axis, Pane};

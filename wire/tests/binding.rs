@@ -27,6 +27,7 @@ const BODIES: &[(CommandKind, &str)] = &[
   "title": "Bind every command kind to its body and reply DTO",
   "project": "wire",
   "acceptance": ["every kind names one body and one reply"],
+  "origin": "task:WIRE-parent",
   "depends": ["SPICE-aBcD"]
 }"#,
     ),

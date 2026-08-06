@@ -588,19 +588,22 @@ fn command_client_process_refuses_untrusted_discovery_before_connecting() {
 
     let capability = uuid("00000000-0000-4000-8000-000000000041");
     let mut discovery = canvas::Discovery {
-        endpoint: "http://192.0.2.1:48123".to_owned(),
+        endpoint: "http://canvas.example:48123".to_owned(),
         capability,
         epoch: uuid("00000000-0000-4000-8000-000000000042"),
     };
     discovery
         .publish(fixture.canvas())
-        .expect("non-loopback discovery publishes");
-    let non_loopback = invoke(&fixture, "down");
-    assert_eq!(non_loopback.status.code(), Some(FAULT_EXIT));
-    let Outcome::Fault(fault) = outcome(&non_loopback) else {
-        panic!("non-loopback discovery must fault");
+        .expect("unresolved discovery publishes");
+    // Which interface the resident bound is the operator's decision and no
+    // longer this client's, but the endpoint still has to be a socket it can
+    // dial rather than a name some resolver answers for.
+    let unresolved = invoke(&fixture, "down");
+    assert_eq!(unresolved.status.code(), Some(FAULT_EXIT));
+    let Outcome::Fault(fault) = outcome(&unresolved) else {
+        panic!("named-host discovery must fault");
     };
-    assert_eq!(fault.reason, "canvas::endpoint-not-loopback");
+    assert_eq!(fault.reason, "canvas::endpoint-invalid");
 
     #[cfg(unix)]
     {
@@ -1193,5 +1196,64 @@ fn down_releases_before_reply_and_linked_worktrees_use_common_state() {
     assert!(
         resident.wait().status.success(),
         "foreground resident failed"
+    );
+}
+
+/// The resident reads its own worktree for a locally built app, and a stage
+/// that cannot serve the whole app stops it before the endpoint is published.
+///
+/// This is the half of the local app loop that lives outside `canvas`: that
+/// the source is resolved at all, and against this worktree rather than some
+/// other directory. A resident that skipped the resolve would reach readiness
+/// here, and one that looked elsewhere would never see this stage.
+#[test]
+fn resident_process_refuses_a_local_app_stage_that_cannot_serve_the_whole_app() {
+    let fixture = Fixture::new("app-source");
+    let stage = fixture.root.join(canvas::DEV_STAGE);
+    fs::create_dir_all(&stage).expect("fixture stage");
+    fs::write(
+        stage.join("canvas-app.html"),
+        b"locally built canvas-app.html",
+    )
+    .expect("fixture asset");
+
+    let mut resident = RunningResident::spawn(&fixture);
+    // Bounded rather than a bare wait: a resident that never resolved this
+    // stage stays up forever, and that has to read as a failure here rather
+    // than as a battery that hangs.
+    fs::create_dir_all(&fixture.runtime).expect("runtime directory");
+    let ending = readiness::wait_until_ready(
+        resident.child.as_mut().expect("resident child"),
+        &fixture.runtime,
+        readiness::ARRIVAL_HORIZON,
+        "resident refusal of a partial local app stage",
+        || false,
+    );
+    assert!(
+        matches!(ending, Readiness::Exited),
+        "the resident served on with a stage it cannot serve the whole app from"
+    );
+    let up = resident.wait();
+
+    assert_eq!(up.status.code(), Some(FAULT_EXIT));
+    let refusal = outcome(&up);
+    let Outcome::Fault(fault) = &refusal else {
+        panic!("a partial local stage answered {refusal:?}");
+    };
+    let detail = &fault.detail;
+    assert_eq!(fault.reason, "canvas::app-source-invalid");
+    for missing in ["app.module", "style.css", "app_bg.wasm"] {
+        assert!(
+            detail.contains(missing),
+            "the refusal does not name {missing}: {detail}"
+        );
+    }
+    assert!(
+        detail.contains("cargo xtask dev-app"),
+        "the refusal does not say how to build the stage: {detail}"
+    );
+    assert!(
+        !fixture.canvas().is_file(),
+        "the endpoint was published for an app the resident cannot serve"
     );
 }

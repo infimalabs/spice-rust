@@ -103,6 +103,16 @@ pub struct BoardStatement {
     pub handle: crate::TaskHandle,
     /// Stable task identity.
     pub uuid: crate::CanonicalUuid,
+    /// Longer authored context.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub description: Option<String>,
+    /// Criteria that decide whether the work is done.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub acceptance: Vec<String>,
     /// Scheduler project grouping.
     pub project: String,
     /// Authored task labels.
@@ -120,6 +130,8 @@ impl From<&crate::TaskHead> for BoardStatement {
         Self {
             handle: statement.handle.clone(),
             uuid: statement.uuid,
+            description: statement.description.clone(),
+            acceptance: statement.acceptance.clone(),
             project: statement.project.clone(),
             tags: statement.tags.clone(),
             dependencies: statement.dependencies.clone(),
@@ -137,6 +149,8 @@ impl BoardStatement {
             handle: self.handle.clone(),
             uuid: self.uuid,
             title: title.to_owned(),
+            description: self.description.clone(),
+            acceptance: self.acceptance.clone(),
             project: self.project.clone(),
             tags: self.tags.clone(),
             dependencies: self.dependencies.clone(),
@@ -202,6 +216,8 @@ impl BoardTask {
     pub fn into_actor_facing(mut self) -> Self {
         if self.visibility.is_hidden() {
             self.presentation_title = "Hidden task".to_owned();
+            self.statement.body.description = None;
+            self.statement.body.acceptance.clear();
         }
         self
     }
