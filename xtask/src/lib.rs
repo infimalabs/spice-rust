@@ -10,7 +10,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 mod app;
 mod commit_message;
+mod hooks;
 mod landing;
+mod proof_image;
 mod reference_transaction;
 mod release;
 
@@ -18,6 +20,8 @@ use app::WASM_TARGET;
 
 pub use app::{AppBuildError, app};
 pub use commit_message::{CommitMessageError, WRAP_LIMIT as COMMIT_MESSAGE_WRAP_LIMIT};
+pub use hooks::{HookActivationError, activate_hooks};
+pub use proof_image::{ProofImageError, build_proof_image, load_proof_image};
 pub use reference_transaction::ReferenceTransactionError;
 pub use release::{CommandRecord, ReleaseEnvironment, TargetBuild, TargetBuildError, stage_target};
 
