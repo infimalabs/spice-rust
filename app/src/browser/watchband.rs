@@ -706,7 +706,7 @@ fn render_composer_heading(
                     .map(watchband::elapsed_label)
                     .unwrap_or_else(|| "now".to_owned())
             }</a>
-            <strong title={activity.to_owned()}>{standing.label.clone()}</strong>
+            <strong title={standing.label.clone()}>{activity}</strong>
             <details class="agent-action-menu">
                 <summary aria-label={format!("Actions for {}", standing.label)}>{"☰"}</summary>
                 <div
