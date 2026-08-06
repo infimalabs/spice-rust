@@ -1273,31 +1273,25 @@ fn resident_text_startup_names_the_exact_lane_app_source() {
     let mut resident = RunningResident::spawn_text(&lane);
     resident.assert_ready(&lane);
     let published = lane.discovery().endpoint;
+    let announced_endpoint = resident.read_stdout_line();
+    assert_eq!(
+        announced_endpoint,
+        format!("canvas endpoint: {published}\n"),
+        "the bound endpoint must reach stdout before shutdown"
+    );
     let down = invoke(&lane, "down");
     assert!(down.status.success(), "lane resident down failed");
     let output = resident.wait();
     assert!(output.status.success(), "lane resident failed");
     let stage = fs::canonicalize(&stage).expect("lane app stage canonicalizes");
-    let announcement = String::from_utf8(output.stderr).expect("lane announcement is UTF-8");
-    // A text start announces what it serves, then where it is served. The
-    // endpoint line is the one an operator acts on now that no separate command
-    // prints it, so it is held to two separate claims.
-    let (announced_source, announced_endpoint) =
-        announcement.split_once('\n').unwrap_or_else(|| {
-            panic!("startup announces a source line then an endpoint: {announcement:?}")
-        });
+    let announced_source = String::from_utf8(output.stderr).expect("lane source is UTF-8");
     assert_eq!(
         announced_source,
-        format!("canvas app source: lane app at {}", stage.display())
+        format!("canvas app source: lane app at {}\n", stage.display())
     );
-    // It is the endpoint that was published, not one formatted alongside it, so
-    // an operator dialling the announcement reaches the surface a client would.
-    assert_eq!(
-        announced_endpoint,
-        format!("canvas endpoint: {published}\n")
-    );
+    assert_eq!(output.stdout, b"null\n");
     // And that published endpoint names the port the kernel handed out. Both
-    // sides of the equality above are the resident's own, so on its own it
+    // sides of the endpoint equality are the resident's own, so on its own it
     // would still hold if the resident published the address it asked for:
     // this fixture starts with `--port 0`, which is unreachable.
     let port = published
@@ -1307,4 +1301,25 @@ fn resident_text_startup_names_the_exact_lane_app_source() {
         port.parse::<u16>().is_ok_and(|port| port != 0),
         "the announced endpoint must name the bound port, not the requested one: {port:?}"
     );
+}
+
+#[test]
+fn resident_text_startup_reports_an_explicit_bound_endpoint_on_stdout() {
+    let lane = Fixture::new("explicit-endpoint-announcement");
+    let reservation = TcpListener::bind(("127.0.0.1", 0)).expect("reserve an explicit port");
+    let listen = reservation.local_addr().expect("reserved address");
+    drop(reservation);
+
+    let mut resident = RunningResident::spawn_text_at(&lane, listen);
+    resident.assert_ready(&lane);
+    let published = lane.discovery().endpoint;
+    assert_eq!(published, format!("http://{listen}"));
+    assert_eq!(
+        resident.read_stdout_line(),
+        format!("canvas endpoint: {published}\n")
+    );
+
+    let down = invoke(&lane, "down");
+    assert!(down.status.success(), "lane resident down failed");
+    assert!(resident.wait().status.success(), "lane resident failed");
 }
