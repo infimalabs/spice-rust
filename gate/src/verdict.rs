@@ -16,11 +16,16 @@ use wire::{Digest, Domain};
 
 use crate::input::{Contract, ToolIdentity};
 use crate::jurisdiction::{Jurisdiction, WalkError};
-use crate::measure::{Bounds, MeasureError, Measurement, Policy, measurement_digest};
+use crate::long_lines::{LongLineFinding, scan_jurisdiction, validate as validate_long_lines};
+use crate::measure::{
+    Bounds, MeasureError, Measurement, Policy, measurement_digest, render_measurements,
+};
+use crate::metrics::CommittedTexts;
 use crate::ratchet::{Finding, Ratchet};
+use crate::tree::TreeError;
 
 /// The one receipt schema this build emits and admits.
-pub const GATE_RECEIPT_VERSION: u64 = 1;
+pub const GATE_RECEIPT_VERSION: u64 = 2;
 
 /// Whether a run passed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,12 +94,16 @@ pub struct Verdict {
     bounds: Digest,
     /// Digest of the complete versioned floor state.
     baseline: Digest,
+    /// Exact committed `HEAD` the per-file source comparison captured.
+    head: String,
     /// Every current compiled tool identity, in declaration order.
     tools: Vec<ReceiptTool>,
     /// Whether the run passed.
     standing: Standing,
     /// Where every metric stands, in metric order.
     findings: Vec<Finding>,
+    /// Newly introduced over-limit Rust lines, in path and locus order.
+    long_lines: Vec<LongLineFinding>,
 }
 
 impl Verdict {
@@ -108,9 +117,11 @@ impl Verdict {
             measurement: run.measurement.clone(),
             bounds: contract.bounds().digest(),
             baseline: contract.baseline().digest(),
+            head: run.head.clone(),
             tools: contract.tools().iter().map(ReceiptTool::current).collect(),
             standing: run.standing,
             findings: run.findings.clone(),
+            long_lines: run.long_lines.clone(),
         }
     }
 
@@ -162,6 +173,12 @@ impl Verdict {
         &self.baseline
     }
 
+    /// Captured committed `HEAD`, or `unborn` when the repository has no commit.
+    #[must_use]
+    pub fn head(&self) -> &str {
+        &self.head
+    }
+
     /// Current compiled tools and the identities observed at preflight.
     #[must_use]
     pub fn tools(&self) -> &[ReceiptTool] {
@@ -180,12 +197,18 @@ impl Verdict {
         &self.findings
     }
 
+    /// Newly introduced over-limit Rust source lines.
+    #[must_use]
+    pub fn long_lines(&self) -> &[LongLineFinding] {
+        &self.long_lines
+    }
+
     /// Human-readable canonical text carrying every receipt field in order.
     #[must_use]
     pub fn render(&self) -> String {
         let mut rendered = format!(
             "gate-receipt {}\ntree {}\ngate-set {}\npolicy {}\ninventory {}\n\
-             measurement {}\nbounds {}\nbaseline {}\n",
+             measurement {}\nbounds {}\nbaseline {}\nhead {}\n",
             self.version,
             self.tree,
             self.gate_set,
@@ -194,6 +217,7 @@ impl Verdict {
             self.measurement,
             self.bounds,
             self.baseline,
+            self.head,
         );
         for tool in &self.tools {
             let _ = writeln!(rendered, "tool {} {}", tool.name, tool.identity);
@@ -202,6 +226,7 @@ impl Verdict {
         for finding in &self.findings {
             let _ = writeln!(rendered, "finding {} {}", finding.metric, finding.movement);
         }
+        render_long_line_findings(&mut rendered, &self.long_lines);
         rendered
     }
 
@@ -245,6 +270,34 @@ impl Verdict {
         Ok(receipt)
     }
 
+    fn validate(&self) -> Result<(), &'static str> {
+        if self.head.is_empty() || self.head.contains(['\n', '\r']) {
+            return Err("captured HEAD is empty or contains a line break");
+        }
+        if self
+            .findings
+            .iter()
+            .any(|finding| finding.metric == "rust.long-lines")
+        {
+            return Err("rust.long-lines survived as a scalar ratchet finding");
+        }
+        validate_long_lines(&self.long_lines)?;
+        let derived = if self.long_lines.is_empty()
+            && self
+                .findings
+                .iter()
+                .all(|finding| finding.movement.passes())
+        {
+            Standing::Clean
+        } else {
+            Standing::Refused
+        };
+        if self.standing != derived {
+            return Err("standing is not derived from scalar and rust.long-lines findings");
+        }
+        Ok(())
+    }
+
     /// Publish this receipt so no reader ever sees a partial one.
     ///
     /// The bytes are staged beside the destination and swapped in one step. A
@@ -260,6 +313,32 @@ impl Verdict {
             .map_err(PublishError::Publish)?
             .publish(|staged| staged.write_all(&bytes))
             .map_err(PublishError::Publish)
+    }
+}
+
+pub(crate) fn run_evidence_digest(
+    measurements: &[Measurement],
+    head: &str,
+    long_lines: &[LongLineFinding],
+) -> Digest {
+    let mut rendered = render_measurements(measurements);
+    let _ = writeln!(rendered, "head {head}");
+    render_long_line_findings(&mut rendered, long_lines);
+    Digest::compute(Domain::GateMeasurement, rendered.as_bytes())
+}
+
+fn render_long_line_findings(rendered: &mut String, findings: &[LongLineFinding]) {
+    for finding in findings {
+        let path = serde_json::to_string(finding.path())
+            .expect("a repository path always has one JSON string spelling");
+        let _ = writeln!(
+            rendered,
+            "finding rust.long-lines {path}:{} bytes {} file-debt {}->{}",
+            finding.line(),
+            finding.bytes(),
+            finding.baseline_debt(),
+            finding.current_debt(),
+        );
     }
 }
 
@@ -279,9 +358,11 @@ struct RawVerdict {
     measurement: Digest,
     bounds: Digest,
     baseline: Digest,
+    head: String,
     tools: Vec<ReceiptTool>,
     standing: Standing,
     findings: Vec<Finding>,
+    long_lines: Vec<LongLineFinding>,
 }
 
 impl From<RawVerdict> for Verdict {
@@ -295,9 +376,11 @@ impl From<RawVerdict> for Verdict {
             measurement: raw.measurement,
             bounds: raw.bounds,
             baseline: raw.baseline,
+            head: raw.head,
             tools: raw.tools,
             standing: raw.standing,
             findings: raw.findings,
+            long_lines: raw.long_lines,
         }
     }
 }
@@ -316,7 +399,9 @@ impl<'de> Deserialize<'de> for Verdict {
                 raw.version, GATE_RECEIPT_VERSION
             )));
         }
-        Ok(Self::from(raw))
+        let receipt = Self::from(raw);
+        receipt.validate().map_err(D::Error::custom)?;
+        Ok(receipt)
     }
 }
 
@@ -329,8 +414,10 @@ pub struct Run {
     policy: Digest,
     inventory: Digest,
     measurement: Digest,
+    head: String,
     standing: Standing,
     findings: Vec<Finding>,
+    long_lines: Vec<LongLineFinding>,
 }
 
 /// A completed run bound to the exact current contract that executed it.
@@ -380,6 +467,17 @@ impl Run {
         bounds: &Bounds,
         snapshot_integrity: SnapshotIntegrity,
     ) -> Result<Self, RunError> {
+        Self::adjudicate_with_inputs(policy, root, ratchet, bounds, snapshot_integrity, None)
+    }
+
+    fn adjudicate_with_inputs(
+        policy: &Policy,
+        root: &Path,
+        ratchet: &Ratchet,
+        bounds: &Bounds,
+        snapshot_integrity: SnapshotIntegrity,
+        long_line_baselines: Option<&CommittedTexts>,
+    ) -> Result<Self, RunError> {
         if snapshot_integrity == SnapshotIntegrity::Unsupported {
             return Err(RunError::SnapshotIntegrityUnsupported);
         }
@@ -403,6 +501,28 @@ impl Run {
             measurements.push(measurement.map_err(RunError::Measure)?);
         }
 
+        let (head, long_lines) = if let Some(baselines) = long_line_baselines {
+            let findings =
+                scan_jurisdiction(snapshot.jurisdiction(), baselines).map_err(|error| {
+                    RunError::LongLineRead {
+                        path: error.path,
+                        source: error.source,
+                    }
+                })?;
+            if let Some(changed) = snapshot.verify().map_err(RunError::Walk)? {
+                return Err(RunError::SnapshotChanged {
+                    metric: "rust.long-lines".to_owned(),
+                    measured: None,
+                    path: changed.path,
+                    tree: changed.tree,
+                    observed_tree: changed.observed_tree,
+                });
+            }
+            (baselines.commit().unwrap_or("unborn").to_owned(), findings)
+        } else {
+            ("not-captured".to_owned(), Vec::new())
+        };
+
         let observed = Jurisdiction::walk(root, policy.ignore()).map_err(RunError::Walk)?;
         let observed_inventory = observed.inventory_digest();
         let observed_tree = observed.tree_digest().map_err(RunError::Walk)?;
@@ -416,12 +536,17 @@ impl Run {
         }
 
         let findings = ratchet.compare(&measurements);
-        let standing = if findings.iter().all(|finding| finding.movement.passes()) {
-            Standing::Clean
+        let standing =
+            if long_lines.is_empty() && findings.iter().all(|finding| finding.movement.passes()) {
+                Standing::Clean
+            } else {
+                Standing::Refused
+            };
+        let measurement = if long_line_baselines.is_some() {
+            run_evidence_digest(&measurements, &head, &long_lines)
         } else {
-            Standing::Refused
+            measurement_digest(&measurements)
         };
-        let measurement = measurement_digest(&measurements);
 
         Ok(Self {
             jurisdiction,
@@ -430,8 +555,10 @@ impl Run {
             policy: policy.digest(),
             inventory,
             measurement,
+            head,
             standing,
             findings,
+            long_lines,
         })
     }
 
@@ -483,6 +610,12 @@ impl Run {
         &self.findings
     }
 
+    /// Newly introduced over-limit Rust source lines attached by a current contract.
+    #[must_use]
+    pub fn long_lines(&self) -> &[LongLineFinding] {
+        &self.long_lines
+    }
+
     /// The ratchet this run earns, absent when the run was refused.
     ///
     /// A refused run earns nothing. Letting one tighten would take the baseline
@@ -507,7 +640,16 @@ impl Contract {
     /// Returns the run failure. A partial run never reaches receipt
     /// construction.
     pub fn adjudicate(&self, root: &Path) -> Result<CurrentRun, RunError> {
-        let run = Run::adjudicate(self.policy(), root, self.ratchet(), self.bounds())?;
+        let baselines =
+            CommittedTexts::read(root, &[".rs".to_owned()]).map_err(RunError::CommittedBaseline)?;
+        let run = Run::adjudicate_with_inputs(
+            self.policy(),
+            root,
+            self.ratchet(),
+            self.bounds(),
+            SnapshotIntegrity::native(),
+            Some(&baselines),
+        )?;
         let receipt = Verdict::current(self, &run);
         Ok(CurrentRun { run, receipt })
     }
@@ -554,6 +696,15 @@ pub enum RunError {
     Walk(WalkError),
     /// A metric could not be measured.
     Measure(MeasureError),
+    /// The committed `HEAD` source baseline could not be captured.
+    CommittedBaseline(TreeError),
+    /// One current Rust source selected for attribution could not be read.
+    LongLineRead {
+        /// Repository-relative selected source path.
+        path: String,
+        /// Filesystem refusal.
+        source: std::io::Error,
+    },
     /// The inventory or admitted contents moved during measurement.
     JurisdictionChanged {
         /// Inventory established before measurement.
@@ -589,6 +740,15 @@ impl fmt::Display for RunError {
             ),
             Self::Walk(source) => write!(formatter, "{source}"),
             Self::Measure(source) => write!(formatter, "{source}"),
+            Self::CommittedBaseline(source) => {
+                write!(
+                    formatter,
+                    "capture committed HEAD for rust.long-lines: {source}"
+                )
+            }
+            Self::LongLineRead { path, source } => {
+                write!(formatter, "read rust.long-lines source {path}: {source}")
+            }
             Self::JurisdictionChanged {
                 inventory,
                 observed_inventory,
@@ -619,6 +779,8 @@ impl std::error::Error for RunError {
         match self {
             Self::Walk(source) => Some(source),
             Self::Measure(source) => Some(source),
+            Self::CommittedBaseline(source) => Some(source),
+            Self::LongLineRead { source, .. } => Some(source),
             Self::SnapshotIntegrityUnsupported
             | Self::JurisdictionChanged { .. }
             | Self::SnapshotChanged { .. } => None,
@@ -654,15 +816,17 @@ mod tests {
             measurement: receipt_digest("measurement"),
             bounds: receipt_digest("bounds"),
             baseline: receipt_digest("baseline"),
+            head: "0123456789abcdef".to_owned(),
             tools: vec![ReceiptTool {
                 name: "awk".to_owned(),
                 identity: receipt_digest("awk"),
             }],
             standing: Standing::Clean,
             findings: vec![Finding {
-                metric: "rust.long-lines".to_owned(),
+                metric: "rust.lines".to_owned(),
                 movement: Movement::Held { baseline: 70 },
             }],
+            long_lines: Vec::new(),
         }
     }
 
@@ -670,9 +834,9 @@ mod tests {
     fn canonical_text_and_json_round_trip_without_losing_ordered_evidence() {
         let receipt = sample_receipt();
         let expected_text = format!(
-            "gate-receipt 1\ntree {}\ngate-set {}\npolicy {}\ninventory {}\n\
-             measurement {}\nbounds {}\nbaseline {}\ntool awk {}\nstanding clean\n\
-             finding rust.long-lines held at 70\n",
+            "gate-receipt 2\ntree {}\ngate-set {}\npolicy {}\ninventory {}\n\
+             measurement {}\nbounds {}\nbaseline {}\nhead 0123456789abcdef\ntool awk {}\n\
+             standing clean\nfinding rust.lines held at 70\n",
             receipt.tree,
             receipt.gate_set,
             receipt.policy,

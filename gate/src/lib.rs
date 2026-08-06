@@ -20,6 +20,7 @@ pub mod hygiene;
 pub mod input;
 pub mod jurisdiction;
 pub mod kill;
+mod long_lines;
 pub mod manifest;
 pub mod measure;
 pub mod message;
@@ -98,6 +99,7 @@ pub use kill::{
     MutationToolIdentity, OutcomeEvidence, PINNED_CARGO_MUTANTS, ProcessCompletion,
     ProcessEvidence, RateError, StreamEvidence, SurvivorRate,
 };
+pub use long_lines::LongLineFinding;
 pub use manifest::{
     GATE_MANIFEST_VERSION, GateDeclaration, GateId, GateManifest, GateManifestError,
     MigrationError, MigrationErrorKind, OriginLayer, PREDECESSOR_GATE_RELEASE, PredecessorDocument,
