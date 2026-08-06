@@ -189,16 +189,34 @@ const DEFAULT_LISTEN: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOS
 pub(crate) const EPHEMERAL_LOOPBACK: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
 
+pub(crate) struct CanvasBinding {
+    listen: SocketAddr,
+    access: canvas::axum::Access,
+}
+
+impl CanvasBinding {
+    pub(crate) fn local(listen: SocketAddr) -> Self {
+        Self {
+            listen,
+            access: canvas::axum::Access::local(),
+        }
+    }
+}
+
 pub(crate) fn up(leaf: &clap::ArgMatches) -> Outcome<()> {
     let listen = match requested_listen(leaf) {
         Ok(listen) => listen,
+        Err(outcome) => return outcome,
+    };
+    let access = match requested_access(leaf, listen) {
+        Ok(access) => access,
         Err(outcome) => return outcome,
     };
     let current = match std::env::current_dir() {
         Ok(current) => current,
         Err(error) => return environment_fault("resident::cwd-unavailable", &error.to_string()),
     };
-    up_from(&current, listen)
+    up_from(&current, CanvasBinding { listen, access })
 }
 
 /// The address `--host` and `--port` asked for, each defaulted on its own.
@@ -222,6 +240,51 @@ fn requested_listen(leaf: &clap::ArgMatches) -> CommandResult<SocketAddr> {
     Ok(SocketAddr::new(host, port))
 }
 
+fn requested_access(
+    leaf: &clap::ArgMatches,
+    listen: SocketAddr,
+) -> CommandResult<canvas::axum::Access> {
+    let token = leaf.get_one::<String>("auth-token").cloned();
+    if let Some(token) = token.as_deref()
+        && (token.len() < 16 || token.len() > 256 || !token.bytes().all(is_token_byte))
+    {
+        return Err(access_refusal(
+            "resident::auth-token-invalid",
+            None,
+            "use 16 to 256 URL-safe characters: letters, digits, hyphen, period, underscore, or tilde",
+        ));
+    }
+    if !listen.ip().is_loopback() && !leaf.get_flag("allow-insecure-bind") {
+        return Err(access_refusal(
+            "resident::insecure-bind-consent-required",
+            Some(&listen.to_string()),
+            "add --allow-insecure-bind only when this network exposure is intended",
+        ));
+    }
+    if !listen.ip().is_loopback() && token.is_none() {
+        return Err(access_refusal(
+            "resident::auth-token-required",
+            Some(&listen.to_string()),
+            "add --auth-token TOKEN and open the remote URL with #TOKEN",
+        ));
+    }
+    Ok(token.map_or_else(canvas::axum::Access::local, canvas::axum::Access::authenticated))
+}
+
+const fn is_token_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
+}
+
+fn access_refusal(reason: &str, observed: Option<&str>, remedy: &str) -> Outcome<()> {
+    Outcome::Refusal(Refusal {
+        reason: reason.to_owned(),
+        witness: Some("requested-canvas-access".to_owned()),
+        expected: Some("loopback, or an explicitly consented authenticated bind".to_owned()),
+        observed: observed.map(str::to_owned),
+        remedy: remedy.to_owned(),
+    })
+}
+
 fn listen_refusal(reason: &str, expected: &str, observed: &str) -> Outcome<()> {
     Outcome::Refusal(Refusal {
         reason: reason.to_owned(),
@@ -232,7 +295,10 @@ fn listen_refusal(reason: &str, expected: &str, observed: &str) -> Outcome<()> {
     })
 }
 
-pub(crate) fn up_from(current: &Path, listen: SocketAddr) -> Outcome<()> {
+pub(crate) fn up_from(
+    current: &Path,
+    binding: CanvasBinding,
+) -> Outcome<()> {
     let repository = match Repository::discover(current) {
         Ok(repository) => repository,
         Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
@@ -293,7 +359,7 @@ pub(crate) fn up_from(current: &Path, listen: SocketAddr) -> Outcome<()> {
             &repository,
             &paths,
             epoch,
-            listen,
+            binding,
             &startup_surface.config,
             &mut seats,
         )),
@@ -539,7 +605,7 @@ async fn run_surface(
     repository: &Repository,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
-    listen: SocketAddr,
+    binding: CanvasBinding,
     config: &SurfaceConfig,
     seats: &mut Seats,
 ) -> CommandResult<()> {
@@ -549,7 +615,8 @@ async fn run_surface(
     let timer_commits = bus.reader().subscribe();
     let timers = timers::Runtime::start(config.projects.clone())?;
     let (server, control) = canvas::axum::Server::bind_streaming(
-        listen,
+        binding.listen,
+        binding.access,
         epoch,
         capabilities.clone(),
         config.speech.clone(),
@@ -563,7 +630,7 @@ async fn run_surface(
     .map_err(|error| {
         environment_fault(
             "canvas::bind-failed",
-            &format!("listening on {listen} failed: {error}"),
+            &format!("listening on {} failed: {error}", binding.listen),
         )
     })?;
     let discovery = server

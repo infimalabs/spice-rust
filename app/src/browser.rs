@@ -389,21 +389,27 @@ async fn run_connection(
 async fn open_socket(
     speech: &UseStateHandle<wire::SpeechPlayback>,
 ) -> Result<(Session, SocketWriter, SocketReader), String> {
-    let discovery: wire::CanvasBootstrap = Request::get("/bootstrap")
-        .send()
-        .await
-        .map_err(|error| format!("bootstrap request failed: {error}"))?
-        .json()
-        .await
-        .map_err(|error| format!("bootstrap response was invalid: {error}"))?;
+    let discovery: wire::CanvasBootstrap = Request::get(&authenticated_path(
+        "/bootstrap",
+        browser_auth_token()?.as_deref(),
+    ))
+    .send()
+    .await
+    .map_err(|error| format!("bootstrap request failed: {error}"))?
+    .json()
+    .await
+    .map_err(|error| format!("bootstrap response was invalid: {error}"))?;
     speech.set(discovery.speech.clone());
     let session = Session::open(discovery.capability, discovery.epoch);
     let endpoint = discovery
         .endpoint
         .strip_prefix("http://")
-        .ok_or_else(|| "bootstrap endpoint was not loopback HTTP".to_owned())?;
-    let socket = WebSocket::open(&format!("ws://{endpoint}/socket"))
-        .map_err(|error| format!("socket did not open: {error}"))?;
+        .ok_or_else(|| "bootstrap endpoint was not the current HTTP origin".to_owned())?;
+    let socket = WebSocket::open(&format!(
+        "ws://{endpoint}/socket?auth={}",
+        discovery.capability
+    ))
+    .map_err(|error| format!("socket did not open: {error}"))?;
     let (mut writer, reader) = socket.split();
     writer
         .send(Message::Bytes(
@@ -521,11 +527,14 @@ async fn dispatch_action(
 }
 
 async fn request_external_speech(text: &str, content_type: &str) -> Result<Vec<u8>, String> {
-    let request = Request::post("/speech")
-        .json(&wire::SpeechRequest {
-            text: text.to_owned(),
-        })
-        .map_err(|error| format!("speech request could not be encoded: {error}"))?;
+    let request = Request::post(&authenticated_path(
+        "/speech",
+        browser_auth_token()?.as_deref(),
+    ))
+    .json(&wire::SpeechRequest {
+        text: text.to_owned(),
+    })
+    .map_err(|error| format!("speech request could not be encoded: {error}"))?;
     let response = request
         .send()
         .await
@@ -554,6 +563,22 @@ async fn request_external_speech(text: &str, content_type: &str) -> Result<Vec<u
         return Err("speech renderer returned empty audio".to_owned());
     }
     Ok(bytes)
+}
+
+fn browser_auth_token() -> Result<Option<String>, String> {
+    let hash = web_sys::window()
+        .ok_or_else(|| "browser window is unavailable".to_owned())?
+        .location()
+        .hash()
+        .map_err(|_| "browser URL fragment is unavailable".to_owned())?;
+    Ok(hash
+        .strip_prefix('#')
+        .filter(|token| !token.is_empty())
+        .map(str::to_owned))
+}
+
+fn authenticated_path(path: &str, token: Option<&str>) -> String {
+    token.map_or_else(|| path.to_owned(), |token| format!("{path}?auth={token}"))
 }
 
 fn bounded_speech_error(error: &str) -> String {

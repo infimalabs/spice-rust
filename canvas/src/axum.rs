@@ -18,7 +18,7 @@ use ::axum::Router;
 use ::axum::body::Body;
 use ::axum::extract::DefaultBodyLimit;
 use ::axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use ::axum::extract::{Json, OriginalUri, State};
+use ::axum::extract::{Json, OriginalUri, RawQuery, State};
 use ::axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, ETAG, HOST, ORIGIN};
 use ::axum::http::{HeaderMap, HeaderValue, StatusCode};
 use ::axum::response::{IntoResponse, Response};
@@ -152,6 +152,13 @@ impl Capabilities {
             .is_some_and(|principals| principals.get(&capability) == Some(actor))
     }
 
+    fn contains(&self, capability: wire::CanonicalUuid) -> bool {
+        self.principals
+            .read()
+            .ok()
+            .is_some_and(|principals| principals.contains_key(&capability))
+    }
+
     fn operator(&self) -> Option<wire::CanonicalUuid> {
         let principals = self.principals.read().ok()?;
         let mut operators = principals.iter().filter_map(|(capability, actor)| {
@@ -208,6 +215,7 @@ impl Error for OpeningError {}
 #[derive(Debug)]
 struct SurfaceState {
     authority: Authority,
+    access: Access,
     origin: String,
     epoch: wire::CanonicalUuid,
     capabilities: Capabilities,
@@ -222,6 +230,66 @@ struct SurfaceState {
     sessions_closed: Notify,
     #[cfg(test)]
     admission_observed: watch::Sender<Option<AdmissionObservation>>,
+}
+
+/// Authentication required before a caller may learn or use operator authority.
+#[derive(Clone, Default)]
+pub struct Access {
+    token: Option<Arc<str>>,
+}
+
+impl Access {
+    /// Local-only surface whose network boundary is its authentication boundary.
+    #[must_use]
+    pub const fn local() -> Self {
+        Self { token: None }
+    }
+
+    /// Remotely reachable surface guarded by one caller-held token.
+    #[must_use]
+    pub fn authenticated(token: String) -> Self {
+        Self {
+            token: Some(Arc::from(token)),
+        }
+    }
+
+    fn is_authenticated(&self) -> bool {
+        self.token.as_deref().is_some_and(|token| !token.is_empty())
+    }
+
+    fn admits_token(&self, query: Option<&str>) -> bool {
+        self.token.as_deref().is_none_or(|expected| {
+            query_secret(query).is_some_and(|got| {
+                constant_time_eq::constant_time_eq(got.as_bytes(), expected.as_bytes())
+            })
+        })
+    }
+
+    fn admits_socket(&self, query: Option<&str>, capabilities: &Capabilities) -> bool {
+        self.token.is_none()
+            || query_secret(query).is_some_and(|got| {
+                self.token.as_deref().is_some_and(|expected| {
+                    constant_time_eq::constant_time_eq(got.as_bytes(), expected.as_bytes())
+                }) || got
+                    .parse::<wire::CanonicalUuid>()
+                    .is_ok_and(|capability| capabilities.contains(capability))
+            })
+    }
+}
+
+impl fmt::Debug for Access {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Access")
+            .field("authenticated", &self.token.is_some())
+            .finish()
+    }
+}
+
+fn query_secret(query: Option<&str>) -> Option<&str> {
+    query?
+        .strip_prefix("auth=")
+        .filter(|secret| !secret.is_empty() && !secret.contains('&'))
 }
 
 /// Which `Host` headers a bound listener answers to.
@@ -522,7 +590,16 @@ impl Server {
         capabilities: Capabilities,
         speech: crate::SpeechConfig,
     ) -> Result<(Self, Control), std::io::Error> {
-        Self::bind_with_capacity(LOOPBACK_EPHEMERAL, epoch, capabilities, speech, None, 64).await
+        Self::bind_with_capacity(
+            LOOPBACK_EPHEMERAL,
+            Access::local(),
+            epoch,
+            capabilities,
+            speech,
+            None,
+            64,
+        )
+        .await
     }
 
     /// Bind the command socket and Bus-backed canvas stream to one generation.
@@ -532,6 +609,7 @@ impl Server {
     /// and a port that survives a restart, so neither can be decided here.
     pub async fn bind_streaming(
         requested: SocketAddr,
+        access: Access,
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
         speech: crate::SpeechConfig,
@@ -540,6 +618,7 @@ impl Server {
     ) -> Result<(Self, Control), std::io::Error> {
         Self::bind_with_capacity(
             requested,
+            access,
             epoch,
             capabilities,
             speech,
@@ -551,12 +630,19 @@ impl Server {
 
     async fn bind_with_capacity(
         requested: SocketAddr,
+        access: Access,
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
         speech: crate::SpeechConfig,
         stream: Option<crate::stream::Source>,
         capacity: usize,
     ) -> Result<(Self, Control), std::io::Error> {
+        if !is_loopback(requested) && !access.is_authenticated() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "a non-loopback canvas listener requires authenticated access",
+            ));
+        }
         let listener = tokio::net::TcpListener::bind(requested).await?;
         let (authority, origin) = reachable_as(listener.local_addr()?);
         let (commands, receiver) = mpsc::channel(capacity);
@@ -572,6 +658,7 @@ impl Server {
                 },
                 state: Arc::new(SurfaceState {
                     authority,
+                    access,
                     origin,
                     epoch,
                     capabilities,
@@ -667,7 +754,14 @@ async fn app(
     response
 }
 
-async fn bootstrap(State(state): State<Arc<SurfaceState>>, headers: HeaderMap) -> Response {
+async fn bootstrap(
+    State(state): State<Arc<SurfaceState>>,
+    RawQuery(query): RawQuery,
+    headers: HeaderMap,
+) -> Response {
+    if !state.access.admits_token(query.as_deref()) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
     let Ok(host) = admit_headers(&state, &headers, false) else {
         return StatusCode::FORBIDDEN.into_response();
     };
@@ -700,9 +794,13 @@ async fn bootstrap(State(state): State<Arc<SurfaceState>>, headers: HeaderMap) -
 
 async fn speech(
     State(state): State<Arc<SurfaceState>>,
+    RawQuery(query): RawQuery,
     headers: HeaderMap,
     Json(request): Json<wire::SpeechRequest>,
 ) -> Response {
+    if !state.access.admits_token(query.as_deref()) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
     if admit_headers(&state, &headers, true).is_err() {
         return StatusCode::FORBIDDEN.into_response();
     }
@@ -873,9 +971,16 @@ fn install_browser_headers(response: &mut Response) {
 
 async fn socket(
     State(state): State<Arc<SurfaceState>>,
+    RawQuery(query): RawQuery,
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Response {
+    if !state
+        .access
+        .admits_socket(query.as_deref(), &state.capabilities)
+    {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
     if admit_headers(&state, &headers, true).is_err() {
         return StatusCode::FORBIDDEN.into_response();
     }
