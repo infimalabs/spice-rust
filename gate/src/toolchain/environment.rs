@@ -22,7 +22,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-use super::{PACKAGED_ENV_PROFILE, column_of};
+use super::{ENV_NAME_LITERAL_MARKER, PACKAGED_ENV_PROFILE, column_of};
 
 /// The compiled form of the packaged environment include globs, in order.
 pub(super) const ENV_EXTENSIONS: &[&str] = &[
@@ -219,9 +219,11 @@ pub(super) fn waived_lines(text: &str) -> BTreeSet<u32> {
 /// suppressed: two reads on one line are two accesses, whichever extractor
 /// names them.
 pub(super) fn accesses(family: Option<&str>, line: &str) -> Vec<Access> {
+    let exemptions = literal_exemptions(line);
     let literals: BTreeSet<(usize, String)> = watchlist()
         .iter()
         .flat_map(|matcher| matcher.names(line))
+        .filter(|(_, name)| !exemptions.contains(name))
         .collect();
     let gated = family.filter(|_| PACKAGED_ENV_PROFILE.access_gate);
     let gates: BTreeSet<usize> = gated
@@ -270,6 +272,12 @@ fn gate_starts(family: &str, line: &str) -> BTreeSet<usize> {
 /// symbol, any quoted literal on a line already about the environment, and any
 /// literal the watchlist recognizes. Waivers do not enter here, because a
 /// waived read is still a name the ledger has to account for.
+///
+/// One explicit current-port assertion narrows only the broad literal fallback:
+/// `env-policy: not-an-env NAME` removes that exact name when it was inferred
+/// solely from the watchlist or packaged declaration list. A name grounded by
+/// access, declaration, or environment context remains a reference even beside
+/// the assertion, so it cannot turn the access waiver into a ledger waiver.
 pub(super) fn references(family: Option<&str>, line: &str) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     if let Some(family) = family {
@@ -287,10 +295,26 @@ pub(super) fn references(family: Option<&str>, line: &str) -> BTreeSet<String> {
     if context().is_match(line) || line.contains(PACKAGED_ENV_PROFILE.allow_marker) {
         extend(&mut names, context_names(), line);
     }
-    extend(&mut names, watchlist(), line);
-    extend(&mut names, declared_names(), line);
+    let exemptions = literal_exemptions(line);
+    let mut inferred = BTreeSet::new();
+    extend(&mut inferred, watchlist(), line);
+    extend(&mut inferred, declared_names(), line);
+    names.extend(inferred.difference(&exemptions).cloned());
     names.retain(|name| is_ledger_name(name));
     names
+}
+
+/// Exact ledger-shaped names asserted to be non-environment literals on a line.
+///
+/// A marker without a following name exempts nothing. Repeating the marker can
+/// name several literals without broadening any one assertion to the whole line.
+fn literal_exemptions(line: &str) -> BTreeSet<String> {
+    line.split(ENV_NAME_LITERAL_MARKER)
+        .skip(1)
+        .filter_map(|suffix| suffix.split_whitespace().next())
+        .filter(|name| is_ledger_name(name))
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Add every name one group of patterns reads out of one line.

@@ -1,6 +1,6 @@
 use gate::{
-    ArmFinding, ArmOutcome, EnvironmentLedgerKind, FindingDetail, GateId, SourceLocus,
-    TOOLCHAIN_ARMS, measure_toolchain,
+    ArmFinding, ArmOutcome, ENV_NAME_LITERAL_MARKER, EnvironmentLedgerKind, FindingDetail, GateId,
+    SourceLocus, TOOLCHAIN_ARMS, measure_toolchain,
 };
 
 mod support;
@@ -146,4 +146,70 @@ fn the_environment_ledger_arm_accounts_an_unaccounted_name_at_every_locus() {
     );
 
     measure_toolchain(observations).expect("environment observations are admitted");
+}
+
+/// One exact marker admits a non-environment fixture but not a real access.
+///
+/// Both names match the broad `SPICE_*` watchlist. The Rust test literal names
+/// itself after the marker, while the Python line is an actual access and stays
+/// unaccounted. The refusal reason prints the marker syntax so an author seeing
+/// only the hook output can distinguish the two cases without reading this
+/// scanner.
+#[test]
+fn the_ledger_refusal_names_the_literal_escape_without_hiding_an_access() {
+    const FIXTURE_NAME: &str = "SPICE_123"; // env-policy: not-an-env SPICE_123
+    const ACCESS_NAME: &str = "SPICE_UNDECLARED"; // env-policy: not-an-env SPICE_UNDECLARED
+    let repository = environment_repository("toolchain-env-literal-marker");
+    repository.write(
+        "tests/task_handle.rs",
+        &format!(
+            concat!(
+                "const INVALID: &str = \"{fixture}\"; // ",
+                "{marker} {fixture}\n"
+            ),
+            fixture = FIXTURE_NAME,
+            marker = ENV_NAME_LITERAL_MARKER
+        ),
+    );
+    repository.write(
+        "app/undeclared.py",
+        &format!("import os\n\nvalue = os.getenv(\"{ACCESS_NAME}\")\n"),
+    );
+    git_commit(
+        &repository,
+        "fixture literal beside genuine environment access",
+    );
+
+    let observations = acquired(
+        &repository,
+        Some(toolchain_directory().into_os_string()),
+        &[],
+    );
+    let observation = arm(&observations, GateId::EnvNameLedger);
+    assert_eq!(observation.outcome, ArmOutcome::Findings);
+    assert!(
+        observation
+            .reason
+            .contains(&format!("`{ENV_NAME_LITERAL_MARKER} NAME`")),
+        "the refusal did not name the literal escape: {}",
+        observation.reason
+    );
+    let names: Vec<&str> = observation
+        .findings
+        .iter()
+        .filter_map(|finding| match &finding.detail {
+            FindingDetail::EnvironmentLedger { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        names.contains(&ACCESS_NAME),
+        "the real access passed unseen"
+    );
+    assert!(
+        !names.contains(&FIXTURE_NAME),
+        "the marked task-handle fixture remained an environment reference"
+    );
+
+    measure_toolchain(observations).expect("the marked fixture and real refusal are admitted");
 }

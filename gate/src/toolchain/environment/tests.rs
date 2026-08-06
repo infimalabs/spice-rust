@@ -251,6 +251,53 @@ mod tests {
         );
     }
 
+    /// The explicit assertion removes only the broad watchlist inference.
+    #[test]
+    fn a_named_non_environment_literal_is_not_a_ledger_reference() {
+        const FIXTURE: &str = "SPICE_123"; // env-policy: not-an-env SPICE_123
+        const ACCESS: &str = "SPICE_REAL"; // env-policy: not-an-env SPICE_REAL
+        let fixture = format!(
+            "let invalid = \"{FIXTURE}\"; // {ENV_NAME_LITERAL_MARKER} {FIXTURE}"
+        );
+        assert!(references(None, &fixture).is_empty());
+        assert!(
+            references(None, &format!("let invalid = \"{FIXTURE}\";")).contains(FIXTURE),
+            "the unmarked control must still exercise the broad watchlist"
+        );
+        assert!(
+            references(
+                Some("python"),
+                &format!(
+                    "os.getenv(\"{ACCESS}\")  # {ENV_NAME_LITERAL_MARKER} {ACCESS}"
+                )
+            )
+            .contains(ACCESS),
+            "the marker cannot suppress a name grounded by an access idiom"
+        );
+        assert!(accesses(None, &fixture).is_empty());
+        let actual = accesses(
+            Some("python"),
+            &format!("os.getenv(\"{ACCESS}\")  # {ENV_NAME_LITERAL_MARKER} {ACCESS}"),
+        );
+        assert_eq!(actual.len(), 1);
+        assert_eq!(actual[0].name, finding_name("python"));
+    }
+
+    /// A marker must name one exact ledger-shaped token to have any effect.
+    #[test]
+    fn a_non_environment_marker_never_waives_the_whole_line() {
+        const FIXTURE: &str = "SPICE_123"; // env-policy: not-an-env SPICE_123
+        const OTHER: &str = "SPICE_OTHER"; // env-policy: not-an-env SPICE_OTHER
+        for line in [
+            format!("let value = \"{FIXTURE}\"; // {ENV_NAME_LITERAL_MARKER}"),
+            format!(
+                "let value = \"{FIXTURE}\"; // {ENV_NAME_LITERAL_MARKER} {OTHER}"
+            ),
+        ] {
+            assert!(references(None, &line).contains(FIXTURE));
+        }
+    }
+
     /// A ledger name is a shape, and a trailing underscore is not that shape.
     #[test]
     fn a_ledger_name_opens_on_a_letter_and_never_closes_on_an_underscore() {
