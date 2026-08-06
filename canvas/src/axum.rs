@@ -625,6 +625,18 @@ impl Server {
         self.listener.bound_address()
     }
 
+    /// Writer for agent prose on a streaming surface.
+    ///
+    /// Non-streaming test and compatibility surfaces have no transcript view,
+    /// so they return `None` rather than accepting messages nobody can read.
+    #[must_use]
+    pub fn message_publisher(&self) -> Option<crate::stream::MessagePublisher> {
+        self.state
+            .stream
+            .as_ref()
+            .map(crate::stream::Source::message_publisher)
+    }
+
     /// Discovery document for the registered operator capability.
     pub fn discovery(&self, capability: wire::CanonicalUuid) -> Result<Discovery, CapabilityError> {
         if !self.state.capabilities.is_operator(capability) {
@@ -679,9 +691,9 @@ async fn app(
     let asset = match state.app.served(uri.path()) {
         Ok(Some(asset)) => asset,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
-        // The source was whole when this generation started, so a read that
-        // fails now is the local stage being rebuilt or removed underneath the
-        // resident, which is a served answer nobody should cache.
+        // The generation was complete when admitted, so a read failure means
+        // immutable staged bytes moved underneath the resident. That is a
+        // served answer nobody should cache.
         Err(error) => {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,

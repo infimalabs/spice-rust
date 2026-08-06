@@ -9,7 +9,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 /// Names tried before a scratch root is declared unobtainable.
 const CREATE_ATTEMPTS: usize = 128;
@@ -125,9 +125,7 @@ pub(crate) fn git(repository: &Tree, arguments: &[&str]) -> String {
 /// Run one fixture Git command and return its complete completion.
 #[allow(dead_code)]
 pub(crate) fn git_output(repository: &Tree, arguments: &[&str]) -> Output {
-    let _fixture_git_guard = FIXTURE_GIT_BARRIER
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
+    let _fixture_git_guard = fixture_git_barrier();
     Command::new(GIT)
         .args(arguments)
         .current_dir(&repository.root)
@@ -135,6 +133,14 @@ pub(crate) fn git_output(repository: &Tree, arguments: &[&str]) -> Output {
         .env("HOME", &repository.root)
         .output()
         .unwrap_or_else(|error| panic!("run git {arguments:?}: {error}"))
+}
+
+/// Hold the integration binary's Git-child barrier across an external fixture event.
+#[allow(dead_code)]
+pub(crate) fn fixture_git_barrier() -> MutexGuard<'static, ()> {
+    FIXTURE_GIT_BARRIER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
 }
 
 /// One tracked workspace document, read from the real workspace.

@@ -30,7 +30,8 @@ struct SurfaceLaunch<'a> {
     /// it decides who dials the published address, not which address gets
     /// published or what admits a caller to it.
     open: bool,
-    announcement: &'a mut dyn io::Write,
+    progress: &'a mut dyn io::Write,
+    endpoint: &'a mut dyn io::Write,
 }
 
 // Runtime policy and trust identity are projections of this one captured generation.
@@ -220,7 +221,11 @@ impl CanvasBinding {
     }
 }
 
-pub(crate) fn up(leaf: &clap::ArgMatches, announcement: &mut dyn io::Write) -> Outcome<()> {
+pub(crate) fn up(
+    leaf: &clap::ArgMatches,
+    progress: &mut dyn io::Write,
+    endpoint: &mut dyn io::Write,
+) -> Outcome<()> {
     let listen = match requested_listen(leaf) {
         Ok(listen) => listen,
         Err(outcome) => return outcome,
@@ -237,7 +242,8 @@ pub(crate) fn up(leaf: &clap::ArgMatches, announcement: &mut dyn io::Write) -> O
         &current,
         CanvasBinding { listen, access },
         leaf.get_flag("open"),
-        announcement,
+        progress,
+        endpoint,
     )
 }
 
@@ -328,14 +334,21 @@ fn listen_refusal(reason: &str, expected: &str, observed: &str) -> Outcome<()> {
 }
 
 pub(crate) fn up_from(current: &Path, binding: CanvasBinding) -> Outcome<()> {
-    up_from_with(current, binding, false, &mut io::sink())
+    up_from_with(
+        current,
+        binding,
+        false,
+        &mut io::sink(),
+        &mut io::sink(),
+    )
 }
 
 fn up_from_with(
     current: &Path,
     binding: CanvasBinding,
     open: bool,
-    announcement: &mut dyn io::Write,
+    progress: &mut dyn io::Write,
+    endpoint: &mut dyn io::Write,
 ) -> Outcome<()> {
     let repository = match Repository::discover(current) {
         Ok(repository) => repository,
@@ -402,7 +415,8 @@ fn up_from_with(
             SurfaceLaunch {
                 binding,
                 open,
-                announcement,
+                progress,
+                endpoint,
             },
         )),
         Err(error) => Err(environment_fault(
@@ -656,7 +670,7 @@ async fn run_surface(
     let capabilities = surface_capabilities(operator, residency.body())?;
     let timer_commits = bus.reader().subscribe();
     let timers = timers::Runtime::start(config.projects.clone())?;
-    // Settled before the listener exists, so a local stage that cannot serve
+    // Settled before the listener exists, so a app stage that cannot supply
     // the whole app stops the resident with its own name rather than turning
     // into a page the operator has to diagnose from the browser.
     let app = canvas::AppSource::resolve(&paths.worktree)
@@ -665,7 +679,8 @@ async fn run_surface(
     let SurfaceLaunch {
         binding,
         open,
-        announcement,
+        progress,
+        endpoint,
     } = launch;
     let listen = binding.listen;
     let (server, control) = canvas::axum::Server::bind_streaming(
@@ -690,6 +705,12 @@ async fn run_surface(
     let discovery = server
         .discovery(operator)
         .map_err(|error| environment_fault("canvas::discovery-invalid", &error.to_string()))?;
+    let message_publisher = server.message_publisher().ok_or_else(|| {
+        environment_fault(
+            "canvas::message-surface-unavailable",
+            "the streaming canvas server has no transcript message publisher",
+        )
+    })?;
     let published = PublishedDiscovery {
         path: paths.canvas.clone(),
         lane_root: paths.lane_canvas.clone(),
@@ -703,15 +724,17 @@ async fn run_surface(
     let server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;
     }));
-    let _ = writeln!(announcement, "canvas app source: {app_description}");
+    let _ = writeln!(progress, "canvas app source: {app_description}");
     announce_canvas(
         &paths.canvas,
         open,
         || {},
         crate::command_client::system_browser,
-        announcement,
+        endpoint,
+        progress,
     );
-    let _ = announcement.flush();
+    let _ = endpoint.flush();
+    let _ = progress.flush();
     let capture::Channels {
         reporter,
         records,
@@ -736,6 +759,7 @@ async fn run_surface(
         published,
         shutdown,
         server_task,
+        message_publisher,
         records,
         failures,
         timers.drive(bus, timer_commits),
@@ -756,12 +780,21 @@ async fn run_surface(
 /// serving. The surface is up either way, and refusing to run because the
 /// operator cannot be handed a URL would trade a working appliance for a
 /// cosmetic one.
+/// Only an endpoint reaches the endpoint stream; a failure to produce one is a
+/// diagnostic and goes where the other diagnostics went.
+///
+/// The point of publishing on stdout is that `endpoint=$(spice up | head -1)`
+/// reads it without a second command, and a shell doing that cannot tell a URL
+/// from a sentence. Writing `canvas unavailable: ...` there hands it a refusal
+/// reason to dial. Kept separate, the same shell sees an empty capture, which
+/// is the one reading that cannot be mistaken for an address.
 fn announce_canvas(
     discovery_path: &Path,
     open: bool,
     before_current_check: impl FnOnce(),
     browser: impl FnOnce(&str) -> Result<(), String>,
     announcement: &mut dyn io::Write,
+    diagnostic: &mut dyn io::Write,
 ) {
     let outcome = crate::command_client::open_canvas_with(
         discovery_path,
@@ -773,9 +806,9 @@ fn announce_canvas(
             writeln!(announcement, "canvas endpoint: {}", reply.body.endpoint)
         }
         Outcome::Refusal(refusal) => {
-            writeln!(announcement, "canvas unavailable: {}", refusal.reason)
+            writeln!(diagnostic, "canvas unavailable: {}", refusal.reason)
         }
-        Outcome::Fault(fault) => writeln!(announcement, "canvas unavailable: {}", fault.reason),
+        Outcome::Fault(fault) => writeln!(diagnostic, "canvas unavailable: {}", fault.reason),
     };
 }
 
@@ -812,6 +845,7 @@ async fn drive_surface(
     published: PublishedDiscovery,
     shutdown: oneshot::Sender<()>,
     mut server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
+    message_publisher: canvas::stream::MessagePublisher,
     mut records: tokio::sync::mpsc::Receiver<lane::capture::CaptureRecord>,
     mut failures: tokio::sync::mpsc::UnboundedReceiver<lane::capture::CaptureFailure>,
     timer: impl std::future::Future<Output = CommandResult<()>>,
@@ -825,7 +859,7 @@ async fn drive_surface(
                     let _ = shutdown.send(());
                     return match server_task.await {
                         Ok(Ok(())) => Ok(()),
-                        served => Err(server_outcome(served)),
+                        ending => Err(server_outcome(ending)),
                     };
                 }
             }
@@ -834,7 +868,13 @@ async fn drive_surface(
                     "lane::capture-records-closed",
                     "lane capture record receiver closed",
                 ))?;
+                let current = seats
+                    .occupant(record.lane)
+                    .is_some_and(|occupant| occupant.occupant() == record.occupant);
                 lane_surface::capture_record(bus, epoch, seats, &record)?;
+                if current {
+                    publish_agent_messages(&message_publisher, &record)?;
+                }
             }
             failure = failures.recv() => {
                 let failure = failure.ok_or_else(|| environment_fault(
@@ -844,11 +884,41 @@ async fn drive_surface(
                 lane_surface::capture_failed(bus, epoch, seats, &failure)?;
             }
             timed = &mut timer => return timed,
-            served = &mut server_task => {
-                return Err(server_outcome(served));
+            ending = &mut server_task => {
+                return Err(server_outcome(ending));
             }
         }
     }
+}
+
+fn publish_agent_messages(
+    publisher: &canvas::stream::MessagePublisher,
+    record: &lane::capture::CaptureRecord,
+) -> CommandResult<()> {
+    for (event, decoded) in record.decoded.events().iter().enumerate() {
+        let listen::Event::Prose(prose) = decoded else {
+            continue;
+        };
+        let event = u32::try_from(event).map_err(|error| {
+            store_fault("canvas::message-locus-invalid", &error.to_string())
+        })?;
+        publisher
+            .publish(wire::AgentMessage {
+                lane: record.lane,
+                author: record.occupant,
+                locus: wire::MessageLocus {
+                    member: prose.locus.member,
+                    offset: prose.locus.offset,
+                    length: prose.locus.length,
+                    event,
+                },
+                text: prose.text.clone(),
+            })
+            .map_err(|error| {
+                store_fault("canvas::message-publish-failed", &error.to_string())
+            })?;
+    }
+    Ok(())
 }
 
 async fn dispatch_control(

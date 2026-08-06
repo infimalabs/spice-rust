@@ -208,7 +208,26 @@ fn seed_environment(root: Option<&Path>, executable: &Path) -> DemoResult<Enviro
 
 fn seed_prepared_root(root: &Path, executable: &Path, automatic: bool) -> DemoResult<Environment> {
     born_repository(root)?;
-    seed_lane_app(root)?;
+    let source_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| {
+            environment_fault(
+                "demo::source-repository-unavailable",
+                "the spice crate has no workspace parent".to_owned(),
+            )
+        })?;
+    let source = canvas::AppSource::resolve(source_root)
+        .map_err(|error| environment_fault("demo::app-unavailable", error.to_string()))?;
+    finish_seed_prepared_root(root, executable, automatic, &source)
+}
+
+fn finish_seed_prepared_root(
+    root: &Path,
+    executable: &Path,
+    automatic: bool,
+    source: &canvas::AppSource,
+) -> DemoResult<Environment> {
+    seed_lane_app(root, source)?;
     let repository = spice::repository::Repository::discover(root)
         .map_err(|error| environment_fault("demo::repository-unavailable", error.to_string()))?;
     let state = repository
@@ -249,24 +268,14 @@ fn seed_prepared_root(root: &Path, executable: &Path, automatic: bool) -> DemoRe
     environment(root.to_path_buf(), transcript, state, executable, automatic)
 }
 
-/// Copy the binary's build lane app into the disposable demo lane.
-fn seed_lane_app(root: &Path) -> DemoResult<()> {
-    let source_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .ok_or_else(|| {
-            environment_fault(
-                "demo::source-repository-unavailable",
-                "the spice crate has no workspace parent".to_owned(),
-            )
-        })?;
-    let source = canvas::AppSource::resolve(source_root)
-        .map_err(|error| environment_fault("demo::app-unavailable", error.to_string()))?;
+/// Copy the binary's current immutable app generation into the demo lane.
+fn seed_lane_app(root: &Path, source: &canvas::AppSource) -> DemoResult<()> {
     let generation = source
         .current_generation()
         .map_err(|error| environment_fault("demo::app-unavailable", error.to_string()))?;
-    let stage = root.join(canvas::LOCAL_STAGE);
+    let stage = root.join(canvas::APP_STAGE);
     let target_generation = stage
-        .join(canvas::LOCAL_STAGE_GENERATIONS)
+        .join(canvas::APP_STAGE_GENERATIONS)
         .join(generation.identity().as_str());
     fs::create_dir_all(&target_generation).map_err(|error| {
         environment_fault(
@@ -286,7 +295,7 @@ fn seed_lane_app(root: &Path) -> DemoResult<()> {
             )
         })?;
     }
-    let pointer = stage.join(canvas::LOCAL_STAGE_CURRENT);
+    let pointer = stage.join(canvas::APP_STAGE_CURRENT);
     fs::write(&pointer, format!("{}\n", generation.identity())).map_err(|error| {
         environment_fault(
             "demo::app-stage-unwritable",

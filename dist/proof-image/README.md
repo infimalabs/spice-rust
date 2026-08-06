@@ -26,7 +26,34 @@ configuration must name an absolute Docker or Podman executable as
 battery runs. Replay uses a read-only workspace, empty temporary caches, and a
 disabled network boundary.
 
+## Cleaning up
+
+Reclaim only what this lane owns, and reclaim the throwaway part rather than
+all of it. The throwaway part is the build context `target/proof-image/context`,
+which `build.sh` already removes at the start of every run: deleting it costs
+this lane nothing and costs no other lane anything. Its archive, checksum,
+identity, build log, and build status sit beside it under `target/proof-image/`
+and are not throwaway. The archive is what `load.sh` restores from below, so
+deleting `target/proof-image/` itself gives up the cheap recovery and leaves the
+next prune costing this lane the emulated `linux/amd64` rebuild.
+
+Never reach for a global cleanup. `docker system prune`, `docker image prune`,
+`docker volume prune`, and `docker builder prune` are machine-wide on a host
+where every lane shares one daemon: they delete the pinned proof image named by
+`identity.txt` and the shared build cache out from under whichever lanes happen
+to be building, which is an emulated `linux/amd64` rebuild for each of them.
+The lane that ran the command is rarely the lane that pays.
+
+A build the daemon dropped this way reports only `unexpected EOF`, which is why
+`build.sh` names that case rather than passing it through. If the pinned image
+itself is gone, restore it from the archive with `load.sh` rather than
+rebuilding:
+
+```sh
+dist/proof-image/load.sh target/proof-image/spice-proof-image.tar
+```
+
 This image does not build or own the interactive Canvas stage. Every lane
-builds that stage natively with `cargo xtask local-app` into ignored
-`dist/stage-local`; the command atomically publishes one complete immutable
+builds that stage natively with `cargo xtask app` into ignored
+`dist/stage-app`; the command atomically publishes one complete immutable
 generation, and its resident serves only those worktree-local bytes.

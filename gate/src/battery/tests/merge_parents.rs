@@ -1,6 +1,6 @@
 //! A merge charged for what it wrote, and not for what it only carried across.
 //!
-//! Both cases run one whole battery over the same repository shape: a short
+//! The first two cases run one whole battery over the same repository shape: a short
 //! Rust source is committed on the base both branches share, the second parent
 //! grows it past every file-loc limit and adds a comparison-adjacent literal to
 //! it, and `main` is merged with that. The two cases differ in one respect only
@@ -14,6 +14,12 @@
 //! that same inherited file and asserts both arms come back. Between them the
 //! exemption is proved to be keyed on the file's bytes rather than on the
 //! presence of `MERGE_HEAD`.
+//!
+//! Two adversarial cases close the boundaries around that rule. One restores a
+//! path both parents deleted and proves their common base still supplies its
+//! delta baseline. The other makes two invalid UTF-8 parent blobs decode to the
+//! same replacement text, then proves only exact byte identity can grant the
+//! inherited-file exemption.
 
 use super::*;
 use crate::metrics::{EvidenceState as MetricState, MetricEvidence, MetricId, MetricKey};
@@ -23,6 +29,12 @@ const INHERITED: &str = "src/inherited.rs";
 
 /// The short source the merge itself writes, standing for its resolutions.
 const RESOLVED: &str = "src/resolved.rs";
+
+/// A source present only in the parents' common base and restored by a merge.
+const REINTRODUCED: &str = "src/reintroduced.rs";
+
+/// A selected source whose exact bytes cannot be represented as UTF-8.
+const INVALID: &str = "src/invalid.rs";
 
 /// Lines that put `INHERITED` past `file_loc` however its headroom varies.
 ///
@@ -52,6 +64,20 @@ fn compared_source(literal: u64, lines: usize) -> String {
     while source.lines().count() < lines {
         source.push_str("pub fn spacer() {}\n");
     }
+    source
+}
+
+/// One short source whose final byte is deliberately not UTF-8.
+fn invalid_source(byte: u8) -> Vec<u8> {
+    let mut source = b"pub fn invalid() {}\n".to_vec();
+    source.extend([byte, b'\n']);
+    source
+}
+
+/// Valid UTF-8 whose decoded text matches either invalid parent after loss.
+fn replacement_source() -> Vec<u8> {
+    let mut source = b"pub fn invalid() {}\n".to_vec();
+    source.extend("\u{fffd}\n".as_bytes());
     source
 }
 
@@ -122,7 +148,9 @@ fn merged_repository(root: &Path) -> PathBuf {
     // `HEAD` would reach the magic arm as having no baseline at all, which is
     // inapplicability rather than the regression this is about.
     fs::write(repository.join(INHERITED), "pub fn inherited() {}\n").expect("fixture base source");
-    fixture_git(&repository, &["add", INHERITED]);
+    fs::write(repository.join(REINTRODUCED), "pub fn reintroduced() {}\n")
+        .expect("fixture merge-base source");
+    fixture_git(&repository, &["add", INHERITED, REINTRODUCED]);
     fixture_git(
         &repository,
         &["commit", "-q", "-m", "drop the unreadable class"],
@@ -134,6 +162,7 @@ fn merged_repository(root: &Path) -> PathBuf {
         compared_source(INHERITED_LITERAL, INHERITED_LINES),
     )
     .expect("fixture inherited source");
+    fixture_git(&repository, &["rm", "-q", REINTRODUCED]);
     fixture_git(&repository, &["add", INHERITED]);
     fixture_git(
         &repository,
@@ -141,6 +170,7 @@ fn merged_repository(root: &Path) -> PathBuf {
     );
 
     fixture_git(&repository, &["checkout", "-q", "main"]);
+    fixture_git(&repository, &["rm", "-q", REINTRODUCED]);
     fs::write(repository.join("src/lib.rs"), "pub fn fixture_moved() {}\n")
         .expect("fixture main-side edit");
     fixture_git(&repository, &["add", "src/lib.rs"]);
@@ -158,6 +188,40 @@ fn merged_repository(root: &Path) -> PathBuf {
     // cannot tell a per-file exemption from a merge-wide amnesty.
     fs::write(repository.join(RESOLVED), "pub fn resolved() {}\n").expect("the merge's resolution");
     fixture_git(&repository, &["add", RESOLVED]);
+    repository
+}
+
+/// Merge a side-parent source whose bytes are not valid UTF-8.
+fn invalid_merged_repository(root: &Path) -> PathBuf {
+    let repository = production_repository(root);
+    for path in PREDECESSOR_CLASS_SOURCES {
+        fixture_git(&repository, &["rm", "-q", "--cached", path]);
+    }
+    fs::write(repository.join(INVALID), invalid_source(0x80)).expect("fixture base bytes");
+    fixture_git(&repository, &["add", INVALID]);
+    fixture_git(
+        &repository,
+        &["commit", "-q", "-m", "commit the invalid-byte base"],
+    );
+
+    fixture_git(&repository, &["checkout", "-q", "-b", "side"]);
+    fs::write(repository.join(INVALID), invalid_source(0x81)).expect("fixture side bytes");
+    fixture_git(&repository, &["add", INVALID]);
+    fixture_git(
+        &repository,
+        &["commit", "-q", "-m", "side changes the exact byte"],
+    );
+
+    fixture_git(&repository, &["checkout", "-q", "main"]);
+    fs::write(repository.join("src/lib.rs"), "pub fn main_moved() {}\n")
+        .expect("fixture main edit");
+    fixture_git(&repository, &["add", "src/lib.rs"]);
+    fixture_git(&repository, &["commit", "-q", "-m", "main moves elsewhere"]);
+    fixture_git(&repository, &["merge", "--no-commit", "--no-ff", "side"]);
+    assert!(
+        repository.join(".git/MERGE_HEAD").exists(),
+        "the invalid-byte fixture must remain a pending merge"
+    );
     repository
 }
 
@@ -278,5 +342,66 @@ fn a_merge_is_charged_for_the_line_it_adds_to_an_inherited_file() {
         arm(&report, GateId::MagicNumbers).state(),
         BatteryState::Failed,
         "the magic-number arm still refuses the literal this merge introduced"
+    );
+}
+
+/// A merge-base file remains a delta baseline after both parents delete it.
+#[test]
+fn a_merge_is_charged_when_it_reintroduces_a_path_only_the_merge_base_carries() {
+    let fixture = Fixture::new();
+    let repository = merged_repository(&fixture.root);
+    fs::write(
+        repository.join(REINTRODUCED),
+        compared_source(MERGED_LITERAL, 4),
+    )
+    .expect("the merge reintroduces the base path");
+    fixture_git(&repository, &["add", REINTRODUCED]);
+
+    let report = battery_report(&repository);
+
+    assert_eq!(
+        measured(
+            row(
+                &report,
+                GateId::MagicNumbers,
+                REINTRODUCED,
+                MetricId::MagicNumberRegressions,
+            ),
+            REINTRODUCED,
+        ),
+        1,
+        "a path absent from both parents still regresses from their common base"
+    );
+    assert_eq!(
+        arm(&report, GateId::MagicNumbers).state(),
+        BatteryState::Failed,
+        "the merge is charged for the literal it reintroduced over the merge base"
+    );
+}
+
+/// Lossy text equality cannot grant an exact-byte merge exemption.
+#[test]
+fn a_byte_distinct_invalid_source_is_measured_instead_of_marked_inherited() {
+    let fixture = Fixture::new();
+    let repository = invalid_merged_repository(&fixture.root);
+    let parent = invalid_source(0x81);
+    let current = replacement_source();
+    assert_ne!(parent, current, "the fixture needs byte-distinct content");
+    assert_eq!(
+        String::from_utf8_lossy(&parent),
+        String::from_utf8_lossy(&current),
+        "the fixture needs text that only exact comparison can distinguish"
+    );
+    fs::write(repository.join(INVALID), current).expect("the merge's exact-byte edit");
+    fixture_git(&repository, &["add", INVALID]);
+
+    let report = battery_report(&repository);
+
+    assert!(
+        measured(
+            row(&report, GateId::FileShape, INVALID, MetricId::FileBytes),
+            INVALID,
+        ) > 0,
+        "byte-distinct content was mistaken for an inherited parent blob"
     );
 }

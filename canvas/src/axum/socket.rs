@@ -89,6 +89,10 @@ async fn socket_session(mut socket: WebSocket, state: Arc<SurfaceState>) {
     send_encoded(&mut socket, &accepted).await;
     let mut subscription = None;
     let mut broadcasts = state.stream.as_ref().map(crate::stream::Source::subscribe);
+    let mut message_broadcasts = state
+        .stream
+        .as_ref()
+        .map(crate::stream::Source::subscribe_messages);
     loop {
         tokio::select! {
             biased;
@@ -128,6 +132,31 @@ async fn socket_session(mut socket: WebSocket, state: Arc<SurfaceState>) {
                     return;
                 }
             }
+            notice = async {
+                message_broadcasts
+                    .as_mut()
+                    .expect("enabled branch has a message broadcast")
+                    .recv()
+                    .await
+            }, if message_broadcasts.is_some()
+                && subscription
+                    .as_ref()
+                    .is_some_and(crate::stream::Subscription::is_live) => {
+                if matches!(
+                    route_message_broadcast(
+                        &mut socket,
+                        &state,
+                        &accepted,
+                        capability,
+                        subscription.as_ref().expect("live branch has a subscription"),
+                        notice,
+                    )
+                    .await,
+                    SessionFlow::Close
+                ) {
+                    return;
+                }
+            }
             message = socket.recv() => {
                 let Some(Ok(message)) = message else {
                     return;
@@ -155,6 +184,50 @@ async fn socket_session(mut socket: WebSocket, state: Arc<SurfaceState>) {
                     return;
                 }
             }
+        }
+    }
+}
+
+async fn route_message_broadcast(
+    socket: &mut WebSocket,
+    state: &SurfaceState,
+    accepted: &wire::Accepted,
+    capability: wire::CanonicalUuid,
+    subscription: &crate::stream::Subscription,
+    notice: Result<wire::AgentMessage, tokio::sync::broadcast::error::RecvError>,
+) -> SessionFlow {
+    if !state.capabilities.matches(capability, &accepted.actor) {
+        send_replaced(socket, state.epoch, Some(subscription.id())).await;
+        return SessionFlow::Close;
+    }
+    match notice {
+        Ok(message) => {
+            let Some(frame) = subscription.message(message) else {
+                return SessionFlow::Continue;
+            };
+            if send_encoded(socket, &frame).await {
+                SessionFlow::Continue
+            } else {
+                SessionFlow::Close
+            }
+        }
+        Err(tokio::sync::broadcast::error::RecvError::Lagged(dropped)) => {
+            let frame = subscription
+                .overflow(dropped)
+                .unwrap_or_else(|failure| failure.frame(state.epoch, Some(subscription.id())));
+            send_encoded(socket, &frame).await;
+            SessionFlow::Close
+        }
+        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+            let frame = stream_fault(
+                state.epoch,
+                Some(subscription.id()),
+                wire::FaultClass::Environment,
+                "stream::message-broadcast-closed",
+                "resident transcript-message broadcast closed",
+            );
+            send_encoded(socket, &frame).await;
+            SessionFlow::Close
         }
     }
 }

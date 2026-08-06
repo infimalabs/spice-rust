@@ -36,6 +36,8 @@
 //! to keep them, and that difference survives every floor above.
 
 pub mod compose;
+#[cfg(any(target_arch = "wasm32", test))]
+mod composer_markdown;
 pub mod mosaic;
 pub mod pane;
 pub mod runtime;
@@ -51,7 +53,8 @@ mod speech;
 
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
 pub use runtime::{
-    BoardView, CanvasRuntime, FactRow, LaneView, RuntimeEvent, StreamDirective, StreamTerminal,
+    BoardView, CanvasRuntime, FactRow, LaneRow, LaneStatus, LaneView, RuntimeEvent, Stale,
+    StreamDirective, StreamTerminal, stale_reads,
 };
 pub use socket::{Admitted, Session};
 pub use state::{Answer, Applied, BrowserState, CAUSAL_HEADERS, CausalLink, ChainEnd, ChainWalk};

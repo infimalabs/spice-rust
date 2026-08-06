@@ -1,14 +1,20 @@
-//! Bus-backed authenticated canvas subscription state.
+//! Authenticated Canvas subscriptions over journal and transcript sources.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::error::Error;
+use std::fmt;
+use std::sync::{Arc, Mutex};
 
 use bus::{BusReader, CanvasSnapshot, JournalCommit};
 use wire::{
-    Accepted, Actor, Fault, FaultClass, Overflow, Packed, Refusal, Seq, StreamCursor, StreamFact,
-    StreamFrame, StreamRequest, TrustView, ViewSubject, WireVersion,
+    Accepted, Actor, AgentMessage, Fault, FaultClass, Overflow, Packed, Refusal, Seq, StreamCursor,
+    StreamFact, StreamFrame, StreamRequest, TrustView, ViewSubject, WireVersion,
 };
 
 use crate::thread::{ThreadError, ThreadIndex};
+
+/// Newest transcript messages retained for a reconnecting Canvas.
+const MESSAGE_CAPACITY: usize = 256;
 
 /// Generation-owned source for every streamed canvas answer.
 #[derive(Clone, Debug)]
@@ -16,19 +22,39 @@ pub struct Source {
     bus: BusReader,
     epoch: wire::CanonicalUuid,
     rows: usize,
+    messages: MessageFeed,
 }
 
 impl Source {
     /// Bind canvas reads to one resident Bus generation and one packing bound.
     #[must_use]
-    pub const fn new(bus: BusReader, epoch: wire::CanonicalUuid, rows: usize) -> Self {
-        Self { bus, epoch, rows }
+    pub fn new(bus: BusReader, epoch: wire::CanonicalUuid, rows: usize) -> Self {
+        Self {
+            bus,
+            epoch,
+            rows,
+            messages: MessageFeed::new(),
+        }
     }
 
     /// Reader for the one bounded post-durability Bus cursor broadcast.
     #[must_use]
     pub fn subscribe(&self) -> bus::BroadcastSubscriber {
         self.bus.subscribe()
+    }
+
+    /// Reader for live agent-authored transcript messages.
+    #[must_use]
+    pub fn subscribe_messages(&self) -> tokio::sync::broadcast::Receiver<AgentMessage> {
+        self.messages.updates.subscribe()
+    }
+
+    /// Generation-scoped writer for prose accepted from lane capture.
+    #[must_use]
+    pub fn message_publisher(&self) -> MessagePublisher {
+        MessagePublisher {
+            feed: self.messages.clone(),
+        }
     }
 
     /// Start one authenticated subscription from one authority snapshot.
@@ -78,7 +104,18 @@ impl Source {
         };
         let mut frames = Vec::new();
         for subject in subscription.subjects.iter().copied().collect::<Vec<_>>() {
-            let frame = subscription.page(subject, None, *id)?;
+            let frame = if subject == ViewSubject::Messages {
+                StreamFrame::Messages {
+                    v: WireVersion::CURRENT,
+                    id: *id,
+                    epoch: self.epoch,
+                    limit: u32::try_from(MESSAGE_CAPACITY)
+                        .expect("the fixed message capacity fits in the wire field"),
+                    messages: self.messages.snapshot().map_err(message_snapshot_fault)?,
+                }
+            } else {
+                subscription.page(subject, None, *id)?
+            };
             frames.push(frame);
         }
         subscription.settle_barrier(horizon);
@@ -128,6 +165,98 @@ impl Source {
             })
         })
     }
+}
+
+#[derive(Clone, Debug)]
+struct MessageFeed {
+    retained: Arc<Mutex<VecDeque<AgentMessage>>>,
+    updates: tokio::sync::broadcast::Sender<AgentMessage>,
+    capacity: usize,
+}
+
+impl MessageFeed {
+    fn new() -> Self {
+        let (updates, _) = tokio::sync::broadcast::channel(MESSAGE_CAPACITY);
+        Self {
+            retained: Arc::new(Mutex::new(VecDeque::new())),
+            updates,
+            capacity: MESSAGE_CAPACITY,
+        }
+    }
+
+    fn snapshot(&self) -> Result<Vec<AgentMessage>, MessagePublishError> {
+        self.retained
+            .lock()
+            .map(|messages| messages.iter().cloned().collect())
+            .map_err(|_| MessagePublishError::Unavailable)
+    }
+}
+
+/// Generation-scoped ingress for agent prose already committed to tape.
+#[derive(Clone, Debug)]
+pub struct MessagePublisher {
+    feed: MessageFeed,
+}
+
+impl MessagePublisher {
+    /// Retain and broadcast one transcript message exactly once.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when retained state is unavailable or one durable
+    /// transcript identity is reused for different content.
+    pub fn publish(&self, message: AgentMessage) -> Result<bool, MessagePublishError> {
+        let mut retained = self
+            .feed
+            .retained
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)?;
+        if let Some(existing) = retained
+            .iter()
+            .find(|existing| existing.lane == message.lane && existing.locus == message.locus)
+        {
+            return if existing == &message {
+                Ok(false)
+            } else {
+                Err(MessagePublishError::IdentityConflict)
+            };
+        }
+        if retained.len() == self.feed.capacity {
+            retained.pop_front();
+        }
+        retained.push_back(message.clone());
+        drop(retained);
+        let _ = self.feed.updates.send(message);
+        Ok(true)
+    }
+}
+
+/// A capture-backed message could not enter the Canvas view.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MessagePublishError {
+    /// Retained message state could not be acquired.
+    Unavailable,
+    /// One tape event identity was reused for different content.
+    IdentityConflict,
+}
+
+impl fmt::Display for MessagePublishError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Unavailable => "canvas message retention is unavailable",
+            Self::IdentityConflict => "a transcript event identity named different message content",
+        })
+    }
+}
+
+impl Error for MessagePublishError {}
+
+fn message_snapshot_fault(error: MessagePublishError) -> Failure {
+    Failure::Fault(Fault {
+        class: FaultClass::Environment,
+        reason: "stream::message-snapshot-unavailable".to_owned(),
+        detail: error.to_string(),
+    })
 }
 
 /// One admitted subscription and its exact continuation/live cursor state.
@@ -253,6 +382,19 @@ impl Subscription {
         Ok(frames)
     }
 
+    /// Project one live transcript message for subscriptions that asked for it.
+    #[must_use]
+    pub fn message(&self, message: AgentMessage) -> Option<StreamFrame> {
+        (self.is_live() && self.subjects.contains(&ViewSubject::Messages)).then_some(
+            StreamFrame::Message {
+                v: WireVersion::CURRENT,
+                id: self.id,
+                epoch: self.epoch,
+                message,
+            },
+        )
+    }
+
     /// Terminal bounded-backpressure frame, resumable after the admitted cursor.
     pub fn overflow(&self, dropped: u64) -> Result<StreamFrame, Failure> {
         let cursor = self.cursor.ok_or_else(|| {
@@ -335,6 +477,12 @@ impl Subscription {
                     epoch: self.epoch,
                     packed,
                 }
+            }
+            ViewSubject::Messages => {
+                return Err(Failure::Refusal(refusal(
+                    "stream::message-continuation-invalid",
+                    "message snapshots never carry a journal continuation",
+                )));
             }
         };
         Ok(frame)
@@ -426,7 +574,9 @@ fn admit_subjects(
 }
 
 fn admit_subject(actor: &Actor, subject: ViewSubject) -> Result<(), Failure> {
-    if subject == ViewSubject::Trust && !matches!(actor, Actor::Operator) {
+    if matches!(subject, ViewSubject::Trust | ViewSubject::Messages)
+        && !matches!(actor, Actor::Operator)
+    {
         return Err(Failure::Refusal(Refusal {
             reason: "stream::subject-authority".to_owned(),
             witness: Some("principal".to_owned()),
@@ -840,22 +990,24 @@ mod tests {
     }
 
     #[test]
-    fn lane_principal_never_admits_operator_trust_subject() {
+    fn lane_principal_never_admits_operator_only_subjects() {
         let bus = fixture(1);
         let source = Source::new(bus.reader(), epoch(), 10);
         let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
-        let failure = source
-            .begin(
-                &accepted(Actor::Lane(lane)),
-                &request(0xc4, vec![ViewSubject::Trust], None),
-            )
-            .expect_err("lane trust view refuses");
+        for subject in [ViewSubject::Trust, ViewSubject::Messages] {
+            let failure = source
+                .begin(
+                    &accepted(Actor::Lane(lane)),
+                    &request(0xc4, vec![subject], None),
+                )
+                .expect_err("lane operator-only view refuses");
 
-        assert!(matches!(
-            failure,
-            Failure::Refusal(Refusal { ref reason, .. })
-                if reason == "stream::subject-authority"
-        ));
+            assert!(matches!(
+                failure,
+                Failure::Refusal(Refusal { ref reason, .. })
+                    if reason == "stream::subject-authority"
+            ));
+        }
         drop(source);
         bus.shutdown().expect("bus shuts down");
     }

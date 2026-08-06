@@ -13,7 +13,7 @@ fn partial_and_reordered_vectors_cannot_decode_as_complete() {
 
     assert_refusals(vec![
         (
-            "complete battery report requires 26 results, received 25",
+            "complete battery report requires 27 results, received 26",
             mutate(&value, |candidate| {
                 candidate["results"]
                     .as_array_mut()
@@ -187,20 +187,20 @@ fn decoded_family_evidence_cannot_be_forged() {
         (
             "invalid metric evidence",
             mutate(&value, |candidate| {
-                candidate["results"][17]["evidence"]["report"]["metrics"] = serde_json::json!([])
+                candidate["results"][18]["evidence"]["report"]["metrics"] = serde_json::json!([])
             }),
         ),
         (
             "invalid metric evidence",
             mutate(&value, |candidate| {
-                candidate["results"][17]["evidence"]["report"]["metrics"][0]["state"]["measurement"]
+                candidate["results"][18]["evidence"]["report"]["metrics"][0]["state"]["measurement"]
                     ["value"] = serde_json::json!(999)
             }),
         ),
         (
             "invalid hygiene evidence",
             mutate(&value, |candidate| {
-                candidate["results"][21]["evidence"]["report"]["evidence"] = serde_json::json!([])
+                candidate["results"][22]["evidence"]["report"]["evidence"] = serde_json::json!([])
             }),
         ),
         (
@@ -225,13 +225,13 @@ fn admitted_skip_provenance_and_reason_cannot_be_forged() {
         (
             "arm provenance disagrees with its declaration-owned skip evidence",
             mutate(&value, |candidate| {
-                candidate["results"][21]["provenance"]["source"] = serde_json::json!("forged")
+                candidate["results"][22]["provenance"]["source"] = serde_json::json!("forged")
             }),
         ),
         (
             "arm state or reason disagrees with its retained family evidence",
             mutate(&value, |candidate| {
-                candidate["results"][22]["reason"] = serde_json::json!("forged exclusion")
+                candidate["results"][23]["reason"] = serde_json::json!("forged exclusion")
             }),
         ),
     ]);
@@ -240,8 +240,8 @@ fn admitted_skip_provenance_and_reason_cannot_be_forged() {
 #[test]
 fn metric_arms_cannot_assemble_mixed_terminal_evidence() {
     let fixture = Fixture::new();
-    let ArmEvidence::Metrics { report } = fixtures::passing(&fixture.source)[17].clone() else {
-        panic!("the eighteenth compiled arm retains structural metric evidence")
+    let ArmEvidence::Metrics { report } = fixtures::passing(&fixture.source)[18].clone() else {
+        panic!("the nineteenth compiled arm retains structural metric evidence")
     };
     let mut metrics = report.metrics().to_vec();
     metrics[1] = crate::metrics::MetricEvidence::new(

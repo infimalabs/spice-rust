@@ -97,6 +97,7 @@ mod tests {
                     | GateId::Taste
                     | GateId::JavascriptUnused
                     | GateId::CsharpUnusedCandidates
+                    | GateId::RustTypecheck
                     | GateId::CanvasWebTypecheck
                     | GateId::EnvPolicy
                     | GateId::EnvNameLedger

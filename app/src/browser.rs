@@ -122,6 +122,12 @@ enum ClientAction {
         rule: wire::Name,
         answer: Answer,
     },
+    /// Direction the operator aimed at one seated lane from its tile.
+    ///
+    /// The occupant and epoch travel with the message because the residency
+    /// witness the resident re-proves is built from the same inbox snapshot the
+    /// tile was drawn from. Recomputing them at the socket would let the tile
+    /// name one lane while the command named another.
     Steer {
         lane: CanonicalUuid,
         occupant: CanonicalUuid,
@@ -139,7 +145,13 @@ enum PendingKind {
     Consent,
     Policy,
     LaneSeat,
-    SteerSend,
+    /// Direction in flight, carrying the lane it was aimed at.
+    ///
+    /// The receipt names that lane, and the only moment it is known for certain
+    /// is the send: by the time the answer lands the selection may have moved,
+    /// so reading it back off the surface would attribute the receipt to
+    /// whichever lane the operator is looking at now.
+    Steer(CanonicalUuid),
     Note(TaskHandle),
     ConsentDecision,
 }
@@ -259,7 +271,7 @@ fn use_agent_controls(
     let seat_notice = use_state(Notice::none);
     view::AgentControls {
         submit_seat: seat_submit(
-            sender.clone(),
+            sender,
             seat_worktree.clone(),
             seat_vendor.clone(),
             seat_life.clone(),
@@ -676,7 +688,7 @@ async fn dispatch_action(
                 principal,
                 writer,
                 pending,
-                PendingKind::SteerSend,
+                PendingKind::Steer(lane),
                 CommandKind::SteerSend,
                 expected,
                 body,
@@ -986,10 +998,10 @@ fn handle_incoming(
             runtime.apply_lane_change(&admitted);
             true
         }
-        PendingKind::SteerSend => {
+        PendingKind::Steer(lane) => {
             let admitted: crate::Admitted<Response<wire::intent::DirectiveAnswer>> =
                 admit_response(session, bytes)?;
-            runtime.apply_steer(&admitted);
+            runtime.apply_steer(&admitted, lane);
             true
         }
         PendingKind::Note(task) => {

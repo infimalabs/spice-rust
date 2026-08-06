@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
@@ -113,7 +113,7 @@ impl Drop for Fixture {
     }
 }
 
-/// The ignore rule every fixture repository owes the stage [`Fixture`] installs.
+/// The ignore rule every fixture repository owes its generated app store.
 ///
 /// A resident refuses to start without that stage, so every fixture root holds
 /// one whether or not the case under test is about the app. It is built output
@@ -122,7 +122,7 @@ impl Drop for Fixture {
 /// clean tree for unrelated reasons. Derived from the constant the stage is
 /// written from so the two cannot come to name different directories.
 fn app_stage_ignore() -> String {
-    format!("/{}/\n", canvas::LOCAL_STAGE)
+    format!("/{}/\n", canvas::APP_STAGE)
 }
 
 /// Assert a freshly seeded fixture repository sees nothing but what it committed.
@@ -174,6 +174,25 @@ impl RunningResident {
 
     fn spawn_text(fixture: &Fixture) -> Self {
         Self::spawn_with_form(fixture, Path::new(env!("CARGO_BIN_EXE_spice")), None, false)
+    }
+
+    fn spawn_text_at(fixture: &Fixture, listen: SocketAddr) -> Self {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+        command
+            .args([
+                "up",
+                "--host",
+                &listen.ip().to_string(),
+                "--port",
+                &listen.port().to_string(),
+            ])
+            .current_dir(&fixture.root)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = command
+            .spawn()
+            .expect("foreground resident launches at an explicit address");
+        Self { child: Some(child) }
     }
 
     fn spawn_with_form(
@@ -228,6 +247,27 @@ impl RunningResident {
                 );
             }
         }
+    }
+
+    fn read_stdout_line(&mut self) -> String {
+        let child = self.child.as_mut().expect("resident child");
+        let stdout = child.stdout.take().expect("resident stdout is piped");
+        let (sender, receiver) = mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let mut stdout = BufReader::new(stdout);
+            let mut line = String::new();
+            let read = stdout.read_line(&mut line);
+            let _ = sender.send((read, line, stdout.into_inner()));
+        });
+        let received = receiver.recv_timeout(CLIENT_DEADLINE_BOUND);
+        if received.is_err() {
+            let _ = child.kill();
+        }
+        let (read, line, stdout) = received.expect("resident reports its endpoint while alive");
+        reader.join().expect("resident stdout reader joins");
+        child.stdout = Some(stdout);
+        assert!(read.expect("resident stdout is readable") > 0);
+        line
     }
 
     fn wait(mut self) -> Output {

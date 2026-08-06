@@ -80,6 +80,20 @@ fn commit_stream(bus: &bus::Bus, note: &str, trust: bool) -> bus::JournalCommit 
     }
 }
 
+fn agent_message(author: u8, offset: u64, text: &str) -> wire::AgentMessage {
+    wire::AgentMessage {
+        lane: identity(0xe5),
+        author: identity(author),
+        locus: wire::MessageLocus {
+            member: 3,
+            offset,
+            length: 24,
+            event: 0,
+        },
+        text: text.to_owned(),
+    }
+}
+
 fn commit_lane_stream(
     bus: &bus::Bus,
     lane: wire::CanonicalUuid,
@@ -126,9 +140,9 @@ fn speech() -> crate::SpeechConfig {
 const FIXTURE_GENERATION: &str = "3333333333333333333333333333333333333333333333333333333333333333";
 
 fn seed_app_generation(root: &std::path::Path, label: &str) -> std::path::PathBuf {
-    let stage = root.join(crate::LOCAL_STAGE);
+    let stage = root.join(crate::APP_STAGE);
     let generation = stage
-        .join(crate::LOCAL_STAGE_GENERATIONS)
+        .join(crate::APP_STAGE_GENERATIONS)
         .join(FIXTURE_GENERATION);
     std::fs::create_dir_all(&generation).expect("fixture app generation");
     for asset in APP.assets() {
@@ -143,7 +157,7 @@ fn seed_app_generation(root: &std::path::Path, label: &str) -> std::path::PathBu
         std::fs::write(generation.join(asset.file()), bytes).expect("fixture app asset");
     }
     std::fs::write(
-        stage.join(crate::LOCAL_STAGE_CURRENT),
+        stage.join(crate::APP_STAGE_CURRENT),
         format!("{FIXTURE_GENERATION}\n"),
     )
     .expect("fixture app pointer");
@@ -421,6 +435,79 @@ async fn authenticated_socket_streams_one_bus_snapshot_updates_resume_and_typed_
             if after.seq == seq(live_cursor) && after.epoch == epoch()
     ));
     assert_socket_terminated(&mut resumed).await;
+    server_task
+        .await
+        .expect("server task joins")
+        .expect("server stops");
+    bus.shutdown().expect("bus shuts down");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn authenticated_socket_reads_and_pushes_agent_messages_with_each_author() {
+    let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
+        .expect("bus starts");
+    commit_stream(&bus, "message horizon", false);
+    let capabilities = Capabilities::default();
+    capabilities
+        .insert(operator(), wire::Actor::Operator)
+        .expect("operator capability");
+    let (server, _control) = Server::bind_streaming(
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
+        epoch(),
+        capabilities,
+        app(),
+        speech(),
+        bus.reader(),
+        8,
+    )
+    .await
+    .expect("streaming server binds");
+    let publisher = server
+        .message_publisher()
+        .expect("streaming server publishes messages");
+    let first = agent_message(0xe6, 10, "first author");
+    let second = agent_message(0xe7, 40, "second author");
+    assert!(publisher.publish(first.clone()).expect("first publishes"));
+    assert!(publisher.publish(second.clone()).expect("second publishes"));
+    let address = server.local_addr().expect("address");
+    let (shutdown, stopped) = oneshot::channel();
+    let server_task = tokio::spawn(server.up_until(async move {
+        let _ = stopped.await;
+    }));
+    let (mut socket, _) = authenticate(address, operator(), epoch()).await;
+    let subscription = identity(0xd0);
+    send_client(
+        &mut socket,
+        &wire::StreamRequest::Subscribe {
+            v: wire::WireVersion::CURRENT,
+            id: subscription,
+            epoch: epoch(),
+            subjects: vec![wire::ViewSubject::Messages],
+            after: None,
+        },
+    )
+    .await;
+    let initial = stream_frame(&mut socket).await;
+    assert!(matches!(
+        initial,
+        wire::StreamFrame::Messages { limit: 256, ref messages, .. }
+            if messages == &[first, second]
+    ));
+
+    let third = agent_message(0xe8, 70, "third author");
+    assert!(publisher.publish(third.clone()).expect("third publishes"));
+    assert!(matches!(
+        stream_frame(&mut socket).await,
+        wire::StreamFrame::Message { id, message, .. }
+            if id == subscription && message == third
+    ));
+
+    shutdown.send(()).expect("shutdown signals");
+    assert!(matches!(
+        stream_frame(&mut socket).await,
+        wire::StreamFrame::Closing { .. }
+    ));
+    assert_socket_terminated(&mut socket).await;
     server_task
         .await
         .expect("server task joins")
@@ -823,15 +910,15 @@ async fn live_server_serves_the_lane_app_and_refuses_another_host() {
     assert!(task.await.expect_err("aborted server task").is_cancelled());
 }
 
-/// A worktree holding a complete local stage, and that stage's path.
+/// A worktree holding a complete app stage, and that stage's path.
 ///
 /// The bytes name their own file so a route served from the wrong one is
 /// visible in the assertion.
-fn local_worktree() -> (std::path::PathBuf, std::path::PathBuf) {
+fn app_worktree() -> (std::path::PathBuf, std::path::PathBuf) {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
 
     let root = std::env::temp_dir().join(format!(
-        "spice-canvas-local-app-{}-{}",
+        "spice-canvas-app-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
@@ -840,8 +927,8 @@ fn local_worktree() -> (std::path::PathBuf, std::path::PathBuf) {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn live_server_serves_a_local_stage_and_refuses_when_it_goes_away() {
-    let (root, stage) = local_worktree();
+async fn live_server_serves_an_app_stage_and_refuses_when_it_goes_away() {
+    let (root, stage) = app_worktree();
     let app = crate::AppSource::resolve(&root).expect("a complete stage resolves");
     let (server, _control) = Server::bind_with_capacity(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),

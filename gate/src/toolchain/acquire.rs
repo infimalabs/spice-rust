@@ -296,6 +296,13 @@ fn examine(
                 bounds,
                 &resolved_programs(declaration, tools),
             ),
+            GateId::RustTypecheck => analyze::rust_typecheck(
+                declaration,
+                source.root,
+                source.repository,
+                bounds,
+                &resolved_programs(declaration, tools),
+            ),
             GateId::CanvasWebTypecheck => analyze::canvas_web_typecheck(
                 declaration,
                 source.root,
@@ -436,6 +443,7 @@ pub(super) const fn owed_analyzer(id: GateId) -> Option<&'static str> {
         GateId::Formatters
         | GateId::LocalPaths
         | GateId::Taste
+        | GateId::RustTypecheck
         | GateId::CanvasWebTypecheck
         | GateId::JavascriptUnused
         | GateId::CsharpUnusedCandidates
