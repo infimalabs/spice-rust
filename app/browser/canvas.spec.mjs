@@ -10,9 +10,11 @@ import {
   assertNoDraftPreview,
   primaryDestination,
 } from "./composer-shards.mjs";
+import { assertComposerImageIndicators } from "./composer-image-indicators.mjs";
 import { assertCanvas } from "./canvas-readiness.mjs";
 import { assertAgentRenewalRequest, captureReferenceControls } from "./control-reference.mjs";
 import { assertReferenceControlStack } from "./control-stack.mjs";
+import { assertTeamMenu } from "./team-menu.mjs";
 import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
 import { assertHeadlessLaunchSites, launchBrowser } from "./headless-launch.mjs";
 import {
@@ -474,12 +476,12 @@ async function assertAgentConversation(page, fixture, worktrees) {
   return {
     lane: seated[0].lane,
     quoteLane: seated[3].lane,
-    primaryHeadings: seated.map((lane, index) => ({
-      lane: lane.lane,
-      prose: index === 1
-        ? "periodic live witness"
-        : `Canvas message reports CONTROL-1kKbC3j4 from ${basename(teamWorktrees[index])}`,
-    })),
+    primaryHeadings: seated.map((lane, index) => {
+      let prose = `Canvas message reports CONTROL-1kKbC3j4 from ${basename(teamWorktrees[index])}`;
+      if (index === 0) prose = "newest lane prose witness";
+      if (index === 1) prose = "periodic live witness";
+      return { lane: lane.lane, prose };
+    }),
   };
 }
 
@@ -1080,19 +1082,9 @@ async function assertMosaicComposer(page, fixture, seeded) {
   await assertNoDraftPreview(lane, 2);
   await quotedComposer.getByRole("textbox").fill("canvas quote reply");
   assert.equal(await composer.getByRole("textbox").inputValue(), "");
-  const pixel = Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-    "base64",
-  );
-  await composer.locator('input[type="file"]').setInputFiles([
-    { name: "pixel.png", mimeType: "image/png", buffer: pixel },
-    { name: "pixel-copy.png", mimeType: "image/png", buffer: pixel },
-  ]);
-  const attachmentControls = composer.locator(".composer-attachment-list");
-  await attachmentControls.getByRole("img", { name: "pixel.png" }).waitFor();
-  await attachmentControls.getByRole("img", { name: "pixel-copy.png" }).waitFor();
-  // Attaching images is where a preview used to appear; the chips above are the
-  // whole of what the operator sees, and the draft stays unrendered.
+  await assertComposerImageIndicators(page, composer, ["pixel.png", "pixel-copy.png"]);
+  // Attaching images is where a preview used to appear; the heading indicators
+  // are the whole of what the operator sees, and the draft stays unrendered.
   await assertNoDraftPreview(lane, 2);
   await page.screenshot({
     path: join(artifacts, "canvas-light-mosaic-composer.png"),
@@ -1199,7 +1191,30 @@ async function assertPackedHistory(page, extent, linked = false) {
     await threadRowsLocator.count() >= minimumRows,
     linked ? "multi-link causal thread renders" : "terminal causal thread renders",
   );
-  assert.match(await thread.locator(".section-count").innerText(), /root/);
+  // The terminal label is the tail of a walk built one admitted frame at a time,
+  // not a value the row count settles. `observe_stream` inserts one CausalLink
+  // per admitted frame and the walk stops at `ChainEnd::Dangling(position)` the
+  // moment a position is missing (app/src/state.rs:351), which renders as
+  // `dangling at N` (app/src/browser/view.rs:588). Two rows can be on screen
+  // while headers below them are still in flight, so the row wait above leaves
+  // this field mid-flight: it was observed once reading `dangling at 14` on a
+  // tree that re-ran green, and CAUSAL_HEADERS is 1024, so position 14 was never
+  // eviction.
+  //
+  // The rejection is dropped on purpose. This wait exists to let the walk root;
+  // the assertion below is what must fail, because it names the label actually
+  // on screen -- `dangling at 14`, or `cycle at N` -- where a thrown timeout
+  // would report only that something took too long.
+  const terminal = thread.locator(".section-count");
+  await waitForPage(page, "the causal walk reaches its rooted terminal", TRANSITION_MS, () => (
+    document.querySelector('[data-pane="lineage"] .section-count')?.textContent?.includes("root")
+      ?? false
+  )).catch(() => {});
+  assert.match(
+    await terminal.innerText(),
+    /root/,
+    "the causal walk reaches root before its terminal label is read",
+  );
   const threadRows = await thread.locator("tbody tr").allTextContents();
   if (linked) {
     assert.ok(threadRows.some((row) => !row.endsWith("root")), "causal walk includes a linked cause");
@@ -1311,6 +1326,7 @@ try {
   await assertDistinctWaitCallSites(lightPage);
   const hiddenStatusReport = await assertWaitReporting(lightPage, resident);
   Object.assign(seeded, await assertAgentConversation(lightPage, fixture, worktrees));
+  await assertTeamMenu(lightPage, fixture);
   const reference = await browser.newContext({
     colorScheme: "dark",
     viewport: { width: 1000, height: 568 },

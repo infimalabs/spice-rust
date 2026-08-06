@@ -20,11 +20,13 @@ use wire::{
 };
 
 mod launch;
+mod lineage;
 mod propose;
 mod reply;
 mod session;
 
 pub(super) use launch::{OccupantLaunchRequest, occupant_launch};
+pub(super) use lineage::configure;
 use propose::{commit_restored, propose_drain, propose_seat, propose_wake};
 use reply::{
     answer, authority_refusal, command_result, committed_lane_reply, fact_lane, lane_refusal,
@@ -245,124 +247,6 @@ pub(super) fn seat(
             compensate_seat(paths, seats, runtime, request.lane, prepared.capability);
             typed_outcome(outcome)
         }
-    }
-}
-
-/// Commit one task-subscription policy for a Canvas lineage.
-///
-/// `drain` here is a policy spelling. Occupant teardown remains exclusively
-/// owned by `lane::state { action: drain }`, so this transaction changes no
-/// seat, capability, session, occupant, or disposition field.
-pub(super) fn configure(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    seats: &Seats,
-    projects: &board::ProjectPolicy,
-    command: &wire::AdmittedCommand,
-    request: &LineageConfigure,
-) -> Outcome<CommandAnswer> {
-    let observed = match current_residency(bus, epoch) {
-        Ok(head) => head,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    let members = observed
-        .body()
-        .lanes
-        .iter()
-        .filter(|row| row.lineage_id == request.lineage_id)
-        .collect::<Vec<_>>();
-    if members.is_empty() {
-        return lane_refusal(
-            "lineage::missing",
-            Some("one current Canvas lineage".to_owned()),
-            Some(request.lineage_id.to_string()),
-            "read lane state and retry with a current lineage identity",
-        );
-    }
-    let previous = match subscription_row(observed.body(), request.lineage_id) {
-        Ok(Some(subscription)) => subscription.clone(),
-        Ok(None) => {
-            return typed_store_fault(
-                "lineage::subscription-missing",
-                "a current lineage has no task-subscription policy",
-            );
-        }
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    let manual_projects = match admit_manual_projects(projects, request.manual_projects.as_deref())
-    {
-        Ok(projects) => projects,
-        Err(outcome) => return outcome,
-    };
-    let mut next = observed.body().clone();
-    let Some(subscription) = next
-        .subscriptions
-        .iter_mut()
-        .find(|subscription| subscription.lineage_id == request.lineage_id)
-    else {
-        return typed_store_fault(
-            "lineage::subscription-missing",
-            "a current lineage lost its task-subscription policy during configuration",
-        );
-    };
-    subscription.policy = request.life;
-    subscription.auto_projects.clear();
-    if let Some(manual_projects) = manual_projects {
-        subscription.manual_projects = manual_projects;
-    }
-    let configured_manual_projects = subscription.manual_projects.clone();
-    let lane_answer = match answer(&next, None, seats) {
-        Ok(answer) => answer,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    let mut write = match write(
-        command.actor().clone(),
-        epoch,
-        Producer::ResidentRecognition,
-    ) {
-        Ok(write) => write,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    guard_residency(&mut write, &observed);
-    let fact = match write.fact(
-        wire::body::LineageConfigured {
-            lineage_id: request.lineage_id,
-            from: previous.policy,
-            life: request.life,
-            from_manual_projects: previous.manual_projects,
-            manual_projects: configured_manual_projects,
-        },
-        FactCause::Existing(observed.position()),
-    ) {
-        Ok(fact) => fact,
-        Err(error) => {
-            return typed_store_fault("lineage::fact-invalid", &error.to_string());
-        }
-    };
-    write.residency_head(fact, move |_| next);
-    if let Err(error) = write.command_result(
-        Command {
-            v: wire::WireVersion::CURRENT,
-            id: command.id(),
-            epoch: command.epoch(),
-            kind: command.kind(),
-            expected: command.expected().to_vec(),
-            body: request.clone(),
-        },
-        epoch,
-        lane_answer.clone(),
-    ) {
-        return typed_store_fault("lineage::receipt-invalid", &error.to_string());
-    }
-    match commit(bus, write) {
-        Ok(committed) => Outcome::Reply(Reply {
-            position: ReplyPosition::Committed(SeqRange {
-                first: seq(committed.first()),
-                last: seq(committed.last()),
-            }),
-            body: CommandAnswer::Lane(Box::new(lane_answer)),
-        }),
-        Err(outcome) => typed_outcome(outcome),
     }
 }
 

@@ -674,11 +674,42 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
         overflow: None,
         horizon: seq(48220),
     };
-    let mut frames = stream_data_samples(epoch, first_id, second_id, second_fact, facts, trust);
+    let activities = agent_activity_samples();
+    law(covered, "AgentMessage", &activities);
+    let mut frames = stream_data_samples(
+        epoch,
+        first_id,
+        second_id,
+        second_fact,
+        facts,
+        trust,
+        activities,
+    );
     frames.extend(stream_boundary_samples(
         epoch, next_epoch, first_id, second_id, cursor,
     ));
     law(covered, "StreamFrame", &frames);
+}
+
+/// The default prose spelling and explicit tool spelling differ by kind alone.
+fn agent_activity_samples() -> [AgentMessage; 2] {
+    let prose = AgentMessage {
+        lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163d8"),
+        author: uuid("018f82d4-6f59-7d06-92e3-bce9131163d9"),
+        locus: MessageLocus {
+            member: 1,
+            offset: 2,
+            length: 3,
+            event: 4,
+        },
+        activity: AgentActivityKind::Prose,
+        text: "visible activity".to_owned(),
+    };
+    let tool = AgentMessage {
+        activity: AgentActivityKind::Tool,
+        ..prose.clone()
+    };
+    [prose, tool]
 }
 
 fn stream_request_samples(
@@ -725,6 +756,7 @@ fn stream_data_samples(
     fact: StreamFact,
     facts: Packed<StreamFact>,
     trust: Packed<TrustView>,
+    activities: [AgentMessage; 2],
 ) -> Vec<StreamFrame> {
     vec![
         StreamFrame::Facts {
@@ -739,6 +771,13 @@ fn stream_data_samples(
             epoch,
             packed: trust,
         },
+        StreamFrame::Messages {
+            v: WireVersion::CURRENT,
+            id: first_id,
+            epoch,
+            limit: 2,
+            messages: activities.to_vec(),
+        },
         StreamFrame::Thread {
             v: WireVersion::CURRENT,
             id: second_id,
@@ -750,6 +789,12 @@ fn stream_data_samples(
             id: first_id,
             epoch,
             fact,
+        },
+        StreamFrame::Message {
+            v: WireVersion::CURRENT,
+            id: second_id,
+            epoch,
+            message: activities[1].clone(),
         },
     ]
 }

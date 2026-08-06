@@ -36,6 +36,9 @@ fn configure_subscription(
         .fact(
             wire::body::LineageConfigured {
                 lineage_id: seat.lane,
+                member: None,
+                from_lineage: None,
+                source_rekeyed_to: None,
                 from,
                 life: policy,
                 from_manual_projects,
