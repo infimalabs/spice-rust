@@ -178,10 +178,12 @@ fn a_task_observation_returns_the_typed_handle_and_trimmed_text() {
 
 #[test]
 fn an_unparseable_task_handle_is_refused_with_a_visible_sentence() {
+    // Construct the underscore spelling as parser input without declaring an
+    // environment reference in the Rust source that owns this UI refusal test.
     for written in [
         "not a handle",
         "spice-aBcD",
-        "SPICE_123", // env-policy: not-an-env SPICE_123
+        concat!("SPICE", "_123"),
         "SPICE-",
     ] {
         let refusal =

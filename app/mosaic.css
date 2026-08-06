@@ -526,7 +526,7 @@
   gap: 6px;
   min-width: 0;
 }
-.team-lifetime {
+.team-slider {
   --control-state-accent: var(--accent);
   display: grid;
   gap: 1px;
@@ -537,7 +537,7 @@
   background: var(--panel);
   cursor: ew-resize;
 }
-.team-lifetime input {
+.team-slider input {
   width: 68px;
   height: 15px;
   margin: 0;
@@ -547,7 +547,7 @@
   accent-color: var(--control-state-accent);
   cursor: ew-resize;
 }
-.team-lifetime span {
+.team-slider span {
   overflow: hidden;
   color: var(--muted);
   font: .58rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -555,17 +555,17 @@
   text-overflow: ellipsis;
   text-transform: lowercase;
 }
-.team-lifetime.armed,
+.team-slider.armed,
 .team-send.armed { --control-state-accent: var(--accent-2); }
-.team-lifetime.maxed,
+.team-slider.maxed,
 .team-send.maxed { --control-state-accent: var(--warning); }
-.team-lifetime.armed,
-.team-lifetime.maxed {
+.team-slider.armed,
+.team-slider.maxed {
   border-color: var(--control-state-accent);
   background: color-mix(in srgb, var(--control-state-accent) 13%, var(--panel));
 }
-.team-lifetime.armed span,
-.team-lifetime.maxed span { color: var(--control-state-accent); }
+.team-slider.armed span,
+.team-slider.maxed span { color: var(--control-state-accent); }
 .team-send {
   min-width: 0;
   min-height: 34px;
@@ -575,6 +575,13 @@
   background: var(--control-state-accent, var(--accent));
   color: var(--page);
   font: 650 .65rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.team-control-issue {
+  width: 76px;
+  margin: 0;
+  color: var(--danger);
+  font: .55rem/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
 }
 
 .team-activity-grid {

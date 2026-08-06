@@ -1,56 +1,15 @@
 //! Browser reducer adapting the target-neutral composer store to Yew.
+//!
+//! Lifetime and speech policy belong to `controls`; this module owns only draft
+//! state so a second local lifetime reducer cannot bypass resident authority.
 
-use std::{collections::BTreeMap, rc::Rc};
+use std::rc::Rc;
 
-use wire::CanonicalUuid;
 use wire::body::DirectiveAttachment;
 use yew::prelude::*;
 
-use super::{LineageLife, MAX_ATTACHMENTS};
+use super::MAX_ATTACHMENTS;
 use crate::composer_drafts::{ComposerDraft, DraftStore};
-
-/// Browser-local policy selections, isolated by durable lineage identity.
-///
-/// A lineage without a local selection reads the policy admitted on its host
-/// member. Once the operator changes that lineage's control, the selection is
-/// retained under only that lineage key and cannot repaint a sibling.
-#[derive(Clone, Default, PartialEq)]
-pub(in crate::browser) struct LineageLives(BTreeMap<CanonicalUuid, LineageLife>);
-
-pub(in crate::browser) enum LineageLifeAction {
-    Set {
-        lineage: CanonicalUuid,
-        life: LineageLife,
-    },
-}
-
-impl Reducible for LineageLives {
-    type Action = LineageLifeAction;
-
-    fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
-        let mut next = (*self).clone();
-        match action {
-            LineageLifeAction::Set { lineage, life } => {
-                next.0.insert(lineage, life);
-            }
-        }
-        Rc::new(next)
-    }
-}
-
-impl LineageLives {
-    pub(super) fn selected(&self, lineage: &crate::runtime::LaneRow) -> LineageLife {
-        self.0
-            .get(&lineage.lane)
-            .copied()
-            .or_else(|| {
-                lineage
-                    .host()
-                    .and_then(|member| LineageLife::from_wire(&member.life))
-            })
-            .expect("a nonempty admitted lineage has one current life policy")
-    }
-}
 
 #[derive(Clone, Default, PartialEq)]
 pub(in crate::browser) struct ComposerDrafts(pub(super) DraftStore);

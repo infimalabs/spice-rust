@@ -210,6 +210,8 @@ vocabulary! {
 
     /// A lane and its capability were created.
     LaneSeated = "lane::seated" by ResidentRecognition;
+    /// One Canvas lineage adopted a shared task-subscription life.
+    LineageConfigured = "lineage::configured" by ResidentRecognition;
     /// A selected vendor record declared the exact resumable lane session.
     LaneSessionDeclared = "lane::declared" by ResidentRecognition;
     /// An occupant became live under the lane.
