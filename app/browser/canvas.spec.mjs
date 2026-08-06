@@ -1197,16 +1197,21 @@ async function assertPackedHistory(page, extent, linked = false) {
   //
   // Keep the wait rejection: a walk that genuinely remains dangling or cyclic
   // is a defect, and neither terminal state is an acceptable substitute for a
-  // root. The exact assertion keeps the final observation equally strict.
+  // root. The rejection carries the label it found instead, because the position
+  // is the diagnosis -- reading 14 against CAUSAL_HEADERS of 1024 is what ruled
+  // eviction out above, where a bare timeout carries no position at all. That
+  // reading is the whole observation: a second read taken after the wait could
+  // only report a later frame than the one that failed, so there is none.
+  //
+  // The pane carries exactly one count, and the predicate requires that rather
+  // than assuming it: a second one would have `querySelector` silently answer
+  // for the wrong node, and the strict locator handed to `observed` reports that
+  // by name instead.
   const terminal = thread.locator(".section-count");
-  await waitForPage(page, "the causal walk reaches root", TRANSITION_MS, () => (
-    document.querySelector('[data-pane="lineage"] .section-count')?.textContent === "root"
-  ));
-  assert.equal(
-    await terminal.innerText(),
-    "root",
-    "the causal walk reaches root before its terminal label is read",
-  );
+  await waitForPage(page, "the causal walk reaches root", TRANSITION_MS, () => {
+    const counts = document.querySelectorAll('[data-pane="lineage"] .section-count');
+    return counts.length === 1 && counts[0].textContent === "root";
+  }, undefined, { observed: () => terminal.innerText() });
   const threadRows = await thread.locator("tbody tr").allTextContents();
   if (linked) {
     assert.ok(threadRows.some((row) => !row.endsWith("root")), "causal walk includes a linked cause");
