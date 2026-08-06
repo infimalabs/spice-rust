@@ -30,11 +30,22 @@ const MARKED: &str = "src/marked.rs";
 /// The prose file carrying a discouraged word, selected as changed.
 const PROSE: &str = "docs/guide.md";
 
+/// The Python sources `production_repository` commits, which this build's
+/// scanner refuses by field rather than reading with C-grammar semantics.
+///
+/// Named here rather than beside one fixture so that every fixture needing the
+/// magic arm to reach a verdict takes the same class out of the index. Any one
+/// of them left committed reports the class refusal from its own row, which is
+/// enough for the arm to fold to that refusal whatever else it measured.
+const PREDECESSOR_CLASS_SOURCES: [&str; 3] =
+    ["app/__init__.py", "app/main.py", "tests/test_main.py"];
+
 mod executor;
 mod file_shape;
 mod latch_wire;
 mod magic;
 mod manifest;
+mod merge_parents;
 mod minting;
 mod report;
 
