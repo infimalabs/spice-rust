@@ -173,6 +173,31 @@ async function stageDevelopmentApp(fixture) {
   return true;
 }
 
+/// Refuse a run whose resident is not serving the app this spec staged.
+///
+/// The bytes the browser executes come from one of two places and this spec
+/// chooses which above, but neither choice is self-enforcing. The embedded
+/// branch is served out of `target/debug/spice`, which carries whatever
+/// `dist/stage` held when it was last linked -- so restaging the app without
+/// relinking drives every assertion below against the previous bundle. That
+/// failure does not announce itself: it surfaces as a timeout in whichever
+/// feature moved, ten seconds of waiting for an element the served app has no
+/// code to render, and it reads exactly like a regression in the change that
+/// actually fixed it. Comparing one served asset against the file it must have
+/// come from turns a whole debugging session into a refusal naming the command.
+async function assertServedApp(endpoint, development) {
+  const expected = join(root, development ? "dist/stage-dev" : "dist/stage", "app_bg.wasm");
+  const response = await fetch(new URL("/app_bg.wasm", endpoint));
+  assert.equal(response.status, 200, "the resident serves the app it was asked for");
+  const served = Buffer.from(await response.arrayBuffer());
+  const wanted = await readFile(expected);
+  assert.ok(
+    served.equals(wanted),
+    `the resident serves ${served.length} bytes of app wasm, but ${expected} is ${wanted.length}`
+      + ` bytes: run cargo build -p spice to relink the binary this spec drives`,
+  );
+}
+
 async function configureFixture(fixture) {
   const vendor = join(fixture, "fake-claude");
   await writeFile(vendor, [
@@ -773,6 +798,7 @@ let resident;
 let browser;
 try {
   resident = await startResident(fixture);
+  await assertServedApp(resident.discovery.endpoint, development);
   const seeded = await seedAuthority(fixture);
   browser = await chromium.launch({ headless: true });
 
