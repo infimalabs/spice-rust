@@ -79,6 +79,7 @@ const CASES: &[Case] = &[
         "board handout",
         &["board", "handout", "readiness-handout.json"],
     ),
+    case("task status", &["task", "status"]),
     case("task next", &["task", "next"]),
     case("task reclaim", &["task", "reclaim"]),
     case("task add", &["task", "add", "readiness task"]),

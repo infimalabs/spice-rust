@@ -267,6 +267,57 @@ mod tests {
         clean(&root, bus);
     }
 
+    /// A held task is named on the claim line and counted as active.
+    ///
+    /// The snapshot above reports every claim field at rest, where a wrong
+    /// predicate and a right one agree: with nothing claimed, `claim -` and
+    /// `active 0` are what any filter produces. Bootstrap step three exists to
+    /// tell an agent which handle it already holds, so the reading that matters
+    /// is the one taken while a claim is live, and it has to distinguish the
+    /// principal asking from the other lanes holding rows of their own.
+    #[test]
+    fn task_status_names_the_claim_the_asking_principal_holds() {
+        let (root, bus, epoch, seats) = fixture("task-bootstrap-claim", 2);
+        let held = "CLI-held00001"
+            .parse::<TaskHandle>()
+            .expect("fixture held handle");
+        let lane = Actor::Lane(seats[0].lane);
+        add(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "CLI-held00001",
+            "Hold one native bootstrap row",
+            Some("todo"),
+        );
+        let available = board(&bus, epoch, lane.clone());
+        assert_committed(issue(
+            &bus,
+            epoch,
+            lane.clone(),
+            CommandKind::ClaimWin,
+            claim_expected(&available, &held, &seats[0]),
+            &ClaimWin {
+                rule: "next".parse().expect("allocator rule"),
+            },
+        ));
+
+        let holder = task_status(&board(&bus, epoch, lane)).expect("holder reads status");
+        assert!(
+            holder.lines().any(|line| line == "claim CLI-held00001"),
+            "{holder}"
+        );
+        assert!(holder.lines().any(|line| line == "active 1"), "{holder}");
+
+        // A peer's claim is still active work on the board, but it is not this
+        // principal's, so the same row has to count without being named.
+        let other = task_status(&board(&bus, epoch, Actor::Lane(seats[1].lane)))
+            .expect("peer reads status");
+        assert!(other.lines().any(|line| line == "claim -"), "{other}");
+        assert!(other.lines().any(|line| line == "active 1"), "{other}");
+        clean(&root, bus);
+    }
+
     #[test]
     fn current_board_edits_are_guarded_deterministic_and_render_form_invariant() {
         let (root, bus, epoch, seats) = fixture("edits", 1);
