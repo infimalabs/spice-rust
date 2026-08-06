@@ -22,6 +22,11 @@ struct SurfaceConfig {
     projects: board::ProjectPolicy,
 }
 
+struct SurfaceLaunch<'a> {
+    listen: SocketAddr,
+    announcement: &'a mut dyn io::Write,
+}
+
 // Runtime policy and trust identity are projections of this one captured generation.
 struct StartupSurface {
     config: SurfaceConfig,
@@ -189,7 +194,7 @@ const DEFAULT_LISTEN: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOS
 pub(crate) const EPHEMERAL_LOOPBACK: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
 
-pub(crate) fn up(leaf: &clap::ArgMatches) -> Outcome<()> {
+pub(crate) fn up(leaf: &clap::ArgMatches, announcement: &mut dyn io::Write) -> Outcome<()> {
     let listen = match requested_listen(leaf) {
         Ok(listen) => listen,
         Err(outcome) => return outcome,
@@ -198,7 +203,7 @@ pub(crate) fn up(leaf: &clap::ArgMatches) -> Outcome<()> {
         Ok(current) => current,
         Err(error) => return environment_fault("resident::cwd-unavailable", &error.to_string()),
     };
-    up_from(&current, listen)
+    up_from_with(&current, listen, announcement)
 }
 
 /// The address `--host` and `--port` asked for, each defaulted on its own.
@@ -233,6 +238,14 @@ fn listen_refusal(reason: &str, expected: &str, observed: &str) -> Outcome<()> {
 }
 
 pub(crate) fn up_from(current: &Path, listen: SocketAddr) -> Outcome<()> {
+    up_from_with(current, listen, &mut io::sink())
+}
+
+fn up_from_with(
+    current: &Path,
+    listen: SocketAddr,
+    announcement: &mut dyn io::Write,
+) -> Outcome<()> {
     let repository = match Repository::discover(current) {
         Ok(repository) => repository,
         Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
@@ -293,9 +306,12 @@ pub(crate) fn up_from(current: &Path, listen: SocketAddr) -> Outcome<()> {
             &repository,
             &paths,
             epoch,
-            listen,
             &startup_surface.config,
             &mut seats,
+            SurfaceLaunch {
+                listen,
+                announcement,
+            },
         )),
         Err(error) => Err(environment_fault(
             "resident::runtime-failed",
@@ -539,19 +555,26 @@ async fn run_surface(
     repository: &Repository,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
-    listen: SocketAddr,
     config: &SurfaceConfig,
     seats: &mut Seats,
+    launch: SurfaceLaunch<'_>,
 ) -> CommandResult<()> {
     let operator = new_uuid();
     let residency = current_residency(bus, epoch)?;
     let capabilities = surface_capabilities(operator, residency.body())?;
     let timer_commits = bus.reader().subscribe();
     let timers = timers::Runtime::start(config.projects.clone())?;
+    // Settled before the listener exists, so a local stage that cannot serve
+    // the whole app stops the resident with its own name rather than turning
+    // into a page the operator has to diagnose from the browser.
+    let app = canvas::AppSource::resolve(&paths.worktree)
+        .map_err(|error| environment_fault("canvas::app-source-invalid", &error.to_string()))?;
+    let app_description = app.to_string();
     let (server, control) = canvas::axum::Server::bind_streaming(
-        listen,
+        launch.listen,
         epoch,
         capabilities.clone(),
+        app,
         config.speech.clone(),
         bus.reader(),
         config.canvas.rows(),
@@ -563,7 +586,7 @@ async fn run_surface(
     .map_err(|error| {
         environment_fault(
             "canvas::bind-failed",
-            &format!("listening on {listen} failed: {error}"),
+            &format!("listening on {} failed: {error}", launch.listen),
         )
     })?;
     let discovery = server
@@ -582,6 +605,8 @@ async fn run_surface(
     let server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;
     }));
+    let _ = writeln!(launch.announcement, "canvas app source: {app_description}");
+    let _ = launch.announcement.flush();
     let capture::Channels {
         reporter,
         records,

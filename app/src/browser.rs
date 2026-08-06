@@ -9,6 +9,7 @@ use gloo_net::websocket::futures::WebSocket;
 use gloo_net::websocket::{Message, WebSocketError};
 use gloo_timers::future::TimeoutFuture;
 use serde::{Deserialize, Serialize};
+use wasm_bindgen::JsCast as _;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use wire::intent::{

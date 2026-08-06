@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
 use std::io::{self, Write};
@@ -11,28 +12,50 @@ static APP_STYLESHEET: &[u8] = include_bytes!("../../dist/stage/style.css");
 static APP_WASM: &[u8] = include_bytes!("../../dist/stage/app_bg.wasm");
 
 static APP_ASSETS: [EmbeddedAsset; 4] = [
-    EmbeddedAsset::new("/", APP_HTML, "text/html; charset=utf-8"),
+    EmbeddedAsset::new("/", "canvas-app.html", APP_HTML, "text/html; charset=utf-8"),
     EmbeddedAsset::new(
         "/app.module",
+        "app.module",
         APP_JAVASCRIPT,
         "text/javascript; charset=utf-8",
     ),
-    EmbeddedAsset::new("/style.css", APP_STYLESHEET, "text/css; charset=utf-8"),
-    EmbeddedAsset::new("/app_bg.wasm", APP_WASM, "application/wasm"),
+    EmbeddedAsset::new(
+        "/style.css",
+        "style.css",
+        APP_STYLESHEET,
+        "text/css; charset=utf-8",
+    ),
+    EmbeddedAsset::new("/app_bg.wasm", "app_bg.wasm", APP_WASM, "application/wasm"),
 ];
+
+/// Where a locally built app stage is read from, relative to the worktree.
+///
+/// `dist/stage` beside it is a committed build product only the sealed Linux
+/// image may write, because Cargo folds the host triple into `-Cmetadata` and
+/// no other environment can reproduce those bytes. This directory is the
+/// untracked neighbour that any host may write, so a lane can see an app edit
+/// without a round trip through that image.
+pub const DEV_STAGE: &str = "dist/stage-dev";
 
 /// One exact browser asset compiled into the native canvas.
 #[derive(Clone, Copy)]
 pub struct EmbeddedAsset {
     path: &'static str,
+    file: &'static str,
     bytes: &'static [u8],
     content_type: &'static str,
 }
 
 impl EmbeddedAsset {
-    const fn new(path: &'static str, bytes: &'static [u8], content_type: &'static str) -> Self {
+    const fn new(
+        path: &'static str,
+        file: &'static str,
+        bytes: &'static [u8],
+        content_type: &'static str,
+    ) -> Self {
         Self {
             path,
+            file,
             bytes,
             content_type,
         }
@@ -41,6 +64,15 @@ impl EmbeddedAsset {
     #[must_use]
     pub const fn path(self) -> &'static str {
         self.path
+    }
+
+    /// The staged file this route is served from, under either source.
+    ///
+    /// One inventory names both, so a directory stage cannot be served from a
+    /// file name the embedded build never had.
+    #[must_use]
+    pub const fn file(self) -> &'static str {
+        self.file
     }
 
     #[must_use]
@@ -121,6 +153,179 @@ impl fmt::Debug for EmbeddedApp {
             .field("assets", &self.assets)
             .field("digest", &self.digest())
             .finish()
+    }
+}
+
+/// Where one canvas generation reads the browser app it serves.
+///
+/// Serving is a decision this value settles once, at startup, rather than a
+/// compile-time alternative: both answers come out of [`AppSource::resolve`],
+/// which reads the worktree it is handed, so a lane and a release differ in
+/// what that call returns and not in which code was compiled.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AppSource {
+    /// The exact bytes this binary was compiled with.
+    Embedded,
+    /// A locally built stage, re-read from disk on every request.
+    Directory(PathBuf),
+}
+
+impl AppSource {
+    /// Decide which app a canvas rooted at `worktree` serves.
+    ///
+    /// A worktree with no [`DEV_STAGE`] directory serves the embedded bytes,
+    /// which is every release and every lane that has not built one. A
+    /// directory that exists is taken to be what the operator meant, so one
+    /// that cannot serve the whole app refuses here rather than answering some
+    /// routes from a local build and the rest from the compiled bytes -- a
+    /// mixture is the one outcome nobody could have asked for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppSourceError::Incomplete`] naming every missing file when
+    /// the directory exists without the full app.
+    pub fn resolve(worktree: &Path) -> Result<Self, AppSourceError> {
+        let directory = worktree.join(DEV_STAGE);
+        if !directory.is_dir() {
+            return Ok(Self::Embedded);
+        }
+        let missing = EMBEDDED_APP
+            .assets()
+            .iter()
+            .map(|asset| asset.file())
+            .filter(|file| !directory.join(file).is_file())
+            .collect::<Vec<_>>();
+        if missing.is_empty() {
+            return Ok(Self::Directory(directory));
+        }
+        Err(AppSourceError::Incomplete { directory, missing })
+    }
+
+    /// Serve one exact route. Unknown paths have no shell fallback.
+    ///
+    /// The directory answer is read per request rather than at startup, so an
+    /// app rebuilt underneath a running canvas is served on the next reload
+    /// without the resident being restarted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppSourceError::Unreadable`] when a directory stage named a
+    /// file at startup that cannot be read now.
+    pub fn served(&self, route: &str) -> Result<Option<ServedAsset>, AppSourceError> {
+        let Some(asset) = EMBEDDED_APP.asset(route) else {
+            return Ok(None);
+        };
+        let bytes = match self {
+            Self::Embedded => Cow::Borrowed(asset.bytes()),
+            Self::Directory(directory) => {
+                let path = directory.join(asset.file());
+                Cow::Owned(
+                    std::fs::read(&path)
+                        .map_err(|source| AppSourceError::Unreadable { path, source })?,
+                )
+            }
+        };
+        Ok(Some(ServedAsset {
+            bytes,
+            content_type: asset.content_type(),
+        }))
+    }
+}
+
+impl fmt::Display for AppSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Embedded => formatter.write_str("compiled app"),
+            Self::Directory(directory) => {
+                write!(formatter, "local app at {}", directory.display())
+            }
+        }
+    }
+}
+
+/// One asset resolved for one request, from whichever source served it.
+pub struct ServedAsset {
+    bytes: Cow<'static, [u8]>,
+    content_type: &'static str,
+}
+
+impl ServedAsset {
+    /// Media type of the route that produced these bytes.
+    #[must_use]
+    pub const fn content_type(&self) -> &'static str {
+        self.content_type
+    }
+
+    /// Content identity under the domain the distribution stage uses.
+    #[must_use]
+    pub fn digest(&self) -> wire::Digest {
+        wire::Digest::compute(wire::Domain::DistArtifact, &self.bytes)
+    }
+
+    /// The bytes themselves, still borrowed when they were compiled in.
+    #[must_use]
+    pub fn into_bytes(self) -> Cow<'static, [u8]> {
+        self.bytes
+    }
+}
+
+impl fmt::Debug for ServedAsset {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ServedAsset")
+            .field("bytes", &self.bytes.len())
+            .field("content_type", &self.content_type)
+            .field("digest", &self.digest())
+            .finish()
+    }
+}
+
+/// Why a canvas could not settle or serve its app source.
+#[derive(Debug)]
+pub enum AppSourceError {
+    /// A local stage directory exists without the whole app in it.
+    Incomplete {
+        /// The directory that was read.
+        directory: PathBuf,
+        /// Every staged file it does not hold.
+        missing: Vec<&'static str>,
+    },
+    /// A file the directory named at startup cannot be read now.
+    Unreadable {
+        /// Exact path that failed.
+        path: PathBuf,
+        /// Underlying failure.
+        source: io::Error,
+    },
+}
+
+impl fmt::Display for AppSourceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Incomplete { directory, missing } => write!(
+                formatter,
+                "the local app stage {} is missing {}; build it with cargo xtask dev-app \
+                 or remove the directory to serve the compiled app",
+                directory.display(),
+                missing.join(", ")
+            ),
+            Self::Unreadable { path, source } => {
+                write!(
+                    formatter,
+                    "cannot read staged app {}: {source}",
+                    path.display()
+                )
+            }
+        }
+    }
+}
+
+impl Error for AppSourceError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Incomplete { .. } => None,
+            Self::Unreadable { source, .. } => Some(source),
+        }
     }
 }
 
@@ -273,6 +478,158 @@ mod tests {
             String::from_utf8_lossy(EMBEDDED_APP.bytes()).contains("/app_bg.wasm"),
             "staged HTML does not load the embedded Wasm"
         );
+    }
+
+    /// A worktree with nothing in it yet.
+    fn worktree() -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "spice-canvas-app-source-{}-{}",
+            std::process::id(),
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).expect("fixture worktree");
+        root
+    }
+
+    /// Fill that worktree's development stage with exactly the named files.
+    fn staged(root: &Path, files: &[(&str, Vec<u8>)]) -> PathBuf {
+        let stage = root.join(DEV_STAGE);
+        fs::create_dir_all(&stage).expect("fixture stage");
+        for (file, bytes) in files {
+            fs::write(stage.join(file), bytes).expect("fixture asset");
+        }
+        stage
+    }
+
+    /// Bytes for every staged file, each naming itself, so no route can be
+    /// served from another route's file without the assertion seeing it.
+    fn local_app() -> Vec<(&'static str, Vec<u8>)> {
+        EMBEDDED_APP
+            .assets()
+            .iter()
+            .map(|asset| {
+                (
+                    asset.file(),
+                    format!("locally built {}", asset.file()).into_bytes(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_worktree_without_a_local_stage_serves_what_was_compiled_in() {
+        let root = worktree();
+
+        let source = AppSource::resolve(&root).expect("an absent stage resolves");
+
+        assert_eq!(source, AppSource::Embedded);
+        assert_eq!(source.to_string(), "compiled app");
+        let served = source
+            .served("/")
+            .expect("compiled bytes are always readable")
+            .expect("the root route is served");
+        assert_eq!(served.content_type(), "text/html; charset=utf-8");
+        assert_eq!(served.into_bytes().as_ref(), EMBEDDED_APP.bytes());
+        assert!(
+            source
+                .served("/missing")
+                .expect("unknown routes are readable")
+                .is_none(),
+            "an unknown route gained a shell fallback"
+        );
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn a_complete_local_stage_is_read_again_on_every_request() {
+        let root = worktree();
+        let stage = staged(&root, &local_app());
+
+        let source = AppSource::resolve(&root).expect("a complete stage resolves");
+
+        assert_eq!(source, AppSource::Directory(stage.clone()));
+        assert_eq!(
+            source.to_string(),
+            format!("local app at {}", stage.display())
+        );
+        let served = source
+            .served("/")
+            .expect("staged files are readable")
+            .expect("the root route is served");
+        assert_eq!(served.content_type(), "text/html; charset=utf-8");
+        assert_eq!(
+            served.into_bytes().as_ref(),
+            b"locally built canvas-app.html"
+        );
+        let wasm = source
+            .served("/app_bg.wasm")
+            .expect("staged files are readable")
+            .expect("the wasm route is served");
+        assert_eq!(wasm.content_type(), "application/wasm");
+        assert_eq!(wasm.into_bytes().as_ref(), b"locally built app_bg.wasm");
+
+        // The operator rebuilds under a canvas that is already listening: the
+        // next request has to carry the new bytes, because nothing resolves
+        // the source a second time.
+        fs::write(stage.join("canvas-app.html"), b"rebuilt").expect("fixture rebuild");
+
+        let served = source
+            .served("/")
+            .expect("staged files are readable")
+            .expect("the root route is served");
+        assert_eq!(
+            served.digest(),
+            wire::Digest::compute(wire::Domain::DistArtifact, b"rebuilt")
+        );
+        assert_eq!(served.into_bytes().as_ref(), b"rebuilt");
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn a_local_stage_missing_files_refuses_rather_than_mixing_sources() {
+        let root = worktree();
+        let whole = local_app();
+        let stage = staged(&root, &whole[..2]);
+
+        let error = AppSource::resolve(&root).expect_err("a partial stage refuses");
+
+        let AppSourceError::Incomplete { directory, missing } = &error else {
+            panic!("a partial stage refused as {error:?}");
+        };
+        assert_eq!(directory, &stage);
+        assert_eq!(missing, &["style.css", "app_bg.wasm"]);
+        let message = error.to_string();
+        assert!(
+            message.contains("style.css") && message.contains("app_bg.wasm"),
+            "the refusal does not name what is missing: {message}"
+        );
+        assert!(
+            message.contains("cargo xtask dev-app"),
+            "the refusal does not say how to build the stage: {message}"
+        );
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn a_staged_file_lost_after_startup_names_itself() {
+        let root = worktree();
+        let stage = staged(&root, &local_app());
+        let source = AppSource::resolve(&root).expect("a complete stage resolves");
+
+        fs::remove_file(stage.join("style.css")).expect("fixture removes one staged file");
+
+        let error = source
+            .served("/style.css")
+            .expect_err("a vanished staged file refuses");
+        let AppSourceError::Unreadable { path, .. } = &error else {
+            panic!("a vanished staged file refused as {error:?}");
+        };
+        assert_eq!(path, &stage.join("style.css"));
+        assert!(
+            source.served("/").is_ok(),
+            "one unreadable file took the routes that are still there with it"
+        );
+        fs::remove_dir_all(root).expect("fixture cleanup");
     }
 
     #[test]

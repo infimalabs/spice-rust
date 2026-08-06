@@ -379,26 +379,183 @@ fn render_conversation_heading(selected: Option<&crate::runtime::LaneRow>) -> Ht
 }
 
 fn render_inbox(pending: &[wire::intent::PendingDirective]) -> Html {
+    html! { <MosaicInbox pending={pending.to_vec()} /> }
+}
+
+#[derive(Properties, PartialEq)]
+struct MosaicInboxProps {
+    pending: Vec<wire::intent::PendingDirective>,
+}
+
+#[function_component(MosaicInbox)]
+fn mosaic_inbox(properties: &MosaicInboxProps) -> Html {
+    let host = use_node_ref();
+    let width = use_element_width(host.clone());
+    let geometry = crate::mosaic::Geometry::new(16.0, *width);
+    let candidate_sets = properties
+        .pending
+        .iter()
+        .map(|directive| message_candidates(directive, &geometry))
+        .collect::<Vec<_>>();
+    let cards = crate::mosaic::pack(&candidate_sets, crate::mosaic::TRACK_COUNT);
+    let (max_row, _) = crate::mosaic::extent(&cards);
+    use_scroll_compensation(
+        host.clone(),
+        max_row,
+        geometry.module,
+        (*width).round() as i32,
+    );
     html! {
-        <div class="conversation-feed" aria-live="polite">
-            if pending.is_empty() {
+        <div
+            ref={host}
+            class={classes!("conversation-feed", (!properties.pending.is_empty()).then_some("mosaic-feed"))}
+            aria-live="polite"
+            data-lanes={geometry.lane_count.to_string()}
+        >
+            if properties.pending.is_empty() {
                 <div class="conversation-empty">
                     <strong>{"Inbox clear"}</strong>
                     <p>{"Pending direction and acknowledgement state appear here."}</p>
                 </div>
             } else {
-                {for pending.iter().map(|directive| html! {
-                    <article class="message outgoing">
-                        <div class="message-meta">
-                            <strong>{"You"}</strong>
-                            <span>{format!("{} / pending", directive.key)}</span>
-                        </div>
-                        <p>{directive.text.clone()}</p>
-                    </article>
+                {for properties.pending.iter().zip(cards.iter()).map(|pair| {
+                    render_mosaic_card(pair, max_row)
                 })}
             }
         </div>
     }
+}
+
+fn message_candidates(
+    directive: &wire::intent::PendingDirective,
+    geometry: &crate::mosaic::Geometry,
+) -> Vec<crate::mosaic::Candidate> {
+    crate::mosaic::span_candidates(geometry, |span| {
+        let width = f64::from(geometry.card_width(0, span).max(160));
+        let characters_per_line = (width / 7.2).floor().max(18.0) as usize;
+        let text_lines = directive
+            .text
+            .lines()
+            .map(|line| line.chars().count().max(1).div_ceil(characters_per_line))
+            .sum::<usize>()
+            .max(1);
+        let attachment_height = directive
+            .attachments
+            .iter()
+            .map(|attachment| {
+                if attachment.content_type.starts_with("image/") {
+                    crate::mosaic::Reservation::Image.pixels(16.0) + 10.0
+                } else {
+                    42.0
+                }
+            })
+            .sum::<f64>();
+        54.0 + text_lines as f64 * 19.0 + attachment_height
+    })
+}
+
+fn render_mosaic_card(
+    (directive, card): (&wire::intent::PendingDirective, &crate::mosaic::Card),
+    max_row: i32,
+) -> Html {
+    let state = card.lifecycle.as_str();
+    html! {
+        <article
+            class={classes!("message", "outgoing", "mosaic-card", state)}
+            data-state={state}
+            data-track={card.track.to_string()}
+            data-span={card.span.to_string()}
+            data-base={card.base.to_string()}
+            data-row={crate::mosaic::css_row_start(card, max_row).to_string()}
+            data-rows={card.rows.to_string()}
+        >
+            <div class="message-meta">
+                <strong>{"You"}</strong>
+                <span>{format!("{} / pending", directive.key)}</span>
+            </div>
+            <p>{directive.text.clone()}</p>
+            {render_attachments(&directive.attachments)}
+        </article>
+    }
+}
+
+fn render_attachments(attachments: &[wire::body::DirectiveAttachment]) -> Html {
+    if attachments.is_empty() {
+        return Html::default();
+    }
+    html! {
+        <div class="message-attachments">
+            {for attachments.iter().map(|attachment| {
+                if attachment.content_type.starts_with("image/") {
+                    html! {
+                        <figure>
+                            <img src={attachment.data_url.clone()} alt={attachment.name.clone()} />
+                            <figcaption>{attachment.name.clone()}</figcaption>
+                        </figure>
+                    }
+                } else {
+                    html! { <span class="message-attachment">{attachment.name.clone()}</span> }
+                }
+            })}
+        </div>
+    }
+}
+
+#[hook]
+fn use_element_width(host: NodeRef) -> UseStateHandle<f64> {
+    let width = use_state_eq(|| 0.0);
+    {
+        let width = width.clone();
+        use_effect_with(host, move |host| {
+            let registration = host.cast::<web_sys::Element>().and_then(|element| {
+                width.set(f64::from(element.client_width()));
+                let observed = element.clone();
+                let width = width.clone();
+                let callback = Closure::<dyn FnMut(js_sys::Array, web_sys::ResizeObserver)>::new(
+                    move |_, _| width.set(f64::from(observed.client_width())),
+                );
+                let observer =
+                    web_sys::ResizeObserver::new(callback.as_ref().unchecked_ref()).ok()?;
+                observer.observe(&element);
+                Some((observer, callback))
+            });
+            move || {
+                if let Some((observer, _callback)) = registration {
+                    observer.disconnect();
+                }
+            }
+        });
+    }
+    width
+}
+
+#[hook]
+fn use_scroll_compensation(host: NodeRef, max_row: i32, module: i32, width: i32) {
+    let previous = use_mut_ref(|| None::<(i32, i32)>);
+    use_effect_with(
+        (max_row, module, width),
+        move |&(max_row, module, width)| {
+            if let Some(element) = host.cast::<web_sys::HtmlElement>() {
+                let prior = *previous.borrow();
+                if let Some((previous_max_row, previous_width)) = prior {
+                    let scrolled =
+                        crate::mosaic::pane_is_scrolled(f64::from(element.scroll_top()), None);
+                    let replaying = previous_width != width;
+                    if let Some(delta) = crate::mosaic::scroll_compensation(
+                        previous_max_row,
+                        max_row,
+                        module,
+                        scrolled,
+                        replaying,
+                    ) {
+                        element.set_scroll_top(element.scroll_top() + delta.round() as i32);
+                    }
+                }
+                *previous.borrow_mut() = Some((max_row, width));
+            }
+            || ()
+        },
+    );
 }
 
 fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &AgentControls) -> Html {
