@@ -44,6 +44,25 @@ fn quote_textarea_id(lane_key: &str, identity: &str) -> String {
     format!("composer-quote-{lane_key}-{identity}")
 }
 
+fn agent_message_quote_identity(message: &wire::AgentMessage) -> String {
+    format!(
+        "agent-{}-{}-{}-{}-{}",
+        message.lane,
+        message.locus.member,
+        message.locus.offset,
+        message.locus.length,
+        message.locus.event,
+    )
+}
+
+pub(super) fn agent_message_source_id(message: &wire::AgentMessage) -> String {
+    format!("message-{}", agent_message_quote_identity(message))
+}
+
+pub(super) fn directive_source_id(directive: &wire::intent::PendingDirective) -> String {
+    format!("message-directive-{}", directive.directive)
+}
+
 pub(super) fn focus_after_render(id: String) {
     spawn_local(async move {
         TimeoutFuture::new(0).await;
@@ -80,15 +99,8 @@ pub(super) fn render_agent_message_card(
     let quote_key = lane_key.clone();
     let quote_drafts = drafts.clone();
     let quote_text = message.text.clone();
-    let quote_identity = format!(
-        "agent-{}-{}-{}-{}-{}",
-        message.lane,
-        message.locus.member,
-        message.locus.offset,
-        message.locus.length,
-        message.locus.event,
-    );
-    let source_id = format!("message-{quote_identity}");
+    let quote_identity = agent_message_quote_identity(message);
+    let source_id = agent_message_source_id(message);
     let focus_identity = quote_identity.clone();
     let focus_lane = lane_key.clone();
     let producer = format!(
@@ -192,7 +204,7 @@ pub(super) fn render_directive_card(
     let quote_preview = directive.preview.clone();
     let quote_text = directive.text.clone();
     let quote_identity = format!("directive-{}", directive.directive);
-    let source_id = format!("message-{quote_identity}");
+    let source_id = directive_source_id(directive);
     let focus_identity = quote_identity.clone();
     let focus_lane = lane_key.to_owned();
     let correspondent = view::chrome::Correspondent {

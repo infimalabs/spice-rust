@@ -63,15 +63,12 @@ if (coverageArguments.length > 0) {
 }
 const agentNames = ["Ava", "Bex", "Cy", "Dee"];
 const teamLaneIds = [
-  "00000000-0000-4000-8000-000000000000",
-  "00000000-0000-4000-8000-000000000001",
-  "00000000-0000-4000-8000-000000000002",
-  "00000000-0000-4000-8000-000000000003",
+  "00000000-0000-4000-8000-000000000000", "00000000-0000-4000-8000-000000000001",
+  "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003",
 ];
 const staleEpoch = "018f9999-9999-7444-8888-999999999999";
 const nestedQuoteMessage = [
-  "> > The final review found no alternate execution path.",
-  "> >",
+  "> > The final review found no alternate execution path.", "> >",
   "> > `cargo xtask verify` is green.",
   ">",
   "> Why it matters: nested context remains visible.",
@@ -435,7 +432,6 @@ async function assertAgentConversation(page, fixture, worktrees) {
   return { lane: seated[0].lane, quoteLane: seated[3].lane };
 }
 
-
 function elapsedLabel(millis) {
   const seconds = Math.trunc(millis / 1_000);
   if (seconds <= 0) return "now";
@@ -444,7 +440,6 @@ function elapsedLabel(millis) {
   if (seconds < 86_400) return `${Math.trunc(seconds / 3_600)}h`;
   return `${Math.trunc(seconds / 86_400)}d`;
 }
-
 
 async function assertFourAgentDensity(console) {
   const geometry = await console.evaluate((surface) => ({
@@ -1218,7 +1213,6 @@ async function assertSameGenerationResume(
   const after = await page.locator('[data-pane="commands"] .event strong').allTextContents();
   assert.ok(after.length > before.length, "same-generation resume appends missed facts");
 }
-
 
 await assertEndpointProbeClosesWithoutResponse();
 await assertEndpointProbeStates();

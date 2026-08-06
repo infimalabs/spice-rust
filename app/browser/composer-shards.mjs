@@ -61,6 +61,39 @@ export async function assertComposerShards({
     "the primary shard owns the agent hamburger",
   );
 
+  const primarySources = [];
+  for (const lane of [seeded.lane, seeded.quoteLane]) {
+    const primaryLink = team.locator(
+      `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-link`,
+    );
+    const primaryHref = await primaryLink.getAttribute("href");
+    assert.match(
+      primaryHref,
+      /^#message-(?:agent|directive)-/,
+      "a primary shard with activity links to a real source card",
+    );
+    const primarySource = page.locator(primaryHref);
+    await primarySource.waitFor({ timeout: TRANSITION_MS });
+    assert.equal(
+      await primarySource.getAttribute("data-agent-lane"),
+      lane,
+      "the primary shard target belongs to that exact agent",
+    );
+    await primaryLink.click();
+    assert.equal(await page.evaluate(() => window.location.hash), primaryHref);
+    assert.equal(
+      await primarySource.evaluate((card) => card.matches(":target")),
+      true,
+      "clicking the primary deep link targets its resident stream card",
+    );
+    primarySources.push(primaryHref);
+  }
+  assert.notEqual(
+    primarySources[0],
+    primarySources[1],
+    "two agents in one lineage have distinct primary stream destinations",
+  );
+
   await nestedCard.click();
   let previewShard = quoteLane
     .locator(".composer-shard--quote")
@@ -165,12 +198,20 @@ export async function assertComposerShards({
   const stackOverflow = await quoteStack.evaluate((stack) => ({
     clientHeight: stack.clientHeight,
     scrollHeight: stack.scrollHeight,
+    overflowY: getComputedStyle(stack).overflowY,
     shardCount: stack.querySelectorAll(".composer-shard").length,
   }));
   assert.equal(stackOverflow.shardCount, 3);
+  // The excess height must also be reachable. Clipping the stack instead of
+  // scrolling it leaves the height reading below completely unchanged, so that
+  // reading alone cannot tell a scrollable stack from a truncated one.
+  assert.ok(
+    ["auto", "scroll"].includes(stackOverflow.overflowY),
+    `the agent stack scrolls its own overflow rather than clipping it: ${JSON.stringify(stackOverflow)}`,
+  );
   assert.ok(
     stackOverflow.scrollHeight > stackOverflow.clientHeight,
-    `multiple draft shards make the agent stack scroll: ${JSON.stringify(stackOverflow)}`,
+    `multiple draft shards overflow the bounded agent stack: ${JSON.stringify(stackOverflow)}`,
   );
   await assertNoDraftPreview(quoteStack, 3);
 
