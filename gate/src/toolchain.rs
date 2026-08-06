@@ -205,6 +205,7 @@ pub use acquire::{RimCapture, RimDirectoryError, ToolchainSource, acquire_toolch
 pub use declarations::*;
 
 /// File suffixes whose committed blobs can prove environment-arm authorship.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn environment_baseline_suffixes() -> Vec<String> {
     PACKAGED_ENV_INCLUDES
         .iter()
