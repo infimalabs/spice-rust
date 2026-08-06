@@ -131,7 +131,6 @@ impl Fixture {
             repository.join("baseline.toml"),
             concat!(
                 "version = 1\n\n",
-                "[[floor]]\nname = \"rust.long-lines\"\nvalue = 0\n\n",
                 "[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n",
             ),
         )

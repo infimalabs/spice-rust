@@ -903,6 +903,11 @@ async fn live_server_serves_the_lane_app_and_refuses_another_host() {
         .expect("response carries headers")
         + 4;
     assert!(admitted.starts_with(b"HTTP/1.1 200 OK\r\n"));
+    assert!(
+        admitted[..split]
+            .windows(b"img-src 'self' data:".len())
+            .any(|window| window == b"img-src 'self' data:")
+    );
     assert_eq!(&admitted[split..], b"test app canvas-app.html");
 
     let script = request(address, &address.to_string(), "/app.module").await;

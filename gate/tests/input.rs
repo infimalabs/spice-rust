@@ -8,7 +8,6 @@ use serde::Deserialize;
 
 const TRACKED_POLICY: &str = include_str!("../../spice.toml");
 const TRACKED_BASELINE: &str = include_str!("../../baseline.toml");
-const TRACKED_LONG_LINE_FLOOR: u64 = 70;
 const TRACKED_FILE_LOC_LIMIT: u64 = 1_000;
 const TRACKED_FILE_LOC_RATCHET: u64 = 1_500;
 
@@ -46,40 +45,22 @@ fn tracked_inputs_load_one_operational_current_contract() {
     let run = contract
         .adjudicate(&root)
         .expect("an operational contract reaches a complete verdict");
-    // This adjudicates the live workspace, so it refuses whenever any tracked
-    // metric rises past its floor -- a condition about the tree, not about the
-    // inputs this test is named for. Say which metric and which files, in the
-    // same words the report fixtures use, rather than only Refused against
-    // Clean.
+    // This adjudicates the live workspace against captured HEAD, so a refusal
+    // names the changed Rust file and exact introduced over-limit line.
     assert_eq!(
         run.receipt().standing(),
         Standing::Clean,
         "{}",
         gate::report::refusal_detail(&root, &contract, &run.report())
     );
-    assert_eq!(run.measurements().len(), 1);
-    assert!(
-        run.measurements()[0].value()
-            <= contract
-                .baseline()
-                .floor("rust.long-lines")
-                .expect("long-line floor is loaded")
-    );
+    assert!(run.measurements().is_empty());
+    assert!(run.receipt().long_lines().is_empty());
 }
 
-/// The one parser metric, its floors, and the loci the camp shares with it.
+/// Native long-line admission, durable mutation state, and the Camp profile.
 fn the_measured_policy_is_current(contract: &Contract) {
     assert_eq!(contract.policy().ignore().render(), ".git/\ntarget/\n");
-    assert_eq!(contract.policy().metrics().len(), 1);
-    let metric = &contract.policy().metrics()[0];
-    assert_eq!(metric.name(), "rust.long-lines");
-    assert_eq!(metric.parser().program(), "/usr/bin/awk");
-    assert_eq!(
-        metric.parser().arguments(),
-        [format!(
-            "length($0) > {LONG_LINE_LIMIT} {{ debt += 1 }} END {{ print debt + 0 }}"
-        )]
-    );
+    assert!(contract.policy().metrics().is_empty());
     assert_eq!(
         contract
             .baseline()
@@ -87,16 +68,9 @@ fn the_measured_policy_is_current(contract: &Contract) {
             .iter()
             .map(|floor| (floor.name(), floor.value()))
             .collect::<Vec<_>>(),
-        [
-            ("rust.long-lines", TRACKED_LONG_LINE_FLOOR),
-            ("rust.mutation-survivors", 0),
-        ]
+        [("rust.mutation-survivors", 0)]
     );
-    assert_eq!(
-        contract.ratchet().baselines().collect::<Vec<_>>(),
-        [("rust.long-lines", TRACKED_LONG_LINE_FLOOR)],
-        "mutation debt is current baseline state but not a retired parser metric"
-    );
+    assert!(contract.ratchet().baselines().next().is_none());
     assert_eq!(contract.tools().len(), 1);
     assert_eq!(contract.tools()[0].name(), "awk");
     assert_eq!(contract.tools()[0].program(), Path::new("/usr/bin/awk"));
@@ -240,37 +214,26 @@ fn admitted_walk_intent_moves_policy_without_selecting_an_executable() {
 #[test]
 fn every_invalid_baseline_refuses_whole_and_names_its_exact_field() {
     let duplicate = baseline_error(
-        "version = 1\n\n[[floor]]\nname = \"rust.long-lines\"\nvalue = 1\n\n\
-         [[floor]]\nname = \"rust.long-lines\"\nvalue = 2\n\n[[floor]]\n\
-         name = \"rust.mutation-survivors\"\nvalue = 0\n",
+        "version = 1\n\n[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n\n\
+         [[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n",
     );
     assert!(matches!(
         duplicate,
         BaselineError::Duplicate { ref path, ref field, ref name }
-            if path == &baseline_path() && field == "floor[1].name" && name == "rust.long-lines"
+            if path == &baseline_path()
+                && field == "floor[1].name" && name == "rust.mutation-survivors"
     ));
 
-    let unsorted = baseline_error(
-        "version = 1\n\n[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n\n\
-         [[floor]]\nname = \"rust.long-lines\"\nvalue = 1\n",
+    let malformed = baseline_error(
+        "version = 1\n\n[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = \"many\"\n",
     );
-    assert!(matches!(
-        unsorted,
-        BaselineError::Unsorted { ref path, ref field, ref previous, ref name }
-            if path == &baseline_path() && field == "floor[1].name"
-                && previous == "rust.mutation-survivors" && name == "rust.long-lines"
-    ));
-
-    let malformed =
-        baseline_error("version = 1\n\n[[floor]]\nname = \"rust.long-lines\"\nvalue = \"many\"\n");
     assert!(matches!(
         malformed,
         BaselineError::Field(ref field)
             if field.path() == baseline_path() && field.field() == "floor[0].value"
     ));
 
-    let missing =
-        baseline_error("version = 1\n\n[[floor]]\nname = \"rust.long-lines\"\nvalue = 1\n");
+    let missing = baseline_error("version = 1\nfloor = []\n");
     assert!(matches!(
         missing,
         BaselineError::Missing { ref path, ref field, ref name }
@@ -279,18 +242,18 @@ fn every_invalid_baseline_refuses_whole_and_names_its_exact_field() {
     ));
 
     let retired = baseline_error(
-        "version = 1\n\n[[floor]]\nname = \"rust.kill-rate\"\nvalue = 1\n\n\
-         [[floor]]\nname = \"rust.long-lines\"\nvalue = 1\n\n[[floor]]\n\
-         name = \"rust.mutation-survivors\"\nvalue = 0\n",
+        "version = 1\n\n[[floor]]\nname = \"rust.long-lines\"\nvalue = 1\n\n\
+         [[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n",
     );
     assert!(matches!(
         retired,
-        BaselineError::Retired { ref path, ref field, ref name }
-            if path == &baseline_path() && field == "floor[0].name" && name == "rust.kill-rate"
+        BaselineError::Retired { ref path, ref field, ref name, owner: 1 }
+            if path == &baseline_path()
+                && field == "floor[0].name" && name == "rust.long-lines"
     ));
 
     let unknown = baseline_error(
-        "version = 1\n\n[[floor]]\nname = \"rust.long-lines\"\nvalue = 1\n\n\
+        "version = 1\n\n[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 0\n\n\
          [[floor]]\nname = \"rust.unknown\"\nvalue = 0\n",
     );
     assert!(matches!(
@@ -319,10 +282,8 @@ fn every_invalid_baseline_refuses_whole_and_names_its_exact_field() {
         BaselineError::Toml { ref path, .. } if path == &baseline_path()
     ));
 
-    let fractional_without_denominator = baseline_error(
-        "version = 1\n\n[[floor]]\nname = \"rust.long-lines\"\nvalue = 1\n\n\
-         [[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 2\n",
-    );
+    let fractional_without_denominator =
+        baseline_error("version = 1\n\n[[floor]]\nname = \"rust.mutation-survivors\"\nvalue = 2\n");
     assert!(matches!(
         fractional_without_denominator,
         BaselineError::MutationRate { ref path, ref field, value: 2 }

@@ -30,52 +30,34 @@ fn render_notice(notice: &Notice) -> Html {
     }
 }
 
-// Both render entry points thread the whole surface through as loose handles.
-// Grouping them would only move the same count behind a struct built at the
-// one call site each has, which is what `AgentControls` already does for the
-// part of it that is a form. Neither is red on the native target, where the
-// wasm-only browser module is not compiled, so the lint went unseen until the
-// wasm target was linted rather than merely checked.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn render_canvas(
-    connection: &UseStateHandle<Connection>,
-    surface: &UseStateHandle<SurfaceData>,
-    axis: &UseStateHandle<Axis>,
-    mosaic: &UseStateHandle<bool>,
-    sender: &SenderHandle,
-    agents: &AgentControls,
-    note_task: &UseStateHandle<String>,
-    note_text: &UseStateHandle<String>,
-    submit_note: Callback<SubmitEvent>,
-    refresh: Callback<MouseEvent>,
-    speech: &UseStateHandle<wire::SpeechPlayback>,
-    speech_status: &UseStateHandle<SpeechStatus>,
-    toggle_speech: Callback<MouseEvent>,
-) -> Html {
-    let active_axis = **axis;
-    let cursor = (**surface)
+pub(super) struct CanvasRender<'a> {
+    pub connection: &'a UseStateHandle<Connection>,
+    pub surface: &'a UseStateHandle<SurfaceData>,
+    pub axis: &'a UseStateHandle<Axis>,
+    pub mosaic: &'a UseStateHandle<bool>,
+    pub composer_drafts: &'a UseReducerHandle<ComposerDrafts>,
+    pub sender: &'a SenderHandle,
+    pub agents: &'a AgentControls,
+    pub note_task: &'a UseStateHandle<String>,
+    pub note_text: &'a UseStateHandle<String>,
+    pub submit_note: Callback<SubmitEvent>,
+    pub refresh: Callback<MouseEvent>,
+    pub speech: &'a UseStateHandle<wire::SpeechPlayback>,
+    pub speech_status: &'a UseStateHandle<SpeechStatus>,
+    pub toggle_speech: Callback<MouseEvent>,
+}
+
+pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
+    let active_axis = **render.axis;
+    let cursor = (**render.surface)
         .as_ref()
         .and_then(CanvasRuntime::resume)
         .map(|cursor| cursor.seq.to_string())
         .unwrap_or_else(|| "-".to_owned());
     html! {
         <div class="shell">
-            {render_rail(axis, mosaic, active_axis, &cursor)}
-            {render_workspace(
-                connection,
-                surface,
-                active_axis,
-                **mosaic,
-                sender,
-                agents,
-                note_task,
-                note_text,
-                submit_note,
-                refresh,
-                speech,
-                speech_status,
-                toggle_speech,
-            )}
+            {render_rail(render.axis, render.mosaic, active_axis, &cursor)}
+            {render_workspace(&render, active_axis)}
         </div>
     }
 }
@@ -130,64 +112,46 @@ pub(super) fn render_rail(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn render_workspace(
-    connection: &UseStateHandle<Connection>,
-    surface: &UseStateHandle<SurfaceData>,
-    active_axis: Axis,
-    mosaic: bool,
-    sender: &SenderHandle,
-    agents: &AgentControls,
-    note_task: &UseStateHandle<String>,
-    note_text: &UseStateHandle<String>,
-    submit_note: Callback<SubmitEvent>,
-    refresh: Callback<MouseEvent>,
-    speech: &wire::SpeechPlayback,
-    speech_status: &SpeechStatus,
-    toggle_speech: Callback<MouseEvent>,
-) -> Html {
+pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> Html {
     html! {
         <div class="workspace">
             <header class="topbar">
                 <div class="mobile-brand">{"Spice Canvas"}</div>
-                <div class={connection.class()}>
+                <div class={render.connection.class()}>
                     <span class="status-dot"></span>
-                    <span class="status-copy">{connection.label()}</span>
+                    <span class="status-copy">{render.connection.label()}</span>
                 </div>
                 <div class="topbar-actions">
-                    {speech_control(speech, speech_status, toggle_speech)}
-                    <button class="refresh" type="button" onclick={refresh}>{"Refresh"}</button>
+                    {speech_control(
+                        render.speech,
+                        render.speech_status,
+                        render.toggle_speech.clone(),
+                    )}
+                    <button
+                        class="refresh"
+                        type="button"
+                        onclick={render.refresh.clone()}
+                    >{"Refresh"}</button>
                 </div>
             </header>
             <main class="content">
-                if mosaic {
-                    {render_agent_console(surface, agents)}
-                } else {
-                    {render_analytics(
-                        connection,
-                        surface,
-                        active_axis,
-                        sender,
-                        note_task,
-                        note_text,
-                        submit_note,
+                if **render.mosaic {
+                    {render_agent_console(render.surface, render.agents)}
+                    {composer::render_mosaic(
+                        render.surface,
+                        render.sender,
+                        render.composer_drafts,
                     )}
+                } else {
+                    {render_analytics(render, active_axis)}
                 }
             </main>
         </div>
     }
 }
 
-fn render_analytics(
-    connection: &UseStateHandle<Connection>,
-    surface: &UseStateHandle<SurfaceData>,
-    active_axis: Axis,
-    sender: &SenderHandle,
-    note_task: &UseStateHandle<String>,
-    note_text: &UseStateHandle<String>,
-    submit_note: Callback<SubmitEvent>,
-) -> Html {
-    let runtime = (**surface).as_ref();
+fn render_analytics(render: &CanvasRender<'_>, active_axis: Axis) -> Html {
+    let runtime = (**render.surface).as_ref();
     let task_count = runtime
         .and_then(CanvasRuntime::board)
         .map_or(0, |board| board.tasks.len());
@@ -214,7 +178,7 @@ fn render_analytics(
             </div>
             <section class="metrics" aria-label="Current resident metrics">
                 {metric("Tasks", task_count.to_string(), format!("{active_tasks} active"))}
-                {metric("Lanes", lane_count.to_string(), resident_state(surface))}
+                {metric("Lanes", lane_count.to_string(), resident_state(render.surface))}
                 {metric(
                     "Consent",
                     pending_count.to_string(),
@@ -229,12 +193,12 @@ fn render_analytics(
             </div>
             {render_axis(
                 active_axis,
-                surface,
-                connection,
-                sender,
-                note_task,
-                note_text,
-                submit_note,
+                render.surface,
+                render.connection,
+                render.sender,
+                render.note_task,
+                render.note_text,
+                render.submit_note.clone(),
             )}
         </>
     }

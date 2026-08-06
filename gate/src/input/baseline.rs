@@ -250,11 +250,12 @@ fn validate_floor_name(
             name: name.to_owned(),
         });
     }
-    if RETIRED_FLOORS.contains(&name) {
+    if let Some((_, owner)) = RETIRED_FLOORS.iter().find(|(retired, _)| retired == &name) {
         return Err(BaselineError::Retired {
             path: path.to_path_buf(),
             field: field.to_owned(),
             name: name.to_owned(),
+            owner: *owner,
         });
     }
     if previous.is_some_and(|earlier| earlier > name) {
