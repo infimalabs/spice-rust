@@ -27,6 +27,12 @@ const QUOTE_TYPICAL_LINES: f64 = 2.0;
 const IMAGE_HEIGHT_REM: f64 = 8.75;
 const IMAGE_LARGE_HEIGHT_REM: f64 = 15.75;
 
+/// Convert the DOM client box, which includes padding, into usable content width.
+#[must_use]
+pub fn content_box_width(client_width_px: f64, padding_left_px: f64, padding_right_px: f64) -> f64 {
+    (client_width_px - padding_left_px - padding_right_px).max(0.0)
+}
+
 /// Geometry resolved from the live root type size and host width.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Geometry {
