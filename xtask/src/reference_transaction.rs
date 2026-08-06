@@ -67,6 +67,23 @@
 //! queue naming no branch every one of them was spent inside the shared lock to
 //! reach a conclusion the queue already determined. A queue that names no
 //! `refs/heads/` reference is answered from the queue alone, launching nothing.
+//!
+//! # A successful commit can still report skipped cleanup
+//!
+//! Git's commit status and its cleanup diagnostic account for different work.
+//! Measured on Git 2.50.1, the direct `git commit` can record the requested
+//! branch update and exit zero, then exhaust `core.packedRefsTimeout` while
+//! deleting an absent pseudo-reference and write an `Unable to create
+//! .git/packed-refs.lock` diagnostic to stderr. If the other writer releases
+//! the lock within the bound, the same successful commit says nothing about
+//! it. A finite bound decides how long Git retries; it cannot guarantee silence.
+//!
+//! Callers therefore have to read status and both output streams together:
+//! zero means the primary commit succeeded, while the diagnostic separately
+//! says best-effort cleanup was skipped. A genuine nonzero commit failure keeps
+//! its own output. This repository-local hook cannot intercept, suppress, or
+//! reinterpret its parent Git process's streams, and it never removes a
+//! `packed-refs.lock` owned by another writer.
 
 use std::error::Error;
 use std::ffi::OsStr;
