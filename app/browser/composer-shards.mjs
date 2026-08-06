@@ -51,23 +51,33 @@ export async function assertComposerShards({
     .getByRole("button", { name: "Quote this message" });
   const quoteStack = quoteLane.locator(".agent-composer-stack");
   const quotePrimary = quoteStack.locator(".composer-shard--primary");
-  const primaryHeading = team.locator(
-    `.team-agent[data-agent-lane="${seeded.lane}"] .composer-shard--primary .composer-shard-heading > strong`,
+  const primaryHeadings = team.locator(
+    ".team-agent .composer-shard--primary .composer-shard-heading > .composer-shard-prose",
   );
   assert.equal(
-    await primaryHeading.innerText(),
-    seeded.activityHeadline,
-    "the primary shard heading shows the agent's current activity headline",
+    await primaryHeadings.count(),
+    seeded.primaryHeadings.length,
+    "every seated lane exposes one primary prose heading",
   );
-  assert.notEqual(
-    await primaryHeading.innerText(),
-    seeded.agentName,
-    "the visible activity headline cannot silently revert to the agent name",
-  );
+  const observedHeadings = [];
+  for (const expected of seeded.primaryHeadings) {
+    const heading = team.locator(
+      `.team-agent[data-agent-lane="${expected.lane}"] `
+        + ".composer-shard--primary .composer-shard-heading > .composer-shard-prose",
+    );
+    const prose = await heading.innerText();
+    assert.equal(prose, expected.prose, `the ${expected.lane} primary heading keeps its own prose`);
+    assert.equal(
+      await heading.getAttribute("title"),
+      expected.prose,
+      `the ${expected.lane} primary heading title keeps its complete prose`,
+    );
+    observedHeadings.push(prose);
+  }
   assert.equal(
-    await primaryHeading.getAttribute("title"),
-    seeded.agentName,
-    "the primary shard keeps the agent name discoverable from its activity heading",
+    new Set(observedHeadings).size,
+    seeded.primaryHeadings.length,
+    "primary prose headings remain pairwise distinct across seated lanes",
   );
   assert.equal(
     await quoteStack.locator(".composer-shard").count(),
