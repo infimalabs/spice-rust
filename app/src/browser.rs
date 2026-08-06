@@ -39,10 +39,20 @@ const APP_SOURCE_IDENTITY: &str = match option_env!("SPICE_APP_SOURCE_IDENTITY")
     Some(identity) => identity,
     None => "unbound-development-build",
 };
+const CONNECTION_HANDSHAKE_TIMEOUT_MILLIS: u32 = 5_000;
+const RECONNECT_DELAY_MILLIS: u32 = 1_200;
 
 type SenderHandle = Rc<RefCell<Option<UnboundedSender<ClientAction>>>>;
 type SocketWriter = futures_util::stream::SplitSink<WebSocket, Message>;
 type SocketReader = futures_util::stream::SplitStream<WebSocket>;
+
+struct EstablishedConnection {
+    session: Session,
+    writer: SocketWriter,
+    reader: SocketReader,
+    principal: Principal,
+    pending: BTreeMap<CanonicalUuid, PendingKind>,
+}
 
 #[derive(Clone, PartialEq)]
 enum Connection {
@@ -492,7 +502,7 @@ async fn run_surface(
         }
         let reason = result.unwrap_err_or_else();
         connection.set(Connection::Offline(reason.clone()));
-        TimeoutFuture::new(1_200).await;
+        TimeoutFuture::new(RECONNECT_DELAY_MILLIS).await;
     }
 }
 
@@ -518,11 +528,31 @@ async fn run_connection(
     data: &Rc<RefCell<SurfaceData>>,
     actions: &mut UnboundedReceiver<ClientAction>,
 ) -> Result<(), String> {
-    let (session, mut writer, mut reader) = open_socket(speech).await?;
-    let principal = admit_runtime(&session, &mut reader, connection, surface, data).await?;
-    let mut pending = BTreeMap::new();
-    send_subscription(&principal, data, &mut writer).await?;
-    send_refresh(&principal, &mut writer, &mut pending).await?;
+    let abort = web_sys::AbortController::new()
+        .map_err(|_| "browser could not create a connection abort controller".to_owned())?;
+    let signal = abort.signal();
+    let established = {
+        let handshake = establish_connection(connection, surface, speech, data, &signal).fuse();
+        let deadline = TimeoutFuture::new(CONNECTION_HANDSHAKE_TIMEOUT_MILLIS).fuse();
+        futures_util::pin_mut!(handshake, deadline);
+        select! {
+            result = handshake => result,
+            () = deadline => {
+                abort.abort();
+                Err(format!(
+                    "canvas connection handshake timed out after \
+                     {CONNECTION_HANDSHAKE_TIMEOUT_MILLIS} ms"
+                ))
+            }
+        }
+    }?;
+    let EstablishedConnection {
+        session,
+        mut writer,
+        mut reader,
+        principal,
+        mut pending,
+    } = established;
 
     while active.get() {
         let incoming = reader.next().fuse();
@@ -557,14 +587,38 @@ async fn run_connection(
     Ok(())
 }
 
+/// Establish every prerequisite of the resident event loop as one boundary.
+async fn establish_connection(
+    connection: &UseStateHandle<Connection>,
+    surface: &UseStateHandle<SurfaceData>,
+    speech: &UseStateHandle<wire::SpeechPlayback>,
+    data: &Rc<RefCell<SurfaceData>>,
+    signal: &web_sys::AbortSignal,
+) -> Result<EstablishedConnection, String> {
+    let (session, mut writer, mut reader) = open_socket(speech, signal).await?;
+    let principal = admit_runtime(&session, &mut reader, connection, surface, data).await?;
+    let mut pending = BTreeMap::new();
+    send_subscription(&principal, data, &mut writer).await?;
+    send_refresh(&principal, &mut writer, &mut pending).await?;
+    Ok(EstablishedConnection {
+        session,
+        writer,
+        reader,
+        principal,
+        pending,
+    })
+}
+
 /// Discover the resident endpoint and open the socket its bootstrap names.
 async fn open_socket(
     speech: &UseStateHandle<wire::SpeechPlayback>,
+    signal: &web_sys::AbortSignal,
 ) -> Result<(Session, SocketWriter, SocketReader), String> {
     let discovery: wire::CanvasBootstrap = Request::get(&authenticated_path(
         "/bootstrap",
         browser_auth_token()?.as_deref(),
     ))
+    .abort_signal(Some(signal))
     .send()
     .await
     .map_err(|error| format!("bootstrap request failed: {error}"))?
