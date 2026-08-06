@@ -94,8 +94,17 @@ fn add(
         },
         None => resolved.root().lane().vendor().clone(),
     };
+    let lane = new_uuid();
+    let team = match matches.get_one::<String>("team") {
+        Some(team) => match team.parse::<wire::CanonicalUuid>() {
+            Ok(team) => team,
+            Err(error) => return protocol_fault("lane::team-invalid", &error.to_string()),
+        },
+        None => lane,
+    };
     let body = LaneSeat {
-        lane: new_uuid(),
+        lane,
+        team,
         worktree: worktree.worktree_root().display().to_string(),
         life,
         vendor,

@@ -597,8 +597,10 @@ async fn dispatch_action(
             life,
             vendor,
         } => {
+            let lane = random_uuid()?;
             let body = LaneSeat {
-                lane: random_uuid()?,
+                lane,
+                team: lane,
                 worktree,
                 life,
                 vendor,

@@ -36,6 +36,7 @@ const VACANT: &str = "vacant";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Seat {
     lane: CanonicalUuid,
+    team: CanonicalUuid,
     capability: CanonicalUuid,
     worktree: String,
     life: String,
@@ -50,6 +51,12 @@ impl Seat {
     #[must_use]
     pub const fn lane(&self) -> CanonicalUuid {
         self.lane
+    }
+
+    /// The team whose Canvas lane contains this seat.
+    #[must_use]
+    pub const fn team(&self) -> CanonicalUuid {
+        self.team
     }
 
     /// The capability minted with the lane.
@@ -105,6 +112,7 @@ impl Seat {
     pub fn residency(&self) -> LaneResidency {
         LaneResidency {
             lane: self.lane,
+            team: self.team,
             worktree: self.worktree.clone(),
             life: self.life.clone(),
             vendor: self.vendor.clone(),
@@ -400,6 +408,7 @@ impl Table {
             fact.lane,
             Seat {
                 lane: fact.lane,
+                team: fact.team,
                 capability: fact.capability,
                 worktree: fact.worktree.clone(),
                 life: fact.life.clone(),
@@ -649,6 +658,7 @@ mod tests {
     fn seated() -> LaneSeated {
         LaneSeated {
             lane: uuid(1),
+            team: uuid(1),
             capability: uuid(2),
             worktree: "/worktrees/lane-a".to_owned(),
             life: "drive".to_owned(),
@@ -1037,6 +1047,7 @@ mod tests {
         assert_eq!(head.lanes.len(), 1);
         let row = &head.lanes[0];
         assert_eq!(row.lane, uuid(1));
+        assert_eq!(row.team, uuid(1));
         assert_eq!(row.occupant, Some(uuid(3)));
         assert_eq!(row.lineage, vec![uuid(3)]);
         assert_eq!(row.capabilities, vec![uuid(2)]);

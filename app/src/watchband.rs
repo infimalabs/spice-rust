@@ -39,8 +39,10 @@ pub const FIELD_BUDGET: usize = 22;
 /// One lane's complete standing, joined from the three answers that carry it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Standing {
-    /// Lane the row describes.
+    /// Independently steerable member the row describes.
     pub lane: CanonicalUuid,
+    /// Team whose Canvas lane contains the member.
+    pub team: CanonicalUuid,
     /// Lane identity abbreviated to what a card has room for.
     pub name: String,
     /// Worktree the lane runs in.
@@ -83,17 +85,19 @@ pub fn standings(
 ) -> Vec<Standing> {
     lanes
         .iter()
-        .map(|lane| {
-            let waiting = inbox.iter().find(|row| row.lane == lane.lane);
-            let held = held_task(tasks, lane.lane);
+        .flat_map(|team| team.members.iter().map(move |member| (team, member)))
+        .map(|(team, member)| {
+            let waiting = inbox.iter().find(|row| row.lane == member.lane);
+            let held = held_task(tasks, member.lane);
             Standing {
-                lane: lane.lane,
-                name: short(lane.lane),
-                worktree: lane.worktree.clone(),
-                label: leaf(&lane.worktree).to_owned(),
-                vendor: lane.vendor.to_string(),
-                life: lane.life.clone(),
-                disposition: lane.disposition.clone(),
+                lane: member.lane,
+                team: team.lane,
+                name: short(member.lane),
+                worktree: member.worktree.clone(),
+                label: leaf(&member.worktree).to_owned(),
+                vendor: member.vendor.to_string(),
+                life: member.life.clone(),
+                disposition: member.disposition.clone(),
                 pending: waiting.map_or(0, |row| row.pending.len()),
                 headline: waiting
                     .and_then(|row| row.pending.last())
@@ -102,7 +106,7 @@ pub fn standings(
                 phase: held.map(|task| task.workflow.body.phase.to_string()),
                 held: held.and_then(|task| since(task, now, |lease| lease.start)),
                 renewed: held.and_then(|task| since(task, now, |lease| lease.renewal)),
-                accent: accent(lane.lane),
+                accent: accent(member.lane),
             }
         })
         .collect()

@@ -113,7 +113,7 @@ impl ComposerDrafts {
 /// the engine that packs a lane's cards lives beside the chrome that styles
 /// them. Passing the feed in keeps that split intact, so this module never
 /// reaches across it to place a card itself.
-type LaneFeed<'a> = &'a dyn Fn(&crate::runtime::LaneRow, &[wire::intent::PendingDirective]) -> Html;
+type LaneFeed<'a> = &'a dyn Fn(&crate::runtime::LaneRow, &CanvasRuntime) -> Html;
 
 pub(super) fn render_mosaic(
     surface: &SurfaceData,
@@ -142,12 +142,7 @@ pub(super) fn render_mosaic(
             } else {
                 <div class="mosaic-lanes">
                     {for lanes.lanes.iter().map(|lane| {
-                        let directives = runtime
-                            .inbox()
-                            .and_then(|inbox| inbox.lanes.iter().find(|row| row.lane == lane.lane))
-                            .map(|row| row.pending.as_slice())
-                            .unwrap_or(&[]);
-                        render_lane(lane, lanes.epoch, directives, can_send, sender, drafts, feed)
+                        render_lane(lane, lanes.epoch, can_send, sender, drafts, feed, runtime)
                     })}
                 </div>
             }
@@ -158,17 +153,22 @@ pub(super) fn render_mosaic(
 fn render_lane(
     lane: &crate::runtime::LaneRow,
     epoch: CanonicalUuid,
-    directives: &[wire::intent::PendingDirective],
     can_send: bool,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
     feed: LaneFeed<'_>,
+    runtime: &CanvasRuntime,
 ) -> Html {
-    let lane_id = lane.lane;
-    let lane_key = lane_id.to_string();
+    let Some(host) = lane.host() else {
+        return empty("Lane team has no admitted members.");
+    };
+    let team_id = lane.lane;
+    let lane_id = host.lane;
+    let lane_key = team_id.to_string();
     let draft = drafts.get(&lane_key).cloned().unwrap_or_default();
-    let occupant = lane.occupant;
+    let occupant = host.occupant;
     let send_enabled = can_send && occupant.is_some();
+    let pending = team_pending_count(lane, runtime.inbox());
     let markdown = compose_markdown(&draft);
     let submit = submit_callback(
         lane_id,
@@ -195,21 +195,21 @@ fn render_lane(
         sender.clone(),
         drafts.clone(),
     );
-    let input_id = format!("mosaic-images-{lane_id}");
+    let input_id = format!("mosaic-images-{team_id}");
     let onchange = choose_images(lane_key.clone(), drafts.clone());
     html! {
         <section
             class={classes!("mosaic-lane", (!send_enabled).then_some("mosaic-lane--vacant"))}
-            data-lane-id={lane_id.to_string()}
+            data-lane-id={team_id.to_string()}
             {ondragover}
             {ondrop}
         >
             <header class="mosaic-lane-header">
                 <div>
-                    <strong>{format!("{} / {}", lane.vendor, short(&lane_id.to_string()))}</strong>
-                    <span>{lane.worktree.clone()}</span>
+                    <strong>{format!("Team {}", short(&team_id.to_string()))}</strong>
+                    <span>{format!("{} agents", lane.members.len())}</span>
                 </div>
-                <span class="tag active">{lane.disposition.clone()}</span>
+                {render_member_lights(lane, runtime.inbox())}
             </header>
             <form class="mosaic-composer" onsubmit={submit}>
                 {render_quote_bands(&lane_key, &draft, drafts)}
@@ -217,7 +217,7 @@ fn render_lane(
                     aria-label={format!("Message for {lane_id}")}
                     rows="4"
                     value={draft.body.clone()}
-                    placeholder={composer_placeholder(lane, directives.len())}
+                    placeholder={composer_placeholder(host, pending)}
                     {oninput}
                     {onkeydown}
                     {onpaste}
@@ -249,20 +249,61 @@ fn render_lane(
                     >{"Send"}</button>
                 </div>
             </form>
-            {feed(lane, directives)}
+            {feed(lane, runtime)}
         </section>
     }
 }
 
-fn composer_placeholder(lane: &crate::runtime::LaneRow, pending: usize) -> String {
-    let occupant = lane
+fn composer_placeholder(member: &crate::runtime::LaneMember, pending: usize) -> String {
+    let occupant = member
         .occupant
         .map(|value| short(&value.to_string()))
         .unwrap_or_else(|| "vacant".to_owned());
     format!(
         "{} / {occupant}\n{pending} pending, {}",
-        lane.vendor, lane.disposition
+        member.vendor, member.disposition
     )
+}
+
+fn team_pending_count(
+    lane: &crate::runtime::LaneRow,
+    inbox: Option<&wire::intent::InboxAnswer>,
+) -> usize {
+    inbox.map_or(0, |inbox| {
+        lane.members
+            .iter()
+            .filter_map(|member| inbox.lanes.iter().find(|row| row.lane == member.lane))
+            .map(|row| row.pending.len())
+            .sum()
+    })
+}
+
+fn render_member_lights(
+    lane: &crate::runtime::LaneRow,
+    inbox: Option<&wire::intent::InboxAnswer>,
+) -> Html {
+    html! {
+        <span class="lane-lights" aria-label={format!("{} team members", lane.members.len())}>
+            {for lane.members.iter().map(|member| {
+                let pending = inbox
+                    .and_then(|inbox| inbox.lanes.iter().find(|row| row.lane == member.lane))
+                    .map_or(0, |row| row.pending.len());
+                let status = member.status(pending);
+                html! {
+                    <span
+                        class={classes!("agent-status-pip", "lane-light")}
+                        data-lane-light-target-id={member.lane.to_string()}
+                        data-agent-status={status.key()}
+                        title={format!(
+                            "{}: {}",
+                            crate::watchband::leaf(&member.worktree),
+                            status.label(),
+                        )}
+                    ></span>
+                }
+            })}
+        </span>
+    }
 }
 
 fn submit_callback(

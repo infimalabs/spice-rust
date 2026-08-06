@@ -1134,6 +1134,7 @@ fn residency_head() -> ResidencyHead {
         state: ResidentState::Seated,
         lanes: vec![LaneResidency {
             lane: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
+            team: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
             worktree: "/worktrees/lane-a".to_owned(),
             life: "drive".to_owned(),
             vendor: "claude".parse().expect("fixture vendor"),

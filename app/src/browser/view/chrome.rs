@@ -137,7 +137,7 @@ pub(super) fn render_watchband(surface: &SurfaceData, controls: &AgentControls) 
         .map(|board| board.tasks.as_slice())
         .unwrap_or(&[]);
     let standings = watchband::standings(lanes, waiting, tasks, now_millis());
-    let selected = selected_agent(lanes, &controls.selected_lane).map(|lane| lane.lane);
+    let selected = selected_agent(lanes, &controls.selected_lane);
     html! {
         <div class="agent-tabs watchband" role="tablist" aria-label="Seated agents">
             if standings.is_empty() {

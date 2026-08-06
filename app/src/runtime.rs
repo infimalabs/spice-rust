@@ -119,9 +119,18 @@ pub struct LaneView {
     pub lanes: Vec<LaneRow>,
 }
 
-/// One safe current lane row.
+/// One Canvas lane: a team and every independently steerable member in it.
 #[derive(Clone, PartialEq, Eq)]
 pub struct LaneRow {
+    /// Stable team identity.
+    pub lane: CanonicalUuid,
+    /// Members in canonical resident seat order.
+    pub members: Vec<LaneMember>,
+}
+
+/// One independently steerable worktree and occupant inside a Canvas lane.
+#[derive(Clone, PartialEq, Eq)]
+pub struct LaneMember {
     pub lane: CanonicalUuid,
     pub worktree: String,
     pub life: String,
@@ -159,6 +168,17 @@ pub enum LaneStatus {
 }
 
 impl LaneStatus {
+    /// Stable machine spelling used by browser hooks and status styling.
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Running => "running",
+            Self::Bound => "bound",
+            Self::Unbound => "unbound",
+        }
+    }
+
     /// The predecessor's exact wording for this state.
     #[must_use]
     pub const fn label(self) -> &'static str {
@@ -171,8 +191,8 @@ impl LaneStatus {
     }
 }
 
-impl LaneRow {
-    /// This lane's status, given how much direction is queued for it.
+impl LaneMember {
+    /// This member's status, given how much direction is queued for it.
     ///
     /// Pending direction outranks liveness, exactly as the predecessor ranks
     /// it: a lane holding unanswered steering is the one the operator has to
@@ -191,24 +211,46 @@ impl LaneRow {
     }
 }
 
+impl LaneRow {
+    /// The team host, which is the first member in canonical seat order.
+    #[must_use]
+    pub fn host(&self) -> Option<&LaneMember> {
+        self.members.first()
+    }
+
+    /// Resolve one independently steerable member of this team.
+    #[must_use]
+    pub fn member(&self, lane: CanonicalUuid) -> Option<&LaneMember> {
+        self.members.iter().find(|member| member.lane == lane)
+    }
+}
+
 impl From<&LaneAnswer> for LaneView {
     fn from(answer: &LaneAnswer) -> Self {
+        let mut teams = Vec::<LaneRow>::new();
+        for lane in &answer.lanes {
+            let member = LaneMember {
+                lane: lane.lane,
+                worktree: lane.worktree.clone(),
+                life: lane.life.clone(),
+                vendor: lane.vendor.clone(),
+                occupant: lane.occupant,
+                disposition: lane.disposition.clone(),
+                bound: lane.session.is_some(),
+            };
+            if let Some(team) = teams.iter_mut().find(|team| team.lane == lane.team) {
+                team.members.push(member);
+            } else {
+                teams.push(LaneRow {
+                    lane: lane.team,
+                    members: vec![member],
+                });
+            }
+        }
         Self {
             epoch: answer.epoch,
             state: answer.state,
-            lanes: answer
-                .lanes
-                .iter()
-                .map(|lane| LaneRow {
-                    lane: lane.lane,
-                    worktree: lane.worktree.clone(),
-                    life: lane.life.clone(),
-                    vendor: lane.vendor.clone(),
-                    occupant: lane.occupant,
-                    disposition: lane.disposition.clone(),
-                    bound: lane.session.is_some(),
-                })
-                .collect(),
+            lanes: teams,
         }
     }
 }

@@ -59,6 +59,7 @@ fn paths(fixture: &Fixture) -> RuntimePaths {
 fn row(fixture: &Fixture) -> wire::LaneResidency {
     wire::LaneResidency {
         lane: fixture.lane,
+        team: fixture.lane,
         worktree: WORKTREE.into(),
         life: "drive".into(),
         vendor: "claude".parse().expect("fixture vendor"),

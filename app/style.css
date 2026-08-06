@@ -918,6 +918,27 @@ tbody tr:last-child td { border-bottom: 0; }
   white-space: nowrap;
 }
 
+.lane-lights {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-status-pip {
+  width: 9px;
+  height: 9px;
+  border: 1px solid color-mix(in srgb, currentColor 64%, transparent);
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.agent-status-pip[data-agent-status="queued"] { color: var(--warning); }
+.agent-status-pip[data-agent-status="running"] { color: var(--accent); }
+.agent-status-pip[data-agent-status="bound"] { color: var(--focus); }
+.agent-status-pip[data-agent-status="unbound"] { color: var(--muted); }
+
 .mosaic-composer {
   display: grid;
   gap: 8px;

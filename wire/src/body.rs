@@ -535,8 +535,10 @@ pub struct ConsentFloored {
 /// A lane and its capability were created.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneSeated {
-    /// Created lane.
+    /// Created independently steerable member seat.
     pub lane: CanonicalUuid,
+    /// Team whose Canvas lane contains the member.
+    pub team: CanonicalUuid,
     /// Capability minted with the lane.
     pub capability: CanonicalUuid,
     /// Worktree the lane is bound to.
