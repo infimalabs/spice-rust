@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 
+import { observedBoundedWait, TRANSITION_MS } from "./canvas-fixture.mjs";
+
 /// Geometry read off the Python Spice reference capture, attachment
 /// 6cb304ba784a940d13b5741390528f964f73937102c6a15e3e4539e3ed40968f/01-image.png,
 /// at the 2x device pixel ratio it was taken with. The reference stacks the
@@ -273,6 +275,7 @@ export async function assertReferenceControlStack(page, console_, artifacts) {
   await draft.fill("reference control capture");
   const speech = controls.locator('.team-speech input[type="range"]');
   const lifetime = controls.locator('.team-lifetime input[type="range"]');
+  const send = controls.locator(".team-send");
 
   for (const state of states) {
     await speech.fill(state.speech);
@@ -283,6 +286,14 @@ export async function assertReferenceControlStack(page, console_, artifacts) {
         .filter({ hasText: expected.label })
         .waitFor({ timeout: 10_000 });
     }
+    // A slider label can render before its lane is live. A trial click waits
+    // for actionability on the send button itself without dispatching it.
+    await observedBoundedWait(
+      page,
+      `${state.name} reference send control becomes live`,
+      TRANSITION_MS,
+      () => send.click({ trial: true, timeout: TRANSITION_MS }),
+    );
     await controls.screenshot({ path: join(artifacts, `controls-${state.name}.png`) });
     const stack = await controls.evaluate(describeStack);
     assert.ok(!stack.send.disabled, "the reference states are captured with a live send button");
