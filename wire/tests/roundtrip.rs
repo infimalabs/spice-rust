@@ -110,6 +110,12 @@ const COMMAND: &str = r#"{
   }
 }"#;
 
+// This response remains raw because `reply_matches_the_specified_document`
+// proves the exact external JSON spelling and `a_reversed_committed_range...`
+// mutates those bytes to exercise decoder refusal. Response schema drift is
+// caught at compile time by the typed `Response<DoneResult>` literals in the
+// snapshot, refusal, and fault round-trip tests below; `DoneResult` drift is
+// caught by their typed body literals.
 const REPLY: &str = r#"{
   "v": 1,
   "id": "018f82d4-6f59-7d06-92e3-bce9131163c4",
