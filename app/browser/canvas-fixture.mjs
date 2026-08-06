@@ -15,6 +15,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -362,6 +363,247 @@ export async function stopResident(fixture, resident) {
     : Promise.resolve();
   await execute(binary, ["--json", "down"], { cwd: fixture, timeout: 10_000 });
   await exited;
+}
+
+/// The page-side connection state, read from the topbar that carries it.
+///
+/// The class names Online against Offline and the label carries the reason the
+/// client last recorded, so a page that never saw the socket close reads
+/// differently from one that saw it and did not render the change.
+///
+/// The status element is NOT always present. The topbar holding it is rendered
+/// only outside the mosaic workspace, so a wait on a status class is deaf while
+/// the mosaic is active. An absent status therefore reports the layout that
+/// hides it rather than a bare false, because the two are opposite diagnoses:
+/// one is a client that never changed state, the other is a client whose state
+/// is simply not on screen to be waited for.
+export async function describeConnection(page) {
+  return await page
+    .evaluate(() => {
+      const status = document.querySelector(".status");
+      if (!status) {
+        return {
+          rendered: false,
+          topbar: Boolean(document.querySelector(".topbar")),
+          mosaic: Boolean(document.querySelector(".mosaic-workspace")),
+        };
+      }
+      return {
+        rendered: true,
+        classes: status.className,
+        label: status.querySelector(".status-copy")?.textContent ?? null,
+      };
+    })
+    .catch((error) => ({ unavailable: String(error) }));
+}
+
+/// Whether the resident is gone, and whether anything still answers where it
+/// used to listen.
+///
+/// These are separate questions. A listening socket that outlives the exited
+/// process leaves the client connecting to something that never replies, which
+/// is a different diagnosis from a refused connection and must not be reported
+/// as the same silence.
+export async function describeResident(resident) {
+  if (!resident) return { known: false };
+  const endpoint = resident.discovery?.endpoint ?? null;
+  return {
+    known: true,
+    exited: resident.child.exitCode !== null || resident.child.signalCode !== null,
+    exitCode: resident.child.exitCode,
+    signal: resident.child.signalCode,
+    endpoint,
+    endpointState: await probeEndpoint(endpoint),
+  };
+}
+
+/// Ask the endpoint for a connection and nothing more.
+///
+/// Deliberately sends no request: the question is whether the port still
+/// accepts, and issuing a request would conflate a dead listener with one that
+/// accepts and then fails to answer.
+function probeEndpoint(endpoint) {
+  const target = parseEndpoint(endpoint);
+  if (!target) return Promise.resolve("unknown");
+  return new Promise((done) => {
+    const socket = connect({ host: target.host, port: target.port });
+    const settle = (outcome) => {
+      socket.destroy();
+      done(outcome);
+    };
+    socket.setTimeout(2_000);
+    socket.on("connect", () => settle("accepting"));
+    socket.on("timeout", () => settle("accepted nothing before the probe timed out"));
+    socket.on("error", (error) => settle(`refused: ${error.code ?? error.message}`));
+  });
+}
+
+function parseEndpoint(endpoint) {
+  if (!endpoint) return null;
+  try {
+    const url = new URL(endpoint);
+    return { host: url.hostname, port: Number(url.port) };
+  } catch {
+    return null;
+  }
+}
+
+/// Name the frame that armed the wait, so a shared selector is still locatable.
+function callSite(marker) {
+  const frames = (marker.stack ?? "").split("\n").slice(1);
+  const caller = frames.find((frame) => !frame.includes("observedWait"));
+  return caller?.trim() ?? "<call site unavailable>";
+}
+
+/// Run a wait and, when it exceeds its bound, replace the bare timeout with a
+/// report naming the wait and the state both sides were in.
+///
+/// The suite is one script, so an unenriched rejection reaches the top level
+/// naming only a selector. Several call sites share a selector, and the raw
+/// timeout says nothing about whether the page or the resident was at fault,
+/// which is exactly the distinction a load-sensitive failure needs.
+export async function observedWait(page, label, run, context = {}) {
+  const marker = new Error(label);
+  try {
+    return await run();
+  } catch (error) {
+    const connection = await describeConnection(page);
+    const resident = await describeResident(context.resident);
+    throw new Error(
+      [
+        `canvas wait failed: ${label}`,
+        `  site: ${callSite(marker)}`,
+        `  connection: ${JSON.stringify(connection)}`,
+        `  resident: ${JSON.stringify(resident)}`,
+      ].join("\n"),
+      { cause: error },
+    );
+  }
+}
+
+/// Prove the instrument reports instead of regressing to a bare timeout.
+///
+/// Drives a wait that cannot ever be satisfied and asserts the failure names the
+/// wait, locates its call site, and carries both descriptions. Without this a
+/// future edit could drop the enrichment and restore an unattributable timeout
+/// with every other test still green.
+///
+/// Returns the connection state the report carried, so a caller running this at
+/// two layouts can prove the report tells a hidden status from a rendered one
+/// instead of only ever seeing whichever the default happens to be.
+export async function assertWaitReporting(page, resident) {
+  const label = "instrument self-check";
+  const failure = await observedWait(
+    page,
+    label,
+    () => page.waitForSelector(".spice-wait-instrument-absent", { timeout: 250 }),
+    { resident },
+  ).then(() => null, (error) => error);
+  assert.ok(failure, "a wait that cannot be satisfied must fail");
+  assert.match(failure.message, /canvas wait failed: instrument self-check/);
+  assert.match(failure.message, /site: .*canvas-fixture\.mjs/);
+  assert.match(failure.message, /"endpointState":/, "the report probes the resident endpoint");
+  assert.ok(failure.cause, "the original timeout survives as the cause");
+
+  // The connection state is asserted by shape rather than by one literal, because
+  // both shapes are real and each is a different diagnosis. Reading it back out
+  // of the rendered message proves the report carries it, not merely that the
+  // helper could compute it.
+  const connection = JSON.parse(reportField(failure.message, "connection"));
+  assert.ok("rendered" in connection, "the report says whether the status rendered");
+  if (connection.rendered) {
+    assert.match(connection.classes, /^status/, "a rendered status names Online against Offline");
+  } else {
+    assert.ok("mosaic" in connection, "an absent status reports the layout that hides it");
+  }
+  return connection;
+}
+
+/// Run the self-check at a second layout and prove the two reports disagree.
+///
+/// The workspace starts as a mosaic, which renders no topbar and therefore no
+/// status element at all, so a wait on a status class is deaf until a single
+/// view is chosen. `hidden` is the report taken at the mosaic; taking another
+/// once a view is open proves the instrument separates a status the layout
+/// hides from one that rendered and never changed, which are opposite
+/// diagnoses for the same timeout.
+export async function assertWaitReportDistinguishesLayout(page, resident, hidden) {
+  const shown = await assertWaitReporting(page, resident);
+  assert.notEqual(
+    hidden.rendered,
+    shown.rendered,
+    "the report tells a status hidden by the layout from one that rendered",
+  );
+}
+
+/// A restarted resident republishes a generation and the canvas rejoins it.
+///
+/// Returns the restarted resident. The rejoin waits report through the
+/// instrument for the same reason the loss waits do: a bare timeout here says
+/// only that a selector never appeared, and cannot tell a client that rejoined
+/// a stale generation from one that never rejoined at all.
+export async function assertResidentRestart(fixture, page, previous) {
+  const resident = await startResident(fixture);
+  assert.notEqual(resident.discovery.epoch, previous.epoch, "restart publishes a new generation");
+  assert.notEqual(
+    resident.discovery.capability,
+    previous.capability,
+    "restart publishes a new operator capability",
+  );
+  const restarted = await reply(fixture, ["lane"]);
+  assert.equal(
+    restarted.body.subscriptions.find(
+      (subscription) => subscription.lineage_id === previous.policy.lineage,
+    )?.policy,
+    previous.policy.policy,
+    "restart preserves the configured task policy instead of deriving it from lane life",
+  );
+  await page.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
+  await chooseCanvasView(page, "Chronology");
+  await observedWait(
+    page,
+    "canvas reports online again after the resident restarts",
+    () => page.waitForSelector(".status.online", { timeout: 10_000 }),
+    { resident },
+  );
+  await observedWait(
+    page,
+    "canvas adopts the generation the restarted resident published",
+    () =>
+      page.waitForFunction(
+        (epoch) => document.querySelector(".status-copy")?.textContent?.includes(epoch),
+        resident.discovery.epoch,
+      ),
+    { resident },
+  );
+  return resident;
+}
+
+/// The canvas must notice the resident is gone.
+///
+/// The status flips Offline and a fault lands in the event stream. Both waits
+/// report through the instrument, so a timeout names which of the two failed
+/// and what the client and the resident looked like when it did, rather than
+/// killing the node process with a bare TimeoutError.
+export async function assertResidentLossObserved(page, resident) {
+  await observedWait(
+    page,
+    "canvas reports offline after the resident stops",
+    () => page.waitForSelector(".status.offline", { timeout: 10_000 }),
+    { resident },
+  );
+  await observedWait(
+    page,
+    "a fault event is recorded after the resident stops",
+    () => page.locator(".event.fault").waitFor({ timeout: 10_000 }),
+    { resident },
+  );
+}
+
+function reportField(message, name) {
+  const line = message.split("\n").find((entry) => entry.startsWith(`  ${name}: `));
+  assert.ok(line, `the report carries the ${name} state`);
+  return line.slice(`  ${name}: `.length);
 }
 
 export async function assertLineageLifeIsolation(browser) {
