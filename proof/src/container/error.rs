@@ -56,7 +56,45 @@ pub enum ContainerError {
 }
 
 impl fmt::Display for ContainerError {
+    /// Two partitions: admitting the sealed appliance, then running inside it.
+    ///
+    /// The split exists only so neither half outgrows a reader. This match
+    /// carries no catch-all, so a new variant is a compile error here rather
+    /// than a closed partition it silently falls out of.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RuntimeNotAbsolute(..)
+            | Self::InspectRuntime { .. }
+            | Self::RuntimeNotRegular(..)
+            | Self::RuntimeNotExecutable(..)
+            | Self::RuntimeProbeSpec(..)
+            | Self::SpawnRuntimeProbe(..)
+            | Self::WaitRuntimeProbe(..)
+            | Self::RuntimeDialectNotAttested { .. }
+            | Self::ImageNotDigestPinned(..)
+            | Self::ImageNotResolved { .. }
+            | Self::ImageIdentityDrift { .. } => self.fmt_appliance(formatter),
+            Self::InspectWorkspace { .. }
+            | Self::WorkspaceNotDirectory(..)
+            | Self::UnrepresentableWorkspace(..)
+            | Self::ZeroOutputLimit
+            | Self::EmptyProgram
+            | Self::NulInCommand
+            | Self::CreateAttestationChallenge(..)
+            | Self::Spec(..)
+            | Self::SpawnRuntime(..)
+            | Self::Wait(..)
+            | Self::MissingCapture(..)
+            | Self::RuntimeControlRefused { .. }
+            | Self::RuntimeNotAttested { .. } => self.fmt_execution(formatter),
+        }
+    }
+}
+
+impl ContainerError {
+    /// Why the sealed appliance was never admitted: the runtime binary, the
+    /// interface it attests, and the digest-pinned image it must already hold.
+    fn fmt_appliance(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::RuntimeNotAbsolute(path) => {
                 write!(
@@ -114,14 +152,26 @@ impl fmt::Display for ContainerError {
             ),
             Self::ImageNotResolved { image, observed } => write!(
                 formatter,
-                "proof runtime does not hold proof image {image}, so load it with \
-                 dist/proof-image/load.sh before sealing: {observed}"
+                "proof runtime does not hold proof image {image}. Restore this lane with \
+                 `dist/proof-image/load.sh target/proof-image/spice-proof-image.tar`, or \
+                 rebuild that archive with `dist/proof-image/build.sh` when it is absent \
+                 too. A global docker prune takes this image from every lane at once, so \
+                 an image that was present a moment ago usually means a prune, not a \
+                 missing setup step: {observed}"
             ),
             Self::ImageIdentityDrift { expected, observed } => write!(
                 formatter,
                 "proof runtime resolved a different appliance: expected {expected:?}, \
                  observed {observed:?}"
             ),
+            _ => unreachable!("appliance admission partition is closed"),
+        }
+    }
+
+    /// Why an admitted appliance did not run: the workspace it mounts, the
+    /// process contract it is given, and the isolation it must prove.
+    fn fmt_execution(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
             Self::InspectWorkspace { path, source } => write!(
                 formatter,
                 "cannot inspect proof workspace {}: {source}",
@@ -170,6 +220,7 @@ impl fmt::Display for ContainerError {
                 "sealed runtime did not prove its OCI isolation contract: expected {expected:?}, \
                  observed {observed:?}"
             ),
+            _ => unreachable!("sealed execution partition is closed"),
         }
     }
 }

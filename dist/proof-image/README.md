@@ -26,6 +26,30 @@ configuration must name an absolute Docker or Podman executable as
 battery runs. Replay uses a read-only workspace, empty temporary caches, and a
 disabled network boundary.
 
+## Cleaning up
+
+Reclaim only what this lane owns. Its throwaway build context is
+`target/proof-image/context`, which `build.sh` already removes at the start of
+every run, and its archive, checksum, identity, and build log sit beside it
+under `target/proof-image/`. Deleting that directory costs this lane one
+rebuild and costs no other lane anything.
+
+Never reach for a global cleanup. `docker system prune`, `docker image prune`,
+`docker volume prune`, and `docker builder prune` are machine-wide on a host
+where every lane shares one daemon: they delete the pinned proof image named by
+`identity.txt` and the shared build cache out from under whichever lanes happen
+to be building, which is an emulated `linux/amd64` rebuild for each of them.
+The lane that ran the command is rarely the lane that pays.
+
+A build the daemon dropped this way reports only `unexpected EOF`, which is why
+`build.sh` names that case rather than passing it through. If the pinned image
+itself is gone, restore it from the archive with `load.sh` rather than
+rebuilding:
+
+```sh
+dist/proof-image/load.sh target/proof-image/spice-proof-image.tar
+```
+
 This image does not build or own the interactive Canvas stage. Every lane
 builds that stage natively with `cargo xtask app` into ignored
 `dist/stage-app`; the command atomically publishes one complete immutable
