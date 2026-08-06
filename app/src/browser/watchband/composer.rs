@@ -67,8 +67,7 @@ pub(super) fn render_agent_message_card(
     drafts: &UseReducerHandle<ComposerDrafts>,
     speak: &Callback<String>,
     order: u64,
-    card: &crate::mosaic::Card,
-    max_row: i32,
+    layout: &CardLayout,
 ) -> Html {
     let drag_text = message.text.clone();
     let ondragstart = Callback::from(move |event: DragEvent| {
@@ -123,7 +122,7 @@ pub(super) fn render_agent_message_card(
                 message.locus.offset,
                 message.locus.event,
             )}
-            class={classes!("mosaic-message-card", card.lifecycle.as_str())}
+            class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
             draggable="true"
             aria-label={format!("Agent message from {producer}")}
             data-card-kind="agent-message"
@@ -131,12 +130,18 @@ pub(super) fn render_agent_message_card(
             data-producer-target-id={quote_lane.to_string()}
             data-accent={correspondent.accent.to_string()}
             data-accent-slot={correspondent.accent.to_string()}
-            data-state={card.lifecycle.as_str()}
-            data-track={card.track.to_string()}
-            data-span={card.span.to_string()}
-            data-base={card.base.to_string()}
-            data-row={crate::mosaic::css_row_start(card, max_row).to_string()}
-            data-rows={card.rows.to_string()}
+            data-state={layout.lifecycle.as_str()}
+            data-track={layout.track.to_string()}
+            data-span={layout.span.to_string()}
+            data-base={layout.base.to_string()}
+            data-row={layout.row.to_string()}
+            data-rows={layout.rows.to_string()}
+            data-creation-index={layout.measurement_index.to_string()}
+            data-mosaic-measure-index={layout.measurement_index.to_string()}
+            data-measurement-reads={layout.measurement_reads.to_string()}
+            data-measured-heights={layout.measured_heights.clone()}
+            data-candidate-spans={layout.candidate_spans.clone()}
+            data-measure-span={layout.measure_span.to_string()}
             {ondragstart}
         >
             <div class="message-body markdown-body">{render_markdown(&message.text)}</div>
@@ -157,8 +162,7 @@ pub(super) fn render_directive_card(
     drafts: &UseReducerHandle<ComposerDrafts>,
     speak: &Callback<String>,
     order: u64,
-    card: &crate::mosaic::Card,
-    max_row: i32,
+    layout: &CardLayout,
 ) -> Html {
     let drag_text = directive.text.clone();
     let ondragstart = Callback::from(move |event: DragEvent| {
@@ -198,16 +202,23 @@ pub(super) fn render_directive_card(
     html! {
         <article
             key={directive.directive.to_string()}
-            class={classes!("mosaic-message-card", card.lifecycle.as_str())}
+            class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
             draggable="true"
             data-directive={directive.directive.to_string()}
+            data-card-kind="directive"
             data-agent-lane={lane.to_string()}
-            data-state={card.lifecycle.as_str()}
-            data-track={card.track.to_string()}
-            data-span={card.span.to_string()}
-            data-base={card.base.to_string()}
-            data-row={crate::mosaic::css_row_start(card, max_row).to_string()}
-            data-rows={card.rows.to_string()}
+            data-state={layout.lifecycle.as_str()}
+            data-track={layout.track.to_string()}
+            data-span={layout.span.to_string()}
+            data-base={layout.base.to_string()}
+            data-row={layout.row.to_string()}
+            data-rows={layout.rows.to_string()}
+            data-creation-index={layout.measurement_index.to_string()}
+            data-mosaic-measure-index={layout.measurement_index.to_string()}
+            data-measurement-reads={layout.measurement_reads.to_string()}
+            data-measured-heights={layout.measured_heights.clone()}
+            data-candidate-spans={layout.candidate_spans.clone()}
+            data-measure-span={layout.measure_span.to_string()}
             {ondragstart}
         >
             <div class="message-body markdown-body">{render_markdown(&directive.text)}</div>

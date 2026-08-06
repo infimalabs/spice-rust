@@ -10,7 +10,7 @@ use crate::watchband::{self, Standing};
 
 mod composer;
 mod controls;
-mod mosaic;
+mod mosaic_view;
 mod state;
 
 use composer::{
@@ -20,7 +20,7 @@ use composer::{
 };
 pub(super) use controls::{LineageControlAction, LineageControls};
 use controls::{LineageLife, LineageSpeech, render_lineage_controls};
-use mosaic::{ActivityCard, MosaicPlane};
+use mosaic_view::{ActivityCard, CardLayout, MosaicPlane};
 use state::ComposerAction;
 pub(super) use state::ComposerDrafts;
 
