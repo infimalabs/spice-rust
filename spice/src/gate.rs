@@ -27,7 +27,7 @@ const PROCESS_PATH: &str = concat!("PA", "TH");
 /// Returns the exact rim acquisition or battery refusal. No alternate command
 /// or predecessor implementation is attempted.
 pub fn run(selector: Selector) -> Result<BatteryReport, RunError> {
-    let mut capture = capture(selector, None)?;
+    let mut capture = capture(selector, None, None)?;
     capture
         .execute()
         .map_err(|error| RunError::refusal("gate::battery-refused", error))
@@ -40,7 +40,7 @@ pub fn run(selector: Selector) -> Result<BatteryReport, RunError> {
 /// Returns the same acquisition and arm refusal as [`run`], without executing
 /// sibling battery arms.
 pub fn run_arm(selector: Selector, gate_id: GateId) -> Result<BatteryArmResult, RunError> {
-    let mut capture = capture(selector, None)?;
+    let mut capture = capture(selector, Some(gate_id), None)?;
     capture
         .execute_arm(gate_id)
         .map_err(|error| RunError::refusal("gate::battery-refused", error))
@@ -52,7 +52,7 @@ pub fn run_arm(selector: Selector, gate_id: GateId) -> Result<BatteryArmResult, 
 ///
 /// Returns the same acquisition and completeness refusals as [`run`].
 pub fn receipt(selector: Selector) -> Result<BatteryReceipt, RunError> {
-    let mut capture = capture(selector, None)?;
+    let mut capture = capture(selector, None, None)?;
     capture
         .execute_receipt()
         .map_err(|error| RunError::refusal("gate::battery-refused", error))
@@ -70,7 +70,7 @@ pub fn run_traced(
     selector: Selector,
     trace: &mut dyn FnMut(RepositoryExecutionEvent),
 ) -> Result<BatteryReport, RunError> {
-    let mut capture = capture(selector, Some(trace))?;
+    let mut capture = capture(selector, None, Some(trace))?;
     capture
         .execute()
         .map_err(|error| RunError::refusal("gate::battery-refused", error))
@@ -78,6 +78,7 @@ pub fn run_traced(
 
 fn capture<'trace>(
     selector: Selector,
+    selected: Option<GateId>,
     trace: Option<&'trace mut dyn FnMut(RepositoryExecutionEvent)>,
 ) -> Result<BatteryCapture<'trace>, RunError> {
     let directory = env::current_dir()
@@ -102,11 +103,17 @@ fn capture<'trace>(
     let claim = ClaimCapture::Idle;
     let hygiene = HygieneConfiguration::current();
     let root = repository.worktree_root();
-    match trace {
-        Some(trace) => {
+    match (selected, trace) {
+        (Some(gate_id), Some(trace)) => BatteryCapture::capture_arm_traced(
+            root, &selector, claim, actor, rim, hygiene, gate_id, trace,
+        ),
+        (Some(gate_id), None) => {
+            BatteryCapture::capture_arm(root, &selector, claim, actor, rim, hygiene, gate_id)
+        }
+        (None, Some(trace)) => {
             BatteryCapture::capture_traced(root, &selector, claim, actor, rim, hygiene, trace)
         }
-        None => BatteryCapture::capture(root, &selector, claim, actor, rim, hygiene),
+        (None, None) => BatteryCapture::capture(root, &selector, claim, actor, rim, hygiene),
     }
     .map_err(|error| {
         let detail = error.detail();

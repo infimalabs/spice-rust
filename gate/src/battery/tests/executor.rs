@@ -544,7 +544,8 @@ fn assert_each_family_ran_once(events: &[RepositoryExecutionEvent]) {
         .iter()
         .filter_map(|event| match event {
             RepositoryExecutionEvent::ArmInvoked { gate_id, .. } => Some(*gate_id),
-            RepositoryExecutionEvent::FamilyInvoked { .. } => None,
+            RepositoryExecutionEvent::FamilyInvoked { .. }
+            | RepositoryExecutionEvent::AnalysisInvoked { .. } => None,
         })
         .collect();
     assert_eq!(arm_events, GateId::ALL);
@@ -553,7 +554,8 @@ fn assert_each_family_ran_once(events: &[RepositoryExecutionEvent]) {
         .iter()
         .filter_map(|event| match event {
             RepositoryExecutionEvent::FamilyInvoked { family } => Some(*family),
-            RepositoryExecutionEvent::ArmInvoked { .. } => None,
+            RepositoryExecutionEvent::ArmInvoked { .. }
+            | RepositoryExecutionEvent::AnalysisInvoked { .. } => None,
         })
         .collect();
     assert_eq!(
@@ -565,6 +567,19 @@ fn assert_each_family_ran_once(events: &[RepositoryExecutionEvent]) {
             ArmFamily::Hygiene,
         ]
     );
+
+    let mut analyses = events
+        .iter()
+        .filter_map(|event| match event {
+            RepositoryExecutionEvent::AnalysisInvoked { gate_id, .. } => Some(*gate_id),
+            RepositoryExecutionEvent::ArmInvoked { .. }
+            | RepositoryExecutionEvent::FamilyInvoked { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    let mut expected = GateId::ALL.to_vec();
+    analyses.sort_unstable();
+    expected.sort_unstable();
+    assert_eq!(analyses, expected);
 }
 
 /// Each result carries evidence its own family owns, refusals included.

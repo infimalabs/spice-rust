@@ -25,7 +25,8 @@ fn shared_rim_invokes_each_compiled_arm_and_family_once_in_order() {
                 gate_id,
                 family,
             } => Some((*position, *gate_id, *family)),
-            RepositoryExecutionEvent::FamilyInvoked { .. } => None,
+            RepositoryExecutionEvent::FamilyInvoked { .. }
+            | RepositoryExecutionEvent::AnalysisInvoked { .. } => None,
         })
         .collect::<Vec<_>>();
     assert_eq!(arms.len(), GateId::ALL.len());
@@ -46,7 +47,8 @@ fn shared_rim_invokes_each_compiled_arm_and_family_once_in_order() {
             .iter()
             .filter_map(|event| match event {
                 RepositoryExecutionEvent::FamilyInvoked { family } => Some(*family),
-                RepositoryExecutionEvent::ArmInvoked { .. } => None,
+                RepositoryExecutionEvent::ArmInvoked { .. }
+                | RepositoryExecutionEvent::AnalysisInvoked { .. } => None,
             })
             .collect::<Vec<_>>(),
         [

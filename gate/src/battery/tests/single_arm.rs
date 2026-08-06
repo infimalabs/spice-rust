@@ -1,0 +1,148 @@
+//! Production selection reaches exactly one analysis in every arm family.
+
+use super::*;
+
+const REPRESENTATIVE_ARMS: [(GateId, ArmFamily); 4] = [
+    (GateId::PlanPhase, ArmFamily::Core),
+    (GateId::EnvNameLedger, ArmFamily::Toolchain),
+    (GateId::FileShape, ArmFamily::Metrics),
+    (GateId::Reachability, ArmFamily::Hygiene),
+];
+
+#[test]
+fn selected_production_arms_execute_alone_and_match_their_full_rows() {
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    // Reach a real native hygiene parse while keeping selected/full equality
+    // independent of completed-run wall-clock evidence.
+    fs::write(repository.join("app/main.py"), "def broken(:\n")
+        .expect("write selected invalid Python source");
+    fixture_git(&repository, &["add", "app/main.py"]);
+    let selector = crate::Selector::staged();
+    let mut complete = crate::BatteryCapture::capture(
+        &repository,
+        &selector,
+        crate::ClaimCapture::Idle,
+        acting(),
+        rim(&repository),
+        hygiene(),
+    )
+    .expect("capture complete production battery");
+    let report = complete
+        .execute()
+        .expect("execute complete production battery");
+
+    for (gate_id, family) in REPRESENTATIVE_ARMS {
+        let mut events = Vec::new();
+        let mut record = |event| events.push(event);
+        let mut selected = crate::BatteryCapture::capture_arm_traced(
+            &repository,
+            &selector,
+            crate::ClaimCapture::Idle,
+            acting(),
+            rim(&repository),
+            hygiene(),
+            gate_id,
+            &mut record,
+        )
+        .expect("capture selected production arm");
+        let complete_error = selected
+            .execute()
+            .expect_err("selected capture must refuse complete execution");
+        assert!(
+            complete_error
+                .detail()
+                .contains("cannot execute a complete battery")
+        );
+        let sibling = GateId::ALL
+            .into_iter()
+            .find(|candidate| *candidate != gate_id)
+            .expect("the battery contains a sibling arm");
+        let mismatch = selected
+            .execute_arm(sibling)
+            .expect_err("selected capture must refuse a different arm");
+        assert!(
+            mismatch
+                .detail()
+                .contains("requires a capture selected for that arm")
+        );
+        let result = selected
+            .execute_arm(gate_id)
+            .expect("execute selected production arm");
+        drop(selected);
+
+        assert_eq!(
+            &result,
+            report
+                .results()
+                .iter()
+                .find(|candidate| candidate.gate_id() == gate_id)
+                .expect("complete battery contains selected row")
+        );
+        assert_eq!(
+            analyses(&events),
+            [(gate_id, family)],
+            "{gate_id} executed a sibling analysis"
+        );
+        assert_eq!(invoked_arms(&events), [(gate_id, family)]);
+        assert_eq!(invoked_families(&events), [family]);
+    }
+}
+
+fn acting() -> crate::ActorCapture {
+    crate::ActorCapture::Acting {
+        actor: "battery-actor".to_owned(),
+        bound_claims: Vec::new(),
+    }
+}
+
+fn rim(repository: &Path) -> crate::RimCapture {
+    crate::RimCapture::new(
+        repository,
+        None,
+        ["app/main.py", "src/lib.rs", "tests/test_main.py"].map(str::to_owned),
+    )
+    .expect("fixture repository root is absolute")
+}
+
+fn hygiene() -> crate::HygieneConfiguration {
+    crate::HygieneConfiguration::new(["app/main.py"], ["tests"])
+        .expect("normalized applicable hygiene roots")
+}
+
+fn analyses(events: &[RepositoryExecutionEvent]) -> Vec<(GateId, ArmFamily)> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            RepositoryExecutionEvent::AnalysisInvoked { gate_id, family } => {
+                Some((*gate_id, *family))
+            }
+            RepositoryExecutionEvent::ArmInvoked { .. }
+            | RepositoryExecutionEvent::FamilyInvoked { .. } => None,
+        })
+        .collect()
+}
+
+fn invoked_arms(events: &[RepositoryExecutionEvent]) -> Vec<(GateId, ArmFamily)> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            RepositoryExecutionEvent::ArmInvoked {
+                gate_id, family, ..
+            } => Some((*gate_id, *family)),
+            RepositoryExecutionEvent::FamilyInvoked { .. }
+            | RepositoryExecutionEvent::AnalysisInvoked { .. } => None,
+        })
+        .collect()
+}
+
+fn invoked_families(events: &[RepositoryExecutionEvent]) -> Vec<ArmFamily> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            RepositoryExecutionEvent::FamilyInvoked { family } => Some(*family),
+            RepositoryExecutionEvent::ArmInvoked { .. }
+            | RepositoryExecutionEvent::AnalysisInvoked { .. } => None,
+        })
+        .collect()
+}

@@ -1,6 +1,6 @@
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::io::{self, Read};
+use std::io::{self, Read, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
@@ -9,11 +9,16 @@ use sill::Deadlines;
 
 const USAGE_EXIT: u8 = 2;
 const USAGE: &str = concat!(
-    "usage: cargo xtask <verify|gate ARM|app|activate-hooks|",
+    "usage: cargo xtask <help|verify|gate ARM|app|activate-hooks|",
     "proof-image <build [ARCHIVE]|load ARCHIVE|verify [ARCHIVE]>|",
     "stage-target TARGET|",
     "commit-msg MESSAGE_FILE|reference-transaction STATE>"
 );
+
+fn help() -> String {
+    let arms = gate::GateId::ALL.map(gate::GateId::as_str).join("\n  ");
+    format!("{USAGE}\n\ngate ARM accepts:\n  {arms}")
+}
 
 fn main() -> ExitCode {
     let mut arguments = env::args_os().skip(1);
@@ -22,20 +27,25 @@ fn main() -> ExitCode {
     let mut output = io::stdout().lock();
     // Dispatch only current spellings; removed command names have no alias arm.
     let result: Result<(), Box<dyn std::error::Error>> = match command.as_deref() {
+        Some(value) if value == OsStr::new("help") && arguments.len() == 0 => {
+            writeln!(output, "{}", help()).map_err(Into::into)
+        }
         Some(value) if value == OsStr::new("verify") && arguments.len() == 0 => {
             xtask::verify(&mut output).map_err(Into::into)
         }
         Some(value) if value == OsStr::new("gate") && arguments.len() == 1 => {
             let arm = arguments.next().expect("one gate arm was admitted");
             let Some(arm) = arm.to_str() else {
-                eprintln!("{USAGE}");
+                eprintln!("{}", help());
                 return ExitCode::from(USAGE_EXIT);
             };
             let Some(gate_id) = gate::GateId::ALL
                 .into_iter()
                 .find(|gate_id| gate_id.as_str() == arm)
             else {
-                eprintln!("unknown gate arm {arm:?}\n{USAGE}");
+                eprintln!(
+                    "unknown gate arm {arm:?}; run `cargo xtask help` for accepted gate arms"
+                );
                 return ExitCode::from(USAGE_EXIT);
             };
             xtask::gate_arm(gate_id, &mut output).map_err(Into::into)
@@ -53,7 +63,7 @@ fn main() -> ExitCode {
         Some(value) if value == OsStr::new("stage-target") && arguments.len() == 1 => {
             let target = arguments.next().expect("one release target was admitted");
             let Some(target) = target.to_str() else {
-                eprintln!("{USAGE}");
+                eprintln!("{}", help());
                 return ExitCode::from(USAGE_EXIT);
             };
             preflight_native_release(target).and_then(|()| {
@@ -88,7 +98,7 @@ fn main() -> ExitCode {
             run_reference_transaction(&state)
         }
         _ => {
-            eprintln!("{USAGE}");
+            eprintln!("{}", help());
             return ExitCode::from(USAGE_EXIT);
         }
     };
@@ -115,7 +125,7 @@ fn run_proof_image(arguments: Vec<OsString>) -> ExitCode {
             ("verify", Some(PathBuf::from(archive)))
         }
         _ => {
-            eprintln!("{USAGE}");
+            eprintln!("{}", help());
             return ExitCode::from(USAGE_EXIT);
         }
     };

@@ -76,6 +76,7 @@ impl BatteryAuthorities {
 pub struct BatteryCapture<'trace> {
     authorities: BatteryAuthorities,
     executor: RepositoryExecutor<'trace>,
+    selected: Option<crate::GateId>,
 }
 
 impl BatteryCapture<'_> {
@@ -101,7 +102,33 @@ impl BatteryCapture<'_> {
         rim: RimCapture,
         hygiene: HygieneConfiguration,
     ) -> Result<Self, BatteryError> {
-        Self::capture_inner(repository, selector, claim, actor, rim, hygiene, None)
+        Self::capture_inner(repository, selector, claim, actor, rim, hygiene, None, None)
+    }
+
+    /// Capture one repository for exactly one canonical arm.
+    ///
+    /// # Errors
+    ///
+    /// Refuses the same pre-execution failures as [`Self::capture`].
+    pub fn capture_arm(
+        repository: impl Into<PathBuf>,
+        selector: &Selector,
+        claim: ClaimCapture,
+        actor: ActorCapture,
+        rim: RimCapture,
+        hygiene: HygieneConfiguration,
+        gate_id: crate::GateId,
+    ) -> Result<Self, BatteryError> {
+        Self::capture_inner(
+            repository,
+            selector,
+            claim,
+            actor,
+            rim,
+            hygiene,
+            Some(gate_id),
+            None,
+        )
     }
 }
 
@@ -128,10 +155,46 @@ impl<'trace> BatteryCapture<'trace> {
             actor,
             rim,
             hygiene,
+            None,
             Some(trace),
         )
     }
 
+    /// Capture one canonical arm while exposing production analysis events.
+    ///
+    /// # Errors
+    ///
+    /// Refuses the same pre-execution failures as [`Self::capture_arm`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the selected identity and observer accompany six independent capture authorities"
+    )]
+    pub fn capture_arm_traced(
+        repository: impl Into<PathBuf>,
+        selector: &Selector,
+        claim: ClaimCapture,
+        actor: ActorCapture,
+        rim: RimCapture,
+        hygiene: HygieneConfiguration,
+        gate_id: crate::GateId,
+        trace: &'trace mut dyn FnMut(RepositoryExecutionEvent),
+    ) -> Result<Self, BatteryError> {
+        Self::capture_inner(
+            repository,
+            selector,
+            claim,
+            actor,
+            rim,
+            hygiene,
+            Some(gate_id),
+            Some(trace),
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the execution mode accompanies six independent capture authorities"
+    )]
     fn capture_inner(
         repository: impl Into<PathBuf>,
         selector: &Selector,
@@ -139,6 +202,7 @@ impl<'trace> BatteryCapture<'trace> {
         actor: ActorCapture,
         rim: RimCapture,
         hygiene: HygieneConfiguration,
+        selected: Option<crate::GateId>,
         trace: Option<&'trace mut dyn FnMut(RepositoryExecutionEvent)>,
     ) -> Result<Self, BatteryError> {
         let repository: PathBuf = repository.into();
@@ -157,6 +221,7 @@ impl<'trace> BatteryCapture<'trace> {
             rim,
             hygiene,
             state.latches(),
+            selected,
             trace,
         )?;
         let contract = executor.contract();
@@ -179,6 +244,7 @@ impl<'trace> BatteryCapture<'trace> {
         Ok(Self {
             authorities,
             executor,
+            selected,
         })
     }
 
@@ -189,8 +255,12 @@ impl<'trace> BatteryCapture<'trace> {
     /// Returns the manifest, context, or completeness refusal that prevented
     /// one total result vector. An arm that fails is a result, not an error.
     pub fn execute(&mut self) -> Result<BatteryReport, BatteryError> {
+        if let Some(gate_id) = self.selected {
+            return Err(BatteryError::new(format!(
+                "selected capture for {gate_id} cannot execute a complete battery"
+            )));
+        }
         let inputs = self.authorities.inputs()?;
-        self.executor.select(None);
         run_battery(&inputs, &mut self.executor)
     }
 
@@ -204,8 +274,12 @@ impl<'trace> BatteryCapture<'trace> {
         &mut self,
         gate_id: crate::GateId,
     ) -> Result<BatteryArmResult, BatteryError> {
+        if self.selected != Some(gate_id) {
+            return Err(BatteryError::new(format!(
+                "arm execution for {gate_id} requires a capture selected for that arm"
+            )));
+        }
         let inputs = self.authorities.inputs()?;
-        self.executor.select(Some(gate_id));
         run_battery_arm(&inputs, &mut self.executor, gate_id)
     }
 
