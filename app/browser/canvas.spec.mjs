@@ -86,7 +86,7 @@ function waitForDiscovery(child, canvas, timeout = 30_000) {
 async function startResident(fixture) {
   const canvas = join(fixture, ".git/.spice/canvas");
   await mkdir(dirname(canvas), { recursive: true });
-  const child = spawn(binary, ["--json", "up"], {
+  const child = spawn(binary, ["--json", "up", "--port", "0"], {
     cwd: fixture,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -224,6 +224,9 @@ function monitorPage(page) {
   const requestFailures = [];
   let expectedNetworkInterruption = false;
   page.on("pageerror", (error) => pageErrors.push(error.stack ?? error.toString()));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push(`console: ${message.text()}`);
+  });
   page.on("requestfailed", (request) => {
     if (!expectedNetworkInterruption) {
       requestFailures.push(`${request.url()} ${request.failure()?.errorText ?? "unknown failure"}`);
@@ -380,7 +383,10 @@ async function assertMosaicPacking(page, console) {
       track: Number(element.dataset.track),
       span: Number(element.dataset.span),
       base: Number(element.dataset.base),
+      row: Number(element.dataset.row),
       rows: Number(element.dataset.rows),
+      gridColumnStart: Number(getComputedStyle(element).gridColumnStart),
+      gridRowStart: Number(getComputedStyle(element).gridRowStart),
       left: box.left,
       right: box.right,
       top: box.top,
@@ -389,6 +395,8 @@ async function assertMosaicPacking(page, console) {
   }));
   assert.ok(placements.every((card) => card.span >= 2 && card.track + card.span <= 12));
   assert.ok(placements.every((card) => card.rows >= 2));
+  assert.ok(placements.every((card) => card.gridColumnStart === card.track + 1));
+  assert.ok(placements.every((card) => card.gridRowStart === card.row));
   for (let left = 0; left < placements.length; left += 1) {
     for (let right = left + 1; right < placements.length; right += 1) {
       const a = placements[left];

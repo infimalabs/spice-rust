@@ -372,17 +372,12 @@ fn mosaic_inbox(properties: &MosaicInboxProps) -> Html {
         .map(|directive| message_candidates(directive, &geometry))
         .collect::<Vec<_>>();
     let cards = crate::mosaic::pack(&candidate_sets, crate::mosaic::TRACK_COUNT);
-    let (max_row, min_base) = crate::mosaic::extent(&cards);
+    let (max_row, _) = crate::mosaic::extent(&cards);
     use_scroll_compensation(
         host.clone(),
         max_row,
         geometry.module,
         (*width).round() as i32,
-    );
-    let rows = (max_row - min_base).max(1);
-    let style = format!(
-        "--mosaic-module: {}px; --mosaic-gap: {}px; grid-template-rows: repeat({}, calc(var(--mosaic-module) - var(--mosaic-gap)));",
-        geometry.module, geometry.gap, rows,
     );
     html! {
         <div
@@ -390,7 +385,6 @@ fn mosaic_inbox(properties: &MosaicInboxProps) -> Html {
             class={classes!("conversation-feed", (!properties.pending.is_empty()).then_some("mosaic-feed"))}
             aria-live="polite"
             data-lanes={geometry.lane_count.to_string()}
-            {style}
         >
             if properties.pending.is_empty() {
                 <div class="conversation-empty">
@@ -439,13 +433,6 @@ fn render_mosaic_card(
     max_row: i32,
 ) -> Html {
     let state = card.lifecycle.as_str();
-    let style = format!(
-        "grid-column: {} / span {}; grid-row: {} / span {};",
-        card.track + 1,
-        card.span,
-        crate::mosaic::css_row_start(card, max_row),
-        card.rows,
-    );
     html! {
         <article
             class={classes!("message", "outgoing", "mosaic-card", state)}
@@ -453,8 +440,8 @@ fn render_mosaic_card(
             data-track={card.track.to_string()}
             data-span={card.span.to_string()}
             data-base={card.base.to_string()}
+            data-row={crate::mosaic::css_row_start(card, max_row).to_string()}
             data-rows={card.rows.to_string()}
-            {style}
         >
             <div class="message-meta">
                 <strong>{"You"}</strong>
