@@ -176,7 +176,6 @@ fn canvas_app() -> Html {
     let speech_controller = use_mut_ref(crate::speech::Controller::default);
     let agents = use_agent_controls(
         sender.clone(),
-        surface.clone(),
         speech_speak(
             speech.clone(),
             speech_status.clone(),
@@ -256,40 +255,25 @@ fn canvas_app() -> Html {
 }
 
 #[hook]
-fn use_agent_controls(
-    sender: SenderHandle,
-    surface: UseStateHandle<SurfaceData>,
-    speak: Callback<String>,
-) -> view::AgentControls {
+fn use_agent_controls(sender: SenderHandle, speak: Callback<String>) -> view::AgentControls {
     let selected_lane = use_state(String::new);
     let seat_worktree = use_state(String::new);
     let seat_vendor = use_state(|| "codex".to_owned());
     let seat_life = use_state(|| "steer".to_owned());
-    let steer_text = use_state(String::new);
     let seat_notice = use_state(Notice::none);
-    let steer_notice = use_state(Notice::none);
     view::AgentControls {
         submit_seat: seat_submit(
-            sender.clone(),
+            sender,
             seat_worktree.clone(),
             seat_vendor.clone(),
             seat_life.clone(),
             seat_notice.clone(),
         ),
-        submit_steer: steer_submit(
-            sender,
-            surface,
-            selected_lane.clone(),
-            steer_text.clone(),
-            steer_notice.clone(),
-        ),
         selected_lane,
         seat_worktree,
         seat_vendor,
         seat_life,
-        steer_text,
         seat_notice,
-        steer_notice,
         speak,
     }
 }
@@ -318,63 +302,6 @@ fn seat_submit(
             Err(refusal) => notice.set(refusal.into()),
         }
     })
-}
-
-fn steer_submit(
-    sender: SenderHandle,
-    surface: UseStateHandle<SurfaceData>,
-    selected_lane: UseStateHandle<String>,
-    message: UseStateHandle<String>,
-    notice: UseStateHandle<Notice>,
-) -> Callback<SubmitEvent> {
-    Callback::from(move |event: SubmitEvent| {
-        event.prevent_default();
-        let selected = selected_lane.parse::<CanonicalUuid>().ok();
-        let seated = selected_occupant(&surface, selected);
-        match compose::steer(&message, seated) {
-            Ok(((lane, occupant, epoch), text)) => {
-                notice.set(Notice::none());
-                send_action(
-                    &sender,
-                    ClientAction::Steer {
-                        lane,
-                        occupant,
-                        epoch,
-                        message: text,
-                        attachments: Vec::new(),
-                    },
-                );
-                message.set(String::new());
-            }
-            Err(refusal) => notice.set(refusal.into()),
-        }
-    })
-}
-
-/// The lane a directive is aimed at: the selected one, else the first seated.
-///
-/// An explicit selection is honoured as given -- if the operator picked a lane
-/// that has since gone vacant they get the refusal for that lane, not a quiet
-/// substitution. The fallback is what has to skip: a vacant lane sorting first
-/// would hand back `steer::lane-vacant` while seated lanes sat further down the
-/// same list, which reads as the console being broken rather than as the one
-/// lane it happened to land on being empty.
-fn selected_occupant(
-    surface: &SurfaceData,
-    selected: Option<CanonicalUuid>,
-) -> Option<(CanonicalUuid, CanonicalUuid, CanonicalUuid)> {
-    surface
-        .as_ref()
-        .and_then(CanvasRuntime::lanes)
-        .and_then(|lanes| {
-            selected
-                .and_then(|selected| lanes.lanes.iter().find(|row| row.lane == selected))
-                .or_else(|| lanes.lanes.iter().find(|row| row.occupant.is_some()))
-                .and_then(|row| {
-                    row.occupant
-                        .map(|occupant| (row.lane, occupant, lanes.epoch))
-                })
-        })
 }
 
 /// Stop what is playing, or read the whole rendered surface aloud.

@@ -230,9 +230,22 @@ pub(super) fn render_mosaic_card(
 ) -> Html {
     let state = card.lifecycle.as_str();
     let text = directive.text.clone();
+    // A card is a quotable source as well as a rendered message: the operator
+    // drags one onto a lane to carry its text into that lane's composer. The
+    // payload is the card's own text, so this needs nothing the card does not
+    // already hold, and the drop side is the lane section that receives it.
+    let dragged = text.clone();
+    let ondragstart = Callback::from(move |event: DragEvent| {
+        if let Some(transfer) = event.data_transfer() {
+            let _ = transfer.set_data("text/plain", &dragged);
+            transfer.set_effect_allowed("copy");
+        }
+    });
     html! {
         <article
             class={classes!("message", "outgoing", "mosaic-card", state)}
+            draggable="true"
+            {ondragstart}
             data-state={state}
             data-key={directive.key.clone()}
             data-accent={correspondent.accent.to_string()}
