@@ -1183,7 +1183,14 @@ async function assertPackedHistory(page, extent, linked = false) {
     await threadRowsLocator.count() >= minimumRows,
     linked ? "multi-link causal thread renders" : "terminal causal thread renders",
   );
-  assert.match(await thread.locator(".section-count").innerText(), /root/);
+  await waitForPage(page, "causal thread reaches root", TRANSITION_MS, () => {
+    return document.querySelector('[data-pane="lineage"] .section-count')?.textContent === "root";
+  });
+  assert.equal(
+    await thread.locator(".section-count").innerText(),
+    "root",
+    "the complete causal walk terminates at its root",
+  );
   const threadRows = await thread.locator("tbody tr").allTextContents();
   if (linked) {
     assert.ok(threadRows.some((row) => !row.endsWith("root")), "causal walk includes a linked cause");
