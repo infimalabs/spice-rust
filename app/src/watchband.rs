@@ -14,9 +14,9 @@
 //! a task. A field the reference design shows and the wire does not carry is
 //! therefore absent here rather than approximated.
 
-use wire::CanonicalUuid;
 use wire::head::ClaimDisposition;
 use wire::intent::{BoardTask, LaneInbox};
+use wire::{CanonicalUuid, TaskHandle};
 
 use crate::runtime::LaneRow;
 
@@ -204,6 +204,27 @@ pub fn elapsed_label(millis: i64) -> String {
 #[must_use]
 pub fn badge(count: usize) -> Option<String> {
     (count > 0).then(|| count.to_string())
+}
+
+/// Canonical task handles an authored message reports, in first-report order.
+///
+/// Markdown punctuation is a boundary rather than part of a handle, so prose
+/// may name one in backticks, parentheses, or at the end of a sentence. The
+/// wire parser remains the authority for the handle grammar, and repeated
+/// mentions produce one chip rather than turning emphasis into a count.
+#[must_use]
+pub fn reported_tasks(text: &str) -> Vec<TaskHandle> {
+    let mut tasks = Vec::new();
+    for token in
+        text.split(|character: char| !character.is_ascii_alphanumeric() && character != '-')
+    {
+        if let Ok(task) = token.parse::<TaskHandle>()
+            && !tasks.contains(&task)
+        {
+            tasks.push(task);
+        }
+    }
+    tasks
 }
 
 /// Fold authored text onto one line, spelling the breaks it had.

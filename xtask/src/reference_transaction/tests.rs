@@ -1,5 +1,5 @@
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -26,6 +26,13 @@ impl Fixture {
         fixture.expect(&["init", "--quiet", "--initial-branch=main", "."]);
         fixture.expect(&["config", "user.email", "lane@example.invalid"]);
         fixture.expect(&["config", "user.name", "lane"]);
+        let empty_hooks = fixture.0.join("empty-hooks");
+        fs::create_dir(&empty_hooks).expect("empty hook directory is created");
+        fixture.expect(&[
+            "config",
+            "core.hooksPath",
+            empty_hooks.to_str().expect("hook path is UTF-8"),
+        ]);
         for subject in ["one", "two", "three"] {
             fs::write(fixture.0.join("file.txt"), format!("{subject}\n"))
                 .expect("tracked file is written");
@@ -55,6 +62,10 @@ impl Fixture {
 
     fn head(&self) -> String {
         self.expect(&["rev-parse", "HEAD"])
+    }
+
+    fn head_subject(&self) -> String {
+        self.expect(&["log", "-1", "--format=%s"])
     }
 
     /// Publish the current tip through the same configuration `apply` reads.
@@ -224,7 +235,66 @@ fn combined(output: &Output) -> String {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        // A fixture is not the writer that owns this shared lock. Refuse to
+        // recursively erase the repository until that writer releases it.
+        if self.shared_lock().exists() {
+            return;
+        }
         let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+struct ForeignLock(PathBuf);
+
+impl ForeignLock {
+    fn take(path: PathBuf, contents: &str) -> Self {
+        fs::write(&path, contents).expect("the other writer takes the shared lock");
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+
+    fn release(self) {
+        fs::remove_file(&self.0).expect("the other writer releases its shared lock");
+    }
+}
+
+#[derive(Debug, PartialEq)]
+struct LockIdentity {
+    bytes: Vec<u8>,
+    device: u64,
+    inode: u64,
+    mode: u32,
+    links: u64,
+    owner: u32,
+    group: u32,
+    size: u64,
+    modified_seconds: i64,
+    modified_nanoseconds: i64,
+    changed_seconds: i64,
+    changed_nanoseconds: i64,
+}
+
+impl LockIdentity {
+    fn read(path: &Path) -> Self {
+        let bytes = fs::read(path).expect("foreign lock bytes read");
+        let metadata = fs::metadata(path).expect("foreign lock metadata reads");
+        Self {
+            bytes,
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            mode: metadata.mode(),
+            links: metadata.nlink(),
+            owner: metadata.uid(),
+            group: metadata.gid(),
+            size: metadata.size(),
+            modified_seconds: metadata.mtime(),
+            modified_nanoseconds: metadata.mtime_nsec(),
+            changed_seconds: metadata.ctime(),
+            changed_nanoseconds: metadata.ctime_nsec(),
+        }
     }
 }
 
@@ -598,6 +668,7 @@ fn a_commit_that_waited_for_the_shared_lock_reports_nothing() {
     let fixture = Fixture::history("waited");
     fixture.expect(&["config", "core.packedRefsTimeout", "10000"]);
     fixture.stage("four");
+    let before = fixture.head();
 
     let hold = Duration::from_millis(400);
     let holder = fixture.hold_shared_lock(hold);
@@ -614,6 +685,16 @@ fn a_commit_that_waited_for_the_shared_lock_reports_nothing() {
         output.status.success(),
         "the commit failed: {}",
         combined(&output)
+    );
+    assert_ne!(
+        fixture.head(),
+        before,
+        "the successful commit advances HEAD"
+    );
+    assert_eq!(
+        fixture.head_subject(),
+        "four",
+        "the requested commit was recorded"
     );
     let seen = combined(&output);
     assert!(
@@ -647,12 +728,13 @@ fn a_commit_that_genuinely_fails_still_reports_its_failure() {
 #[test]
 fn a_lock_another_writer_holds_survives_a_commit_that_gave_up() {
     let fixture = Fixture::history("survives");
+    let fixture_root = fixture.path().to_owned();
     fixture.expect(&["config", "core.packedRefsTimeout", "100"]);
-    let lock = fixture.shared_lock();
     let held = "another writer holds this\n";
-    fs::write(&lock, held).expect("the other writer takes the shared lock");
-    let stamped = fs::metadata(&lock).expect("lock metadata").modified().ok();
+    let foreign_lock = ForeignLock::take(fixture.shared_lock(), held);
+    let identity = LockIdentity::read(foreign_lock.path());
     fixture.stage("five");
+    let before = fixture.head();
 
     let output = git(fixture.path(), &["commit", "--quiet", "-m", "five"]).expect("git launches");
 
@@ -661,21 +743,36 @@ fn a_lock_another_writer_holds_survives_a_commit_that_gave_up() {
         "recording the commit never needs the shared lock: {}",
         combined(&output)
     );
+    assert_ne!(
+        fixture.head(),
+        before,
+        "the successful commit advances HEAD"
+    );
+    assert_eq!(
+        fixture.head_subject(),
+        "five",
+        "the requested commit was recorded"
+    );
+    let seen = combined(&output);
     assert!(
-        combined(&output).contains("packed-refs.lock"),
+        seen.contains("Unable to create")
+            && seen.contains("packed-refs.lock")
+            && seen.contains("File exists"),
         "a cleanup that genuinely gave up must say so, or silence stops \
          meaning recovered: {}",
-        combined(&output)
+        seen
     );
     assert_eq!(
-        fs::read_to_string(&lock).expect("the lock is still there"),
-        held,
-        "the lock another writer holds was removed, truncated or stolen"
+        LockIdentity::read(foreign_lock.path()),
+        identity,
+        "the lock another writer holds changed bytes or metadata"
     );
+    drop(fixture);
     assert_eq!(
-        fs::metadata(&lock).expect("lock metadata").modified().ok(),
-        stamped,
-        "the lock another writer holds was rewritten"
+        LockIdentity::read(foreign_lock.path()),
+        identity,
+        "fixture cleanup touched the lock that the other writer still holds"
     );
-    fs::remove_file(&lock).expect("this fixture releases the lock it took");
+    foreign_lock.release();
+    fs::remove_dir_all(fixture_root).expect("the released fixture is removed");
 }

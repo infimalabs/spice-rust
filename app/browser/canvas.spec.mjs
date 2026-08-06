@@ -6,10 +6,14 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright";
-import { assertReferenceControlStack } from "./control-reference.mjs";
+import { assertAgentRenewalRequest, captureReferenceControls } from "./control-reference.mjs";
+import { assertReferenceControlStack } from "./control-stack.mjs";
 import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
 import {
+  assertEndpointProbeClosesWithoutResponse,
   assertEndpointProbeStates,
+  assertGenerationOnline,
+  assertOfflineObserved,
   assertLineageLifeIsolation,
   assertResidentLossObserved,
   assertResidentRestart,
@@ -28,6 +32,7 @@ import {
   seedAuthority,
   startResident,
   stopResident,
+  RECONNECT_MS,
 } from "./canvas-fixture.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -899,6 +904,8 @@ async function assertPerTeamWatchbands(page, fixture, worktrees) {
   await secondarySurface.getByLabel("Speak this message").first().click();
   await page.waitForFunction(() => window.__speechLog.some((row) => row.action === "speak"));
 
+  await assertAgentRenewalRequest(primarySurface, fixture);
+
   const policyMessage = "drain lifetime is task policy, not occupant teardown";
   await primarySurface.locator(".team-agent").first().getByRole("textbox").fill(policyMessage);
   await primarySurface.getByRole("button", { name: "Drain", exact: true }).click();
@@ -1019,10 +1026,11 @@ async function captureReferenceViewport(page) {
   );
   assert.equal(pixels.bodyWidth, 1000, "the reference viewport has no horizontal overflow");
   assert.equal(pixels.background, "rgb(11, 15, 12)", "the captured surface uses the dark palette");
-  await page.screenshot({
-    path: join(artifacts, "canvas-reference-four-agent-dark.png"),
-    fullPage: false,
-  });
+  await captureReferenceControls(
+    page,
+    team,
+    join(artifacts, "canvas-reference-four-agent-dark.png"),
+  );
 }
 
 async function assertAuthoritySurface(page, seeded) {
@@ -1290,7 +1298,7 @@ async function assertStaleGeneration(browser, endpoint, currentEpoch) {
   });
   await page.goto(endpoint, { waitUntil: "domcontentloaded" });
   await chooseCanvasView(page, "Chronology");
-  await page.waitForSelector(".status.offline", { timeout: 10_000 });
+  await assertOfflineObserved(page, "refusing a stale generation");
   const fault = page.locator(".event.fault");
   await fault.waitFor();
   assert.match(await fault.innerText(), /Canvas connection reset/);
@@ -1315,7 +1323,7 @@ async function assertSameGenerationResume(
     if (!socket) throw new Error("canvas WebSocket was not captured");
     socket.close(4000, "fixture reconnect");
   });
-  await page.waitForSelector(".status.offline", { timeout: 10_000 });
+  await assertOfflineObserved(page, "the fixture closes its socket");
   assert.match(await page.locator(".status-copy").innerText(), /Reconnecting/);
   await chooseCanvasView(page, "Chronology");
   await page.locator(".event.fault").waitFor();
@@ -1324,8 +1332,7 @@ async function assertSameGenerationResume(
   const advanced = await journalExtent(fixture);
   assert.ok(advanced.facts > beforeExtent.facts, "offline command advances resident authority");
 
-  await page.waitForSelector(".status.online", { timeout: 15_000 });
-  await page.waitForFunction((expected) => document.querySelector(".status-copy")?.textContent?.includes(expected), epoch);
+  await assertGenerationOnline(page, epoch, "the socket is reopened", RECONNECT_MS);
   monitor.expectNetworkInterruption(false);
   await assertPackedHistory(page, advanced);
   const after = await page.locator('[data-pane="commands"] .event strong').allTextContents();
@@ -1333,6 +1340,7 @@ async function assertSameGenerationResume(
 }
 
 
+await assertEndpointProbeClosesWithoutResponse();
 await assertEndpointProbeStates();
 await buildResident();
 const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browser-")));
