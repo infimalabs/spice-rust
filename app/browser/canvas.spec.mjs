@@ -337,6 +337,36 @@ async function assertAgentConversation(page, fixture, worktrees) {
     assert.ok(packedMembers.has(member.lane), "every worktree member reaches the lane plane");
   }
 
+  const directiveChrome = await console.locator('[data-card-kind="directive"]').evaluateAll(
+    (cards) => cards.map((card) => ({
+      lane: card.dataset.agentLane,
+      accent: card.dataset.accent,
+      edge: getComputedStyle(card).borderRightColor,
+    })),
+  );
+  const repeatedLane = seated[1].lane;
+  const repeatedChrome = directiveChrome.filter((card) => card.lane === repeatedLane);
+  assert.ok(repeatedChrome.length >= 2, "the accent probe has two cards from one lane");
+  assert.ok(repeatedChrome.every((card) => card.accent === repeatedChrome[0].accent));
+  assert.ok(repeatedChrome.every((card) => card.edge === repeatedChrome[0].edge));
+  const distinctChrome = directiveChrome.find(
+    (card) => card.lane !== repeatedLane && card.accent !== repeatedChrome[0].accent,
+  );
+  assert.ok(distinctChrome, "the fixture exposes a different lane accent slot");
+  assert.notEqual(distinctChrome.edge, repeatedChrome[0].edge);
+  const expectedActions = ["Speak this message", "Quote this message", "Copy this message"];
+  for (const kind of ["agent-message", "directive"]) {
+    const card = console.locator(`[data-card-kind="${kind}"]`).first();
+    assert.ok((await card.locator(".message-author").innerText()).trim());
+    assert.deepEqual(
+      await card.locator(".message-actions button").evaluateAll(
+        (buttons) => buttons.map((button) => button.getAttribute("aria-label")),
+      ),
+      expectedActions,
+      `${kind} exposes the reference speak, quote, and copy controls`,
+    );
+  }
+
   const scroller = plane;
   const compensationViewport = page.viewportSize();
   await page.setViewportSize({ width: compensationViewport.width, height: 360 });
