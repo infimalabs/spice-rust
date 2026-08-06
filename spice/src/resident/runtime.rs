@@ -22,6 +22,11 @@ struct SurfaceConfig {
     projects: board::ProjectPolicy,
 }
 
+struct SurfaceLaunch<'a> {
+    binding: CanvasBinding,
+    announcement: &'a mut dyn io::Write,
+}
+
 // Runtime policy and trust identity are projections of this one captured generation.
 struct StartupSurface {
     config: SurfaceConfig,
@@ -203,7 +208,7 @@ impl CanvasBinding {
     }
 }
 
-pub(crate) fn up(leaf: &clap::ArgMatches) -> Outcome<()> {
+pub(crate) fn up(leaf: &clap::ArgMatches, announcement: &mut dyn io::Write) -> Outcome<()> {
     let listen = match requested_listen(leaf) {
         Ok(listen) => listen,
         Err(outcome) => return outcome,
@@ -216,7 +221,7 @@ pub(crate) fn up(leaf: &clap::ArgMatches) -> Outcome<()> {
         Ok(current) => current,
         Err(error) => return environment_fault("resident::cwd-unavailable", &error.to_string()),
     };
-    up_from(&current, CanvasBinding { listen, access })
+    up_from_with(&current, CanvasBinding { listen, access }, announcement)
 }
 
 /// The address `--host` and `--port` asked for, each defaulted on its own.
@@ -304,6 +309,14 @@ pub(crate) fn up_from(
     current: &Path,
     binding: CanvasBinding,
 ) -> Outcome<()> {
+    up_from_with(current, binding, &mut io::sink())
+}
+
+fn up_from_with(
+    current: &Path,
+    binding: CanvasBinding,
+    announcement: &mut dyn io::Write,
+) -> Outcome<()> {
     let repository = match Repository::discover(current) {
         Ok(repository) => repository,
         Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
@@ -364,9 +377,12 @@ pub(crate) fn up_from(
             &repository,
             &paths,
             epoch,
-            binding,
             &startup_surface.config,
             &mut seats,
+            SurfaceLaunch {
+                binding,
+                announcement,
+            },
         )),
         Err(error) => Err(environment_fault(
             "resident::runtime-failed",
@@ -610,9 +626,9 @@ async fn run_surface(
     repository: &Repository,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
-    binding: CanvasBinding,
     config: &SurfaceConfig,
     seats: &mut Seats,
+    launch: SurfaceLaunch<'_>,
 ) -> CommandResult<()> {
     let operator = new_uuid();
     let residency = current_residency(bus, epoch)?;
@@ -624,8 +640,14 @@ async fn run_surface(
     // into a page the operator has to diagnose from the browser.
     let app = canvas::AppSource::resolve(&paths.worktree)
         .map_err(|error| environment_fault("canvas::app-source-invalid", &error.to_string()))?;
+    let app_description = app.to_string();
+    let SurfaceLaunch {
+        binding,
+        announcement,
+    } = launch;
+    let listen = binding.listen;
     let (server, control) = canvas::axum::Server::bind_streaming(
-        canvas::axum::Binding::new(binding.listen, binding.access),
+        canvas::axum::Binding::new(listen, binding.access),
         epoch,
         capabilities.clone(),
         app,
@@ -640,7 +662,7 @@ async fn run_surface(
     .map_err(|error| {
         environment_fault(
             "canvas::bind-failed",
-            &format!("listening on {} failed: {error}", binding.listen),
+            &format!("listening on {listen} failed: {error}"),
         )
     })?;
     let discovery = server
@@ -659,6 +681,8 @@ async fn run_surface(
     let server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;
     }));
+    let _ = writeln!(announcement, "canvas app source: {app_description}");
+    let _ = announcement.flush();
     let capture::Channels {
         reporter,
         records,
