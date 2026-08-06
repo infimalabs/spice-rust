@@ -12,3 +12,10 @@
 # serves it in place of the compiled bytes. Never committed: only the sealed
 # image may write the reproducible stage beside it.
 /dist/stage-dev/
+
+# Snapshots, console logs and screenshots the Playwright MCP browser writes
+# beside the worktree. Every lane is told to validate the canvas through that
+# browser, so without this each one leaves untracked evidence behind -- and a
+# gate that walks the filesystem rather than the tracked set counts it as an
+# input to the build.
+/.playwright-mcp/
