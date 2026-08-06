@@ -92,6 +92,7 @@ const RESIDENCY: &str = r#"{
   "state": "seated",
   "lanes": [{
     "lane": "018f82d4-6f59-7d06-92e3-bce913116302",
+    "lineage_id": "018f82d4-6f59-7d06-92e3-bce913116302",
     "worktree": "/worktrees/lane-a",
     "life": "drive",
     "vendor": "claude",
@@ -169,6 +170,7 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
             "lane",
             "life",
             "lineage",
+            "lineage_id",
             "occupant",
             "session",
             "vendor",

@@ -240,7 +240,7 @@ fn trunk_command(
         .env("NO_COLOR", "true")
         .env("RUSTC_WORKSPACE_WRAPPER", "")
         .env("RUSTC_WRAPPER", "")
-        .env("SPICE_APP_SOURCE_IDENTITY", source_identity.as_str())
+        .env("SPICE_APP_SOURCE_IDENTITY", source_identity.as_str()) // env-policy: allow
         .args([
             "build",
             "index.html",
@@ -597,7 +597,7 @@ mod tests {
             Some(&Some(format!("/cargo-target/xtask-app-{worktree}-build")))
         );
         assert_eq!(
-            environment.get("SPICE_APP_SOURCE_IDENTITY"),
+            environment.get("SPICE_APP_SOURCE_IDENTITY"), // env-policy: allow
             Some(&Some(sources.to_string()))
         );
         assert_eq!(command.get_current_dir(), Some(Path::new("/workspace/app")));
