@@ -459,8 +459,7 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
             occupant: second_uuid,
             worktree: "/worktrees/lane-a".to_owned(),
             vendor: "claude".parse().expect("fixture vendor"),
-            model: "sonnet".to_owned(),
-            effort: "high".to_owned(),
+            launch: Some(wire::body::LaneLaunchIdentity::new("sonnet", "high")),
             epoch: first_uuid,
             stream: "stdout".to_owned(),
             identity: "018f7777-7777-7444-8888-999999999999".to_owned(),
@@ -485,6 +484,14 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
         session: None,
         disposition: "empty".to_owned(),
     };
+    let recorded_session = occupied.session.clone().expect("occupied session");
+    let mut unrecorded_session = recorded_session.clone();
+    unrecorded_session.launch = None;
+    law(
+        covered,
+        "LaneSession",
+        &[recorded_session, unrecorded_session],
+    );
     law(covered, "LaneResidency", &[occupied.clone(), empty.clone()]);
     let drive = LineageSubscription {
         lineage_id: first_uuid,

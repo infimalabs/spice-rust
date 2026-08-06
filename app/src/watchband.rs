@@ -81,6 +81,40 @@ pub struct Standing {
     pub accent: usize,
 }
 
+/// Complete driver and session detail shown by a standing's hover title.
+///
+/// A launch recorded before model and effort became durable names that state
+/// explicitly. It does not borrow the vendor, session, or another lane as a
+/// plausible-looking substitute.
+#[must_use]
+pub fn standing_title(standing: &Standing) -> String {
+    let vendor = match standing.vendor.as_str() {
+        "claude" => "Claude driver",
+        "codex" => "Codex driver",
+        "openai" => "OpenAI driver",
+        _ => "Agent driver",
+    };
+    let mut parts = vec![vendor.to_owned()];
+    parts.push(format!(
+        "model: {}",
+        standing.model.as_deref().unwrap_or("unrecorded")
+    ));
+    parts.push(format!(
+        "effort: {}",
+        standing.effort.as_deref().unwrap_or("unrecorded")
+    ));
+    parts.push(format!(
+        "thread: {}",
+        standing
+            .thread
+            .map_or_else(|| "unbound".to_owned(), |thread| thread.to_string())
+    ));
+    if let Some(session) = &standing.session {
+        parts.push(format!("session: {session}"));
+    }
+    parts.join("; ")
+}
+
 /// Join the lane table, the inbox and the board into one row per lane.
 ///
 /// Lane order is the resident's; this never sorts. `now` is milliseconds since

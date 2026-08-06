@@ -836,6 +836,24 @@ fn a_reversed_committed_range_does_not_decode() {
 
 #[test]
 fn a_declared_session_requires_one_complete_launch_identity() {
+    let pre_extension = br#"{
+        "lane":"018f82d4-6f59-7d06-92e3-bce9131163c2",
+        "occupant":"018f82d4-6f59-7d06-92e3-bce9131163c3",
+        "worktree":"/worktrees/lane-a",
+        "vendor":"claude",
+        "epoch":"018f82d4-6f59-7d06-92e3-bce9131163c4",
+        "stream":"stdout",
+        "identity":"session-a",
+        "member":1,
+        "offset":2,
+        "length":3
+    }"#;
+    let unrecorded = wire::decode::<wire::body::LaneSessionDeclared>(pre_extension)
+        .expect("the pre-extension declaration enters the current unrecorded state");
+    assert_eq!(unrecorded.launch, None);
+    let normalized = serde_json::to_value(unrecorded).expect("the current state encodes");
+    assert!(normalized.get("model").is_none() && normalized.get("effort").is_none());
+
     let complete = serde_json::json!({
         "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
         "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c3",
@@ -851,8 +869,13 @@ fn a_declared_session_requires_one_complete_launch_identity() {
         "length": 3
     });
     let bytes = serde_json::to_vec(&complete).expect("fixture encodes");
-    wire::decode::<wire::body::LaneSessionDeclared>(&bytes)
-        .expect("the one current declaration shape decodes");
+    let recorded = wire::decode::<wire::body::LaneSessionDeclared>(&bytes)
+        .expect("the recorded declaration shape decodes");
+    let launch = recorded.launch.expect("the complete pair is recorded");
+    assert_eq!(
+        (launch.model.as_str(), launch.effort.as_str()),
+        ("sonnet", "high")
+    );
 
     for field in ["model", "effort"] {
         let mut incomplete = complete.clone();

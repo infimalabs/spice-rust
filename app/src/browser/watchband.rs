@@ -414,7 +414,7 @@ fn render_agent_details(
         <article
             class="team-detail-card"
             data-accent={standing.accent.to_string()}
-            title={standing_title(standing)}
+            title={watchband::standing_title(standing)}
         >
             <header>
                 <span class="agent-presence"></span>
@@ -542,7 +542,7 @@ fn render_agent_composer(
             )}
             data-agent-lane={lane_id.to_string()}
             data-shard-target-id={lane_id.to_string()}
-            title={standing_title(standing)}
+            title={watchband::standing_title(standing)}
             {ondragover}
             {ondrop}
         >
@@ -689,32 +689,6 @@ fn composer_placeholder(standing: &Standing, pending: usize) -> String {
         });
     }
     lines.join("\n")
-}
-
-fn standing_title(standing: &Standing) -> String {
-    let vendor = match standing.vendor.as_str() {
-        "claude" => "Claude driver",
-        "codex" => "Codex driver",
-        "openai" => "OpenAI driver",
-        _ => "Agent driver",
-    };
-    let mut parts = vec![vendor.to_owned()];
-    if let Some(model) = &standing.model {
-        parts.push(format!("model: {model}"));
-    }
-    if let Some(effort) = &standing.effort {
-        parts.push(format!("effort: {effort}"));
-    }
-    parts.push(format!(
-        "thread: {}",
-        standing
-            .thread
-            .map_or_else(|| "unbound".to_owned(), |thread| thread.to_string())
-    ));
-    if let Some(session) = &standing.session {
-        parts.push(format!("session: {session}"));
-    }
-    parts.join("; ")
 }
 
 fn submit_lineage_callback(

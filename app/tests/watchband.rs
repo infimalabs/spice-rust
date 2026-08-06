@@ -1,7 +1,7 @@
 use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
     ACCENTS, FIELD_BUDGET, SHORT_LEN, accent, badge, elapsed_label, leaf, one_line, reported_tasks,
-    short, standings, ticker_line, truncate,
+    short, standing_title, standings, ticker_line, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -345,6 +345,30 @@ fn configured_agent_names_distinguish_two_lanes_that_share_one_worktree() {
     assert_eq!(rows[0].label, "Ava");
     assert_eq!(rows[1].label, "Matilda");
     assert_eq!(rows[0].worktree, rows[1].worktree);
+}
+
+#[test]
+fn a_standing_title_names_recorded_and_unrecorded_launches_without_substitution() {
+    let mut standing = standings(&[lane(LANE_A, "/fleet/one/spice-rust-a")], &[], &[], at(0))
+        .pop()
+        .expect("fixture standing");
+    assert_eq!(
+        standing_title(&standing),
+        format!(
+            "Codex driver; model: gpt-5.2-codex; effort: high; thread: {OCCUPANT}; \
+             session: session-fixture"
+        )
+    );
+
+    standing.model = None;
+    standing.effort = None;
+    assert_eq!(
+        standing_title(&standing),
+        format!(
+            "Codex driver; model: unrecorded; effort: unrecorded; thread: {OCCUPANT}; \
+             session: session-fixture"
+        )
+    );
 }
 
 #[test]
