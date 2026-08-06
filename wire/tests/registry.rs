@@ -66,7 +66,10 @@ fn every_command_names_the_witnesses_it_requires() {
     for kind in CommandKind::ALL {
         let law = kind.law();
         let scanner_disposition = matches!(kind, CommandKind::SteerDispose);
-        let lane_lifecycle = matches!(kind, CommandKind::LaneSeat | CommandKind::LaneState);
+        let lane_lifecycle = matches!(
+            kind,
+            CommandKind::LaneSeat | CommandKind::LaneState | CommandKind::LineageConfigure
+        );
         assert_eq!(
             law.required.is_empty(),
             kind.is_read() || scanner_disposition || lane_lifecycle,
@@ -93,7 +96,11 @@ fn every_command_names_the_witnesses_it_requires() {
 /// would silently let a seated lane import another lane's worktree.
 #[test]
 fn lane_lifecycle_is_admitted_for_the_operator_alone() {
-    for kind in [CommandKind::LaneSeat, CommandKind::LaneState] {
+    for kind in [
+        CommandKind::LaneSeat,
+        CommandKind::LaneState,
+        CommandKind::LineageConfigure,
+    ] {
         assert_eq!(
             kind.law().authority,
             Authority::Operator,

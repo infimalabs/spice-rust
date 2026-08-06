@@ -156,6 +156,13 @@ const BODIES: &[(CommandKind, &str)] = &[
 }"#,
     ),
     (
+        CommandKind::LineageConfigure,
+        r#"{
+  "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "life": "drain"
+}"#,
+    ),
+    (
         CommandKind::LaneRecall,
         r#"{ "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2" }"#,
     ),
@@ -506,6 +513,7 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::LaneRead,
     BodyShape::LaneSeat,
     BodyShape::LaneState,
+    BodyShape::LineageConfigure,
     BodyShape::LaneRecall,
     BodyShape::TasteRecord,
     BodyShape::Recognize,

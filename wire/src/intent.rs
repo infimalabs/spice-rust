@@ -336,6 +336,43 @@ pub struct LaneSeat {
     pub vendor: Name,
 }
 
+/// The closed lineage lifetime selected by the operator's Canvas watchband.
+///
+/// This is task-subscription policy. It is deliberately distinct from
+/// [`LaneAction::Drain`], which tears down an occupant process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LineageLife {
+    /// The operator steers task selection explicitly.
+    Steer,
+    /// The lineage follows work it creates or claims.
+    Drive,
+    /// The lineage can draw from all assignable work.
+    Drain,
+}
+
+impl LineageLife {
+    /// Stable residency spelling shared with existing lane rows.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Steer => "steer",
+            Self::Drive => "drive",
+            Self::Drain => "drain",
+        }
+    }
+}
+
+/// Change the task-subscription life shared by every member of one Canvas lineage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LineageConfigure {
+    /// Stable Canvas lineage identifying the group.
+    pub lineage_id: CanonicalUuid,
+    /// Authoritative task-subscription life to commit for every member.
+    pub life: LineageLife,
+}
+
 /// Change a seated lane's state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

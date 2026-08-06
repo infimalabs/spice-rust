@@ -226,7 +226,7 @@ async function configureFixture(fixture, linkedRoot) {
     "commit", "--quiet", "-m", "canvas fixture",
   ], { cwd: fixture });
   const worktrees = [fixture];
-  for (let index = 2; index <= 4; index += 1) {
+  for (let index = 2; index <= 5; index += 1) {
     const worktree = join(linkedRoot, `lane-${index}`);
     await execute("git", ["worktree", "add", "--quiet", "--detach", worktree], { cwd: fixture });
     worktrees.push(await realpath(worktree));
@@ -407,11 +407,12 @@ async function assertCanvas(page, scheme) {
 }
 
 async function assertAgentConversation(page, fixture, worktrees) {
+  const teamWorktrees = worktrees.slice(0, 4);
   const console = page.locator('[data-pane="agent-console"]');
   await chooseCanvasView(page, "Mosaic");
   await console.waitFor();
   await console.getByRole("tab", { name: /^Info/ }).click();
-  await console.getByLabel("Worktree").fill(worktrees[0]);
+  await console.getByLabel("Worktree").fill(teamWorktrees[0]);
   await console.getByLabel("Life").fill("steer");
 
   // A refused submission has to say why. The vendor field is free text with no
@@ -432,9 +433,9 @@ async function assertAgentConversation(page, fixture, worktrees) {
   await console.locator(".team-detail-card").nth(0).waitFor({ timeout: 15_000 });
 
   const firstSnapshot = await reply(fixture, ["lane"]);
-  const host = firstSnapshot.body.lanes.find((lane) => lane.worktree === worktrees[0]);
+  const host = firstSnapshot.body.lanes.find((lane) => lane.worktree === teamWorktrees[0]);
   assert.ok(host, "the Canvas seat control creates the lineage host");
-  for (const worktree of worktrees.slice(1)) {
+  for (const worktree of teamWorktrees.slice(1)) {
     await reply(fixture, [
       "lane", "add", worktree,
       "--lineage", host.lineage_id,
@@ -448,7 +449,9 @@ async function assertAgentConversation(page, fixture, worktrees) {
   await console.locator(".team-detail-card").nth(3).waitFor({ timeout: 15_000 });
 
   const lanes = await reply(fixture, ["lane"]);
-  const seated = worktrees.map((worktree) => lanes.body.lanes.find((lane) => lane.worktree === worktree));
+  const seated = teamWorktrees.map(
+    (worktree) => lanes.body.lanes.find((lane) => lane.worktree === worktree),
+  );
   assert.ok(seated.every(Boolean), "one lineage admits all four linked worktrees");
   assert.ok(
     seated.every((lane) => lane.lineage_id === host.lineage_id),
@@ -572,7 +575,7 @@ async function assertAgentConversation(page, fixture, worktrees) {
     await console.locator(".team-detail-card").nth(3).waitFor();
     assert.equal(await console.locator(".team-detail-card").count(), 4, `${mode} reaches all agents`);
   }
-  await console.getByText(worktrees[0], { exact: true }).waitFor();
+  await console.getByText(teamWorktrees[0], { exact: true }).waitFor();
   await console.getByRole("tab", { name: /^Compose/ }).click();
   await assertFourAgentDensity(console);
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
@@ -607,6 +610,106 @@ async function assertFourAgentDensity(console) {
       assert.ok(Math.abs(row[index - 1].top - row[index].top) <= 1, "agent columns share one row");
     }
   }
+}
+
+async function assertPerTeamWatchbands(page, fixture, worktrees) {
+  const before = await reply(fixture, ["lane"]);
+  const primary = before.body.lanes.find((lane) => lane.worktree === worktrees[0]);
+  assert.ok(primary, "the primary team remains seated for watchband proof");
+  await reply(fixture, [
+    "lane", "add", worktrees[4],
+    "--life", "Drive",
+    "--vendor", "claude",
+  ]);
+  await page.reload({ waitUntil: "networkidle" });
+  await chooseCanvasView(page, "Mosaic");
+  const console = page.locator('[data-pane="agent-console"]');
+  await console.getByRole("tab", { name: /^Compose/ }).first().click();
+  await console.locator(".team-surface").nth(1).waitFor({ timeout: 15_000 });
+
+  const lanes = await reply(fixture, ["lane"]);
+  const secondary = lanes.body.lanes.find((lane) => lane.worktree === worktrees[4]);
+  assert.ok(secondary, "the second team is independently seated");
+  const primarySurface = console.locator(
+    `.team-surface[data-lineage-id="${primary.lineage_id}"]`,
+  );
+  const secondarySurface = console.locator(
+    `.team-surface[data-lineage-id="${secondary.lineage_id}"]`,
+  );
+  assert.equal(await console.locator(".team-surface").count(), 2);
+  assert.equal(await console.locator(".team-speech").count(), 2);
+  assert.equal(await console.locator(".team-lifetime").count(), 2);
+
+  const primaryLife = primarySurface.locator('.team-lifetime input[type="range"]');
+  await primaryLife.fill("2");
+  await page.waitForFunction(
+    (lineage) => document
+      .querySelector(`.team-surface[data-lineage-id="${lineage}"] .team-composer-controls`)
+      ?.dataset.lifetimePending === "false",
+    primary.lineage_id,
+  );
+  await primarySurface.getByRole("button", { name: "Drain", exact: true }).waitFor();
+  const configured = await reply(fixture, ["lane"]);
+  const primaryRows = configured.body.lanes.filter(
+    (lane) => lane.lineage_id === primary.lineage_id,
+  );
+  assert.equal(primaryRows.length, 4, "the first team retains all four worktrees");
+  assert.ok(primaryRows.every((lane) => lane.life === "drain"));
+  assert.ok(
+    primaryRows.every((lane) => lane.occupant && lane.disposition === "occupied"),
+    "watchband Drain changes task policy and never tears down occupants",
+  );
+  assert.equal(
+    await secondarySurface.getByRole("button", { name: "Drive", exact: true }).count(),
+    1,
+    "the sibling team keeps its own authoritative lifetime",
+  );
+
+  const primarySpeech = primarySurface.locator('.team-speech input[type="range"]');
+  const secondarySpeech = secondarySurface.locator('.team-speech input[type="range"]');
+  await primarySpeech.fill("0");
+  await secondarySpeech.fill("2");
+  assert.equal(await primarySpeech.inputValue(), "0");
+  assert.equal(await secondarySpeech.inputValue(), "2");
+  assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
+  assert.equal(await secondarySurface.locator(".team-speech span").innerText(), "narrate");
+  await console.getByRole("tab", { name: /^Info/ }).first().click();
+  await console.getByRole("tab", { name: /^Compose/ }).first().click();
+  assert.equal(await primarySpeech.inputValue(), "0", "Quiet survives a team redraw");
+  assert.equal(await secondarySpeech.inputValue(), "2", "Narrate survives a team redraw");
+  assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
+  assert.equal(await secondarySurface.locator(".team-speech span").innerText(), "narrate");
+
+  await page.evaluate(() => { window.__speechLog = []; });
+  await primarySurface.getByLabel("Speak this message").first().click();
+  assert.deepEqual(
+    await page.evaluate(() => window.__speechLog),
+    [],
+    "Quiet suppresses manual speech for only its team",
+  );
+  await secondarySurface.getByLabel("Speak this message").first().click();
+  await page.waitForFunction(() => window.__speechLog.some((row) => row.action === "speak"));
+
+  const policyMessage = "drain lifetime is task policy, not occupant teardown";
+  await primarySurface.locator(".team-agent").first().getByRole("textbox").fill(policyMessage);
+  await primarySurface.getByRole("button", { name: "Drain", exact: true }).click();
+  await primarySurface
+    .locator(".mosaic-message-card")
+    .filter({ hasText: policyMessage })
+    .waitFor({ timeout: 10_000 });
+  const inbox = await reply(fixture, ["inbox", primaryRows[0].lane]);
+  assert.ok(
+    inbox.body.lanes[0].pending.some((directive) => directive.text === policyMessage),
+    "the Drain-labelled submit follows the configured team policy into real steering",
+  );
+  assert.equal(await primarySpeech.inputValue(), "0", "Quiet survives a streamed refresh");
+  assert.equal(await secondarySpeech.inputValue(), "2", "Narrate survives a streamed refresh");
+  assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
+  assert.equal(await secondarySurface.locator(".team-speech span").innerText(), "narrate");
+  await page.screenshot({
+    path: join(artifacts, "canvas-light-watchband-teams.png"),
+    fullPage: true,
+  });
 }
 
 async function captureReferenceViewport(page) {
@@ -1202,6 +1305,7 @@ try {
     resident.discovery.epoch,
     beforeReconnect,
   );
+  await assertPerTeamWatchbands(lightPage, fixture, worktrees);
   lightMonitor.assertClean();
   await dark.close();
 
