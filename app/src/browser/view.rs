@@ -56,11 +56,12 @@ pub(super) fn render_rail(
                 {for Surface::all().map(|candidate| {
                     let axis = axis.clone();
                     let selected = candidate == active_axis;
+                    let mosaic = matches!(candidate, Surface::Mosaic);
                     html! {
                         <button
                             class={classes!(
                                 "axis-button",
-                                matches!(candidate, Surface::Mosaic).then_some("axis-button-mosaic"),
+                                mosaic.then_some("axis-button-mosaic"),
                             )}
                             aria-current={selected.then_some("page")}
                             title={candidate.question()}
