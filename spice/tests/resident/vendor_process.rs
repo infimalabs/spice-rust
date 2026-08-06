@@ -110,7 +110,10 @@ fn resident_agent_process_receives_both_git_shadow_scopes() {
     fs::write(fixture.root.join("spice.toml"), document).expect("vendor configuration");
     fs::write(
         fixture.root.join(".gitignore"),
-        "dist/\nfixture-claude\nlaunch-captures\nlaunch-index\n",
+        format!(
+            "fixture-claude\nlaunch-captures\nlaunch-index\n{}",
+            app_stage_ignore()
+        ),
     )
     .expect("fixture ignore policy");
     fixture_git(&fixture.root, &["init", "-b", "main-d"]);
@@ -121,6 +124,7 @@ fn resident_agent_process_receives_both_git_shadow_scopes() {
     );
     fixture_git(&fixture.root, &["add", ".gitignore", "spice.toml"]);
     fixture_git(&fixture.root, &["commit", "-m", "fixture baseline"]);
+    assert_fixture_repository_clean(&fixture.root);
     fixture_git(&fixture.root, &["branch", "integration"]);
     fixture_git(
         &fixture.root,
@@ -307,16 +311,19 @@ fn prepare_cutover_repository(fixture: &Fixture, rig: &Rig) {
     fs::write(fixture.root.join("spice.toml"), &document).expect("Claude config extends");
     fs::write(
         fixture.root.join(".gitignore"),
-        concat!(
-            ".agents/\n",
-            ".spice/\n",
-            "codex-worktree/\n",
-            "dist/\n",
-            "fixture-claude\n",
-            "fixture-codex\n",
-            "launch-captures/\n",
-            "launch-index\n",
-            "native-path/\n",
+        format!(
+            concat!(
+                ".agents/\n",
+                ".spice/\n",
+                "codex-worktree/\n",
+                "fixture-claude\n",
+                "fixture-codex\n",
+                "launch-captures/\n",
+                "launch-index\n",
+                "native-path/\n",
+                "{}",
+            ),
+            app_stage_ignore()
         ),
     )
     .expect("cutover fixture ignore policy writes");
@@ -328,6 +335,7 @@ fn prepare_cutover_repository(fixture: &Fixture, rig: &Rig) {
     );
     fixture_git(&fixture.root, &["add", ".gitignore", "spice.toml"]);
     fixture_git(&fixture.root, &["commit", "-m", "empty cutover authority"]);
+    assert_fixture_repository_clean(&fixture.root);
     fs::remove_dir_all(&rig.codex_worktree).expect("synthetic Codex worktree withdraws");
     fs::remove_dir_all(fixture.root.join(".git/worktrees/vendor-process-codex"))
         .expect("synthetic Codex Git directory withdraws");

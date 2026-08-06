@@ -587,7 +587,7 @@ const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["up"],
-        "up [--host HOST] [--port PORT] [--allow-insecure-bind] [--auth-token TOKEN]",
+        "up [--host HOST] [--port PORT] [--allow-insecure-bind] [--auth-token TOKEN] [--open]",
         Local,
         Resident,
         [JournalMigrated, TrustPended, UpSeated],
@@ -1118,16 +1118,6 @@ const CONTRACTS: &[Contract] = &[
         "journal::thread"
     ),
     row!(
-        ["canvas"],
-        "canvas",
-        Operator,
-        Read,
-        [],
-        [Resident, OperatorCapability],
-        Reply,
-        "canvas::open"
-    ),
-    row!(
         ["release", "publish"],
         "release publish [--apply=<digest>]",
         Operator,
@@ -1242,7 +1232,6 @@ pub fn landing(path: &[&str]) -> Landing {
         | ["journal", "verify"]
         | ["fold"]
         | ["thread"]
-        | ["canvas"]
         | ["release", "publish"]
         | ["restore", "verify"]
         | ["lane"]

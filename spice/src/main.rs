@@ -18,7 +18,6 @@ use wire::{Fault, FaultClass, Outcome, Refusal};
 #[cfg(not(target_arch = "wasm32"))]
 mod board_command;
 #[cfg(not(target_arch = "wasm32"))]
-mod canvas_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod command_client;
 #[cfg(not(target_arch = "wasm32"))]
@@ -242,7 +241,6 @@ fn dispatch_native_repository_queries(
         ["journal", "verify"] => deliver(&journal_command::verify(contract), form),
         ["fold"] => deliver(&journal_command::folds(contract), form),
         ["thread"] => deliver(&journal_command::thread(leaf, contract), form),
-        ["canvas"] => deliver(&canvas_command::open(), form),
         ["version"] => deliver(&version_outcome(), form),
         ["release", "notes"] => deliver(&release_command::notes(leaf), form),
         _ => {}
@@ -346,10 +344,6 @@ fn target_unsupported(path: &[&str]) -> Option<Fault> {
         ["restore", "verify"] => (
             "restore::target-unsupported",
             "reading and verifying a restore archive is unavailable on wasm32",
-        ),
-        ["canvas"] => (
-            "canvas::target-unsupported",
-            "repository discovery and platform browser launch are unavailable on wasm32",
         ),
         ["config", "migrate-tasks"] => (
             "task-migration::target-unsupported",

@@ -24,6 +24,12 @@ struct SurfaceConfig {
 
 struct SurfaceLaunch<'a> {
     binding: CanvasBinding,
+    /// Whether the operator asked this start to also open the app.
+    ///
+    /// Discovery is announced either way, so this is not part of the binding:
+    /// it decides who dials the published address, not which address gets
+    /// published or what admits a caller to it.
+    open: bool,
     announcement: &'a mut dyn io::Write,
 }
 
@@ -186,6 +192,10 @@ impl Drop for PublishedDiscovery {
 /// because reaching this surface from another machine is a decision only the
 /// operator can make, and `--host` is how they make it.
 const DEFAULT_LISTEN: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8765);
+/// Bounds on an operator-supplied bearer token for a non-loopback bind.
+///
+/// Stated rather than inlined so the refusal text and the check cannot come to
+/// name two different lengths.
 const AUTH_TOKEN_MIN_BYTES: usize = 16;
 const AUTH_TOKEN_MAX_BYTES: usize = 256;
 
@@ -223,7 +233,12 @@ pub(crate) fn up(leaf: &clap::ArgMatches, announcement: &mut dyn io::Write) -> O
         Ok(current) => current,
         Err(error) => return environment_fault("resident::cwd-unavailable", &error.to_string()),
     };
-    up_from_with(&current, CanvasBinding { listen, access }, announcement)
+    up_from_with(
+        &current,
+        CanvasBinding { listen, access },
+        leaf.get_flag("open"),
+        announcement,
+    )
 }
 
 /// The address `--host` and `--port` asked for, each defaulted on its own.
@@ -258,9 +273,9 @@ fn requested_access(
         return Err(access_refusal(
             "resident::auth-token-invalid",
             None,
-            concat!(
-                "use 16 to 256 URL-safe characters: letters, digits, hyphen, ",
-                "period, underscore, or tilde"
+            &format!(
+                "use {AUTH_TOKEN_MIN_BYTES} to {AUTH_TOKEN_MAX_BYTES} URL-safe \
+                 characters: letters, digits, hyphen, period, underscore, or tilde"
             ),
         ));
     }
@@ -312,16 +327,14 @@ fn listen_refusal(reason: &str, expected: &str, observed: &str) -> Outcome<()> {
     })
 }
 
-pub(crate) fn up_from(
-    current: &Path,
-    binding: CanvasBinding,
-) -> Outcome<()> {
-    up_from_with(current, binding, &mut io::sink())
+pub(crate) fn up_from(current: &Path, binding: CanvasBinding) -> Outcome<()> {
+    up_from_with(current, binding, false, &mut io::sink())
 }
 
 fn up_from_with(
     current: &Path,
     binding: CanvasBinding,
+    open: bool,
     announcement: &mut dyn io::Write,
 ) -> Outcome<()> {
     let repository = match Repository::discover(current) {
@@ -388,6 +401,7 @@ fn up_from_with(
             &mut seats,
             SurfaceLaunch {
                 binding,
+                open,
                 announcement,
             },
         )),
@@ -650,6 +664,7 @@ async fn run_surface(
     let app_description = app.to_string();
     let SurfaceLaunch {
         binding,
+        open,
         announcement,
     } = launch;
     let listen = binding.listen;
@@ -689,6 +704,13 @@ async fn run_surface(
         let _ = stopped.await;
     }));
     let _ = writeln!(announcement, "canvas app source: {app_description}");
+    announce_canvas(
+        &paths.canvas,
+        open,
+        || {},
+        crate::command_client::system_browser,
+        announcement,
+    );
     let _ = announcement.flush();
     let capture::Channels {
         reporter,
@@ -719,6 +741,42 @@ async fn run_surface(
         timers.drive(bus, timer_commits),
     )
     .await
+}
+
+/// Announce the app this start serves, and dial it when asked to.
+///
+/// The endpoint is read back out of the discovery file the resident has just
+/// published rather than formatted from the address it bound, so the line an
+/// operator is told to open has already passed the ownership, loopback-origin,
+/// and generation admission that a client applies to the same file. That is
+/// the whole reason there is no separate opener command: one reader admits the
+/// endpoint, and `up` is simply its first caller.
+///
+/// A resident whose own discovery fails that admission says so and keeps
+/// serving. The surface is up either way, and refusing to run because the
+/// operator cannot be handed a URL would trade a working appliance for a
+/// cosmetic one.
+fn announce_canvas(
+    discovery_path: &Path,
+    open: bool,
+    before_current_check: impl FnOnce(),
+    browser: impl FnOnce(&str) -> Result<(), String>,
+    announcement: &mut dyn io::Write,
+) {
+    let outcome = crate::command_client::open_canvas_with(
+        discovery_path,
+        before_current_check,
+        |endpoint| if open { browser(endpoint) } else { Ok(()) },
+    );
+    let _ = match outcome {
+        Outcome::Reply(reply) => {
+            writeln!(announcement, "canvas endpoint: {}", reply.body.endpoint)
+        }
+        Outcome::Refusal(refusal) => {
+            writeln!(announcement, "canvas unavailable: {}", refusal.reason)
+        }
+        Outcome::Fault(fault) => writeln!(announcement, "canvas unavailable: {}", fault.reason),
+    };
 }
 
 fn surface_capabilities(

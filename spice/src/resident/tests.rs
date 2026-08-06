@@ -630,3 +630,118 @@ fn test_uuid(last: u8) -> CanonicalUuid {
         .parse()
         .expect("fixture UUID")
 }
+
+/// One published discovery, at a path the caller owns for the test.
+fn published_discovery(name: &str, port: u16) -> (PathBuf, PathBuf, canvas::Discovery) {
+    let root = fixture(name);
+    fs::create_dir_all(&root).expect("announcement fixture root");
+    let path = root.join("canvas");
+    let discovery = canvas::Discovery {
+        endpoint: format!("http://127.0.0.1:{port}"),
+        capability: test_uuid(1),
+        epoch: test_uuid(2),
+    };
+    discovery
+        .publish(&path)
+        .expect("fixture discovery publishes");
+    (root, path, discovery)
+}
+
+/// The announced endpoint is one that passed admission, and nothing dials it.
+///
+/// This is the whole reason `up` reads its own discovery back rather than
+/// formatting the address it bound: the operator is handed a URL only after
+/// the same ownership, loopback-origin, and generation checks a client makes.
+/// A plain start must not seize the operator's browser, so the launcher stays
+/// untouched until `--open` asks for it.
+#[test]
+fn announcing_the_canvas_names_the_admitted_endpoint_without_dialling_it() {
+    let (root, path, discovery) = published_discovery("announce-endpoint", 48231);
+    let mut dialled = None;
+    let mut announced = Vec::new();
+
+    announce_canvas(
+        &path,
+        false,
+        || {},
+        |endpoint| {
+            dialled = Some(endpoint.to_owned());
+            Ok(())
+        },
+        &mut announced,
+    );
+
+    assert_eq!(
+        String::from_utf8(announced).expect("announcement is text"),
+        format!("canvas endpoint: {}\n", discovery.endpoint)
+    );
+    assert_eq!(dialled, None, "a plain start must not open a browser");
+    fs::remove_dir_all(&root).expect("announcement fixture cleanup");
+}
+
+/// `--open` hands the launcher the admitted endpoint and no other.
+#[test]
+fn opening_at_start_dials_exactly_the_endpoint_that_was_announced() {
+    let (root, path, discovery) = published_discovery("announce-open", 48232);
+    let mut dialled = None;
+    let mut announced = Vec::new();
+
+    announce_canvas(
+        &path,
+        true,
+        || {},
+        |endpoint| {
+            dialled = Some(endpoint.to_owned());
+            Ok(())
+        },
+        &mut announced,
+    );
+
+    assert_eq!(dialled.as_deref(), Some(discovery.endpoint.as_str()));
+    assert_eq!(
+        String::from_utf8(announced).expect("announcement is text"),
+        format!("canvas endpoint: {}\n", discovery.endpoint)
+    );
+    fs::remove_dir_all(&root).expect("announcement fixture cleanup");
+}
+
+/// A generation replaced under the announcement is refused, not announced.
+///
+/// Folding the opener into `up` only preserves the admission it replaced if
+/// the resident's own read is subject to it. Publishing a new generation
+/// between the read and the identity recheck is the exact race that check
+/// exists for, and it must reach the announcement as a refusal rather than as
+/// a URL belonging to the generation that just lost.
+#[test]
+fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
+    let (root, path, discovery) = published_discovery("announce-stale", 48233);
+    let replacement = canvas::Discovery {
+        capability: test_uuid(3),
+        epoch: test_uuid(4),
+        ..discovery.clone()
+    };
+    let mut dialled = None;
+    let mut announced = Vec::new();
+
+    announce_canvas(
+        &path,
+        true,
+        || {
+            replacement
+                .publish(&path)
+                .expect("replacement publishes before the identity recheck");
+        },
+        |endpoint| {
+            dialled = Some(endpoint.to_owned());
+            Ok(())
+        },
+        &mut announced,
+    );
+
+    assert_eq!(
+        String::from_utf8(announced).expect("announcement is text"),
+        "canvas unavailable: canvas::discovery-replaced\n"
+    );
+    assert_eq!(dialled, None, "a stale generation must not be dialled");
+    fs::remove_dir_all(&root).expect("announcement fixture cleanup");
+}
