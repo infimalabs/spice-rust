@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#f4f5f2">
   <title>Spice Canvas</title>
-  <link rel="stylesheet" href="/style.css" integrity="sha384-rQe9JqFv3jiWD1eHdPMbrcidZwH2GHzy4HMRkELXdjRwSdoUCEMQ2m0ILAGA+8aq"/>
+  <link rel="stylesheet" href="/style.css" integrity="sha384-sqqU+O/1h9Qv1WudzZ2o6Fxyt77bwM405mhNWFPLI6jOeEH2GwCAkAaLNN7zLok4"/>
 
 <script type="module">
 import init, * as bindings from '/app.module';
@@ -19,7 +19,7 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-<link rel="modulepreload" href="/app.module" crossorigin="anonymous" integrity="sha384-9/1AgpYXE6tUQRaIgnuZlMCvtAojiwXzIMc/lDcf7oa+4CFN+jNPnGYrcWQiLgKH"><link rel="preload" href="/app_bg.wasm" crossorigin="anonymous" integrity="sha384-cj7pPV3NKITpUOOAOLLOWOrBVHwuvHmVYmLBUzDK4y3qrxc7kGdOLjCPMNVWQp3p" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="/app.module" crossorigin="anonymous" integrity="sha384-BR3j+qPdPaXye5sbbGN/m7Dm4+M2FCDyu3FhW7iWswtJXDFl95ozjYNiJwHWR/j/"><link rel="preload" href="/app_bg.wasm" crossorigin="anonymous" integrity="sha384-jLyU56DtMAl1qndp1vEso+H3eCpCAVYX1iQk38nhY637sCTzHBMpdH6NDK4vlMhk" as="fetch" type="application/wasm"></head>
 <body>
   <main id="app" aria-live="polite"></main>
 </body>
