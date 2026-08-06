@@ -1,10 +1,10 @@
-//! Fallible Canvas message views over authoritative lane capture.
+//! Fallible Canvas activity views over authoritative lane capture.
 
 use std::io;
 
 use bus::Bus;
 use lane::occupant::Seats;
-use wire::{CanonicalUuid, Outcome};
+use wire::{AgentActivityKind, CanonicalUuid, Outcome};
 
 use super::{CommandResult, lane_surface, store_fault};
 
@@ -54,8 +54,16 @@ pub(super) fn publish_agent_messages(
     record: &lane::capture::CaptureRecord,
 ) -> CommandResult<()> {
     for (event, decoded) in record.decoded.events().iter().enumerate() {
-        let listen::Event::Prose(prose) = decoded else {
-            continue;
+        let (activity, locus, text) = match decoded {
+            listen::Event::Prose(prose) => {
+                (AgentActivityKind::Prose, prose.locus, prose.text.clone())
+            }
+            listen::Event::Tool(tool) => (
+                AgentActivityKind::Tool,
+                tool.locus,
+                tool_activity_preview(tool),
+            ),
+            _ => continue,
         };
         let event = u32::try_from(event)
             .map_err(|error| store_fault("canvas::message-locus-invalid", &error.to_string()))?;
@@ -64,14 +72,30 @@ pub(super) fn publish_agent_messages(
                 lane: record.lane,
                 author: record.occupant,
                 locus: wire::MessageLocus {
-                    member: prose.locus.member,
-                    offset: prose.locus.offset,
-                    length: prose.locus.length,
+                    member: locus.member,
+                    offset: locus.offset,
+                    length: locus.length,
                     event,
                 },
-                text: prose.text.clone(),
+                activity,
+                text,
             })
             .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
     }
     Ok(())
+}
+
+fn tool_activity_preview(tool: &listen::Tool) -> String {
+    match &tool.moment {
+        listen::ToolMoment::Call { name } => name.clone(),
+        listen::ToolMoment::Update { name } => format!("{name} update"),
+        listen::ToolMoment::Result(result) => {
+            let outcome = match result {
+                listen::ToolResult::Succeeded => "succeeded",
+                listen::ToolResult::Failed => "failed",
+                listen::ToolResult::Unreported => "completed",
+            };
+            format!("{} {outcome}", tool.call_id)
+        }
+    }
 }

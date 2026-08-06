@@ -13,7 +13,7 @@ use wire::{
 
 use crate::thread::{ThreadError, ThreadIndex};
 
-/// Newest transcript messages retained for a reconnecting Canvas.
+/// Newest visible transcript activities retained for a reconnecting Canvas.
 const MESSAGE_CAPACITY: usize = 256;
 
 /// Generation-owned source for every streamed canvas answer.
@@ -43,13 +43,13 @@ impl Source {
         self.bus.subscribe()
     }
 
-    /// Reader for live agent-authored transcript messages.
+    /// Reader for live agent-authored transcript activities.
     #[must_use]
     pub fn subscribe_messages(&self) -> tokio::sync::broadcast::Receiver<AgentMessage> {
         self.messages.updates.subscribe()
     }
 
-    /// Generation-scoped writer for prose accepted from lane capture.
+    /// Generation-scoped writer for visible activity accepted from lane capture.
     #[must_use]
     pub fn message_publisher(&self) -> MessagePublisher {
         MessagePublisher {
@@ -192,14 +192,14 @@ impl MessageFeed {
     }
 }
 
-/// Generation-scoped ingress for agent prose already committed to tape.
+/// Generation-scoped ingress for agent activity already committed to tape.
 #[derive(Clone, Debug)]
 pub struct MessagePublisher {
     feed: MessageFeed,
 }
 
 impl MessagePublisher {
-    /// Retain and broadcast one transcript message exactly once.
+    /// Retain and broadcast one transcript activity exactly once.
     ///
     /// # Errors
     ///
@@ -382,7 +382,7 @@ impl Subscription {
         Ok(frames)
     }
 
-    /// Project one live transcript message for subscriptions that asked for it.
+    /// Project one live transcript activity for subscriptions that asked for it.
     #[must_use]
     pub fn message(&self, message: AgentMessage) -> Option<StreamFrame> {
         (self.is_live() && self.subjects.contains(&ViewSubject::Messages)).then_some(

@@ -2,8 +2,8 @@
 //!
 //! This is one closed DTO family: a client subscribes, continues an explicitly
 //! named packed cursor, or asks for a causal thread; the resident returns
-//! packed facts/trust/thread answers, capture-backed message snapshots, later
-//! fact or message updates, or one typed terminal boundary. Every variant
+//! packed facts/trust/thread answers, capture-backed activity snapshots, later
+//! fact or activity updates, or one typed terminal boundary. Every variant
 //! carries the current wire and resident epoch. A capability is deliberately
 //! absent: it crosses exactly once in [`crate::Hello`].
 
@@ -17,7 +17,7 @@ use crate::{
 /// Stable source position of one decoded event in a lane transcript tape.
 ///
 /// A tape locus identifies the durable vendor record. `event` distinguishes
-/// multiple assistant text blocks decoded from that one record without
+/// multiple visible activities decoded from that one record without
 /// pretending transcript events are journal facts or journal positions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -32,30 +32,55 @@ pub struct MessageLocus {
     pub event: u32,
 }
 
-/// Agent-authored prose projected from one durable transcript event.
+/// Visible kind of one agent-authored transcript activity.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentActivityKind {
+    /// Assistant prose rendered as a conversation card.
+    #[default]
+    Prose,
+    /// A tool call, update, or result rendered in the lane status strip.
+    Tool,
+}
+
+impl AgentActivityKind {
+    /// Whether this activity belongs in the prose card plane.
+    #[must_use]
+    pub const fn is_prose(&self) -> bool {
+        matches!(self, Self::Prose)
+    }
+}
+
+/// Agent-authored activity projected from one durable transcript event.
 ///
-/// This is a Canvas view over tape evidence, not an authoritative fact. The
-/// lane says where the transcript belongs, the author is the exact occupant
-/// that emitted it, and the locus lets consumers deduplicate reconnects.
+/// This is a Canvas view over tape evidence, not an authoritative fact. Prose
+/// remains the default wire shape for compatibility; tool activity carries its
+/// explicit kind and uses `text` for the concise operator-facing preview.
+/// The lane says where the transcript belongs, the author is the exact
+/// occupant that emitted it, and the locus lets consumers deduplicate
+/// reconnects.
 ///
 /// Prose outlives the seat that produced it, so [`Self::author`] names an
 /// occupant that need not still be seated anywhere, and a consumer routing a
 /// reply may not assume otherwise. When exactly one current member is occupied
 /// by the author, a reply follows that member in whichever lane it now occupies.
-/// With zero matches the reply belongs to [`Self::lane`], the lane this message
+/// With zero matches the reply belongs to [`Self::lane`], the lane this activity
 /// was carried in; multiple matches are ambiguous and resolve there as well.
 /// Neither case may select another member by row order, so no unrelated occupant
 /// is handed direction it did not earn.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentMessage {
-    /// Lane whose selected transcript carried the prose.
+    /// Lane whose selected transcript carried the activity.
     pub lane: CanonicalUuid,
-    /// Occupant identity that authored the prose.
+    /// Occupant identity that authored the activity.
     pub author: CanonicalUuid,
-    /// Durable transcript event supplying this message.
+    /// Durable transcript event supplying this activity.
     pub locus: MessageLocus,
-    /// Visible assistant prose.
+    /// Visible activity kind. Its absent wire spelling means prose.
+    #[serde(default, skip_serializing_if = "AgentActivityKind::is_prose")]
+    pub activity: AgentActivityKind,
+    /// Visible assistant prose or concise tool preview.
     pub text: String,
 }
 
@@ -77,7 +102,7 @@ pub enum ViewSubject {
     Facts,
     /// Current executable-surface trust heads.
     Trust,
-    /// Agent-authored prose projected from durable transcript capture.
+    /// Agent-authored prose and tool moments projected from transcript capture.
     Messages,
 }
 
@@ -422,12 +447,12 @@ pub enum StreamFrame {
         epoch: CanonicalUuid,
         packed: Packed<TrustView>,
     },
-    /// Current bounded transcript-message snapshot.
+    /// Current bounded transcript-activity snapshot.
     Messages {
         v: WireVersion,
         id: CanonicalUuid,
         epoch: CanonicalUuid,
-        /// Maximum number of newest messages retained by this generation.
+        /// Maximum number of newest activities retained by this generation.
         limit: u32,
         messages: Vec<AgentMessage>,
     },
@@ -445,7 +470,7 @@ pub enum StreamFrame {
         epoch: CanonicalUuid,
         fact: StreamFact,
     },
-    /// One later agent-authored transcript message.
+    /// One later agent-authored transcript activity.
     Message {
         v: WireVersion,
         id: CanonicalUuid,

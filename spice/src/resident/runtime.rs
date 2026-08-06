@@ -801,7 +801,7 @@ async fn run_surface(
     let message_publisher = server.message_publisher().ok_or_else(|| {
         environment_fault(
             "canvas::message-surface-unavailable",
-            "the streaming canvas server has no transcript message publisher",
+            "the streaming canvas server has no transcript activity publisher",
         )
     })?;
     let published = PublishedDiscovery {
