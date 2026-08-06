@@ -263,7 +263,10 @@ impl Law {
         optional: &[WitnessKind::Assignment],
         authority: Authority::Connected,
     };
-    /// The review path is the one that always carries the assignment.
+    /// The review path is the one that always carries the assignment, and the
+    /// only one that may also carry follow-up tracking: the absence of each
+    /// handle it mints and of each edge it wires, exactly the predicates
+    /// [`Self::ADD`] and [`Self::DEPENDS`] require of those moves alone.
     pub const REVIEW: Self = Self {
         required: &[
             WitnessKind::Task,
@@ -273,7 +276,7 @@ impl Law {
             WitnessKind::Residency,
             WitnessKind::Assignment,
         ],
-        optional: &[],
+        optional: &[WitnessKind::Absence, WitnessKind::Edge],
         authority: Authority::Connected,
     };
     /// Exact workflow and claim heads plus the anti-self-review witness.

@@ -1006,27 +1006,42 @@ fn wait_for_event<T>(
 }
 
 fn effect_observers(path: &Path) -> Vec<readiness::filesystem_event::DirectObserver> {
+    effect_observers_before_arm(path, |_| {})
+}
+
+fn effect_observers_before_arm(
+    path: &Path,
+    mut before_arm: impl FnMut(&Path),
+) -> Vec<readiness::filesystem_event::DirectObserver> {
     let root = if path.is_dir() {
         path
     } else {
         path.parent().expect("effect path has a parent")
     };
-    let mut watched = vec![root.to_path_buf()];
+    let mut watched = vec![(root.to_path_buf(), false)];
     if path.is_file() {
-        watched.push(path.to_path_buf());
+        watched.push((path.to_path_buf(), false));
     } else {
         watched.extend(
             fs::read_dir(root)
                 .expect("effect directory reads")
                 .map(|entry| entry.expect("effect directory entry reads").path())
-                .filter(|entry| entry.is_file()),
+                .filter(|entry| entry.is_file())
+                .map(|entry| (entry, true)),
         );
     }
-    watched.sort();
-    watched.dedup();
+    watched.sort_by(|(left, _), (right, _)| left.cmp(right));
+    watched.dedup_by(|(left, _), (right, _)| left == right);
     watched
-        .iter()
-        .map(|watched| readiness::filesystem_event::DirectObserver::arm(watched, "effect"))
+        .into_iter()
+        .filter_map(|(watched, incidental)| {
+            before_arm(&watched);
+            match readiness::filesystem_event::DirectObserver::try_arm(&watched) {
+                Ok(observer) => Some(observer),
+                Err(error) if incidental && error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => panic!("effect observer arms on {}: {error}", watched.display()),
+            }
+        })
         .collect()
 }
 

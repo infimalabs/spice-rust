@@ -315,14 +315,13 @@ pub(in crate::browser) struct Correspondent {
     pub(in crate::browser) name: String,
     pub(in crate::browser) accent: usize,
     pub(in crate::browser) speak: Callback<String>,
-    pub(in crate::browser) quote: Callback<String>,
+    pub(in crate::browser) quote: Callback<()>,
 }
 
 pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Correspondent) -> Html {
     let speak = correspondent.speak.clone();
     let quote = correspondent.quote.clone();
     let spoken = text.to_owned();
-    let quoted = text.to_owned();
     let copied = text.to_owned();
     html! {
         <span class="message-actions">
@@ -334,7 +333,7 @@ pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Corres
             <button
                 class="card-action" type="button" title="Quote this message"
                 aria-label="Quote this message"
-                onclick={Callback::from(move |_| quote.emit(quoted.clone()))}
+                onclick={Callback::from(move |_| quote.emit(()))}
             >{"❞"}</button>
             <button
                 class="card-action" type="button" title="Copy this message"

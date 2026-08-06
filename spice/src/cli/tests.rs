@@ -336,6 +336,51 @@ fn review_finding_and_note_are_declared_on_the_only_review_leaf() {
 }
 
 #[test]
+fn review_follow_up_tracking_repeats_on_the_review_leaf() {
+    // A finding has to be able to open more than one statement and wire more
+    // than one existing task, so both operands accrue rather than overwrite.
+    let matches = command()
+        .try_get_matches_from([
+            "spice",
+            "task",
+            "review",
+            "BOARD-review01",
+            "--finding",
+            "the refusal has no fixture",
+            "--then",
+            "title=Cover the refusal | project=task.cli",
+            "--then",
+            "title=Cover the sentinel | project=task.board",
+            "--followup",
+            "BOARD-track001",
+            "--followup",
+            "BOARD-track002",
+        ])
+        .expect("declared follow-up operands parse");
+    let leaf = selected_matches(&matches);
+
+    assert_eq!(
+        leaf.get_many::<String>("then")
+            .expect("--then is declared on the review leaf")
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "title=Cover the refusal | project=task.cli",
+            "title=Cover the sentinel | project=task.board",
+        ],
+        "a second --then replaced the first instead of accruing"
+    );
+    assert_eq!(
+        leaf.get_many::<String>("followup")
+            .expect("--followup is declared on the review leaf")
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["BOARD-track001", "BOARD-track002"],
+        "a second --followup replaced the first instead of accruing"
+    );
+}
+
+#[test]
 fn task_bootstrap_status_and_authored_add_fields_are_parser_owned() {
     let list = command()
         .try_get_matches_from([

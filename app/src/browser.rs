@@ -148,6 +148,8 @@ enum ClientAction {
         epoch: CanonicalUuid,
         message: String,
         attachments: Vec<DirectiveAttachment>,
+        /// Composer sends restore through this receipt; non-draft sends omit it.
+        resolve: Option<Callback<bool>>,
     },
 }
 
@@ -166,7 +168,10 @@ enum PendingKind {
     /// is the send: by the time the answer lands the selection may have moved,
     /// so reading it back off the surface would attribute the receipt to
     /// whichever lane the operator is looking at now.
-    Steer(CanonicalUuid),
+    Steer {
+        lane: CanonicalUuid,
+        resolve: Option<Callback<bool>>,
+    },
     Note(TaskHandle),
     ConsentDecision,
 }
@@ -237,7 +242,9 @@ fn canvas_app() -> Html {
 
     let refresh = {
         let sender = sender.clone();
-        Callback::from(move |_| send_action(&sender, ClientAction::Refresh))
+        Callback::from(move |_| {
+            send_action(&sender, ClientAction::Refresh);
+        })
     };
     let submit_note = {
         let sender = sender.clone();
@@ -674,67 +681,23 @@ async fn dispatch_action(
             .await
         }
         ClientAction::ConfigureLineage { lineage, life } => {
-            send_typed(
-                principal,
-                writer,
-                pending,
-                PendingKind::LineageConfigure(lineage),
-                CommandKind::LineageConfigure,
-                vec![],
-                LineageConfigure {
-                    lineage_id: lineage,
-                    life,
-                },
-            )
-            .await
+            send_lineage_configuration(principal, writer, pending, lineage, life).await
         }
         ClientAction::Note { task, note } => {
-            let body = TaskNote {
-                task: task.clone(),
-                note,
-            };
-            let expected = vec![Witness::Existence { task: task.clone() }];
-            send_typed(
-                principal,
-                writer,
-                pending,
-                PendingKind::Note(task),
-                CommandKind::TaskNote,
-                expected,
-                body,
-            )
-            .await
+            send_task_note(principal, writer, pending, task, note).await
         }
         ClientAction::Consent {
             request,
             rule,
             answer,
-        } => {
-            let body = wire::intent::ConsentDecide { request, answer };
-            let expected = vec![
-                Witness::Consent {
-                    request,
-                    answer: Answer::Asked,
-                },
-                Witness::Rule { name: rule },
-            ];
-            send_typed(
-                principal,
-                writer,
-                pending,
-                PendingKind::ConsentDecision,
-                CommandKind::ConsentDecide,
-                expected,
-                body,
-            )
-            .await
-        }
+        } => send_consent_decision(principal, writer, pending, request, rule, answer).await,
         ClientAction::Steer {
             lane,
             occupant,
             epoch,
             message,
             attachments,
+            resolve,
         } => {
             let body = SteerSend {
                 lane,
@@ -750,7 +713,7 @@ async fn dispatch_action(
                 principal,
                 writer,
                 pending,
-                PendingKind::Steer(lane),
+                PendingKind::Steer { lane, resolve },
                 CommandKind::SteerSend,
                 expected,
                 body,
@@ -758,6 +721,80 @@ async fn dispatch_action(
             .await
         }
     }
+}
+
+async fn send_lineage_configuration(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    lineage: CanonicalUuid,
+    life: LineageLife,
+) -> Result<(), String> {
+    send_typed(
+        principal,
+        writer,
+        pending,
+        PendingKind::LineageConfigure(lineage),
+        CommandKind::LineageConfigure,
+        vec![],
+        LineageConfigure {
+            lineage_id: lineage,
+            life,
+        },
+    )
+    .await
+}
+
+async fn send_task_note(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    task: TaskHandle,
+    note: String,
+) -> Result<(), String> {
+    let body = TaskNote {
+        task: task.clone(),
+        note,
+    };
+    let expected = vec![Witness::Existence { task: task.clone() }];
+    send_typed(
+        principal,
+        writer,
+        pending,
+        PendingKind::Note(task),
+        CommandKind::TaskNote,
+        expected,
+        body,
+    )
+    .await
+}
+
+async fn send_consent_decision(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    request: CanonicalUuid,
+    rule: wire::Name,
+    answer: Answer,
+) -> Result<(), String> {
+    let body = wire::intent::ConsentDecide { request, answer };
+    let expected = vec![
+        Witness::Consent {
+            request,
+            answer: Answer::Asked,
+        },
+        Witness::Rule { name: rule },
+    ];
+    send_typed(
+        principal,
+        writer,
+        pending,
+        PendingKind::ConsentDecision,
+        CommandKind::ConsentDecide,
+        expected,
+        body,
+    )
+    .await
 }
 
 async fn request_external_speech(text: &str, content_type: &str) -> Result<Vec<u8>, String> {
@@ -1073,10 +1110,14 @@ fn handle_incoming(
         PendingKind::LineageConfigure(lineage) => {
             apply_lineage_configuration(session, lineage_controls, runtime, lineage, bytes)?
         }
-        PendingKind::Steer(lane) => {
+        PendingKind::Steer { lane, resolve } => {
             let admitted: crate::Admitted<Response<wire::intent::DirectiveAnswer>> =
                 admit_response(session, bytes)?;
+            let accepted = matches!(&admitted.get().outcome, wire::Outcome::Reply(_));
             runtime.apply_steer(&admitted, lane);
+            if let Some(resolve) = resolve {
+                resolve.emit(accepted);
+            }
             true
         }
         PendingKind::Note(task) => {
@@ -1187,10 +1228,11 @@ fn binary_message(message: Message) -> Result<Vec<u8>, String> {
     }
 }
 
-fn send_action(sender: &SenderHandle, action: ClientAction) {
-    if let Some(sender) = sender.borrow_mut().as_mut() {
-        let _ = sender.unbounded_send(action);
-    }
+fn send_action(sender: &SenderHandle, action: ClientAction) -> bool {
+    sender
+        .borrow_mut()
+        .as_mut()
+        .is_some_and(|sender| sender.unbounded_send(action).is_ok())
 }
 
 fn metric(label: &'static str, value: String, detail: String) -> Html {
