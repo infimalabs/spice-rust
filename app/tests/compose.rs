@@ -20,7 +20,8 @@ const LIFE: &str = "steer";
 
 #[test]
 fn a_complete_seat_form_is_accepted_with_its_fields_intact() {
-    let seat = compose::seat(WORKTREE, VENDOR, LIFE).expect("a complete form seats");
+    let seat = compose::seat("  Ava  ", WORKTREE, VENDOR, LIFE).expect("a complete form seats");
+    assert_eq!(seat.name.as_deref(), Some("Ava"));
     assert_eq!(seat.worktree, WORKTREE);
     assert_eq!(seat.life, "steer");
     assert_eq!(seat.vendor.as_str(), "claude");
@@ -34,10 +35,10 @@ fn a_complete_seat_form_is_accepted_with_its_fields_intact() {
 /// produced no request and no message at all.
 #[test]
 fn a_capitalised_vendor_is_folded_to_the_lower_case_name_the_wire_takes() {
-    let seat = compose::seat(WORKTREE, "Claude", LIFE).expect("a capitalised vendor seats");
+    let seat = compose::seat("", WORKTREE, "Claude", LIFE).expect("a capitalised vendor seats");
     assert_eq!(seat.vendor.as_str(), "claude");
 
-    let shouted = compose::seat(WORKTREE, "CODEX", LIFE).expect("a shouted vendor seats");
+    let shouted = compose::seat("", WORKTREE, "CODEX", LIFE).expect("a shouted vendor seats");
     assert_eq!(shouted.vendor.as_str(), "codex");
 }
 
@@ -49,7 +50,7 @@ fn a_capitalised_vendor_is_folded_to_the_lower_case_name_the_wire_takes() {
 #[test]
 fn a_vendor_that_is_not_one_word_is_refused_and_quoted_back_as_written() {
     for written in ["my agent", "gpt-5", "clau.de", "claudé", "claude2"] {
-        let refusal = compose::seat(WORKTREE, written, LIFE)
+        let refusal = compose::seat("", WORKTREE, written, LIFE)
             .expect_err("a vendor that is not one lower-case word is refused");
         assert_eq!(
             refusal,
@@ -70,13 +71,13 @@ fn a_vendor_that_is_not_one_word_is_refused_and_quoted_back_as_written() {
 /// vendor that is not one word, quoting a value that looks correct to read.
 #[test]
 fn a_vendor_is_trimmed_before_it_is_judged() {
-    let seat = compose::seat(WORKTREE, "  Claude\n", LIFE).expect("a padded vendor seats");
+    let seat = compose::seat("", WORKTREE, "  Claude\n", LIFE).expect("a padded vendor seats");
     assert_eq!(seat.vendor.as_str(), "claude");
 }
 
 #[test]
 fn a_blank_vendor_is_refused_by_name_rather_than_quoted_as_nothing() {
-    let refusal = compose::seat(WORKTREE, "   ", LIFE).expect_err("a blank vendor refuses");
+    let refusal = compose::seat("", WORKTREE, "   ", LIFE).expect_err("a blank vendor refuses");
     assert_eq!(
         refusal,
         Refusal::Missing {
@@ -90,7 +91,8 @@ fn a_blank_vendor_is_refused_by_name_rather_than_quoted_as_nothing() {
 #[test]
 fn a_blank_worktree_is_refused_by_name_with_the_shape_of_a_good_one() {
     for written in ["", "   ", "\t"] {
-        let refusal = compose::seat(written, VENDOR, LIFE).expect_err("a blank worktree refuses");
+        let refusal =
+            compose::seat("", written, VENDOR, LIFE).expect_err("a blank worktree refuses");
         let sentence = refusal.to_string();
         assert!(sentence.starts_with("Worktree is required"), "{sentence}");
         assert!(sentence.contains("absolute path"), "{sentence}");
@@ -99,7 +101,7 @@ fn a_blank_worktree_is_refused_by_name_with_the_shape_of_a_good_one() {
 
 #[test]
 fn a_blank_life_is_refused_by_name_and_lists_the_lives_on_offer() {
-    let refusal = compose::seat(WORKTREE, VENDOR, "  ").expect_err("a blank life refuses");
+    let refusal = compose::seat("", WORKTREE, VENDOR, "  ").expect_err("a blank life refuses");
     let sentence = refusal.to_string();
     assert!(sentence.starts_with("Life is required"), "{sentence}");
     for life in ["steer", "drive", "drain"] {
@@ -116,7 +118,7 @@ fn a_blank_life_is_refused_by_name_and_lists_the_lives_on_offer() {
 /// broken too, so any other precedence changes which one is named.
 #[test]
 fn refusals_arrive_in_the_order_the_form_lists_its_fields() {
-    let named = |worktree, vendor, life| match compose::seat(worktree, vendor, life) {
+    let named = |worktree, vendor, life| match compose::seat("", worktree, vendor, life) {
         Err(Refusal::Missing { field, .. }) => field,
         Err(Refusal::Vendor { .. }) => "Vendor",
         other => panic!("a broken form refuses: {other:?}"),

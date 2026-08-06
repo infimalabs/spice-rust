@@ -48,11 +48,18 @@ fn lane(id: &str, worktree: &str) -> LaneRow {
 fn member(id: &str, worktree: &str) -> LaneMember {
     LaneMember {
         lane: uuid(id),
+        name: None,
         worktree: worktree.to_owned(),
         life: "docker".to_owned(),
         vendor: "codex".parse().expect("the fixture spells a vendor name"),
         occupant: Some(uuid(OCCUPANT)),
         disposition: "seated".to_owned(),
+        liveness: wire::intent::LaneLiveness::Running,
+        // A seat that has run: `bound` records that a resumable session was once
+        // declared for it, which is true of every lane this fixture builds
+        // because each one is occupied. No standing reads the field, so the
+        // value is the fixture's stance rather than anything asserted below --
+        // spelled out because a bare `true` reads as load-bearing when it is not.
         bound: true,
     }
 }
@@ -152,6 +159,7 @@ fn a_standing_joins_the_lane_table_the_inbox_and_the_board() {
     assert_eq!(rows[0].vendor, "codex");
     assert_eq!(rows[0].life, "docker");
     assert_eq!(rows[0].disposition, "seated");
+    assert_eq!(rows[0].liveness, wire::intent::LaneLiveness::Running);
     assert_eq!(rows[0].pending, 2);
     assert_eq!(rows[0].handle.as_deref(), Some("FIDELIT-1kKRSfyV"));
     assert_eq!(rows[0].phase.as_deref(), Some("review"));
@@ -297,6 +305,21 @@ fn a_lane_is_labelled_by_what_separates_it_from_its_fleet() {
     );
     assert_eq!(leaf("main-c"), "main-c");
     assert_eq!(leaf("/"), "/");
+}
+
+#[test]
+fn a_configured_agent_name_wins_while_an_unconfigured_lane_uses_the_worktree_leaf() {
+    let mut configured = lane(LANE_A, "/fleet/one/spice-rust-a");
+    configured.members[0].name = Some("Ava".to_owned());
+    let unconfigured = lane(LANE_B, "/fleet/one/spice-rust-g");
+
+    let rows = standings(&[configured, unconfigured], &[], &[], at(0));
+
+    assert_eq!(rows[0].label, "Ava");
+    assert_eq!(rows[0].worktree, "/fleet/one/spice-rust-a");
+    assert_eq!(rows[1].label, "spice-rust-g");
+    assert_eq!(rows[1].worktree, "/fleet/one/spice-rust-g");
+    assert_eq!(rows[0].pending, 0, "pending remains an inbox-derived join");
 }
 
 #[test]

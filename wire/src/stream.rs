@@ -302,6 +302,7 @@ fn stream_fact_body(fact: &AnyFact) -> serde_json::Map<String, serde_json::Value
         lane,
         lineage_id,
         capability: _,
+        name,
         worktree,
         life,
         vendor,
@@ -309,6 +310,7 @@ fn stream_fact_body(fact: &AnyFact) -> serde_json::Map<String, serde_json::Value
     let visible = StreamLaneSeated {
         lane,
         lineage_id,
+        name,
         worktree,
         life,
         vendor,
@@ -360,6 +362,12 @@ impl<'de> Deserialize<'de> for StreamFactBody {
 struct StreamLaneSeated {
     lane: CanonicalUuid,
     lineage_id: CanonicalUuid,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    name: Option<String>,
     worktree: String,
     life: String,
     vendor: Name,

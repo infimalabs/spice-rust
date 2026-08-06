@@ -18,6 +18,7 @@ pub(super) fn propose_seat(
     next.lanes.push(wire::LaneResidency {
         lane: request.lane,
         lineage_id: request.lineage_id,
+        name: request.name.clone(),
         worktree: request.worktree.clone(),
         life: request.life.clone(),
         vendor: request.vendor.clone(),
@@ -40,6 +41,7 @@ pub(super) fn propose_seat(
                 lane: request.lane,
                 lineage_id: request.lineage_id,
                 capability,
+                name: request.name.clone(),
                 worktree: request.worktree.clone(),
                 life: request.life.clone(),
                 vendor: request.vendor.clone(),

@@ -118,6 +118,7 @@ type SurfaceData = Option<CanvasRuntime>;
 enum ClientAction {
     Refresh,
     Seat {
+        name: Option<String>,
         worktree: String,
         life: String,
         vendor: wire::Name,
@@ -277,6 +278,7 @@ fn canvas_app() -> Html {
 
 #[hook]
 fn use_agent_controls(sender: SenderHandle, speak: Callback<String>) -> view::AgentControls {
+    let seat_name = use_state(String::new);
     let seat_worktree = use_state(String::new);
     let seat_vendor = use_state(|| "codex".to_owned());
     let seat_life = use_state(|| "steer".to_owned());
@@ -284,11 +286,13 @@ fn use_agent_controls(sender: SenderHandle, speak: Callback<String>) -> view::Ag
     view::AgentControls {
         submit_seat: seat_submit(
             sender,
+            seat_name.clone(),
             seat_worktree.clone(),
             seat_vendor.clone(),
             seat_life.clone(),
             seat_notice.clone(),
         ),
+        seat_name,
         seat_worktree,
         seat_vendor,
         seat_life,
@@ -299,6 +303,7 @@ fn use_agent_controls(sender: SenderHandle, speak: Callback<String>) -> view::Ag
 
 fn seat_submit(
     sender: SenderHandle,
+    name: UseStateHandle<String>,
     worktree: UseStateHandle<String>,
     vendor: UseStateHandle<String>,
     life: UseStateHandle<String>,
@@ -306,12 +311,13 @@ fn seat_submit(
 ) -> Callback<SubmitEvent> {
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
-        match compose::seat(&worktree, &vendor, &life) {
+        match compose::seat(&name, &worktree, &vendor, &life) {
             Ok(seat) => {
                 notice.set(Notice::none());
                 send_action(
                     &sender,
                     ClientAction::Seat {
+                        name: seat.name,
                         worktree: seat.worktree,
                         life: seat.life,
                         vendor: seat.vendor,
@@ -612,6 +618,7 @@ async fn dispatch_action(
     match action {
         ClientAction::Refresh => send_refresh(principal, writer, pending).await,
         ClientAction::Seat {
+            name,
             worktree,
             life,
             vendor,
@@ -620,6 +627,7 @@ async fn dispatch_action(
             let body = LaneSeat {
                 lane,
                 lineage_id: lane,
+                name,
                 worktree,
                 life,
                 vendor,

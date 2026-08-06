@@ -193,11 +193,10 @@ fn board_response(
         .expect("board response is admitted")
 }
 
-/// One admitted lane roster, one row per `(lane, occupant, session)` triple.
+/// One admitted safe lane roster, one row per `(lane, lineage, occupant, bound)` tuple.
 ///
-/// The session body is the resident's real one rather than a placeholder,
-/// because `bound` is derived from its presence and a shape the wire refuses
-/// would prove the mapping against a row that never crosses.
+/// Session authority and capabilities are intentionally not part of this DTO;
+/// only the explicit `bound` projection crosses into the Canvas.
 fn lane_response(rows: &[(&str, &str, Option<&str>, bool)]) -> String {
     let lanes = rows
         .iter()
@@ -209,23 +208,12 @@ fn lane_response(rows: &[(&str, &str, Option<&str>, bool)]) -> String {
                 "life": "steer",
                 "vendor": "claude",
                 "lineage": [],
-                "capabilities": [],
+                "bound": bound,
                 "disposition": if occupant.is_some() { "occupied" } else { "vacant" },
+                "liveness": if occupant.is_some() { "running" } else { "vacant" },
             });
             if let Some(occupant) = occupant {
                 row["occupant"] = serde_json::json!(occupant);
-            }
-            if *bound {
-                row["session"] = serde_json::json!({
-                    "lane": lane,
-                    "occupant": OPERATOR,
-                    "worktree": format!("/tmp/worktree-{}", &lane[..8]),
-                    "vendor": "claude",
-                    "epoch": EPOCH,
-                    "stream": "stdout",
-                    "identity": "018f7777-7777-7444-8888-999999999999",
-                    "locus": {"member": 0, "offset": 0, "length": 12},
-                });
             }
             row
         })
@@ -825,15 +813,15 @@ fn only_the_tail_of_a_backlog_invalidates_reads_and_a_thread_walk_never_does() {
 
 /// The tile ladder is the predecessor's, and every rung has its own cause.
 ///
-/// The four rungs are read from three independent inputs — queued direction,
-/// a live occupant, and a declared session — so the fixture varies one at a
-/// time rather than presenting four lanes that differ in every field. The
+/// The five rungs are read from three independent inputs — queued direction,
+/// typed occupant liveness, and a declared session — so the fixture varies one
+/// at a time rather than presenting lanes that differ in every field. The
 /// labels are written out here rather than read back from [`LaneStatus`],
 /// because a test that asks the enum what its wording is passes after the
 /// wording changes.
 ///
 /// The rank is asserted through a shuffled sort because the strip orders its
-/// tiles by `Ord` alone: a ladder that named the four states in the right
+/// tiles by `Ord` alone: a ladder that named the five states in the right
 /// order but derived the wrong comparison would still put the lane waiting on
 /// the operator at the far end of the strip.
 #[test]
@@ -877,15 +865,18 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
 
     assert_eq!(LaneStatus::Queued.label(), "steering queued");
     assert_eq!(LaneStatus::Running.label(), "agent running");
+    assert_eq!(LaneStatus::RunningStale.label(), "agent running-stale");
     assert_eq!(LaneStatus::Bound.label(), "agent bound");
     assert_eq!(LaneStatus::Unbound.label(), "agent unbound");
     assert_eq!(LaneStatus::Queued.key(), "queued");
     assert_eq!(LaneStatus::Running.key(), "running");
+    assert_eq!(LaneStatus::RunningStale.key(), "running-stale");
     assert_eq!(LaneStatus::Bound.key(), "bound");
     assert_eq!(LaneStatus::Unbound.key(), "unbound");
 
     let mut strip = vec![
         LaneStatus::Unbound,
+        LaneStatus::RunningStale,
         LaneStatus::Running,
         LaneStatus::Bound,
         LaneStatus::Queued,
@@ -896,6 +887,7 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
         vec![
             LaneStatus::Queued,
             LaneStatus::Running,
+            LaneStatus::RunningStale,
             LaneStatus::Bound,
             LaneStatus::Unbound,
         ],
