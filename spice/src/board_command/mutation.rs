@@ -5,6 +5,17 @@ struct ValidatedSnapshot {
     entries: Vec<Entry>,
 }
 
+struct PreparedTask {
+    task: TaskHandle,
+    project: String,
+    flow: Vec<wire::Phase>,
+    phase: wire::Phase,
+    origin: wire::Origin,
+    at: Instant,
+    statement: TaskHead,
+    workflow: WorkflowHead,
+}
+
 fn task_add(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -50,6 +61,7 @@ fn task_oops_add(
         project: None,
         description: Some(add.description.clone()),
         acceptance: Vec::new(),
+        origin: None,
         flow: None,
         depends: Vec::new(),
     };
@@ -64,6 +76,65 @@ fn create_task<B: serde::Serialize>(
     request_body: B,
     projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
+    let prepared = match prepare_task(command, add, &project, projects) {
+        Ok(prepared) => prepared,
+        Err(outcome) => return outcome,
+    };
+    let mut write = JournalWrite::new(
+        command.actor().clone(),
+        prepared.origin,
+        prepared.at,
+        Producer::CommandDoor,
+    );
+    guard(&mut write, command.expected().to_vec());
+    let added = match write.fact(
+        body::TaskAdded {
+            task: prepared.task.clone(),
+            uuid: command.id(),
+            title: add.title.clone(),
+            description: add.description.clone(),
+            acceptance: add.acceptance.clone(),
+            project: prepared.project,
+            tags: Vec::new(),
+            depends: add.depends.clone(),
+            flow: prepared.flow,
+            phase: prepared.phase,
+            revision: 1,
+        },
+        FactCause::Root,
+    ) {
+        Ok(fact) => fact,
+        Err(error) => return store_fault("task::add-build", &error.to_string()),
+    };
+    let statement = prepared.statement;
+    write.task_head(added, move |position| TaskHead {
+        revision: position,
+        ..statement
+    });
+    write.workflow_head(prepared.task.clone(), added, move |_| prepared.workflow);
+    if let Err(outcome) = add_oops_note(&mut write, &project, add, &prepared.task, added) {
+        return outcome;
+    }
+    let answer = wire::intent::TaskAnswer {
+        task: prepared.task,
+        status: "pending".to_owned(),
+    };
+    if let Err(error) = write.command_result(
+        request(command, request_body),
+        command.epoch(),
+        answer.clone(),
+    ) {
+        return store_fault("task::add-receipt", &error.to_string());
+    }
+    committed(bus, write, CommandAnswer::Task(answer))
+}
+
+fn prepare_task(
+    command: &wire::AdmittedCommand,
+    add: &TaskAdd,
+    project: &Project,
+    projects: &ProjectPolicy,
+) -> Result<PreparedTask, Outcome<CommandAnswer>> {
     let handles = command
         .expected()
         .iter()
@@ -73,30 +144,26 @@ fn create_task<B: serde::Serialize>(
         })
         .collect::<Vec<_>>();
     let [task] = handles.as_slice() else {
-        return protocol_fault(
+        return Err(protocol_fault(
             "task::add-witness-invalid",
             "task add requires exactly one intended absent handle",
-        );
+        ));
     };
     let task = task.clone();
     let project_text = project.as_str().to_owned();
-    let flow = match phases(add.flow.as_deref()) {
-        Ok(flow) => flow,
-        Err(outcome) => return outcome,
-    };
+    let flow = phases(add.flow.as_deref())?;
     let phase = flow[0].clone();
-    let origin = match task_origin(&task) {
-        Ok(origin) => origin,
-        Err(outcome) => return outcome,
+    let origin = match add.origin.clone() {
+        Some(origin) => origin,
+        None => task_origin(&task)?,
     };
-    let at = match current_instant() {
-        Ok(at) => at,
-        Err(outcome) => return outcome,
-    };
+    let at = current_instant()?;
     let statement = TaskHead {
         handle: task.clone(),
         uuid: command.id(),
         title: add.title.clone(),
+        description: add.description.clone(),
+        acceptance: add.acceptance.clone(),
         project: project_text.clone(),
         tags: Vec::new(),
         dependencies: add.depends.clone(),
@@ -115,37 +182,31 @@ fn create_task<B: serde::Serialize>(
     if let Err(error) =
         Entry::new(statement.clone(), workflow.clone(), None, None, projects)
     {
-        return refusal(
+        return Err(refusal(
             "task::add-refused",
             Some(error.to_string()),
             "correct the task project, dependencies, or phase flow and retry",
-        );
+        ));
     }
-    let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
-    guard(&mut write, command.expected().to_vec());
-    let added = match write.fact(
-        body::TaskAdded {
-            task: task.clone(),
-            uuid: command.id(),
-            title: add.title.clone(),
-            project: project_text,
-            tags: Vec::new(),
-            depends: add.depends.clone(),
-            flow,
-            phase,
-            revision: 1,
-        },
-        FactCause::Root,
-    ) {
-        Ok(fact) => fact,
-        Err(error) => return store_fault("task::add-build", &error.to_string()),
-    };
-    let statement_head = statement.clone();
-    write.task_head(added, move |position| TaskHead {
-        revision: position,
-        ..statement_head
-    });
-    write.workflow_head(task.clone(), added, move |_| workflow);
+    Ok(PreparedTask {
+        task,
+        project: project_text,
+        flow,
+        phase,
+        origin,
+        at,
+        statement,
+        workflow,
+    })
+}
+
+fn add_oops_note(
+    write: &mut JournalWrite,
+    project: &Project,
+    add: &TaskAdd,
+    task: &TaskHandle,
+    added: PendingFact,
+) -> Result<(), Outcome<CommandAnswer>> {
     if project.visibility().hidden_stem() == Some("oops")
         && let Some(note) = &add.description
         && let Err(error) = write.fact(
@@ -156,20 +217,9 @@ fn create_task<B: serde::Serialize>(
             FactCause::Pending(added),
         )
     {
-        return store_fault("task::oops-note-build", &error.to_string());
+        return Err(store_fault("task::oops-note-build", &error.to_string()));
     }
-    let answer = wire::intent::TaskAnswer {
-        task: task.clone(),
-        status: "pending".to_owned(),
-    };
-    if let Err(error) = write.command_result(
-        request(command, request_body),
-        command.epoch(),
-        answer.clone(),
-    ) {
-        return store_fault("task::add-receipt", &error.to_string());
-    }
-    committed(bus, write, CommandAnswer::Task(answer))
+    Ok(())
 }
 
 fn task_note(

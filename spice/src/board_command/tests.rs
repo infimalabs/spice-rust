@@ -165,6 +165,7 @@ mod tests {
                 project: Some(project.to_owned()),
                 description: None,
                 acceptance: Vec::new(),
+                origin: None,
                 flow: flow.map(str::to_owned),
                 depends: Vec::new(),
             },
@@ -197,6 +198,73 @@ mod tests {
         bus.verify().expect("fixture authority verifies");
         bus.shutdown().expect("fixture bus stops");
         fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn task_status_counts_one_snapshot_and_task_add_retains_authored_context() {
+        let (root, bus, epoch, _) = fixture("task-bootstrap", 1);
+        let task = "CLI-context01"
+            .parse::<TaskHandle>()
+            .expect("fixture task handle");
+        let origin: wire::Origin = "task:CLI-parent".parse().expect("fixture origin");
+        assert_committed(issue(
+            &bus,
+            epoch,
+            Actor::Operator,
+            CommandKind::TaskAdd,
+            vec![Witness::Absence { task: task.clone() }],
+            &TaskAdd {
+                title: "Carry native bootstrap context".to_owned(),
+                project: Some("task.cli".to_owned()),
+                description: Some("The agent needs the complete handoff".to_owned()),
+                acceptance: vec![
+                    "Status reports board counts".to_owned(),
+                    "Creation provenance survives".to_owned(),
+                ],
+                origin: Some(origin.clone()),
+                flow: Some("todo".to_owned()),
+                depends: Vec::new(),
+            },
+        ));
+        add(
+            &bus,
+            epoch,
+            Actor::Operator,
+            "CLI-review001",
+            "Review native bootstrap",
+            Some("review"),
+        );
+
+        let answer = board(&bus, epoch, Actor::Operator);
+        let statement = &at(&answer, &task).statement.body;
+        assert_eq!(
+            statement.description.as_deref(),
+            Some("The agent needs the complete handoff")
+        );
+        assert_eq!(
+            statement.acceptance,
+            [
+                "Status reports board counts",
+                "Creation provenance survives"
+            ]
+        );
+        assert_eq!(statement.provenance, origin);
+
+        let status = task_status(&answer).expect("validated board yields status");
+        for expected in [
+            "claim -",
+            "actor operator",
+            "active 0",
+            "ready 1",
+            "review 1",
+            "blocked 0",
+            "waiting 0",
+            "stale 0",
+            "oops 0",
+        ] {
+            assert!(status.lines().any(|line| line == expected), "{status}");
+        }
+        clean(&root, bus);
     }
 
     #[test]

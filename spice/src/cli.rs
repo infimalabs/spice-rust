@@ -643,6 +643,16 @@ const CONTRACTS: &[Contract] = &[
         "board::handout"
     ),
     row!(
+        ["task", "status"],
+        "task status",
+        OperatorOrLane,
+        Read,
+        [],
+        [Resident],
+        Reply,
+        "board::status"
+    ),
+    row!(
         ["task", "next"],
         "task next",
         OperatorOrLane,
@@ -665,7 +675,7 @@ const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "add"],
-        "task add TITLE [--project PROJECT]",
+        "task add TITLE [--project PROJECT] [--description DESCRIPTION] [--acceptance ACCEPTANCE...] [--origin ORIGIN]",
         OperatorOrLane,
         Command,
         [TaskAdded],
@@ -1252,6 +1262,7 @@ pub fn landing(path: &[&str]) -> Landing {
         | ["board"]
         | ["board", "graph"]
         | ["board", "handout"]
+        | ["task", "status"]
         | ["task", "next"]
         | ["task", "reclaim"]
         | ["task", "add"]

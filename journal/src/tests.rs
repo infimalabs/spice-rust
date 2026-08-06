@@ -1076,6 +1076,8 @@ fn task_head() -> TaskHead {
         handle: "JOURNAL-a1".parse::<TaskHandle>().expect("task handle"),
         uuid: uuid("018f82d4-6f59-7d06-92e3-bce913116301"),
         title: "Lay journal baseline".to_owned(),
+        description: None,
+        acceptance: Vec::new(),
         project: "journal".to_owned(),
         tags: vec!["journal".to_owned()],
         dependencies: Vec::new(),
