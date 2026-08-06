@@ -4,7 +4,7 @@ use super::*;
 
 mod chrome;
 
-use chrome::Correspondent;
+use chrome::CardActions;
 
 #[derive(Clone)]
 pub(super) struct AgentControls {
@@ -100,8 +100,13 @@ pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> 
                         render.surface,
                         render.sender,
                         render.composer_drafts,
-                        &|lane, pending| {
-                            lane_inbox(lane, pending, render.agents, render.composer_drafts)
+                        &|lane, _pending| {
+                            lane_inbox(
+                                render.surface,
+                                lane,
+                                render.agents,
+                                render.composer_drafts,
+                            )
                         },
                     )}
                 } else {
@@ -191,24 +196,20 @@ pub(super) fn render_agent_console(surface: &SurfaceData, controls: &AgentContro
     }
 }
 
-/// The packed inbox belonging to one seated lane.
+/// The packed agent-message feed belonging to one seated lane.
 ///
-/// Every lane gets its own, which is what the predecessor did: each lane there
-/// owned an engine-packed plane keyed to itself, rather than one plane
-/// following whichever lane was selected. Quoting a card therefore has an
-/// unambiguous destination -- the draft of the lane the card is waiting on --
-/// so this builds the correspondent from the lane rather than from a selection.
+/// Every lane gets its own plane, while every card keeps the occupant identity
+/// that authored it. Quoting still has an unambiguous destination—the draft
+/// for this lane—but colour and footer attribution come from each message.
 pub(super) fn lane_inbox(
+    surface: &SurfaceData,
     lane: &crate::runtime::LaneRow,
-    pending: &[wire::intent::PendingDirective],
     controls: &AgentControls,
     drafts: &UseReducerHandle<composer::ComposerDrafts>,
 ) -> Html {
     let lane_key = lane.lane.to_string();
     let drafts = drafts.clone();
-    let correspondent = Correspondent {
-        name: crate::watchband::leaf(&lane.worktree).to_owned(),
-        accent: crate::watchband::accent(lane.lane),
+    let actions = CardActions {
         speak: controls.speak.clone(),
         quote: Callback::from(move |text: String| {
             drafts.dispatch(composer::ComposerAction::AddQuote {
@@ -217,7 +218,18 @@ pub(super) fn lane_inbox(
             });
         }),
     };
-    html! { <MosaicInbox pending={pending.to_vec()} correspondent={correspondent} /> }
+    let messages = surface
+        .as_ref()
+        .map(|runtime| {
+            runtime
+                .messages()
+                .iter()
+                .filter(|message| message.lane == lane.lane)
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    html! { <MosaicInbox {messages} {actions} /> }
 }
 
 /// Which lane the watchband is currently showing as its selected tab.
@@ -239,8 +251,8 @@ fn selected_agent<'a>(
 
 #[derive(Properties, PartialEq)]
 struct MosaicInboxProps {
-    pending: Vec<wire::intent::PendingDirective>,
-    correspondent: Correspondent,
+    messages: Vec<wire::AgentMessage>,
+    actions: CardActions,
 }
 
 #[function_component(MosaicInbox)]
@@ -249,9 +261,9 @@ fn mosaic_inbox(properties: &MosaicInboxProps) -> Html {
     let width = use_element_width(host.clone());
     let geometry = crate::mosaic::Geometry::new(16.0, *width);
     let candidate_sets = properties
-        .pending
+        .messages
         .iter()
-        .map(|directive| message_candidates(directive, &geometry))
+        .map(|message| message_candidates(message, &geometry))
         .collect::<Vec<_>>();
     let cards = crate::mosaic::pack(&candidate_sets, crate::mosaic::TRACK_COUNT);
     let (max_row, _) = crate::mosaic::extent(&cards);
@@ -263,7 +275,7 @@ fn mosaic_inbox(properties: &MosaicInboxProps) -> Html {
     );
     let feed = classes!(
         "conversation-feed",
-        (!properties.pending.is_empty()).then_some("mosaic-feed"),
+        (!properties.messages.is_empty()).then_some("mosaic-feed"),
     );
     html! {
         <div
@@ -272,14 +284,14 @@ fn mosaic_inbox(properties: &MosaicInboxProps) -> Html {
             aria-live="polite"
             data-lanes={geometry.lane_count.to_string()}
         >
-            if properties.pending.is_empty() {
+            if properties.messages.is_empty() {
                 <div class="conversation-empty">
-                    <strong>{"Inbox clear"}</strong>
-                    <p>{"Pending direction and acknowledgement state appear here."}</p>
+                    <strong>{"No agent messages yet"}</strong>
+                    <p>{"Agent-authored prose appears here as it reaches durable capture."}</p>
                 </div>
             } else {
-                {for properties.pending.iter().zip(cards.iter()).map(|pair| {
-                    chrome::render_mosaic_card(pair, max_row, &properties.correspondent)
+                {for properties.messages.iter().zip(cards.iter()).map(|pair| {
+                    chrome::render_mosaic_card(pair, max_row, &properties.actions)
                 })}
             }
         </div>
@@ -287,30 +299,19 @@ fn mosaic_inbox(properties: &MosaicInboxProps) -> Html {
 }
 
 fn message_candidates(
-    directive: &wire::intent::PendingDirective,
+    message: &wire::AgentMessage,
     geometry: &crate::mosaic::Geometry,
 ) -> Vec<crate::mosaic::Candidate> {
     crate::mosaic::span_candidates(geometry, |span| {
         let width = f64::from(geometry.card_width(0, span).max(160));
         let characters_per_line = (width / 7.2).floor().max(18.0) as usize;
-        let text_lines = directive
+        let text_lines = message
             .text
             .lines()
             .map(|line| line.chars().count().max(1).div_ceil(characters_per_line))
             .sum::<usize>()
             .max(1);
-        let attachment_height = directive
-            .attachments
-            .iter()
-            .map(|attachment| {
-                if attachment.content_type.starts_with("image/") {
-                    crate::mosaic::Reservation::Image.pixels(16.0) + 10.0
-                } else {
-                    42.0
-                }
-            })
-            .sum::<f64>();
-        54.0 + text_lines as f64 * 19.0 + attachment_height
+        54.0 + text_lines as f64 * 19.0
     })
 }
 

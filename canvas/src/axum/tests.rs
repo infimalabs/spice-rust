@@ -80,6 +80,20 @@ fn commit_stream(bus: &bus::Bus, note: &str, trust: bool) -> bus::JournalCommit 
     }
 }
 
+fn agent_message(author: u8, offset: u64, text: &str) -> wire::AgentMessage {
+    wire::AgentMessage {
+        lane: identity(0xe5),
+        author: identity(author),
+        locus: wire::MessageLocus {
+            member: 3,
+            offset,
+            length: 24,
+            event: 0,
+        },
+        text: text.to_owned(),
+    }
+}
+
 fn commit_lane_stream(
     bus: &bus::Bus,
     lane: wire::CanonicalUuid,
@@ -421,6 +435,79 @@ async fn authenticated_socket_streams_one_bus_snapshot_updates_resume_and_typed_
             if after.seq == seq(live_cursor) && after.epoch == epoch()
     ));
     assert_socket_terminated(&mut resumed).await;
+    server_task
+        .await
+        .expect("server task joins")
+        .expect("server stops");
+    bus.shutdown().expect("bus shuts down");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn authenticated_socket_reads_and_pushes_agent_messages_with_each_author() {
+    let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
+        .expect("bus starts");
+    commit_stream(&bus, "message horizon", false);
+    let capabilities = Capabilities::default();
+    capabilities
+        .insert(operator(), wire::Actor::Operator)
+        .expect("operator capability");
+    let (server, _control) = Server::bind_streaming(
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
+        epoch(),
+        capabilities,
+        app(),
+        speech(),
+        bus.reader(),
+        8,
+    )
+    .await
+    .expect("streaming server binds");
+    let publisher = server
+        .message_publisher()
+        .expect("streaming server publishes messages");
+    let first = agent_message(0xe6, 10, "first author");
+    let second = agent_message(0xe7, 40, "second author");
+    assert!(publisher.publish(first.clone()).expect("first publishes"));
+    assert!(publisher.publish(second.clone()).expect("second publishes"));
+    let address = server.local_addr().expect("address");
+    let (shutdown, stopped) = oneshot::channel();
+    let server_task = tokio::spawn(server.up_until(async move {
+        let _ = stopped.await;
+    }));
+    let (mut socket, _) = authenticate(address, operator(), epoch()).await;
+    let subscription = identity(0xd0);
+    send_client(
+        &mut socket,
+        &wire::StreamRequest::Subscribe {
+            v: wire::WireVersion::CURRENT,
+            id: subscription,
+            epoch: epoch(),
+            subjects: vec![wire::ViewSubject::Messages],
+            after: None,
+        },
+    )
+    .await;
+    let initial = stream_frame(&mut socket).await;
+    assert!(matches!(
+        initial,
+        wire::StreamFrame::Messages { limit: 256, ref messages, .. }
+            if messages == &[first, second]
+    ));
+
+    let third = agent_message(0xe8, 70, "third author");
+    assert!(publisher.publish(third.clone()).expect("third publishes"));
+    assert!(matches!(
+        stream_frame(&mut socket).await,
+        wire::StreamFrame::Message { id, message, .. }
+            if id == subscription && message == third
+    ));
+
+    shutdown.send(()).expect("shutdown signals");
+    assert!(matches!(
+        stream_frame(&mut socket).await,
+        wire::StreamFrame::Closing { .. }
+    ));
+    assert_socket_terminated(&mut socket).await;
     server_task
         .await
         .expect("server task joins")

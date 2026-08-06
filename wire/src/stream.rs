@@ -2,9 +2,10 @@
 //!
 //! This is one closed DTO family: a client subscribes, continues an explicitly
 //! named packed cursor, or asks for a causal thread; the resident returns
-//! packed facts/trust/thread answers, later fact updates, or one typed terminal
-//! boundary. Every variant carries the current wire and resident epoch. A
-//! capability is deliberately absent: it crosses exactly once in [`crate::Hello`].
+//! packed facts/trust/thread answers, capture-backed message snapshots, later
+//! fact or message updates, or one typed terminal boundary. Every variant
+//! carries the current wire and resident epoch. A capability is deliberately
+//! absent: it crosses exactly once in [`crate::Hello`].
 
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +13,42 @@ use crate::{
     Actor, AnyFact, CanonicalUuid, Envelope, FactKind, Fault, FaultClass, Instant, Name, Origin,
     Packed, Refusal, Seq, TrustHead, WireVersion,
 };
+
+/// Stable source position of one decoded event in a lane transcript tape.
+///
+/// A tape locus identifies the durable vendor record. `event` distinguishes
+/// multiple assistant text blocks decoded from that one record without
+/// pretending transcript events are journal facts or journal positions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessageLocus {
+    /// Tape member holding the vendor record.
+    pub member: u64,
+    /// Byte offset of the vendor record within the member.
+    pub offset: u64,
+    /// Number of bytes in the vendor record.
+    pub length: u64,
+    /// Zero-based decoded event index within the vendor record.
+    pub event: u32,
+}
+
+/// Agent-authored prose projected from one durable transcript event.
+///
+/// This is a Canvas view over tape evidence, not an authoritative fact. The
+/// lane says where the transcript belongs, the author is the exact occupant
+/// that emitted it, and the locus lets consumers deduplicate reconnects.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentMessage {
+    /// Lane whose selected transcript carried the prose.
+    pub lane: CanonicalUuid,
+    /// Occupant identity that authored the prose.
+    pub author: CanonicalUuid,
+    /// Durable transcript event supplying this message.
+    pub locus: MessageLocus,
+    /// Visible assistant prose.
+    pub text: String,
+}
 
 /// A resumable journal position bound to one resident generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,6 +68,8 @@ pub enum ViewSubject {
     Facts,
     /// Current executable-surface trust heads.
     Trust,
+    /// Agent-authored prose projected from durable transcript capture.
+    Messages,
 }
 
 /// One strict client-to-resident stream request.
@@ -363,6 +402,15 @@ pub enum StreamFrame {
         epoch: CanonicalUuid,
         packed: Packed<TrustView>,
     },
+    /// Current bounded transcript-message snapshot.
+    Messages {
+        v: WireVersion,
+        id: CanonicalUuid,
+        epoch: CanonicalUuid,
+        /// Maximum number of newest messages retained by this generation.
+        limit: u32,
+        messages: Vec<AgentMessage>,
+    },
     /// One causal thread page.
     Thread {
         v: WireVersion,
@@ -376,6 +424,13 @@ pub enum StreamFrame {
         id: CanonicalUuid,
         epoch: CanonicalUuid,
         fact: StreamFact,
+    },
+    /// One later agent-authored transcript message.
+    Message {
+        v: WireVersion,
+        id: CanonicalUuid,
+        epoch: CanonicalUuid,
+        message: AgentMessage,
     },
     /// The authenticated principal cannot admit the request as written.
     Refusal {
