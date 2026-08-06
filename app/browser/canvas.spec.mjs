@@ -194,7 +194,7 @@ async function reply(fixture, args) {
   return outcome;
 }
 
-async function configureFixture(fixture, linkedRoot) {
+async function configureFixture(fixture, linkedRoot, memberCount = 4) {
   await execute("git", ["init", "--quiet"], { cwd: fixture });
   await mkdir(join(fixture, "dist"), { recursive: true });
   await cp(join(root, "dist/stage-app"), join(fixture, "dist/stage-app"), { recursive: true });
@@ -246,7 +246,7 @@ async function configureFixture(fixture, linkedRoot) {
     "commit", "--quiet", "-m", "canvas fixture",
   ], { cwd: fixture });
   const worktrees = [fixture];
-  for (let index = 2; index <= 4; index += 1) {
+  for (let index = 2; index <= memberCount; index += 1) {
     const worktree = join(linkedRoot, `lane-${index}`);
     await execute("git", ["worktree", "add", "--quiet", "--detach", worktree], { cwd: fixture });
     worktrees.push(await realpath(worktree));
@@ -607,6 +607,123 @@ async function assertAgentConversation(page, fixture, worktrees) {
   const remainingQuietWindow = Math.max(0, 61_000 - (Date.now() - firstSeatedAt));
   await new Promise((resolveWait) => setTimeout(resolveWait, remainingQuietWindow));
   return { lane: seated[0].lane, quoteLane: seated[3].lane };
+}
+
+async function assertLineageLifeIsolation(browser) {
+  const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-lineage-life-")));
+  const linkedRoot = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-life-lanes-")));
+  let resident;
+  let context;
+  try {
+    const worktrees = await configureFixture(fixture, linkedRoot, 7);
+    resident = await startResident(fixture);
+    const pending = await reply(fixture, ["trust"]);
+    await reply(fixture, ["trust", "grant", pending.body.digest]);
+
+    await reply(fixture, [
+      "lane", "add", worktrees[0], "--life", "Drain", "--vendor", "claude",
+    ]);
+    const firstSnapshot = await reply(fixture, ["lane"]);
+    const host = firstSnapshot.body.lanes.find((lane) => lane.worktree === worktrees[0]);
+    assert.ok(host, "the six-member Drain lineage has a host");
+    for (const worktree of worktrees.slice(1, 6)) {
+      await reply(fixture, [
+        "lane", "add", worktree,
+        "--lineage", host.lineage_id,
+        "--life", "Drain",
+        "--vendor", "claude",
+      ]);
+    }
+    await reply(fixture, [
+      "lane", "add", worktrees[6], "--life", "Drive", "--vendor", "claude",
+    ]);
+    const snapshot = await reply(fixture, ["lane"]);
+    const drainMembers = snapshot.body.lanes.filter(
+      (lane) => lane.lineage_id === host.lineage_id,
+    );
+    const drive = snapshot.body.lanes.find((lane) => lane.worktree === worktrees[6]);
+    assert.equal(drainMembers.length, 6, "one admitted lineage contains six members");
+    assert.ok(drainMembers.every((lane) => lane.life === "drain"));
+    assert.ok(drive, "the one-member Drive lineage is admitted");
+    assert.notEqual(drive.lineage_id, host.lineage_id);
+    assert.equal(drive.life, "drive");
+
+    context = await browser.newContext({
+      colorScheme: "light",
+      viewport: { width: 1440, height: 900 },
+    });
+    const page = await context.newPage();
+    const monitor = monitorPage(page);
+    await page.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
+    await chooseCanvasView(page, "Mosaic");
+    const console = page.locator('[data-pane="agent-console"]');
+    await console.waitFor();
+    const drainSurface = console.locator(
+      `.team-surface[data-lineage-id="${host.lineage_id}"]`,
+    );
+    const driveSurface = console.locator(
+      `.team-surface[data-lineage-id="${drive.lineage_id}"]`,
+    );
+    await drainSurface.getByRole("button", { name: "Drain", exact: true }).waitFor();
+    await driveSurface.getByRole("button", { name: "Drive", exact: true }).waitFor();
+    assert.equal(await console.locator(".team-surface").count(), 2);
+
+    await drainSurface.getByRole("textbox").first().fill("drain lineage accessibility");
+    await drainSurface.getByRole("button", { name: "Drain", exact: true }).click();
+    const drainPlane = drainSurface.locator(".lane-mosaic-plane");
+    await drainPlane
+      .locator(".mosaic-message-card")
+      .filter({ hasText: "drain lineage accessibility" })
+      .waitFor({ timeout: 10_000 });
+    await driveSurface.getByRole("textbox").fill("drive lineage accessibility");
+    await driveSurface.getByRole("button", { name: "Drive", exact: true }).click();
+    const drivePlane = driveSurface.locator(".lane-mosaic-plane");
+    await drivePlane
+      .locator(".mosaic-message-card")
+      .filter({ hasText: "drive lineage accessibility" })
+      .waitFor({ timeout: 10_000 });
+
+    const planes = console.locator(".lane-mosaic-plane");
+    assert.equal(await planes.count(), 2, "two admitted lineages own exactly two packed planes");
+    assert.match(await drainPlane.ariaSnapshot(), /Drain policy, 6 members/);
+    assert.match(await drivePlane.ariaSnapshot(), /Drive policy, 1 member/);
+
+    await drainSurface.locator('.team-lifetime input[type="range"]').fill("0");
+    await drainSurface.getByRole("button", { name: "Steer", exact: true }).waitFor();
+    assert.equal(
+      await driveSurface.getByRole("button", { name: "Drive", exact: true }).count(),
+      1,
+      "changing the Drain lineage leaves its Drive sibling unchanged",
+    );
+    await drainSurface.getByRole("textbox").first().fill("isolated lineage submission");
+    await drainSurface.getByRole("button", { name: "Steer", exact: true }).click();
+    await drainPlane
+      .locator(".mosaic-message-card")
+      .filter({ hasText: "isolated lineage submission" })
+      .waitFor({ timeout: 10_000 });
+    assert.equal(
+      await drainSurface.getByRole("button", { name: "Steer", exact: true }).count(),
+      1,
+      "submitting the changed lineage retains its own policy",
+    );
+    assert.equal(
+      await drivePlane.getAttribute("data-lineage-policy"),
+      "Drive",
+      "submitting one lineage does not mutate its sibling policy",
+    );
+    monitor.assertClean();
+  } finally {
+    if (context) await context.close();
+    if (resident?.child.exitCode === null) {
+      const liveTeam = await reply(fixture, ["lane"]);
+      for (const agent of liveTeam.body.lanes) {
+        await reply(fixture, ["lane", "drain", agent.lane]);
+      }
+      await stopResident(fixture, resident);
+    }
+    await rm(fixture, { recursive: true, force: true });
+    await rm(linkedRoot, { recursive: true, force: true });
+  }
 }
 
 async function assertFourAgentDensity(console) {
@@ -1158,6 +1275,7 @@ try {
   resident = await startResident(fixture);
   const seeded = await seedAuthority(fixture);
   browser = await chromium.launch({ headless: true });
+  await assertLineageLifeIsolation(browser);
 
   const light = await browser.newContext({
     colorScheme: "light",
