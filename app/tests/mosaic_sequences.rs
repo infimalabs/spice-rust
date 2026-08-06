@@ -12,6 +12,13 @@
 //! cards in the same cell, a card that shifts after it was already on screen,
 //! a replay that diverges, and a wide tier that drops into a hole to take
 //! width. None of those panic on their own.
+//!
+//! The last of those is the reason this file is not redundant with `mosaic.rs`
+//! and its own suite. Reordering the placement key so that span outranks the
+//! frontier -- the one change that turns "prefer width when it costs nothing"
+//! into "prefer width" -- leaves every hand-built case passing, and fails only
+//! [`a_wide_tier_never_digs_a_hole_to_take_width`]. A rule that no test can
+//! see is a rule the next edit removes for free.
 
 use app::mosaic::{self, Candidate, Card, TRACK_COUNT};
 
