@@ -462,6 +462,11 @@ fn acknowledgment_paths(
     assert_eq!(inbox.lanes[0].pending[0].key, sent.key);
     assert_eq!(inbox.lanes[0].pending[0].text, direction);
     assert_eq!(
+        inbox.lanes[0].pending[0].authored,
+        directive_authored(fixture, sent.directive)
+    );
+    assert!(inbox.lanes[0].pending[0].authored < inbox.lanes[0].pending[0].expires);
+    assert_eq!(
         inbox.lanes[0].pending[0].preview.as_deref(),
         Some("bind the exact command family")
     );
@@ -833,6 +838,26 @@ fn verify_authority(
 fn fact_body<T: serde::de::DeserializeOwned>(envelope: &wire::Envelope<wire::AnyFact>) -> T {
     let bytes = wire::encode(envelope.fact.body()).expect("fact body encodes");
     wire::decode(&bytes).expect("registered fact body decodes")
+}
+
+fn directive_authored(fixture: &Fixture, directive: wire::CanonicalUuid) -> Instant {
+    let journal = journal::Journal::open(fixture.journal()).expect("steering journal opens");
+    let snapshot = journal.fact_snapshot().expect("steering facts read");
+    snapshot
+        .facts()
+        .iter()
+        .find_map(|envelope| match envelope.fact.kind() {
+            FactKind::SteerSent => {
+                let body: wire::body::SteerSent = fact_body(envelope);
+                (body.directive == directive).then_some(envelope.at)
+            }
+            FactKind::SteerResent => {
+                let body: wire::body::SteerResent = fact_body(envelope);
+                (body.directive == directive).then_some(envelope.at)
+            }
+            _ => None,
+        })
+        .expect("pending directive has an authoring fact")
 }
 
 fn assert_transcript_locus(

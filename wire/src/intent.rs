@@ -603,6 +603,8 @@ pub struct PendingDirective {
     /// Exact attachments retained with the directive.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<DirectiveAttachment>,
+    /// Commit instant of the fact that authored this directive rung.
+    pub authored: Instant,
     /// Instant at which the directive lapses.
     pub expires: Instant,
 }
