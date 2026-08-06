@@ -423,6 +423,7 @@
                     project: Some(project.to_owned()),
                     description: None,
                     acceptance: Vec::new(),
+                    origin: None,
                     flow: None,
                     depends: Vec::new(),
                 },

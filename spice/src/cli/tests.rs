@@ -104,7 +104,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 
 #[test]
 fn every_contract_has_an_executable_landing_disposition() {
-    assert_eq!(contracts().len(), 88);
+    assert_eq!(contracts().len(), 89);
 
     let unaccounted = contracts()
         .iter()
@@ -117,7 +117,7 @@ fn every_contract_has_an_executable_landing_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 88);
+    assert_eq!(landed, 89);
     assert_eq!(landing(&["demo"]), Landing::Landed);
     assert_eq!(landing(&["install"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
@@ -132,6 +132,7 @@ fn every_contract_has_an_executable_landing_disposition() {
     assert_eq!(landing(&["lane", "import"]), Landing::Landed);
     assert_eq!(landing(&["steer", "recover"]), Landing::Landed);
     assert_eq!(landing(&["task", "reclaim"]), Landing::Landed);
+    assert_eq!(landing(&["task", "status"]), Landing::Landed);
     assert_eq!(landing(&["recall"]), Landing::Landed);
     assert_eq!(landing(&["steer"]), Landing::Landed);
     assert_eq!(landing(&["steer", "cancel"]), Landing::Landed);
@@ -331,6 +332,54 @@ fn review_finding_and_note_are_declared_on_the_only_review_leaf() {
     assert_eq!(
         leaf.get_one::<String>("note").map(String::as_str),
         Some("add a refusal fixture")
+    );
+}
+
+#[test]
+fn task_bootstrap_status_and_authored_add_fields_are_parser_owned() {
+    let status = command()
+        .try_get_matches_from(["spice", "task", "status"])
+        .expect("task status parses");
+    assert_eq!(
+        selected_contract(&status)
+            .expect("status selects a contract")
+            .path,
+        ["task", "status"]
+    );
+
+    let add = command()
+        .try_get_matches_from([
+            "spice",
+            "task",
+            "add",
+            "Restore the mosaic",
+            "--project",
+            "task.cli",
+            "--description",
+            "Carry the operator context",
+            "--acceptance",
+            "Status reports counts",
+            "--acceptance",
+            "Origin survives creation",
+            "--origin",
+            "task:CLI-parent",
+        ])
+        .expect("authored task fields parse");
+    let leaf = selected_matches(&add);
+    assert_eq!(
+        leaf.get_one::<String>("description").map(String::as_str),
+        Some("Carry the operator context")
+    );
+    assert_eq!(
+        leaf.get_many::<String>("acceptance")
+            .expect("acceptance values")
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["Status reports counts", "Origin survives creation"]
+    );
+    assert_eq!(
+        leaf.get_one::<String>("origin").map(String::as_str),
+        Some("task:CLI-parent")
     );
 }
 
