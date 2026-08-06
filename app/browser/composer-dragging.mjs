@@ -36,6 +36,10 @@ export async function assertPrimaryComposerDragging(
     `.composer-shard--primary[data-shard-target-id="${lane}"]`,
   );
   const sourceComposer = primaryComposer(source.lane);
+  const composerHandle = {
+    sourcePosition: { x: 10, y: 10 },
+    targetPosition: { x: 10, y: 10 },
+  };
   assert.equal(await sourceComposer.getAttribute("draggable"), "true");
   assert.equal(await sourceComposer.getAttribute("data-primary-composer-draggable"), "true");
   assert.equal(
@@ -47,7 +51,7 @@ export async function assertPrimaryComposerDragging(
   const sameTeamOrder = primaryRows.map((lane) => lane.lane);
   sameTeamOrder.splice(sameTeamOrder.indexOf(source.lane), 1);
   sameTeamOrder.splice(sameTeamOrder.indexOf(sameTeamTarget.lane), 0, source.lane);
-  await sourceComposer.dragTo(primaryComposer(sameTeamTarget.lane));
+  await sourceComposer.dragTo(primaryComposer(sameTeamTarget.lane), composerHandle);
   await waitForPage(
     page,
     "same-team primary composer drag reorders members",
@@ -74,7 +78,10 @@ export async function assertPrimaryComposerDragging(
   };
   const retainedDraft = "draft follows the primary composer across teams";
   await primaryComposer(source.lane).getByRole("textbox").fill(retainedDraft);
-  await primaryComposer(source.lane).dragTo(primaryComposer(crossTeamTarget.lane));
+  await primaryComposer(source.lane).dragTo(
+    primaryComposer(crossTeamTarget.lane),
+    composerHandle,
+  );
   const destinationOrder = [source.lane, ...secondaryRows.map((lane) => lane.lane)];
   await waitForPage(
     page,

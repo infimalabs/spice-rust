@@ -427,6 +427,17 @@ pub enum TaskSubscriptionScope {
 pub struct LineageConfigure {
     /// Stable Canvas lineage identifying the group.
     pub lineage_id: CanonicalUuid,
+    /// One seated member to move into this lineage, or absent to preserve membership.
+    ///
+    /// Moving a member to a fresh lineage creates a team. Moving it to its own
+    /// lane identity removes it from a team. The resident keeps every other
+    /// member and subscription authoritative in the same transaction.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub member: Option<CanonicalUuid>,
     /// Authoritative task-subscription policy to commit for the lineage.
     pub life: LineageLife,
     /// Replacement operator-pinned project set, or absent to preserve it.

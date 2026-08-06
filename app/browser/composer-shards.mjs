@@ -86,18 +86,37 @@ export async function assertComposerShards({
     .getByRole("button", { name: "Quote this message" });
   const quoteStack = quoteLane.locator(".agent-composer-stack");
   const quotePrimary = quoteStack.locator(".composer-shard--primary");
-  const primaryHeading = team.locator(
-    `.team-agent[data-agent-lane="${seeded.lane}"] .composer-shard--primary .composer-shard-heading > strong`,
+  const primaryHeadings = team.locator(
+    ".team-agent .composer-shard--primary .composer-shard-heading > .composer-shard-prose",
   );
   assert.equal(
-    await primaryHeading.innerText(),
-    seeded.primaryProse,
-    "COMPOSE-1kKbxl51: the seeded primary heading leads with its latest exact-lane agent prose",
+    await primaryHeadings.count(),
+    seeded.primaryHeadings.length,
+    "every seated lane exposes one primary prose heading",
   );
+  const observedHeadings = [];
+  for (const expected of seeded.primaryHeadings) {
+    const heading = team.locator(
+      `.team-agent[data-agent-lane="${expected.lane}"] `
+        + ".composer-shard--primary .composer-shard-heading > .composer-shard-prose",
+    );
+    const prose = await heading.innerText();
+    assert.equal(
+      prose,
+      expected.prose,
+      `COMPOSE-1kKbxl51: the ${expected.lane} primary heading keeps its latest exact-lane prose`,
+    );
+    assert.equal(
+      await heading.getAttribute("title"),
+      expected.prose,
+      `COMPOSE-1kKbxl51: the ${expected.lane} primary heading title keeps its complete prose`,
+    );
+    observedHeadings.push(prose);
+  }
   assert.equal(
-    await primaryHeading.getAttribute("title"),
-    seeded.primaryProse,
-    "COMPOSE-1kKbxl51: the complete seeded-lane prose survives one-line truncation",
+    new Set(observedHeadings).size,
+    seeded.primaryHeadings.length,
+    "primary prose headings remain pairwise distinct across seated lanes",
   );
   assert.equal(
     await quoteStack.locator(".composer-shard").count(),

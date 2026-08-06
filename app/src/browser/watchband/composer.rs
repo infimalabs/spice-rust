@@ -1,7 +1,7 @@
 //! Browser callbacks, activity cards, attachments, and safe Markdown for lane messages.
 
 use pulldown_cmark::{CowStr, Event as MarkdownEvent, Options, Parser, Tag};
-use web_sys::{ClipboardEvent, DragEvent, File, FileList, FileReader, HtmlInputElement};
+use web_sys::{ClipboardEvent, DragEvent, File, FileList, FileReader};
 
 use super::*;
 
@@ -335,13 +335,19 @@ pub(super) fn render_quote_shards(
     }
 }
 
-pub(super) fn render_attachments(
+/// Draft images ride in the shard heading as message-card thumbnails shrunk to
+/// heading scale. The thumbnail is itself the remove control: a separate × would
+/// be wider than the image it decorates and would crowd the prose, deep link,
+/// and hamburger sharing that row. The strip is rendered even with no images so
+/// the heading keeps its fixed child order and its grid columns, which is what
+/// holds the hamburger still as the first image arrives.
+pub(super) fn render_image_indicators(
     lane_key: &str,
     draft: &ComposerDraft,
     drafts: &UseReducerHandle<ComposerDrafts>,
 ) -> Html {
     html! {
-        <div class="composer-attachment-list">
+        <span class="composer-shard-image-indicators">
             {for draft.attachments.iter().enumerate().map(|(index, attachment)| {
                 let remove_key = lane_key.to_owned();
                 let remove_drafts = drafts.clone();
@@ -352,31 +358,19 @@ pub(super) fn render_attachments(
                     });
                 });
                 html! {
-                    <span class="composer-attachment-chip" title={attachment.name.clone()}>
+                    <button
+                        type="button"
+                        class="composer-shard-image-indicator"
+                        title={format!("Remove {}", attachment.name)}
+                        aria-label={format!("Remove image {}", attachment.name)}
+                        onclick={remove}
+                    >
                         <img src={attachment.data_url.clone()} alt={attachment.name.clone()} />
-                        <button
-                            type="button"
-                            aria-label="Remove image"
-                            onclick={remove}
-                        >{"×"}</button>
-                    </span>
+                    </button>
                 }
             })}
-        </div>
+        </span>
     }
-}
-
-pub(super) fn choose_images(
-    lane_key: String,
-    drafts: UseReducerHandle<ComposerDrafts>,
-) -> Callback<Event> {
-    Callback::from(move |event: Event| {
-        let input: HtmlInputElement = event.target_unchecked_into();
-        if let Some(files) = input.files() {
-            add_image_files(&drafts, &lane_key, &files);
-        }
-        input.set_value("");
-    })
 }
 
 pub(super) fn paste_images(

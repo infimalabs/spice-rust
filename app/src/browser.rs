@@ -139,6 +139,7 @@ enum ClientAction {
     },
     ConfigureLineage {
         lineage: CanonicalUuid,
+        member: Option<CanonicalUuid>,
         life: LineageLife,
     },
     Note {
@@ -750,9 +751,11 @@ async fn dispatch_action(
             )
             .await
         }
-        ClientAction::ConfigureLineage { lineage, life } => {
-            send_lineage_configuration(principal, writer, pending, lineage, life).await
-        }
+        ClientAction::ConfigureLineage {
+            lineage,
+            member,
+            life,
+        } => send_lineage_configuration(principal, writer, pending, lineage, member, life).await,
         ClientAction::Note { task, note } => {
             send_task_note(principal, writer, pending, task, note).await
         }
@@ -798,6 +801,7 @@ async fn send_lineage_configuration(
     writer: &mut SocketWriter,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     lineage: CanonicalUuid,
+    member: Option<CanonicalUuid>,
     life: LineageLife,
 ) -> Result<(), String> {
     send_typed(
@@ -809,6 +813,7 @@ async fn send_lineage_configuration(
         vec![],
         LineageConfigure {
             lineage_id: lineage,
+            member,
             life,
             manual_projects: None,
         },

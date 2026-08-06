@@ -681,6 +681,7 @@ fn lineage_configuration_changes_only_the_typed_task_subscription() {
 
     let request = wire::intent::LineageConfigure {
         lineage_id: lineage,
+        member: None,
         life: wire::intent::LineageLife::Drain,
         manual_projects: Some(vec!["task.manual".to_owned()]),
     };
@@ -1220,7 +1221,7 @@ fn announcing_the_canvas_refuses_a_generation_that_was_replaced() {
 }
 
 #[test]
-fn durable_capture_projects_only_current_occupant_prose_with_event_identity() {
+fn durable_capture_projects_current_occupant_tool_and_prose_with_event_identity() {
     let bus = Bus::start(journal::Journal::in_memory().expect("message authority opens"))
         .expect("message bus starts");
     let source = canvas::stream::Source::new(bus.reader(), test_uuid(9), 8);
@@ -1237,6 +1238,13 @@ fn durable_capture_projects_only_current_occupant_prose_with_event_identity() {
         decoded: listen::Decoded::Events(vec![
             listen::Event::Reasoning(listen::Reasoning {
                 content: listen::ReasoningContent::Opaque,
+                locus,
+            }),
+            listen::Event::Tool(listen::Tool {
+                call_id: "tool-1".to_owned(),
+                moment: listen::ToolMoment::Call {
+                    name: "Bash".to_owned(),
+                },
                 locus,
             }),
             listen::Event::Prose(listen::Prose {
@@ -1268,13 +1276,35 @@ fn durable_capture_projects_only_current_occupant_prose_with_event_identity() {
         &mut diagnostics,
     )
     .expect("current capture projects");
+    assert_tool_and_prose_activity(&mut updates, &record);
+    assert_stale_capture_ignored(
+        &bus,
+        &mut seats,
+        &publisher,
+        &mut updates,
+        &record,
+        &mut diagnostics,
+    );
+    seats
+        .vacate(record.lane)
+        .expect("replacement occupant remains supervised")
+        .wait()
+        .expect("replacement occupant stops");
+    drop(source);
+    bus.shutdown().expect("message bus stops");
+}
 
-    let message = updates.try_recv().expect("prose publishes once");
-    assert_eq!(message.lane, record.lane);
-    assert_eq!(message.author, record.occupant);
-    assert_eq!(message.text, "agent-authored answer");
+fn assert_tool_and_prose_activity(
+    updates: &mut tokio::sync::broadcast::Receiver<wire::AgentMessage>,
+    record: &lane::capture::CaptureRecord,
+) {
+    let tool = updates.try_recv().expect("tool activity publishes once");
+    assert_eq!(tool.lane, record.lane);
+    assert_eq!(tool.author, record.occupant);
+    assert_eq!(tool.activity, wire::AgentActivityKind::Tool);
+    assert_eq!(tool.text, "Bash");
     assert_eq!(
-        message.locus,
+        tool.locus,
         wire::MessageLocus {
             member: 4,
             offset: 120,
@@ -1282,11 +1312,35 @@ fn durable_capture_projects_only_current_occupant_prose_with_event_identity() {
             event: 1,
         }
     );
+
+    let prose = updates.try_recv().expect("prose publishes once");
+    assert_eq!(prose.lane, record.lane);
+    assert_eq!(prose.author, record.occupant);
+    assert_eq!(prose.activity, wire::AgentActivityKind::Prose);
+    assert_eq!(prose.text, "agent-authored answer");
+    assert_eq!(
+        prose.locus,
+        wire::MessageLocus {
+            member: 4,
+            offset: 120,
+            length: 48,
+            event: 2,
+        }
+    );
     assert!(matches!(
         updates.try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
+}
 
+fn assert_stale_capture_ignored(
+    bus: &bus::Bus,
+    seats: &mut Seats,
+    publisher: &impl AgentMessagePublisher,
+    updates: &mut tokio::sync::broadcast::Receiver<wire::AgentMessage>,
+    record: &lane::capture::CaptureRecord,
+    diagnostics: &mut Vec<u8>,
+) {
     seats
         .vacate(record.lane)
         .expect("original occupant remains supervised")
@@ -1302,41 +1356,27 @@ fn durable_capture_projects_only_current_occupant_prose_with_event_identity() {
             ),
         )
         .expect("replacement occupant starts");
-    let stale_locus = listen::Locus::new(4, 180, 48);
-    let stale_record = lane::capture::CaptureRecord {
+    let locus = listen::Locus::new(4, 180, 48);
+    let stale = lane::capture::CaptureRecord {
         lane: record.lane,
         occupant: record.occupant,
         stream: vendor::RecordStream::Stdout,
         boundary: sill::RecordBoundary::Complete,
-        locus: stale_locus,
+        locus,
         declaration: None,
         decoded: listen::Decoded::Events(vec![listen::Event::Prose(listen::Prose {
             text: "stale prior-occupant answer".to_owned(),
             phase: None,
-            locus: stale_locus,
+            locus,
         })]),
     };
-    accept_capture_record(
-        &bus,
-        test_uuid(4),
-        &mut seats,
-        &publisher,
-        &stale_record,
-        &mut diagnostics,
-    )
-    .expect("stale capture is ignored");
+    accept_capture_record(bus, test_uuid(4), seats, publisher, &stale, diagnostics)
+        .expect("stale capture is ignored");
     assert!(matches!(
         updates.try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
     assert!(diagnostics.is_empty());
-    seats
-        .vacate(record.lane)
-        .expect("replacement occupant remains supervised")
-        .wait()
-        .expect("replacement occupant stops");
-    drop(source);
-    bus.shutdown().expect("message bus stops");
 }
 
 struct UnavailableMessagePublisher;

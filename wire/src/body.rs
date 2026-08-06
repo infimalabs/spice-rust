@@ -561,6 +561,27 @@ pub struct LaneSeated {
 pub struct LineageConfigured {
     /// Stable Canvas lineage identifying the configured group.
     pub lineage_id: CanonicalUuid,
+    /// Member moved into the configured lineage, absent for policy-only changes.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub member: Option<CanonicalUuid>,
+    /// Lineage the moved member occupied before this transaction.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub from_lineage: Option<CanonicalUuid>,
+    /// Replacement identity assigned to a source team when its host left.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub source_rekeyed_to: Option<CanonicalUuid>,
     /// Prior task-subscription policy before this transaction.
     pub from: crate::intent::LineageLife,
     /// Authoritative task-subscription policy after this transaction.

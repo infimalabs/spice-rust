@@ -85,8 +85,8 @@ pub use reply::{
     RestoreVerification, SeqRange, SeqRangeError, ThreadReport, Version,
 };
 pub use stream::{
-    AgentMessage, MessageLocus, StreamAdmissionError, StreamCursor, StreamFact, StreamFrame,
-    StreamRequest, TrustView, ViewSubject,
+    AgentActivityKind, AgentMessage, MessageLocus, StreamAdmissionError, StreamCursor, StreamFact,
+    StreamFrame, StreamRequest, TrustView, ViewSubject,
 };
 pub use witness::{
     Answer, Disposition, Name, NameError, Phase, PhaseError, TaskHandle, TaskHandleError, Witness,
