@@ -476,6 +476,7 @@ mod tests {
                     &fixture.root,
                     &[],
                     refused_source,
+                    |_| true,
                 ),
             ),
         ];

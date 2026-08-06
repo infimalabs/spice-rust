@@ -86,6 +86,7 @@ mod tests {
                     Vec::new(),
                 )
                 .expect("the fixture rim directory is absolute"),
+                baselines: None,
             };
             probe_with(&requirement(), &source, bounds, read_program)
         }
