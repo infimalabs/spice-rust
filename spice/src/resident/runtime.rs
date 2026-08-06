@@ -782,12 +782,6 @@ async fn run_surface(
 /// cosmetic one.
 /// Only an endpoint reaches the endpoint stream; a failure to produce one is a
 /// diagnostic and goes where the other diagnostics went.
-///
-/// The point of publishing on stdout is that `endpoint=$(spice up | head -1)`
-/// reads it without a second command, and a shell doing that cannot tell a URL
-/// from a sentence. Writing `canvas unavailable: ...` there hands it a refusal
-/// reason to dial. Kept separate, the same shell sees an empty capture, which
-/// is the one reading that cannot be mistaken for an address.
 fn announce_canvas(
     discovery_path: &Path,
     open: bool,
@@ -796,11 +790,39 @@ fn announce_canvas(
     announcement: &mut dyn io::Write,
     diagnostic: &mut dyn io::Write,
 ) {
-    let outcome = crate::command_client::open_canvas_with(
-        discovery_path,
-        before_current_check,
-        |endpoint| if open { browser(endpoint) } else { Ok(()) },
+    render_announcement(
+        crate::command_client::open_canvas_with(
+            discovery_path,
+            before_current_check,
+            |endpoint| if open { browser(endpoint) } else { Ok(()) },
+        ),
+        announcement,
+        diagnostic,
     );
+}
+
+/// Route one outcome: an endpoint to the endpoint stream, anything that is not
+/// an endpoint to the diagnostic stream.
+///
+/// The point of publishing on stdout is that `endpoint=$(spice up | head -1)`
+/// reads it without a second command, and a shell doing that cannot tell a URL
+/// from a sentence. Writing `canvas unavailable: ...` there hands it a refusal
+/// reason to dial. Kept separate, the same shell sees an empty capture, which
+/// is the one reading that cannot be mistaken for an address.
+///
+/// Split from [`announce_canvas`] so the routing is driven by an outcome rather
+/// than by a filesystem. Every failure `open_canvas_with` can reach today is a
+/// `Fault`: a missing generation, a replaced generation, an undialable endpoint,
+/// and a failed launch were each probed, and none of them refuses. The refusal
+/// arm is required by `Outcome` and reached by no input, so the only way to hold
+/// it is to hand it one directly — which is what the caller in the tests does.
+/// The arm cannot be deleted, and collapsing it into a catch-all would also
+/// swallow whatever variant `Outcome` gains next, so it stays named.
+fn render_announcement(
+    outcome: Outcome<wire::CanvasOpen>,
+    announcement: &mut dyn io::Write,
+    diagnostic: &mut dyn io::Write,
+) {
     let _ = match outcome {
         Outcome::Reply(reply) => {
             writeln!(announcement, "canvas endpoint: {}", reply.body.endpoint)
