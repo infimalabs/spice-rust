@@ -517,17 +517,18 @@ pub struct Server {
 }
 
 impl Server {
-    /// Bind an ephemeral IPv4 loopback port, serving the compiled app.
+    /// Bind an ephemeral IPv4 loopback port with one resolved lane app.
     pub async fn bind(
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
+        app: crate::AppSource,
         speech: crate::SpeechConfig,
     ) -> Result<(Self, Control), std::io::Error> {
         Self::bind_with_capacity(
             LOOPBACK_EPHEMERAL,
             epoch,
             capabilities,
-            crate::AppSource::Embedded,
+            app,
             speech,
             None,
             64,
@@ -623,7 +624,7 @@ impl Server {
         })
     }
 
-    /// Serve the embedded app and current-wire socket until the task is cancelled.
+    /// Serve the lane-built app and current-wire socket until the task is cancelled.
     pub async fn up(self) -> Result<(), std::io::Error> {
         self.up_until(std::future::pending()).await
     }
@@ -678,10 +679,7 @@ async fn app(
     };
     let content_type = asset.content_type();
     let digest = asset.digest();
-    let mut response = Response::new(match asset.into_bytes() {
-        std::borrow::Cow::Borrowed(bytes) => Body::from(bytes),
-        std::borrow::Cow::Owned(bytes) => Body::from(bytes),
-    });
+    let mut response = Response::new(Body::from(asset.into_bytes()));
     response
         .headers_mut()
         .insert(CONTENT_TYPE, HeaderValue::from_static(content_type));

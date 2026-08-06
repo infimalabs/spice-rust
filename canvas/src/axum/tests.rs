@@ -8,7 +8,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
 use super::*;
-use crate::EMBEDDED_APP;
+use crate::APP;
 
 type ClientSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -122,10 +122,24 @@ fn speech() -> crate::SpeechConfig {
     crate::SpeechConfig::default()
 }
 
-/// The app source every test but the app-serving ones binds with: the bytes
-/// compiled into this binary, which is what a release resident serves.
-fn embedded() -> crate::AppSource {
-    crate::AppSource::Embedded
+/// One complete lane-built app shared by tests that do not inspect its bytes.
+fn app() -> crate::AppSource {
+    static ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    let root = ROOT.get_or_init(|| {
+        let root =
+            std::env::temp_dir().join(format!("spice-canvas-test-app-{}", std::process::id()));
+        let stage = root.join(crate::DEV_STAGE);
+        std::fs::create_dir_all(&stage).expect("fixture app stage");
+        for asset in APP.assets() {
+            std::fs::write(
+                stage.join(asset.file()),
+                format!("test app {}", asset.file()),
+            )
+            .expect("fixture app asset");
+        }
+        root
+    });
+    crate::AppSource::resolve(root).expect("fixture app resolves")
 }
 
 async fn websocket(address: SocketAddr) -> ClientSocket {
@@ -327,7 +341,7 @@ async fn authenticated_socket_streams_one_bus_snapshot_updates_resume_and_typed_
         LOOPBACK_EPHEMERAL,
         epoch(),
         capabilities,
-        embedded(),
+        app(),
         speech(),
         bus.reader(),
         8,
@@ -393,7 +407,7 @@ async fn capability_replacement_faults_the_live_stream_without_disclosure() {
         LOOPBACK_EPHEMERAL,
         epoch(),
         capabilities.clone(),
-        embedded(),
+        app(),
         speech(),
         bus.reader(),
         8,
@@ -447,7 +461,7 @@ async fn blocked_command_delivery_turns_broadcast_lag_into_resumable_overflow() 
         LOOPBACK_EPHEMERAL,
         epoch(),
         capabilities,
-        embedded(),
+        app(),
         speech(),
         bus.reader(),
         8,
@@ -526,7 +540,7 @@ async fn server_binds_ipv4_loopback_and_publishes_that_endpoint() {
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind(epoch(), capabilities, speech())
+    let (server, _control) = Server::bind(epoch(), capabilities, app(), speech())
         .await
         .expect("binds");
     let address = server.local_addr().expect("local address");
@@ -555,7 +569,7 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
         SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
         epoch(),
         capabilities,
-        embedded(),
+        app(),
         speech(),
         None,
         1,
@@ -669,6 +683,7 @@ async fn speech_endpoint_executes_only_the_server_owned_argv_contract() {
     let (server, _control) = Server::bind(
         epoch(),
         Capabilities::default(),
+        app(),
         external_speech(&["/bin/cat"]),
     )
     .await
@@ -714,7 +729,7 @@ async fn speech_endpoint_bounds_disabled_malformed_and_unavailable_backends() {
         external_speech(&[]),
         external_speech(&["/definitely/missing/spice-speech"]),
     ] {
-        let (server, _control) = Server::bind(epoch(), Capabilities::default(), speech)
+        let (server, _control) = Server::bind(epoch(), Capabilities::default(), app(), speech)
             .await
             .expect("binds");
         let address = server.local_addr().expect("local address");
@@ -742,6 +757,7 @@ async fn speech_endpoint_bounds_disabled_malformed_and_unavailable_backends() {
     let (server, _control) = Server::bind(
         epoch(),
         Capabilities::default(),
+        app(),
         external_speech(&["/bin/cat"]),
     )
     .await
@@ -770,8 +786,8 @@ async fn speech_endpoint_bounds_disabled_malformed_and_unavailable_backends() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn live_server_serves_exact_embedded_bytes_and_refuses_another_host() {
-    let (server, _control) = Server::bind(epoch(), Capabilities::default(), speech())
+async fn live_server_serves_the_lane_app_and_refuses_another_host() {
+    let (server, _control) = Server::bind(epoch(), Capabilities::default(), app(), speech())
         .await
         .expect("binds");
     let address = server.local_addr().expect("local address");
@@ -784,7 +800,7 @@ async fn live_server_serves_exact_embedded_bytes_and_refuses_another_host() {
         .expect("response carries headers")
         + 4;
     assert!(admitted.starts_with(b"HTTP/1.1 200 OK\r\n"));
-    assert_eq!(&admitted[split..], EMBEDDED_APP.bytes());
+    assert_eq!(&admitted[split..], b"test app canvas-app.html");
 
     let script = request(address, &address.to_string(), "/app.module").await;
     assert!(script.starts_with(b"HTTP/1.1 200 OK\r\n"));
@@ -807,7 +823,7 @@ async fn live_server_serves_exact_embedded_bytes_and_refuses_another_host() {
 /// A worktree holding a complete development stage, and that stage's path.
 ///
 /// The bytes name their own file so a route served from the wrong one is
-/// visible in the assertion rather than merely non-embedded.
+/// visible in the assertion.
 fn local_worktree() -> (std::path::PathBuf, std::path::PathBuf) {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
 
@@ -818,7 +834,7 @@ fn local_worktree() -> (std::path::PathBuf, std::path::PathBuf) {
     ));
     let stage = root.join(crate::DEV_STAGE);
     std::fs::create_dir_all(&stage).expect("fixture stage");
-    for asset in EMBEDDED_APP.assets() {
+    for asset in APP.assets() {
         std::fs::write(
             stage.join(asset.file()),
             format!("locally built {}", asset.file()),
@@ -854,7 +870,6 @@ async fn live_server_serves_a_local_stage_and_refuses_when_it_goes_away() {
         + 4;
     assert!(served.starts_with(b"HTTP/1.1 200 OK\r\n"));
     assert_eq!(&served[split..], b"locally built canvas-app.html");
-    assert_ne!(&served[split..], EMBEDDED_APP.bytes());
 
     // A stage that stops answering mid-flight is reported as this endpoint's
     // own failure, not as the app the operator asked to stop serving.
@@ -878,7 +893,7 @@ async fn bootstrap_names_the_exact_operator_generation_and_is_not_cached() {
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind(epoch(), capabilities, speech())
+    let (server, _control) = Server::bind(epoch(), capabilities, app(), speech())
         .await
         .expect("binds");
     let address = server.local_addr().expect("local address");
@@ -919,7 +934,7 @@ async fn authenticated_session_routes_multiple_typed_commands_and_correlates_ans
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, mut control) = Server::bind(epoch(), capabilities, speech())
+    let (server, mut control) = Server::bind(epoch(), capabilities, app(), speech())
         .await
         .expect("binds");
     let address = server.local_addr().expect("local address");
@@ -943,7 +958,7 @@ async fn shutdown_closes_partial_upgrade_pre_hello_and_active_sockets() {
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind(epoch(), capabilities, speech())
+    let (server, _control) = Server::bind(epoch(), capabilities, app(), speech())
         .await
         .expect("binds");
     let state = Arc::clone(&server.state);
@@ -988,7 +1003,7 @@ async fn shutdown_forces_transport_closed_when_a_session_cannot_finish_draining(
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind(epoch(), capabilities, speech())
+    let (server, _control) = Server::bind(epoch(), capabilities, app(), speech())
         .await
         .expect("binds");
     let state = Arc::clone(&server.state);
@@ -1015,7 +1030,7 @@ async fn operator_lane_replacement_and_reconnect_cross_the_live_door() {
     capabilities
         .insert(lane_capability, wire::Actor::Lane(lane))
         .expect("lane capability");
-    let (server, mut control) = Server::bind(epoch(), capabilities, speech())
+    let (server, mut control) = Server::bind(epoch(), capabilities, app(), speech())
         .await
         .expect("binds");
     let address = server.local_addr().expect("local address");
@@ -1076,7 +1091,7 @@ async fn operator_lane_replacement_and_reconnect_cross_the_live_door() {
     replacement
         .insert(operator(), wire::Actor::Lane(lane))
         .expect("replacement generation capability");
-    let (server, _control) = Server::bind(replacement_epoch, replacement, speech())
+    let (server, _control) = Server::bind(replacement_epoch, replacement, app(), speech())
         .await
         .expect("replacement binds");
     let address = server.local_addr().expect("replacement address");
@@ -1134,7 +1149,7 @@ async fn saturated_queue_orders_concurrent_work_before_dark_and_refuses_later_wo
         LOOPBACK_EPHEMERAL,
         epoch(),
         capabilities,
-        embedded(),
+        app(),
         speech(),
         None,
         1,
@@ -1222,7 +1237,7 @@ async fn shutdown_interrupts_a_queue_reservation_blocked_by_saturation() {
         LOOPBACK_EPHEMERAL,
         epoch(),
         capabilities,
-        embedded(),
+        app(),
         speech(),
         None,
         1,
@@ -1428,7 +1443,7 @@ fn host_and_origin_must_name_the_published_endpoint() {
         origin: "http://127.0.0.1:48123".to_owned(),
         epoch: epoch(),
         capabilities: Capabilities::default(),
-        app: embedded(),
+        app: app(),
         speech: speech(),
         speech_slot: Semaphore::new(1),
         admission: Mutex::new(Admission::Open),

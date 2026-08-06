@@ -51,11 +51,13 @@ impl Fixture {
         ));
         let runtime = root.join(".git/.spice");
         fs::create_dir_all(root.join(".git")).expect("fixture git directory");
-        Self {
+        let fixture = Self {
             cleanup: root.clone(),
             root,
             runtime,
-        }
+        };
+        fixture.install_app();
+        fixture
     }
 
     fn linked(name: &str) -> Self {
@@ -72,10 +74,24 @@ impl Fixture {
         fs::write(root.join(".git"), format!("gitdir: {}\n", git.display()))
             .expect("linked Git pointer");
         fs::write(git.join("commondir"), "../..\n").expect("linked common pointer");
-        Self {
+        let fixture = Self {
             root,
             runtime: common.join(".spice"),
             cleanup,
+        };
+        fixture.install_app();
+        fixture
+    }
+
+    fn install_app(&self) {
+        let stage = self.root.join(canvas::DEV_STAGE);
+        fs::create_dir_all(&stage).expect("fixture app stage");
+        for asset in canvas::APP.assets() {
+            fs::write(
+                stage.join(asset.file()),
+                format!("resident test app {}", asset.file()),
+            )
+            .expect("fixture app asset");
         }
     }
 

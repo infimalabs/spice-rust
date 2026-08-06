@@ -502,6 +502,18 @@ fn version_outcome() -> Outcome<wire::Version> {
         Ok(state) => state,
         Err(error) => return state_failure(&error).outcome(),
     };
+    let app = match canvas::AppSource::resolve(repository.worktree_root())
+        .and_then(|source| source.digest())
+    {
+        Ok(digest) => digest,
+        Err(error) => {
+            return Outcome::Fault(Fault {
+                class: FaultClass::Environment,
+                reason: "version::app-unavailable".to_owned(),
+                detail: error.to_string(),
+            });
+        }
+    };
     let reader = match journal::JournalReader::open(state.journal()) {
         Ok(reader) => reader,
         Err(error) => return journal_version_failure(error),
@@ -517,7 +529,7 @@ fn version_outcome() -> Outcome<wire::Version> {
             binary,
             wire: wire::WireVersion::CURRENT,
             journal,
-            app: canvas::EMBEDDED_APP.digest(),
+            app,
         },
     })
 }
