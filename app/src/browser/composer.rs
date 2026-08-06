@@ -77,6 +77,49 @@ impl LineageLife {
     }
 }
 
+/// Browser-local policy selections, isolated by durable lineage identity.
+///
+/// A lineage without a local selection reads the policy admitted on its host
+/// member. Once the operator changes that lineage's control, the selection is
+/// retained under only that lineage key and cannot repaint a sibling.
+#[derive(Clone, Default, PartialEq)]
+pub(super) struct LineageLives(BTreeMap<CanonicalUuid, LineageLife>);
+
+pub(super) enum LineageLifeAction {
+    Set {
+        lineage: CanonicalUuid,
+        life: LineageLife,
+    },
+}
+
+impl Reducible for LineageLives {
+    type Action = LineageLifeAction;
+
+    fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
+        let mut next = (*self).clone();
+        match action {
+            LineageLifeAction::Set { lineage, life } => {
+                next.0.insert(lineage, life);
+            }
+        }
+        Rc::new(next)
+    }
+}
+
+impl LineageLives {
+    fn selected(&self, lineage: &crate::runtime::LaneRow) -> LineageLife {
+        self.0
+            .get(&lineage.lane)
+            .copied()
+            .or_else(|| {
+                lineage
+                    .host()
+                    .and_then(|member| LineageLife::from_wire(&member.life))
+            })
+            .expect("a nonempty admitted lineage has one current life policy")
+    }
+}
+
 #[derive(Clone, Default, PartialEq)]
 pub(super) struct ComposerDraft {
     body: String,
@@ -210,7 +253,7 @@ pub(super) fn render_lineage(
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
     mode: &UseStateHandle<LineageMode>,
-    life: &UseStateHandle<LineageLife>,
+    lives: &UseReducerHandle<LineageLives>,
     controls: &view::AgentControls,
 ) -> Html {
     let Some(runtime) = surface.as_ref() else {
@@ -258,6 +301,14 @@ pub(super) fn render_lineage(
                     .filter(|standing| standing.lineage_id == lineage.lane)
                     .cloned()
                     .collect::<Vec<_>>();
+                let life = lives.selected(lineage);
+                let update_life = {
+                    let lives = lives.clone();
+                    let lineage = lineage.lane;
+                    Callback::from(move |life| {
+                        lives.dispatch(LineageLifeAction::Set { lineage, life });
+                    })
+                };
                 html! {
                     <section
                         class="team-surface"
@@ -278,6 +329,7 @@ pub(super) fn render_lineage(
                                     drafts,
                                     mode,
                                     life,
+                                    update_life,
                                     controls,
                                 ),
                                 LineageMode::Filters | LineageMode::Metrics | LineageMode::Info => html! {
@@ -387,7 +439,8 @@ fn render_compose(
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
     mode: &UseStateHandle<LineageMode>,
-    life: &UseStateHandle<LineageLife>,
+    life: LineageLife,
+    update_life: Callback<LineageLife>,
     controls: &view::AgentControls,
 ) -> Html {
     if lineage.members.is_empty() {
@@ -418,10 +471,10 @@ fn render_compose(
                         )
                     })}
                 </div>
-                {render_lineage_controls(life, ready)}
+                {render_lineage_controls(life, update_life, ready)}
             </form>
             {view::chrome::render_ticker(surface)}
-            {render_activity(runtime, lineage, drafts, controls)}
+            {render_activity(runtime, lineage, drafts, controls, life)}
         </div>
     }
 }
@@ -431,6 +484,7 @@ fn render_activity(
     lineage: &crate::runtime::LaneRow,
     drafts: &UseReducerHandle<ComposerDrafts>,
     controls: &view::AgentControls,
+    life: LineageLife,
 ) -> Html {
     let cards = runtime
         .messages()
@@ -469,6 +523,8 @@ fn render_activity(
             <MosaicPlane
                 key={lineage.lane.to_string()}
                 lane={lineage.lane}
+                {life}
+                members={lineage.members.len()}
                 {cards}
                 drafts={drafts.clone()}
                 speak={controls.speak.clone()}
@@ -492,6 +548,8 @@ enum ActivityCard {
 #[derive(Properties, PartialEq)]
 struct MosaicPlaneProps {
     lane: CanonicalUuid,
+    life: LineageLife,
+    members: usize,
     cards: Vec<ActivityCard>,
     drafts: UseReducerHandle<ComposerDrafts>,
     speak: Callback<String>,
@@ -516,8 +574,16 @@ fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
             ref={host}
             class="lane-mosaic-plane"
             data-agent-plane={properties.lane.to_string()}
+            data-lineage-policy={properties.life.label()}
+            data-lineage-members={properties.members.to_string()}
             data-lanes={geometry.lane_count.to_string()}
             data-plane-rows={plane.rows().to_string()}
+            aria-label={format!(
+                "Packed lineage plane: {} policy, {} {}",
+                properties.life.label(),
+                properties.members,
+                if properties.members == 1 { "member" } else { "members" },
+            )}
         >
             {for properties.cards.iter().zip(plane.cards.iter()).map(|(activity, card)| {
                 match activity {
@@ -810,9 +876,11 @@ fn render_agent_composer(
     }
 }
 
-fn render_lineage_controls(life: &UseStateHandle<LineageLife>, ready: bool) -> Html {
-    let selected = **life;
-    let update = life.clone();
+fn render_lineage_controls(
+    selected: LineageLife,
+    update: Callback<LineageLife>,
+    ready: bool,
+) -> Html {
     html! {
         <aside class="team-composer-controls">
             <label class={classes!(
@@ -830,8 +898,14 @@ fn render_lineage_controls(life: &UseStateHandle<LineageLife>, ready: bool) -> H
                     title={selected.help()}
                     oninput={Callback::from(move |event: InputEvent| {
                         let input: HtmlInputElement = event.target_unchecked_into();
-                        let index = input.value().parse::<usize>().unwrap_or(0).min(2);
-                        update.set(LineageLife::ALL[index]);
+                        if let Some(life) = input
+                            .value()
+                            .parse::<usize>()
+                            .ok()
+                            .and_then(|index| LineageLife::ALL.get(index).copied())
+                        {
+                            update.emit(life);
+                        }
                     })}
                 />
                 <span>{selected.label()}</span>

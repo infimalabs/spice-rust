@@ -36,7 +36,7 @@ pub(super) struct CanvasRender<'a> {
     pub axis: &'a UseStateHandle<Axis>,
     pub mosaic: &'a UseStateHandle<bool>,
     pub lineage_mode: &'a UseStateHandle<LineageMode>,
-    pub lineage_life: &'a UseStateHandle<LineageLife>,
+    pub lineage_lives: &'a UseReducerHandle<LineageLives>,
     pub composer_drafts: &'a UseReducerHandle<ComposerDrafts>,
     pub sender: &'a SenderHandle,
     pub agents: &'a AgentControls,
@@ -102,7 +102,7 @@ pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> 
                         render.sender,
                         render.composer_drafts,
                         render.lineage_mode,
-                        render.lineage_life,
+                        render.lineage_lives,
                         render.agents,
                     )}
                 } else {
