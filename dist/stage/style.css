@@ -322,6 +322,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .watchband-empty { margin: 0; color: var(--muted); font-size: .84rem; }
 
+/* On its own destination the band owns the page rather than sitting above one,
+   so tiles wrap into rows instead of scrolling out of sight sideways. The tile
+   width is already fixed, so wrapping lands them on a grid without one. */
+.content--mosaic .watchband-strip { overflow-x: visible; flex-wrap: wrap; }
+
 /* A tile is fixed-width so the strip reads as one band rather than as columns
    that resize when a lane's direction text changes length. */
 .lane-tile {
