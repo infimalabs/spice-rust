@@ -44,7 +44,7 @@ fn quote_textarea_id(lane_key: &str, identity: &str) -> String {
     format!("composer-quote-{lane_key}-{identity}")
 }
 
-fn focus_after_render(id: String) {
+pub(super) fn focus_after_render(id: String) {
     spawn_local(async move {
         TimeoutFuture::new(0).await;
         let Some(document) = web_sys::window().and_then(|window| window.document()) else {
@@ -88,6 +88,7 @@ pub(super) fn render_agent_message_card(
         message.locus.length,
         message.locus.event,
     );
+    let source_id = format!("message-{quote_identity}");
     let focus_identity = quote_identity.clone();
     let focus_lane = lane_key.clone();
     let producer = format!(
@@ -123,6 +124,7 @@ pub(super) fn render_agent_message_card(
                 message.locus.offset,
                 message.locus.event,
             )}
+            id={source_id}
             class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
             draggable="true"
             aria-label={format!("Agent message from {producer}")}
@@ -190,6 +192,7 @@ pub(super) fn render_directive_card(
     let quote_preview = directive.preview.clone();
     let quote_text = directive.text.clone();
     let quote_identity = format!("directive-{}", directive.directive);
+    let source_id = format!("message-{quote_identity}");
     let focus_identity = quote_identity.clone();
     let focus_lane = lane_key.to_owned();
     let correspondent = view::chrome::Correspondent {
@@ -220,6 +223,7 @@ pub(super) fn render_directive_card(
     html! {
         <article
             key={directive.directive.to_string()}
+            id={source_id}
             class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
             draggable="true"
             data-directive={directive.directive.to_string()}
@@ -263,7 +267,7 @@ pub(super) fn render_directive_card(
     }
 }
 
-pub(super) fn render_quote_bands(
+pub(super) fn render_quote_shards(
     lane_key: &str,
     draft: &ComposerDraft,
     drafts: &UseReducerHandle<ComposerDrafts>,
@@ -294,19 +298,28 @@ pub(super) fn render_quote_bands(
                 });
                 let shown = crate::composer_markdown::quote_label(quote.preview.as_deref());
                 let textarea_id = quote_textarea_id(lane_key, &quote.identity);
+                let source_id = format!("message-{}", quote.identity);
                 html! {
-                    <div
+                    <article
                         key={quote.identity.clone()}
-                        class="composer-quote-band"
+                        class="mosaic-composer composer-shard composer-shard--quote"
                         title={quote.quote.clone()}
+                        data-shard-kind="quote"
+                        data-shard-target-id={lane_key.to_owned()}
                         data-quote-identity={quote.identity.clone()}
                         data-quote-target-id={lane_key.to_owned()}
                     >
-                        <header>
-                            <span>{shown}</span>
+                        <header class="composer-shard-heading">
+                            <a
+                                class="composer-shard-link"
+                                href={format!("#{source_id}")}
+                                aria-label={format!("Return to quoted message: {shown}")}
+                                title="Return to this message in the stream"
+                            >{"↩"}</a>
+                            <strong>{shown}</strong>
                             <button
                                 type="button"
-                                aria-label="Remove quoted composer"
+                                aria-label="Remove quoted composer shard"
                                 onclick={remove}
                             >{"×"}</button>
                         </header>
@@ -320,7 +333,7 @@ pub(super) fn render_quote_bands(
                             oninput={update}
                             onkeydown={target_submit.clone()}
                         ></textarea>
-                    </div>
+                    </article>
                 }
             })}
         </div>
